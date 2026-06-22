@@ -33,6 +33,7 @@ Implemented in `packages/harnessy-core`:
 - Tiny local capability fixture and Effect Vitest coverage.
 - Full v1 compatibility capability pack at `packages/capability-harnessy-v1-full`, including a complete v1 repo snapshot plus direct resources for flow-install, the context vault, Jarvis CLI, and bootstrap docs.
 - Native v1-compatible installer options: saved `installPaths`, `--dry-run`, `--reconfigure`, `--step`, `--agents-file`, `--context-dir`, `--skills-dir`, `--scripts-dir`, `--yes`, scoped memory `_scopes.yaml`, AGENTS.md managed block, context AGENTS.md managed block, and force refresh that preserves lockfile capabilities.
+- Native runtime asset scaffolding: preserved v1 project script copying, `.jarvis/hooks.yaml` scaffold, `install --step runtime-assets`, and planned user-global hook/shim/skill/agent registration metadata without applying global writes.
 
 ## Remaining core points
 
@@ -114,7 +115,7 @@ Status: `packages/capability-org-knowledge` exists with manifest resources/check
 
 These are now preserved in `packages/capability-harnessy-v1-full` and should be promoted into native Harnessy commands/services rather than rediscovered from scratch:
 
-- Installer behavior: hooks, script shims, global skill installation/agent registration, project script copying, and dependency checks. Saved install paths, dry-run/step-only/force modes, and managed AGENTS blocks are now native.
+- Installer behavior: explicit opt-in apply mode for planned global hooks/script shims/global skill installation/agent registration, v1 package.json lifecycle patching, generated helper scripts, cron/autoflow scaffolding, and deeper dependency checks. Saved install paths, dry-run/step-only/force modes, managed AGENTS blocks, project script copying, hook config scaffold, and planned global runtime metadata are now native.
 - Skill lifecycle: create, validate, publish, feedback, improve, promote.
 - Product/spec flow: brainstorm, PRD, design spec, technical spec, MVP tech spec, review skills.
 - Build/review: engineer, build-e2e, code review, local run, dev container, security audit, semver, git commit, design mockup.
@@ -143,7 +144,7 @@ Validation after wave 3, full v1 pack, and native installer parity:
 
 ## Next dispatch after wave 3
 
-1. Promote v1 hooks/script shims/global skill registration from the full pack into native services.
+1. Add explicit opt-in apply mode for planned global hooks/script shims/global skill registration.
 2. Remote git/npm/url fetch policy and safe fetch/extract implementation.
 3. Multiple profile activation and capability-scoped context loading.
 4. Garden JSON report expansion beyond current resolved-source/fingerprint fields.

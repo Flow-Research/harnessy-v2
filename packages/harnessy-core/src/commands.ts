@@ -46,7 +46,9 @@ const yesOption = Options.boolean("yes").pipe(
 /** Optional v1-style step-only installer mode. */
 const stepOption = Options.string("step").pipe(
 	Options.optional,
-	Options.withDescription("Run only one install step: all, skills, memory, agents-md, context-agents."),
+	Options.withDescription(
+		"Run only one install step: all, skills, memory, agents-md, context-agents, runtime-assets.",
+	),
 );
 
 /** Optional root AGENTS.md path override. */
@@ -118,12 +120,19 @@ const logMaterialization = (
 /** Parse a v1-compatible step name into the native installer step enum. */
 const parseInstallStep = (raw: string | undefined): Effect.Effect<InstallStep, HarnessError> => {
 	if (raw === undefined) return Effect.succeed("all");
-	if (raw === "all" || raw === "skills" || raw === "memory" || raw === "agents-md" || raw === "context-agents") {
+	if (
+		raw === "all" ||
+		raw === "skills" ||
+		raw === "memory" ||
+		raw === "agents-md" ||
+		raw === "context-agents" ||
+		raw === "runtime-assets"
+	) {
 		return Effect.succeed(raw);
 	}
 	return Effect.fail(
 		new HarnessError({
-			message: `Unknown install step: ${raw}. Expected one of: all, skills, memory, agents-md, context-agents`,
+			message: `Unknown install step: ${raw}. Expected one of: all, skills, memory, agents-md, context-agents, runtime-assets`,
 		}),
 	);
 };
@@ -181,6 +190,15 @@ const installCommand = Command.make(
 			}
 			if (result.step === "skills") {
 				yield* Console.log("Skills are preserved in capability packs; native skill promotion is pending.");
+			}
+			if (result.runtimeAssets !== null) {
+				const globalPlanned = result.runtimeAssets.actions.filter((action) => action.unsafeGlobal).length;
+				if (result.runtimeAssets.written.length > 0) {
+					yield* Console.log(`Synced runtime assets: ${result.runtimeAssets.written.length}`);
+				}
+				if (globalPlanned > 0) {
+					yield* Console.log(`Planned user-global runtime actions without applying them: ${globalPlanned}`);
+				}
 			}
 			if (result.capability !== null) {
 				yield* Console.log(

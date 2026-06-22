@@ -25,12 +25,13 @@ import { HarnessPathResolver } from "./path-resolver.ts";
 import type { HarnessPaths } from "./paths.ts";
 import { ProfileStore } from "./profile-store.ts";
 import { ProjectDetector, type ProjectInfo } from "./project-detection.ts";
+import { type HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime-assets.ts";
 import { RuntimeEnvironment } from "./runtime-environment.ts";
 
 export type { AddCapabilityResult } from "./capability-registry.ts";
 
 /** Native v2 installer step, mirroring v1 step-only modes where available. */
-export type InstallStep = "all" | "skills" | "memory" | "agents-md" | "context-agents";
+export type InstallStep = "all" | "skills" | "memory" | "agents-md" | "context-agents" | "runtime-assets";
 
 /** Full native install options used by the CLI. */
 export interface NativeInstallOptions {
@@ -68,6 +69,8 @@ export interface NativeInstallResult {
 	readonly scripts: PackageScriptPatchResult | null;
 	/** Capability add result for full installs with a source. */
 	readonly capability: AddCapabilityResult | null;
+	/** Safe project-local runtime asset sync plus planned user-global work. */
+	readonly runtimeAssets: HarnessRuntimeAssetSyncResult | null;
 }
 
 /** Result of installing Harnessy and optionally recording a first capability. */
@@ -78,6 +81,8 @@ export interface InstallResult {
 	readonly scripts: PackageScriptPatchResult;
 	/** Capability add result when a source was provided. */
 	readonly capability: AddCapabilityResult | null;
+	/** Safe project-local runtime asset sync plus planned user-global work. */
+	readonly runtimeAssets: HarnessRuntimeAssetSyncResult | null;
 }
 
 /** Result of initializing or refreshing generated Harnessy project files. */
@@ -194,6 +199,7 @@ export class HarnessProject extends Context.Service<
 			const capabilityChecks = yield* CapabilityChecker;
 			const dependencies = yield* DependencyChecker;
 			const packageScripts = yield* PackageScripts;
+			const runtimeAssets = yield* HarnessRuntimeAssets;
 			const profiles = yield* ProfileStore;
 			const detector = yield* ProjectDetector;
 
@@ -225,6 +231,9 @@ export class HarnessProject extends Context.Service<
 				if (step === "agents-md") return [`${resolved.targetDir}/${installPaths.agentsFile}`];
 				if (step === "context-agents") return [`${resolved.targetDir}/${installPaths.contextDir}/AGENTS.md`];
 				if (step === "skills") return [`${resolved.targetDir}/${installPaths.skillsDir}`];
+				if (step === "runtime-assets") {
+					return [`${resolved.targetDir}/${installPaths.scriptsDir}`, `${resolved.targetDir}/.jarvis/hooks.yaml`];
+				}
 				return [
 					resolved.contextAgentsFile,
 					resolved.defaultProfile,
@@ -256,16 +265,24 @@ export class HarnessProject extends Context.Service<
 					options.reconfigure ?? false,
 				).pipe(Effect.provideService(Path.Path, pathService));
 				if (dryRun) {
+					const runtimeAssetResult =
+						step === "all" || step === "runtime-assets"
+							? yield* runtimeAssets.syncProjectAssets(resolved, installPaths, {
+									dryRun: true,
+									force: options.force,
+								})
+							: null;
 					return {
 						dryRun,
 						step,
 						paths: resolved,
 						installPaths,
-						written: dryRunPlan(resolved, step, installPaths),
+						written: [...dryRunPlan(resolved, step, installPaths), ...(runtimeAssetResult?.written ?? [])],
 						managedBlocks: {},
 						init: null,
 						scripts: null,
 						capability: null,
+						runtimeAssets: runtimeAssetResult,
 					} satisfies NativeInstallResult;
 				}
 
@@ -281,6 +298,7 @@ export class HarnessProject extends Context.Service<
 						init: null,
 						scripts: null,
 						capability: null,
+						runtimeAssets: null,
 					} satisfies NativeInstallResult;
 				}
 
@@ -296,6 +314,7 @@ export class HarnessProject extends Context.Service<
 						init: null,
 						scripts: null,
 						capability: null,
+						runtimeAssets: null,
 					} satisfies NativeInstallResult;
 				}
 
@@ -311,6 +330,7 @@ export class HarnessProject extends Context.Service<
 						init: null,
 						scripts: null,
 						capability: null,
+						runtimeAssets: null,
 					} satisfies NativeInstallResult;
 				}
 
@@ -325,6 +345,26 @@ export class HarnessProject extends Context.Service<
 						init: null,
 						scripts: null,
 						capability: null,
+						runtimeAssets: null,
+					} satisfies NativeInstallResult;
+				}
+
+				if (step === "runtime-assets") {
+					const runtimeAssetResult = yield* runtimeAssets.syncProjectAssets(resolved, installPaths, {
+						dryRun: false,
+						force: options.force,
+					});
+					return {
+						dryRun,
+						step,
+						paths: resolved,
+						installPaths,
+						written: runtimeAssetResult.written,
+						managedBlocks: {},
+						init: null,
+						scripts: null,
+						capability: null,
+						runtimeAssets: runtimeAssetResult,
 					} satisfies NativeInstallResult;
 				}
 
@@ -335,6 +375,10 @@ export class HarnessProject extends Context.Service<
 				}
 				const initResult = { paths: resolved, initialized, written: generated.written } satisfies InitResult;
 				const scripts = yield* packageScripts.patch(resolved);
+				const runtimeAssetResult = yield* runtimeAssets.syncProjectAssets(resolved, installPaths, {
+					dryRun: false,
+					force: options.force,
+				});
 				const agentsMd = yield* managedBlocks.syncProjectAgents(resolved, installPaths, false);
 				const contextAgents = yield* managedBlocks.syncContextAgents(resolved, installPaths, false);
 				const capability =
@@ -346,6 +390,7 @@ export class HarnessProject extends Context.Service<
 					installPaths,
 					written: [
 						...generated.written,
+						...runtimeAssetResult.written,
 						agentsMd.changed ? agentsMd.path : null,
 						contextAgents.changed ? contextAgents.path : null,
 					].filter((filePath): filePath is string => filePath !== null),
@@ -353,6 +398,7 @@ export class HarnessProject extends Context.Service<
 					init: initResult,
 					scripts,
 					capability,
+					runtimeAssets: runtimeAssetResult,
 				} satisfies NativeInstallResult;
 			});
 
@@ -369,6 +415,7 @@ export class HarnessProject extends Context.Service<
 					init: installed.init,
 					scripts: installed.scripts,
 					capability: installed.capability,
+					runtimeAssets: installed.runtimeAssets,
 				} satisfies InstallResult;
 			});
 
@@ -478,6 +525,7 @@ export class HarnessProject extends Context.Service<
 		Layer.provideMerge(GeneratedFiles.layer),
 		Layer.provideMerge(ManagedBlocks.layer),
 		Layer.provideMerge(PackageScripts.layer),
+		Layer.provideMerge(HarnessRuntimeAssets.layer),
 		Layer.provideMerge(ProfileStore.layer),
 		Layer.provideMerge(ProjectDetector.layer),
 		Layer.provideMerge(RuntimeEnvironment.liveLayer),

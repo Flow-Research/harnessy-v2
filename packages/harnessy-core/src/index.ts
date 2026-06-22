@@ -103,6 +103,8 @@ export {
 	WorkspaceInfo,
 	WorkspaceKind,
 } from "./project-detection.ts";
+export type { HarnessRuntimeAssetSyncOptions } from "./runtime-assets.ts";
+export { HarnessRuntimeAssetAction, HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime-assets.ts";
 export { RuntimeEnvironment } from "./runtime-environment.ts";
 export type {
 	StructuredCapability,

@@ -45,6 +45,8 @@ Ported into native v2 core:
 - Deterministic dependency checks.
 - Native installer flags: `--dry-run`, `--reconfigure`, `--step`, `--agents-file`, `--context-dir`, `--skills-dir`, `--scripts-dir`, `--yes`.
 - Managed AGENTS.md and context AGENTS.md Harnessy blocks.
+- Project-local v1 runtime asset sync for preserved flow scripts and `.jarvis/hooks.yaml`.
+- Planned metadata for user-global hook bundles, pipeline shims, global skill installs, and agent registration without applying global writes.
 - Force refresh behavior that preserves existing lockfile capabilities.
 
 Target shape now exists in `packages/harnessy-core/`.
@@ -123,7 +125,7 @@ Flow:
 
 Promote from `packages/capability-harnessy-v1-full/resources/source` into native v2 modules:
 
-- Installer behavior still remaining: hooks, script shims, global skill installation/agent registration, project script copying, dependency checks.
+- Installer behavior still remaining: explicit opt-in apply mode for global hooks/script shims/global skill installation/agent registration, v1 package.json lifecycle patching, generated helper scripts, cron/autoflow scaffolding, and deeper dependency checks.
 - Skill lifecycle: create, validate, publish, feedback, improve, promote.
 - Product/spec flow: brainstorm, PRD, design spec, technical spec, MVP tech spec, review skills.
 - Build/review: engineer, build-e2e, code review, local run, dev container, security audit, semver, git commit, design mockup.
@@ -135,6 +137,6 @@ Promote from `packages/capability-harnessy-v1-full/resources/source` into native
 
 ## Immediate next work
 
-1. Promote v1 hooks/script shims/global skill registration from the full pack into native services.
+1. Add explicit opt-in apply mode for planned global hooks/script shims/global skill registration.
 2. Implement safe remote git/npm/url fetch policy and extraction.
 3. Add multiple profile activation and capability-scoped context loading.
