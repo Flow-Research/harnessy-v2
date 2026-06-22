@@ -43,11 +43,35 @@ const yesOption = Options.boolean("yes").pipe(
 	Options.withDescription("Accept noninteractive defaults."),
 );
 
+/** Opt in to v1 user-global writes such as ~/.scripts, ~/.agents, and ~/.local/bin. */
+const applyGlobalOption = Options.boolean("apply-global").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Apply v1 user-global runtime writes instead of only planning them."),
+);
+
+/** Override the home-like root for v1 user-global writes. Primarily for sandboxes and tests. */
+const globalRootOption = Options.string("global-root").pipe(
+	Options.optional,
+	Options.withDescription("Home-like root for v1 global runtime writes."),
+);
+
+/** Override the global Harnessy skills directory. */
+const globalSkillsDirOption = Options.string("global-skills-dir").pipe(
+	Options.optional,
+	Options.withDescription("Global skills directory for v1 skill installation."),
+);
+
+/** Override the user-local command shim directory. */
+const globalCommandsDirOption = Options.string("global-commands-dir").pipe(
+	Options.optional,
+	Options.withDescription("User-local command shim directory for v1 runtime commands."),
+);
+
 /** Optional v1-style step-only installer mode. */
 const stepOption = Options.string("step").pipe(
 	Options.optional,
 	Options.withDescription(
-		"Run only one install step: all, skills, memory, agents-md, context-agents, runtime-assets.",
+		"Run only one install step: all, skills, memory, agents-md, context-agents, package-scripts, runtime-assets.",
 	),
 );
 
@@ -126,13 +150,14 @@ const parseInstallStep = (raw: string | undefined): Effect.Effect<InstallStep, H
 		raw === "memory" ||
 		raw === "agents-md" ||
 		raw === "context-agents" ||
+		raw === "package-scripts" ||
 		raw === "runtime-assets"
 	) {
 		return Effect.succeed(raw);
 	}
 	return Effect.fail(
 		new HarnessError({
-			message: `Unknown install step: ${raw}. Expected one of: all, skills, memory, agents-md, context-agents, runtime-assets`,
+			message: `Unknown install step: ${raw}. Expected one of: all, skills, memory, agents-md, context-agents, package-scripts, runtime-assets`,
 		}),
 	);
 };
@@ -147,13 +172,32 @@ const installCommand = Command.make(
 		dryRun: dryRunOption,
 		reconfigure: reconfigureOption,
 		yes: yesOption,
+		applyGlobal: applyGlobalOption,
+		globalRoot: globalRootOption,
+		globalSkillsDir: globalSkillsDirOption,
+		globalCommandsDir: globalCommandsDirOption,
 		step: stepOption,
 		agentsFile: agentsFileOption,
 		contextDir: contextDirOption,
 		skillsDir: skillsDirOption,
 		scriptsDir: scriptsDirOption,
 	},
-	({ source, target, force, dryRun, reconfigure, step, agentsFile, contextDir, skillsDir, scriptsDir }) =>
+	({
+		source,
+		target,
+		force,
+		dryRun,
+		reconfigure,
+		applyGlobal,
+		globalRoot,
+		globalSkillsDir,
+		globalCommandsDir,
+		step,
+		agentsFile,
+		contextDir,
+		skillsDir,
+		scriptsDir,
+	}) =>
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const parsedStep = yield* parseInstallStep(Option.getOrUndefined(step));
@@ -161,6 +205,10 @@ const installCommand = Command.make(
 				force,
 				dryRun,
 				reconfigure,
+				applyGlobal,
+				globalRoot: Option.getOrUndefined(globalRoot),
+				globalSkillsDir: Option.getOrUndefined(globalSkillsDir),
+				globalCommandsDir: Option.getOrUndefined(globalCommandsDir),
 				step: parsedStep,
 				rawSource: Option.getOrUndefined(source),
 				installPathOverrides: {
@@ -187,6 +235,9 @@ const installCommand = Command.make(
 			yield* logWrittenFiles(result.written);
 			if (result.scripts !== null && result.scripts.added.length > 0) {
 				yield* Console.log(`Added package scripts: ${result.scripts.added.join(", ")}`);
+			}
+			if (result.scripts !== null && result.scripts.updated.length > 0) {
+				yield* Console.log(`Updated package scripts: ${result.scripts.updated.join(", ")}`);
 			}
 			if (result.step === "skills") {
 				yield* Console.log("Skills are preserved in capability packs; native skill promotion is pending.");

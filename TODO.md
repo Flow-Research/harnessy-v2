@@ -15,5 +15,5 @@ Goal: make Harnessy the AGPL open-source agent capability harness that Garden bu
 - Done: `packages/capability-harnessy-v1-full` now carries a full v1 repository snapshot plus direct runtime resources for flow-install, context vault, Jarvis CLI, and bootstrap docs.
 - Done: native installer now has saved `installPaths`, dry-run/reconfigure/step flags, path overrides, scoped memory `_scopes.yaml`, managed AGENTS.md/context AGENTS.md blocks, and force refresh that preserves capabilities.
 - Done: capability entries now persist resolved-source metadata and local fingerprint summaries; `capability materialize` supports refresh/dry-run/JSON.
-- Done: native runtime asset scaffolding copies preserved v1 project scripts, scaffolds `.jarvis/hooks.yaml`, adds `install --step runtime-assets`, and plans user-global hook/shim/skill/agent registration without applying it.
+- Done: native runtime asset parity copies preserved v1 project scripts, patches v1 package lifecycle scripts, scaffolds `.jarvis/hooks.yaml`, installs generated helper scripts, and supports explicit `--apply-global` for v1 global hooks, pipeline shims, global skills, tmux config, and Claude/OpenCode/Codex registration.
 - Add smoke test: fresh repo → install Harnessy URL/git/npm → capability loads.

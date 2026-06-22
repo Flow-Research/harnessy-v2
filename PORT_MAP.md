@@ -46,7 +46,9 @@ Ported into native v2 core:
 - Native installer flags: `--dry-run`, `--reconfigure`, `--step`, `--agents-file`, `--context-dir`, `--skills-dir`, `--scripts-dir`, `--yes`.
 - Managed AGENTS.md and context AGENTS.md Harnessy blocks.
 - Project-local v1 runtime asset sync for preserved flow scripts and `.jarvis/hooks.yaml`.
-- Planned metadata for user-global hook bundles, pipeline shims, global skill installs, and agent registration without applying global writes.
+- V1 package.json lifecycle script patching using configured `installPaths.scriptsDir`.
+- Generated helper scripts: `skills-root.mjs`, `skills-root.config.json`, and `parse-frontmatter.mjs`.
+- Explicit `--apply-global` mode for v1 global lifecycle scripts, hook bundles, pipeline shims, global skill installs, skill command shims, tmux config, and Claude/OpenCode/Codex registration.
 - Force refresh behavior that preserves existing lockfile capabilities.
 
 Target shape now exists in `packages/harnessy-core/`.
@@ -125,7 +127,7 @@ Flow:
 
 Promote from `packages/capability-harnessy-v1-full/resources/source` into native v2 modules:
 
-- Installer behavior still remaining: explicit opt-in apply mode for global hooks/script shims/global skill installation/agent registration, v1 package.json lifecycle patching, generated helper scripts, cron/autoflow scaffolding, and deeper dependency checks.
+- Installer behavior still remaining: cron registration, optional Autoflow workflow/program prompt flow, full `install.sh` bootstrap/cache/Jarvis uv install behavior, dependency install commands, and detailed unpromoted-improvement warnings/stale plugin cleanup branches.
 - Skill lifecycle: create, validate, publish, feedback, improve, promote.
 - Product/spec flow: brainstorm, PRD, design spec, technical spec, MVP tech spec, review skills.
 - Build/review: engineer, build-e2e, code review, local run, dev container, security audit, semver, git commit, design mockup.
@@ -137,6 +139,6 @@ Promote from `packages/capability-harnessy-v1-full/resources/source` into native
 
 ## Immediate next work
 
-1. Add explicit opt-in apply mode for planned global hooks/script shims/global skill registration.
-2. Implement safe remote git/npm/url fetch policy and extraction.
+1. Finish remaining v1 command/runtime surface parity for Jarvis, QA, flow-deps, goal-agent, deploy, tmux, life-orchestrator, cron, trace instrumentation, and attribute validation command exposure.
+2. Port or explicitly plan the remaining v1 bootstrap/autoflow/cron installer behaviors.
 3. Add multiple profile activation and capability-scoped context loading.

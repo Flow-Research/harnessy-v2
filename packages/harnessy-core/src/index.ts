@@ -83,8 +83,8 @@ export type {
 	VerifyResult,
 } from "./operations.ts";
 export { HarnessProject } from "./operations.ts";
-export type { PackageScriptPatchResult } from "./package-scripts.ts";
-export { HARNESSY_PACKAGE_SCRIPTS, PackageScripts } from "./package-scripts.ts";
+export type { PackageScriptPatchOptions, PackageScriptPatchResult } from "./package-scripts.ts";
+export { HARNESSY_PACKAGE_SCRIPTS, harnessyPackageScriptsFor, PackageScripts } from "./package-scripts.ts";
 export { HarnessPathResolver } from "./path-resolver.ts";
 export type { HarnessPaths } from "./paths.ts";
 export { pathsForTarget, resolveTargetDir, resolveTargetPaths, toTargetRelative } from "./paths.ts";

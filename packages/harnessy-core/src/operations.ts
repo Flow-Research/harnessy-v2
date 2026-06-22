@@ -31,7 +31,14 @@ import { RuntimeEnvironment } from "./runtime-environment.ts";
 export type { AddCapabilityResult } from "./capability-registry.ts";
 
 /** Native v2 installer step, mirroring v1 step-only modes where available. */
-export type InstallStep = "all" | "skills" | "memory" | "agents-md" | "context-agents" | "runtime-assets";
+export type InstallStep =
+	| "all"
+	| "skills"
+	| "memory"
+	| "agents-md"
+	| "context-agents"
+	| "package-scripts"
+	| "runtime-assets";
 
 /** Full native install options used by the CLI. */
 export interface NativeInstallOptions {
@@ -47,6 +54,14 @@ export interface NativeInstallOptions {
 	readonly rawSource?: string;
 	/** V1-compatible install destination overrides. */
 	readonly installPathOverrides?: InstallPathOverrides;
+	/** Apply user-global v1 installer writes instead of returning planned metadata only. */
+	readonly applyGlobal?: boolean;
+	/** Test-only home/global root override for user-global installer writes. */
+	readonly globalRoot?: string;
+	/** Test/config override for global skills root. */
+	readonly globalSkillsDir?: string;
+	/** Test/config override for user-local command shims. */
+	readonly globalCommandsDir?: string;
 }
 
 /** Result of running the native v1-compatible installer. */
@@ -231,6 +246,7 @@ export class HarnessProject extends Context.Service<
 				if (step === "agents-md") return [`${resolved.targetDir}/${installPaths.agentsFile}`];
 				if (step === "context-agents") return [`${resolved.targetDir}/${installPaths.contextDir}/AGENTS.md`];
 				if (step === "skills") return [`${resolved.targetDir}/${installPaths.skillsDir}`];
+				if (step === "package-scripts") return [];
 				// Runtime-asset paths are reported via runtimeAssetResult.written (the
 				// per-file list), which the dry-run and non-dry paths both append. Emitting
 				// them here too would double-count .jarvis/hooks.yaml and list the scripts
@@ -267,11 +283,19 @@ export class HarnessProject extends Context.Service<
 					options.reconfigure ?? false,
 				).pipe(Effect.provideService(Path.Path, pathService));
 				if (dryRun) {
+					const scriptsResult =
+						step === "all" || step === "package-scripts"
+							? yield* packageScripts.patch(resolved, { installPaths, dryRun: true })
+							: null;
 					const runtimeAssetResult =
 						step === "all" || step === "runtime-assets"
 							? yield* runtimeAssets.syncProjectAssets(resolved, installPaths, {
 									dryRun: true,
 									force: options.force,
+									applyGlobal: options.applyGlobal,
+									globalRoot: options.globalRoot,
+									globalSkillsDir: options.globalSkillsDir,
+									globalCommandsDir: options.globalCommandsDir,
 								})
 							: null;
 					return {
@@ -279,10 +303,14 @@ export class HarnessProject extends Context.Service<
 						step,
 						paths: resolved,
 						installPaths,
-						written: [...dryRunPlan(resolved, step, installPaths), ...(runtimeAssetResult?.written ?? [])],
+						written: [
+							...dryRunPlan(resolved, step, installPaths),
+							...(scriptsResult?.changed ? [scriptsResult.packageJsonPath] : []),
+							...(runtimeAssetResult?.written ?? []),
+						],
 						managedBlocks: {},
 						init: null,
-						scripts: null,
+						scripts: scriptsResult,
 						capability: null,
 						runtimeAssets: runtimeAssetResult,
 					} satisfies NativeInstallResult;
@@ -351,10 +379,30 @@ export class HarnessProject extends Context.Service<
 					} satisfies NativeInstallResult;
 				}
 
+				if (step === "package-scripts") {
+					const scripts = yield* packageScripts.patch(resolved, { installPaths, dryRun });
+					return {
+						dryRun,
+						step,
+						paths: resolved,
+						installPaths,
+						written: scripts.changed ? [scripts.packageJsonPath] : [],
+						managedBlocks: {},
+						init: null,
+						scripts,
+						capability: null,
+						runtimeAssets: null,
+					} satisfies NativeInstallResult;
+				}
+
 				if (step === "runtime-assets") {
 					const runtimeAssetResult = yield* runtimeAssets.syncProjectAssets(resolved, installPaths, {
 						dryRun: false,
 						force: options.force,
+						applyGlobal: options.applyGlobal,
+						globalRoot: options.globalRoot,
+						globalSkillsDir: options.globalSkillsDir,
+						globalCommandsDir: options.globalCommandsDir,
 					});
 					return {
 						dryRun,
@@ -376,10 +424,14 @@ export class HarnessProject extends Context.Service<
 					yield* lockfiles.write(resolved, new HarnessLockfile({ ...existingLockfile, installPaths }));
 				}
 				const initResult = { paths: resolved, initialized, written: generated.written } satisfies InitResult;
-				const scripts = yield* packageScripts.patch(resolved);
+				const scripts = yield* packageScripts.patch(resolved, { installPaths, dryRun: false });
 				const runtimeAssetResult = yield* runtimeAssets.syncProjectAssets(resolved, installPaths, {
 					dryRun: false,
 					force: options.force,
+					applyGlobal: options.applyGlobal,
+					globalRoot: options.globalRoot,
+					globalSkillsDir: options.globalSkillsDir,
+					globalCommandsDir: options.globalCommandsDir,
 				});
 				const agentsMd = yield* managedBlocks.syncProjectAgents(resolved, installPaths, false);
 				const contextAgents = yield* managedBlocks.syncContextAgents(resolved, installPaths, false);

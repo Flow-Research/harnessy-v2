@@ -247,19 +247,38 @@ describe("HarnessProject", () => {
 				const targetDir = yield* fs.makeTempDirectoryScoped();
 				yield* fs.writeFileString(
 					`${targetDir}/package.json`,
-					JSON.stringify({ scripts: { "harnessy:verify": "custom verify" } }),
+					JSON.stringify({ scripts: { "harness:verify": "custom verify" } }),
 				);
 
-				const install = yield* project.install(targetDir, false, undefined);
-				expect(install.scripts.added).toEqual(["harnessy:doctor", "harnessy:deps"]);
-				expect(install.scripts.existing).toEqual(["harnessy:verify"]);
+				const install = yield* project.runInstaller(targetDir, {
+					force: false,
+					step: "package-scripts",
+					reconfigure: true,
+					installPathOverrides: { scriptsDir: "scripts/flow" },
+				});
+				expect(install.scripts?.added).toEqual([
+					"skills:validate",
+					"skills:register",
+					"skills:register:claude",
+					"skills:register:opencode",
+					"skills:register:codex",
+					"flow:cleanup",
+					"flow:sync",
+					"flow:sync:force",
+					"flow:sync:remote",
+					"flow:sync:remote:force",
+					"postinstall",
+				]);
+				expect(install.scripts?.updated).toEqual(["harness:verify"]);
 
 				const packageJson = JSON.parse(yield* fs.readFileString(`${targetDir}/package.json`)) as {
 					readonly scripts: Record<string, string>;
 				};
-				expect(packageJson.scripts["harnessy:verify"]).toBe("custom verify");
-				expect(packageJson.scripts["harnessy:doctor"]).toBe("harnessy doctor");
-				expect(packageJson.scripts["harnessy:deps"]).toBe("harnessy deps check");
+				expect(packageJson.scripts["skills:validate"]).toBe("node scripts/flow/validate-skills.mjs");
+				expect(packageJson.scripts["skills:register:codex"]).toBe("node scripts/flow/register-codex-skills.mjs");
+				expect(packageJson.scripts["flow:cleanup"]).toBe("node scripts/flow/cleanup-stale-plugins.mjs");
+				expect(packageJson.scripts["harness:verify"]).toBe("node scripts/flow/verify-harness.mjs");
+				expect(packageJson.scripts.postinstall).toBe("node scripts/flow/sync-rules.mjs");
 			}),
 		),
 	);

@@ -4,14 +4,38 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "./errors.ts";
+import type { InstallPaths } from "./install-paths.ts";
 import type { HarnessPaths } from "./paths.ts";
 
-/** Scripts Harnessy adds to package.json when no conflicting script exists. */
-export const HARNESSY_PACKAGE_SCRIPTS = {
-	"harnessy:verify": "harnessy verify",
-	"harnessy:doctor": "harnessy doctor",
-	"harnessy:deps": "harnessy deps check",
-} as const;
+/** Build the v1 flow-install package.json lifecycle script map for a scripts directory. */
+export const harnessyPackageScriptsFor = (scriptsDirRel: string): Readonly<Record<string, string>> => {
+	const scriptsDirRef = scriptsDirRel.replaceAll("\\", "/").replace(/\/+$/, "");
+	return {
+		"skills:validate": `node ${scriptsDirRef}/validate-skills.mjs`,
+		"skills:register": `node ${scriptsDirRef}/register-skills.mjs`,
+		"skills:register:claude": `node ${scriptsDirRef}/register-claude-skills.mjs`,
+		"skills:register:opencode": `node ${scriptsDirRef}/register-opencode-skills.mjs`,
+		"skills:register:codex": `node ${scriptsDirRef}/register-codex-skills.mjs`,
+		"flow:cleanup": `node ${scriptsDirRef}/cleanup-stale-plugins.mjs`,
+		"flow:sync": `bash \${HOME}/.cache/harnessy/install.sh --in-place || node \${HOME}/.cache/harnessy/tools/flow-install/index.mjs --yes`,
+		"flow:sync:force": `bash \${HOME}/.cache/harnessy/install.sh --in-place --force || node \${HOME}/.cache/harnessy/tools/flow-install/index.mjs --yes --force`,
+		"flow:sync:remote": `bash \${HOME}/.cache/harnessy/install.sh --in-place --refresh-source || node \${HOME}/.cache/harnessy/tools/flow-install/index.mjs --yes`,
+		"flow:sync:remote:force": `bash \${HOME}/.cache/harnessy/install.sh --in-place --refresh-source --force || node \${HOME}/.cache/harnessy/tools/flow-install/index.mjs --yes --force`,
+		"harness:verify": `node ${scriptsDirRef}/verify-harness.mjs`,
+		postinstall: `node ${scriptsDirRef}/sync-rules.mjs`,
+	};
+};
+
+/** Backwards-compatible default script map using the v2 default scripts directory. */
+export const HARNESSY_PACKAGE_SCRIPTS = harnessyPackageScriptsFor("scripts/harnessy");
+
+/** Options for v1 package.json lifecycle patching. */
+export interface PackageScriptPatchOptions {
+	/** Preview changes without writing package.json. */
+	readonly dryRun?: boolean;
+	/** V1-compatible install path layout. */
+	readonly installPaths: InstallPaths;
+}
 
 /** Result of package.json script patching. */
 export interface PackageScriptPatchResult {
@@ -19,11 +43,13 @@ export interface PackageScriptPatchResult {
 	readonly packageJsonPath: string;
 	/** Whether package.json exists. */
 	readonly packageJsonExists: boolean;
-	/** Whether the file was changed. */
+	/** Whether the file was changed or would change in dry-run mode. */
 	readonly changed: boolean;
 	/** Scripts added in this pass. */
 	readonly added: ReadonlyArray<string>;
-	/** Harnessy script keys already present before patching. */
+	/** Script keys whose values were updated to match v1 flow-install. */
+	readonly updated: ReadonlyArray<string>;
+	/** V1 lifecycle script keys already present before patching. */
 	readonly existing: ReadonlyArray<string>;
 }
 
@@ -40,12 +66,15 @@ const getScriptsRecord = (pkg: Record<string, unknown>): Record<string, unknown>
 	return nextScripts;
 };
 
-/** Adds Harnessy lifecycle scripts to package.json when safe. */
+/** Adds v1 flow-install lifecycle scripts to package.json. */
 export class PackageScripts extends Context.Service<
 	PackageScripts,
 	{
-		/** Add missing Harnessy package scripts without overwriting existing entries. */
-		readonly patch: (paths: HarnessPaths) => Effect.Effect<PackageScriptPatchResult, HarnessError>;
+		/** Add or update v1 lifecycle package scripts, mirroring flow-install's package.json patch. */
+		readonly patch: (
+			paths: HarnessPaths,
+			options: PackageScriptPatchOptions,
+		) => Effect.Effect<PackageScriptPatchResult, HarnessError>;
 	}
 >()("@harnessy/core/PackageScripts") {
 	/** Live package script patcher backed by platform filesystem and path services. */
@@ -59,7 +88,10 @@ export class PackageScripts extends Context.Service<
 			const mapPlatformError = (action: string, cause: unknown): HarnessError =>
 				new HarnessError({ message: `${action}: ${causeMessage(cause)}`, cause });
 
-			const patch = Effect.fn("PackageScripts.patch")(function* (paths: HarnessPaths) {
+			const patch = Effect.fn("PackageScripts.patch")(function* (
+				paths: HarnessPaths,
+				options: PackageScriptPatchOptions,
+			) {
 				const packageJsonPath = path.join(paths.targetDir, "package.json");
 				const packageJsonExists = yield* fs
 					.exists(packageJsonPath)
@@ -70,6 +102,7 @@ export class PackageScripts extends Context.Service<
 						packageJsonExists,
 						changed: false,
 						added: [],
+						updated: [],
 						existing: [],
 					} satisfies PackageScriptPatchResult;
 				}
@@ -92,27 +125,36 @@ export class PackageScripts extends Context.Service<
 
 				const scripts = getScriptsRecord(parsed);
 				const added: Array<string> = [];
+				const updated: Array<string> = [];
 				const existing: Array<string> = [];
-				for (const [name, command] of Object.entries(HARNESSY_PACKAGE_SCRIPTS)) {
-					if (typeof scripts[name] === "string") {
+				for (const [name, command] of Object.entries(harnessyPackageScriptsFor(options.installPaths.scriptsDir))) {
+					if (scripts[name] === command) {
 						existing.push(name);
 						continue;
 					}
-					scripts[name] = command;
-					added.push(name);
+					if (typeof scripts[name] === "string") {
+						updated.push(name);
+					} else {
+						added.push(name);
+					}
+					if (options.dryRun !== true) {
+						scripts[name] = command;
+					}
 				}
 
-				if (added.length > 0) {
+				const changed = added.length > 0 || updated.length > 0;
+				if (changed && options.dryRun !== true) {
 					yield* fs
-						.writeFileString(packageJsonPath, `${JSON.stringify(parsed, null, "\t")}\n`)
+						.writeFileString(packageJsonPath, `${JSON.stringify(parsed, null, 2)}\n`)
 						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not write ${packageJsonPath}`, cause)));
 				}
 
 				return {
 					packageJsonPath,
 					packageJsonExists,
-					changed: added.length > 0,
+					changed,
 					added,
+					updated,
 					existing,
 				} satisfies PackageScriptPatchResult;
 			});
