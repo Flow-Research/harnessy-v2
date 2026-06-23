@@ -1,5 +1,11 @@
 /** Public programmatic API for parsing and inspecting Harnessy project state. */
 
+export type { HarnessBootstrapPrepareOptions, HarnessBootstrapPrepareResult } from "./bootstrap.ts";
+export {
+	HarnessBootstrap,
+	HarnessBootstrapAction,
+	HarnessBootstrapMode,
+} from "./bootstrap.ts";
 export type { CapabilityCheckReport } from "./capability-checker.ts";
 export {
 	CapabilityChecker,
@@ -78,6 +84,8 @@ export type {
 	InitResult,
 	InstallResult,
 	InstallStep,
+	NativeBootstrapOptions,
+	NativeBootstrapResult,
 	NativeInstallOptions,
 	NativeInstallResult,
 	VerifyResult,

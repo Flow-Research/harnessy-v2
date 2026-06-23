@@ -49,6 +49,24 @@ const applyGlobalOption = Options.boolean("apply-global").pipe(
 	Options.withDescription("Apply v1 user-global runtime writes instead of only planning them."),
 );
 
+/** Opt in to native safe v1 install.sh bootstrap writes. */
+const applyBootstrapOption = Options.boolean("apply-bootstrap").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Apply native safe v1 bootstrap writes instead of only planning them."),
+);
+
+/** V1 --here mode: install into the current repository. */
+const hereOption = Options.boolean("here").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Install Harnessy into the current repository, mirroring v1 install.sh --here."),
+);
+
+/** Compatibility alias used by v1 package lifecycle scripts. */
+const inPlaceOption = Options.boolean("in-place").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Install Harnessy into the current repository, compatibility alias for --here."),
+);
+
 /** Override the home-like root for v1 user-global writes. Primarily for sandboxes and tests. */
 const globalRootOption = Options.string("global-root").pipe(
 	Options.optional,
@@ -65,6 +83,36 @@ const globalSkillsDirOption = Options.string("global-skills-dir").pipe(
 const globalCommandsDirOption = Options.string("global-commands-dir").pipe(
 	Options.optional,
 	Options.withDescription("User-local command shim directory for v1 runtime commands."),
+);
+
+/** Override v1 FLOW_INSTALL_DIR. */
+const bootstrapInstallDirOption = Options.string("install-dir").pipe(
+	Options.optional,
+	Options.withDescription("Harnessy workspace install directory for v1 bootstrap mode."),
+);
+
+/** Override v1 FLOW_CACHE_DIR. */
+const bootstrapCacheDirOption = Options.string("cache-dir").pipe(
+	Options.optional,
+	Options.withDescription("Harnessy source cache directory for v1 in-place bootstrap mode."),
+);
+
+/** Override v1 FLOW_REPO_URL. */
+const bootstrapRepoUrlOption = Options.string("repo-url").pipe(
+	Options.optional,
+	Options.withDescription("Harnessy source repository URL represented in bootstrap plans."),
+);
+
+/** Plan v1 source refresh behavior. */
+const bootstrapRefreshSourceOption = Options.boolean("refresh-source").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Plan v1 cached-source refresh behavior."),
+);
+
+/** Mirror v1 FLOW_SKIP_SUBPROJECTS. */
+const skipSubprojectsOption = Options.boolean("skip-subprojects").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Skip bundled subproject clone behavior."),
 );
 
 /** Optional v1-style step-only installer mode. */
@@ -161,6 +209,99 @@ const parseInstallStep = (raw: string | undefined): Effect.Effect<InstallStep, H
 		}),
 	);
 };
+
+/** Bootstrap Harnessy using the v1 install.sh surface with safe native apply gates. */
+const bootstrapCommand = Command.make(
+	"bootstrap",
+	{
+		target: Options.string("target").pipe(Options.optional),
+		here: hereOption,
+		inPlace: inPlaceOption,
+		force: forceOption,
+		dryRun: dryRunOption,
+		yes: yesOption,
+		reconfigure: reconfigureOption,
+		applyBootstrap: applyBootstrapOption,
+		applyGlobal: applyGlobalOption,
+		globalRoot: globalRootOption,
+		globalSkillsDir: globalSkillsDirOption,
+		globalCommandsDir: globalCommandsDirOption,
+		installDir: bootstrapInstallDirOption,
+		cacheDir: bootstrapCacheDirOption,
+		repoUrl: bootstrapRepoUrlOption,
+		refreshSource: bootstrapRefreshSourceOption,
+		skipSubprojects: skipSubprojectsOption,
+		agentsFile: agentsFileOption,
+		contextDir: contextDirOption,
+		skillsDir: skillsDirOption,
+		scriptsDir: scriptsDirOption,
+	},
+	({
+		target,
+		here,
+		inPlace,
+		force,
+		dryRun,
+		yes,
+		reconfigure,
+		applyBootstrap,
+		applyGlobal,
+		globalRoot,
+		globalSkillsDir,
+		globalCommandsDir,
+		installDir,
+		cacheDir,
+		repoUrl,
+		refreshSource,
+		skipSubprojects,
+		agentsFile,
+		contextDir,
+		skillsDir,
+		scriptsDir,
+	}) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const targetValue = Option.getOrUndefined(target);
+			const mode = here || inPlace || targetValue !== undefined ? "in-place" : "bootstrap";
+			const result = yield* project.bootstrap({
+				mode,
+				target: targetValue ?? ".",
+				force,
+				dryRun,
+				yes,
+				reconfigure,
+				applyBootstrap,
+				applyGlobal,
+				globalRoot: Option.getOrUndefined(globalRoot),
+				globalSkillsDir: Option.getOrUndefined(globalSkillsDir),
+				globalCommandsDir: Option.getOrUndefined(globalCommandsDir),
+				installDir: Option.getOrUndefined(installDir),
+				cacheDir: Option.getOrUndefined(cacheDir),
+				repoUrl: Option.getOrUndefined(repoUrl),
+				refreshSource,
+				skipSubprojects,
+				installPathOverrides: {
+					agentsFile: Option.getOrUndefined(agentsFile),
+					contextDir: Option.getOrUndefined(contextDir),
+					skillsDir: Option.getOrUndefined(skillsDir),
+					scriptsDir: Option.getOrUndefined(scriptsDir),
+				},
+			});
+			yield* Console.log(
+				result.dryRun
+					? `Dry run: Harnessy bootstrap ${result.mode} for ${result.bootstrap.targetRoot}`
+					: `Bootstrapped Harnessy ${result.mode} for ${result.bootstrap.targetRoot}`,
+			);
+			yield* Console.log(`Installer source: ${result.bootstrap.flowRoot}`);
+			yield* logWrittenFiles(result.written);
+			const externalActions = result.bootstrap.actions.filter(
+				(action) => action.unsafeExternal && action.status === "planned",
+			);
+			if (externalActions.length > 0) {
+				yield* Console.log(`Planned external bootstrap actions: ${externalActions.length}`);
+			}
+		}),
+).pipe(Command.withDescription("Prepare or apply v1 install.sh bootstrap behavior"));
 
 /** Install Harnessy state and optionally record a first capability source. */
 const installCommand = Command.make(
@@ -516,6 +657,7 @@ const depsCommand = Command.make("deps").pipe(
 /** Root Effect CLI command tree. Runtime services are provided by `main.ts`. */
 export const rootCommand = Command.make("harnessy").pipe(
 	Command.withSubcommands([
+		bootstrapCommand,
 		installCommand,
 		initCommand,
 		verifyCommand,

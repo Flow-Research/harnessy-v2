@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { HarnessBootstrap, type HarnessBootstrapMode, type HarnessBootstrapPrepareResult } from "./bootstrap.ts";
 import { CapabilityChecker, type CapabilityCheckReport } from "./capability-checker.ts";
 import { CapabilityFingerprinter } from "./capability-fingerprint.ts";
 import { CapabilityMaterializer } from "./capability-materializer.ts";
@@ -29,6 +30,58 @@ import { type HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runt
 import { RuntimeEnvironment } from "./runtime-environment.ts";
 
 export type { AddCapabilityResult } from "./capability-registry.ts";
+
+/** Native v1 install.sh bootstrap options. */
+export interface NativeBootstrapOptions {
+	/** Bootstrap a full workspace or install into an existing target. */
+	readonly mode: HarnessBootstrapMode;
+	/** Target repository for in-place installs. */
+	readonly target?: string;
+	/** Apply native safe bootstrap writes. Defaults to plan-only. */
+	readonly applyBootstrap?: boolean;
+	/** Preview changes without writing files. */
+	readonly dryRun?: boolean;
+	/** Noninteractive v1 flag. Kept for parity and forwarded to native install planning. */
+	readonly yes?: boolean;
+	/** Force v1 sync behavior. */
+	readonly force?: boolean;
+	/** Reconfigure v1 install paths. */
+	readonly reconfigure?: boolean;
+	/** Plan remote source refresh. */
+	readonly refreshSource?: boolean;
+	/** Skip bundled subproject clone behavior. */
+	readonly skipSubprojects?: boolean;
+	/** FLOW_REPO_URL override. */
+	readonly repoUrl?: string;
+	/** FLOW_INSTALL_DIR override. */
+	readonly installDir?: string;
+	/** FLOW_CACHE_DIR override. */
+	readonly cacheDir?: string;
+	/** V1-compatible install destination overrides. */
+	readonly installPathOverrides?: InstallPathOverrides;
+	/** Apply user-global v1 installer writes while running the native framework install. */
+	readonly applyGlobal?: boolean;
+	/** Test-only home/global root override for user-global installer writes. */
+	readonly globalRoot?: string;
+	/** Test/config override for global skills root. */
+	readonly globalSkillsDir?: string;
+	/** Test/config override for user-local command shims. */
+	readonly globalCommandsDir?: string;
+}
+
+/** Result of preparing and optionally applying v1 install.sh bootstrap behavior. */
+export interface NativeBootstrapResult {
+	/** Whether this bootstrap pass was plan-only. */
+	readonly dryRun: boolean;
+	/** Requested bootstrap mode. */
+	readonly mode: HarnessBootstrapMode;
+	/** Prepared bootstrap/source action result. */
+	readonly bootstrap: HarnessBootstrapPrepareResult;
+	/** Native framework install result, applied or dry-run planned. */
+	readonly install: NativeInstallResult;
+	/** Files or paths written/planned across bootstrap and framework install. */
+	readonly written: ReadonlyArray<string>;
+}
 
 /** Native v2 installer step, mirroring v1 step-only modes where available. */
 export type InstallStep =
@@ -164,6 +217,8 @@ const profileCapabilityIssues = (
 export class HarnessProject extends Context.Service<
 	HarnessProject,
 	{
+		/** Prepare and optionally apply native v1 install.sh bootstrap behavior. */
+		readonly bootstrap: (options: NativeBootstrapOptions) => Effect.Effect<NativeBootstrapResult, HarnessError>;
 		/** Run the native v1-compatible installer with path, dry-run, and step options. */
 		readonly runInstaller: (
 			target: string,
@@ -206,6 +261,7 @@ export class HarnessProject extends Context.Service<
 		HarnessProject,
 		Effect.gen(function* () {
 			const pathService = yield* Path.Path;
+			const bootstrapService = yield* HarnessBootstrap;
 			const paths = yield* HarnessPathResolver;
 			const generatedFiles = yield* GeneratedFiles;
 			const lockfiles = yield* LockfileStore;
@@ -456,6 +512,40 @@ export class HarnessProject extends Context.Service<
 				} satisfies NativeInstallResult;
 			});
 
+			const bootstrap = Effect.fn("HarnessProject.bootstrap")(function* (options: NativeBootstrapOptions) {
+				const prepare = yield* bootstrapService.prepare({
+					mode: options.mode,
+					targetRoot: options.target,
+					dryRun: options.applyBootstrap === true ? (options.dryRun ?? false) : true,
+					applyBootstrap: options.applyBootstrap,
+					force: options.force,
+					refreshSource: options.refreshSource,
+					skipSubprojects: options.skipSubprojects,
+					globalRoot: options.globalRoot,
+					installDir: options.installDir,
+					cacheDir: options.cacheDir,
+					repoUrl: options.repoUrl,
+				});
+				const installTarget = options.mode === "in-place" ? prepare.targetRoot : prepare.flowRoot;
+				const install = yield* runInstaller(installTarget, {
+					force: options.force ?? false,
+					dryRun: prepare.dryRun,
+					reconfigure: options.reconfigure,
+					installPathOverrides: options.installPathOverrides,
+					applyGlobal: options.applyGlobal,
+					globalRoot: options.globalRoot,
+					globalSkillsDir: options.globalSkillsDir,
+					globalCommandsDir: options.globalCommandsDir,
+				});
+				return {
+					dryRun: prepare.dryRun,
+					mode: options.mode,
+					bootstrap: prepare,
+					install,
+					written: [...prepare.written, ...install.written],
+				} satisfies NativeBootstrapResult;
+			});
+
 			const install = Effect.fn("HarnessProject.install")(function* (
 				target: string,
 				force: boolean,
@@ -554,6 +644,7 @@ export class HarnessProject extends Context.Service<
 			});
 
 			return {
+				bootstrap,
 				runInstaller,
 				install,
 				init,
@@ -570,6 +661,7 @@ export class HarnessProject extends Context.Service<
 
 	/** Live layer with all Harnessy services wired, leaving only platform services to provide at the edge. */
 	static readonly layer = HarnessProject.liveLayer.pipe(
+		Layer.provideMerge(HarnessBootstrap.layer),
 		Layer.provideMerge(CapabilityRegistry.layer),
 		Layer.provideMerge(CapabilityChecker.layer),
 		Layer.provideMerge(CapabilityFingerprinter.layer),

@@ -115,7 +115,7 @@ Status: `packages/capability-org-knowledge` exists with manifest resources/check
 
 These are now preserved in `packages/capability-harnessy-v1-full` and should be promoted into native Harnessy commands/services rather than rediscovered from scratch:
 
-- Installer behavior: optional Autoflow workflow/program prompt flow, full `install.sh` bootstrap/cache/dependency install commands, and detailed unpromoted-improvement warnings/stale plugin cleanup branches. Saved install paths, dry-run/step-only/force modes, managed AGENTS blocks, project script copying, package lifecycle scripts, hook config scaffold, generated helper scripts, Jarvis command shim, runtime command exposure, and opt-in global runtime apply paths are now native.
+- Installer behavior: optional Autoflow workflow/program prompt flow, remote git refresh/clone execution, direct dependency installer command execution, and detailed unpromoted-improvement warnings/stale plugin cleanup branches. Saved install paths, dry-run/step-only/force modes, managed AGENTS blocks, project script copying, package lifecycle scripts, hook config scaffold, generated helper scripts, Jarvis command shim, runtime command exposure, native bootstrap planning/source-cache/framework apply paths, and opt-in global runtime apply paths are now native.
 - Skill lifecycle: create, validate, publish, feedback, improve, promote.
 - Product/spec flow: brainstorm, PRD, design spec, technical spec, MVP tech spec, review skills.
 - Build/review: engineer, build-e2e, code review, local run, dev container, security audit, semver, git commit, design mockup.
@@ -144,7 +144,7 @@ Validation after wave 3, full v1 pack, and native installer parity:
 
 ## Next dispatch after wave 3
 
-1. Promote full bootstrap behavior (`install.sh`, cache refresh, dependency install commands) behind reviewed Effect service boundaries.
-2. Port or explicitly plan the remaining v1 bootstrap/autoflow installer behaviors.
+1. Decide whether remote git refresh/clone and dependency installer commands should get an explicit command-runner service, or remain planned external actions.
+2. Port or explicitly plan the remaining v1 Autoflow installer behavior.
 3. Multiple profile activation and capability-scoped context loading.
 4. Garden JSON report expansion beyond current resolved-source/fingerprint fields.

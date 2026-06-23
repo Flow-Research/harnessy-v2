@@ -62,6 +62,7 @@ Ported as a direct compatibility source pack:
 - v1 `.jarvis/context` vault docs, profiles, scoped memory registry, templates, and skill catalog.
 - v1 `jarvis-cli` Python project and tests.
 - v1 root bootstrap docs/scripts.
+- Native `harnessy bootstrap` command for v1 `install.sh` mode parity, plan-only by default and apply-gated by `--apply-bootstrap`.
 
 Target shape now exists in `packages/capability-harnessy-v1-full/`.
 
@@ -127,7 +128,7 @@ Flow:
 
 Promote from `packages/capability-harnessy-v1-full/resources/source` into native v2 modules:
 
-- Installer behavior still remaining: optional Autoflow workflow/program prompt flow, full `install.sh` bootstrap/cache/dependency install commands, and detailed unpromoted-improvement warnings/stale plugin cleanup branches.
+- Installer behavior still remaining: optional Autoflow workflow/program prompt flow, remote git refresh/clone execution, direct dependency installer command execution, and detailed unpromoted-improvement warnings/stale plugin cleanup branches. Native bootstrap now plans those external actions and applies preserved-source/cache/framework install paths safely.
 - Skill lifecycle: create, validate, publish, feedback, improve, promote.
 - Product/spec flow: brainstorm, PRD, design spec, technical spec, MVP tech spec, review skills.
 - Build/review: engineer, build-e2e, code review, local run, dev container, security audit, semver, git commit, design mockup.
@@ -139,6 +140,6 @@ Promote from `packages/capability-harnessy-v1-full/resources/source` into native
 
 ## Immediate next work
 
-1. Promote full bootstrap behavior (`install.sh`, cache refresh, dependency install commands) behind reviewed Effect service boundaries.
-2. Port or explicitly plan the remaining v1 bootstrap/autoflow installer behaviors.
+1. Decide whether remote git refresh/clone and dependency installer commands should get an explicit command-runner service, or remain planned external actions.
+2. Port or explicitly plan the remaining v1 Autoflow installer behavior.
 3. Add multiple profile activation and capability-scoped context loading.
