@@ -2,7 +2,7 @@
 
 Sources checked: `harnessy-v1/README.md`, `install.sh`, `package.json`, `tools/flow-install/`, `.jarvis/context/`, `jarvis-cli/`, workflows, tests, and skill manifests.
 
-Status: the entire v1 repository snapshot is now preserved in `packages/capability-harnessy-v1-full/resources/source/` excluding only `.git`. The same pack also exposes direct resources for `flow-install`, the v1 context vault, `jarvis-cli`, and root bootstrap docs so v2 can materialize and verify the v1 surface before each piece is promoted into native Effect services. Native `--apply-global` now covers the user-global runtime command surface below except for the `jarvis` uv-tool bootstrap path.
+Status: the entire v1 repository snapshot is now preserved in `packages/capability-harnessy-v1-full/resources/source/` excluding only `.git`. The same pack also exposes direct resources for `flow-install`, the v1 context vault, `jarvis-cli`, and root bootstrap docs so v2 can materialize and verify the v1 surface before each piece is promoted into native Effect services. Native `--apply-global` now covers the user-global runtime command surface below, including a `jarvis` shim backed by the preserved v1 `jarvis-cli` project.
 
 ## 1. Bootstrap and install
 

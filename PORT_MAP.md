@@ -48,7 +48,7 @@ Ported into native v2 core:
 - Project-local v1 runtime asset sync for preserved flow scripts and `.jarvis/hooks.yaml`.
 - V1 package.json lifecycle script patching using configured `installPaths.scriptsDir`.
 - Generated helper scripts: `skills-root.mjs`, `skills-root.config.json`, and `parse-frontmatter.mjs`.
-- Explicit `--apply-global` mode for v1 global lifecycle scripts, hook bundles, runtime command scripts (`pipeline-trigger`, `stale-gate-monitor`, `flow-cron`, `flow-cron-exec`, trace instrumentation, attribute validation), global skill installs, skill command shims, tmux config, and Claude/OpenCode/Codex registration.
+- Explicit `--apply-global` mode for v1 global lifecycle scripts, hook bundles, runtime command scripts (`jarvis`, `pipeline-trigger`, `stale-gate-monitor`, `flow-cron`, `flow-cron-exec`, trace instrumentation, attribute validation), global skill installs, skill command shims, tmux config, and Claude/OpenCode/Codex registration.
 - Force refresh behavior that preserves existing lockfile capabilities.
 
 Target shape now exists in `packages/harnessy-core/`.
@@ -127,7 +127,7 @@ Flow:
 
 Promote from `packages/capability-harnessy-v1-full/resources/source` into native v2 modules:
 
-- Installer behavior still remaining: cron registration, optional Autoflow workflow/program prompt flow, full `install.sh` bootstrap/cache/Jarvis uv install behavior, dependency install commands, and detailed unpromoted-improvement warnings/stale plugin cleanup branches.
+- Installer behavior still remaining: optional Autoflow workflow/program prompt flow, full `install.sh` bootstrap/cache/dependency install commands, and detailed unpromoted-improvement warnings/stale plugin cleanup branches.
 - Skill lifecycle: create, validate, publish, feedback, improve, promote.
 - Product/spec flow: brainstorm, PRD, design spec, technical spec, MVP tech spec, review skills.
 - Build/review: engineer, build-e2e, code review, local run, dev container, security audit, semver, git commit, design mockup.
@@ -139,6 +139,6 @@ Promote from `packages/capability-harnessy-v1-full/resources/source` into native
 
 ## Immediate next work
 
-1. Promote Jarvis/bootstrap behavior (`install.sh`, cache refresh, uv tool install, dependency install commands) behind reviewed Effect service boundaries.
-2. Port or explicitly plan the remaining v1 bootstrap/autoflow/cron installer behaviors.
+1. Promote full bootstrap behavior (`install.sh`, cache refresh, dependency install commands) behind reviewed Effect service boundaries.
+2. Port or explicitly plan the remaining v1 bootstrap/autoflow installer behaviors.
 3. Add multiple profile activation and capability-scoped context loading.

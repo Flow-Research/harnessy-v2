@@ -116,6 +116,7 @@ describe("Harnessy runtime assets", () => {
 				expect(yield* fs.exists(`${globalRoot}/.scripts/parse-frontmatter.mjs`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/.agents/claude-marketplace/harnessy/hooks/hooks.json`)).toBe(true);
 				for (const command of [
+					"jarvis",
 					"pipeline-trigger",
 					"stale-gate-monitor",
 					"flow-cron",
@@ -140,6 +141,9 @@ describe("Harnessy runtime assets", () => {
 					expect(yield* fs.exists(`${globalRoot}/bin/${command}`)).toBe(true);
 				}
 				expect(yield* fs.exists(`${globalRoot}/skills/goal-agent/SKILL.md`)).toBe(true);
+				const jarvisShim = yield* fs.readFileString(`${globalRoot}/bin/jarvis`);
+				expect(jarvisShim).toContain("uv run --project");
+				expect(jarvisShim).toContain("jarvis-cli");
 				expect((yield* fs.stat(traceSource)).mode).toBe(traceSourceMode);
 				expect(yield* fs.exists(`${globalRoot}/skills/_shared`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/.config/harnessy/tmux-agent-launcher.json`)).toBe(true);
@@ -206,7 +210,14 @@ describe("Harnessy runtime assets", () => {
 					]);
 
 					expect(yield* fs.exists(`${globalRoot}/.scripts/skills-root.mjs`)).toBe(true);
-					for (const command of ["stale-gate-monitor", "flow-cron", "flow-cron-exec", "qa", "goal-agent"]) {
+					for (const command of [
+						"jarvis",
+						"stale-gate-monitor",
+						"flow-cron",
+						"flow-cron-exec",
+						"qa",
+						"goal-agent",
+					]) {
 						expect(yield* fs.exists(`${globalRoot}/bin/${command}`)).toBe(true);
 					}
 					expect(yield* fs.exists(`${globalRoot}/skills/qa-runtime/SKILL.md`)).toBe(true);
