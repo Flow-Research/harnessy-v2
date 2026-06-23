@@ -72,7 +72,7 @@ describe("Harnessy runtime assets", () => {
 				expect(globalKinds).toContain("global-lifecycle-script");
 				expect(globalKinds).toContain("global-helper-script");
 				expect(globalKinds).toContain("global-hook-bundle");
-				expect(globalKinds).toContain("global-pipeline-script");
+				expect(globalKinds).toContain("global-runtime-command");
 				expect(globalKinds).toContain("global-skill-install");
 				expect(globalKinds).toContain("agent-registration");
 				expect(
@@ -96,6 +96,9 @@ describe("Harnessy runtime assets", () => {
 					`${globalRoot}/.config/opencode/opencode.json`,
 					JSON.stringify({ skills: { paths: [] } }),
 				);
+				const traceSource =
+					"../../packages/capability-harnessy-v1-full/resources/source/tools/flow-install/scripts/instrument-traces.py";
+				const traceSourceMode = (yield* fs.stat(traceSource)).mode;
 
 				const result = yield* project.runInstaller(targetDir, {
 					force: false,
@@ -112,8 +115,32 @@ describe("Harnessy runtime assets", () => {
 				expect(yield* fs.exists(`${globalRoot}/.scripts/skills-root.mjs`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/.scripts/parse-frontmatter.mjs`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/.agents/claude-marketplace/harnessy/hooks/hooks.json`)).toBe(true);
-				expect(yield* fs.exists(`${globalRoot}/bin/pipeline-trigger`)).toBe(true);
+				for (const command of [
+					"pipeline-trigger",
+					"stale-gate-monitor",
+					"flow-cron",
+					"flow-cron-exec",
+					"instrument-traces.py",
+					"validate-attribute.sh",
+					"qa",
+					"flow-qa",
+					"flow-deps",
+					"goal-agent",
+					"background-runner",
+					"post-mortem",
+					"harness-deploy",
+					"tmux-agent-launcher",
+					"t",
+					"daily-brief",
+					"weekly-plan",
+					"collect-state",
+					"notify",
+					"discover-tool",
+				]) {
+					expect(yield* fs.exists(`${globalRoot}/bin/${command}`)).toBe(true);
+				}
 				expect(yield* fs.exists(`${globalRoot}/skills/goal-agent/SKILL.md`)).toBe(true);
+				expect((yield* fs.stat(traceSource)).mode).toBe(traceSourceMode);
 				expect(yield* fs.exists(`${globalRoot}/skills/_shared`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/.config/harnessy/tmux-agent-launcher.json`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/.claude/plugins/known_marketplaces.json`)).toBe(true);
@@ -179,7 +206,9 @@ describe("Harnessy runtime assets", () => {
 					]);
 
 					expect(yield* fs.exists(`${globalRoot}/.scripts/skills-root.mjs`)).toBe(true);
-					expect(yield* fs.exists(`${globalRoot}/bin/stale-gate-monitor`)).toBe(true);
+					for (const command of ["stale-gate-monitor", "flow-cron", "flow-cron-exec", "qa", "goal-agent"]) {
+						expect(yield* fs.exists(`${globalRoot}/bin/${command}`)).toBe(true);
+					}
 					expect(yield* fs.exists(`${globalRoot}/skills/qa-runtime/SKILL.md`)).toBe(true);
 					expect(yield* fs.exists(`${globalRoot}/.claude/settings.json`)).toBe(true);
 				}),

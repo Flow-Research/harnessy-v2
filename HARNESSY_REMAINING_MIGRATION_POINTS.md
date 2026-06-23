@@ -33,7 +33,7 @@ Implemented in `packages/harnessy-core`:
 - Tiny local capability fixture and Effect Vitest coverage.
 - Full v1 compatibility capability pack at `packages/capability-harnessy-v1-full`, including a complete v1 repo snapshot plus direct resources for flow-install, the context vault, Jarvis CLI, and bootstrap docs.
 - Native v1-compatible installer options: saved `installPaths`, `--dry-run`, `--reconfigure`, `--step`, `--agents-file`, `--context-dir`, `--skills-dir`, `--scripts-dir`, `--yes`, scoped memory `_scopes.yaml`, AGENTS.md managed block, context AGENTS.md managed block, and force refresh that preserves lockfile capabilities.
-- Native runtime asset parity: preserved v1 project script copying, v1 package.json lifecycle scripts, `.jarvis/hooks.yaml` scaffold, generated helper scripts, `install --step package-scripts`, `install --step runtime-assets`, and explicit `--apply-global` for user-global lifecycle scripts, hooks, pipeline shims, skills, skill command shims, tmux config, and Claude/OpenCode/Codex registration.
+- Native runtime asset parity: preserved v1 project script copying, v1 package.json lifecycle scripts, `.jarvis/hooks.yaml` scaffold, generated helper scripts, `install --step package-scripts`, `install --step runtime-assets`, and explicit `--apply-global` for user-global lifecycle scripts, hooks, runtime command scripts (`pipeline-trigger`, `stale-gate-monitor`, `flow-cron`, `flow-cron-exec`, trace instrumentation, attribute validation), skills, skill command shims, tmux config, and Claude/OpenCode/Codex registration.
 
 ## Remaining core points
 
@@ -144,7 +144,7 @@ Validation after wave 3, full v1 pack, and native installer parity:
 
 ## Next dispatch after wave 3
 
-1. Finish remaining v1 command/runtime surface parity for Jarvis, QA, flow-deps, goal-agent, deploy, tmux, life-orchestrator, cron, trace instrumentation, and attribute validation command exposure.
+1. Promote Jarvis/bootstrap behavior (`install.sh`, cache refresh, uv tool install, dependency install commands) behind reviewed Effect service boundaries.
 2. Port or explicitly plan the remaining v1 bootstrap/autoflow/cron installer behaviors.
 3. Multiple profile activation and capability-scoped context loading.
 4. Garden JSON report expansion beyond current resolved-source/fingerprint fields.

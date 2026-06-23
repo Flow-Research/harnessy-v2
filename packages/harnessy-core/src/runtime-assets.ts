@@ -27,7 +27,14 @@ const CANONICAL_FLOW_SCRIPTS = [
 	"verify-harness.mjs",
 ] as const;
 
-const PIPELINE_SCRIPTS = ["pipeline-trigger", "stale-gate-monitor"] as const;
+const GLOBAL_RUNTIME_COMMANDS = [
+	"pipeline-trigger",
+	"stale-gate-monitor",
+	"flow-cron",
+	"flow-cron-exec",
+	"instrument-traces.py",
+	"validate-attribute.sh",
+] as const;
 
 const RESERVED_SCRIPT_NAMES = new Set([
 	"register-skills.mjs",
@@ -70,7 +77,7 @@ export class HarnessRuntimeAssetAction extends Schema.Class<HarnessRuntimeAssetA
 		"global-lifecycle-script",
 		"global-helper-script",
 		"global-hook-bundle",
-		"global-pipeline-script",
+		"global-runtime-command",
 		"global-skill-install",
 		"global-skill-shim",
 		"global-config",
@@ -243,11 +250,18 @@ export class HarnessRuntimeAssets extends Context.Service<
 					yield* makeDirectory(path.dirname(targetPath));
 					if (overwrite) yield* removePath(targetPath);
 					else if (yield* exists(targetPath)) return false;
-					yield* fs.symlink(sourcePath, targetPath).pipe(
-						Effect.catch(() => copyFile(sourcePath, targetPath)),
-						Effect.mapError((cause) => mapPlatformError(`Could not link ${sourcePath} to ${targetPath}`, cause)),
-					);
-					yield* fs.chmod(targetPath, 0o755).pipe(Effect.catch(() => Effect.void));
+
+					const sourceInfo = yield* fs
+						.stat(sourcePath)
+						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not stat ${sourcePath}`, cause)));
+					const sourceExecutable = (sourceInfo.mode & 0o111) !== 0;
+					const copied = sourceExecutable
+						? yield* fs.symlink(sourcePath, targetPath).pipe(
+								Effect.as(false),
+								Effect.catch(() => copyFile(sourcePath, targetPath).pipe(Effect.as(true))),
+							)
+						: yield* copyFile(sourcePath, targetPath).pipe(Effect.as(true));
+					if (copied) yield* fs.chmod(targetPath, 0o755).pipe(Effect.catch(() => Effect.void));
 					return true;
 				});
 
@@ -707,14 +721,14 @@ export const parseFrontmatter = (content) => {
 						written.push(hooksTarget);
 					}
 
-					for (const scriptName of PIPELINE_SCRIPTS) {
+					for (const scriptName of GLOBAL_RUNTIME_COMMANDS) {
 						const sourcePath = path.join(flowInstallScriptsDir, scriptName);
 						const targetPath = path.join(globals.globalCommandsDir, scriptName);
 						if (options.dryRun || options.applyGlobal !== true) {
 							actions.push(
 								makeAction({
-									kind: "global-pipeline-script",
-									label: `Install pipeline command ${scriptName}`,
+									kind: "global-runtime-command",
+									label: `Install runtime command ${scriptName}`,
 									sourcePath,
 									targetPath,
 									unsafeGlobal: true,
@@ -729,8 +743,8 @@ export const parseFrontmatter = (content) => {
 						yield* symlinkExecutable(sourcePath, targetPath, true);
 						actions.push(
 							makeAction({
-								kind: "global-pipeline-script",
-								label: `Install pipeline command ${scriptName}`,
+								kind: "global-runtime-command",
+								label: `Install runtime command ${scriptName}`,
 								sourcePath,
 								targetPath,
 								unsafeGlobal: true,
