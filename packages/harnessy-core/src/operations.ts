@@ -231,9 +231,11 @@ export class HarnessProject extends Context.Service<
 				if (step === "agents-md") return [`${resolved.targetDir}/${installPaths.agentsFile}`];
 				if (step === "context-agents") return [`${resolved.targetDir}/${installPaths.contextDir}/AGENTS.md`];
 				if (step === "skills") return [`${resolved.targetDir}/${installPaths.skillsDir}`];
-				if (step === "runtime-assets") {
-					return [`${resolved.targetDir}/${installPaths.scriptsDir}`, `${resolved.targetDir}/.jarvis/hooks.yaml`];
-				}
+				// Runtime-asset paths are reported via runtimeAssetResult.written (the
+				// per-file list), which the dry-run and non-dry paths both append. Emitting
+				// them here too would double-count .jarvis/hooks.yaml and list the scripts
+				// dir as both a directory and its expanded files.
+				if (step === "runtime-assets") return [];
 				return [
 					resolved.contextAgentsFile,
 					resolved.defaultProfile,
