@@ -289,8 +289,16 @@ export class HarnessRuntimeAssets extends Context.Service<
 			};
 
 			const compareSemver = (left: string, right: string): number => {
-				const leftParts = left.split(".").map(Number);
-				const rightParts = right.split(".").map(Number);
+				// Coerce non-numeric parts to 0 (matching v1 utils.compareSemver's `pa[i] || 0`).
+				// `?? 0` only catches undefined, so NaN from a non-numeric version would survive
+				// and make every comparison fall through to 0 (treated as equal), skipping upgrades.
+				const parseParts = (value: string): ReadonlyArray<number> =>
+					value.split(".").map((part) => {
+						const parsed = Number(part);
+						return Number.isFinite(parsed) ? parsed : 0;
+					});
+				const leftParts = parseParts(left);
+				const rightParts = parseParts(right);
 				for (let index = 0; index < 3; index += 1) {
 					const leftValue = leftParts[index] ?? 0;
 					const rightValue = rightParts[index] ?? 0;
