@@ -369,7 +369,7 @@ export const parseFrontmatter = (content) => {
 
 			const generatedJarvisShim = (): string => `#!/usr/bin/env bash
 set -euo pipefail
-JARVIS_CLI_ROOT=\${HARNESSY_JARVIS_CLI_ROOT:-${jarvisCliRoot}}
+JARVIS_CLI_ROOT="\${HARNESSY_JARVIS_CLI_ROOT:-${jarvisCliRoot}}"
 exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 `;
 
