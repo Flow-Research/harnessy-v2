@@ -167,6 +167,24 @@ const refreshOption = Options.boolean("refresh").pipe(
 	Options.withDescription("Overwrite existing materialized capability resources."),
 );
 
+/** Optional manifest `owner` for a scaffolded skill. */
+const skillOwnerOption = Options.string("owner").pipe(
+	Options.optional,
+	Options.withDescription("Manifest owner for the scaffolded skill."),
+);
+
+/** Optional manifest `description` for a scaffolded skill. */
+const skillDescriptionOption = Options.string("description").pipe(
+	Options.optional,
+	Options.withDescription("Manifest description and SKILL.md intro for the scaffolded skill."),
+);
+
+/** Optional manifest `type` for a scaffolded skill. */
+const skillTypeOption = Options.string("type").pipe(
+	Options.optional,
+	Options.withDescription("Manifest type for the scaffolded skill (default: skill)."),
+);
+
 /** Render all file paths written by an operation. */
 const logWrittenFiles = (written: ReadonlyArray<string>) =>
 	Effect.gen(function* () {
@@ -619,6 +637,36 @@ const capabilityCommand = Command.make("capability").pipe(
 	Command.withDescription("Manage Harnessy capabilities"),
 );
 
+/** Scaffold a new project-local skill that passes validation. */
+const skillCreateCommand = Command.make(
+	"create",
+	{
+		name: Args.string("name"),
+		target: targetOption,
+		force: forceOption,
+		owner: skillOwnerOption,
+		description: skillDescriptionOption,
+		type: skillTypeOption,
+	},
+	({ name, target, force, owner, description, type }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const result = yield* project.createSkill(target, name, {
+				force,
+				owner: Option.getOrUndefined(owner),
+				description: Option.getOrUndefined(description),
+				type: Option.getOrUndefined(type),
+			});
+			if (!result.created) {
+				yield* Console.log(result.reason ?? `Skill "${result.name}" already exists.`);
+				return;
+			}
+			yield* Console.log(`Created skill "${result.name}" at ${result.skillDir}`);
+			yield* logWrittenFiles(result.written);
+			yield* Console.log(`Validate it: harnessy skill validate --target ${target}`);
+		}),
+).pipe(Command.withDescription("Scaffold a new project-local skill"));
+
 /** Validate project-local skill manifests and path guardrails. */
 const skillValidateCommand = Command.make(
 	"validate",
@@ -680,8 +728,8 @@ const skillListCommand = Command.make(
 
 /** Inspect and validate project-local skills. */
 const skillCommand = Command.make("skill").pipe(
-	Command.withSubcommands([skillValidateCommand, skillListCommand] as const),
-	Command.withDescription("Inspect and validate project-local skills"),
+	Command.withSubcommands([skillCreateCommand, skillValidateCommand, skillListCommand] as const),
+	Command.withDescription("Create, inspect, and validate project-local skills"),
 );
 
 /** Check dependency declarations from installed capability manifests. */

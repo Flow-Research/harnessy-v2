@@ -117,7 +117,7 @@ Status: `packages/capability-org-knowledge` exists with manifest resources/check
 These are now preserved in `packages/capability-harnessy-v1-full` and should be promoted into native Harnessy commands/services rather than rediscovered from scratch:
 
 - Installer behavior: optional Autoflow workflow/program prompt flow, remote git refresh/clone execution, direct dependency installer command execution, and detailed unpromoted-improvement warnings/stale plugin cleanup branches. Saved install paths, dry-run/step-only/force modes, managed AGENTS blocks, project script copying, package lifecycle scripts, hook config scaffold, generated helper scripts, Jarvis command shim, runtime command exposure, native bootstrap planning/source-cache/framework apply paths, and opt-in global runtime apply paths are now native.
-- Skill lifecycle: create, publish, feedback, improve, promote. (Validate is now native: `harnessy skill validate` / `skill list` runs the v1 manifest required-field checks plus the `skill_guardrails` path checks deterministically via `SkillValidator`.)
+- Skill lifecycle: publish, feedback, improve, promote. (Validate and create are now native: `harnessy skill validate` / `skill list` run the v1 manifest required-field checks plus the `skill_guardrails` path checks via `SkillValidator`; `harnessy skill create` scaffolds a validation-passing skill via `SkillScaffolder`.)
 - Product/spec flow: brainstorm, PRD, design spec, technical spec, MVP tech spec, review skills.
 - Build/review: engineer, build-e2e, code review, local run, dev container, security audit, semver, git commit, design mockup.
 - QA/regression: QA runtime, sweeps, feature catalog, browser/API integration codegen, spec-to-regression, test quality validator.
