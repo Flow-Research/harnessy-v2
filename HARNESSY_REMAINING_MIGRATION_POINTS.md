@@ -35,6 +35,7 @@ Implemented in `packages/harnessy-core`:
 - Native v1-compatible installer options: saved `installPaths`, `--dry-run`, `--reconfigure`, `--step`, `--agents-file`, `--context-dir`, `--skills-dir`, `--scripts-dir`, `--yes`, scoped memory `_scopes.yaml`, AGENTS.md managed block, context AGENTS.md managed block, and force refresh that preserves lockfile capabilities.
 - Native runtime asset parity: preserved v1 project script copying, v1 package.json lifecycle scripts, `.jarvis/hooks.yaml` scaffold, generated helper scripts, `install --step package-scripts`, `install --step runtime-assets`, and explicit `--apply-global` for user-global lifecycle scripts, hooks, runtime command scripts (`jarvis`, `pipeline-trigger`, `stale-gate-monitor`, `flow-cron`, `flow-cron-exec`, trace instrumentation, attribute validation), skills, skill command shims, tmux config, and Claude/OpenCode/Codex registration.
 - Native skill validation: `harnessy skill validate` / `skill list` (`SkillValidator`) port v1 `validate-skills.mjs` required manifest fields and `skill_guardrails/validate_skill_paths.py` path guardrails (SKILL.md presence, template-resolution declaration, no `CLAUDE_PLUGIN_ROOT`, no relative `./commands/*.md`) into one deterministic report with `--json` output.
+- Native skill creation: `harnessy skill create <name>` (`SkillScaffolder`) scaffolds validation-passing project-local skill files without shell or network access.
 
 ## Remaining core points
 
