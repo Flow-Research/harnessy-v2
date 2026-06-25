@@ -53,6 +53,26 @@ describe("SkillScaffolder", () => {
 		),
 	);
 
+	it.effect("preserves an existing skill directory without --force", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const targetDir = yield* fs.makeTempDirectoryScoped();
+				const notesPath = `${targetDir}/.harnessy/skills/notes-only/README.md`;
+				yield* fs.makeDirectory(`${targetDir}/.harnessy/skills/notes-only`, { recursive: true });
+				yield* fs.writeFileString(notesPath, "user notes\n");
+
+				const result = yield* project.createSkill(targetDir, "notes-only", {});
+				expect(result.created).toBe(false);
+				expect(result.reason).toContain("already exists");
+				expect(yield* fs.readFileString(notesPath)).toBe("user notes\n");
+				expect(yield* fs.exists(`${targetDir}/.harnessy/skills/notes-only/manifest.yaml`)).toBe(false);
+				expect(yield* fs.exists(`${targetDir}/.harnessy/skills/notes-only/SKILL.md`)).toBe(false);
+			}),
+		),
+	);
+
 	it.effect("overwrites an existing skill with --force", () =>
 		provideLive(
 			Effect.gen(function* () {

@@ -85,17 +85,28 @@ export interface SkillValidationReport {
 	readonly ok: boolean;
 }
 
-/** Parse the flat `key: value` subset of YAML used by v1 skill manifests. */
-const parseFlatYaml = (content: string): Record<string, string> => {
-	const data: Record<string, string> = {};
+/**
+ * Parse the top-level `key: value` subset of YAML used by v1 skill manifests.
+ *
+ * Required fields are presence-based, because collection headers such as
+ * `permissions:` are valid even when their scalar value is empty.
+ */
+const parseFlatYaml = (
+	content: string,
+): { readonly fields: ReadonlySet<string>; readonly values: Readonly<Record<string, string>> } => {
+	const fields = new Set<string>();
+	const values: Record<string, string> = {};
 	for (const line of content.split(/\r?\n/)) {
+		if (/^\s/.test(line)) continue;
 		const index = line.indexOf(":");
 		if (index === -1) continue;
 		const key = line.slice(0, index).trim();
 		if (key === "" || key.startsWith("#")) continue;
-		data[key] = line.slice(index + 1).trim();
+		fields.add(key);
+		const value = line.slice(index + 1).trim();
+		if (value !== "") values[key] = value;
 	}
-	return data;
+	return { fields, values };
 };
 
 /**
@@ -151,7 +162,7 @@ export class SkillValidator extends Context.Service<
 			const collectTextFiles = (root: string): Effect.Effect<ReadonlyArray<string>, HarnessError> =>
 				Effect.gen(function* () {
 					const collected: Array<string> = [];
-					const entries = yield* readDir(root);
+					const entries = [...(yield* readDir(root))].sort();
 					for (const entry of entries) {
 						const entryPath = path.join(root, entry);
 						const type = yield* statType(entryPath);
@@ -188,12 +199,12 @@ export class SkillValidator extends Context.Service<
 					const manifest = parseFlatYaml(yield* readFile(manifestPath));
 					summary = new SkillSummary({
 						directory,
-						name: manifest.name,
-						version: manifest.version,
-						status: manifest.status,
+						name: manifest.values.name,
+						version: manifest.values.version,
+						status: manifest.values.status,
 					});
 					for (const field of REQUIRED_MANIFEST_FIELDS) {
-						if (!manifest[field]) {
+						if (!manifest.fields.has(field)) {
 							issues.push(
 								new SkillValidationIssue({
 									skill: directory,

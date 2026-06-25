@@ -113,6 +113,9 @@ export class SkillScaffolder extends Context.Service<
 				const manifestPath = path.join(skillDir, "manifest.yaml");
 				const skillMdPath = path.join(skillDir, "SKILL.md");
 
+				const skillDirExists = yield* fs
+					.exists(skillDir)
+					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not inspect ${skillDir}`, cause)));
 				const manifestExists = yield* fs
 					.exists(manifestPath)
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not inspect ${manifestPath}`, cause)));
@@ -120,7 +123,7 @@ export class SkillScaffolder extends Context.Service<
 					.exists(skillMdPath)
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not inspect ${skillMdPath}`, cause)));
 
-				if ((manifestExists || skillMdExists) && options.force !== true) {
+				if ((skillDirExists || manifestExists || skillMdExists) && options.force !== true) {
 					return new SkillScaffoldResult({
 						name,
 						skillDir,

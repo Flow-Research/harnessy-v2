@@ -13,6 +13,7 @@ import {
 	type MaterializeCapabilitiesResult,
 } from "./capability-registry.ts";
 import type { CapabilityEntry } from "./capability-source.ts";
+import { CommandRunner } from "./command-runner.ts";
 import { HARNESSY_VERSION } from "./constants.ts";
 import { DependencyChecker, type DependencyReport } from "./dependency-checker.ts";
 import { HarnessError } from "./errors.ts";
@@ -41,6 +42,10 @@ export interface NativeBootstrapOptions {
 	readonly target?: string;
 	/** Apply native safe bootstrap writes. Defaults to plan-only. */
 	readonly applyBootstrap?: boolean;
+	/** Execute runnable external bootstrap commands (git refresh, uv tool install). Requires applyBootstrap. */
+	readonly runExternal?: boolean;
+	/** Acquire source by cloning the repo with git instead of copying the preserved snapshot. */
+	readonly cloneSource?: boolean;
 	/** Preview changes without writing files. */
 	readonly dryRun?: boolean;
 	/** Noninteractive v1 flag. Kept for parity and forwarded to native install planning. */
@@ -530,6 +535,8 @@ export class HarnessProject extends Context.Service<
 					targetRoot: options.target,
 					dryRun: options.applyBootstrap === true ? (options.dryRun ?? false) : true,
 					applyBootstrap: options.applyBootstrap,
+					runExternal: options.runExternal,
+					cloneSource: options.cloneSource,
 					force: options.force,
 					refreshSource: options.refreshSource,
 					skipSubprojects: options.skipSubprojects,
@@ -700,6 +707,7 @@ export class HarnessProject extends Context.Service<
 	/** Live layer with all Harnessy services wired, leaving only platform services to provide at the edge. */
 	static readonly layer = HarnessProject.liveLayer.pipe(
 		Layer.provideMerge(HarnessBootstrap.layer),
+		Layer.provideMerge(CommandRunner.layer),
 		Layer.provideMerge(CapabilityRegistry.layer),
 		Layer.provideMerge(CapabilityChecker.layer),
 		Layer.provideMerge(CapabilityFingerprinter.layer),

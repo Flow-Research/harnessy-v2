@@ -116,8 +116,8 @@ Status: `packages/capability-org-knowledge` exists with manifest resources/check
 
 These are now preserved in `packages/capability-harnessy-v1-full` and should be promoted into native Harnessy commands/services rather than rediscovered from scratch:
 
-- Installer behavior: optional Autoflow workflow/program prompt flow, remote git refresh/clone execution, direct dependency installer command execution, and detailed unpromoted-improvement warnings/stale plugin cleanup branches. Saved install paths, dry-run/step-only/force modes, managed AGENTS blocks, project script copying, package lifecycle scripts, hook config scaffold, generated helper scripts, Jarvis command shim, runtime command exposure, native bootstrap planning/source-cache/framework apply paths, and opt-in global runtime apply paths are now native.
-- Skill lifecycle: publish, feedback, improve, promote. (Validate and create are now native: `harnessy skill validate` / `skill list` run the v1 manifest required-field checks plus the `skill_guardrails` path checks via `SkillValidator`; `harnessy skill create` scaffolds a validation-passing skill via `SkillScaffolder`.)
+- Installer behavior: optional Autoflow workflow/program prompt flow, direct dependency installer command execution for compound/piped commands (`curl | sh`, corepack `&&`), and detailed unpromoted-improvement warnings/stale plugin cleanup branches. Saved install paths, dry-run/step-only/force modes, managed AGENTS blocks, project script copying, package lifecycle scripts, hook config scaffold, generated helper scripts, Jarvis command shim, runtime command exposure, native bootstrap planning/source-cache/framework apply paths, opt-in global runtime apply paths, opt-in execution of single-argv external bootstrap commands (git source refresh, `uv tool install`) via the native `CommandRunner`, and remote git clone via `--clone-source` are now native.
+- Skill lifecycle: publish, feedback, improve, promote. Validate and create are now native: `harnessy skill validate` / `skill list` run the v1 manifest required-field checks plus the `skill_guardrails` path checks via `SkillValidator`; `harnessy skill create` scaffolds a validation-passing skill via `SkillScaffolder`.
 - Product/spec flow: brainstorm, PRD, design spec, technical spec, MVP tech spec, review skills.
 - Build/review: engineer, build-e2e, code review, local run, dev container, security audit, semver, git commit, design mockup.
 - QA/regression: QA runtime, sweeps, feature catalog, browser/API integration codegen, spec-to-regression, test quality validator.
@@ -145,7 +145,8 @@ Validation after wave 3, full v1 pack, and native installer parity:
 
 ## Next dispatch after wave 3
 
-1. Decide whether remote git refresh/clone and dependency installer commands should get an explicit command-runner service, or remain planned external actions.
-2. Port or explicitly plan the remaining v1 Autoflow installer behavior.
-3. Multiple profile activation and capability-scoped context loading.
-4. Garden JSON report expansion beyond current resolved-source/fingerprint fields.
+1. Done: external bootstrap commands now run through an explicit native `CommandRunner` service built on the effect-smol `ChildProcessSpawner` seam. Single-argv commands (git source refresh, `uv tool install`) execute behind `--apply-bootstrap --run-external`; compound/piped commands (`curl | sh`, corepack `&&`) remain represented as manual/plan-only `command` strings by design. The runner accepts argv arrays only — no shell parsing — and captures structured exit/stdout/stderr per command. Tested with a recording fake `ChildProcessSpawner` (opencode pattern) plus two live tests against the runner's own node binary; no real third-party binaries, network, or timing in tests.
+2. Done (git clone): `--clone-source` acquires the bootstrap source via `git clone <repoUrl> <flowRoot>` through `CommandRunner`, gated behind `--run-external` (plan-only otherwise). Remaining: dependency installer commands that are currently compound/piped (`curl | sh`, corepack `&&`) once their security boundary is reviewed.
+3. Port or explicitly plan the remaining v1 Autoflow installer behavior.
+4. Multiple profile activation and capability-scoped context loading.
+5. Garden JSON report expansion beyond current resolved-source/fingerprint fields.

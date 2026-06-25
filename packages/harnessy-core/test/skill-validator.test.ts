@@ -133,6 +133,56 @@ describe("SkillValidator", () => {
 		),
 	);
 
+	it.effect("validates top-level manifest field presence separately from scalar values", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const targetDir = yield* fs.makeTempDirectoryScoped();
+				const collectionHeadersManifest = [
+					"name: collection-skill",
+					"type: skill",
+					"version: 1.0.0",
+					"owner: platform",
+					"status: active",
+					"blast_radius: low",
+					"description: A valid collection-style skill",
+					"permissions:",
+					"  - read",
+					"data_categories:",
+					"  - none",
+					"egress:",
+					"  - none",
+					"invoke: manual",
+					"location: local",
+					"",
+				].join("\n");
+				yield* writeSkill(fs, targetDir, "collection-skill", {
+					"manifest.yaml": collectionHeadersManifest,
+					"SKILL.md": VALID_SKILL_MD,
+				});
+
+				const validReport = yield* project.validateSkills(targetDir);
+				expect(validReport.ok).toBe(true);
+
+				const nestedOnlyTarget = yield* fs.makeTempDirectoryScoped();
+				const missingTopLevelEgressManifest = collectionHeadersManifest
+					.split("\n")
+					.filter((line) => !line.startsWith("egress:"))
+					.join("\n");
+				yield* writeSkill(fs, nestedOnlyTarget, "nested-only", {
+					"manifest.yaml": `${missingTopLevelEgressManifest}\npermissions_detail:\n  egress: none\n`,
+					"SKILL.md": VALID_SKILL_MD,
+				});
+
+				const invalidReport = yield* project.validateSkills(nestedOnlyTarget);
+				expect(invalidReport.ok).toBe(false);
+				expect(invalidReport.issues.some((issue) => issue.kind === "missing-manifest-field")).toBe(true);
+				expect(invalidReport.issues.some((issue) => issue.message.includes("missing egress"))).toBe(true);
+			}),
+		),
+	);
+
 	it.effect("flags a missing SKILL.md", () =>
 		provideLive(
 			Effect.gen(function* () {

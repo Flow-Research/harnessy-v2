@@ -8,6 +8,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { CommandRunner, CommandRunResult, displayCommand } from "./command-runner.ts";
 import { causeMessage, HarnessError } from "./errors.ts";
 import { RuntimeEnvironment } from "./runtime-environment.ts";
 
@@ -24,6 +25,7 @@ export class HarnessBootstrapAction extends Schema.Class<HarnessBootstrapAction>
 	kind: Schema.Literals([
 		"tool-check",
 		"source-cache",
+		"source-clone",
 		"source-refresh",
 		"jarvis-tool-install",
 		"framework-install",
@@ -32,17 +34,32 @@ export class HarnessBootstrapAction extends Schema.Class<HarnessBootstrapAction>
 	]),
 	/** Human-readable label. */
 	label: Schema.String,
-	/** Outcome for this pass. */
-	status: Schema.Literals(["planned", "written", "skipped"]),
+	/** Outcome for this pass. `failed` means an executed external command exited non-zero or could not spawn. */
+	status: Schema.Literals(["planned", "written", "skipped", "failed"]),
 	/** Whether the action would run external commands or touch user-global tooling. */
 	unsafeExternal: Schema.Boolean,
 	/** Source path for copy-like native actions. */
 	sourcePath: Schema.optional(Schema.String),
 	/** Destination path or location label. */
 	targetPath: Schema.optional(Schema.String),
-	/** v1-compatible command represented by this action when not run natively. */
+	/** v1-compatible command represented by this action, as a display string. */
 	command: Schema.optional(Schema.String),
-	/** Deterministic explanation for planned/skipped actions. */
+	/**
+	 * Structured argv for external actions Harnessy can run directly (executable
+	 * plus already-split arguments — never a shell string). Present only for
+	 * actions safe to execute via {@link CommandRunner}; compound/piped v1
+	 * commands (e.g. `curl ... | sh`) carry `command` only and stay manual.
+	 */
+	argv: Schema.optional(
+		Schema.Struct({
+			executable: Schema.String,
+			args: Schema.Array(Schema.String),
+			cwd: Schema.optional(Schema.String),
+		}),
+	),
+	/** Captured result when this external action was actually executed. */
+	run: Schema.optional(CommandRunResult),
+	/** Deterministic explanation for planned/skipped/failed actions. */
 	reason: Schema.optional(Schema.String),
 }) {}
 
@@ -56,6 +73,18 @@ export interface HarnessBootstrapPrepareOptions {
 	readonly dryRun?: boolean;
 	/** Apply native safe bootstrap writes. External commands remain represented, not run. */
 	readonly applyBootstrap?: boolean;
+	/**
+	 * Execute the runnable external bootstrap commands (git source refresh, uv
+	 * tool install) instead of only planning them. Requires `applyBootstrap` and
+	 * a non-dry run; compound/piped commands are never auto-run regardless.
+	 */
+	readonly runExternal?: boolean;
+	/**
+	 * Acquire the source by cloning `repoUrl` with git instead of copying the
+	 * preserved v1 snapshot. The clone runs only with `runExternal`; without it
+	 * the bootstrap stays plan-only (the source cannot be materialized).
+	 */
+	readonly cloneSource?: boolean;
 	/** Force semantics from v1 install.sh. */
 	readonly force?: boolean;
 	/** Refresh cached source semantics from v1 install.sh. */
@@ -118,6 +147,7 @@ export class HarnessBootstrap extends Context.Service<
 			const fs = yield* FileSystem.FileSystem;
 			const path = yield* Path.Path;
 			const environment = yield* RuntimeEnvironment;
+			const commandRunner = yield* CommandRunner;
 
 			const mapPlatformError = (action: string, cause: unknown): HarnessError =>
 				new HarnessError({ message: `${action}: ${causeMessage(cause)}`, cause });
@@ -183,7 +213,16 @@ export class HarnessBootstrap extends Context.Service<
 			});
 
 			const prepare = Effect.fn("HarnessBootstrap.prepare")(function* (options: HarnessBootstrapPrepareOptions) {
-				const dryRun = options.applyBootstrap === true ? (options.dryRun ?? false) : true;
+				const wantsClone = options.cloneSource === true;
+				const canRunExternal = options.runExternal === true && options.applyBootstrap === true;
+				// Cloning materializes the source via git, so without --run-external there is
+				// no source to install from — the whole bootstrap stays plan-only in that case.
+				const dryRun =
+					options.applyBootstrap === true
+						? wantsClone && !canRunExternal
+							? true
+							: (options.dryRun ?? false)
+						: true;
 				const home = path.resolve(options.globalRoot ?? homedir());
 				const installDir = path.resolve(resolveHome(home, options.installDir ?? path.join(home, "harnessy")));
 				const cacheDir = path.resolve(resolveHome(home, options.cacheDir ?? path.join(home, ".cache", "harnessy")));
@@ -194,6 +233,56 @@ export class HarnessBootstrap extends Context.Service<
 				const actions: Array<HarnessBootstrapAction> = [];
 				const written: Array<string> = [];
 				const issues: Array<string> = [];
+
+				// External commands only execute behind --apply-bootstrap + --run-external
+				// on a non-dry run. Otherwise they are represented as planned argv actions.
+				const runExternalNow = options.runExternal === true && options.applyBootstrap === true && dryRun === false;
+
+				const externalAction = Effect.fn("HarnessBootstrap.externalAction")(function* (input: {
+					readonly kind: HarnessBootstrapAction["kind"];
+					readonly label: string;
+					readonly executable: string;
+					readonly args: ReadonlyArray<string>;
+					readonly targetPath?: string;
+					readonly cwd?: string;
+					readonly reason: string;
+				}) {
+					const argv = { executable: input.executable, args: [...input.args], cwd: input.cwd };
+					const command = displayCommand(input.executable, input.args);
+					if (!runExternalNow) {
+						return makeAction({
+							kind: input.kind,
+							label: input.label,
+							status: "planned",
+							unsafeExternal: true,
+							targetPath: input.targetPath,
+							command,
+							argv,
+							reason: input.reason,
+						});
+					}
+					const result = yield* commandRunner.run({
+						id: input.kind,
+						label: input.label,
+						executable: input.executable,
+						args: input.args,
+						cwd: input.cwd,
+					});
+					if (result.status !== "succeeded") {
+						issues.push(`${input.label} failed: ${result.error ?? `exited ${result.exitCode ?? "unknown"}`}`);
+					}
+					return makeAction({
+						kind: input.kind,
+						label: input.label,
+						status: result.status === "succeeded" ? "written" : "failed",
+						unsafeExternal: true,
+						targetPath: input.targetPath,
+						command,
+						argv,
+						run: result,
+						reason: result.status === "succeeded" ? undefined : "External command did not complete successfully.",
+					});
+				});
 
 				actions.push(yield* toolAction("Ensure uv", "uv", "curl -LsSf https://astral.sh/uv/install.sh | sh"));
 				actions.push(yield* toolAction("Ensure Node.js", "node", "Install Node 18+ and rerun Harnessy."));
@@ -218,7 +307,43 @@ export class HarnessBootstrap extends Context.Service<
 					}),
 				);
 
-				if (dryRun || options.applyBootstrap !== true) {
+				if (wantsClone) {
+					// A repoUrl beginning with "-" could be parsed by git as an option; the
+					// "--" delimiter below already prevents that, but reject it up front for a
+					// clearer error than git would produce.
+					if (repoUrl.startsWith("-")) {
+						return yield* new HarnessError({
+							message: `Invalid repository URL "${repoUrl}": must not start with "-".`,
+						});
+					}
+					// Acquire the source by cloning the remote repo instead of copying the
+					// preserved snapshot. git creates flowRoot itself, so only its parent
+					// must exist; the externalAction gates actual execution on --run-external.
+					// "--" ends git option parsing so the URL/path can never be read as a flag.
+					if (runExternalNow) {
+						yield* makeDirectory(path.dirname(flowRoot));
+					}
+					const cloneAction = yield* externalAction({
+						kind: "source-clone",
+						label:
+							options.mode === "in-place" ? "Clone cached Harnessy source" : "Clone Harnessy workspace source",
+						executable: "git",
+						args: ["clone", "--", repoUrl, flowRoot],
+						targetPath: flowRoot,
+						reason: "Remote source clone runs only with --run-external; otherwise it is planned.",
+					});
+					actions.push(cloneAction);
+					// A failed clone leaves no source to install from, so halt the whole
+					// bootstrap rather than proceeding into the framework install phase.
+					if (cloneAction.status === "failed") {
+						return yield* new HarnessError({
+							message: `Failed to clone Harnessy source from ${repoUrl}: ${
+								cloneAction.run?.error ?? `git exited ${cloneAction.run?.exitCode ?? "non-zero"}`
+							}`,
+						});
+					}
+					written.push(flowRoot);
+				} else if (dryRun || options.applyBootstrap !== true) {
 					actions.push(
 						makeAction({
 							kind: "source-cache",
@@ -254,29 +379,28 @@ export class HarnessBootstrap extends Context.Service<
 
 				if (options.refreshSource === true) {
 					actions.push(
-						makeAction({
+						yield* externalAction({
 							kind: "source-refresh",
 							label: "Refresh Harnessy source",
-							status: "planned",
-							unsafeExternal: true,
+							executable: "git",
+							args: ["-C", flowRoot, "pull", "--ff-only"],
 							targetPath: flowRoot,
-							command: `git -C ${JSON.stringify(flowRoot)} pull --ff-only`,
 							reason:
-								"Native bootstrap uses the preserved v1 source snapshot; remote git refresh remains an explicit external action.",
+								"Native bootstrap uses the preserved v1 source snapshot; remote git refresh runs only with --run-external.",
 						}),
 					);
 				}
 
+				const jarvisCliPath = path.join(flowRoot, "jarvis-cli");
 				actions.push(
-					makeAction({
+					yield* externalAction({
 						kind: "jarvis-tool-install",
 						label: "Install Jarvis CLI into PATH",
-						status: "planned",
-						unsafeExternal: true,
-						targetPath: path.join(flowRoot, "jarvis-cli"),
-						command: `uv tool install --force ${JSON.stringify(path.join(flowRoot, "jarvis-cli"))}`,
+						executable: "uv",
+						args: ["tool", "install", "--force", jarvisCliPath],
+						targetPath: jarvisCliPath,
 						reason:
-							"The native runtime-assets step installs a jarvis shim; uv tool install is preserved as an explicit bootstrap action.",
+							"The native runtime-assets step installs a jarvis shim; uv tool install runs only with --run-external.",
 					}),
 				);
 
