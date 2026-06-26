@@ -180,6 +180,12 @@ export class SkillPromote extends Context.Service<
 
 			const check = Effect.fn("SkillPromote.check")(function* (options: SkillPromoteCheckOptions) {
 				const { skill, installedRoot, sourceRoot, tracesRoot } = options;
+				// Guard against path traversal: skill is joined into installed/source/traces roots.
+				if (skill === "" || skill === "." || skill === ".." || /[/\\]/.test(skill)) {
+					return yield* new HarnessError({
+						message: `Invalid skill name "${skill}": path separators and traversal are not allowed.`,
+					});
+				}
 				const installedManifest = path.join(installedRoot, skill, "manifest.yaml");
 				const sourceManifest = path.join(sourceRoot, skill, "manifest.yaml");
 
@@ -212,19 +218,17 @@ export class SkillPromote extends Context.Service<
 
 				const records = yield* readImprovementRecords(skill, tracesRoot);
 				const improvements = records.filter((record) => stringField(record, "type") !== PROMOTION_TYPE);
-				const promotedIds = new Set<string>();
+				// Track raw promoted values (not just strings) so membership matches v1's `not in promoted_ids`.
+				const promotedValues = new Set<unknown>();
 				for (const record of records) {
 					if (stringField(record, "type") !== PROMOTION_TYPE) continue;
 					const promoted = record.improvements_promoted;
 					if (Array.isArray(promoted)) {
-						for (const id of promoted) if (typeof id === "string") promotedIds.add(id);
+						for (const id of promoted) promotedValues.add(id);
 					}
 				}
 
-				const unpromoted = improvements.filter((record) => {
-					const id = stringField(record, "improvement_id");
-					return id === undefined || !promotedIds.has(id);
-				});
+				const unpromoted = improvements.filter((record) => !promotedValues.has(record.improvement_id));
 				const unpromotedIds = unpromoted
 					.map((record) => stringField(record, "improvement_id"))
 					.filter((id): id is string => id !== undefined);

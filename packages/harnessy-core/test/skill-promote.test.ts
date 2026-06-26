@@ -144,6 +144,27 @@ describe("SkillPromote", () => {
 		),
 	);
 
+	it.effect("rejects skill names that contain path traversal", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const root = yield* fs.makeTempDirectoryScoped();
+
+				const error = yield* project
+					.promoteSkill({
+						skill: "../escape",
+						installedRoot: root,
+						sourceRoot: root,
+						tracesRoot: root,
+					})
+					.pipe(Effect.flip);
+
+				expect(error.message).toContain("path separators and traversal are not allowed");
+			}),
+		),
+	);
+
 	it.effect("fails when the source root does not exist", () =>
 		provideLive(
 			Effect.gen(function* () {

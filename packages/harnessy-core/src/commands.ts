@@ -790,20 +790,28 @@ const tracesRootOption = Options.string("traces-root").pipe(
 	Options.withDescription("Decision-traces root (or set AGENTS_TRACES_ROOT; default ~/.agents/traces)."),
 );
 
+/** Expand a leading `~`/`~/` to the home directory, mirroring v1 `Path.expanduser`. */
+const expandHome = (input: string): string =>
+	input === "~" ? homedir() : input.startsWith("~/") ? join(homedir(), input.slice(2)) : input;
+
 /** Resolve installed/traces roots from flags, falling back to env then home defaults. */
 const resolvePromoteRoots = (
 	sourceRoot: string,
 	installedRoot: Option.Option<string>,
 	tracesRoot: Option.Option<string>,
 ) => ({
-	sourceRoot,
-	installedRoot: Option.getOrElse(
-		installedRoot,
-		() => process.env.AGENTS_SKILLS_ROOT?.trim() || join(homedir(), ".agents", "skills"),
+	sourceRoot: expandHome(sourceRoot),
+	installedRoot: expandHome(
+		Option.getOrElse(
+			installedRoot,
+			() => process.env.AGENTS_SKILLS_ROOT?.trim() || join(homedir(), ".agents", "skills"),
+		),
 	),
-	tracesRoot: Option.getOrElse(
-		tracesRoot,
-		() => process.env.AGENTS_TRACES_ROOT?.trim() || join(homedir(), ".agents", "traces"),
+	tracesRoot: expandHome(
+		Option.getOrElse(
+			tracesRoot,
+			() => process.env.AGENTS_TRACES_ROOT?.trim() || join(homedir(), ".agents", "traces"),
+		),
 	),
 });
 
