@@ -124,7 +124,7 @@ export const parsePnpmWorkspaceGlobs = (raw: string): ReadonlyArray<string> => {
 	const globs: Array<string> = [];
 	let inPackages = false;
 	for (const line of raw.split(/\r?\n/)) {
-		if (/^packages:/.test(line)) {
+		if (line.startsWith("packages:")) {
 			inPackages = true;
 			continue;
 		}

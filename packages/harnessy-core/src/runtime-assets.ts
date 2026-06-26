@@ -270,11 +270,7 @@ export class HarnessRuntimeAssets extends Context.Service<
 				Effect.gen(function* () {
 					if (!(yield* exists(filePath))) return null;
 					const raw = yield* readFileString(filePath);
-					try {
-						return JSON.parse(raw) as unknown;
-					} catch {
-						return null;
-					}
+					return yield* Effect.try(() => JSON.parse(raw) as unknown).pipe(Effect.orElseSucceed(() => null));
 				});
 
 			const writeJson = (filePath: string, data: unknown) =>

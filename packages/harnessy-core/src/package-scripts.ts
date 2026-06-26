@@ -110,15 +110,14 @@ export class PackageScripts extends Context.Service<
 				const raw = yield* fs
 					.readFileString(packageJsonPath)
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not read ${packageJsonPath}`, cause)));
-				let parsed: unknown;
-				try {
-					parsed = JSON.parse(raw);
-				} catch (cause) {
-					return yield* new HarnessError({
-						message: `Invalid package.json ${packageJsonPath}: ${causeMessage(cause)}`,
-						cause,
-					});
-				}
+				const parsed = yield* Effect.try({
+					try: () => JSON.parse(raw) as unknown,
+					catch: (cause) =>
+						new HarnessError({
+							message: `Invalid package.json ${packageJsonPath}: ${causeMessage(cause)}`,
+							cause,
+						}),
+				});
 				if (!isRecord(parsed)) {
 					return yield* new HarnessError({ message: `Invalid package.json ${packageJsonPath}: expected object` });
 				}

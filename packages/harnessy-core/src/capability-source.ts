@@ -161,11 +161,7 @@ const splitSourceRef = (value: string): { readonly locator: string; readonly ref
 const normalizeGitLocator = (locator: string): string => {
 	const withoutGitPrefix = locator.startsWith("git+") ? locator.slice("git+".length) : locator;
 	if (!URL_LIKE_PATTERN.test(withoutGitPrefix)) return withoutGitPrefix;
-	try {
-		return new URL(withoutGitPrefix).toString();
-	} catch {
-		return withoutGitPrefix;
-	}
+	return URL.canParse(withoutGitPrefix) ? new URL(withoutGitPrefix).toString() : withoutGitPrefix;
 };
 
 const normalizeGitParts = (value: string): { readonly locator: string; readonly ref: string | null } => {

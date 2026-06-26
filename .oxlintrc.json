@@ -1,0 +1,28 @@
+{
+	"$schema": "./node_modules/oxlint/configuration_schema.json",
+	"ignorePatterns": [
+		"**/node_modules/**",
+		"**/dist/**",
+		"open-src/**",
+		"harnessy-v1/**",
+		"packages/capability-harnessy-v1-full/**"
+	],
+	"jsPlugins": ["oxlint-plugin-eslint"],
+	"rules": {
+		"eslint-js/no-restricted-syntax": "off"
+	},
+	"overrides": [
+		{
+			"files": ["packages/harnessy-core/src/**/*.ts"],
+			"rules": {
+				"eslint-js/no-restricted-syntax": [
+					"error",
+					{
+						"selector": "TryStatement > CatchClause",
+						"message": "Do not use try/catch — this is an Effect codebase. Wrap throwing code with Effect.try / Effect.tryPromise and map to a tagged HarnessError, or guard with non-throwing APIs (e.g. URL.canParse)."
+					}
+				]
+			}
+		}
+	]
+}
