@@ -42,6 +42,21 @@ describe("AnytypeConnector", () => {
 				expect(results[0]).toMatchObject({ id: "obj-1", name: "25 - Meeting", type: "Page" });
 				expect(fake.calls[0]?.method).toBe("POST");
 				expect(fake.calls[0]?.url).toBe("http://anytype.test/v1/spaces/space-1/search");
+				// The query is sent as a JSON body with the right content-type.
+				expect(JSON.parse(fake.calls[0]?.body ?? "{}")).toEqual({ query: "meeting" });
+				expect(fake.calls[0]?.headers["content-type"]).toContain("application/json");
+			}),
+		);
+	});
+
+	it.effect("url-encodes space and object ids in the path", () => {
+		const fake = makeFakeHttp(() => ({ body: { object: { id: "x", name: "x" } } }));
+		return withFake(
+			fake,
+			Effect.gen(function* () {
+				const anytype = yield* AnytypeConnector;
+				yield* anytype.getObject("space/with slash", "obj#frag");
+				expect(fake.calls[0]?.url).toBe("http://anytype.test/v1/spaces/space%2Fwith%20slash/objects/obj%23frag");
 			}),
 		);
 	});
@@ -67,8 +82,10 @@ describe("AnytypeConnector", () => {
 			fake,
 			Effect.gen(function* () {
 				const anytype = yield* AnytypeConnector;
-				const exit = yield* Effect.exit(anytype.listSpaces());
-				expect(exit._tag).toBe("Failure");
+				const error = yield* Effect.flip(anytype.listSpaces());
+				// Surfaced as a HarnessError whose message names the failing action.
+				expect(error._tag).toBe("HarnessError");
+				expect(error.message).toContain("AnyType list spaces");
 			}),
 		);
 	});

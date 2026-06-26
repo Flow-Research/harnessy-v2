@@ -20,12 +20,16 @@ export const ANYTYPE_DEFAULT_BASE_URL = "http://127.0.0.1:31009";
  * Supplied explicitly (from CLI flags / env at the edge) rather than read from
  * the environment inside the service, so the connector stays pure and testable.
  */
+/** Default per-request timeout (ms) so a hung local API can't wedge the CLI. */
+export const ANYTYPE_DEFAULT_TIMEOUT_MS = 10_000;
+
 export class AnytypeConfig extends Context.Service<
 	AnytypeConfig,
 	{
 		readonly baseUrl: string;
 		readonly apiKey: string;
 		readonly version: string;
+		readonly timeoutMillis: number;
 	}
 >()("@harnessy/core/AnytypeConfig") {
 	/** Build a config layer from explicit settings. */
@@ -33,11 +37,13 @@ export class AnytypeConfig extends Context.Service<
 		readonly baseUrl?: string;
 		readonly apiKey: string;
 		readonly version?: string;
+		readonly timeoutMillis?: number;
 	}) =>
 		Layer.succeed(AnytypeConfig, {
 			baseUrl: (options.baseUrl ?? ANYTYPE_DEFAULT_BASE_URL).replace(/\/$/, ""),
 			apiKey: options.apiKey,
 			version: options.version ?? ANYTYPE_DEFAULT_VERSION,
+			timeoutMillis: options.timeoutMillis ?? ANYTYPE_DEFAULT_TIMEOUT_MS,
 		});
 }
 
@@ -129,7 +135,11 @@ export class AnytypeConnector extends Context.Service<
 			) =>
 				client
 					.execute(request)
-					.pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)), Effect.mapError(toError(action)));
+					.pipe(
+						Effect.timeout(config.timeoutMillis),
+						Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
+						Effect.mapError(toError(action)),
+					);
 
 			const listSpaces = Effect.fn("AnytypeConnector.listSpaces")(function* () {
 				const body = yield* sendJson(
@@ -141,7 +151,7 @@ export class AnytypeConnector extends Context.Service<
 			});
 
 			const search = Effect.fn("AnytypeConnector.search")(function* (spaceId: string, query: string) {
-				const request = HttpClientRequest.post(url(`/v1/spaces/${spaceId}/search`)).pipe(
+				const request = HttpClientRequest.post(url(`/v1/spaces/${encodeURIComponent(spaceId)}/search`)).pipe(
 					withAuth,
 					HttpClientRequest.bodyJsonUnsafe({ query }),
 				);
@@ -152,7 +162,9 @@ export class AnytypeConnector extends Context.Service<
 			});
 
 			const getObject = Effect.fn("AnytypeConnector.getObject")(function* (spaceId: string, objectId: string) {
-				const request = HttpClientRequest.get(url(`/v1/spaces/${spaceId}/objects/${objectId}`)).pipe(withAuth);
+				const request = HttpClientRequest.get(
+					url(`/v1/spaces/${encodeURIComponent(spaceId)}/objects/${encodeURIComponent(objectId)}`),
+				).pipe(withAuth);
 				const body = yield* sendJson(`get object ${objectId}`, request, ObjectEnvelope);
 				return new AnytypeObject({
 					id: body.object.id,

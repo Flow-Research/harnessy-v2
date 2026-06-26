@@ -13,7 +13,19 @@ export interface RecordedRequest {
 	readonly url: string;
 	readonly method: string;
 	readonly headers: Readonly<Record<string, string | undefined>>;
+	/** Decoded request body text, when the request carried one. */
+	readonly body: string | undefined;
 }
+
+/** Best-effort decode of an HttpClientRequest body into text for assertions. */
+const decodeBody = (body: unknown): string | undefined => {
+	if (body && typeof body === "object" && "body" in body) {
+		const raw = (body as { readonly body: unknown }).body;
+		if (raw instanceof Uint8Array) return new TextDecoder().decode(raw);
+		if (typeof raw === "string") return raw;
+	}
+	return undefined;
+};
 
 /** Canned response for a single request. */
 export interface FakeHttpResponse {
@@ -42,6 +54,7 @@ export const makeFakeHttp = (handler: (request: RecordedRequest) => FakeHttpResp
 			url: request.url,
 			method: request.method,
 			headers: request.headers,
+			body: decodeBody(request.body),
 		};
 		calls.push(recorded);
 		const response = handler(recorded);
