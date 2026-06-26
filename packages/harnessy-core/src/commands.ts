@@ -795,12 +795,7 @@ const expandHome = (input: string): string =>
 	input === "~" ? homedir() : input.startsWith("~/") ? join(homedir(), input.slice(2)) : input;
 
 /** Resolve installed/traces roots from flags, falling back to env then home defaults. */
-const resolvePromoteRoots = (
-	sourceRoot: string,
-	installedRoot: Option.Option<string>,
-	tracesRoot: Option.Option<string>,
-) => ({
-	sourceRoot: expandHome(sourceRoot),
+const resolveAgentsRoots = (installedRoot: Option.Option<string>, tracesRoot: Option.Option<string>) => ({
 	installedRoot: expandHome(
 		Option.getOrElse(
 			installedRoot,
@@ -814,6 +809,13 @@ const resolvePromoteRoots = (
 		),
 	),
 });
+
+/** Resolve source/installed/traces roots for the promotion check. */
+const resolvePromoteRoots = (
+	sourceRoot: string,
+	installedRoot: Option.Option<string>,
+	tracesRoot: Option.Option<string>,
+) => ({ sourceRoot: expandHome(sourceRoot), ...resolveAgentsRoots(installedRoot, tracesRoot) });
 
 /** Detect skill improvements not yet promoted from the installed copy back to source. */
 const skillPromoteCommand = Command.make(
@@ -870,10 +872,70 @@ const skillPromoteCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("Detect skill improvements not yet promoted from installed to source"));
 
+/** Free-text feedback line(s) to record; repeatable. */
+const feedbackTextOption = Options.string("text").pipe(
+	Options.atLeast(0),
+	Options.withDescription("Feedback text to record (repeat for multiple lines)."),
+);
+
+/** Structured feedback category; repeatable. */
+const feedbackCategoryOption = Options.string("category").pipe(
+	Options.atLeast(0),
+	Options.withDescription("Structured feedback category (repeat for multiple)."),
+);
+
+/** Capture skill feedback as a decision trace. */
+const skillFeedbackCommand = Command.make(
+	"feedback",
+	{
+		skill: Args.string("skill"),
+		text: feedbackTextOption,
+		category: feedbackCategoryOption,
+		installedRoot: installedRootOption,
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({ skill, text, category, installedRoot, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(installedRoot, tracesRoot);
+			const result = yield* project.captureSkillFeedback({
+				skill,
+				installedRoot: roots.installedRoot,
+				tracesRoot: roots.tracesRoot,
+				feedback: text,
+				categories: category,
+			});
+			if (json) {
+				yield* Console.log(
+					JSON.stringify(
+						{
+							command: "skill-feedback",
+							ok: true,
+							traceId: result.traceId,
+							file: result.file,
+							skill: result.skill,
+						},
+						null,
+						2,
+					),
+				);
+				return;
+			}
+			yield* Console.log(`Recorded feedback for ${result.skill} (${result.traceId}) -> ${result.file}`);
+		}),
+).pipe(Command.withDescription("Record skill feedback as a decision trace"));
+
 /** Inspect and validate project-local skills. */
 const skillCommand = Command.make("skill").pipe(
-	Command.withSubcommands([skillCreateCommand, skillValidateCommand, skillListCommand, skillPromoteCommand] as const),
-	Command.withDescription("Create, inspect, validate, and promote project-local skills"),
+	Command.withSubcommands([
+		skillCreateCommand,
+		skillValidateCommand,
+		skillListCommand,
+		skillPromoteCommand,
+		skillFeedbackCommand,
+	] as const),
+	Command.withDescription("Create, inspect, validate, promote, and give feedback on project-local skills"),
 );
 
 /** Check dependency declarations from installed capability manifests. */
