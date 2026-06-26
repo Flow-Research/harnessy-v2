@@ -93,6 +93,30 @@ describe("SkillTraces", () => {
 		),
 	);
 
+	it.effect("rounds average loops half-to-even like Python round(x, 2)", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const traces = yield* fs.makeTempDirectoryScoped();
+				// 8 traces, total 1 loop -> avg 0.125; half-to-even rounds to 0.12 (half-up would give 0.13).
+				const lines = Array.from({ length: 8 }, (_, index) =>
+					trace({
+						timestamp: `2026-06-0${index + 1}T00:00:00Z`,
+						gate: "g",
+						outcome: "approved",
+						loops: index === 0 ? 1 : 0,
+					}),
+				);
+				yield* writeTraces(fs, traces, "demo", lines);
+
+				const stats = yield* project.skillTraceStats({ skill: "demo", tracesRoot: traces });
+
+				expect(stats.gates[0].avgRefinementLoops).toBe(0.12);
+			}),
+		),
+	);
+
 	it.effect("rejects skill names that contain path traversal", () =>
 		provideLive(
 			Effect.gen(function* () {

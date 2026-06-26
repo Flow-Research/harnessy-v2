@@ -68,10 +68,12 @@ const stringField = (record: Record<string, unknown>, key: string, fallback: str
 	return typeof value === "string" ? value : fallback;
 };
 
-/** Read a finite number field, falling back to 0. */
+/** Read a finite number field (or a finite numeric string); absent/invalid values fall back to 0. */
 const numberField = (record: Record<string, unknown>, key: string): number => {
 	const value = record[key];
-	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+	return 0;
 };
 
 /** Read the structured feedback categories as strings. */
@@ -98,8 +100,14 @@ const mostCommon = (counter: Map<string, number>, limit: number): ReadonlyArray<
 		.slice(0, limit)
 		.map((entry) => new SkillTraceCount({ key: entry.key, count: entry.count }));
 
-/** Round to two decimals, mirroring v1 `round(x, 2)`. */
-const round2 = (value: number): number => Math.round(value * 100) / 100;
+/** Round to two decimals using half-to-even, mirroring Python 3 `round(x, 2)`. */
+const round2 = (value: number): number => {
+	const scaled = value * 100;
+	const floor = Math.floor(scaled);
+	const diff = scaled - floor;
+	const rounded = diff > 0.5 ? floor + 1 : diff < 0.5 ? floor : floor % 2 === 0 ? floor : floor + 1;
+	return rounded / 100;
+};
 
 /** Per-gate accumulator. */
 interface GateAccumulator {
@@ -133,27 +141,26 @@ export class SkillTraces extends Context.Service<
 				new HarnessError({ message: `${action}: ${causeMessage(cause)}`, cause });
 
 			/** Parse a skill's NDJSON traces into plain records, skipping malformed lines. */
-			const loadTraces = (skill: string, tracesRoot: string) =>
-				Effect.gen(function* () {
-					const file = path.join(tracesRoot, skill, TRACES_FILE);
-					const exists = yield* fs
-						.exists(file)
-						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not inspect ${file}`, cause)));
-					if (!exists) return [] as ReadonlyArray<Record<string, unknown>>;
-					const raw = yield* fs
-						.readFileString(file)
-						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not read ${file}`, cause)));
-					const traces: Array<Record<string, unknown>> = [];
-					for (const line of raw.split(/\r?\n/)) {
-						const trimmed = line.trim();
-						if (trimmed === "") continue;
-						const parsed = yield* Effect.try(() => JSON.parse(trimmed) as unknown).pipe(
-							Effect.orElseSucceed(() => null),
-						);
-						if (isRecord(parsed)) traces.push(parsed);
-					}
-					return traces as ReadonlyArray<Record<string, unknown>>;
-				});
+			const loadTraces = Effect.fn("SkillTraces.loadTraces")(function* (skill: string, tracesRoot: string) {
+				const file = path.join(tracesRoot, skill, TRACES_FILE);
+				const exists = yield* fs
+					.exists(file)
+					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not inspect ${file}`, cause)));
+				if (!exists) return [] as ReadonlyArray<Record<string, unknown>>;
+				const raw = yield* fs
+					.readFileString(file)
+					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not read ${file}`, cause)));
+				const traces: Array<Record<string, unknown>> = [];
+				for (const line of raw.split(/\r?\n/)) {
+					const trimmed = line.trim();
+					if (trimmed === "") continue;
+					const parsed = yield* Effect.try(() => JSON.parse(trimmed) as unknown).pipe(
+						Effect.orElseSucceed(() => null),
+					);
+					if (isRecord(parsed)) traces.push(parsed);
+				}
+				return traces as ReadonlyArray<Record<string, unknown>>;
+			});
 
 			const stats = Effect.fn("SkillTraces.stats")(function* (options: SkillTraceStatsOptions) {
 				const { skill, tracesRoot } = options;
