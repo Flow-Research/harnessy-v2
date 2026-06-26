@@ -95,8 +95,16 @@ export class SkillFeedback extends Context.Service<
 				const skillExists = yield* fs
 					.exists(skillDir)
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not inspect ${skillDir}`, cause)));
-				if (!skillExists) {
-					return yield* new HarnessError({ message: `Skill not found: ${skill} (looked under ${installedRoot})` });
+				const isDirectory =
+					skillExists &&
+					(yield* fs
+						.stat(skillDir)
+						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not stat ${skillDir}`, cause)))).type ===
+						"Directory";
+				if (!isDirectory) {
+					return yield* new HarnessError({
+						message: `Skill not found: ${skill} (no skill directory under ${installedRoot})`,
+					});
 				}
 
 				const millis = yield* Clock.currentTimeMillis;
@@ -111,7 +119,7 @@ export class SkillFeedback extends Context.Service<
 					trace_id: traceId,
 					timestamp: isoSeconds(date),
 					skill,
-					...(options.skillVersion === undefined ? {} : { version: options.skillVersion }),
+					...(options.skillVersion ? { version: options.skillVersion } : {}),
 					phase: {},
 					gate: {
 						name: gate,
