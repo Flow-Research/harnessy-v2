@@ -1,0 +1,283 @@
+import { FileSystem, Path, Schema } from "effect";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+
+import { causeMessage, HarnessError } from "./errors.ts";
+
+/** Trace file name written by the v1 decision-trace system. */
+const TRACES_FILE = "traces.ndjson";
+/** Gate type excluded from quality metrics: retrospective traces are feedback, not gate outcomes. */
+const RETROSPECTIVE_TYPE = "retrospective";
+
+/** Inputs for computing a skill's quality metrics. */
+export interface SkillMetricsOptions {
+	/** Skill directory name. */
+	readonly skill: string;
+	/** Decision-traces root (v1 `~/.agents/traces`). */
+	readonly tracesRoot: string;
+	/** Restrict to the N most recent traces before metrics are computed. */
+	readonly last?: number;
+}
+
+/** A label paired with how many times it occurred. */
+export class SkillMetricCount extends Schema.Class<SkillMetricCount>("SkillMetricCount")({
+	/** Outcome label. */
+	key: Schema.String,
+	/** Occurrence count. */
+	count: Schema.Number,
+}) {}
+
+/** Quality metrics for one gate. */
+export class SkillGateMetrics extends Schema.Class<SkillGateMetrics>("SkillGateMetrics")({
+	/** Gate name. */
+	name: Schema.String,
+	/** Number of traces for this gate. */
+	count: Schema.Number,
+	/** Mean refinement loops (3 decimals). */
+	avgRefinementLoops: Schema.Number,
+	/** Fraction of traces resolved with zero refinement loops (3 decimals). */
+	firstPassRate: Schema.Number,
+	/** Outcome counts in first-seen order. */
+	outcomes: Schema.Array(SkillMetricCount),
+	/** Mean gate duration in seconds, when any trace records a duration (1 decimal). */
+	avgDurationSeconds: Schema.optional(Schema.Number),
+}) {}
+
+/** Aggregate quality metrics for a skill, mirroring v1 `run_metrics.py compute`. */
+export class SkillMetrics extends Schema.Class<SkillMetrics>("SkillMetrics")({
+	/** Skill the metrics belong to. */
+	skill: Schema.String,
+	/** Number of gate traces analyzed (retrospective feedback excluded). */
+	totalTraces: Schema.Number,
+	/** Mean refinement loops across all gate traces (3 decimals). */
+	avgRefinementLoops: Schema.Number,
+	/** Fraction of gate traces resolved first-pass (3 decimals). */
+	firstPassRate: Schema.Number,
+	/** Total refinement loops across all gate traces. */
+	totalRefinementLoops: Schema.Number,
+	/** Count of first-pass gate traces. */
+	firstPassCount: Schema.Number,
+	/** Mean gate duration in seconds, when recorded (1 decimal). */
+	avgDurationSeconds: Schema.optional(Schema.Number),
+	/** Composite quality score in [0, 1] (4 decimals). */
+	qualityScore: Schema.Number,
+	/** Per-gate metrics, sorted by average refinement loops (descending). */
+	gates: Schema.Array(SkillGateMetrics),
+}) {}
+
+/** Narrow unknown NDJSON values to plain records. */
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** Read a nested record at `record[key]`, or an empty record. */
+const recordField = (record: Record<string, unknown>, key: string): Record<string, unknown> => {
+	const value = record[key];
+	return isRecord(value) ? value : {};
+};
+
+/** Read a string field, falling back to `fallback`. */
+const stringField = (record: Record<string, unknown>, key: string, fallback: string): string => {
+	const value = record[key];
+	return typeof value === "string" ? value : fallback;
+};
+
+/** Read a finite number field (or numeric string); absent/invalid values fall back to 0. */
+const numberField = (record: Record<string, unknown>, key: string): number => {
+	const value = record[key];
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+	return 0;
+};
+
+/** True when `record[key]` is present (any non-undefined value). */
+const hasField = (record: Record<string, unknown>, key: string): boolean => record[key] !== undefined;
+
+/** Round to `digits` decimals using half-to-even, mirroring Python 3 `round`. */
+const roundTo = (value: number, digits: number): number => {
+	const factor = 10 ** digits;
+	const scaled = value * factor;
+	const floor = Math.floor(scaled);
+	const diff = scaled - floor;
+	const rounded = diff > 0.5 ? floor + 1 : diff < 0.5 ? floor : floor % 2 === 0 ? floor : floor + 1;
+	return rounded / factor;
+};
+
+/** Per-gate accumulator. */
+interface GateAccumulator {
+	count: number;
+	totalLoops: number;
+	firstPass: number;
+	totalDuration: number;
+	durationCount: number;
+	readonly outcomes: Map<string, number>;
+}
+
+/** Composite quality score, mirroring v1 `compute_quality_score`. */
+const qualityScore = (firstPassRate: number, avgLoops: number, avgDuration: number): number => {
+	const normLoops = Math.min(avgLoops, 5) / 5;
+	const normDuration = Math.min(avgDuration, 7200) / 7200;
+	return roundTo(firstPassRate * 0.5 + (1 - normLoops) * 0.3 + (1 - normDuration) * 0.2, 4);
+};
+
+/**
+ * Computes skill quality metrics the way v1 `_shared/run_metrics.py compute`
+ * did, natively and deterministically: per-gate and overall refinement loops,
+ * first-pass rate, durations, and the composite quality score — excluding
+ * retrospective (feedback) traces, which are not gate outcomes. Read-only: no
+ * shell, no network, no writes.
+ */
+export class SkillMetricsService extends Context.Service<
+	SkillMetricsService,
+	{
+		/** Compute quality metrics across a skill's gate traces. */
+		readonly compute: (options: SkillMetricsOptions) => Effect.Effect<SkillMetrics, HarnessError>;
+	}
+>()("@harnessy/core/SkillMetrics") {
+	/** Live metrics computer backed by platform filesystem services. */
+	static readonly layer = Layer.effect(
+		SkillMetricsService,
+		Effect.gen(function* () {
+			const fs = yield* FileSystem.FileSystem;
+			const path = yield* Path.Path;
+
+			const mapPlatformError = (action: string, cause: unknown): HarnessError =>
+				new HarnessError({ message: `${action}: ${causeMessage(cause)}`, cause });
+
+			const loadTraces = Effect.fn("SkillMetrics.loadTraces")(function* (skill: string, tracesRoot: string) {
+				const file = path.join(tracesRoot, skill, TRACES_FILE);
+				const exists = yield* fs
+					.exists(file)
+					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not inspect ${file}`, cause)));
+				if (!exists) return [] as ReadonlyArray<Record<string, unknown>>;
+				const raw = yield* fs
+					.readFileString(file)
+					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not read ${file}`, cause)));
+				const traces: Array<Record<string, unknown>> = [];
+				for (const line of raw.split(/\r?\n/)) {
+					const trimmed = line.trim();
+					if (trimmed === "") continue;
+					const parsed = yield* Effect.try(() => JSON.parse(trimmed) as unknown).pipe(
+						Effect.orElseSucceed(() => null),
+					);
+					if (isRecord(parsed)) traces.push(parsed);
+				}
+				return traces as ReadonlyArray<Record<string, unknown>>;
+			});
+
+			const compute = Effect.fn("SkillMetrics.compute")(function* (options: SkillMetricsOptions) {
+				const { skill, tracesRoot } = options;
+				if (skill === "" || skill === "." || skill === ".." || /[/\\]/.test(skill)) {
+					return yield* new HarnessError({
+						message: `Invalid skill name "${skill}": path separators and traversal are not allowed.`,
+					});
+				}
+
+				let traces = yield* loadTraces(skill, tracesRoot);
+				if (options.last !== undefined) {
+					traces = [...traces]
+						.sort((a, b) => stringField(b, "timestamp", "").localeCompare(stringField(a, "timestamp", "")))
+						.slice(0, Math.max(options.last, 0));
+				}
+				// Retrospective traces are feedback, not gate outcomes — excluded from metrics.
+				const gateTraces = traces.filter(
+					(trace) => stringField(recordField(trace, "gate"), "type", "") !== RETROSPECTIVE_TYPE,
+				);
+
+				if (gateTraces.length === 0) {
+					return new SkillMetrics({
+						skill,
+						totalTraces: 0,
+						avgRefinementLoops: 0,
+						firstPassRate: 0,
+						totalRefinementLoops: 0,
+						firstPassCount: 0,
+						qualityScore: qualityScore(0, 0, 0),
+						gates: [],
+					});
+				}
+
+				let totalLoops = 0;
+				let firstPass = 0;
+				let totalDuration = 0;
+				let durationCount = 0;
+				const gates = new Map<string, GateAccumulator>();
+				for (const trace of gateTraces) {
+					const gate = recordField(trace, "gate");
+					const name = stringField(gate, "name", "unknown");
+					const loops = numberField(gate, "refinement_loops");
+					totalLoops += loops;
+					if (loops === 0) firstPass += 1;
+
+					let accumulator = gates.get(name);
+					if (accumulator === undefined) {
+						accumulator = {
+							count: 0,
+							totalLoops: 0,
+							firstPass: 0,
+							totalDuration: 0,
+							durationCount: 0,
+							outcomes: new Map(),
+						};
+						gates.set(name, accumulator);
+					}
+					accumulator.count += 1;
+					accumulator.totalLoops += loops;
+					if (loops === 0) accumulator.firstPass += 1;
+					const outcome = stringField(gate, "outcome", "unknown");
+					accumulator.outcomes.set(outcome, (accumulator.outcomes.get(outcome) ?? 0) + 1);
+					if (hasField(gate, "duration_seconds")) {
+						const duration = numberField(gate, "duration_seconds");
+						totalDuration += duration;
+						durationCount += 1;
+						accumulator.totalDuration += duration;
+						accumulator.durationCount += 1;
+					}
+				}
+
+				const total = gateTraces.length;
+				const avgRefinementLoops = roundTo(totalLoops / total, 3);
+				const firstPassRate = roundTo(firstPass / total, 3);
+				const avgDurationSeconds = durationCount > 0 ? roundTo(totalDuration / durationCount, 1) : undefined;
+
+				const gateMetrics = [...gates.entries()]
+					.map(([name, accumulator], index) => ({ name, accumulator, index }))
+					.sort((a, b) => {
+						const avgA = a.accumulator.totalLoops / Math.max(a.accumulator.count, 1);
+						const avgB = b.accumulator.totalLoops / Math.max(b.accumulator.count, 1);
+						return avgB !== avgA ? avgB - avgA : a.index - b.index;
+					})
+					.map(({ name, accumulator }) => {
+						const gateDuration =
+							accumulator.durationCount > 0
+								? roundTo(accumulator.totalDuration / accumulator.durationCount, 1)
+								: undefined;
+						return new SkillGateMetrics({
+							name,
+							count: accumulator.count,
+							avgRefinementLoops: roundTo(accumulator.totalLoops / accumulator.count, 3),
+							firstPassRate: roundTo(accumulator.firstPass / accumulator.count, 3),
+							outcomes: [...accumulator.outcomes.entries()].map(
+								([key, count]) => new SkillMetricCount({ key, count }),
+							),
+							...(gateDuration === undefined ? {} : { avgDurationSeconds: gateDuration }),
+						});
+					});
+
+				return new SkillMetrics({
+					skill,
+					totalTraces: total,
+					avgRefinementLoops,
+					firstPassRate,
+					totalRefinementLoops: totalLoops,
+					firstPassCount: firstPass,
+					...(avgDurationSeconds === undefined ? {} : { avgDurationSeconds }),
+					qualityScore: qualityScore(firstPassRate, avgRefinementLoops, avgDurationSeconds ?? 0),
+					gates: gateMetrics,
+				});
+			});
+
+			return { compute };
+		}),
+	);
+}

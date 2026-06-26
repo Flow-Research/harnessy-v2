@@ -30,6 +30,7 @@ import { ProjectDetector, type ProjectInfo } from "./project-detection.ts";
 import { type HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime-assets.ts";
 import { RuntimeEnvironment } from "./runtime-environment.ts";
 import { SkillFeedback, type SkillFeedbackOptions, type SkillFeedbackResult } from "./skill-feedback.ts";
+import { type SkillMetrics, type SkillMetricsOptions, SkillMetricsService } from "./skill-metrics.ts";
 import {
 	SkillPromote,
 	type SkillPromoteCheck,
@@ -270,6 +271,8 @@ export class HarnessProject extends Context.Service<
 		) => Effect.Effect<SkillFeedbackResult, HarnessError>;
 		/** Aggregate per-gate statistics across a skill's decision traces. */
 		readonly skillTraceStats: (options: SkillTraceStatsOptions) => Effect.Effect<SkillTraceStats, HarnessError>;
+		/** Compute quality metrics across a skill's gate traces. */
+		readonly skillMetrics: (options: SkillMetricsOptions) => Effect.Effect<SkillMetrics, HarnessError>;
 		/** Read installed capability records from the lockfile. */
 		readonly listCapabilities: (target: string) => Effect.Effect<ReadonlyArray<CapabilityEntry>, HarnessError>;
 		/** Check dependency declarations from installed capability manifests. */
@@ -310,6 +313,7 @@ export class HarnessProject extends Context.Service<
 			const skillPromote = yield* SkillPromote;
 			const skillFeedback = yield* SkillFeedback;
 			const skillTraces = yield* SkillTraces;
+			const skillMetrics = yield* SkillMetricsService;
 			const profiles = yield* ProfileStore;
 			const detector = yield* ProjectDetector;
 
@@ -676,6 +680,10 @@ export class HarnessProject extends Context.Service<
 				return yield* skillTraces.stats(options);
 			});
 
+			const skillMetricsFor = Effect.fn("HarnessProject.skillMetrics")(function* (options: SkillMetricsOptions) {
+				return yield* skillMetrics.compute(options);
+			});
+
 			const doctor = Effect.fn("HarnessProject.doctor")(function* (target: string) {
 				const resolved = yield* paths.resolve(target);
 				const lockfileExists = yield* lockfiles.exists(resolved);
@@ -742,6 +750,7 @@ export class HarnessProject extends Context.Service<
 				scanSkillPromotions,
 				captureSkillFeedback,
 				skillTraceStats,
+				skillMetrics: skillMetricsFor,
 				doctor,
 				listCapabilities,
 				checkDependencies,
@@ -779,6 +788,7 @@ export class HarnessProject extends Context.Service<
 			Layer.provideMerge(SkillPromote.layer),
 			Layer.provideMerge(SkillFeedback.layer),
 			Layer.provideMerge(SkillTraces.layer),
+			Layer.provideMerge(SkillMetricsService.layer),
 			Layer.provideMerge(ProfileStore.layer),
 			Layer.provideMerge(ProjectDetector.layer),
 			Layer.provideMerge(RuntimeEnvironment.liveLayer),

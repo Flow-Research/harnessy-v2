@@ -25,6 +25,7 @@ import type {
 import type { DependencyCheckResult, DependencyReport, DependencyStatus } from "./dependency-checker.ts";
 import type { DoctorResult, VerifyResult } from "./operations.ts";
 import type { MonorepoType, PackageManager, WorkspaceKind } from "./project-detection.ts";
+import type { SkillMetrics } from "./skill-metrics.ts";
 import type { SkillPromoteCheck, SkillPromoteScan } from "./skill-promote.ts";
 import type { SkillTraceStats } from "./skill-traces.ts";
 import type { SkillValidationReport } from "./skill-validator.ts";
@@ -890,6 +891,29 @@ export const renderSkillPromoteScanJson = (scan: SkillPromoteScan): string =>
 		totalSharedSkills: scan.totalSharedSkills,
 		skillsWithUnpromoted: scan.skillsWithUnpromoted,
 		skills: scan.skills.map(skillPromoteEntry),
+	});
+
+/** Render the stable structured JSON text for `harnessy skill metrics <skill> --json`. */
+export const renderSkillMetricsJson = (metrics: SkillMetrics): string =>
+	renderStructuredJson({
+		command: "skill-metrics",
+		ok: true,
+		skill: metrics.skill,
+		totalTraces: metrics.totalTraces,
+		avgRefinementLoops: metrics.avgRefinementLoops,
+		firstPassRate: metrics.firstPassRate,
+		totalRefinementLoops: metrics.totalRefinementLoops,
+		firstPassCount: metrics.firstPassCount,
+		...(metrics.avgDurationSeconds === undefined ? {} : { avgDurationSeconds: metrics.avgDurationSeconds }),
+		qualityScore: metrics.qualityScore,
+		gates: metrics.gates.map((gate) => ({
+			name: gate.name,
+			count: gate.count,
+			avgRefinementLoops: gate.avgRefinementLoops,
+			firstPassRate: gate.firstPassRate,
+			outcomes: gate.outcomes.map((entry) => ({ key: entry.key, count: entry.count })),
+			...(gate.avgDurationSeconds === undefined ? {} : { avgDurationSeconds: gate.avgDurationSeconds }),
+		})),
 	});
 
 /** Render the stable structured JSON text for `harnessy skill traces <skill> --json`. */

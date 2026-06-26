@@ -17,6 +17,7 @@ import {
 	renderDepsCheckJson,
 	renderDoctorJson,
 	renderSkillListJson,
+	renderSkillMetricsJson,
 	renderSkillPromoteCheckJson,
 	renderSkillPromoteScanJson,
 	renderSkillTraceStatsJson,
@@ -960,6 +961,50 @@ const skillTracesCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("Aggregate decision-trace statistics for a skill"));
 
+/** Restrict metrics to the N most recent traces. */
+const lastOption = Options.integer("last").pipe(
+	Options.optional,
+	Options.withDescription("Compute metrics over only the N most recent traces."),
+);
+
+/** Compute quality metrics for a skill from its decision traces. */
+const skillMetricsCommand = Command.make(
+	"metrics",
+	{
+		skill: Args.string("skill"),
+		last: lastOption,
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({ skill, last, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const metrics = yield* project.skillMetrics({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				last: Option.getOrUndefined(last),
+			});
+			if (json) {
+				yield* Console.log(renderSkillMetricsJson(metrics));
+				return;
+			}
+			if (metrics.totalTraces === 0) {
+				yield* Console.log(`No gate traces to score for ${metrics.skill}.`);
+				return;
+			}
+			yield* Console.log(
+				`${metrics.skill}: quality ${metrics.qualityScore.toFixed(2)}/1.00, first-pass ${metrics.firstPassRate}, avg ${metrics.avgRefinementLoops} loops over ${metrics.totalTraces} traces.`,
+			);
+			for (const gate of metrics.gates) {
+				const flag = gate.avgRefinementLoops > 1.5 ? " !" : "";
+				yield* Console.log(
+					`  ${gate.name}\t${gate.avgRefinementLoops} loops\t${gate.firstPassRate} first-pass${flag}`,
+				);
+			}
+		}),
+).pipe(Command.withDescription("Compute quality metrics for a skill from its decision traces"));
+
 /** Inspect and validate project-local skills. */
 const skillCommand = Command.make("skill").pipe(
 	Command.withSubcommands([
@@ -969,6 +1014,7 @@ const skillCommand = Command.make("skill").pipe(
 		skillPromoteCommand,
 		skillFeedbackCommand,
 		skillTracesCommand,
+		skillMetricsCommand,
 	] as const),
 	Command.withDescription("Create, inspect, validate, promote, give feedback on, and analyze project-local skills"),
 );
