@@ -1,8 +1,12 @@
+import process from "node:process";
+
 import { Console } from "effect";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Argument as Args, Command, Flag as Options } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
 
+import { ANYTYPE_DEFAULT_BASE_URL, AnytypeConfig, AnytypeConnector } from "./anytype-connector.ts";
 import { HarnessError } from "./errors.ts";
 import { HarnessProject, type InstallStep } from "./operations.ts";
 import {
@@ -758,6 +762,125 @@ const depsCommand = Command.make("deps").pipe(
 	Command.withDescription("Inspect Harnessy capability dependencies"),
 );
 
+// --- Connectors: portable, capability-style integrations (read-only for now) ---
+
+/** AnyType API key; falls back to the ANYTYPE_API_KEY env var. */
+const anytypeApiKeyOption = Options.string("api-key").pipe(
+	Options.optional,
+	Options.withDescription("AnyType local API key (or set ANYTYPE_API_KEY)."),
+);
+
+/** AnyType local API base URL; falls back to ANYTYPE_API_URL, then the default. */
+const anytypeUrlOption = Options.string("anytype-url").pipe(
+	Options.optional,
+	Options.withDescription("AnyType local API base URL (or set ANYTYPE_API_URL)."),
+);
+
+const spaceOption = Options.string("space").pipe(Options.withDescription("AnyType space id."));
+const queryOption = Options.string("query").pipe(Options.withDescription("Search query."));
+const objectIdOption = Options.string("object-id").pipe(Options.withDescription("AnyType object id."));
+
+/** Resolve AnyType connection settings from flags, falling back to env. */
+const resolveAnytype = (apiKeyOpt: Option.Option<string>, urlOpt: Option.Option<string>) => ({
+	apiKey: Option.getOrElse(apiKeyOpt, () => process.env.ANYTYPE_API_KEY ?? ""),
+	baseUrl: Option.getOrElse(urlOpt, () => process.env.ANYTYPE_API_URL ?? ANYTYPE_DEFAULT_BASE_URL),
+});
+
+/** Provide the connector, its config, and a live HTTP client to a connector effect. */
+const provideAnytype = <A, E>(
+	effect: Effect.Effect<A, E, AnytypeConnector>,
+	settings: { readonly apiKey: string; readonly baseUrl: string },
+) =>
+	Effect.gen(function* () {
+		if (settings.apiKey === "") {
+			return yield* new HarnessError({
+				message: "Missing AnyType API key. Pass --api-key or set ANYTYPE_API_KEY.",
+			});
+		}
+		return yield* effect;
+	}).pipe(
+		Effect.provide(AnytypeConnector.layer),
+		Effect.provide(AnytypeConfig.layer({ baseUrl: settings.baseUrl, apiKey: settings.apiKey })),
+		Effect.provide(FetchHttpClient.layer),
+	);
+
+const anytypeSpacesCommand = Command.make(
+	"spaces",
+	{ apiKey: anytypeApiKeyOption, anytypeUrl: anytypeUrlOption, json: jsonOption },
+	({ apiKey, anytypeUrl, json }) =>
+		provideAnytype(
+			Effect.gen(function* () {
+				const spaces = yield* (yield* AnytypeConnector).listSpaces();
+				if (json) {
+					yield* Console.log(JSON.stringify(spaces, null, 2));
+					return;
+				}
+				for (const space of spaces) {
+					yield* Console.log(`${space.id}\t${space.name ?? "?"}`);
+				}
+			}),
+			resolveAnytype(apiKey, anytypeUrl),
+		),
+).pipe(Command.withDescription("List AnyType spaces"));
+
+const anytypeSearchCommand = Command.make(
+	"search",
+	{
+		space: spaceOption,
+		query: queryOption,
+		apiKey: anytypeApiKeyOption,
+		anytypeUrl: anytypeUrlOption,
+		json: jsonOption,
+	},
+	({ space, query, apiKey, anytypeUrl, json }) =>
+		provideAnytype(
+			Effect.gen(function* () {
+				const results = yield* (yield* AnytypeConnector).search(space, query);
+				if (json) {
+					yield* Console.log(JSON.stringify(results, null, 2));
+					return;
+				}
+				for (const result of results) {
+					yield* Console.log(`${result.id}\t${result.type ?? "?"}\t${result.name ?? "?"}`);
+				}
+			}),
+			resolveAnytype(apiKey, anytypeUrl),
+		),
+).pipe(Command.withDescription("Search an AnyType space"));
+
+const anytypeGetCommand = Command.make(
+	"get",
+	{
+		space: spaceOption,
+		objectId: objectIdOption,
+		apiKey: anytypeApiKeyOption,
+		anytypeUrl: anytypeUrlOption,
+		json: jsonOption,
+	},
+	({ space, objectId, apiKey, anytypeUrl, json }) =>
+		provideAnytype(
+			Effect.gen(function* () {
+				const object = yield* (yield* AnytypeConnector).getObject(space, objectId);
+				yield* Console.log(
+					json ? JSON.stringify(object, null, 2) : (object.markdown ?? object.snippet ?? object.name ?? ""),
+				);
+			}),
+			resolveAnytype(apiKey, anytypeUrl),
+		),
+).pipe(Command.withDescription("Fetch one AnyType object (markdown body by default)"));
+
+/** AnyType connector subcommand group. */
+const anytypeCommand = Command.make("anytype").pipe(
+	Command.withSubcommands([anytypeSpacesCommand, anytypeSearchCommand, anytypeGetCommand] as const),
+	Command.withDescription("Read from a local AnyType app via its API"),
+);
+
+/** Connector command group (portable integration capabilities). */
+const connectorCommand = Command.make("connector").pipe(
+	Command.withSubcommands([anytypeCommand] as const),
+	Command.withDescription("Portable connector capabilities"),
+);
+
 /** Root Effect CLI command tree. Runtime services are provided by `main.ts`. */
 export const rootCommand = Command.make("harnessy").pipe(
 	Command.withSubcommands([
@@ -768,6 +891,7 @@ export const rootCommand = Command.make("harnessy").pipe(
 		doctorCommand,
 		capabilityCommand,
 		skillCommand,
+		connectorCommand,
 		depsCommand,
 	] as const),
 	Command.withDescription("Harnessy capability harness CLI"),
