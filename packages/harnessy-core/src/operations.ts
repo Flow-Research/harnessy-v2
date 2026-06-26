@@ -38,6 +38,7 @@ import {
 	type SkillPromoteScanOptions,
 } from "./skill-promote.ts";
 import { SkillScaffolder, type SkillScaffoldOptions, type SkillScaffoldResult } from "./skill-scaffold.ts";
+import { type SkillTraceStats, type SkillTraceStatsOptions, SkillTraces } from "./skill-traces.ts";
 import { type SkillValidationReport, SkillValidator } from "./skill-validator.ts";
 
 export type { AddCapabilityResult } from "./capability-registry.ts";
@@ -267,6 +268,8 @@ export class HarnessProject extends Context.Service<
 		readonly captureSkillFeedback: (
 			options: SkillFeedbackOptions,
 		) => Effect.Effect<SkillFeedbackResult, HarnessError>;
+		/** Aggregate per-gate statistics across a skill's decision traces. */
+		readonly skillTraceStats: (options: SkillTraceStatsOptions) => Effect.Effect<SkillTraceStats, HarnessError>;
 		/** Read installed capability records from the lockfile. */
 		readonly listCapabilities: (target: string) => Effect.Effect<ReadonlyArray<CapabilityEntry>, HarnessError>;
 		/** Check dependency declarations from installed capability manifests. */
@@ -306,6 +309,7 @@ export class HarnessProject extends Context.Service<
 			const skillScaffolder = yield* SkillScaffolder;
 			const skillPromote = yield* SkillPromote;
 			const skillFeedback = yield* SkillFeedback;
+			const skillTraces = yield* SkillTraces;
 			const profiles = yield* ProfileStore;
 			const detector = yield* ProjectDetector;
 
@@ -666,6 +670,12 @@ export class HarnessProject extends Context.Service<
 				return yield* skillFeedback.capture(options);
 			});
 
+			const skillTraceStats = Effect.fn("HarnessProject.skillTraceStats")(function* (
+				options: SkillTraceStatsOptions,
+			) {
+				return yield* skillTraces.stats(options);
+			});
+
 			const doctor = Effect.fn("HarnessProject.doctor")(function* (target: string) {
 				const resolved = yield* paths.resolve(target);
 				const lockfileExists = yield* lockfiles.exists(resolved);
@@ -731,6 +741,7 @@ export class HarnessProject extends Context.Service<
 				promoteSkill,
 				scanSkillPromotions,
 				captureSkillFeedback,
+				skillTraceStats,
 				doctor,
 				listCapabilities,
 				checkDependencies,
@@ -741,27 +752,36 @@ export class HarnessProject extends Context.Service<
 		}),
 	);
 
-	/** Live layer with all Harnessy services wired, leaving only platform services to provide at the edge. */
-	static readonly layer = HarnessProject.liveLayer.pipe(
-		Layer.provideMerge(HarnessBootstrap.layer),
-		Layer.provideMerge(CommandRunner.layer),
-		Layer.provideMerge(CapabilityRegistry.layer),
-		Layer.provideMerge(CapabilityChecker.layer),
-		Layer.provideMerge(CapabilityFingerprinter.layer),
-		Layer.provideMerge(CapabilityMaterializer.layer),
-		Layer.provideMerge(DependencyChecker.layer),
-		Layer.provideMerge(LockfileStore.layer),
-		Layer.provideMerge(GeneratedFiles.layer),
-		Layer.provideMerge(ManagedBlocks.layer),
-		Layer.provideMerge(PackageScripts.layer),
-		Layer.provideMerge(HarnessRuntimeAssets.layer),
-		Layer.provideMerge(SkillValidator.layer),
-		Layer.provideMerge(SkillScaffolder.layer),
-		Layer.provideMerge(SkillPromote.layer),
-		Layer.provideMerge(SkillFeedback.layer),
-		Layer.provideMerge(ProfileStore.layer),
-		Layer.provideMerge(ProjectDetector.layer),
-		Layer.provideMerge(RuntimeEnvironment.liveLayer),
-		Layer.provideMerge(HarnessPathResolver.layer),
-	);
+	/**
+	 * Live layer with all Harnessy services wired, leaving only platform services
+	 * to provide at the edge. Split into two `pipe` chains because `pipe` only
+	 * has typed overloads up to 20 arguments; chaining is associative, so the
+	 * provideMerge feed order is preserved across the boundary.
+	 */
+	static readonly layer = HarnessProject.liveLayer
+		.pipe(
+			Layer.provideMerge(HarnessBootstrap.layer),
+			Layer.provideMerge(CommandRunner.layer),
+			Layer.provideMerge(CapabilityRegistry.layer),
+			Layer.provideMerge(CapabilityChecker.layer),
+			Layer.provideMerge(CapabilityFingerprinter.layer),
+			Layer.provideMerge(CapabilityMaterializer.layer),
+			Layer.provideMerge(DependencyChecker.layer),
+			Layer.provideMerge(LockfileStore.layer),
+			Layer.provideMerge(GeneratedFiles.layer),
+			Layer.provideMerge(ManagedBlocks.layer),
+			Layer.provideMerge(PackageScripts.layer),
+			Layer.provideMerge(HarnessRuntimeAssets.layer),
+		)
+		.pipe(
+			Layer.provideMerge(SkillValidator.layer),
+			Layer.provideMerge(SkillScaffolder.layer),
+			Layer.provideMerge(SkillPromote.layer),
+			Layer.provideMerge(SkillFeedback.layer),
+			Layer.provideMerge(SkillTraces.layer),
+			Layer.provideMerge(ProfileStore.layer),
+			Layer.provideMerge(ProjectDetector.layer),
+			Layer.provideMerge(RuntimeEnvironment.liveLayer),
+			Layer.provideMerge(HarnessPathResolver.layer),
+		);
 }

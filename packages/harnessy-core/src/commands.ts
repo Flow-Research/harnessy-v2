@@ -19,6 +19,7 @@ import {
 	renderSkillListJson,
 	renderSkillPromoteCheckJson,
 	renderSkillPromoteScanJson,
+	renderSkillTraceStatsJson,
 	renderSkillValidateJson,
 	renderVerifyJson,
 } from "./structured-output.ts";
@@ -926,6 +927,39 @@ const skillFeedbackCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("Record skill feedback as a decision trace"));
 
+/** Aggregate decision-trace statistics for a skill. */
+const skillTracesCommand = Command.make(
+	"traces",
+	{
+		skill: Args.string("skill"),
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({ skill, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const stats = yield* project.skillTraceStats({ skill, tracesRoot: roots.tracesRoot });
+			if (json) {
+				yield* Console.log(renderSkillTraceStatsJson(stats));
+				return;
+			}
+			if (stats.totalTraces === 0) {
+				yield* Console.log(`No decision traces recorded for ${stats.skill}.`);
+				return;
+			}
+			yield* Console.log(
+				`${stats.skill}: ${stats.totalTraces} traces (${stats.earliest ?? "?"} .. ${stats.latest ?? "?"}).`,
+			);
+			for (const gate of stats.gates) {
+				const outcomes = gate.outcomes.map((entry) => `${entry.key}=${entry.count}`).join(", ");
+				yield* Console.log(
+					`  ${gate.name}\tcount=${gate.count}\tavgLoops=${gate.avgRefinementLoops}\t[${outcomes}]`,
+				);
+			}
+		}),
+).pipe(Command.withDescription("Aggregate decision-trace statistics for a skill"));
+
 /** Inspect and validate project-local skills. */
 const skillCommand = Command.make("skill").pipe(
 	Command.withSubcommands([
@@ -934,8 +968,9 @@ const skillCommand = Command.make("skill").pipe(
 		skillListCommand,
 		skillPromoteCommand,
 		skillFeedbackCommand,
+		skillTracesCommand,
 	] as const),
-	Command.withDescription("Create, inspect, validate, promote, and give feedback on project-local skills"),
+	Command.withDescription("Create, inspect, validate, promote, give feedback on, and analyze project-local skills"),
 );
 
 /** Check dependency declarations from installed capability manifests. */

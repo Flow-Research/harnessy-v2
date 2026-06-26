@@ -26,6 +26,7 @@ import type { DependencyCheckResult, DependencyReport, DependencyStatus } from "
 import type { DoctorResult, VerifyResult } from "./operations.ts";
 import type { MonorepoType, PackageManager, WorkspaceKind } from "./project-detection.ts";
 import type { SkillPromoteCheck, SkillPromoteScan } from "./skill-promote.ts";
+import type { SkillTraceStats } from "./skill-traces.ts";
 import type { SkillValidationReport } from "./skill-validator.ts";
 
 /** Capability source payload emitted in structured command output. */
@@ -889,6 +890,24 @@ export const renderSkillPromoteScanJson = (scan: SkillPromoteScan): string =>
 		totalSharedSkills: scan.totalSharedSkills,
 		skillsWithUnpromoted: scan.skillsWithUnpromoted,
 		skills: scan.skills.map(skillPromoteEntry),
+	});
+
+/** Render the stable structured JSON text for `harnessy skill traces <skill> --json`. */
+export const renderSkillTraceStatsJson = (stats: SkillTraceStats): string =>
+	renderStructuredJson({
+		command: "skill-traces",
+		ok: true,
+		skill: stats.skill,
+		totalTraces: stats.totalTraces,
+		...(stats.earliest === undefined ? {} : { earliest: stats.earliest }),
+		...(stats.latest === undefined ? {} : { latest: stats.latest }),
+		gates: stats.gates.map((gate) => ({
+			name: gate.name,
+			count: gate.count,
+			avgRefinementLoops: gate.avgRefinementLoops,
+			outcomes: gate.outcomes.map((entry) => ({ key: entry.key, count: entry.count })),
+			topCategories: gate.topCategories.map((entry) => ({ key: entry.key, count: entry.count })),
+		})),
 	});
 
 /** Build the stable structured payload for `harnessy doctor --json`. */
