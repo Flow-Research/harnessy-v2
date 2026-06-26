@@ -90,17 +90,29 @@ const numberField = (record: Record<string, unknown>, key: string): number => {
 	return 0;
 };
 
-/** True when `record[key]` is present (any non-undefined value). */
-const hasField = (record: Record<string, unknown>, key: string): boolean => record[key] !== undefined;
+/** Read a finite number field, or null when absent/null/non-numeric (mirrors v1 `is not None`). */
+const finiteNumberOrNull = (record: Record<string, unknown>, key: string): number | null => {
+	const value = record[key];
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+	return null;
+};
 
-/** Round to `digits` decimals using half-to-even, mirroring Python 3 `round`. */
+/**
+ * Round to `digits` decimals to match Python 3 `round`. Python rounds the exact
+ * binary value half-to-even; `toFixed` rounds the same value half-away-from-zero.
+ * They differ only on exact dyadic ties (e.g. 0.125), so use `toFixed` for the
+ * common case and apply half-to-even only when the value is exactly `k.5` ulps.
+ * Verified to match `round()` across thousands of integer-ratio inputs.
+ */
 const roundTo = (value: number, digits: number): number => {
 	const factor = 10 ** digits;
-	const scaled = value * factor;
-	const floor = Math.floor(scaled);
-	const diff = scaled - floor;
-	const rounded = diff > 0.5 ? floor + 1 : diff < 0.5 ? floor : floor % 2 === 0 ? floor : floor + 1;
-	return rounded / factor;
+	const doubled = value * 2 * factor;
+	if (Number.isInteger(doubled) && Math.abs(doubled % 2) === 1) {
+		const floor = Math.floor(value * factor);
+		return (floor % 2 === 0 ? floor : floor + 1) / factor;
+	}
+	return Number(value.toFixed(digits));
 };
 
 /** Per-gate accumulator. */
@@ -174,10 +186,11 @@ export class SkillMetricsService extends Context.Service<
 				}
 
 				let traces = yield* loadTraces(skill, tracesRoot);
-				if (options.last !== undefined) {
+				// v1 `if args.last:` leaves traces unfiltered for 0 / unset; only a positive N restricts.
+				if (options.last !== undefined && options.last > 0) {
 					traces = [...traces]
 						.sort((a, b) => stringField(b, "timestamp", "").localeCompare(stringField(a, "timestamp", "")))
-						.slice(0, Math.max(options.last, 0));
+						.slice(0, options.last);
 				}
 				// Retrospective traces are feedback, not gate outcomes — excluded from metrics.
 				const gateTraces = traces.filter(
@@ -226,8 +239,8 @@ export class SkillMetricsService extends Context.Service<
 					if (loops === 0) accumulator.firstPass += 1;
 					const outcome = stringField(gate, "outcome", "unknown");
 					accumulator.outcomes.set(outcome, (accumulator.outcomes.get(outcome) ?? 0) + 1);
-					if (hasField(gate, "duration_seconds")) {
-						const duration = numberField(gate, "duration_seconds");
+					const duration = finiteNumberOrNull(gate, "duration_seconds");
+					if (duration !== null) {
 						totalDuration += duration;
 						durationCount += 1;
 						accumulator.totalDuration += duration;

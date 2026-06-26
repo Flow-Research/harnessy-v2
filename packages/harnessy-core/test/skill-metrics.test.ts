@@ -124,6 +124,60 @@ describe("SkillMetrics", () => {
 		),
 	);
 
+	it.effect("treats a null duration as absent, not zero", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const traces = yield* fs.makeTempDirectoryScoped();
+				// One trace with an explicit null duration, one without -> no durations recorded.
+				yield* writeTraces(fs, traces, "demo", [
+					JSON.stringify({
+						timestamp: "2026-06-01T00:00:00Z",
+						gate: {
+							name: "prd",
+							type: "human",
+							outcome: "approved",
+							refinement_loops: 0,
+							duration_seconds: null,
+						},
+					}),
+					trace({ timestamp: "2026-06-02T00:00:00Z", gate: "prd", outcome: "approved", loops: 0 }),
+				]);
+
+				const metrics = yield* project.skillMetrics({ skill: "demo", tracesRoot: traces });
+
+				expect(metrics.avgDurationSeconds).toBeUndefined();
+				// No durations -> score uses 0 duration credit: 1*0.5 + 1*0.3 + 1*0.2 = 1.
+				expect(metrics.qualityScore).toBe(1);
+			}),
+		),
+	);
+
+	it.effect("rounds to match Python round() on dyadic ties (half-to-even)", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const traces = yield* fs.makeTempDirectoryScoped();
+				// 16 traces, total 1 loop -> avg 0.0625; Python round(0.0625, 3) = 0.062 (half-to-even).
+				const lines = Array.from({ length: 16 }, (_, index) =>
+					trace({
+						timestamp: `2026-06-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+						gate: "prd",
+						outcome: "approved",
+						loops: index === 0 ? 1 : 0,
+					}),
+				);
+				yield* writeTraces(fs, traces, "demo", lines);
+
+				const metrics = yield* project.skillMetrics({ skill: "demo", tracesRoot: traces });
+
+				expect(metrics.avgRefinementLoops).toBe(0.062);
+			}),
+		),
+	);
+
 	it.effect("rejects skill names that contain path traversal", () =>
 		provideLive(
 			Effect.gen(function* () {
