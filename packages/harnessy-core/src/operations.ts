@@ -29,6 +29,13 @@ import { ProfileStore } from "./profile-store.ts";
 import { ProjectDetector, type ProjectInfo } from "./project-detection.ts";
 import { type HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime-assets.ts";
 import { RuntimeEnvironment } from "./runtime-environment.ts";
+import {
+	SkillPromote,
+	type SkillPromoteCheck,
+	type SkillPromoteCheckOptions,
+	type SkillPromoteScan,
+	type SkillPromoteScanOptions,
+} from "./skill-promote.ts";
 import { SkillScaffolder, type SkillScaffoldOptions, type SkillScaffoldResult } from "./skill-scaffold.ts";
 import { type SkillValidationReport, SkillValidator } from "./skill-validator.ts";
 
@@ -251,6 +258,10 @@ export class HarnessProject extends Context.Service<
 			name: string,
 			options: SkillScaffoldOptions,
 		) => Effect.Effect<SkillScaffoldResult, HarnessError>;
+		/** Check one skill for improvements not yet promoted from installed to source. */
+		readonly promoteSkill: (options: SkillPromoteCheckOptions) => Effect.Effect<SkillPromoteCheck, HarnessError>;
+		/** Scan every shared skill for unpromoted improvements. */
+		readonly scanSkillPromotions: (options: SkillPromoteScanOptions) => Effect.Effect<SkillPromoteScan, HarnessError>;
 		/** Read installed capability records from the lockfile. */
 		readonly listCapabilities: (target: string) => Effect.Effect<ReadonlyArray<CapabilityEntry>, HarnessError>;
 		/** Check dependency declarations from installed capability manifests. */
@@ -288,6 +299,7 @@ export class HarnessProject extends Context.Service<
 			const runtimeAssets = yield* HarnessRuntimeAssets;
 			const skillValidator = yield* SkillValidator;
 			const skillScaffolder = yield* SkillScaffolder;
+			const skillPromote = yield* SkillPromote;
 			const profiles = yield* ProfileStore;
 			const detector = yield* ProjectDetector;
 
@@ -632,6 +644,16 @@ export class HarnessProject extends Context.Service<
 				return yield* skillScaffolder.scaffold(resolved, installPaths, name, options);
 			});
 
+			const promoteSkill = Effect.fn("HarnessProject.promoteSkill")(function* (options: SkillPromoteCheckOptions) {
+				return yield* skillPromote.check(options);
+			});
+
+			const scanSkillPromotions = Effect.fn("HarnessProject.scanSkillPromotions")(function* (
+				options: SkillPromoteScanOptions,
+			) {
+				return yield* skillPromote.scan(options);
+			});
+
 			const doctor = Effect.fn("HarnessProject.doctor")(function* (target: string) {
 				const resolved = yield* paths.resolve(target);
 				const lockfileExists = yield* lockfiles.exists(resolved);
@@ -694,6 +716,8 @@ export class HarnessProject extends Context.Service<
 				verify,
 				validateSkills,
 				createSkill,
+				promoteSkill,
+				scanSkillPromotions,
 				doctor,
 				listCapabilities,
 				checkDependencies,
@@ -720,6 +744,7 @@ export class HarnessProject extends Context.Service<
 		Layer.provideMerge(HarnessRuntimeAssets.layer),
 		Layer.provideMerge(SkillValidator.layer),
 		Layer.provideMerge(SkillScaffolder.layer),
+		Layer.provideMerge(SkillPromote.layer),
 		Layer.provideMerge(ProfileStore.layer),
 		Layer.provideMerge(ProjectDetector.layer),
 		Layer.provideMerge(RuntimeEnvironment.liveLayer),

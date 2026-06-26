@@ -25,6 +25,7 @@ import type {
 import type { DependencyCheckResult, DependencyReport, DependencyStatus } from "./dependency-checker.ts";
 import type { DoctorResult, VerifyResult } from "./operations.ts";
 import type { MonorepoType, PackageManager, WorkspaceKind } from "./project-detection.ts";
+import type { SkillPromoteCheck, SkillPromoteScan } from "./skill-promote.ts";
 import type { SkillValidationReport } from "./skill-validator.ts";
 
 /** Capability source payload emitted in structured command output. */
@@ -847,6 +848,48 @@ export const renderSkillValidateJson = (target: string, report: SkillValidationR
 /** Render the stable structured JSON text for `harnessy skill list --json`. */
 export const renderSkillListJson = (target: string, report: SkillValidationReport): string =>
 	renderStructuredJson(skillJsonOutput("skill-list", target, report));
+
+/** One skill's promotion state in the structured payload. */
+export interface StructuredSkillPromoteEntry {
+	readonly skill: string;
+	readonly installedVersion?: string;
+	readonly sourceVersion?: string;
+	readonly installedExists: boolean;
+	readonly sourceExists: boolean;
+	readonly hasUnpromoted: boolean;
+	readonly reason?: string;
+	readonly unpromotedCount: number;
+	readonly unpromotedIds: ReadonlyArray<string>;
+}
+
+/** Build the stable structured payload for one promotion check. */
+const skillPromoteEntry = (check: SkillPromoteCheck): StructuredSkillPromoteEntry => ({
+	skill: check.skill,
+	...(check.installedVersion === undefined ? {} : { installedVersion: check.installedVersion }),
+	...(check.sourceVersion === undefined ? {} : { sourceVersion: check.sourceVersion }),
+	installedExists: check.installedExists,
+	sourceExists: check.sourceExists,
+	hasUnpromoted: check.hasUnpromoted,
+	...(check.reason === undefined ? {} : { reason: check.reason }),
+	unpromotedCount: check.unpromotedCount,
+	unpromotedIds: check.unpromotedIds,
+});
+
+/** Render the stable structured JSON text for `harnessy skill promote <skill> --json`. */
+export const renderSkillPromoteCheckJson = (check: SkillPromoteCheck): string =>
+	renderStructuredJson({ command: "skill-promote", ok: true, ...skillPromoteEntry(check) });
+
+/** Render the stable structured JSON text for `harnessy skill promote --json` (scan). */
+export const renderSkillPromoteScanJson = (scan: SkillPromoteScan): string =>
+	renderStructuredJson({
+		command: "skill-promote-scan",
+		ok: true,
+		installedRoot: scan.installedRoot,
+		sourceRoot: scan.sourceRoot,
+		totalSharedSkills: scan.totalSharedSkills,
+		skillsWithUnpromoted: scan.skillsWithUnpromoted,
+		skills: scan.skills.map(skillPromoteEntry),
+	});
 
 /** Build the stable structured payload for `harnessy doctor --json`. */
 export const doctorJsonOutput = (target: string, result: DoctorResult): StructuredDoctorOutput => ({

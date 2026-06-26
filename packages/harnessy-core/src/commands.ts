@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 
 import { Console } from "effect";
@@ -15,6 +17,8 @@ import {
 	renderDepsCheckJson,
 	renderDoctorJson,
 	renderSkillListJson,
+	renderSkillPromoteCheckJson,
+	renderSkillPromoteScanJson,
 	renderSkillValidateJson,
 	renderVerifyJson,
 } from "./structured-output.ts";
@@ -442,7 +446,9 @@ const installCommand = Command.make(
 				yield* Console.log(`Updated package scripts: ${result.scripts.updated.join(", ")}`);
 			}
 			if (result.step === "skills") {
-				yield* Console.log("Skills are preserved in capability packs; native skill promotion is pending.");
+				yield* Console.log(
+					"Skills are preserved in capability packs; check promotion state with: harnessy skill promote --source-root <dir>.",
+				);
 			}
 			if (result.runtimeAssets !== null) {
 				const globalPlanned = result.runtimeAssets.actions.filter((action) => action.unsafeGlobal).length;
@@ -767,10 +773,99 @@ const skillListCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("List project-local skills recorded under the configured skills directory"));
 
+/** Source skills root the installed copy is promoted back to. */
+const sourceRootOption = Options.string("source-root").pipe(
+	Options.withDescription("Source skills root (e.g. <flow-repo>/tools/flow-install/skills)."),
+);
+
+/** Installed skills root; falls back to AGENTS_SKILLS_ROOT, then ~/.agents/skills. */
+const installedRootOption = Options.string("installed-root").pipe(
+	Options.optional,
+	Options.withDescription("Installed skills root (or set AGENTS_SKILLS_ROOT; default ~/.agents/skills)."),
+);
+
+/** Decision-traces root; falls back to AGENTS_TRACES_ROOT, then ~/.agents/traces. */
+const tracesRootOption = Options.string("traces-root").pipe(
+	Options.optional,
+	Options.withDescription("Decision-traces root (or set AGENTS_TRACES_ROOT; default ~/.agents/traces)."),
+);
+
+/** Resolve installed/traces roots from flags, falling back to env then home defaults. */
+const resolvePromoteRoots = (
+	sourceRoot: string,
+	installedRoot: Option.Option<string>,
+	tracesRoot: Option.Option<string>,
+) => ({
+	sourceRoot,
+	installedRoot: Option.getOrElse(
+		installedRoot,
+		() => process.env.AGENTS_SKILLS_ROOT?.trim() || join(homedir(), ".agents", "skills"),
+	),
+	tracesRoot: Option.getOrElse(
+		tracesRoot,
+		() => process.env.AGENTS_TRACES_ROOT?.trim() || join(homedir(), ".agents", "traces"),
+	),
+});
+
+/** Detect skill improvements not yet promoted from the installed copy back to source. */
+const skillPromoteCommand = Command.make(
+	"promote",
+	{
+		skill: Args.string("skill").pipe(Args.optional),
+		sourceRoot: sourceRootOption,
+		installedRoot: installedRootOption,
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({ skill, sourceRoot, installedRoot, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolvePromoteRoots(sourceRoot, installedRoot, tracesRoot);
+
+			if (Option.isSome(skill)) {
+				const check = yield* project.promoteSkill({ skill: skill.value, ...roots });
+				if (json) {
+					yield* Console.log(renderSkillPromoteCheckJson(check));
+					return;
+				}
+				if (!check.hasUnpromoted) {
+					yield* Console.log(
+						`${check.skill}: nothing to promote (${check.reason ?? "up to date"}); installed=${check.installedVersion ?? "?"} source=${check.sourceVersion ?? "?"}.`,
+					);
+					return;
+				}
+				yield* Console.log(
+					`${check.skill}: ${check.unpromotedCount} unpromoted improvement(s); installed=${check.installedVersion ?? "?"} source=${check.sourceVersion ?? "?"}.`,
+				);
+				for (const id of check.unpromotedIds) yield* Console.log(`  - ${id}`);
+				return;
+			}
+
+			const scan = yield* project.scanSkillPromotions(roots);
+			if (json) {
+				yield* Console.log(renderSkillPromoteScanJson(scan));
+				return;
+			}
+			if (scan.totalSharedSkills === 0) {
+				yield* Console.log(`No skills shared between ${scan.installedRoot} and ${scan.sourceRoot}.`);
+				return;
+			}
+			for (const entry of scan.skills) {
+				const state = entry.hasUnpromoted ? `${entry.unpromotedCount} unpromoted` : "—";
+				yield* Console.log(
+					`${entry.skill}\t${entry.installedVersion ?? "?"}\t${entry.sourceVersion ?? "?"}\t${state}`,
+				);
+			}
+			yield* Console.log(
+				`${scan.skillsWithUnpromoted}/${scan.totalSharedSkills} shared skill(s) have unpromoted improvements.`,
+			);
+		}),
+).pipe(Command.withDescription("Detect skill improvements not yet promoted from installed to source"));
+
 /** Inspect and validate project-local skills. */
 const skillCommand = Command.make("skill").pipe(
-	Command.withSubcommands([skillCreateCommand, skillValidateCommand, skillListCommand] as const),
-	Command.withDescription("Create, inspect, and validate project-local skills"),
+	Command.withSubcommands([skillCreateCommand, skillValidateCommand, skillListCommand, skillPromoteCommand] as const),
+	Command.withDescription("Create, inspect, validate, and promote project-local skills"),
 );
 
 /** Check dependency declarations from installed capability manifests. */
