@@ -16,6 +16,8 @@ import {
 	renderCapabilityMaterializeJson,
 	renderDepsCheckJson,
 	renderDoctorJson,
+	renderRatchetGatesJson,
+	renderRatchetScoreJson,
 	renderSkillListJson,
 	renderSkillMetricsJson,
 	renderSkillPromoteCheckJson,
@@ -1005,6 +1007,102 @@ const skillMetricsCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("Compute quality metrics for a skill from its decision traces"));
 
+/** File name of the autoresearch run ledger under the autoflow state directory. */
+const RUNS_LEDGER_FILE = "runs.ndjson";
+
+/** Composite layer to compute: 1 (default) or 2 (adds human-intervention and cost terms). */
+const ratchetLayerOption = Options.integer("layer").pipe(
+	Options.withDefault(1),
+	Options.withDescription("Composite layer to compute: 1 (default) or 2."),
+);
+
+/** Autoresearch run ledger; defaults to `<traces-root>/autoflow/runs.ndjson`. */
+const runsFileOption = Options.string("runs-file").pipe(
+	Options.optional,
+	Options.withDescription("Autoresearch run ledger (NDJSON). Default <traces-root>/autoflow/runs.ndjson."),
+);
+
+/** Resolve the run-ledger path, defaulting to the global autoflow location under the traces root. */
+const resolveRunsFile = (runsFile: Option.Option<string>, tracesRoot: string): string =>
+	Option.match(runsFile, {
+		onNone: () => join(tracesRoot, "autoflow", RUNS_LEDGER_FILE),
+		onSome: expandHome,
+	});
+
+/** Compute the autoresearch ratchet composite score for a skill. */
+const ratchetScoreCommand = Command.make(
+	"score",
+	{
+		skill: Args.string("skill"),
+		layer: ratchetLayerOption,
+		runsFile: runsFileOption,
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({ skill, layer, runsFile, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const score = yield* project.ratchetScore({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+				layer,
+			});
+			if (json) {
+				yield* Console.log(renderRatchetScoreJson(score));
+				return;
+			}
+			const v = score.variables;
+			yield* Console.log(`${score.skill}: ratchet score ${score.score.toFixed(4)} (layer ${score.layer})`);
+			const base = `  f=${v.f}  p=${v.p}  q=${v.q}  r=${v.r}`;
+			yield* Console.log(score.layer >= 2 ? `${base}  h=${v.h}  c=${v.c}` : base);
+		}),
+).pipe(Command.withDescription("Compute the autoresearch ratchet composite score for a skill"));
+
+/** Check the autoresearch ratchet hard-constraint gates across the run ledger. */
+const ratchetGatesCommand = Command.make(
+	"gates",
+	{
+		skill: Args.string("skill"),
+		runsFile: runsFileOption,
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({ skill, runsFile, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const gates = yield* project.ratchetGates({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+			});
+			if (json) {
+				yield* Console.log(renderRatchetGatesJson(gates));
+				return;
+			}
+			yield* Console.log(
+				`Hard constraint gates: ${gates.allPassed ? "PASSED" : "FAILED"} (${gates.totalRuns} runs)`,
+			);
+			yield* Console.log(
+				`  ${gates.catastrophicFailure.passed ? "ok" : "X"} catastrophic_failure: ${gates.catastrophicFailure.value} (threshold ${gates.catastrophicFailure.threshold})`,
+			);
+			yield* Console.log(
+				`  ${gates.regression.passed ? "ok" : "X"} regression: ${gates.regression.value} (threshold ${gates.regression.threshold})`,
+			);
+			yield* Console.log(
+				`  ${gates.humanIntervention.passed ? "ok" : "X"} human_intervention: ${gates.humanIntervention.value} (threshold ${gates.humanIntervention.threshold})`,
+			);
+		}),
+).pipe(Command.withDescription("Check the autoresearch ratchet hard-constraint gates"));
+
+/** Autoresearch ratchet evaluation (score + hard-constraint gates). */
+const ratchetCommand = Command.make("ratchet").pipe(
+	Command.withSubcommands([ratchetScoreCommand, ratchetGatesCommand] as const),
+	Command.withDescription("Autoresearch ratchet: composite score and hard-constraint gates"),
+);
+
 /** Inspect and validate project-local skills. */
 const skillCommand = Command.make("skill").pipe(
 	Command.withSubcommands([
@@ -1015,6 +1113,7 @@ const skillCommand = Command.make("skill").pipe(
 		skillFeedbackCommand,
 		skillTracesCommand,
 		skillMetricsCommand,
+		ratchetCommand,
 	] as const),
 	Command.withDescription("Create, inspect, validate, promote, give feedback on, and analyze project-local skills"),
 );

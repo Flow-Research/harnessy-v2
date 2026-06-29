@@ -27,6 +27,7 @@ import type { DoctorResult, VerifyResult } from "./operations.ts";
 import type { MonorepoType, PackageManager, WorkspaceKind } from "./project-detection.ts";
 import type { SkillMetrics } from "./skill-metrics.ts";
 import type { SkillPromoteCheck, SkillPromoteScan } from "./skill-promote.ts";
+import type { RatchetGates, RatchetScore } from "./skill-ratchet.ts";
 import type { SkillTraceStats } from "./skill-traces.ts";
 import type { SkillValidationReport } from "./skill-validator.ts";
 
@@ -914,6 +915,63 @@ export const renderSkillMetricsJson = (metrics: SkillMetrics): string =>
 			outcomes: gate.outcomes.map((entry) => ({ key: entry.key, count: entry.count })),
 			...(gate.avgDurationSeconds === undefined ? {} : { avgDurationSeconds: gate.avgDurationSeconds }),
 		})),
+	});
+
+/** Render the stable structured JSON text for `harnessy skill ratchet score <skill> --json`. */
+export const renderRatchetScoreJson = (score: RatchetScore): string =>
+	renderStructuredJson({
+		command: "ratchet-score",
+		ok: true,
+		skill: score.skill,
+		layer: score.layer,
+		score: score.score,
+		variables: {
+			f: score.variables.f,
+			p: score.variables.p,
+			q: score.variables.q,
+			r: score.variables.r,
+			h: score.variables.h,
+			c: score.variables.c,
+		},
+		...(score.raw === undefined
+			? {}
+			: {
+					raw: {
+						totalRuns: score.raw.totalRuns,
+						completedRuns: score.raw.completedRuns,
+						avgRefinementLoops: score.raw.avgRefinementLoops,
+						testsPassed: score.raw.testsPassed,
+						testsTotal: score.raw.testsTotal,
+						humanGatesTriggered: score.raw.humanGatesTriggered,
+						humanGatesTotal: score.raw.humanGatesTotal,
+					},
+				}),
+	});
+
+/** Render the stable structured JSON text for `harnessy skill ratchet gates <skill> --json`. */
+export const renderRatchetGatesJson = (gates: RatchetGates): string =>
+	renderStructuredJson({
+		command: "ratchet-gates",
+		ok: true,
+		allPassed: gates.allPassed,
+		totalRuns: gates.totalRuns,
+		gates: {
+			catastrophicFailure: {
+				value: gates.catastrophicFailure.value,
+				threshold: gates.catastrophicFailure.threshold,
+				passed: gates.catastrophicFailure.passed,
+			},
+			regression: {
+				value: gates.regression.value,
+				threshold: gates.regression.threshold,
+				passed: gates.regression.passed,
+			},
+			humanIntervention: {
+				value: gates.humanIntervention.value,
+				threshold: gates.humanIntervention.threshold,
+				passed: gates.humanIntervention.passed,
+			},
+		},
 	});
 
 /** Render the stable structured JSON text for `harnessy skill traces <skill> --json`. */

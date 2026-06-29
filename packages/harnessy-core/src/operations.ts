@@ -38,6 +38,7 @@ import {
 	type SkillPromoteScan,
 	type SkillPromoteScanOptions,
 } from "./skill-promote.ts";
+import { type RatchetGates, type RatchetOptions, type RatchetScore, RatchetService } from "./skill-ratchet.ts";
 import { SkillScaffolder, type SkillScaffoldOptions, type SkillScaffoldResult } from "./skill-scaffold.ts";
 import { type SkillTraceStats, type SkillTraceStatsOptions, SkillTraces } from "./skill-traces.ts";
 import { type SkillValidationReport, SkillValidator } from "./skill-validator.ts";
@@ -273,6 +274,10 @@ export class HarnessProject extends Context.Service<
 		readonly skillTraceStats: (options: SkillTraceStatsOptions) => Effect.Effect<SkillTraceStats, HarnessError>;
 		/** Compute quality metrics across a skill's gate traces. */
 		readonly skillMetrics: (options: SkillMetricsOptions) => Effect.Effect<SkillMetrics, HarnessError>;
+		/** Compute the autoresearch ratchet composite score for a skill. */
+		readonly ratchetScore: (options: RatchetOptions) => Effect.Effect<RatchetScore, HarnessError>;
+		/** Check the autoresearch ratchet hard-constraint gates. */
+		readonly ratchetGates: (options: RatchetOptions) => Effect.Effect<RatchetGates, HarnessError>;
 		/** Read installed capability records from the lockfile. */
 		readonly listCapabilities: (target: string) => Effect.Effect<ReadonlyArray<CapabilityEntry>, HarnessError>;
 		/** Check dependency declarations from installed capability manifests. */
@@ -314,6 +319,7 @@ export class HarnessProject extends Context.Service<
 			const skillFeedback = yield* SkillFeedback;
 			const skillTraces = yield* SkillTraces;
 			const skillMetrics = yield* SkillMetricsService;
+			const ratchet = yield* RatchetService;
 			const profiles = yield* ProfileStore;
 			const detector = yield* ProjectDetector;
 
@@ -684,6 +690,14 @@ export class HarnessProject extends Context.Service<
 				return yield* skillMetrics.compute(options);
 			});
 
+			const ratchetScore = Effect.fn("HarnessProject.ratchetScore")(function* (options: RatchetOptions) {
+				return yield* ratchet.score(options);
+			});
+
+			const ratchetGates = Effect.fn("HarnessProject.ratchetGates")(function* (options: RatchetOptions) {
+				return yield* ratchet.gates(options);
+			});
+
 			const doctor = Effect.fn("HarnessProject.doctor")(function* (target: string) {
 				const resolved = yield* paths.resolve(target);
 				const lockfileExists = yield* lockfiles.exists(resolved);
@@ -751,6 +765,8 @@ export class HarnessProject extends Context.Service<
 				captureSkillFeedback,
 				skillTraceStats,
 				skillMetrics: skillMetricsFor,
+				ratchetScore,
+				ratchetGates,
 				doctor,
 				listCapabilities,
 				checkDependencies,
@@ -788,6 +804,9 @@ export class HarnessProject extends Context.Service<
 			Layer.provideMerge(SkillPromote.layer),
 			Layer.provideMerge(SkillFeedback.layer),
 			Layer.provideMerge(SkillTraces.layer),
+			// Ratchet depends on the metrics service, so it must be provided earlier in the
+			// chain than SkillMetricsService — later provideMerge entries feed earlier ones.
+			Layer.provideMerge(RatchetService.layer),
 			Layer.provideMerge(SkillMetricsService.layer),
 			Layer.provideMerge(ProfileStore.layer),
 			Layer.provideMerge(ProjectDetector.layer),
