@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "./errors.ts";
+import { roundTo } from "./round.ts";
 
 /** Skill trace-directory artifact names, mirroring v1 `attribute.py`. */
 const TRACES_FILE = "traces.ndjson";
@@ -154,6 +155,8 @@ export interface AttributeBackfillResult {
 	readonly skippedExisting: ReadonlyArray<string>;
 	readonly componentIndexFile: string;
 	readonly componentCount: number;
+	/** Set to "no improvements found" when there was nothing to attribute (v1 parity). */
+	readonly reason?: string;
 }
 
 /** Narrow unknown JSON values to plain records. */
@@ -188,21 +191,6 @@ const numberOrNull = (record: Record<string, unknown>, key: string): number | nu
 const intOr0 = (record: Record<string, unknown>, key: string): number => {
 	const value = numberOrNull(record, key);
 	return value === null ? 0 : Math.trunc(value);
-};
-
-/**
- * Round to `digits` decimals to match Python 3 `round` (half-to-even on exact
- * dyadic ties; `toFixed` otherwise). Identical to the helper used across the
- * other decision-trace services.
- */
-const roundTo = (value: number, digits: number): number => {
-	const factor = 10 ** digits;
-	const doubled = value * 2 * factor;
-	if (Number.isInteger(doubled) && Math.abs(doubled % 2) === 1) {
-		const floor = Math.floor(value * factor);
-		return (floor % 2 === 0 ? floor : floor + 1) / factor;
-	}
-	return Number(value.toFixed(digits));
 };
 
 /** Two-digit zero pad. */
@@ -327,7 +315,9 @@ const identifyGates = (
 
 	const gateStats = buildGateStats(candidateTraces);
 	const gateNames = [...gateStats.keys()];
-	const dedupeSorted = (names: ReadonlyArray<string>) => [...new Set(names)].sort((a, b) => a.localeCompare(b));
+	// Default sort orders by UTF-16 code unit, matching Python `sorted()` code-point order for the
+	// gate names here (not locale-aware ordering).
+	const dedupeSorted = (names: ReadonlyArray<string>) => [...new Set(names)].sort();
 
 	const [phaseId, phaseName] = parsePhaseReference(section);
 
@@ -731,7 +721,7 @@ export class SkillAttribute extends Context.Service<
 						confidenceCounts: Object.fromEntries(entry.confidenceCounts),
 						improvementTypes,
 						currentGateSignals,
-						notes: [...entry.notes].sort((a, b) => a.localeCompare(b)),
+						notes: [...entry.notes].sort(),
 					};
 				}
 
@@ -842,6 +832,17 @@ export class SkillAttribute extends Context.Service<
 				const state = yield* requireKeptState(options);
 
 				const improvements = yield* loadImprovements(options.tracesRoot, options.skill);
+				// v1 short-circuits before indexing when there is nothing to attribute.
+				if (improvements.length === 0) {
+					return {
+						created: 0,
+						createdRecords: [],
+						skippedExisting: [],
+						componentIndexFile: componentIndexPath(options.tracesRoot, options.skill),
+						componentCount: 0,
+						reason: "no improvements found",
+					} satisfies AttributeBackfillResult;
+				}
 				const existing = yield* loadNdjson(attributionsPath(options.tracesRoot, options.skill));
 				const seen = new Set<string>();
 				for (const record of existing) {

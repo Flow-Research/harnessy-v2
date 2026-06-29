@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "./errors.ts";
+import { roundTo } from "./round.ts";
 
 /** Skill trace-directory artifact names, mirroring v1 `attribute_validate.py`. */
 const ATTRIBUTIONS_FILE = "attributions.ndjson";
@@ -145,17 +146,6 @@ const numberOr0 = (record: Record<string, unknown>, key: string): number => {
 	if (typeof value === "number" && Number.isFinite(value)) return value;
 	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
 	return 0;
-};
-
-/** Round to `digits` decimals to match Python 3 `round` (half-to-even on exact dyadic ties). */
-const roundTo = (value: number, digits: number): number => {
-	const factor = 10 ** digits;
-	const doubled = value * 2 * factor;
-	if (Number.isInteger(doubled) && Math.abs(doubled % 2) === 1) {
-		const floor = Math.floor(value * factor);
-		return (floor % 2 === 0 ? floor : floor + 1) / factor;
-	}
-	return Number(value.toFixed(digits));
 };
 
 /** Two-digit zero pad. */

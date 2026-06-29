@@ -1120,6 +1120,7 @@ export const renderAttributeBackfillJson = (result: AttributeBackfillResult): st
 		skippedExisting: result.skippedExisting,
 		componentIndexFile: result.componentIndexFile,
 		componentCount: result.componentCount,
+		...(result.reason === undefined ? {} : { reason: result.reason }),
 	});
 
 /** Render the stable structured JSON text for `harnessy skill attribute index <skill> --json`. */

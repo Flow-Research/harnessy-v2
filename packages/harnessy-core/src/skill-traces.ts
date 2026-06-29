@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "./errors.ts";
+import { roundTo } from "./round.ts";
 
 /** Trace file name written by the v1 decision-trace system. */
 const TRACES_FILE = "traces.ndjson";
@@ -101,13 +102,7 @@ const mostCommon = (counter: Map<string, number>, limit: number): ReadonlyArray<
 		.map((entry) => new SkillTraceCount({ key: entry.key, count: entry.count }));
 
 /** Round to two decimals using half-to-even, mirroring Python 3 `round(x, 2)`. */
-const round2 = (value: number): number => {
-	const scaled = value * 100;
-	const floor = Math.floor(scaled);
-	const diff = scaled - floor;
-	const rounded = diff > 0.5 ? floor + 1 : diff < 0.5 ? floor : floor % 2 === 0 ? floor : floor + 1;
-	return rounded / 100;
-};
+const round2 = (value: number): number => roundTo(value, 2);
 
 /** Per-gate accumulator. */
 interface GateAccumulator {

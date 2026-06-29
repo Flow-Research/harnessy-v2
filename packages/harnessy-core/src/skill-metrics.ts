@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "./errors.ts";
+import { roundTo } from "./round.ts";
 
 /** Trace file name written by the v1 decision-trace system. */
 const TRACES_FILE = "traces.ndjson";
@@ -174,23 +175,6 @@ const finiteNumberOrNull = (record: Record<string, unknown>, key: string): numbe
 	if (typeof value === "number" && Number.isFinite(value)) return value;
 	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
 	return null;
-};
-
-/**
- * Round to `digits` decimals to match Python 3 `round`. Python rounds the exact
- * binary value half-to-even; `toFixed` rounds the same value half-away-from-zero.
- * They differ only on exact dyadic ties (e.g. 0.125), so use `toFixed` for the
- * common case and apply half-to-even only when the value is exactly `k.5` ulps.
- * Verified to match `round()` across thousands of integer-ratio inputs.
- */
-const roundTo = (value: number, digits: number): number => {
-	const factor = 10 ** digits;
-	const doubled = value * 2 * factor;
-	if (Number.isInteger(doubled) && Math.abs(doubled % 2) === 1) {
-		const floor = Math.floor(value * factor);
-		return (floor % 2 === 0 ? floor : floor + 1) / factor;
-	}
-	return Number(value.toFixed(digits));
 };
 
 /** Per-gate accumulator. */

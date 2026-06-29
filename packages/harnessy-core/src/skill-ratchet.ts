@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 
 import { CommandRunner } from "./command-runner.ts";
 import { causeMessage, HarnessError } from "./errors.ts";
+import { roundTo } from "./round.ts";
 import { SkillMetricsService } from "./skill-metrics.ts";
 
 /**
@@ -153,22 +154,6 @@ const truthy = (value: unknown): boolean => {
 
 /** Read a gate flag with Python truthiness (mirrors v1 `record.get(key, False)`). */
 const boolField = (record: Record<string, unknown>, key: string): boolean => truthy(record[key]);
-
-/**
- * Round to `digits` decimals to match Python 3 `round`, which rounds the exact
- * binary value half-to-even where `toFixed` rounds half-away-from-zero. They
- * differ only on exact dyadic ties, so use `toFixed` for the common case and
- * apply half-to-even only when the value is exactly `k.5` ulps.
- */
-const roundTo = (value: number, digits: number): number => {
-	const factor = 10 ** digits;
-	const doubled = value * 2 * factor;
-	if (Number.isInteger(doubled) && Math.abs(doubled % 2) === 1) {
-		const floor = Math.floor(value * factor);
-		return (floor % 2 === 0 ? floor : floor + 1) / factor;
-	}
-	return Number(value.toFixed(digits));
-};
 
 /** Guard a skill name against path traversal, matching the other skill services. */
 const invalidSkill = (skill: string): boolean => skill === "" || skill === "." || skill === ".." || /[/\\]/.test(skill);
