@@ -130,8 +130,22 @@ const finiteNumberOrNull = (record: Record<string, unknown>, key: string): numbe
 	return null;
 };
 
-/** Read a truthy boolean field (mirrors v1 `record.get(key, False)`). */
-const boolField = (record: Record<string, unknown>, key: string): boolean => record[key] === true;
+/**
+ * Evaluate a value for Python truthiness, matching v1's `if r.get(key, False)`.
+ * v1 reads raw ledger values and tests them with Python's `bool()`, so a JSON
+ * `1`, `"x"`, or non-empty array counts as true — not just a literal `true`.
+ */
+const truthy = (value: unknown): boolean => {
+	if (typeof value === "boolean") return value;
+	if (typeof value === "number") return value !== 0 && !Number.isNaN(value);
+	if (typeof value === "string") return value.length > 0;
+	if (Array.isArray(value)) return value.length > 0;
+	if (value !== null && typeof value === "object") return Object.keys(value).length > 0;
+	return false;
+};
+
+/** Read a gate flag with Python truthiness (mirrors v1 `record.get(key, False)`). */
+const boolField = (record: Record<string, unknown>, key: string): boolean => truthy(record[key]);
 
 /**
  * Round to `digits` decimals to match Python 3 `round`, which rounds the exact

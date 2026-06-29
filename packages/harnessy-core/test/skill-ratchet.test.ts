@@ -200,6 +200,28 @@ describe("Ratchet gates", () => {
 		),
 	);
 
+	it.effect("treats non-boolean truthy gate flags as set (Python truthiness)", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const dir = yield* fs.makeTempDirectoryScoped();
+				// v1 reads raw values with Python `bool()`, so a JSON `1` counts as a catastrophic failure.
+				yield* writeRuns(fs, `${dir}/runs.ndjson`, [{ outcome: "completed", catastrophic_failure: 1 }]);
+
+				const gates = yield* project.ratchetGates({
+					skill: "demo",
+					tracesRoot: dir,
+					runsFile: `${dir}/runs.ndjson`,
+				});
+
+				expect(gates.catastrophicFailure.value).toBe(1);
+				expect(gates.catastrophicFailure.passed).toBe(false);
+				expect(gates.allPassed).toBe(false);
+			}),
+		),
+	);
+
 	it.effect("vetoes on catastrophic failures and excess regressions", () =>
 		provideLive(
 			Effect.gen(function* () {
