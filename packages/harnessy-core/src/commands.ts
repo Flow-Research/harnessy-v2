@@ -16,8 +16,12 @@ import {
 	renderCapabilityMaterializeJson,
 	renderDepsCheckJson,
 	renderDoctorJson,
+	renderRatchetDecisionJson,
+	renderRatchetEvaluationJson,
 	renderRatchetGatesJson,
 	renderRatchetScoreJson,
+	renderRatchetSnapshotJson,
+	renderRatchetStatusJson,
 	renderSkillListJson,
 	renderSkillMetricsCompareJson,
 	renderSkillMetricsJson,
@@ -1099,10 +1103,177 @@ const ratchetGatesCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("Check the autoresearch ratchet hard-constraint gates"));
 
-/** Autoresearch ratchet evaluation (score + hard-constraint gates). */
+/** Autoflow state directory holding ratchet cycle state; defaults to `<traces-root>/autoflow`. */
+const stateDirOption = Options.string("state-dir").pipe(
+	Options.optional,
+	Options.withDescription("Autoflow state directory for ratchet cycle state. Default <traces-root>/autoflow."),
+);
+
+/** Git working directory used for snapshot tags and revert checkouts; defaults to the current directory. */
+const repoDirOption = Options.string("repo-dir").pipe(
+	Options.withDefault("."),
+	Options.withDescription("Git working directory for ratchet snapshot tags and reverts."),
+);
+
+/** Number of post-snapshot runs an evaluation needs before it is ready. */
+const windowOption = Options.integer("window").pipe(
+	Options.withDescription("Number of post-snapshot runs to evaluate."),
+);
+
+/** Resolve the autoflow state directory, defaulting under the traces root. */
+const resolveStateDir = (stateDir: Option.Option<string>, tracesRoot: string): string =>
+	Option.match(stateDir, { onNone: () => join(tracesRoot, "autoflow"), onSome: expandHome });
+
+/** Snapshot a ratchet baseline before a skill improvement. */
+const ratchetSnapshotCommand = Command.make(
+	"snapshot",
+	{
+		skill: Args.string("skill"),
+		installedRoot: installedRootOption,
+		runsFile: runsFileOption,
+		tracesRoot: tracesRootOption,
+		stateDir: stateDirOption,
+		repoDir: repoDirOption,
+		json: jsonOption,
+	},
+	({ skill, installedRoot, runsFile, tracesRoot, stateDir, repoDir, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(installedRoot, tracesRoot);
+			const result = yield* project.ratchetSnapshot({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+				skillsRoot: roots.installedRoot,
+				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				repoDir: expandHome(repoDir),
+			});
+			if (json) {
+				yield* Console.log(renderRatchetSnapshotJson(result));
+				return;
+			}
+			yield* Console.log(
+				`${result.skill}: snapshot ${result.tag} (baseline ${result.baselineScore.toFixed(4)}, window ${result.evaluationWindow})`,
+			);
+		}),
+).pipe(Command.withDescription("Snapshot a ratchet baseline (git tag + state) before a skill improvement"));
+
+/** Evaluate a ratchet candidate over a window of post-snapshot runs. */
+const ratchetEvaluateCommand = Command.make(
+	"evaluate",
+	{
+		skill: Args.string("skill"),
+		window: windowOption,
+		runsFile: runsFileOption,
+		tracesRoot: tracesRootOption,
+		stateDir: stateDirOption,
+		json: jsonOption,
+	},
+	({ skill, window, runsFile, tracesRoot, stateDir, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const evaluation = yield* project.ratchetEvaluate({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				window,
+			});
+			if (json) {
+				yield* Console.log(renderRatchetEvaluationJson(evaluation));
+				return;
+			}
+			if (evaluation.status === "waiting") {
+				yield* Console.log(
+					`${evaluation.skill}: waiting (${evaluation.runsCompleted ?? 0}/${evaluation.runsNeeded ?? 0} runs)`,
+				);
+				return;
+			}
+			yield* Console.log(
+				`${evaluation.skill}: baseline ${evaluation.baselineScore.toFixed(4)} -> candidate ${(evaluation.candidateScore ?? 0).toFixed(4)} (delta ${evaluation.delta ?? 0}, gates ${evaluation.gates?.allPassed ? "PASSED" : "FAILED"})`,
+			);
+		}),
+).pipe(Command.withDescription("Evaluate a ratchet candidate over a window of post-snapshot runs"));
+
+/** Make the ratchet keep/revert decision. */
+const ratchetDecideCommand = Command.make(
+	"decide",
+	{
+		skill: Args.string("skill"),
+		installedRoot: installedRootOption,
+		tracesRoot: tracesRootOption,
+		stateDir: stateDirOption,
+		repoDir: repoDirOption,
+		json: jsonOption,
+	},
+	({ skill, installedRoot, tracesRoot, stateDir, repoDir, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(installedRoot, tracesRoot);
+			const decision = yield* project.ratchetDecide({
+				skill,
+				skillsRoot: roots.installedRoot,
+				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				repoDir: expandHome(repoDir),
+			});
+			if (json) {
+				yield* Console.log(renderRatchetDecisionJson(decision));
+				return;
+			}
+			yield* Console.log(`${decision.skill}: ${decision.decision.toUpperCase()} — ${decision.reason}`);
+			yield* Console.log(
+				`  baseline ${decision.baselineScore.toFixed(4)}, candidate ${decision.candidateScore.toFixed(4)}, delta ${decision.delta}`,
+			);
+			if (decision.decision === "revert") {
+				yield* Console.log(`  reverted to ${decision.tag}`);
+			}
+		}),
+).pipe(Command.withDescription("Make the ratchet keep/revert decision, reverting to the snapshot tag when reverting"));
+
+/** Show the current ratchet cycle state. */
+const ratchetStatusCommand = Command.make(
+	"status",
+	{
+		skill: Args.string("skill"),
+		tracesRoot: tracesRootOption,
+		stateDir: stateDirOption,
+		json: jsonOption,
+	},
+	({ skill, tracesRoot, stateDir, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const report = yield* project.ratchetStatus({
+				skill,
+				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+			});
+			if (json) {
+				yield* Console.log(renderRatchetStatusJson(report));
+				return;
+			}
+			if (report.status === "idle") {
+				yield* Console.log(`${report.skill}: idle (no active ratchet cycle)`);
+				return;
+			}
+			yield* Console.log(`${report.skill}: ${report.status} (tag ${report.snapshotTag ?? "?"})`);
+			yield* Console.log(
+				`  baseline ${report.baselineScore ?? "?"}, candidate ${report.candidateScore ?? "?"}, delta ${report.delta ?? "?"}, decision ${report.decision ?? "-"}`,
+			);
+		}),
+).pipe(Command.withDescription("Show the current ratchet cycle state"));
+
+/** Autoresearch ratchet (score, gates, and the snapshot/evaluate/decide cycle). */
 const ratchetCommand = Command.make("ratchet").pipe(
-	Command.withSubcommands([ratchetScoreCommand, ratchetGatesCommand] as const),
-	Command.withDescription("Autoresearch ratchet: composite score and hard-constraint gates"),
+	Command.withSubcommands([
+		ratchetScoreCommand,
+		ratchetGatesCommand,
+		ratchetSnapshotCommand,
+		ratchetEvaluateCommand,
+		ratchetDecideCommand,
+		ratchetStatusCommand,
+	] as const),
+	Command.withDescription("Autoresearch ratchet: composite score, gates, and the snapshot/evaluate/decide cycle"),
 );
 
 /** Skill version recorded before an improvement, for `metrics compare`. */

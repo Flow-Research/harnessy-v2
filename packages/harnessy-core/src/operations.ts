@@ -46,7 +46,20 @@ import {
 	type SkillPromoteScan,
 	type SkillPromoteScanOptions,
 } from "./skill-promote.ts";
-import { type RatchetGates, type RatchetOptions, type RatchetScore, RatchetService } from "./skill-ratchet.ts";
+import {
+	type RatchetDecideOptions,
+	type RatchetDecision,
+	type RatchetEvaluateOptions,
+	type RatchetEvaluation,
+	type RatchetGates,
+	type RatchetOptions,
+	type RatchetScore,
+	RatchetService,
+	type RatchetSnapshotOptions,
+	type RatchetSnapshotResult,
+	type RatchetStatusOptions,
+	type RatchetStatusReport,
+} from "./skill-ratchet.ts";
 import { SkillScaffolder, type SkillScaffoldOptions, type SkillScaffoldResult } from "./skill-scaffold.ts";
 import { type SkillTraceStats, type SkillTraceStatsOptions, SkillTraces } from "./skill-traces.ts";
 import { type SkillValidationReport, SkillValidator } from "./skill-validator.ts";
@@ -286,6 +299,14 @@ export class HarnessProject extends Context.Service<
 		readonly ratchetScore: (options: RatchetOptions) => Effect.Effect<RatchetScore, HarnessError>;
 		/** Check the autoresearch ratchet hard-constraint gates. */
 		readonly ratchetGates: (options: RatchetOptions) => Effect.Effect<RatchetGates, HarnessError>;
+		/** Snapshot a ratchet baseline before a skill improvement. */
+		readonly ratchetSnapshot: (options: RatchetSnapshotOptions) => Effect.Effect<RatchetSnapshotResult, HarnessError>;
+		/** Evaluate a ratchet candidate over a window of post-snapshot runs. */
+		readonly ratchetEvaluate: (options: RatchetEvaluateOptions) => Effect.Effect<RatchetEvaluation, HarnessError>;
+		/** Make the ratchet keep/revert decision. */
+		readonly ratchetDecide: (options: RatchetDecideOptions) => Effect.Effect<RatchetDecision, HarnessError>;
+		/** Read the current ratchet cycle state. */
+		readonly ratchetStatus: (options: RatchetStatusOptions) => Effect.Effect<RatchetStatusReport, HarnessError>;
 		/** Compare quality metrics between two skill versions. */
 		readonly compareSkillMetrics: (
 			options: SkillMetricsCompareOptions,
@@ -712,6 +733,26 @@ export class HarnessProject extends Context.Service<
 				return yield* ratchet.gates(options);
 			});
 
+			const ratchetSnapshot = Effect.fn("HarnessProject.ratchetSnapshot")(function* (
+				options: RatchetSnapshotOptions,
+			) {
+				return yield* ratchet.snapshot(options);
+			});
+
+			const ratchetEvaluate = Effect.fn("HarnessProject.ratchetEvaluate")(function* (
+				options: RatchetEvaluateOptions,
+			) {
+				return yield* ratchet.evaluate(options);
+			});
+
+			const ratchetDecide = Effect.fn("HarnessProject.ratchetDecide")(function* (options: RatchetDecideOptions) {
+				return yield* ratchet.decide(options);
+			});
+
+			const ratchetStatus = Effect.fn("HarnessProject.ratchetStatus")(function* (options: RatchetStatusOptions) {
+				return yield* ratchet.status(options);
+			});
+
 			const compareSkillMetrics = Effect.fn("HarnessProject.compareSkillMetrics")(function* (
 				options: SkillMetricsCompareOptions,
 			) {
@@ -793,6 +834,10 @@ export class HarnessProject extends Context.Service<
 				skillMetrics: skillMetricsFor,
 				ratchetScore,
 				ratchetGates,
+				ratchetSnapshot,
+				ratchetEvaluate,
+				ratchetDecide,
+				ratchetStatus,
 				compareSkillMetrics,
 				skillMetricsTrend,
 				doctor,
@@ -832,10 +877,13 @@ export class HarnessProject extends Context.Service<
 			Layer.provideMerge(SkillPromote.layer),
 			Layer.provideMerge(SkillFeedback.layer),
 			Layer.provideMerge(SkillTraces.layer),
-			// Ratchet depends on the metrics service, so it must be provided earlier in the
-			// chain than SkillMetricsService — later provideMerge entries feed earlier ones.
+			// Ratchet depends on the metrics service and the command runner, so both must be
+			// provided later in the chain than RatchetService — later provideMerge entries feed
+			// earlier ones. CommandRunner.layer is also provided in the first chain; layers are
+			// memoized by reference, so re-providing it here builds a single shared instance.
 			Layer.provideMerge(RatchetService.layer),
 			Layer.provideMerge(SkillMetricsService.layer),
+			Layer.provideMerge(CommandRunner.layer),
 			Layer.provideMerge(ProfileStore.layer),
 			Layer.provideMerge(ProjectDetector.layer),
 			Layer.provideMerge(RuntimeEnvironment.liveLayer),
