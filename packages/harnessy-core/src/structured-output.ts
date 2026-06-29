@@ -1,3 +1,4 @@
+import type { AiResolution } from "./ai-runner.ts";
 import type { CapabilityCheckResult } from "./capability-checker.ts";
 import type {
 	BlastRadius,
@@ -1126,6 +1127,16 @@ export const renderAttributeBackfillJson = (result: AttributeBackfillResult): st
 /** Render the stable structured JSON text for `harnessy skill attribute index <skill> --json`. */
 export const renderComponentIndexJson = (index: ComponentIndex): string =>
 	renderStructuredJson({ command: "attribute-index", ok: true, ...index });
+
+/** Render the stable structured JSON text for `harnessy ai resolve --json`. */
+export const renderAiResolutionJson = (resolution: AiResolution): string =>
+	renderStructuredJson({
+		command: "ai-resolve",
+		ok: true,
+		single: resolution.single,
+		providerOrder: resolution.providerOrder,
+		resolved: resolution.resolved.map((entry) => ({ provider: entry.provider, model: entry.model })),
+	});
 
 /** Render the stable structured JSON text for `harnessy skill attribute-validate queue <skill> --json`. */
 export const renderAttributeReviewQueueJson = (queue: AttributeReviewQueue): string =>

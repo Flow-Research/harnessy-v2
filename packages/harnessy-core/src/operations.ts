@@ -3,6 +3,13 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import {
+	type AiClassifyOptions,
+	type AiFailure,
+	type AiResolution,
+	type AiResolveOptions,
+	AiRunner,
+} from "./ai-runner.ts";
 import { HarnessBootstrap, type HarnessBootstrapMode, type HarnessBootstrapPrepareResult } from "./bootstrap.ts";
 import { CapabilityChecker, type CapabilityCheckReport } from "./capability-checker.ts";
 import { CapabilityFingerprinter } from "./capability-fingerprint.ts";
@@ -350,6 +357,10 @@ export class HarnessProject extends Context.Service<
 		readonly attributeValidationSummary: (
 			options: AttributeValidateOptions,
 		) => Effect.Effect<ValidationSummary, HarnessError>;
+		/** Resolve the AI provider fallback order and per-provider models. */
+		readonly aiResolve: (options: AiResolveOptions) => Effect.Effect<AiResolution, HarnessError>;
+		/** Classify an AI provider failure from its captured output. */
+		readonly aiClassify: (options: AiClassifyOptions) => Effect.Effect<AiFailure, HarnessError>;
 		/** Compare quality metrics between two skill versions. */
 		readonly compareSkillMetrics: (
 			options: SkillMetricsCompareOptions,
@@ -400,6 +411,7 @@ export class HarnessProject extends Context.Service<
 			const ratchet = yield* RatchetService;
 			const attribute = yield* SkillAttribute;
 			const attributeValidate = yield* SkillAttributeValidate;
+			const aiRunner = yield* AiRunner;
 			const profiles = yield* ProfileStore;
 			const detector = yield* ProjectDetector;
 
@@ -838,6 +850,14 @@ export class HarnessProject extends Context.Service<
 				return yield* attributeValidate.summary(options);
 			});
 
+			const aiResolve = Effect.fn("HarnessProject.aiResolve")(function* (options: AiResolveOptions) {
+				return yield* aiRunner.resolve(options);
+			});
+
+			const aiClassify = Effect.fn("HarnessProject.aiClassify")(function* (options: AiClassifyOptions) {
+				return yield* aiRunner.classify(options);
+			});
+
 			const compareSkillMetrics = Effect.fn("HarnessProject.compareSkillMetrics")(function* (
 				options: SkillMetricsCompareOptions,
 			) {
@@ -930,6 +950,8 @@ export class HarnessProject extends Context.Service<
 				attributeReview,
 				attributeReviewPacket,
 				attributeValidationSummary,
+				aiResolve,
+				aiClassify,
 				compareSkillMetrics,
 				skillMetricsTrend,
 				doctor,
@@ -977,6 +999,7 @@ export class HarnessProject extends Context.Service<
 			Layer.provideMerge(SkillMetricsService.layer),
 			Layer.provideMerge(SkillAttribute.layer),
 			Layer.provideMerge(SkillAttributeValidate.layer),
+			Layer.provideMerge(AiRunner.layer),
 			Layer.provideMerge(CommandRunner.layer),
 			Layer.provideMerge(ProfileStore.layer),
 			Layer.provideMerge(ProjectDetector.layer),

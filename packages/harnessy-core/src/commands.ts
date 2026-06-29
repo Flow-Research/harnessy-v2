@@ -12,6 +12,7 @@ import { ANYTYPE_DEFAULT_BASE_URL, AnytypeConfig, AnytypeConnector } from "./any
 import { HarnessError } from "./errors.ts";
 import { HarnessProject, type InstallStep } from "./operations.ts";
 import {
+	renderAiResolutionJson,
 	renderAttributeBackfillJson,
 	renderAttributeComputeJson,
 	renderAttributePacketJson,
@@ -1831,6 +1832,49 @@ const connectorCommand = Command.make("connector").pipe(
 );
 
 /** Root Effect CLI command tree. Runtime services are provided by `main.ts`. */
+/** Pin a single AI provider, or `auto` for the fallback chain. */
+const aiProviderOption = Options.string("provider").pipe(
+	Options.optional,
+	Options.withDescription("AI provider: auto, claude, codex, or opencode (default: env or auto)."),
+);
+
+/** Requested AI model (a Claude alias is translated/omitted for other providers). */
+const aiModelOption = Options.string("model").pipe(
+	Options.optional,
+	Options.withDescription("Requested model; Claude aliases are not forwarded to other providers."),
+);
+
+/** Resolve the AI provider fallback order and per-provider models from the environment. */
+const aiResolveCommand = Command.make(
+	"resolve",
+	{ provider: aiProviderOption, model: aiModelOption, json: jsonOption },
+	({ provider, model, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const resolution = yield* project.aiResolve({
+				env: process.env,
+				provider: Option.getOrUndefined(provider),
+				model: Option.getOrUndefined(model),
+			});
+			if (json) {
+				yield* Console.log(renderAiResolutionJson(resolution));
+				return;
+			}
+			yield* Console.log(
+				`provider order: ${resolution.providerOrder.join(" -> ")}${resolution.single ? " (pinned)" : ""}`,
+			);
+			for (const entry of resolution.resolved) {
+				yield* Console.log(`  ${entry.provider}\t${entry.model ?? "(provider default)"}`);
+			}
+		}),
+).pipe(Command.withDescription("Resolve the AI provider fallback order and per-provider models"));
+
+/** Provider-agnostic AI runner resolution. */
+const aiCommand = Command.make("ai").pipe(
+	Command.withSubcommands([aiResolveCommand] as const),
+	Command.withDescription("Provider-agnostic AI runner (provider/model resolution)"),
+);
+
 export const rootCommand = Command.make("harnessy").pipe(
 	Command.withSubcommands([
 		bootstrapCommand,
@@ -1842,6 +1886,7 @@ export const rootCommand = Command.make("harnessy").pipe(
 		skillCommand,
 		connectorCommand,
 		depsCommand,
+		aiCommand,
 	] as const),
 	Command.withDescription("Harnessy capability harness CLI"),
 );
