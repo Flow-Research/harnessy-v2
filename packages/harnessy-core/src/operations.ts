@@ -29,6 +29,15 @@ import { ProfileStore } from "./profile-store.ts";
 import { ProjectDetector, type ProjectInfo } from "./project-detection.ts";
 import { type HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime-assets.ts";
 import { RuntimeEnvironment } from "./runtime-environment.ts";
+import {
+	type AttributeBackfillOptions,
+	type AttributeBackfillResult,
+	type AttributeComputeOptions,
+	type AttributeComputeResult,
+	type AttributeOptions,
+	type ComponentIndex,
+	SkillAttribute,
+} from "./skill-attribute.ts";
 import { SkillFeedback, type SkillFeedbackOptions, type SkillFeedbackResult } from "./skill-feedback.ts";
 import {
 	type SkillMetrics,
@@ -307,6 +316,16 @@ export class HarnessProject extends Context.Service<
 		readonly ratchetDecide: (options: RatchetDecideOptions) => Effect.Effect<RatchetDecision, HarnessError>;
 		/** Read the current ratchet cycle state. */
 		readonly ratchetStatus: (options: RatchetStatusOptions) => Effect.Effect<RatchetStatusReport, HarnessError>;
+		/** Compute a descriptive attribution for the latest (or specified) kept improvement. */
+		readonly attributeCompute: (
+			options: AttributeComputeOptions,
+		) => Effect.Effect<AttributeComputeResult, HarnessError>;
+		/** Backfill descriptive attributions for improvements missing one. */
+		readonly attributeBackfill: (
+			options: AttributeBackfillOptions,
+		) => Effect.Effect<AttributeBackfillResult, HarnessError>;
+		/** Regenerate the component index from attribution history. */
+		readonly attributeIndex: (options: AttributeOptions) => Effect.Effect<ComponentIndex, HarnessError>;
 		/** Compare quality metrics between two skill versions. */
 		readonly compareSkillMetrics: (
 			options: SkillMetricsCompareOptions,
@@ -355,6 +374,7 @@ export class HarnessProject extends Context.Service<
 			const skillTraces = yield* SkillTraces;
 			const skillMetrics = yield* SkillMetricsService;
 			const ratchet = yield* RatchetService;
+			const attribute = yield* SkillAttribute;
 			const profiles = yield* ProfileStore;
 			const detector = yield* ProjectDetector;
 
@@ -753,6 +773,22 @@ export class HarnessProject extends Context.Service<
 				return yield* ratchet.status(options);
 			});
 
+			const attributeCompute = Effect.fn("HarnessProject.attributeCompute")(function* (
+				options: AttributeComputeOptions,
+			) {
+				return yield* attribute.compute(options);
+			});
+
+			const attributeBackfill = Effect.fn("HarnessProject.attributeBackfill")(function* (
+				options: AttributeBackfillOptions,
+			) {
+				return yield* attribute.backfill(options);
+			});
+
+			const attributeIndex = Effect.fn("HarnessProject.attributeIndex")(function* (options: AttributeOptions) {
+				return yield* attribute.index(options);
+			});
+
 			const compareSkillMetrics = Effect.fn("HarnessProject.compareSkillMetrics")(function* (
 				options: SkillMetricsCompareOptions,
 			) {
@@ -838,6 +874,9 @@ export class HarnessProject extends Context.Service<
 				ratchetEvaluate,
 				ratchetDecide,
 				ratchetStatus,
+				attributeCompute,
+				attributeBackfill,
+				attributeIndex,
 				compareSkillMetrics,
 				skillMetricsTrend,
 				doctor,
@@ -883,6 +922,7 @@ export class HarnessProject extends Context.Service<
 			// memoized by reference, so re-providing it here builds a single shared instance.
 			Layer.provideMerge(RatchetService.layer),
 			Layer.provideMerge(SkillMetricsService.layer),
+			Layer.provideMerge(SkillAttribute.layer),
 			Layer.provideMerge(CommandRunner.layer),
 			Layer.provideMerge(ProfileStore.layer),
 			Layer.provideMerge(ProjectDetector.layer),

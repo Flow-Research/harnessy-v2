@@ -25,6 +25,7 @@ import type {
 import type { DependencyCheckResult, DependencyReport, DependencyStatus } from "./dependency-checker.ts";
 import type { DoctorResult, VerifyResult } from "./operations.ts";
 import type { MonorepoType, PackageManager, WorkspaceKind } from "./project-detection.ts";
+import type { AttributeBackfillResult, AttributeComputeResult, ComponentIndex } from "./skill-attribute.ts";
 import type { SkillMetrics, SkillMetricsComparison, SkillTrend } from "./skill-metrics.ts";
 import type { SkillPromoteCheck, SkillPromoteScan } from "./skill-promote.ts";
 import type {
@@ -1087,6 +1088,37 @@ export const renderRatchetStatusJson = (report: RatchetStatusReport): string =>
 		...(report.runsSinceSnapshot === undefined ? {} : { runsSinceSnapshot: report.runsSinceSnapshot }),
 		...(report.evaluationWindow === undefined ? {} : { evaluationWindow: report.evaluationWindow }),
 	});
+
+/** Render the stable structured JSON text for `harnessy skill attribute compute <skill> --json`. */
+export const renderAttributeComputeJson = (result: AttributeComputeResult): string =>
+	renderStructuredJson({
+		command: "attribute-compute",
+		ok: true,
+		attributionId: result.attributionId,
+		improvementId: result.improvementId,
+		attributionsFile: result.attributionsFile,
+		componentIndexFile: result.componentIndexFile,
+		status: result.status,
+		componentCount: result.componentCount,
+		attribution: result.attribution,
+		componentIndex: result.componentIndex,
+	});
+
+/** Render the stable structured JSON text for `harnessy skill attribute backfill <skill> --json`. */
+export const renderAttributeBackfillJson = (result: AttributeBackfillResult): string =>
+	renderStructuredJson({
+		command: "attribute-backfill",
+		ok: true,
+		created: result.created,
+		createdRecords: result.createdRecords,
+		skippedExisting: result.skippedExisting,
+		componentIndexFile: result.componentIndexFile,
+		componentCount: result.componentCount,
+	});
+
+/** Render the stable structured JSON text for `harnessy skill attribute index <skill> --json`. */
+export const renderComponentIndexJson = (index: ComponentIndex): string =>
+	renderStructuredJson({ command: "attribute-index", ok: true, ...index });
 
 /** Render the stable structured JSON text for `harnessy skill traces <skill> --json`. */
 export const renderSkillTraceStatsJson = (stats: SkillTraceStats): string =>

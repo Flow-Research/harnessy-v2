@@ -12,8 +12,11 @@ import { ANYTYPE_DEFAULT_BASE_URL, AnytypeConfig, AnytypeConnector } from "./any
 import { HarnessError } from "./errors.ts";
 import { HarnessProject, type InstallStep } from "./operations.ts";
 import {
+	renderAttributeBackfillJson,
+	renderAttributeComputeJson,
 	renderCapabilityInspectJson,
 	renderCapabilityMaterializeJson,
+	renderComponentIndexJson,
 	renderDepsCheckJson,
 	renderDoctorJson,
 	renderRatchetDecisionJson,
@@ -1276,6 +1279,118 @@ const ratchetCommand = Command.make("ratchet").pipe(
 	Command.withDescription("Autoresearch ratchet: composite score, gates, and the snapshot/evaluate/decide cycle"),
 );
 
+/** Specific improvement to attribute; defaults to the latest non-promotion improvement. */
+const improvementIdOption = Options.string("improvement-id").pipe(
+	Options.optional,
+	Options.withDescription("Improvement record to attribute (default: latest non-promotion improvement)."),
+);
+
+/** Maximum number of new attributions to create during backfill (0 = no limit). */
+const attributeLimitOption = Options.integer("limit").pipe(
+	Options.withDefault(0),
+	Options.withDescription("Maximum number of new attribution records to create (0 = no limit)."),
+);
+
+/** Compute a descriptive attribution for the latest (or specified) kept ratchet cycle. */
+const attributeComputeCommand = Command.make(
+	"compute",
+	{
+		skill: Args.string("skill"),
+		improvementId: improvementIdOption,
+		runsFile: runsFileOption,
+		tracesRoot: tracesRootOption,
+		stateDir: stateDirOption,
+		json: jsonOption,
+	},
+	({ skill, improvementId, runsFile, tracesRoot, stateDir, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const result = yield* project.attributeCompute({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				improvementId: Option.getOrUndefined(improvementId),
+			});
+			if (json) {
+				yield* Console.log(renderAttributeComputeJson(result));
+				return;
+			}
+			yield* Console.log(
+				`${skill}: attribution ${result.attributionId} for ${result.improvementId ?? "?"} (${result.componentCount} components, ${result.status})`,
+			);
+		}),
+).pipe(Command.withDescription("Write a descriptive attribution for the latest kept ratchet cycle"));
+
+/** Backfill attributions for improvements missing one. */
+const attributeBackfillCommand = Command.make(
+	"backfill",
+	{
+		skill: Args.string("skill"),
+		limit: attributeLimitOption,
+		runsFile: runsFileOption,
+		tracesRoot: tracesRootOption,
+		stateDir: stateDirOption,
+		json: jsonOption,
+	},
+	({ skill, limit, runsFile, tracesRoot, stateDir, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const result = yield* project.attributeBackfill({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				limit,
+			});
+			if (json) {
+				yield* Console.log(renderAttributeBackfillJson(result));
+				return;
+			}
+			yield* Console.log(
+				`${skill}: backfilled ${result.created} attribution(s), skipped ${result.skippedExisting.length} (${result.componentCount} components)`,
+			);
+		}),
+).pipe(Command.withDescription("Generate attributions for improvements missing attribution history"));
+
+/** Regenerate the component index from attribution history. */
+const attributeIndexCommand = Command.make(
+	"index",
+	{
+		skill: Args.string("skill"),
+		runsFile: runsFileOption,
+		tracesRoot: tracesRootOption,
+		stateDir: stateDirOption,
+		json: jsonOption,
+	},
+	({ skill, runsFile, tracesRoot, stateDir, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const index = yield* project.attributeIndex({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+			});
+			if (json) {
+				yield* Console.log(renderComponentIndexJson(index));
+				return;
+			}
+			yield* Console.log(
+				`${index.skill}: ${Object.keys(index.components).length} components, ${index.bottleneckGates.length} bottleneck gate(s)`,
+			);
+		}),
+).pipe(Command.withDescription("Regenerate the component index from attribution history"));
+
+/** Descriptive component attribution for kept ratchet cycles. */
+const attributeCommand = Command.make("attribute").pipe(
+	Command.withSubcommands([attributeComputeCommand, attributeBackfillCommand, attributeIndexCommand] as const),
+	Command.withDescription("Descriptive component attribution (compute, backfill, index) for kept ratchet cycles"),
+);
+
 /** Skill version recorded before an improvement, for `metrics compare`. */
 const beforeOption = Options.string("before").pipe(
 	Options.withDescription("Skill version recorded before the improvement."),
@@ -1377,6 +1492,7 @@ const skillCommand = Command.make("skill").pipe(
 		skillTracesCommand,
 		skillMetricsCommand,
 		ratchetCommand,
+		attributeCommand,
 	] as const),
 	Command.withDescription("Create, inspect, validate, promote, give feedback on, and analyze project-local skills"),
 );
