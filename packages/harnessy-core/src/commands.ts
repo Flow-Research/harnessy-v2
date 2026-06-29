@@ -14,6 +14,9 @@ import { HarnessProject, type InstallStep } from "./operations.ts";
 import {
 	renderAttributeBackfillJson,
 	renderAttributeComputeJson,
+	renderAttributePacketJson,
+	renderAttributeReviewJson,
+	renderAttributeReviewQueueJson,
 	renderCapabilityInspectJson,
 	renderCapabilityMaterializeJson,
 	renderComponentIndexJson,
@@ -33,6 +36,7 @@ import {
 	renderSkillTraceStatsJson,
 	renderSkillTrendJson,
 	renderSkillValidateJson,
+	renderValidationSummaryJson,
 	renderVerifyJson,
 } from "./structured-output.ts";
 
@@ -1391,6 +1395,151 @@ const attributeCommand = Command.make("attribute").pipe(
 	Command.withDescription("Descriptive component attribution (compute, backfill, index) for kept ratchet cycles"),
 );
 
+/** Attribution under review, for `attribute-validate review`. */
+const attributionIdOption = Options.string("attribution-id").pipe(
+	Options.withDescription("Attribution record being reviewed."),
+);
+
+/** A 1–5 rubric score option. */
+const scoreOption = (name: string, dimension: string) =>
+	Options.integer(name).pipe(Options.withDescription(`Replay-review ${dimension} score (1-5).`));
+
+/** Optional reviewer notes. */
+const reviewNotesOption = Options.string("notes").pipe(
+	Options.withDefault(""),
+	Options.withDescription("Reviewer notes."),
+);
+
+/** List attributions still needing replay review. */
+const attributeValidateQueueCommand = Command.make(
+	"queue",
+	{ skill: Args.string("skill"), tracesRoot: tracesRootOption, json: jsonOption },
+	({ skill, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const queue = yield* project.attributeReviewQueue({ skill, tracesRoot: roots.tracesRoot });
+			if (json) {
+				yield* Console.log(renderAttributeReviewQueueJson(queue));
+				return;
+			}
+			yield* Console.log(`${queue.skill}: ${queue.pendingReviewCount} attribution(s) pending review`);
+			for (const pending of queue.pendingReviews) {
+				yield* Console.log(
+					`  ${pending.attributionId}\t${pending.componentCount} components\t${pending.timestamp}`,
+				);
+			}
+		}),
+).pipe(Command.withDescription("List attribution records still needing replay review"));
+
+/** Record a human replay review for one attribution. */
+const attributeValidateReviewCommand = Command.make(
+	"review",
+	{
+		skill: Args.string("skill"),
+		attributionId: attributionIdOption,
+		legibility: scoreOption("legibility", "legibility"),
+		plausibility: scoreOption("plausibility", "plausibility"),
+		conservatism: scoreOption("conservatism", "conservatism"),
+		usefulness: scoreOption("usefulness", "usefulness"),
+		trustworthiness: scoreOption("trustworthiness", "trustworthiness"),
+		notes: reviewNotesOption,
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({
+		skill,
+		attributionId,
+		legibility,
+		plausibility,
+		conservatism,
+		usefulness,
+		trustworthiness,
+		notes,
+		tracesRoot,
+		json,
+	}) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const result = yield* project.attributeReview({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				attributionId,
+				legibility,
+				plausibility,
+				conservatism,
+				usefulness,
+				trustworthiness,
+				notes,
+			});
+			if (json) {
+				yield* Console.log(renderAttributeReviewJson(result));
+				return;
+			}
+			yield* Console.log(
+				`${skill}: recorded ${result.review.reviewId} for ${attributionId} (avg ${result.averageScore})`,
+			);
+		}),
+).pipe(Command.withDescription("Record a human replay review for one attribution"));
+
+/** Generate a markdown replay-review packet for pending attributions. */
+const attributeValidatePacketCommand = Command.make(
+	"packet",
+	{
+		skill: Args.string("skill"),
+		limit: attributeLimitOption,
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({ skill, limit, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const result = yield* project.attributeReviewPacket({ skill, tracesRoot: roots.tracesRoot, limit });
+			if (json) {
+				yield* Console.log(renderAttributePacketJson(result));
+				return;
+			}
+			yield* Console.log(
+				`${skill}: wrote packet for ${result.pendingReviewCount} pending review(s) -> ${result.packetFile}`,
+			);
+		}),
+).pipe(Command.withDescription("Generate a markdown replay-review packet for pending attributions"));
+
+/** Derive and persist the Phase-1 readiness summary. */
+const attributeValidateSummaryCommand = Command.make(
+	"summary",
+	{ skill: Args.string("skill"), tracesRoot: tracesRootOption, json: jsonOption },
+	({ skill, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const summary = yield* project.attributeValidationSummary({ skill, tracesRoot: roots.tracesRoot });
+			if (json) {
+				yield* Console.log(renderValidationSummaryJson(summary));
+				return;
+			}
+			yield* Console.log(
+				`${summary.skill}: promotion ${summary.promotionReady ? "READY" : "not ready"} — ${summary.nextAction}`,
+			);
+			for (const [name, gate] of Object.entries(summary.gates)) {
+				yield* Console.log(`  ${gate.passed ? "ok" : "X"} ${name}: ${gate.reason}`);
+			}
+		}),
+).pipe(Command.withDescription("Derive the Phase-1 descriptive-attribution readiness summary"));
+
+/** Replay-oriented human validation of descriptive attribution. */
+const attributeValidateCommand = Command.make("attribute-validate").pipe(
+	Command.withSubcommands([
+		attributeValidateQueueCommand,
+		attributeValidateReviewCommand,
+		attributeValidatePacketCommand,
+		attributeValidateSummaryCommand,
+	] as const),
+	Command.withDescription("Replay-oriented human validation (queue, review, packet, summary) for attribution"),
+);
+
 /** Skill version recorded before an improvement, for `metrics compare`. */
 const beforeOption = Options.string("before").pipe(
 	Options.withDescription("Skill version recorded before the improvement."),
@@ -1493,6 +1642,7 @@ const skillCommand = Command.make("skill").pipe(
 		skillMetricsCommand,
 		ratchetCommand,
 		attributeCommand,
+		attributeValidateCommand,
 	] as const),
 	Command.withDescription("Create, inspect, validate, promote, give feedback on, and analyze project-local skills"),
 );

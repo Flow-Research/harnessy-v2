@@ -26,6 +26,12 @@ import type { DependencyCheckResult, DependencyReport, DependencyStatus } from "
 import type { DoctorResult, VerifyResult } from "./operations.ts";
 import type { MonorepoType, PackageManager, WorkspaceKind } from "./project-detection.ts";
 import type { AttributeBackfillResult, AttributeComputeResult, ComponentIndex } from "./skill-attribute.ts";
+import type {
+	AttributePacketResult,
+	AttributeReviewQueue,
+	AttributeReviewResult,
+	ValidationSummary,
+} from "./skill-attribute-validate.ts";
 import type { SkillMetrics, SkillMetricsComparison, SkillTrend } from "./skill-metrics.ts";
 import type { SkillPromoteCheck, SkillPromoteScan } from "./skill-promote.ts";
 import type {
@@ -1119,6 +1125,39 @@ export const renderAttributeBackfillJson = (result: AttributeBackfillResult): st
 /** Render the stable structured JSON text for `harnessy skill attribute index <skill> --json`. */
 export const renderComponentIndexJson = (index: ComponentIndex): string =>
 	renderStructuredJson({ command: "attribute-index", ok: true, ...index });
+
+/** Render the stable structured JSON text for `harnessy skill attribute-validate queue <skill> --json`. */
+export const renderAttributeReviewQueueJson = (queue: AttributeReviewQueue): string =>
+	renderStructuredJson({
+		command: "attribute-validate-queue",
+		ok: true,
+		skill: queue.skill,
+		pendingReviewCount: queue.pendingReviewCount,
+		pendingReviews: queue.pendingReviews,
+	});
+
+/** Render the stable structured JSON text for `harnessy skill attribute-validate review <skill> --json`. */
+export const renderAttributeReviewJson = (result: AttributeReviewResult): string =>
+	renderStructuredJson({
+		command: "attribute-validate-review",
+		ok: true,
+		review: result.review,
+		averageScore: result.averageScore,
+	});
+
+/** Render the stable structured JSON text for `harnessy skill attribute-validate packet <skill> --json`. */
+export const renderAttributePacketJson = (result: AttributePacketResult): string =>
+	renderStructuredJson({
+		command: "attribute-validate-packet",
+		ok: true,
+		skill: result.skill,
+		pendingReviewCount: result.pendingReviewCount,
+		packetFile: result.packetFile,
+	});
+
+/** Render the stable structured JSON text for `harnessy skill attribute-validate summary <skill> --json`. */
+export const renderValidationSummaryJson = (summary: ValidationSummary): string =>
+	renderStructuredJson({ command: "attribute-validate-summary", ok: true, ...summary });
 
 /** Render the stable structured JSON text for `harnessy skill traces <skill> --json`. */
 export const renderSkillTraceStatsJson = (stats: SkillTraceStats): string =>

@@ -38,6 +38,16 @@ import {
 	type ComponentIndex,
 	SkillAttribute,
 } from "./skill-attribute.ts";
+import {
+	type AttributePacketOptions,
+	type AttributePacketResult,
+	type AttributeReviewOptions,
+	type AttributeReviewQueue,
+	type AttributeReviewResult,
+	type AttributeValidateOptions,
+	SkillAttributeValidate,
+	type ValidationSummary,
+} from "./skill-attribute-validate.ts";
 import { SkillFeedback, type SkillFeedbackOptions, type SkillFeedbackResult } from "./skill-feedback.ts";
 import {
 	type SkillMetrics,
@@ -326,6 +336,20 @@ export class HarnessProject extends Context.Service<
 		) => Effect.Effect<AttributeBackfillResult, HarnessError>;
 		/** Regenerate the component index from attribution history. */
 		readonly attributeIndex: (options: AttributeOptions) => Effect.Effect<ComponentIndex, HarnessError>;
+		/** List attributions still needing replay review. */
+		readonly attributeReviewQueue: (
+			options: AttributeValidateOptions,
+		) => Effect.Effect<AttributeReviewQueue, HarnessError>;
+		/** Record a human replay review for one attribution. */
+		readonly attributeReview: (options: AttributeReviewOptions) => Effect.Effect<AttributeReviewResult, HarnessError>;
+		/** Generate a markdown replay-review packet. */
+		readonly attributeReviewPacket: (
+			options: AttributePacketOptions,
+		) => Effect.Effect<AttributePacketResult, HarnessError>;
+		/** Derive and persist the Phase-1 readiness summary. */
+		readonly attributeValidationSummary: (
+			options: AttributeValidateOptions,
+		) => Effect.Effect<ValidationSummary, HarnessError>;
 		/** Compare quality metrics between two skill versions. */
 		readonly compareSkillMetrics: (
 			options: SkillMetricsCompareOptions,
@@ -375,6 +399,7 @@ export class HarnessProject extends Context.Service<
 			const skillMetrics = yield* SkillMetricsService;
 			const ratchet = yield* RatchetService;
 			const attribute = yield* SkillAttribute;
+			const attributeValidate = yield* SkillAttributeValidate;
 			const profiles = yield* ProfileStore;
 			const detector = yield* ProjectDetector;
 
@@ -789,6 +814,30 @@ export class HarnessProject extends Context.Service<
 				return yield* attribute.index(options);
 			});
 
+			const attributeReviewQueue = Effect.fn("HarnessProject.attributeReviewQueue")(function* (
+				options: AttributeValidateOptions,
+			) {
+				return yield* attributeValidate.queue(options);
+			});
+
+			const attributeReview = Effect.fn("HarnessProject.attributeReview")(function* (
+				options: AttributeReviewOptions,
+			) {
+				return yield* attributeValidate.review(options);
+			});
+
+			const attributeReviewPacket = Effect.fn("HarnessProject.attributeReviewPacket")(function* (
+				options: AttributePacketOptions,
+			) {
+				return yield* attributeValidate.packet(options);
+			});
+
+			const attributeValidationSummary = Effect.fn("HarnessProject.attributeValidationSummary")(function* (
+				options: AttributeValidateOptions,
+			) {
+				return yield* attributeValidate.summary(options);
+			});
+
 			const compareSkillMetrics = Effect.fn("HarnessProject.compareSkillMetrics")(function* (
 				options: SkillMetricsCompareOptions,
 			) {
@@ -877,6 +926,10 @@ export class HarnessProject extends Context.Service<
 				attributeCompute,
 				attributeBackfill,
 				attributeIndex,
+				attributeReviewQueue,
+				attributeReview,
+				attributeReviewPacket,
+				attributeValidationSummary,
 				compareSkillMetrics,
 				skillMetricsTrend,
 				doctor,
@@ -923,6 +976,7 @@ export class HarnessProject extends Context.Service<
 			Layer.provideMerge(RatchetService.layer),
 			Layer.provideMerge(SkillMetricsService.layer),
 			Layer.provideMerge(SkillAttribute.layer),
+			Layer.provideMerge(SkillAttributeValidate.layer),
 			Layer.provideMerge(CommandRunner.layer),
 			Layer.provideMerge(ProfileStore.layer),
 			Layer.provideMerge(ProjectDetector.layer),
