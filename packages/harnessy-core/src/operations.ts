@@ -30,7 +30,15 @@ import { ProjectDetector, type ProjectInfo } from "./project-detection.ts";
 import { type HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime-assets.ts";
 import { RuntimeEnvironment } from "./runtime-environment.ts";
 import { SkillFeedback, type SkillFeedbackOptions, type SkillFeedbackResult } from "./skill-feedback.ts";
-import { type SkillMetrics, type SkillMetricsOptions, SkillMetricsService } from "./skill-metrics.ts";
+import {
+	type SkillMetrics,
+	type SkillMetricsCompareOptions,
+	type SkillMetricsComparison,
+	type SkillMetricsOptions,
+	SkillMetricsService,
+	type SkillTrend,
+	type SkillTrendOptions,
+} from "./skill-metrics.ts";
 import {
 	SkillPromote,
 	type SkillPromoteCheck,
@@ -278,6 +286,12 @@ export class HarnessProject extends Context.Service<
 		readonly ratchetScore: (options: RatchetOptions) => Effect.Effect<RatchetScore, HarnessError>;
 		/** Check the autoresearch ratchet hard-constraint gates. */
 		readonly ratchetGates: (options: RatchetOptions) => Effect.Effect<RatchetGates, HarnessError>;
+		/** Compare quality metrics between two skill versions. */
+		readonly compareSkillMetrics: (
+			options: SkillMetricsCompareOptions,
+		) => Effect.Effect<SkillMetricsComparison, HarnessError>;
+		/** Trend per-trace refinement loops over time. */
+		readonly skillMetricsTrend: (options: SkillTrendOptions) => Effect.Effect<SkillTrend, HarnessError>;
 		/** Read installed capability records from the lockfile. */
 		readonly listCapabilities: (target: string) => Effect.Effect<ReadonlyArray<CapabilityEntry>, HarnessError>;
 		/** Check dependency declarations from installed capability manifests. */
@@ -698,6 +712,18 @@ export class HarnessProject extends Context.Service<
 				return yield* ratchet.gates(options);
 			});
 
+			const compareSkillMetrics = Effect.fn("HarnessProject.compareSkillMetrics")(function* (
+				options: SkillMetricsCompareOptions,
+			) {
+				return yield* skillMetrics.compare(options);
+			});
+
+			const skillMetricsTrend = Effect.fn("HarnessProject.skillMetricsTrend")(function* (
+				options: SkillTrendOptions,
+			) {
+				return yield* skillMetrics.trend(options);
+			});
+
 			const doctor = Effect.fn("HarnessProject.doctor")(function* (target: string) {
 				const resolved = yield* paths.resolve(target);
 				const lockfileExists = yield* lockfiles.exists(resolved);
@@ -767,6 +793,8 @@ export class HarnessProject extends Context.Service<
 				skillMetrics: skillMetricsFor,
 				ratchetScore,
 				ratchetGates,
+				compareSkillMetrics,
+				skillMetricsTrend,
 				doctor,
 				listCapabilities,
 				checkDependencies,

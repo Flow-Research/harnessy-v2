@@ -25,7 +25,7 @@ import type {
 import type { DependencyCheckResult, DependencyReport, DependencyStatus } from "./dependency-checker.ts";
 import type { DoctorResult, VerifyResult } from "./operations.ts";
 import type { MonorepoType, PackageManager, WorkspaceKind } from "./project-detection.ts";
-import type { SkillMetrics } from "./skill-metrics.ts";
+import type { SkillMetrics, SkillMetricsComparison, SkillTrend } from "./skill-metrics.ts";
 import type { SkillPromoteCheck, SkillPromoteScan } from "./skill-promote.ts";
 import type { RatchetGates, RatchetScore } from "./skill-ratchet.ts";
 import type { SkillTraceStats } from "./skill-traces.ts";
@@ -894,26 +894,62 @@ export const renderSkillPromoteScanJson = (scan: SkillPromoteScan): string =>
 		skills: scan.skills.map(skillPromoteEntry),
 	});
 
+/** Build the stable metrics payload body shared by the metrics and compare renderers. */
+const skillMetricsBody = (metrics: SkillMetrics) => ({
+	skill: metrics.skill,
+	totalTraces: metrics.totalTraces,
+	avgRefinementLoops: metrics.avgRefinementLoops,
+	firstPassRate: metrics.firstPassRate,
+	totalRefinementLoops: metrics.totalRefinementLoops,
+	firstPassCount: metrics.firstPassCount,
+	...(metrics.avgDurationSeconds === undefined ? {} : { avgDurationSeconds: metrics.avgDurationSeconds }),
+	qualityScore: metrics.qualityScore,
+	gates: metrics.gates.map((gate) => ({
+		name: gate.name,
+		count: gate.count,
+		avgRefinementLoops: gate.avgRefinementLoops,
+		firstPassRate: gate.firstPassRate,
+		outcomes: gate.outcomes.map((entry) => ({ key: entry.key, count: entry.count })),
+		...(gate.avgDurationSeconds === undefined ? {} : { avgDurationSeconds: gate.avgDurationSeconds }),
+	})),
+});
+
 /** Render the stable structured JSON text for `harnessy skill metrics <skill> --json`. */
 export const renderSkillMetricsJson = (metrics: SkillMetrics): string =>
+	renderStructuredJson({ command: "skill-metrics", ok: true, ...skillMetricsBody(metrics) });
+
+/** Render the stable structured JSON text for `harnessy skill metrics compare <skill> --json`. */
+export const renderSkillMetricsCompareJson = (comparison: SkillMetricsComparison): string =>
 	renderStructuredJson({
-		command: "skill-metrics",
+		command: "skill-metrics-compare",
 		ok: true,
-		skill: metrics.skill,
-		totalTraces: metrics.totalTraces,
-		avgRefinementLoops: metrics.avgRefinementLoops,
-		firstPassRate: metrics.firstPassRate,
-		totalRefinementLoops: metrics.totalRefinementLoops,
-		firstPassCount: metrics.firstPassCount,
-		...(metrics.avgDurationSeconds === undefined ? {} : { avgDurationSeconds: metrics.avgDurationSeconds }),
-		qualityScore: metrics.qualityScore,
-		gates: metrics.gates.map((gate) => ({
-			name: gate.name,
-			count: gate.count,
-			avgRefinementLoops: gate.avgRefinementLoops,
-			firstPassRate: gate.firstPassRate,
-			outcomes: gate.outcomes.map((entry) => ({ key: entry.key, count: entry.count })),
-			...(gate.avgDurationSeconds === undefined ? {} : { avgDurationSeconds: gate.avgDurationSeconds }),
+		skill: comparison.skill,
+		beforeVersion: comparison.beforeVersion,
+		afterVersion: comparison.afterVersion,
+		before: skillMetricsBody(comparison.before),
+		after: skillMetricsBody(comparison.after),
+		delta: {
+			qualityScore: comparison.delta.qualityScore,
+			avgRefinementLoops: comparison.delta.avgRefinementLoops,
+			firstPassRate: comparison.delta.firstPassRate,
+		},
+		decision: comparison.decision,
+	});
+
+/** Render the stable structured JSON text for `harnessy skill metrics trend <skill> --json`. */
+export const renderSkillTrendJson = (trend: SkillTrend): string =>
+	renderStructuredJson({
+		command: "skill-metrics-trend",
+		ok: true,
+		skill: trend.skill,
+		...(trend.gate === undefined ? {} : { gate: trend.gate }),
+		count: trend.count,
+		entries: trend.entries.map((entry) => ({
+			timestamp: entry.timestamp,
+			gate: entry.gate,
+			loops: entry.loops,
+			outcome: entry.outcome,
+			...(entry.version === undefined ? {} : { version: entry.version }),
 		})),
 	});
 

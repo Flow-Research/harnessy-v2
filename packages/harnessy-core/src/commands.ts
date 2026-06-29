@@ -19,10 +19,12 @@ import {
 	renderRatchetGatesJson,
 	renderRatchetScoreJson,
 	renderSkillListJson,
+	renderSkillMetricsCompareJson,
 	renderSkillMetricsJson,
 	renderSkillPromoteCheckJson,
 	renderSkillPromoteScanJson,
 	renderSkillTraceStatsJson,
+	renderSkillTrendJson,
 	renderSkillValidateJson,
 	renderVerifyJson,
 } from "./structured-output.ts";
@@ -970,8 +972,8 @@ const lastOption = Options.integer("last").pipe(
 );
 
 /** Compute quality metrics for a skill from its decision traces. */
-const skillMetricsCommand = Command.make(
-	"metrics",
+const metricsComputeCommand = Command.make(
+	"compute",
 	{
 		skill: Args.string("skill"),
 		last: lastOption,
@@ -1101,6 +1103,96 @@ const ratchetGatesCommand = Command.make(
 const ratchetCommand = Command.make("ratchet").pipe(
 	Command.withSubcommands([ratchetScoreCommand, ratchetGatesCommand] as const),
 	Command.withDescription("Autoresearch ratchet: composite score and hard-constraint gates"),
+);
+
+/** Skill version recorded before an improvement, for `metrics compare`. */
+const beforeOption = Options.string("before").pipe(
+	Options.withDescription("Skill version recorded before the improvement."),
+);
+
+/** Skill version recorded after an improvement, for `metrics compare`. */
+const afterOption = Options.string("after").pipe(
+	Options.withDescription("Skill version recorded after the improvement."),
+);
+
+/** Compare quality metrics between two skill versions. */
+const metricsCompareCommand = Command.make(
+	"compare",
+	{
+		skill: Args.string("skill"),
+		before: beforeOption,
+		after: afterOption,
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({ skill, before, after, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const comparison = yield* project.compareSkillMetrics({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				before,
+				after,
+			});
+			if (json) {
+				yield* Console.log(renderSkillMetricsCompareJson(comparison));
+				return;
+			}
+			const arrow = (value: number) => (value > 0 ? "up" : value < 0 ? "down" : "flat");
+			yield* Console.log(`${comparison.skill}: ${comparison.beforeVersion} -> ${comparison.afterVersion}`);
+			yield* Console.log(
+				`  quality ${comparison.before.qualityScore.toFixed(2)} -> ${comparison.after.qualityScore.toFixed(2)} (${arrow(comparison.delta.qualityScore)} ${comparison.delta.qualityScore})`,
+			);
+			yield* Console.log(
+				`  first-pass ${comparison.before.firstPassRate} -> ${comparison.after.firstPassRate} (${comparison.delta.firstPassRate})`,
+			);
+			yield* Console.log(`  decision: ${comparison.decision.toUpperCase()}`);
+		}),
+).pipe(Command.withDescription("Compare quality metrics between two skill versions"));
+
+/** Filter the trend to a single gate name. */
+const gateOption = Options.string("gate").pipe(
+	Options.optional,
+	Options.withDescription("Restrict the trend to a single gate name."),
+);
+
+/** Show the refinement-loop trend for a skill over time. */
+const metricsTrendCommand = Command.make(
+	"trend",
+	{
+		skill: Args.string("skill"),
+		gate: gateOption,
+		last: lastOption,
+		tracesRoot: tracesRootOption,
+		json: jsonOption,
+	},
+	({ skill, gate, last, tracesRoot, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const trend = yield* project.skillMetricsTrend({
+				skill,
+				tracesRoot: roots.tracesRoot,
+				gate: Option.getOrUndefined(gate),
+				last: Option.getOrUndefined(last),
+			});
+			if (json) {
+				yield* Console.log(renderSkillTrendJson(trend));
+				return;
+			}
+			const label = Option.getOrElse(gate, () => "all gates");
+			yield* Console.log(`${trend.skill}: trend ${label} (last ${trend.count})`);
+			for (const entry of trend.entries) {
+				yield* Console.log(`  ${entry.timestamp}\t${entry.gate}\t${entry.loops} loops\t${entry.outcome}`);
+			}
+		}),
+).pipe(Command.withDescription("Show the refinement-loop trend for a skill over time"));
+
+/** Quality metrics for a skill: compute, compare versions, and trend over time. */
+const skillMetricsCommand = Command.make("metrics").pipe(
+	Command.withSubcommands([metricsComputeCommand, metricsCompareCommand, metricsTrendCommand] as const),
+	Command.withDescription("Compute, compare, and trend skill quality metrics from decision traces"),
 );
 
 /** Inspect and validate project-local skills. */
