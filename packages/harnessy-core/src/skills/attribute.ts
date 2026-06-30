@@ -5,6 +5,15 @@ import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "../errors.ts";
 import { roundTo } from "../round.ts";
+import {
+	intOr0,
+	isRecord,
+	numberOrNull,
+	parseNdjson,
+	recordField,
+	stringField,
+	stringOrNull,
+} from "./decision-trace-io.ts";
 
 /** Skill trace-directory artifact names, mirroring v1 `attribute.py`. */
 const TRACES_FILE = "traces.ndjson";
@@ -158,40 +167,6 @@ export interface AttributeBackfillResult {
 	/** Set to "no improvements found" when there was nothing to attribute (v1 parity). */
 	readonly reason?: string;
 }
-
-/** Narrow unknown JSON values to plain records. */
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** Read a nested record at `record[key]`, or an empty record. */
-const recordField = (record: Record<string, unknown>, key: string): Record<string, unknown> => {
-	const value = record[key];
-	return isRecord(value) ? value : {};
-};
-
-/** Read a string field, or null when absent/non-string. */
-const stringOrNull = (record: Record<string, unknown>, key: string): string | null => {
-	const value = record[key];
-	return typeof value === "string" ? value : null;
-};
-
-/** Read a string field with a fallback. */
-const stringField = (record: Record<string, unknown>, key: string, fallback: string): string =>
-	stringOrNull(record, key) ?? fallback;
-
-/** Read a finite number field, or null when absent/non-numeric. */
-const numberOrNull = (record: Record<string, unknown>, key: string): number | null => {
-	const value = record[key];
-	if (typeof value === "number" && Number.isFinite(value)) return value;
-	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
-	return null;
-};
-
-/** Read an integer-ish field, defaulting to 0 (mirrors v1 `int(x or 0)`). */
-const intOr0 = (record: Record<string, unknown>, key: string): number => {
-	const value = numberOrNull(record, key);
-	return value === null ? 0 : Math.trunc(value);
-};
 
 /** Two-digit zero pad. */
 const pad = (value: number): string => value.toString().padStart(2, "0");
@@ -449,16 +424,7 @@ export class SkillAttribute extends Context.Service<
 				const raw = yield* fs
 					.readFileString(file)
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not read ${file}`, cause)));
-				const records: Array<Record<string, unknown>> = [];
-				for (const line of raw.split(/\r?\n/)) {
-					const trimmed = line.trim();
-					if (trimmed === "") continue;
-					const parsed = yield* Effect.try(() => JSON.parse(trimmed) as unknown).pipe(
-						Effect.orElseSucceed(() => null),
-					);
-					if (isRecord(parsed)) records.push(parsed);
-				}
-				return records as ReadonlyArray<Record<string, unknown>>;
+				return yield* parseNdjson(raw);
 			});
 
 			const skillDir = (tracesRoot: string, skill: string) => path.join(tracesRoot, skill);

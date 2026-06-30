@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import { causeMessage, HarnessError } from "../errors.ts";
 import { roundTo } from "../round.ts";
 import { CommandRunner } from "../runtime/command-runner.ts";
+import { boolField, isRecord, numberOrNull, parseNdjson, stringField } from "./decision-trace-io.ts";
 import { SkillMetricsService } from "./metrics.ts";
 
 /**
@@ -118,41 +119,6 @@ export class RatchetGates extends Schema.Class<RatchetGates>("RatchetGates")({
 	/** Human-intervention rate gate. */
 	humanIntervention: RatchetGateCheck,
 }) {}
-
-/** Narrow unknown NDJSON values to plain records. */
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** Read a string field, falling back to `fallback`. */
-const stringField = (record: Record<string, unknown>, key: string, fallback: string): string => {
-	const value = record[key];
-	return typeof value === "string" ? value : fallback;
-};
-
-/** Read a finite number field (or numeric string), or null when absent/non-numeric (mirrors v1 `is not None`). */
-const finiteNumberOrNull = (record: Record<string, unknown>, key: string): number | null => {
-	const value = record[key];
-	if (typeof value === "number" && Number.isFinite(value)) return value;
-	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
-	return null;
-};
-
-/**
- * Evaluate a value for Python truthiness, matching v1's `if r.get(key, False)`.
- * v1 reads raw ledger values and tests them with Python's `bool()`, so a JSON
- * `1`, `"x"`, or non-empty array counts as true — not just a literal `true`.
- */
-const truthy = (value: unknown): boolean => {
-	if (typeof value === "boolean") return value;
-	if (typeof value === "number") return value !== 0 && !Number.isNaN(value);
-	if (typeof value === "string") return value.length > 0;
-	if (Array.isArray(value)) return value.length > 0;
-	if (value !== null && typeof value === "object") return Object.keys(value).length > 0;
-	return false;
-};
-
-/** Read a gate flag with Python truthiness (mirrors v1 `record.get(key, False)`). */
-const boolField = (record: Record<string, unknown>, key: string): boolean => truthy(record[key]);
 
 /** Guard a skill name against path traversal, matching the other skill services. */
 const invalidSkill = (skill: string): boolean => skill === "" || skill === "." || skill === ".." || /[/\\]/.test(skill);
@@ -343,7 +309,7 @@ const computeGates = (runs: ReadonlyArray<Record<string, unknown>>): RatchetGate
 	const total = runs.length;
 	const catastrophic = runs.filter((run) => boolField(run, "catastrophic_failure")).length;
 	const regressions = runs.filter((run) => boolField(run, "regression_detected")).length;
-	const humanRuns = runs.filter((run) => (finiteNumberOrNull(run, "human_gates_triggered") ?? 0) > 0).length;
+	const humanRuns = runs.filter((run) => (numberOrNull(run, "human_gates_triggered") ?? 0) > 0).length;
 
 	const catastrophicRate = total > 0 ? catastrophic / total : 0;
 	const regressionRate = total > 0 ? regressions / total : 0;
@@ -377,12 +343,12 @@ const computeGates = (runs: ReadonlyArray<Record<string, unknown>>): RatchetGate
 /** Read a `RatchetVariables` block from a persisted record (defaulting absent fields to 0). */
 const variablesFromRecord = (record: Record<string, unknown>): RatchetVariables =>
 	new RatchetVariables({
-		f: finiteNumberOrNull(record, "f") ?? 0,
-		p: finiteNumberOrNull(record, "p") ?? 0,
-		q: finiteNumberOrNull(record, "q") ?? 0,
-		r: finiteNumberOrNull(record, "r") ?? 0,
-		h: finiteNumberOrNull(record, "h") ?? 0,
-		c: finiteNumberOrNull(record, "c") ?? 0,
+		f: numberOrNull(record, "f") ?? 0,
+		p: numberOrNull(record, "p") ?? 0,
+		q: numberOrNull(record, "q") ?? 0,
+		r: numberOrNull(record, "r") ?? 0,
+		h: numberOrNull(record, "h") ?? 0,
+		c: numberOrNull(record, "c") ?? 0,
 	});
 
 /** Serialize ratchet state to the v2-native camelCase JSON written to disk. */
@@ -455,16 +421,7 @@ export class RatchetService extends Context.Service<
 				const raw = yield* fs
 					.readFileString(runsFile)
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not read ${runsFile}`, cause)));
-				const runs: Array<Record<string, unknown>> = [];
-				for (const line of raw.split(/\r?\n/)) {
-					const trimmed = line.trim();
-					if (trimmed === "") continue;
-					const parsed = yield* Effect.try(() => JSON.parse(trimmed) as unknown).pipe(
-						Effect.orElseSucceed(() => null),
-					);
-					if (isRecord(parsed)) runs.push(parsed);
-				}
-				return runs as ReadonlyArray<Record<string, unknown>>;
+				return yield* parseNdjson(raw);
 			});
 
 			/**
@@ -499,19 +456,19 @@ export class RatchetService extends Context.Service<
 				let humanGatesTotal = 0;
 				let costSum = 0;
 				for (const run of runs) {
-					const tp = finiteNumberOrNull(run, "tests_passed");
-					const tt = finiteNumberOrNull(run, "tests_total");
+					const tp = numberOrNull(run, "tests_passed");
+					const tt = numberOrNull(run, "tests_total");
 					if (tp !== null && tt !== null && tt > 0) {
 						testsPassed += tp;
 						testsTotal += tt;
 					}
-					const ht = finiteNumberOrNull(run, "human_gates_triggered");
-					const htotal = finiteNumberOrNull(run, "human_gates_total");
+					const ht = numberOrNull(run, "human_gates_triggered");
+					const htotal = numberOrNull(run, "human_gates_total");
 					if (ht !== null && htotal !== null && htotal > 0) {
 						humanGatesTriggered += ht;
 						humanGatesTotal += htotal;
 					}
-					costSum += finiteNumberOrNull(run, "cost") ?? 0;
+					costSum += numberOrNull(run, "cost") ?? 0;
 				}
 
 				const q = testsTotal > 0 ? testsPassed / testsTotal : p;
@@ -558,26 +515,26 @@ export class RatchetService extends Context.Service<
 				if (!isRecord(parsed)) {
 					return yield* new HarnessError({ message: `Ratchet state at ${file} is not a JSON object.` });
 				}
-				const hasDelta = "delta" in parsed && finiteNumberOrNull(parsed, "delta") !== null;
+				const hasDelta = "delta" in parsed && numberOrNull(parsed, "delta") !== null;
 				const state: RatchetStateData = {
 					skill: stringField(parsed, "skill", skill),
 					status: stringField(parsed, "status", "unknown"),
 					snapshotTag: stringField(parsed, "snapshotTag", ""),
 					snapshotTimestamp: stringField(parsed, "snapshotTimestamp", ""),
-					baselineScore: finiteNumberOrNull(parsed, "baselineScore") ?? 0,
+					baselineScore: numberOrNull(parsed, "baselineScore") ?? 0,
 					baselineVariables: variablesFromRecord(
 						isRecord(parsed.baselineVariables) ? parsed.baselineVariables : {},
 					),
-					baselineRunsCount: finiteNumberOrNull(parsed, "baselineRunsCount") ?? 0,
-					evaluationWindow: finiteNumberOrNull(parsed, "evaluationWindow") ?? CONFIG.evaluationWindow,
-					runsSinceSnapshot: finiteNumberOrNull(parsed, "runsSinceSnapshot") ?? 0,
-					...(finiteNumberOrNull(parsed, "candidateScore") === null
+					baselineRunsCount: numberOrNull(parsed, "baselineRunsCount") ?? 0,
+					evaluationWindow: numberOrNull(parsed, "evaluationWindow") ?? CONFIG.evaluationWindow,
+					runsSinceSnapshot: numberOrNull(parsed, "runsSinceSnapshot") ?? 0,
+					...(numberOrNull(parsed, "candidateScore") === null
 						? {}
-						: { candidateScore: finiteNumberOrNull(parsed, "candidateScore") as number }),
+						: { candidateScore: numberOrNull(parsed, "candidateScore") as number }),
 					...(isRecord(parsed.candidateVariables)
 						? { candidateVariables: variablesFromRecord(parsed.candidateVariables) }
 						: {}),
-					...(hasDelta ? { delta: finiteNumberOrNull(parsed, "delta") as number } : {}),
+					...(hasDelta ? { delta: numberOrNull(parsed, "delta") as number } : {}),
 					...(typeof parsed.gatesPassed === "boolean" ? { gatesPassed: parsed.gatesPassed } : {}),
 					...("decision" in parsed ? { decision: stringField(parsed, "decision", "") } : {}),
 					...("reason" in parsed ? { reason: stringField(parsed, "reason", "") } : {}),

@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "../errors.ts";
 import { roundTo } from "../round.ts";
+import { isRecord, numberField, parseNdjson, recordField, stringField, stringOrNull } from "./decision-trace-io.ts";
 
 /** Skill trace-directory artifact names, mirroring v1 `attribute_validate.py`. */
 const ATTRIBUTIONS_FILE = "attributions.ndjson";
@@ -120,34 +121,6 @@ export interface ValidationSummary {
 	readonly notes: ReadonlyArray<string>;
 }
 
-/** Narrow unknown JSON values to plain records. */
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** Read a nested record at `record[key]`, or an empty record. */
-const recordField = (record: Record<string, unknown>, key: string): Record<string, unknown> => {
-	const value = record[key];
-	return isRecord(value) ? value : {};
-};
-
-/** Read a string field, or null when absent/non-string. */
-const stringOrNull = (record: Record<string, unknown>, key: string): string | null => {
-	const value = record[key];
-	return typeof value === "string" ? value : null;
-};
-
-/** Read a string field with a fallback. */
-const stringField = (record: Record<string, unknown>, key: string, fallback: string): string =>
-	stringOrNull(record, key) ?? fallback;
-
-/** Read a finite number field, defaulting to 0 (mirrors v1 `float(x or 0.0)`). */
-const numberOr0 = (record: Record<string, unknown>, key: string): number => {
-	const value = record[key];
-	if (typeof value === "number" && Number.isFinite(value)) return value;
-	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
-	return 0;
-};
-
 /** Two-digit zero pad. */
 const pad = (value: number): string => value.toString().padStart(2, "0");
 
@@ -165,7 +138,7 @@ const signed4 = (value: number): string => `${value >= 0 ? "+" : "-"}${Math.abs(
 /** Average of the five rubric scores, rounded to 2 decimals (v1 `review_average`). */
 const reviewAverage = (review: Record<string, unknown>): number => {
 	const keys = ["legibility", "plausibility", "conservatism", "usefulness", "trustworthiness"];
-	const sum = keys.reduce((total, key) => total + numberOr0(review, key), 0);
+	const sum = keys.reduce((total, key) => total + numberField(review, key), 0);
 	return roundTo(sum / keys.length, 2);
 };
 
@@ -233,16 +206,7 @@ export class SkillAttributeValidate extends Context.Service<
 				const raw = yield* fs
 					.readFileString(file)
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not read ${file}`, cause)));
-				const records: Array<Record<string, unknown>> = [];
-				for (const line of raw.split(/\r?\n/)) {
-					const trimmed = line.trim();
-					if (trimmed === "") continue;
-					const parsed = yield* Effect.try(() => JSON.parse(trimmed) as unknown).pipe(
-						Effect.orElseSucceed(() => null),
-					);
-					if (isRecord(parsed)) records.push(parsed);
-				}
-				return records as ReadonlyArray<Record<string, unknown>>;
+				return yield* parseNdjson(raw);
 			});
 
 			/** Latest review per attribution id, keyed by `attributionId` (v1 `latest_review_by_attribution`). */
@@ -378,7 +342,7 @@ export class SkillAttributeValidate extends Context.Service<
 									if (!isRecord(gateDeltaValue)) continue;
 									const delta = recordField(gateDeltaValue, "delta");
 									lines.push(
-										`  - ${gateName}: first_pass_rate ${signed4(numberOr0(delta, "firstPassRate"))}, avg_refinement_loops ${signed4(numberOr0(delta, "avgRefinementLoops"))}`,
+										`  - ${gateName}: first_pass_rate ${signed4(numberField(delta, "firstPassRate"))}, avg_refinement_loops ${signed4(numberField(delta, "avgRefinementLoops"))}`,
 									);
 								}
 							}
@@ -457,10 +421,12 @@ export class SkillAttributeValidate extends Context.Service<
 						? roundTo(reviewedRecords.reduce((total, r) => total + reviewAverage(r), 0) / reviewCount, 2)
 						: null;
 				const usefulnessAvg =
-					reviewCount > 0 ? reviewedRecords.reduce((t, r) => t + numberOr0(r, "usefulness"), 0) / reviewCount : 0;
+					reviewCount > 0
+						? reviewedRecords.reduce((t, r) => t + numberField(r, "usefulness"), 0) / reviewCount
+						: 0;
 				const trustAvg =
 					reviewCount > 0
-						? reviewedRecords.reduce((t, r) => t + numberOr0(r, "trustworthiness"), 0) / reviewCount
+						? reviewedRecords.reduce((t, r) => t + numberField(r, "trustworthiness"), 0) / reviewCount
 						: 0;
 
 				const componentIndexExists = yield* fs

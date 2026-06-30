@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "../errors.ts";
+import { parseNdjson } from "./decision-trace-io.ts";
 
 /** Improvement-record file name written by the v1 skill-improve loop. */
 const IMPROVEMENTS_FILE = "improvements.ndjson";
@@ -67,10 +68,6 @@ export class SkillPromoteScan extends Schema.Class<SkillPromoteScan>("SkillPromo
 	/** Per-skill promotion state, sorted by skill name. */
 	skills: Schema.Array(SkillPromoteCheck),
 }) {}
-
-/** Narrow unknown NDJSON values to plain records. */
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Read a string field from a record, or undefined when absent/non-string. */
 const stringField = (record: Record<string, unknown>, key: string): string | undefined => {
@@ -166,16 +163,7 @@ export class SkillPromote extends Context.Service<
 					const file = path.join(tracesRoot, skill, IMPROVEMENTS_FILE);
 					if (!(yield* exists(file))) return [] as ReadonlyArray<Record<string, unknown>>;
 					const raw = yield* readFile(file);
-					const records: Array<Record<string, unknown>> = [];
-					for (const line of raw.split(/\r?\n/)) {
-						const trimmed = line.trim();
-						if (trimmed === "") continue;
-						const parsed = yield* Effect.try(() => JSON.parse(trimmed) as unknown).pipe(
-							Effect.orElseSucceed(() => null),
-						);
-						if (isRecord(parsed)) records.push(parsed);
-					}
-					return records as ReadonlyArray<Record<string, unknown>>;
+					return yield* parseNdjson(raw);
 				});
 
 			const check = Effect.fn("SkillPromote.check")(function* (options: SkillPromoteCheckOptions) {

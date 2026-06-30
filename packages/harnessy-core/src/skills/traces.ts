@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "../errors.ts";
 import { roundTo } from "../round.ts";
+import { numberField, parseNdjson, recordField, stringField } from "./decision-trace-io.ts";
 
 /** Trace file name written by the v1 decision-trace system. */
 const TRACES_FILE = "traces.ndjson";
@@ -52,30 +53,6 @@ export class SkillTraceStats extends Schema.Class<SkillTraceStats>("SkillTraceSt
 	/** Per-gate statistics, sorted by average refinement loops (descending). */
 	gates: Schema.Array(SkillTraceGateStats),
 }) {}
-
-/** Narrow unknown NDJSON values to plain records. */
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-/** Read a nested record at `record[key]`, or an empty record. */
-const recordField = (record: Record<string, unknown>, key: string): Record<string, unknown> => {
-	const value = record[key];
-	return isRecord(value) ? value : {};
-};
-
-/** Read a string field, falling back to `fallback`. */
-const stringField = (record: Record<string, unknown>, key: string, fallback: string): string => {
-	const value = record[key];
-	return typeof value === "string" ? value : fallback;
-};
-
-/** Read a finite number field (or a finite numeric string); absent/invalid values fall back to 0. */
-const numberField = (record: Record<string, unknown>, key: string): number => {
-	const value = record[key];
-	if (typeof value === "number" && Number.isFinite(value)) return value;
-	if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
-	return 0;
-};
 
 /** Read the structured feedback categories as strings. */
 const categoriesOf = (trace: Record<string, unknown>): ReadonlyArray<string> => {
@@ -145,16 +122,7 @@ export class SkillTraces extends Context.Service<
 				const raw = yield* fs
 					.readFileString(file)
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not read ${file}`, cause)));
-				const traces: Array<Record<string, unknown>> = [];
-				for (const line of raw.split(/\r?\n/)) {
-					const trimmed = line.trim();
-					if (trimmed === "") continue;
-					const parsed = yield* Effect.try(() => JSON.parse(trimmed) as unknown).pipe(
-						Effect.orElseSucceed(() => null),
-					);
-					if (isRecord(parsed)) traces.push(parsed);
-				}
-				return traces as ReadonlyArray<Record<string, unknown>>;
+				return yield* parseNdjson(raw);
 			});
 
 			const stats = Effect.fn("SkillTraces.stats")(function* (options: SkillTraceStatsOptions) {
