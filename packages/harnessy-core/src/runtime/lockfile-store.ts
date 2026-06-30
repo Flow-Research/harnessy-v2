@@ -3,10 +3,10 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { causeMessage, HarnessError } from "./errors.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import type { HarnessPaths } from "../paths.ts";
 import type { InstallPaths } from "./install-paths.ts";
 import { emptyLockfile, formatLockfile, type HarnessLockfile, parseLockfile } from "./lockfile.ts";
-import type { HarnessPaths } from "./paths.ts";
 
 /** Reads and writes the project-local Harnessy lockfile. */
 export class LockfileStore extends Context.Service<

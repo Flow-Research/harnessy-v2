@@ -3,11 +3,11 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { DependencyRequirement } from "./capabilities/manifest.ts";
-import type { CapabilityEntry } from "./capabilities/source.ts";
-import { causeMessage, HarnessError } from "./errors.ts";
+import type { DependencyRequirement } from "../capabilities/manifest.ts";
+import type { CapabilityEntry } from "../capabilities/source.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import { RuntimeEnvironment } from "./environment.ts";
 import type { HarnessLockfile } from "./lockfile.ts";
-import { RuntimeEnvironment } from "./runtime-environment.ts";
 
 /** Dependency check status. */
 export const DependencyStatus = Schema.Literals(["available", "missing", "unknown"]);

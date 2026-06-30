@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "../errors.ts";
-import type { InstallPaths } from "../install-paths.ts";
 import type { HarnessPaths } from "../paths.ts";
+import type { InstallPaths } from "../runtime/install-paths.ts";
 
 /**
  * Required `manifest.yaml` fields for a project-local skill, mirroring v1

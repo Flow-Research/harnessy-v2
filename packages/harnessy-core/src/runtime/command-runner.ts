@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { causeMessage, type HarnessError } from "./errors.ts";
+import { causeMessage, type HarnessError } from "../errors.ts";
 
 /**
  * A single external command to execute.

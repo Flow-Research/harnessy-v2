@@ -8,12 +8,14 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { causeMessage, HarnessError } from "./errors.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import type { HarnessPaths } from "../paths.ts";
 import type { InstallPaths } from "./install-paths.ts";
-import type { HarnessPaths } from "./paths.ts";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
-const v1SourceRoot = resolve(srcDir, "../../capability-harnessy-v1-full/resources/source");
+// This module lives in src/runtime/ (and dist/runtime/), two levels under the
+// package root, so reach the sibling v1 pack with three `..` segments.
+const v1SourceRoot = resolve(srcDir, "../../../capability-harnessy-v1-full/resources/source");
 
 const CANONICAL_FLOW_SCRIPTS = [
 	"agents.mjs",

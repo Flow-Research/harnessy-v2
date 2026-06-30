@@ -3,9 +3,9 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { causeMessage, HarnessError } from "./errors.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import type { HarnessPaths } from "../paths.ts";
 import type { InstallPaths } from "./install-paths.ts";
-import type { HarnessPaths } from "./paths.ts";
 
 /** Build the v1 flow-install package.json lifecycle script map for a scripts directory. */
 export const harnessyPackageScriptsFor = (scriptsDirRel: string): Readonly<Record<string, string>> => {

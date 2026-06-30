@@ -4,11 +4,10 @@ import { FileSystem } from "effect";
 import * as Effect from "effect/Effect";
 import { TestConsole } from "effect/testing";
 import { Command } from "effect/unstable/cli";
-
-import { HarnessBootstrap } from "../src/bootstrap.ts";
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
 import { HarnessProject } from "../src/operations.ts";
+import { HarnessBootstrap } from "../src/runtime/bootstrap.ts";
 import { type FakeSpawner, makeFakeSpawner } from "./lib/fake-spawner.ts";
 
 /** Provide the live Harnessy project service plus Node platform services. */

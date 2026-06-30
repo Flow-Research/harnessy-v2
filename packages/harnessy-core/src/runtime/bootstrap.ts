@@ -7,13 +7,14 @@ import { FileSystem, Path, Schema } from "effect";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-
+import { causeMessage, HarnessError } from "../errors.ts";
 import { CommandRunner, CommandRunResult, displayCommand } from "./command-runner.ts";
-import { causeMessage, HarnessError } from "./errors.ts";
-import { RuntimeEnvironment } from "./runtime-environment.ts";
+import { RuntimeEnvironment } from "./environment.ts";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
-const preservedV1SourceRoot = resolve(srcDir, "../../capability-harnessy-v1-full/resources/source");
+// This module lives in src/runtime/ (and dist/runtime/), two levels under the
+// package root, so reach the sibling v1 pack with three `..` segments.
+const preservedV1SourceRoot = resolve(srcDir, "../../../capability-harnessy-v1-full/resources/source");
 
 /** Native bootstrap mode corresponding to v1 install.sh modes. */
 export const HarnessBootstrapMode = Schema.Literals(["bootstrap", "in-place"]);

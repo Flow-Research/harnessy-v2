@@ -10,7 +10,6 @@ import {
 	type AiResolveOptions,
 	AiRunner,
 } from "./ai/runner.ts";
-import { HarnessBootstrap, type HarnessBootstrapMode, type HarnessBootstrapPrepareResult } from "./bootstrap.ts";
 import { CapabilityChecker, type CapabilityCheckReport } from "./capabilities/checker.ts";
 import { CapabilityFingerprinter } from "./capabilities/fingerprint.ts";
 import { CapabilityMaterializer } from "./capabilities/materializer.ts";
@@ -20,22 +19,27 @@ import {
 	type MaterializeCapabilitiesResult,
 } from "./capabilities/registry.ts";
 import type { CapabilityEntry } from "./capabilities/source.ts";
-import { CommandRunner } from "./command-runner.ts";
 import { HARNESSY_VERSION } from "./constants.ts";
-import { DependencyChecker, type DependencyReport } from "./dependency-checker.ts";
 import { HarnessError } from "./errors.ts";
-import { type GeneratedFileStatus, GeneratedFiles } from "./generated-files.ts";
-import { type InstallPathOverrides, type InstallPaths, resolveInstallPaths } from "./install-paths.ts";
-import { HarnessLockfile } from "./lockfile.ts";
-import { LockfileStore } from "./lockfile-store.ts";
-import { ManagedBlocks, type ManagedBlocksResult } from "./managed-blocks.ts";
-import { type PackageScriptPatchResult, PackageScripts } from "./package-scripts.ts";
-import { HarnessPathResolver } from "./path-resolver.ts";
 import type { HarnessPaths } from "./paths.ts";
-import { ProfileStore } from "./profile-store.ts";
-import { ProjectDetector, type ProjectInfo } from "./project-detection.ts";
-import { type HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime-assets.ts";
-import { RuntimeEnvironment } from "./runtime-environment.ts";
+import { type HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime/assets.ts";
+import {
+	HarnessBootstrap,
+	type HarnessBootstrapMode,
+	type HarnessBootstrapPrepareResult,
+} from "./runtime/bootstrap.ts";
+import { CommandRunner } from "./runtime/command-runner.ts";
+import { DependencyChecker, type DependencyReport } from "./runtime/dependency-checker.ts";
+import { RuntimeEnvironment } from "./runtime/environment.ts";
+import { type GeneratedFileStatus, GeneratedFiles } from "./runtime/generated-files.ts";
+import { type InstallPathOverrides, type InstallPaths, resolveInstallPaths } from "./runtime/install-paths.ts";
+import { HarnessLockfile } from "./runtime/lockfile.ts";
+import { LockfileStore } from "./runtime/lockfile-store.ts";
+import { ManagedBlocks, type ManagedBlocksResult } from "./runtime/managed-blocks.ts";
+import { type PackageScriptPatchResult, PackageScripts } from "./runtime/package-scripts.ts";
+import { HarnessPathResolver } from "./runtime/path-resolver.ts";
+import { ProfileStore } from "./runtime/profile-store.ts";
+import { ProjectDetector, type ProjectInfo } from "./runtime/project-detection.ts";
 import {
 	type AttributeBackfillOptions,
 	type AttributeBackfillResult,

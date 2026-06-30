@@ -2,10 +2,9 @@ import { Clock, FileSystem, Path, Schema } from "effect";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-
-import { CommandRunner } from "../command-runner.ts";
 import { causeMessage, HarnessError } from "../errors.ts";
 import { roundTo } from "../round.ts";
+import { CommandRunner } from "../runtime/command-runner.ts";
 import { SkillMetricsService } from "./metrics.ts";
 
 /**

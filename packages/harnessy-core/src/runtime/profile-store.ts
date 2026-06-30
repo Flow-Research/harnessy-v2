@@ -3,9 +3,9 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { causeMessage, HarnessError } from "./errors.ts";
-import type { HarnessPaths } from "./paths.ts";
-import { expandHomePath } from "./paths.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import type { HarnessPaths } from "../paths.ts";
+import { expandHomePath } from "../paths.ts";
 import { type HarnessProfile, parseProfile } from "./profile.ts";
 
 /** Result of verifying a Harnessy profile and its referenced context and memory files. */

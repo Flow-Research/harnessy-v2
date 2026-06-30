@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import * as Effect from "effect/Effect";
 
-import { causeMessage, HarnessError } from "./errors.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
 
 /** Default profile output modes for commands that support multiple renderers. */
 export const ProfileOutputMode = Schema.Literals(["text", "json"]);

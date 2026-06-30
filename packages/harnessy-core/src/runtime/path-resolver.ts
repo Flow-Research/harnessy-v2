@@ -3,8 +3,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import type { HarnessPaths } from "./paths.ts";
-import { resolveTargetPaths } from "./paths.ts";
+import type { HarnessPaths } from "../paths.ts";
+import { resolveTargetPaths } from "../paths.ts";
 
 /** Resolves user-provided project targets into absolute Harnessy path sets. */
 export class HarnessPathResolver extends Context.Service<

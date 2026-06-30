@@ -4,8 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "../errors.ts";
-import type { InstallPaths } from "../install-paths.ts";
 import type { HarnessPaths } from "../paths.ts";
+import type { InstallPaths } from "../runtime/install-paths.ts";
 
 /** Skill directory names are lowercase kebab slugs (no path separators or traversal). */
 const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;

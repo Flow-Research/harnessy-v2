@@ -3,8 +3,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { causeMessage, HarnessError } from "./errors.ts";
-import type { HarnessPaths } from "./paths.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import type { HarnessPaths } from "../paths.ts";
 
 /** Package manager families Harnessy can infer without running installers. */
 export const PackageManager = Schema.Literals(["npm", "pnpm", "yarn", "bun", "unknown"]);

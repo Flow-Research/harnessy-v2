@@ -9,10 +9,10 @@ import { CAPABILITY_MANIFEST_NAME, CapabilityManifest, DependencyRequirement } f
 import { CapabilityEntry, CapabilitySource } from "../src/capabilities/source.ts";
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
-import { DependencyCheckResult } from "../src/dependency-checker.ts";
-import { HarnessLockfile } from "../src/lockfile.ts";
 import { HarnessProject } from "../src/operations.ts";
-import { ExistingHarnessState, ProjectInfo } from "../src/project-detection.ts";
+import { DependencyCheckResult } from "../src/runtime/dependency-checker.ts";
+import { HarnessLockfile } from "../src/runtime/lockfile.ts";
+import { ExistingHarnessState, ProjectInfo } from "../src/runtime/project-detection.ts";
 import {
 	renderCapabilityInspectJson,
 	renderDepsCheckJson,

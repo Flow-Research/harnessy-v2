@@ -23,9 +23,9 @@ import type {
 	CapabilitySourceType,
 	CapabilityUrlArtifactKind,
 } from "./capabilities/source.ts";
-import type { DependencyCheckResult, DependencyReport, DependencyStatus } from "./dependency-checker.ts";
 import type { DoctorResult, VerifyResult } from "./operations.ts";
-import type { MonorepoType, PackageManager, WorkspaceKind } from "./project-detection.ts";
+import type { DependencyCheckResult, DependencyReport, DependencyStatus } from "./runtime/dependency-checker.ts";
+import type { MonorepoType, PackageManager, WorkspaceKind } from "./runtime/project-detection.ts";
 import type { AttributeBackfillResult, AttributeComputeResult, ComponentIndex } from "./skills/attribute.ts";
 import type {
 	AttributePacketResult,

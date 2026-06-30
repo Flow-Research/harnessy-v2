@@ -19,11 +19,11 @@ import {
 } from "../src/capabilities/source.ts";
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
-import { DependencyChecker } from "../src/dependency-checker.ts";
-import { formatLockfile, HarnessLockfile, parseLockfile } from "../src/lockfile.ts";
 import { HarnessProject } from "../src/operations.ts";
-import { parseGitRemote, parsePnpmWorkspaceGlobs } from "../src/project-detection.ts";
-import { RuntimeEnvironment } from "../src/runtime-environment.ts";
+import { DependencyChecker } from "../src/runtime/dependency-checker.ts";
+import { RuntimeEnvironment } from "../src/runtime/environment.ts";
+import { formatLockfile, HarnessLockfile, parseLockfile } from "../src/runtime/lockfile.ts";
+import { parseGitRemote, parsePnpmWorkspaceGlobs } from "../src/runtime/project-detection.ts";
 
 /** Provide the live Harnessy service plus Node platform services for filesystem-backed tests. */
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

@@ -4,8 +4,8 @@ import { FileSystem } from "effect";
 import * as Effect from "effect/Effect";
 
 import { pathsForTarget } from "../src/paths.ts";
-import { parseProfile } from "../src/profile.ts";
-import { ProfileStore } from "../src/profile-store.ts";
+import { parseProfile } from "../src/runtime/profile.ts";
+import { ProfileStore } from "../src/runtime/profile-store.ts";
 
 /** Provide the live profile store plus Node platform services for filesystem-backed tests. */
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

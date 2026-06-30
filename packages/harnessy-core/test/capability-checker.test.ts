@@ -11,10 +11,10 @@ import {
 	ToolAvailableCheck,
 } from "../src/capabilities/manifest.ts";
 import { CapabilityEntry, CapabilitySource } from "../src/capabilities/source.ts";
-import { HarnessLockfile } from "../src/lockfile.ts";
 import type { HarnessPaths } from "../src/paths.ts";
 import { pathsForTarget } from "../src/paths.ts";
-import { RuntimeEnvironment } from "../src/runtime-environment.ts";
+import { RuntimeEnvironment } from "../src/runtime/environment.ts";
+import { HarnessLockfile } from "../src/runtime/lockfile.ts";
 
 const addedAt = "2026-01-01T00:00:00.000Z";
 

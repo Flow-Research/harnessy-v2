@@ -4,7 +4,7 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { CommandRunner, displayCommand } from "../src/command-runner.ts";
+import { CommandRunner, displayCommand } from "../src/runtime/command-runner.ts";
 import { type FakeSpawner, makeFakeSpawner } from "./lib/fake-spawner.ts";
 
 const withFake = <A, E>(fake: FakeSpawner, effect: Effect.Effect<A, E, CommandRunner>) =>

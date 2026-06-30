@@ -1,11 +1,5 @@
 /** Public programmatic API for parsing and inspecting Harnessy project state. */
 
-export type { HarnessBootstrapPrepareOptions, HarnessBootstrapPrepareResult } from "./bootstrap.ts";
-export {
-	HarnessBootstrap,
-	HarnessBootstrapAction,
-	HarnessBootstrapMode,
-} from "./bootstrap.ts";
 export type { CapabilityCheckReport } from "./capabilities/checker.ts";
 export {
 	CapabilityChecker,
@@ -68,17 +62,7 @@ export {
 	planCapabilityResolution,
 } from "./capabilities/source.ts";
 export { HARNESSY_VERSION } from "./constants.ts";
-export type { DependencyReport } from "./dependency-checker.ts";
-export { DependencyChecker, DependencyCheckResult, DependencyStatus } from "./dependency-checker.ts";
 export { HarnessError } from "./errors.ts";
-export type { GeneratedFileInstallResult, GeneratedFileStatus } from "./generated-files.ts";
-export { GeneratedFiles } from "./generated-files.ts";
-export type { InstallPathOverrides } from "./install-paths.ts";
-export { defaultInstallPaths, InstallPaths, resolveInstallPaths } from "./install-paths.ts";
-export { emptyLockfile, formatLockfile, formatManifestJson, HarnessLockfile, parseLockfile } from "./lockfile.ts";
-export { LockfileStore } from "./lockfile-store.ts";
-export type { ManagedBlockResult, ManagedBlocksResult } from "./managed-blocks.ts";
-export { ManagedBlocks } from "./managed-blocks.ts";
 export type {
 	DoctorResult,
 	InitResult,
@@ -91,14 +75,39 @@ export type {
 	VerifyResult,
 } from "./operations.ts";
 export { HarnessProject } from "./operations.ts";
-export type { PackageScriptPatchOptions, PackageScriptPatchResult } from "./package-scripts.ts";
-export { HARNESSY_PACKAGE_SCRIPTS, harnessyPackageScriptsFor, PackageScripts } from "./package-scripts.ts";
-export { HarnessPathResolver } from "./path-resolver.ts";
 export type { HarnessPaths } from "./paths.ts";
 export { pathsForTarget, resolveTargetDir, resolveTargetPaths, toTargetRelative } from "./paths.ts";
-export { HarnessProfile, parseProfile } from "./profile.ts";
-export type { ProfileVerification } from "./profile-store.ts";
-export { ProfileStore } from "./profile-store.ts";
+export type { HarnessRuntimeAssetSyncOptions } from "./runtime/assets.ts";
+export { HarnessRuntimeAssetAction, HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime/assets.ts";
+export type { HarnessBootstrapPrepareOptions, HarnessBootstrapPrepareResult } from "./runtime/bootstrap.ts";
+export {
+	HarnessBootstrap,
+	HarnessBootstrapAction,
+	HarnessBootstrapMode,
+} from "./runtime/bootstrap.ts";
+export type { DependencyReport } from "./runtime/dependency-checker.ts";
+export { DependencyChecker, DependencyCheckResult, DependencyStatus } from "./runtime/dependency-checker.ts";
+export { RuntimeEnvironment } from "./runtime/environment.ts";
+export type { GeneratedFileInstallResult, GeneratedFileStatus } from "./runtime/generated-files.ts";
+export { GeneratedFiles } from "./runtime/generated-files.ts";
+export type { InstallPathOverrides } from "./runtime/install-paths.ts";
+export { defaultInstallPaths, InstallPaths, resolveInstallPaths } from "./runtime/install-paths.ts";
+export {
+	emptyLockfile,
+	formatLockfile,
+	formatManifestJson,
+	HarnessLockfile,
+	parseLockfile,
+} from "./runtime/lockfile.ts";
+export { LockfileStore } from "./runtime/lockfile-store.ts";
+export type { ManagedBlockResult, ManagedBlocksResult } from "./runtime/managed-blocks.ts";
+export { ManagedBlocks } from "./runtime/managed-blocks.ts";
+export type { PackageScriptPatchOptions, PackageScriptPatchResult } from "./runtime/package-scripts.ts";
+export { HARNESSY_PACKAGE_SCRIPTS, harnessyPackageScriptsFor, PackageScripts } from "./runtime/package-scripts.ts";
+export { HarnessPathResolver } from "./runtime/path-resolver.ts";
+export { HarnessProfile, parseProfile } from "./runtime/profile.ts";
+export type { ProfileVerification } from "./runtime/profile-store.ts";
+export { ProfileStore } from "./runtime/profile-store.ts";
 export {
 	ExistingHarnessState,
 	MonorepoInfo,
@@ -110,10 +119,7 @@ export {
 	parsePnpmWorkspaceGlobs,
 	WorkspaceInfo,
 	WorkspaceKind,
-} from "./project-detection.ts";
-export type { HarnessRuntimeAssetSyncOptions } from "./runtime-assets.ts";
-export { HarnessRuntimeAssetAction, HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime-assets.ts";
-export { RuntimeEnvironment } from "./runtime-environment.ts";
+} from "./runtime/project-detection.ts";
 export type {
 	StructuredCapability,
 	StructuredCapabilityAutoresearchMetadata,

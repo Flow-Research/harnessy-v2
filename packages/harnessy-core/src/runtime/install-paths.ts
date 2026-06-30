@@ -1,9 +1,9 @@
 import { Path, Schema } from "effect";
 import * as Effect from "effect/Effect";
 
-import { causeMessage, HarnessError } from "./errors.ts";
-import type { HarnessPaths } from "./paths.ts";
-import { toTargetRelative } from "./paths.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import type { HarnessPaths } from "../paths.ts";
+import { toTargetRelative } from "../paths.ts";
 
 /** V1-compatible configurable install locations recorded in the Harnessy lockfile. */
 export class InstallPaths extends Schema.Class<InstallPaths>("InstallPaths")({
