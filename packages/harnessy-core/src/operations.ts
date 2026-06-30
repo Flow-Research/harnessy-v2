@@ -1,4 +1,4 @@
-import { Path } from "effect";
+import { FileSystem, Path } from "effect";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -361,6 +361,11 @@ export class HarnessProject extends Context.Service<
 		readonly aiResolve: (options: AiResolveOptions) => Effect.Effect<AiResolution, HarnessError>;
 		/** Classify an AI provider failure from its captured output. */
 		readonly aiClassify: (options: AiClassifyOptions) => Effect.Effect<AiFailure, HarnessError>;
+		/** Resolve the autoresearch autoflow state directory, mirroring v1 `autoflow_state_dir()`. */
+		readonly resolveAutoflowDir: (options: {
+			readonly tracesRoot: string;
+			readonly cwd: string;
+		}) => Effect.Effect<string, HarnessError>;
 		/** Compare quality metrics between two skill versions. */
 		readonly compareSkillMetrics: (
 			options: SkillMetricsCompareOptions,
@@ -414,6 +419,8 @@ export class HarnessProject extends Context.Service<
 			const aiRunner = yield* AiRunner;
 			const profiles = yield* ProfileStore;
 			const detector = yield* ProjectDetector;
+			const commandRunner = yield* CommandRunner;
+			const fileSystem = yield* FileSystem.FileSystem;
 
 			const init = Effect.fn("HarnessProject.init")(function* (target: string, force: boolean) {
 				const resolved = yield* paths.resolve(target);
@@ -858,6 +865,35 @@ export class HarnessProject extends Context.Service<
 				return yield* aiRunner.classify(options);
 			});
 
+			const resolveAutoflowDir = Effect.fn("HarnessProject.resolveAutoflowDir")(function* (options: {
+				tracesRoot: string;
+				cwd: string;
+			}) {
+				// v1 `autoflow_state_dir()`: prefer a per-project `.jarvis/context/autoflow/`
+				// (git root, then cwd) when a `.jarvis/context` exists, else the global fallback.
+				const gitRoot = yield* commandRunner
+					.run({
+						id: "autoflow-git-root",
+						label: "git rev-parse --show-toplevel",
+						executable: "git",
+						args: ["rev-parse", "--show-toplevel"],
+						cwd: options.cwd,
+					})
+					.pipe(
+						Effect.map((result) => (result.status === "succeeded" ? result.stdout.trim() : "")),
+						Effect.orElseSucceed(() => ""),
+					);
+				for (const base of [gitRoot, options.cwd]) {
+					if (base === "") continue;
+					const contextDir = pathService.join(base, ".jarvis", "context");
+					const autoflowDir = pathService.join(contextDir, "autoflow");
+					const autoflowExists = yield* fileSystem.exists(autoflowDir).pipe(Effect.orElseSucceed(() => false));
+					const contextExists = yield* fileSystem.exists(contextDir).pipe(Effect.orElseSucceed(() => false));
+					if (autoflowExists || contextExists) return autoflowDir;
+				}
+				return pathService.join(options.tracesRoot, "autoflow");
+			});
+
 			const compareSkillMetrics = Effect.fn("HarnessProject.compareSkillMetrics")(function* (
 				options: SkillMetricsCompareOptions,
 			) {
@@ -952,6 +988,7 @@ export class HarnessProject extends Context.Service<
 				attributeValidationSummary,
 				aiResolve,
 				aiClassify,
+				resolveAutoflowDir,
 				compareSkillMetrics,
 				skillMetricsTrend,
 				doctor,

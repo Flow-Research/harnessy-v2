@@ -1044,10 +1044,10 @@ const runsFileOption = Options.string("runs-file").pipe(
 	Options.withDescription("Autoresearch run ledger (NDJSON). Default <traces-root>/autoflow/runs.ndjson."),
 );
 
-/** Resolve the run-ledger path, defaulting to the global autoflow location under the traces root. */
-const resolveRunsFile = (runsFile: Option.Option<string>, tracesRoot: string): string =>
+/** Resolve the run-ledger path, defaulting to the resolved autoflow state directory. */
+const resolveRunsFile = (runsFile: Option.Option<string>, autoflowDir: string): string =>
 	Option.match(runsFile, {
-		onNone: () => join(tracesRoot, "autoflow", RUNS_LEDGER_FILE),
+		onNone: () => join(autoflowDir, RUNS_LEDGER_FILE),
 		onSome: expandHome,
 	});
 
@@ -1065,10 +1065,11 @@ const ratchetScoreCommand = Command.make(
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const autoflowDir = yield* project.resolveAutoflowDir({ tracesRoot: roots.tracesRoot, cwd: process.cwd() });
 			const score = yield* project.ratchetScore({
 				skill,
 				tracesRoot: roots.tracesRoot,
-				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+				runsFile: resolveRunsFile(runsFile, autoflowDir),
 				layer,
 			});
 			if (json) {
@@ -1095,10 +1096,11 @@ const ratchetGatesCommand = Command.make(
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const autoflowDir = yield* project.resolveAutoflowDir({ tracesRoot: roots.tracesRoot, cwd: process.cwd() });
 			const gates = yield* project.ratchetGates({
 				skill,
 				tracesRoot: roots.tracesRoot,
-				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+				runsFile: resolveRunsFile(runsFile, autoflowDir),
 			});
 			if (json) {
 				yield* Console.log(renderRatchetGatesJson(gates));
@@ -1136,9 +1138,9 @@ const windowOption = Options.integer("window").pipe(
 	Options.withDescription("Number of post-snapshot runs to evaluate."),
 );
 
-/** Resolve the autoflow state directory, defaulting under the traces root. */
-const resolveStateDir = (stateDir: Option.Option<string>, tracesRoot: string): string =>
-	Option.match(stateDir, { onNone: () => join(tracesRoot, "autoflow"), onSome: expandHome });
+/** Resolve the autoflow state directory, defaulting to the resolved autoflow directory. */
+const resolveStateDir = (stateDir: Option.Option<string>, autoflowDir: string): string =>
+	Option.match(stateDir, { onNone: () => autoflowDir, onSome: expandHome });
 
 /** Snapshot a ratchet baseline before a skill improvement. */
 const ratchetSnapshotCommand = Command.make(
@@ -1156,12 +1158,13 @@ const ratchetSnapshotCommand = Command.make(
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(installedRoot, tracesRoot);
+			const autoflowDir = yield* project.resolveAutoflowDir({ tracesRoot: roots.tracesRoot, cwd: process.cwd() });
 			const result = yield* project.ratchetSnapshot({
 				skill,
 				tracesRoot: roots.tracesRoot,
-				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
+				runsFile: resolveRunsFile(runsFile, autoflowDir),
 				skillsRoot: roots.installedRoot,
-				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				stateDir: resolveStateDir(stateDir, autoflowDir),
 				repoDir: expandHome(repoDir),
 			});
 			if (json) {
@@ -1189,11 +1192,12 @@ const ratchetEvaluateCommand = Command.make(
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const autoflowDir = yield* project.resolveAutoflowDir({ tracesRoot: roots.tracesRoot, cwd: process.cwd() });
 			const evaluation = yield* project.ratchetEvaluate({
 				skill,
 				tracesRoot: roots.tracesRoot,
-				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
-				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				runsFile: resolveRunsFile(runsFile, autoflowDir),
+				stateDir: resolveStateDir(stateDir, autoflowDir),
 				window,
 			});
 			if (json) {
@@ -1227,10 +1231,11 @@ const ratchetDecideCommand = Command.make(
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(installedRoot, tracesRoot);
+			const autoflowDir = yield* project.resolveAutoflowDir({ tracesRoot: roots.tracesRoot, cwd: process.cwd() });
 			const decision = yield* project.ratchetDecide({
 				skill,
 				skillsRoot: roots.installedRoot,
-				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				stateDir: resolveStateDir(stateDir, autoflowDir),
 				repoDir: expandHome(repoDir),
 			});
 			if (json) {
@@ -1260,9 +1265,10 @@ const ratchetStatusCommand = Command.make(
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const autoflowDir = yield* project.resolveAutoflowDir({ tracesRoot: roots.tracesRoot, cwd: process.cwd() });
 			const report = yield* project.ratchetStatus({
 				skill,
-				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				stateDir: resolveStateDir(stateDir, autoflowDir),
 			});
 			if (json) {
 				yield* Console.log(renderRatchetStatusJson(report));
@@ -1319,11 +1325,12 @@ const attributeComputeCommand = Command.make(
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const autoflowDir = yield* project.resolveAutoflowDir({ tracesRoot: roots.tracesRoot, cwd: process.cwd() });
 			const result = yield* project.attributeCompute({
 				skill,
 				tracesRoot: roots.tracesRoot,
-				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
-				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				runsFile: resolveRunsFile(runsFile, autoflowDir),
+				stateDir: resolveStateDir(stateDir, autoflowDir),
 				improvementId: Option.getOrUndefined(improvementId),
 			});
 			if (json) {
@@ -1351,11 +1358,12 @@ const attributeBackfillCommand = Command.make(
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const autoflowDir = yield* project.resolveAutoflowDir({ tracesRoot: roots.tracesRoot, cwd: process.cwd() });
 			const result = yield* project.attributeBackfill({
 				skill,
 				tracesRoot: roots.tracesRoot,
-				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
-				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				runsFile: resolveRunsFile(runsFile, autoflowDir),
+				stateDir: resolveStateDir(stateDir, autoflowDir),
 				limit,
 			});
 			if (json) {
@@ -1382,11 +1390,12 @@ const attributeIndexCommand = Command.make(
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
+			const autoflowDir = yield* project.resolveAutoflowDir({ tracesRoot: roots.tracesRoot, cwd: process.cwd() });
 			const index = yield* project.attributeIndex({
 				skill,
 				tracesRoot: roots.tracesRoot,
-				runsFile: resolveRunsFile(runsFile, roots.tracesRoot),
-				stateDir: resolveStateDir(stateDir, roots.tracesRoot),
+				runsFile: resolveRunsFile(runsFile, autoflowDir),
+				stateDir: resolveStateDir(stateDir, autoflowDir),
 			});
 			if (json) {
 				yield* Console.log(renderComponentIndexJson(index));
