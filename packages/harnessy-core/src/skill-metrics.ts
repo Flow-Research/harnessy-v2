@@ -1,4 +1,4 @@
-import { FileSystem, Path, Schema } from "effect";
+import { Clock, FileSystem, Path, Schema } from "effect";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -19,7 +19,26 @@ export interface SkillMetricsOptions {
 	readonly tracesRoot: string;
 	/** Restrict to the N most recent traces before metrics are computed. */
 	readonly last?: number;
+	/** Only traces within this duration window (e.g. `7d`, `6m`, `1y`); `m` is months (30d). */
+	readonly since?: string;
 }
+
+/** Milliseconds per day, for duration-window math. */
+const MILLIS_PER_DAY = 86_400_000;
+
+/**
+ * Parse a v1 duration string (`<int><d|m|y>`, case-insensitive) into milliseconds,
+ * mirroring v1 `_parse_duration`: `d` days, `m` 30-day months, `y` 365-day years.
+ * Returns null on an invalid format.
+ */
+const parseDurationMillis = (value: string): number | null => {
+	const match = /^(\d+)([dmy])$/i.exec(value);
+	if (!match) return null;
+	const amount = Number(match[1]);
+	const unit = match[2].toLowerCase();
+	const days = unit === "d" ? amount : unit === "m" ? amount * 30 : amount * 365;
+	return days * MILLIS_PER_DAY;
+};
 
 /** Inputs for comparing a skill's quality metrics across two versions. */
 export interface SkillMetricsCompareOptions {
@@ -353,6 +372,20 @@ export class SkillMetricsService extends Context.Service<
 				}
 
 				let traces = yield* loadTraces(skill, tracesRoot);
+				// v1 applies the `--since` window first, dropping traces with no/older timestamps.
+				if (options.since !== undefined) {
+					const durationMillis = parseDurationMillis(options.since);
+					if (durationMillis === null) {
+						return yield* new HarnessError({
+							message: `Invalid duration "${options.since}". Use a format like 7d, 6m, or 1y.`,
+						});
+					}
+					const cutoff = (yield* Clock.currentTimeMillis) - durationMillis;
+					traces = traces.filter((trace) => {
+						const ts = Date.parse(stringField(trace, "timestamp", "").replace("Z", "+00:00"));
+						return !Number.isNaN(ts) && ts >= cutoff;
+					});
+				}
 				// v1 `if args.last:` leaves traces unfiltered for 0 / unset; only a positive N restricts.
 				if (options.last !== undefined && options.last > 0) {
 					traces = [...traces]

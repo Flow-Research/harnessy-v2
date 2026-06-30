@@ -983,16 +983,23 @@ const lastOption = Options.integer("last").pipe(
 	Options.withDescription("Compute metrics over only the N most recent traces."),
 );
 
+/** Restrict metrics to a recent duration window (e.g. 7d, 6m, 1y; `m` is months). */
+const sinceOption = Options.string("since").pipe(
+	Options.optional,
+	Options.withDescription("Only traces within this duration window (e.g. 7d, 6m, 1y; m is months)."),
+);
+
 /** Compute quality metrics for a skill from its decision traces. */
 const metricsComputeCommand = Command.make(
 	"compute",
 	{
 		skill: Args.string("skill"),
 		last: lastOption,
+		since: sinceOption,
 		tracesRoot: tracesRootOption,
 		json: jsonOption,
 	},
-	({ skill, last, tracesRoot, json }) =>
+	({ skill, last, since, tracesRoot, json }) =>
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
 			const roots = resolveAgentsRoots(Option.none(), tracesRoot);
@@ -1000,6 +1007,7 @@ const metricsComputeCommand = Command.make(
 				skill,
 				tracesRoot: roots.tracesRoot,
 				last: Option.getOrUndefined(last),
+				since: Option.getOrUndefined(since),
 			});
 			if (json) {
 				yield* Console.log(renderSkillMetricsJson(metrics));

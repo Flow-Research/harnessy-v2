@@ -191,4 +191,43 @@ describe("SkillMetrics", () => {
 			}),
 		),
 	);
+
+	it.live("restricts to a recent duration window with --since", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const traces = yield* fs.makeTempDirectoryScoped();
+				const day = 86_400_000;
+				const now = Date.now();
+				const iso = (millisAgo: number) => new Date(now - millisAgo).toISOString().replace(/\.\d{3}Z$/, "Z");
+				yield* writeTraces(fs, traces, "demo", [
+					trace({ timestamp: iso(2 * day), gate: "prd", outcome: "approved", loops: 0 }), // within 7d
+					trace({ timestamp: iso(100 * day), gate: "prd", outcome: "approved", loops: 4 }), // older than 7d
+				]);
+
+				const metrics = yield* project.skillMetrics({ skill: "demo", tracesRoot: traces, since: "7d" });
+
+				// Only the recent (loops 0) trace survives the window.
+				expect(metrics.totalTraces).toBe(1);
+				expect(metrics.avgRefinementLoops).toBe(0);
+			}),
+		),
+	);
+
+	it.effect("rejects an invalid --since duration", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const traces = yield* fs.makeTempDirectoryScoped();
+
+				const error = yield* project
+					.skillMetrics({ skill: "demo", tracesRoot: traces, since: "soon" })
+					.pipe(Effect.flip);
+
+				expect(error.message).toContain('Invalid duration "soon"');
+			}),
+		),
+	);
 });
