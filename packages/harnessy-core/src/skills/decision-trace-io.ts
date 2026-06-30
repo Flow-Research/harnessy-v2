@@ -59,6 +59,42 @@ export const truthy = (value: unknown): boolean => {
 /** Read a flag with Python truthiness (mirrors `record.get(key, False)`). */
 export const boolField = (record: Record<string, unknown>, key: string): boolean => truthy(record[key]);
 
+// --- Decision-trace schema --------------------------------------------------
+// The trace/gate field contract, in one place. Accessors here have uniform
+// semantics across every trace consumer (metrics / traces / attribute). Fields
+// whose reading differs by consumer (e.g. `refinement_loops` is truncated to an
+// int in attribution but kept as-is in metrics) are deliberately NOT centralized
+// here — each consumer keeps its own read so this module stays a faithful,
+// single-meaning contract.
+
+/** Gate `type` value marking a retrospective (feedback) trace, excluded from gate metrics. */
+export const RETROSPECTIVE_TYPE = "retrospective";
+
+/** The `gate` sub-record of a trace. */
+export const gateOf = (trace: Record<string, unknown>): Record<string, unknown> => recordField(trace, "gate");
+
+/** The `phase` sub-record of a trace. */
+export const phaseOf = (trace: Record<string, unknown>): Record<string, unknown> => recordField(trace, "phase");
+
+/** Gate name, defaulting to `"unknown"`. */
+export const gateName = (gate: Record<string, unknown>): string => stringField(gate, "name", "unknown");
+
+/** Gate type, defaulting to `""`. */
+export const gateType = (gate: Record<string, unknown>): string => stringField(gate, "type", "");
+
+/** Gate outcome, defaulting to `"unknown"`. */
+export const gateOutcome = (gate: Record<string, unknown>): string => stringField(gate, "outcome", "unknown");
+
+/** Trace timestamp, defaulting to `""`. */
+export const traceTimestamp = (trace: Record<string, unknown>): string => stringField(trace, "timestamp", "");
+
+/** Trace skill version, or null when absent. */
+export const traceVersion = (trace: Record<string, unknown>): string | null => stringOrNull(trace, "version");
+
+/** Whether a trace is a retrospective (feedback) trace rather than a gate outcome. */
+export const isRetrospective = (trace: Record<string, unknown>): boolean =>
+	gateType(gateOf(trace)) === RETROSPECTIVE_TYPE;
+
 /**
  * Parse NDJSON text into the records it contains: one JSON object per non-blank
  * line, silently skipping blank lines and lines that are not a JSON object

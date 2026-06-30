@@ -5,12 +5,21 @@ import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "../errors.ts";
 import { roundTo } from "../round.ts";
-import { numberField, numberOrNull, parseNdjson, recordField, stringField } from "./decision-trace-io.ts";
+import {
+	gateName,
+	gateOf,
+	gateOutcome,
+	isRetrospective,
+	numberField,
+	numberOrNull,
+	parseNdjson,
+	stringField,
+	traceTimestamp,
+	traceVersion,
+} from "./decision-trace-io.ts";
 
 /** Trace file name written by the v1 decision-trace system. */
 const TRACES_FILE = "traces.ndjson";
-/** Gate type excluded from quality metrics: retrospective traces are feedback, not gate outcomes. */
-const RETROSPECTIVE_TYPE = "retrospective";
 
 /** Inputs for computing a skill's quality metrics. */
 export interface SkillMetricsOptions {
@@ -211,8 +220,8 @@ const buildMetrics = (skill: string, gateTraces: ReadonlyArray<Record<string, un
 	let durationCount = 0;
 	const gates = new Map<string, GateAccumulator>();
 	for (const trace of gateTraces) {
-		const gate = recordField(trace, "gate");
-		const name = stringField(gate, "name", "unknown");
+		const gate = gateOf(trace);
+		const name = gateName(gate);
 		const loops = numberField(gate, "refinement_loops");
 		totalLoops += loops;
 		if (loops === 0) firstPass += 1;
@@ -232,7 +241,7 @@ const buildMetrics = (skill: string, gateTraces: ReadonlyArray<Record<string, un
 		accumulator.count += 1;
 		accumulator.totalLoops += loops;
 		if (loops === 0) accumulator.firstPass += 1;
-		const outcome = stringField(gate, "outcome", "unknown");
+		const outcome = gateOutcome(gate);
 		accumulator.outcomes.set(outcome, (accumulator.outcomes.get(outcome) ?? 0) + 1);
 		const duration = numberOrNull(gate, "duration_seconds");
 		if (duration !== null) {
@@ -342,20 +351,18 @@ export class SkillMetricsService extends Context.Service<
 					}
 					const cutoff = (yield* Clock.currentTimeMillis) - durationMillis;
 					traces = traces.filter((trace) => {
-						const ts = Date.parse(stringField(trace, "timestamp", "").replace("Z", "+00:00"));
+						const ts = Date.parse(traceTimestamp(trace).replace("Z", "+00:00"));
 						return !Number.isNaN(ts) && ts >= cutoff;
 					});
 				}
 				// v1 `if args.last:` leaves traces unfiltered for 0 / unset; only a positive N restricts.
 				if (options.last !== undefined && options.last > 0) {
 					traces = [...traces]
-						.sort((a, b) => stringField(b, "timestamp", "").localeCompare(stringField(a, "timestamp", "")))
+						.sort((a, b) => traceTimestamp(b).localeCompare(traceTimestamp(a)))
 						.slice(0, options.last);
 				}
 				// Retrospective traces are feedback, not gate outcomes — excluded from metrics.
-				const gateTraces = traces.filter(
-					(trace) => stringField(recordField(trace, "gate"), "type", "") !== RETROSPECTIVE_TYPE,
-				);
+				const gateTraces = traces.filter((trace) => !isRetrospective(trace));
 				return buildMetrics(skill, gateTraces);
 			});
 
@@ -369,11 +376,7 @@ export class SkillMetricsService extends Context.Service<
 				const traces = yield* loadTraces(skill, tracesRoot);
 				// Compare two skill versions, excluding retrospective feedback traces from each side.
 				const forVersion = (version: string) =>
-					traces.filter(
-						(trace) =>
-							stringField(trace, "version", "") === version &&
-							stringField(recordField(trace, "gate"), "type", "") !== RETROSPECTIVE_TYPE,
-					);
+					traces.filter((trace) => stringField(trace, "version", "") === version && !isRetrospective(trace));
 				const beforeMetrics = buildMetrics(skill, forVersion(before));
 				const afterMetrics = buildMetrics(skill, forVersion(after));
 
@@ -403,25 +406,23 @@ export class SkillMetricsService extends Context.Service<
 				let traces = yield* loadTraces(skill, tracesRoot);
 				// trend does not exclude retrospective traces (mirrors v1 `run_metrics.py trend`).
 				if (options.gate !== undefined) {
-					traces = traces.filter((trace) => stringField(recordField(trace, "gate"), "name", "") === options.gate);
+					traces = traces.filter((trace) => stringField(gateOf(trace), "name", "") === options.gate);
 				}
-				const sorted = [...traces].sort((a, b) =>
-					stringField(a, "timestamp", "").localeCompare(stringField(b, "timestamp", "")),
-				);
+				const sorted = [...traces].sort((a, b) => traceTimestamp(a).localeCompare(traceTimestamp(b)));
 				// v1 `traces[-last:]` keeps the most recent N in ascending order; default window 20.
 				const last = options.last !== undefined && options.last > 0 ? options.last : 20;
 				const windowed = sorted.slice(Math.max(0, sorted.length - last));
 
 				const entries = windowed.map((trace) => {
-					const gate = recordField(trace, "gate");
-					const version = trace.version;
+					const gate = gateOf(trace);
+					const version = traceVersion(trace);
 					return new SkillTrendEntry({
 						// v1 slices the timestamp to its YYYY-MM-DD date prefix.
-						timestamp: stringField(trace, "timestamp", "").slice(0, 10),
-						gate: stringField(gate, "name", "unknown"),
+						timestamp: traceTimestamp(trace).slice(0, 10),
+						gate: gateName(gate),
 						loops: numberField(gate, "refinement_loops"),
-						outcome: stringField(gate, "outcome", "unknown"),
-						...(typeof version === "string" ? { version } : {}),
+						outcome: gateOutcome(gate),
+						...(version !== null ? { version } : {}),
 					});
 				});
 

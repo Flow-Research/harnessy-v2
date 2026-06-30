@@ -5,7 +5,15 @@ import * as Layer from "effect/Layer";
 
 import { causeMessage, HarnessError } from "../errors.ts";
 import { roundTo } from "../round.ts";
-import { numberField, parseNdjson, recordField, stringField } from "./decision-trace-io.ts";
+import {
+	gateName,
+	gateOf,
+	gateOutcome,
+	numberField,
+	parseNdjson,
+	recordField,
+	traceTimestamp,
+} from "./decision-trace-io.ts";
 
 /** Trace file name written by the v1 decision-trace system. */
 const TRACES_FILE = "traces.ndjson";
@@ -141,9 +149,9 @@ export class SkillTraces extends Context.Service<
 				const gates = new Map<string, GateAccumulator>();
 				const timestamps: Array<string> = [];
 				for (const trace of traces) {
-					timestamps.push(stringField(trace, "timestamp", ""));
-					const gate = recordField(trace, "gate");
-					const name = stringField(gate, "name", "unknown");
+					timestamps.push(traceTimestamp(trace));
+					const gate = gateOf(trace);
+					const name = gateName(gate);
 					let accumulator = gates.get(name);
 					if (accumulator === undefined) {
 						accumulator = { count: 0, totalLoops: 0, outcomes: new Map(), categories: new Map() };
@@ -151,7 +159,7 @@ export class SkillTraces extends Context.Service<
 					}
 					accumulator.count += 1;
 					accumulator.totalLoops += numberField(gate, "refinement_loops");
-					bump(accumulator.outcomes, stringField(gate, "outcome", "unknown"));
+					bump(accumulator.outcomes, gateOutcome(gate));
 					for (const category of categoriesOf(trace)) bump(accumulator.categories, category);
 				}
 

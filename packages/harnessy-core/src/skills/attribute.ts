@@ -6,10 +6,13 @@ import * as Layer from "effect/Layer";
 import { causeMessage, HarnessError } from "../errors.ts";
 import { roundTo } from "../round.ts";
 import {
+	gateOf,
 	intOr0,
 	isRecord,
+	isRetrospective,
 	numberOrNull,
 	parseNdjson,
+	phaseOf,
 	recordField,
 	stringField,
 	stringOrNull,
@@ -22,8 +25,6 @@ const ATTRIBUTIONS_FILE = "attributions.ndjson";
 const COMPONENT_INDEX_FILE = "component_index.json";
 /** Ratchet cycle state file name (written by the native ratchet, camelCase). */
 const ratchetStateFile = (skill: string): string => `ratchet_${skill}.json`;
-/** Gate type excluded from attribution stats: retrospective traces are feedback. */
-const RETROSPECTIVE_TYPE = "retrospective";
 
 /** Inputs shared by attribution operations. */
 export interface AttributeOptions {
@@ -238,16 +239,16 @@ interface GateStat {
 
 /** Keep only non-retrospective gate traces (v1 `gate_traces`). */
 const gateTraces = (traces: ReadonlyArray<Record<string, unknown>>): Array<Record<string, unknown>> =>
-	traces.filter((trace) => stringField(recordField(trace, "gate"), "type", "") !== RETROSPECTIVE_TYPE);
+	traces.filter((trace) => !isRetrospective(trace));
 
 /** Build per-gate stats with phase counters (v1 `build_gate_stats`). */
 const buildGateStats = (traces: ReadonlyArray<Record<string, unknown>>): Map<string, GateStat> => {
 	const accumulators = new Map<string, GateStatAccumulator>();
 	for (const trace of gateTraces(traces)) {
-		const gate = recordField(trace, "gate");
+		const gate = gateOf(trace);
 		const gateName = stringField(gate, "name", "unknown");
 		const loops = intOr0(gate, "refinement_loops");
-		const phase = recordField(trace, "phase");
+		const phase = phaseOf(trace);
 
 		let entry = accumulators.get(gateName);
 		if (entry === undefined) {
