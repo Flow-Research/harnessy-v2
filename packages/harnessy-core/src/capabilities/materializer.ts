@@ -2,11 +2,10 @@ import { FileSystem, Path, Schema } from "effect";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-
-import { type CapabilityResource, CapabilityResourceKind } from "./capability-manifest.ts";
-import { type CapabilityEntry, localCapabilityPath, makeCapabilitySlug } from "./capability-source.ts";
-import { causeMessage, HarnessError } from "./errors.ts";
-import type { HarnessPaths } from "./paths.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import type { HarnessPaths } from "../paths.ts";
+import { type CapabilityResource, CapabilityResourceKind } from "./manifest.ts";
+import { type CapabilityEntry, localCapabilityPath, makeCapabilitySlug } from "./source.ts";
 
 /** A manifest resource copied into a capability artifact. */
 export class CapabilityMaterializedResource extends Schema.Class<CapabilityMaterializedResource>(

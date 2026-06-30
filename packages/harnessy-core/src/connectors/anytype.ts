@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
-import { causeMessage, HarnessError } from "./errors.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
 
 /**
  * AnyType local-API version header. The desktop app pins its API to a dated

@@ -2,15 +2,15 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
 import * as Effect from "effect/Effect";
-import { CapabilityChecker } from "../src/capability-checker.ts";
+import { CapabilityChecker } from "../src/capabilities/checker.ts";
 import {
 	type CapabilityCheck,
 	CapabilityManifest,
 	FileContainsCheck,
 	PathExistsCheck,
 	ToolAvailableCheck,
-} from "../src/capability-manifest.ts";
-import { CapabilityEntry, CapabilitySource } from "../src/capability-source.ts";
+} from "../src/capabilities/manifest.ts";
+import { CapabilityEntry, CapabilitySource } from "../src/capabilities/source.ts";
 import { HarnessLockfile } from "../src/lockfile.ts";
 import type { HarnessPaths } from "../src/paths.ts";
 import { pathsForTarget } from "../src/paths.ts";

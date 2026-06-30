@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import * as Effect from "effect/Effect";
 
-import { CapabilityEntry } from "./capability-source.ts";
+import { CapabilityEntry } from "./capabilities/source.ts";
 import { causeMessage, HarnessError } from "./errors.ts";
 import { defaultInstallPaths, InstallPaths } from "./install-paths.ts";
 import type { HarnessPaths } from "./paths.ts";

@@ -3,7 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { causeMessage, HarnessError } from "./errors.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
 
 /** Improvement-record file name written by the v1 skill-improve loop. */
 const IMPROVEMENTS_FILE = "improvements.ndjson";

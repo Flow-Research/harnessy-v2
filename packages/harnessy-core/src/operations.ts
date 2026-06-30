@@ -9,17 +9,17 @@ import {
 	type AiResolution,
 	type AiResolveOptions,
 	AiRunner,
-} from "./ai-runner.ts";
+} from "./ai/runner.ts";
 import { HarnessBootstrap, type HarnessBootstrapMode, type HarnessBootstrapPrepareResult } from "./bootstrap.ts";
-import { CapabilityChecker, type CapabilityCheckReport } from "./capability-checker.ts";
-import { CapabilityFingerprinter } from "./capability-fingerprint.ts";
-import { CapabilityMaterializer } from "./capability-materializer.ts";
+import { CapabilityChecker, type CapabilityCheckReport } from "./capabilities/checker.ts";
+import { CapabilityFingerprinter } from "./capabilities/fingerprint.ts";
+import { CapabilityMaterializer } from "./capabilities/materializer.ts";
 import {
 	type AddCapabilityResult,
 	CapabilityRegistry,
 	type MaterializeCapabilitiesResult,
-} from "./capability-registry.ts";
-import type { CapabilityEntry } from "./capability-source.ts";
+} from "./capabilities/registry.ts";
+import type { CapabilityEntry } from "./capabilities/source.ts";
 import { CommandRunner } from "./command-runner.ts";
 import { HARNESSY_VERSION } from "./constants.ts";
 import { DependencyChecker, type DependencyReport } from "./dependency-checker.ts";
@@ -44,7 +44,7 @@ import {
 	type AttributeOptions,
 	type ComponentIndex,
 	SkillAttribute,
-} from "./skill-attribute.ts";
+} from "./skills/attribute.ts";
 import {
 	type AttributePacketOptions,
 	type AttributePacketResult,
@@ -54,8 +54,8 @@ import {
 	type AttributeValidateOptions,
 	SkillAttributeValidate,
 	type ValidationSummary,
-} from "./skill-attribute-validate.ts";
-import { SkillFeedback, type SkillFeedbackOptions, type SkillFeedbackResult } from "./skill-feedback.ts";
+} from "./skills/attribute-validate.ts";
+import { SkillFeedback, type SkillFeedbackOptions, type SkillFeedbackResult } from "./skills/feedback.ts";
 import {
 	type SkillMetrics,
 	type SkillMetricsCompareOptions,
@@ -64,14 +64,14 @@ import {
 	SkillMetricsService,
 	type SkillTrend,
 	type SkillTrendOptions,
-} from "./skill-metrics.ts";
+} from "./skills/metrics.ts";
 import {
 	SkillPromote,
 	type SkillPromoteCheck,
 	type SkillPromoteCheckOptions,
 	type SkillPromoteScan,
 	type SkillPromoteScanOptions,
-} from "./skill-promote.ts";
+} from "./skills/promote.ts";
 import {
 	type RatchetDecideOptions,
 	type RatchetDecision,
@@ -85,12 +85,12 @@ import {
 	type RatchetSnapshotResult,
 	type RatchetStatusOptions,
 	type RatchetStatusReport,
-} from "./skill-ratchet.ts";
-import { SkillScaffolder, type SkillScaffoldOptions, type SkillScaffoldResult } from "./skill-scaffold.ts";
-import { type SkillTraceStats, type SkillTraceStatsOptions, SkillTraces } from "./skill-traces.ts";
-import { type SkillValidationReport, SkillValidator } from "./skill-validator.ts";
+} from "./skills/ratchet.ts";
+import { SkillScaffolder, type SkillScaffoldOptions, type SkillScaffoldResult } from "./skills/scaffold.ts";
+import { type SkillTraceStats, type SkillTraceStatsOptions, SkillTraces } from "./skills/traces.ts";
+import { type SkillValidationReport, SkillValidator } from "./skills/validator.ts";
 
-export type { AddCapabilityResult } from "./capability-registry.ts";
+export type { AddCapabilityResult } from "./capabilities/registry.ts";
 
 /** Native v1 install.sh bootstrap options. */
 export interface NativeBootstrapOptions {

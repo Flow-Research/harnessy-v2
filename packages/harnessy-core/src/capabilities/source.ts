@@ -2,10 +2,9 @@ import { createHash } from "node:crypto";
 
 import { Path, Schema } from "effect";
 import * as Effect from "effect/Effect";
-
-import { CAPABILITY_MANIFEST_NAME, CapabilityManifest } from "./capability-manifest.ts";
-import { causeMessage, HarnessError } from "./errors.ts";
-import { expandHomePath } from "./paths.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import { expandHomePath } from "../paths.ts";
+import { CAPABILITY_MANIFEST_NAME, CapabilityManifest } from "./manifest.ts";
 
 /** Supported source classes for zero-effort capability installation. */
 export const CapabilitySourceType = Schema.Literals(["git", "npm", "url", "local"]);

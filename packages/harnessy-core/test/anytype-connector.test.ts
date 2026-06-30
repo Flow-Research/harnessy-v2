@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { AnytypeConfig, AnytypeConnector } from "../src/anytype-connector.ts";
+import { AnytypeConfig, AnytypeConnector } from "../src/connectors/anytype.ts";
 import { type FakeHttp, makeFakeHttp } from "./lib/fake-http.ts";
 
 const withFake = <A, E>(fake: FakeHttp, effect: Effect.Effect<A, E, AnytypeConnector>) =>

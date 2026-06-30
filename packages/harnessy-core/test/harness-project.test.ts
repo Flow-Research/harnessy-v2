@@ -10,13 +10,13 @@ import {
 	CapabilityResource,
 	DependencyRequirement,
 	parseCapabilityManifest,
-} from "../src/capability-manifest.ts";
+} from "../src/capabilities/manifest.ts";
 import {
 	CapabilityEntry,
 	CapabilitySource,
 	makeCapabilityId,
 	parseCapabilitySource,
-} from "../src/capability-source.ts";
+} from "../src/capabilities/source.ts";
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
 import { DependencyChecker } from "../src/dependency-checker.ts";

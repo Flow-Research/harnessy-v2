@@ -2,14 +2,13 @@ import { FileSystem, Path, Schema } from "effect";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-
-import type { CapabilityCheck } from "./capability-manifest.ts";
-import type { CapabilityEntry } from "./capability-source.ts";
-import { localCapabilityPath } from "./capability-source.ts";
-import { causeMessage, HarnessError } from "./errors.ts";
-import type { HarnessLockfile } from "./lockfile.ts";
-import type { HarnessPaths } from "./paths.ts";
-import { RuntimeEnvironment } from "./runtime-environment.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import type { HarnessLockfile } from "../lockfile.ts";
+import type { HarnessPaths } from "../paths.ts";
+import { RuntimeEnvironment } from "../runtime-environment.ts";
+import type { CapabilityCheck } from "./manifest.ts";
+import type { CapabilityEntry } from "./source.ts";
+import { localCapabilityPath } from "./source.ts";
 
 /** Manifest-defined deterministic check kinds that the local runner supports. */
 export const CapabilityCheckKind = Schema.Literals(["path-exists", "file-contains", "tool-available"]);

@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import * as Effect from "effect/Effect";
 
-import { causeMessage, HarnessError } from "./errors.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
 
 /** Kinds of dependency declarations a capability can request. */
 export const DependencyKind = Schema.Literals(["tool", "node", "python"]);

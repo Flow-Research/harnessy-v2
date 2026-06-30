@@ -3,9 +3,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
 import * as Effect from "effect/Effect";
 
-import { CapabilityManifest, CapabilityResource } from "../src/capability-manifest.ts";
-import { CapabilityMaterializer } from "../src/capability-materializer.ts";
-import { CapabilityEntry, CapabilitySource } from "../src/capability-source.ts";
+import { CapabilityManifest, CapabilityResource } from "../src/capabilities/manifest.ts";
+import { CapabilityMaterializer } from "../src/capabilities/materializer.ts";
+import { CapabilityEntry, CapabilitySource } from "../src/capabilities/source.ts";
 import { pathsForTarget } from "../src/paths.ts";
 
 /** Provide the live materializer plus Node platform services for filesystem-backed tests. */

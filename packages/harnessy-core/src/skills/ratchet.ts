@@ -3,10 +3,10 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { CommandRunner } from "./command-runner.ts";
-import { causeMessage, HarnessError } from "./errors.ts";
-import { roundTo } from "./round.ts";
-import { SkillMetricsService } from "./skill-metrics.ts";
+import { CommandRunner } from "../command-runner.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import { roundTo } from "../round.ts";
+import { SkillMetricsService } from "./metrics.ts";
 
 /**
  * Default autoresearch ratchet configuration, mirroring v1 `DEFAULT_CONFIG`.

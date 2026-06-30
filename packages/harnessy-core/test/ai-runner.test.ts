@@ -6,7 +6,7 @@ import {
 	looksLikeMarkdownDocument,
 	providerOrder,
 	resolveProviderModel,
-} from "../src/ai-runner.ts";
+} from "../src/ai/runner.ts";
 
 describe("AiRunner provider order", () => {
 	it("defaults to the claude/codex/opencode chain under auto", () => {

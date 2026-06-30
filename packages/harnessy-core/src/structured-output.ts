@@ -1,5 +1,5 @@
-import type { AiResolution } from "./ai-runner.ts";
-import type { CapabilityCheckResult } from "./capability-checker.ts";
+import type { AiResolution } from "./ai/runner.ts";
+import type { CapabilityCheckResult } from "./capabilities/checker.ts";
 import type {
 	BlastRadius,
 	CapabilityAutoresearchMetadata,
@@ -11,9 +11,9 @@ import type {
 	CapabilityTraceDeclaration,
 	DependencyKind,
 	DependencyRequirement,
-} from "./capability-manifest.ts";
-import type { CapabilityMaterializationResult } from "./capability-materializer.ts";
-import type { MaterializeCapabilitiesResult } from "./capability-registry.ts";
+} from "./capabilities/manifest.ts";
+import type { CapabilityMaterializationResult } from "./capabilities/materializer.ts";
+import type { MaterializeCapabilitiesResult } from "./capabilities/registry.ts";
 import type {
 	CapabilityEntry,
 	CapabilityFingerprintMetadata,
@@ -22,19 +22,19 @@ import type {
 	CapabilityResolutionPlan,
 	CapabilitySourceType,
 	CapabilityUrlArtifactKind,
-} from "./capability-source.ts";
+} from "./capabilities/source.ts";
 import type { DependencyCheckResult, DependencyReport, DependencyStatus } from "./dependency-checker.ts";
 import type { DoctorResult, VerifyResult } from "./operations.ts";
 import type { MonorepoType, PackageManager, WorkspaceKind } from "./project-detection.ts";
-import type { AttributeBackfillResult, AttributeComputeResult, ComponentIndex } from "./skill-attribute.ts";
+import type { AttributeBackfillResult, AttributeComputeResult, ComponentIndex } from "./skills/attribute.ts";
 import type {
 	AttributePacketResult,
 	AttributeReviewQueue,
 	AttributeReviewResult,
 	ValidationSummary,
-} from "./skill-attribute-validate.ts";
-import type { SkillMetrics, SkillMetricsComparison, SkillTrend } from "./skill-metrics.ts";
-import type { SkillPromoteCheck, SkillPromoteScan } from "./skill-promote.ts";
+} from "./skills/attribute-validate.ts";
+import type { SkillMetrics, SkillMetricsComparison, SkillTrend } from "./skills/metrics.ts";
+import type { SkillPromoteCheck, SkillPromoteScan } from "./skills/promote.ts";
 import type {
 	RatchetDecision,
 	RatchetEvaluation,
@@ -42,9 +42,9 @@ import type {
 	RatchetScore,
 	RatchetSnapshotResult,
 	RatchetStatusReport,
-} from "./skill-ratchet.ts";
-import type { SkillTraceStats } from "./skill-traces.ts";
-import type { SkillValidationReport } from "./skill-validator.ts";
+} from "./skills/ratchet.ts";
+import type { SkillTraceStats } from "./skills/traces.ts";
+import type { SkillValidationReport } from "./skills/validator.ts";
 
 /** Capability source payload emitted in structured command output. */
 export interface StructuredCapabilitySource {

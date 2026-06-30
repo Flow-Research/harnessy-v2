@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import { Argument as Args, Command, Flag as Options } from "effect/unstable/cli";
 import { FetchHttpClient } from "effect/unstable/http";
 
-import { ANYTYPE_DEFAULT_BASE_URL, AnytypeConfig, AnytypeConnector } from "./anytype-connector.ts";
+import { ANYTYPE_DEFAULT_BASE_URL, AnytypeConfig, AnytypeConnector } from "./connectors/anytype.ts";
 import { HarnessError } from "./errors.ts";
 import { HarnessProject, type InstallStep } from "./operations.ts";
 import {

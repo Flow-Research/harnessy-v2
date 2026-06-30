@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
 import * as Effect from "effect/Effect";
 
-import { CapabilityFingerprinter } from "../src/capability-fingerprint.ts";
+import { CapabilityFingerprinter } from "../src/capabilities/fingerprint.ts";
 
 /** Provide the live fingerprinter plus Node platform services for filesystem-backed tests. */
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>

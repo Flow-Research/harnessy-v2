@@ -6,19 +6,19 @@ export {
 	HarnessBootstrapAction,
 	HarnessBootstrapMode,
 } from "./bootstrap.ts";
-export type { CapabilityCheckReport } from "./capability-checker.ts";
+export type { CapabilityCheckReport } from "./capabilities/checker.ts";
 export {
 	CapabilityChecker,
 	CapabilityCheckKind,
 	CapabilityCheckResult,
 	CapabilityCheckStatus,
-} from "./capability-checker.ts";
+} from "./capabilities/checker.ts";
 export {
 	CapabilityFingerprinter,
 	CapabilityFingerprintFile,
 	CapabilityFingerprintKind,
 	CapabilityFingerprintResult,
-} from "./capability-fingerprint.ts";
+} from "./capabilities/fingerprint.ts";
 export {
 	BlastRadius,
 	CAPABILITY_MANIFEST_NAME,
@@ -38,15 +38,15 @@ export {
 	PathExistsCheck,
 	parseCapabilityManifest,
 	ToolAvailableCheck,
-} from "./capability-manifest.ts";
+} from "./capabilities/manifest.ts";
 export {
 	CapabilityMaterializationResult,
 	CapabilityMaterializedResource,
 	CapabilityMaterializer,
 	CapabilitySkippedResource,
-} from "./capability-materializer.ts";
-export type { AddCapabilityResult, MaterializeCapabilitiesResult } from "./capability-registry.ts";
-export { CapabilityRegistry } from "./capability-registry.ts";
+} from "./capabilities/materializer.ts";
+export type { AddCapabilityResult, MaterializeCapabilitiesResult } from "./capabilities/registry.ts";
+export { CapabilityRegistry } from "./capabilities/registry.ts";
 export {
 	CapabilityEntry,
 	CapabilityFingerprintMetadata,
@@ -66,7 +66,7 @@ export {
 	parseAndPlanCapabilitySource,
 	parseCapabilitySource,
 	planCapabilityResolution,
-} from "./capability-source.ts";
+} from "./capabilities/source.ts";
 export { HARNESSY_VERSION } from "./constants.ts";
 export type { DependencyReport } from "./dependency-checker.ts";
 export { DependencyChecker, DependencyCheckResult, DependencyStatus } from "./dependency-checker.ts";

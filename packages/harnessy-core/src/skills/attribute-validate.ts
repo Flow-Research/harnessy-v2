@@ -3,8 +3,8 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { causeMessage, HarnessError } from "./errors.ts";
-import { roundTo } from "./round.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import { roundTo } from "../round.ts";
 
 /** Skill trace-directory artifact names, mirroring v1 `attribute_validate.py`. */
 const ATTRIBUTIONS_FILE = "attributions.ndjson";

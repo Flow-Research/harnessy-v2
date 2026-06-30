@@ -4,14 +4,14 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
-import { CAPABILITY_MANIFEST_NAME } from "../src/capability-manifest.ts";
+import { CAPABILITY_MANIFEST_NAME } from "../src/capabilities/manifest.ts";
 import {
 	localCapabilityPath,
 	makeCapabilityId,
 	parseAndPlanCapabilitySource,
 	parseCapabilitySource,
 	planCapabilityResolution,
-} from "../src/capability-source.ts";
+} from "../src/capabilities/source.ts";
 
 const targetDir = resolve("/tmp/harnessy-source-resolution-target");
 

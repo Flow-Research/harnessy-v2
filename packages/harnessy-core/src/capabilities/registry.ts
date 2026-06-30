@@ -2,9 +2,13 @@ import { FileSystem, Path } from "effect";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { CapabilityFingerprinter, type CapabilityFingerprintResult } from "./capability-fingerprint.ts";
-import { CAPABILITY_MANIFEST_NAME, parseCapabilityManifest } from "./capability-manifest.ts";
-import { type CapabilityMaterializationResult, CapabilityMaterializer } from "./capability-materializer.ts";
+import { causeMessage, HarnessError } from "../errors.ts";
+import { formatManifestJson, HarnessLockfile } from "../lockfile.ts";
+import { LockfileStore } from "../lockfile-store.ts";
+import type { HarnessPaths } from "../paths.ts";
+import { CapabilityFingerprinter, type CapabilityFingerprintResult } from "./fingerprint.ts";
+import { CAPABILITY_MANIFEST_NAME, parseCapabilityManifest } from "./manifest.ts";
+import { type CapabilityMaterializationResult, CapabilityMaterializer } from "./materializer.ts";
 import {
 	CapabilityEntry,
 	CapabilityFingerprintMetadata,
@@ -14,11 +18,7 @@ import {
 	makeCapabilityId,
 	parseCapabilitySource,
 	planCapabilityResolution,
-} from "./capability-source.ts";
-import { causeMessage, HarnessError } from "./errors.ts";
-import { formatManifestJson, HarnessLockfile } from "./lockfile.ts";
-import { LockfileStore } from "./lockfile-store.ts";
-import type { HarnessPaths } from "./paths.ts";
+} from "./source.ts";
 
 /** Result of recording a capability source. */
 export interface AddCapabilityResult {

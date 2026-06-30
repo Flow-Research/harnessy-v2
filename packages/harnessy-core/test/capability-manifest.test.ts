@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
 import * as Effect from "effect/Effect";
 
-import { CAPABILITY_MANIFEST_NAME, parseCapabilityManifest } from "../src/capability-manifest.ts";
+import { CAPABILITY_MANIFEST_NAME, parseCapabilityManifest } from "../src/capabilities/manifest.ts";
 
 const fixtureManifestPath = `fixtures/tiny-capability/${CAPABILITY_MANIFEST_NAME}`;
 

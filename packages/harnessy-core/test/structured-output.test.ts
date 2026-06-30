@@ -5,8 +5,8 @@ import * as Effect from "effect/Effect";
 import { TestConsole } from "effect/testing";
 import { Command } from "effect/unstable/cli";
 
-import { CAPABILITY_MANIFEST_NAME, CapabilityManifest, DependencyRequirement } from "../src/capability-manifest.ts";
-import { CapabilityEntry, CapabilitySource } from "../src/capability-source.ts";
+import { CAPABILITY_MANIFEST_NAME, CapabilityManifest, DependencyRequirement } from "../src/capabilities/manifest.ts";
+import { CapabilityEntry, CapabilitySource } from "../src/capabilities/source.ts";
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
 import { DependencyCheckResult } from "../src/dependency-checker.ts";
