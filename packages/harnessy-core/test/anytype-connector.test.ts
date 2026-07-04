@@ -23,9 +23,40 @@ describe("AnytypeConnector", () => {
 				const spaces = yield* anytype.listSpaces();
 				expect(spaces).toHaveLength(1);
 				expect(spaces[0]).toMatchObject({ id: "space-1", name: "Flow" });
-				expect(fake.calls[0]?.url).toBe("http://anytype.test/v1/spaces");
+				expect(fake.calls[0]?.url).toBe("http://anytype.test/v1/spaces?offset=0&limit=1000");
 				expect(fake.calls[0]?.headers.authorization).toBe("Bearer secret-key");
 				expect(fake.calls[0]?.headers["anytype-version"]).toBeDefined();
+			}),
+		);
+	});
+
+	it.effect("follows paginated listSpaces responses", () => {
+		const fake = makeFakeHttp((request) => {
+			const offset = new URL(request.url).searchParams.get("offset");
+			return offset === "0"
+				? {
+						body: {
+							data: [{ id: "space-1", name: "Flow" }],
+							pagination: { offset: 0, limit: 1, total: 2, has_more: true },
+						},
+					}
+				: {
+						body: {
+							data: [{ id: "space-2", name: "Research" }],
+							pagination: { offset: 1, limit: 1, total: 2, has_more: false },
+						},
+					};
+		});
+		return withFake(
+			fake,
+			Effect.gen(function* () {
+				const anytype = yield* AnytypeConnector;
+				const spaces = yield* anytype.listSpaces();
+				expect(spaces.map((space) => space.id)).toEqual(["space-1", "space-2"]);
+				expect(fake.calls.map((call) => call.url)).toEqual([
+					"http://anytype.test/v1/spaces?offset=0&limit=1000",
+					"http://anytype.test/v1/spaces?offset=1&limit=1000",
+				]);
 			}),
 		);
 	});
@@ -41,10 +72,46 @@ describe("AnytypeConnector", () => {
 				const results = yield* anytype.search("space-1", "meeting");
 				expect(results[0]).toMatchObject({ id: "obj-1", name: "25 - Meeting", type: "Page" });
 				expect(fake.calls[0]?.method).toBe("POST");
-				expect(fake.calls[0]?.url).toBe("http://anytype.test/v1/spaces/space-1/search");
+				expect(fake.calls[0]?.url).toBe("http://anytype.test/v1/spaces/space-1/search?offset=0&limit=1000");
 				// The query is sent as a JSON body with the right content-type.
 				expect(JSON.parse(fake.calls[0]?.body ?? "{}")).toEqual({ query: "meeting" });
 				expect(fake.calls[0]?.headers["content-type"]).toContain("application/json");
+			}),
+		);
+	});
+
+	it.effect("follows paginated search responses", () => {
+		const fake = makeFakeHttp((request) => {
+			const offset = new URL(request.url).searchParams.get("offset");
+			return offset === "0"
+				? {
+						body: {
+							data: [{ id: "obj-1", name: "First", type: { name: "Page" } }],
+							pagination: { offset: 0, limit: 1, total: 2, has_more: true },
+						},
+					}
+				: {
+						body: {
+							data: [{ id: "obj-2", name: "Second", type: { name: "Task" } }],
+							pagination: { offset: 1, limit: 1, total: 2, has_more: false },
+						},
+					};
+		});
+		return withFake(
+			fake,
+			Effect.gen(function* () {
+				const anytype = yield* AnytypeConnector;
+				const results = yield* anytype.search("space-1", "meeting");
+				expect(results.map((result) => result.id)).toEqual(["obj-1", "obj-2"]);
+				expect(results.map((result) => result.type)).toEqual(["Page", "Task"]);
+				expect(fake.calls.map((call) => call.url)).toEqual([
+					"http://anytype.test/v1/spaces/space-1/search?offset=0&limit=1000",
+					"http://anytype.test/v1/spaces/space-1/search?offset=1&limit=1000",
+				]);
+				expect(fake.calls.map((call) => JSON.parse(call.body ?? "{}"))).toEqual([
+					{ query: "meeting" },
+					{ query: "meeting" },
+				]);
 			}),
 		);
 	});

@@ -13,6 +13,8 @@ import { causeMessage, HarnessError } from "../errors.ts";
 export const ANYTYPE_DEFAULT_VERSION = "2025-11-08";
 /** Default base URL of the AnyType desktop app's local API. */
 export const ANYTYPE_DEFAULT_BASE_URL = "http://127.0.0.1:31009";
+/** AnyType's documented maximum page size for paginated list/search endpoints. */
+export const ANYTYPE_PAGE_LIMIT = 1000;
 
 /**
  * Connection settings for the AnyType local API.
@@ -72,14 +74,29 @@ export class AnytypeObject extends Schema.Class<AnytypeObject>("AnytypeObject")(
 // Lenient wire schemas — decode only the fields we expose and ignore the rest,
 // so AnyType adding fields never breaks the connector.
 const TypeRef = Schema.optional(Schema.Struct({ name: Schema.optional(Schema.String) }));
+const PaginationMeta = Schema.optional(
+	Schema.Struct({
+		has_more: Schema.optional(Schema.Boolean),
+		limit: Schema.optional(Schema.Number),
+		offset: Schema.optional(Schema.Number),
+		total: Schema.optional(Schema.Number),
+	}),
+);
 const SpacesEnvelope = Schema.Struct({
 	data: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optional(Schema.String) }))),
+	pagination: PaginationMeta,
 });
 const SearchEnvelope = Schema.Struct({
 	data: Schema.optional(
 		Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optional(Schema.String), type: TypeRef })),
 	),
+	pagination: PaginationMeta,
 });
+const nextOffset = (current: number, pagination?: { readonly offset?: number; readonly limit?: number }) => {
+	const pageOffset = pagination?.offset !== undefined && pagination.offset >= 0 ? pagination.offset : current;
+	const pageLimit = pagination?.limit !== undefined && pagination.limit > 0 ? pagination.limit : ANYTYPE_PAGE_LIMIT;
+	return pageOffset + pageLimit;
+};
 const ObjectEnvelope = Schema.Struct({
 	object: Schema.Struct({
 		id: Schema.String,
@@ -126,6 +143,8 @@ export class AnytypeConnector extends Context.Service<
 
 			const url = (path: string) => `${config.baseUrl}${path}`;
 			const withAuth = HttpClientRequest.setHeaders(headers);
+			const paginatedUrl = (path: string, offset: number) =>
+				`${url(path)}?${new URLSearchParams({ offset: String(offset), limit: String(ANYTYPE_PAGE_LIMIT) })}`;
 
 			// One composed request→decode pipeline reused by every method.
 			const sendJson = <A, I>(
@@ -142,23 +161,40 @@ export class AnytypeConnector extends Context.Service<
 					);
 
 			const listSpaces = Effect.fn("AnytypeConnector.listSpaces")(function* () {
-				const body = yield* sendJson(
-					"list spaces",
-					HttpClientRequest.get(url("/v1/spaces")).pipe(withAuth),
-					SpacesEnvelope,
-				);
-				return (body.data ?? []).map((space) => new AnytypeSpace(space));
+				const spaces: Array<AnytypeSpace> = [];
+				let offset = 0;
+				let hasMore = true;
+				while (hasMore) {
+					const body = yield* sendJson(
+						"list spaces",
+						HttpClientRequest.get(paginatedUrl("/v1/spaces", offset)).pipe(withAuth),
+						SpacesEnvelope,
+					);
+					spaces.push(...(body.data ?? []).map((space) => new AnytypeSpace(space)));
+					hasMore = body.pagination?.has_more === true;
+					offset = nextOffset(offset, body.pagination);
+				}
+				return spaces;
 			});
 
 			const search = Effect.fn("AnytypeConnector.search")(function* (spaceId: string, query: string) {
-				const request = HttpClientRequest.post(url(`/v1/spaces/${encodeURIComponent(spaceId)}/search`)).pipe(
-					withAuth,
-					HttpClientRequest.bodyJsonUnsafe({ query }),
-				);
-				const body = yield* sendJson(`search ${spaceId}`, request, SearchEnvelope);
-				return (body.data ?? []).map(
-					(item) => new AnytypeObjectSummary({ id: item.id, name: item.name, type: item.type?.name }),
-				);
+				const results: Array<AnytypeObjectSummary> = [];
+				let offset = 0;
+				let hasMore = true;
+				while (hasMore) {
+					const request = HttpClientRequest.post(
+						paginatedUrl(`/v1/spaces/${encodeURIComponent(spaceId)}/search`, offset),
+					).pipe(withAuth, HttpClientRequest.bodyJsonUnsafe({ query }));
+					const body = yield* sendJson(`search ${spaceId}`, request, SearchEnvelope);
+					results.push(
+						...(body.data ?? []).map(
+							(item) => new AnytypeObjectSummary({ id: item.id, name: item.name, type: item.type?.name }),
+						),
+					);
+					hasMore = body.pagination?.has_more === true;
+					offset = nextOffset(offset, body.pagination);
+				}
+				return results;
 			});
 
 			const getObject = Effect.fn("AnytypeConnector.getObject")(function* (spaceId: string, objectId: string) {
