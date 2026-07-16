@@ -54,16 +54,27 @@ hsy --help
 
 ### 2. Sign in to a model provider
 
-`hsy` is the agent shell — it needs a model. Either export an API key before
-launching:
+`hsy` is the agent shell — it needs a model. Claude Code users can reuse their
+existing Claude Pro/Max session through Harnessy's built-in bridge:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY, GEMINI_API_KEY, ...
+claude auth login
 hsy
 ```
 
-or launch and sign in with a subscription (Claude Pro/Max, ChatGPT Plus/Pro,
-GitHub Copilot):
+Then use `/claude-auth` to verify the session and `/model` to select a model
+under `claude-bridge`. Harnessy delegates authentication to Claude Code; it
+does not copy OAuth tokens or require an Anthropic API key. Set
+`HARNESSY_CLAUDE_CODE_BIN` only when `claude` is not on `PATH`.
+
+Other providers can use an API key before launch:
+
+```bash
+export OPENAI_API_KEY=sk-...   # or GEMINI_API_KEY, OPENROUTER_API_KEY, ...
+hsy
+```
+
+or the host's subscription login flow:
 
 ```text
 hsy
@@ -71,8 +82,9 @@ hsy
 /model    # pick a model (Ctrl+L)
 ```
 
-Auth and settings live in `~/.hsy/agent` — your existing `~/.pi/agent` state is
-never touched.
+Harnessy auth and settings live in `~/.hsy/agent`; Claude Code continues to own
+its credentials in its own user configuration. Existing Pi state is never
+touched.
 
 ### 3. Use the built-in engine
 

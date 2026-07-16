@@ -69,6 +69,30 @@ Environment:
   `packages/coding-agent/vitest.config.ts` so upstream tool-list fixtures stay
   exact; `builtin-harnessy-engine.test.ts` re-enables and covers it)
 
+### Built-in Claude Code provider
+
+`hsy` also registers `claude-bridge` as a native model provider. It vendors the
+well-used `pi-claude-bridge` transport but adapts only its host boundary:
+Harnessy configuration, diagnostics, and global instructions resolve through
+the active `~/.hsy/agent` directory. It never loads another agent host's state.
+
+Authentication remains owned by Claude Code:
+
+```bash
+claude auth login
+hsy
+```
+
+Use `/claude-auth` for status and `/model` to select a `claude-bridge` model.
+The provider routes Claude's tool calls back through hsy's native tool loop, so
+Harnessy keeps tool rendering and execution control. `AskClaude` remains
+opt-in through `~/.hsy/agent/claude-bridge.json`; the built-in contributes only
+the provider by default. `HARNESSY_CLAUDE_CODE_BIN` overrides the executable.
+
+The vendoring record and MIT notice are in
+`packages/harnessy-core/CLAUDE_BRIDGE_VENDOR.md` and
+`packages/harnessy-core/THIRD_PARTY_LICENSES/pi-claude-bridge.txt`.
+
 ### Fresh-user sandbox
 
 `./hsy-fresh.sh` (or `npm run hsy:fresh`) launches the agent under a throwaway

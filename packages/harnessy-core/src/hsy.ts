@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import process from "node:process";
 import { runPiCli } from "@earendil-works/pi-coding-agent";
+import { harnessyClaudeBridgeExtension } from "./claude-bridge/index.ts";
 import { resolveExecutorBuiltin } from "./executor-builtin.ts";
 import {
 	configureHsyRuntimeEnv,
@@ -48,5 +49,8 @@ void runPiCli(normalizeHsyArgs(process.argv.slice(2)), {
 		configDir: HSY_CONFIG_DIR,
 		helpEpilogue: HSY_HELP_EPILOGUE,
 	},
-	extensionFactories: [{ name: "harnessy-welcome", factory: harnessyWelcomeExtension }],
+	extensionFactories: [
+		{ name: "harnessy-welcome", factory: harnessyWelcomeExtension },
+		{ name: "harnessy-claude-bridge", factory: harnessyClaudeBridgeExtension },
+	],
 });
