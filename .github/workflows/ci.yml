@@ -40,3 +40,14 @@ jobs:
 
       - name: Test
         run: npm test
+
+  credential-scan:
+    name: Credential Scanner
+    uses: Flow-Research/.github/.github/workflows/credential-scanner.yml@ci/qa-protocol-enforcement
+
+  pr-lint:
+    name: PR Template Check
+    if: github.event_name == 'pull_request'
+    uses: Flow-Research/.github/.github/workflows/pr-template-linter.yml@ci/qa-protocol-enforcement
+    with:
+      pr-body: ${{ github.event.pull_request.body }}
