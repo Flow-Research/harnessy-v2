@@ -7,6 +7,10 @@ import type { ExtensionAPI } from "../../../src/index.ts";
 
 const noop: (pi: ExtensionAPI) => void = () => {};
 
+function userInlineExtensions(loader: DefaultResourceLoader) {
+	return loader.getExtensions().extensions.filter((extension) => extension.path !== "<inline:plan-mode>");
+}
+
 describe("inline extension naming", () => {
 	const roots: string[] = [];
 
@@ -46,11 +50,11 @@ describe("inline extension naming", () => {
 
 		await loader.reload();
 
-		const result = loader.getExtensions();
+		const extensions = userInlineExtensions(loader);
 
-		expect(result.extensions).toHaveLength(2);
-		expect(result.extensions[0].path).toBe("<inline:1>");
-		expect(result.extensions[1].path).toBe("<inline:2>");
+		expect(extensions).toHaveLength(2);
+		expect(extensions[0].path).toBe("<inline:1>");
+		expect(extensions[1].path).toBe("<inline:2>");
 	});
 
 	it("displays named wrappers as <inline:name>", async () => {
@@ -69,11 +73,11 @@ describe("inline extension naming", () => {
 
 		await loader.reload();
 
-		const result = loader.getExtensions();
+		const extensions = userInlineExtensions(loader);
 
-		expect(result.extensions).toHaveLength(2);
-		expect(result.extensions[0].path).toBe("<inline:my-provider>");
-		expect(result.extensions[1].path).toBe("<inline:my-commands>");
+		expect(extensions).toHaveLength(2);
+		expect(extensions[0].path).toBe("<inline:my-provider>");
+		expect(extensions[1].path).toBe("<inline:my-commands>");
 	});
 
 	it("supports mixed bare and named factories", async () => {
@@ -89,11 +93,11 @@ describe("inline extension naming", () => {
 
 		await loader.reload();
 
-		const result = loader.getExtensions();
+		const extensions = userInlineExtensions(loader);
 
-		expect(result.extensions).toHaveLength(3);
-		expect(result.extensions[0].path).toBe("<inline:1>");
-		expect(result.extensions[1].path).toBe("<inline:named-ext>");
-		expect(result.extensions[2].path).toBe("<inline:3>");
+		expect(extensions).toHaveLength(3);
+		expect(extensions[0].path).toBe("<inline:1>");
+		expect(extensions[1].path).toBe("<inline:named-ext>");
+		expect(extensions[2].path).toBe("<inline:3>");
 	});
 });

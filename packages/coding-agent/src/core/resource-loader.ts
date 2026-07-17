@@ -10,6 +10,7 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import { harnessyEngineEnabled, harnessyEngineExtension } from "./extensions/builtin/harnessy-engine.ts";
+import { planModeExtension } from "./extensions/builtin/plan-mode.ts";
 import {
 	clearExtensionCache,
 	createExtensionRuntime,
@@ -229,12 +230,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
-		// Built-in extensions ship with the agent itself — the Harnessy engine
-		// bridge is part of the product, not user configuration.
-		const builtinFactories: InlineExtension[] = harnessyEngineEnabled()
-			? [{ name: "harnessy-engine", factory: harnessyEngineExtension }]
-			: [];
-		this.extensionFactories = [...builtinFactories, ...(options.extensionFactories ?? [])];
+		// Built-in extensions ship with the agent itself, independent of user
+		// extension discovery. Plan mode is available in every runtime; the
+		// Harnessy engine bridge is present only in Harnessy sessions.
+		const builtinFactories: InlineExtension[] = [{ name: "plan-mode", factory: planModeExtension }];
+		if (harnessyEngineEnabled()) {
+			builtinFactories.push({ name: "harnessy-engine", factory: harnessyEngineExtension });
+		}
+		this.extensionFactories = [...(options.extensionFactories ?? []), ...builtinFactories];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
