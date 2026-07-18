@@ -18,12 +18,19 @@ jobs:
             const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
             const VALID_CAPABILITIES = new Set(['issue', 'pr']);
             const TRUSTED_BOT_AUTHORS = new Set(['dependabot[bot]', 'sentry[bot]', 'claude[bot]']);
+            const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER']);
             const issueAuthor = context.payload.issue.user.login;
+            const authorAssociation = context.payload.issue.author_association;
             const defaultBranch = context.payload.repository.default_branch;
             const isBotAuthor = issueAuthor.endsWith('[bot]');
 
             if (TRUSTED_BOT_AUTHORS.has(issueAuthor)) {
               console.log(`Skipping trusted bot: ${issueAuthor}`);
+              return;
+            }
+
+            if (TRUSTED_AUTHOR_ASSOCIATIONS.has(authorAssociation)) {
+              console.log(`${issueAuthor} is a trusted internal ${authorAssociation.toLowerCase()}`);
               return;
             }
 
