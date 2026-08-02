@@ -827,6 +827,13 @@ export interface AgentHarnessOptions<
 	/** Curated stream/provider request options. Snapshotted at turn start. */
 	streamOptions?: AgentHarnessStreamOptions;
 	model: Model<any>;
+	/**
+	 * Optional registry of models available for selection. When provided,
+	 * `setModel()` validates the supplied model against this list by `provider`
+	 * and `id`. If absent, no registry validation is performed and any
+	 * `Model<any>` is accepted (current behavior).
+	 */
+	availableModels?: Model<any>[];
 	thinkingLevel?: ThinkingLevel;
 	activeToolNames?: string[];
 	steeringMode?: QueueMode;

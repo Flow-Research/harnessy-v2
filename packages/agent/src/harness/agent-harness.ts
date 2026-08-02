@@ -167,6 +167,7 @@ export class AgentHarness<
 	private runPromise?: Promise<void>;
 	private pendingSessionWrites: PendingSessionWrite[] = [];
 	private model: Model<any>;
+	private availableModels: Model<any>[] | undefined;
 	private thinkingLevel: ThinkingLevel;
 	private systemPrompt: AgentHarnessOptions<TSkill, TPromptTemplate, TTool>["systemPrompt"];
 	private streamOptions: AgentHarnessStreamOptions;
@@ -194,6 +195,8 @@ export class AgentHarness<
 		for (const tool of options.tools ?? []) {
 			this.tools.set(tool.name, tool);
 		}
+		this.availableModels = options.availableModels ? [...options.availableModels] : undefined;
+		this.validateModel(options.model);
 		this.model = options.model;
 		this.thinkingLevel = options.thinkingLevel ?? "off";
 		this.activeToolNames = options.activeToolNames
@@ -451,6 +454,18 @@ export class AgentHarness<
 		const duplicates = findDuplicateNames(names);
 		if (duplicates.length > 0)
 			throw new AgentHarnessError("invalid_argument", `${message}: ${duplicates.join(", ")}`);
+	}
+
+	private validateModel(model: Model<any>): void {
+		if (!this.availableModels) return;
+		const found = this.availableModels.some(
+			(m) => m.provider === model.provider && m.id === model.id,
+		);
+		if (!found)
+			throw new AgentHarnessError(
+				"invalid_argument",
+				`Model ${model.provider}/${model.id} is not in the available models registry`,
+			);
 	}
 
 	private validateToolNames(toolNames: string[], tools: Map<string, TTool> = this.tools): void {
@@ -830,8 +845,17 @@ export class AgentHarness<
 		return this.model;
 	}
 
+	getAvailableModels(): Model<any>[] | undefined {
+		return this.availableModels ? [...this.availableModels] : undefined;
+	}
+
+	setAvailableModels(models: Model<any>[]): void {
+		this.availableModels = [...models];
+	}
+
 	async setModel(model: Model<any>): Promise<void> {
 		try {
+			this.validateModel(model);
 			const previousModel = this.model;
 			if (this.phase === "idle") {
 				await this.session.appendModelChange(model.provider, model.id);

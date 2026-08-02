@@ -86,6 +86,126 @@ describe("AgentHarness", () => {
 		expect(harness.getFollowUpMode()).toBe("one-at-a-time");
 	});
 
+	describe("model registry", () => {
+		const env = new NodeExecutionEnv({ cwd: process.cwd() });
+		const modelA = getModel("anthropic", "claude-sonnet-4-5");
+		const modelB = getModel("anthropic", "claude-haiku-4-5");
+
+		it("accepts any model when no registry is provided", () => {
+			const session = new Session(new InMemorySessionStorage());
+			expect(
+				() =>
+					new AgentHarness({
+						models,
+						env,
+						session,
+						model: modelA,
+					}),
+			).not.toThrow();
+		});
+
+		it("accepts the initial model when it is in the registry", () => {
+			const session = new Session(new InMemorySessionStorage());
+			expect(
+				() =>
+					new AgentHarness({
+						models,
+						env,
+						session,
+						model: modelA,
+						availableModels: [modelA, modelB],
+					}),
+			).not.toThrow();
+		});
+
+		it("rejects construction when the initial model is not in the registry", () => {
+			const session = new Session(new InMemorySessionStorage());
+			expect(
+				() =>
+					new AgentHarness({
+						models,
+						env,
+						session,
+						model: modelA,
+						availableModels: [modelB],
+					}),
+			).toThrow("not in the available models registry");
+		});
+
+		it("getAvailableModels returns undefined when no registry is set", () => {
+			const session = new Session(new InMemorySessionStorage());
+			const harness = new AgentHarness({ models, env, session, model: modelA });
+			expect(harness.getAvailableModels()).toBeUndefined();
+		});
+
+		it("getAvailableModels returns a copy of the registry", () => {
+			const session = new Session(new InMemorySessionStorage());
+			const harness = new AgentHarness({
+				models,
+				env,
+				session,
+				model: modelA,
+				availableModels: [modelA, modelB],
+			});
+			const registry = harness.getAvailableModels();
+			expect(registry).toHaveLength(2);
+			expect(registry![0]).toBe(modelA);
+			expect(registry![1]).toBe(modelB);
+		});
+
+		it("setAvailableModels updates the registry", () => {
+			const session = new Session(new InMemorySessionStorage());
+			const harness = new AgentHarness({ models, env, session, model: modelA });
+			expect(harness.getAvailableModels()).toBeUndefined();
+			harness.setAvailableModels([modelA]);
+			expect(harness.getAvailableModels()).toHaveLength(1);
+		});
+
+		it("setModel succeeds when no registry is set", async () => {
+			const session = new Session(new InMemorySessionStorage());
+			const harness = new AgentHarness({ models, env, session, model: modelA });
+			await expect(harness.setModel(modelB)).resolves.toBeUndefined();
+			expect(harness.getModel()).toBe(modelB);
+		});
+
+		it("setModel succeeds for a model present in the registry", async () => {
+			const session = new Session(new InMemorySessionStorage());
+			const harness = new AgentHarness({
+				models,
+				env,
+				session,
+				model: modelA,
+				availableModels: [modelA, modelB],
+			});
+			await expect(harness.setModel(modelB)).resolves.toBeUndefined();
+			expect(harness.getModel()).toBe(modelB);
+		});
+
+		it("setModel rejects for a model not in the registry", async () => {
+			const session = new Session(new InMemorySessionStorage());
+			const harness = new AgentHarness({
+				models,
+				env,
+				session,
+				model: modelA,
+				availableModels: [modelA],
+			});
+			await expect(harness.setModel(modelB)).rejects.toThrow("not in the available models registry");
+			expect(harness.getModel()).toBe(modelA);
+		});
+
+		it("setModel validates after setAvailableModels updates the registry", async () => {
+			const session = new Session(new InMemorySessionStorage());
+			const harness = new AgentHarness({ models, env, session, model: modelA });
+			// No registry — any model accepted.
+			await expect(harness.setModel(modelB)).resolves.toBeUndefined();
+			// Install a registry that only allows modelB.
+			harness.setAvailableModels([modelB]);
+			// modelA is now rejected.
+			await expect(harness.setModel(modelA)).rejects.toThrow("not in the available models registry");
+		});
+	});
+
 	it("drains one queued steering message at a time and emits queue updates", async () => {
 		const registration = newFaux();
 		const userCounts: number[] = [];
