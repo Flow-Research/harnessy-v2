@@ -332,7 +332,7 @@ const call = (
 				);
 			},
 		);
-		outgoing.setTimeout(3_000, () => outgoing.destroy(new Error("request timeout")));
+		outgoing.setTimeout(10_000, () => outgoing.destroy(new Error("request timeout")));
 		outgoing.on("error", rejectRequest);
 		outgoing.end(options.body);
 	});
