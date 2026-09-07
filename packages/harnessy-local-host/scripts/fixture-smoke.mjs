@@ -144,6 +144,7 @@ const assertRejectedInput = (result, command) => {
 };
 
 const exactHostInventory = [
+	"LICENSE",
 	"README.md",
 	"dist/application.d.ts",
 	"dist/application.js",
