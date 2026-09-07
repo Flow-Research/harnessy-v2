@@ -170,6 +170,7 @@ jobs:
         with:
           name: release-supply-chain-${{ env.RELEASE_TAG }}
           path: .supply-chain-evidence/
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 90
 
@@ -360,6 +361,7 @@ jobs:
         with:
           name: publication-supply-chain-${{ github.run_id }}-${{ github.sha }}
           path: .supply-chain-evidence/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
 

@@ -12,7 +12,7 @@
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces",
-		"build": "npm --workspace @earendil-works/pi-tui run build && npm --workspace @earendil-works/pi-ai run build:ts && npm --workspace @earendil-works/pi-agent-core run build && npm --workspace @earendil-works/pi-coding-agent run build && npm --workspace @earendil-works/pi-orchestrator run build && npm --workspace @harnessy/core run build && npm --workspace @harnessy/local-host run build && npm --workspace @harnessy/sdk run build && npm --workspace @harnessy/engine run build",
+		"build": "npm --workspace @earendil-works/pi-tui run build && npm --workspace @earendil-works/pi-ai run build:ts && npm --workspace @earendil-works/pi-agent-core run build && npm --workspace @earendil-works/pi-coding-agent run build && npm --workspace @earendil-works/pi-orchestrator run build && npm --workspace @harnessy/core run build && npm --workspace @harnessy/sdk run build && npm --workspace @harnessy/local-host run build && npm --workspace @harnessy/engine run build",
 		"build:executor-runtime": "node scripts/build-harnessy-executor.mjs",
 		"check": "biome check --error-on-warnings . && npm run check:pinned-deps && npm run check:ts-imports && npm run check:workspace-builds && npm run check:shrinkwrap && npm run check:install-lock:coding-agent && tsgo --noEmit && npm run lint && npm run check:browser-smoke && npm run check:ci-contract && npm run qa:catalog:check",
 		"lint": "oxlint packages/harnessy-core packages/harnessy-local-host",
