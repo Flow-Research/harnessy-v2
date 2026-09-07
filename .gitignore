@@ -44,3 +44,6 @@ plans/
 collect.sh
 
 harnessy-v1/
+.supply-chain-evidence/
+.supply-chain-repro/
+.supply-chain-python/

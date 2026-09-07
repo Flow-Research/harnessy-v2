@@ -68,5 +68,13 @@ export default defineConfig({
 		// they don't flake on slow/cold runs.
 		testTimeout: 30_000,
 		hookTimeout: 30_000,
+		coverage: {
+			provider: "v8",
+			include: ["src/**/*.ts"],
+			exclude: ["src/**/*.d.ts"],
+			reporter: ["text"],
+			reportsDirectory: "coverage",
+			thresholds: { statements: 62, branches: 48, functions: 60, lines: 64 },
+		},
 	},
 });

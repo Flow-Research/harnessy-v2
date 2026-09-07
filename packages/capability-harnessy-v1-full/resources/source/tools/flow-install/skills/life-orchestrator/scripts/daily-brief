@@ -12,15 +12,20 @@ import argparse
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
+import time
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 COLLECT_STATE = os.path.join(SCRIPTS_DIR, "collect-state")
 NOTIFY = os.path.join(SCRIPTS_DIR, "notify")
-AGENTS_LIFE_DIR = os.path.expanduser("~/.agents/life")
+AGENTS_LIFE_DIR = os.path.expanduser(
+    os.environ.get("AGENTS_LIFE_DIR", "~/.agents/life")
+)
+LEARNING_RESEARCH_STATE_DIR = os.path.join(AGENTS_LIFE_DIR, "learning-research")
 
 def detect_project_root():
     """Resolve the active Harnessy project root.
@@ -62,12 +67,15 @@ from ai_runner import format_failure, run_ai_prompt  # type: ignore  # noqa: E40
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def run_collect_state():
+def run_collect_state(no_save=False):
     """Run collect-state and return parsed JSON."""
     timeout_s = int(os.environ.get("LIFE_ORCHESTRATOR_COLLECT_TIMEOUT", "180"))
+    command = [sys.executable, COLLECT_STATE]
+    if no_save:
+        command.append("--no-save")
     try:
         result = subprocess.run(
-            [sys.executable, COLLECT_STATE],
+            command,
             capture_output=True, text=True, timeout=timeout_s,
             cwd=PROJECT_ROOT,
         )
@@ -83,6 +91,101 @@ def run_collect_state():
         sys.exit(1)
 
 
+def _reading_candidates(state):
+    readings = state.get("learning_readings")
+    if not isinstance(readings, dict):
+        return []
+    return readings.get("candidates") or []
+
+
+def _research_status(today):
+    path = os.path.join(LEARNING_RESEARCH_STATE_DIR, f"{today.isoformat()}.json")
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _reading_setting(name, env_name, default):
+    if env_name in os.environ:
+        return os.environ[env_name]
+    config_path = os.path.join(AGENTS_LIFE_DIR, "config.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return default
+    reading = config.get("reading") if isinstance(config, dict) else None
+    if isinstance(reading, dict):
+        return reading.get(name, default)
+    return default
+
+
+def wait_for_learning_readings(today, state, no_save=False):
+    """Wait up to 30 minutes for research, then use the verified reserve."""
+    minimum = max(1, int(_reading_setting("minimum", "LIFE_READING_MINIMUM", 2)))
+    wait_seconds = max(0, int(_reading_setting("wait_seconds", "LIFE_READING_WAIT_SECONDS", 1800)))
+    poll_seconds = max(1, int(_reading_setting("poll_seconds", "LIFE_READING_POLL_SECONDS", 15)))
+    started = time.monotonic()
+
+    while len(_reading_candidates(state)) < minimum:
+        elapsed = time.monotonic() - started
+        if elapsed >= wait_seconds:
+            break
+        status = _research_status(today)
+        if status and status.get("status") in {"failed", "timed_out"}:
+            break
+        remaining = wait_seconds - elapsed
+        print(
+            "Waiting for learning research "
+            f"({len(_reading_candidates(state))}/{minimum} links ready; "
+            f"up to {int(remaining)}s remaining)...",
+            file=sys.stderr,
+        )
+        time.sleep(min(poll_seconds, remaining))
+        state = run_collect_state(no_save=True)
+
+    readings = state.get("learning_readings")
+    if not isinstance(readings, dict):
+        readings = {"domain": "founder-learning", "candidates": []}
+        state["learning_readings"] = readings
+    candidates = readings.get("candidates") or []
+    if len(candidates) < minimum:
+        for candidate in readings.get("fallback_candidates") or []:
+            identity = candidate.get("canonical_url") or candidate.get("url")
+            identities = {
+                item.get("canonical_url") or item.get("url") for item in candidates
+            }
+            if identity in identities:
+                continue
+            source_name = candidate.get("source_name")
+            source_limit = candidate.get("source_max_per_brief")
+            if source_name and source_limit:
+                used = sum(
+                    1
+                    for item in candidates
+                    if str(item.get("source_name") or "").lower()
+                    == str(source_name).lower()
+                )
+                if used >= int(source_limit):
+                    continue
+            enriched = dict(candidate)
+            enriched["reused_fallback"] = True
+            candidates.append(enriched)
+            if len(candidates) >= minimum:
+                break
+        readings["candidates"] = candidates
+
+    if len(candidates) < minimum:
+        raise RuntimeError(
+            f"only {len(candidates)} verified reading link(s) available after "
+            f"waiting {wait_seconds} seconds; refusing to publish an empty reading section"
+        )
+    return state
+
+
 def build_prompt(state, today):
     """Construct the chief-of-staff prompt with embedded state."""
     day_of_week = today.strftime("%A")
@@ -90,6 +193,10 @@ def build_prompt(state, today):
     day = today.day
     year = today.year
     date_str = today.strftime("%Y-%m-%d")
+    nearby_calendar = ", ".join(
+        (today + datetime.timedelta(days=offset)).strftime("%A %Y-%m-%d")
+        for offset in range(-7, 8)
+    )
 
     state_json = json.dumps(compact_state(state), indent=2, default=str)
 
@@ -104,7 +211,9 @@ def build_prompt(state, today):
 
     if reminders_text:
         reminders_block = (
-            f"At the end of the brief, include a '## Daily Reminders' section with these items:\n"
+            "Treat the standing reminders below as candidates, not a checklist to reproduce. "
+            "Include at most two only when they change today's active outcome, decision, risk, "
+            "commitment, or Tier-A relationship:\n"
             f"{reminders_text}"
         )
     else:
@@ -120,32 +229,101 @@ def build_prompt(state, today):
             "\n\nThe state includes a `wiki_updates` field with what the user's autonomous "
             f"research agents found in the last 24h ({n_sessions} session(s), "
             f"{n_pending} pending seeds across all domains). "
-            "Add a '## Wiki Research' section near the end of the brief that:\n"
-            "  - Names the domains with new activity and what topic was researched\n"
-            "  - Lists 2-4 key new concepts or findings (use the `topic` field, not raw filenames)\n"
-            "  - Surfaces anything in `errors` or `notes` fields that needs the user's judgment\n"
-            "  - Mentions pending seeds only if there are several stale ones\n"
-            "Keep it tight — 4-8 lines. If nothing material happened, say so in one line."
+            "Include one bullet only if the run changed an active question, decision, risk, or "
+            "commitment. Otherwise omit wiki research entirely, including routine errors and "
+            "zero-result runs."
         )
 
     return f"""\
-You are writing the user's morning note. Read their priorities, daily notes, the change summary
-from overnight, recent meeting summaries, and the current project status files. Produce a daily
-brief with these sections:
+You are writing Julian's personal morning brief. It should work like a thoughtful chief of staff
+who knows the history: concise enough to read in a few minutes, but complete enough that Julian
+does not need to reopen every transcript to understand what matters.
 
-1. What Changed - what actually moved across their projects, stated plainly
-2. Decisions For You - decisions, reviews, or approvals only the user can do, ranked by urgency
-3. What It Means Today - the practical interpretation: what matters, what is stale,
-   what should be delegated, and which cadence or owner would help
-4. In The Background - what agents or lower-priority work completed, stalled, or is waiting
+Use `##` markdown headings for these sections. Omit one only when it is genuinely empty:
+
+1. What Changed - three to five developments since the previous brief. Group related developments,
+   state the direct facts and explain their practical consequence. Put most next steps below instead
+   of ending every bullet with an action.
+2. Decisions and Actions for You - one to five Julian-owned decisions, reviews, conversations, or
+   approvals, ranked by urgency. Start from the current priorities and use newer evidence to update
+   them. Use **TODAY** or **THIS WEEK** only when an explicit, correctly resolved date supports it.
+3. What It Means Today - two short paragraphs connecting the changes to the weekly and
+   90-day priorities. Name the day's main outcome, the trade-offs, what can wait, and what is stale.
+4. Delegated or Waiting - up to five owner-specific items. State the deliverable, status or due date,
+   and Julian's role, which is usually to wait. If delegated work slipped, ask Julian only to choose
+   whether to chase, replace, narrow, or stop it; do not hand the work back to him.
+5. Open Threads and Risks - up to five unresolved external dependencies, unowned commitments,
+   or important uncertainties that are not already direct actions or delegated work. Give the latest
+   recorded status and the person who can verify it. If the source gives no checkpoint, say "no date
+   recorded" rather than choosing one.
+6. In the Background - up to three engineering, research, agent, or administrative developments
+   only when they change readiness, timing, or a decision.
+7. Worth Reading - two or three source-linked articles chosen only from `learning_readings`.
+   Select at least two whenever two valid candidates are supplied. Include an item only when it
+   directly supports the current competence cycle, this week's work, or a live decision. For each,
+   use a markdown link followed by one plain sentence explaining why it is worth Julian's time now.
+   Never invent, repair, or substitute a URL. If fewer than two candidates are supplied, include
+   every valid candidate and add one short note that the verified reading queue needs replenishing.
+
+Length and continuity:
+- Aim for 800 to 1,050 words. Quiet days can be shorter; never exceed 1,100 words.
+- Do not cut a live commitment merely to hit the word range. Compress repeated, unchanged history.
+- Give each main theme one home. A direct Julian action belongs only in Decisions. A named owner's
+  deliverable belongs only in Delegated. An external dependency, unowned commitment, or uncertainty
+  belongs only in Open Threads and Risks. Background must not repeat any of them.
+- Route meeting commitments into those same sections: Julian-owned to Decisions; another named
+  owner to Delegated; external or unowned to Open Threads and Risks. Do not create a meeting recap.
+- After drafting, remove any action, deadline, or status repeated in more than one section.
+- Treat the current priorities file as the authority on what matters.
+- Treat `competence_priorities` as the durable learning contract. Preserve its current weekly
+  allocation, including both its technical and institutional/economic strands, but mention it in
+  today's brief only when a session, conversation, review, or output is due or at risk. Never turn
+  the full curriculum into a daily task list, and never let it displace a more urgent commitment
+  from `priorities` without stating the trade-off.
+- Surface priority deadlines that are due or overdue within seven days, but describe their status
+  from the newest evidence. If the record has not been refreshed, say the latest recorded status
+  needs verification; do not claim that nothing changed.
+- Use the current weekly plan as the active frame. If it is marked stale or not current for this
+  week, say so and rely on newer priorities, meetings, notes, and project records.
+- Treat the previous daily brief as unverified carry-forward candidates, not source truth. Keep an
+  old item only when it still appears open and newer evidence has not resolved, parked, superseded,
+  or contradicted it.
+- Do not summarize every meeting. Carry forward decisions, commitments, risks, and unresolved
+  questions through the routing rule above. Meeting action items are candidates, not automatic
+  priorities.
+- Never convert missing financial evidence into zero. Call it unknown and assign verification.
+- Treat reading candidates as optional reading, not as work commitments. Choose the strongest two
+  or three supplied items, do not repeat the same link elsewhere, and never claim to have verified
+  more than the supplied title, topic, provenance, and source URL establish.
+- Prefer primary and institutional sources for factual authority. A candidate marked
+  `source_tier: secondary` may add synthesis or a case study, but do not treat it as independent
+  confirmation of the underlying claims. Deterministic source caps have already been applied.
+- A candidate marked `selection_lane: evergreen` was selected for present relevance despite an
+  older publication date. Do not describe it as new or recent; explain why the older case matters now.
+- Do not add a title, conclusion, generic encouragement, or raw file-change inventory.
+
+Source integrity:
+- Today is {day_of_week}, {month} {day}, {year}. If a source gives only "Saturday", "tomorrow", or
+  another relative day, do not translate it into a numbered date. If it unambiguously refers to
+  today, say "today ({day_of_week})". Otherwise keep the source's wording and say the numbered date
+  was not recorded. The nearby calendar is a consistency check, not permission to guess.
+- An item missing from the available records is not proof it never happened. Say "not recorded in
+  the available notes" rather than presenting an absence as a confirmed fact.
+- Preserve the posture in the source: a proposal, discussion, invitation, or action item is not an
+  approved decision. Do not invent a sequence such as "do X before Y" unless a source requires it.
+- A generated meeting summary may compress or conflate discussion. Attribute consequential claims
+  to the meeting, and do not let one summary silently override the current priorities or a newer
+  explicit decision record.
+- Use only due dates and checkpoints contained in the sources or resolved from an unambiguous
+  relative date. Never invent a convenient date for an undated follow-up.
+- Do not turn a team opinion into a confident market, investor, legal, or regulatory prediction.
 
 Pay special attention to the "notes" field in the state data — these are the user's own thoughts,
 reminders, and action items captured throughout the day. Use them to understand what's on their
 mind, what they're prioritizing, and what they might be forgetting.
 
-Also use `recent_meetings` when present. Do not summarize every meeting. Pull forward only the
-meeting decisions, risks, follow-ups, or unresolved questions that change what the user should do
-today. Treat meeting action items as candidate work, not automatic priorities.
+Also use `recent_meetings` when present. They have already been deduplicated and ranked for
+relevance. Prefer concrete commitments and decisions over generic meeting summaries.
 
 When `project_context_vaults` contains a nested project's local `.jarvis/context`, treat that as
 canonical for that project. If a private project status says a project needs refresh but the nested
@@ -154,6 +332,9 @@ vault has newer status or meetings, use the nested vault as the fresher source a
 Write like a sharp teammate leaving a useful note, not like an AI report, strategy memo, or
 system log. Use normal human language, short paragraphs, and concrete verbs. It is fine to use
 contractions. Avoid grand summary sentences and consultant phrases.
+
+Do not repeat sentence frames such as "That matters because" or "Next move" across bullets.
+Vary the prose naturally. Expand a less familiar acronym on first use.
 
 Do not use phrases like "center of gravity", "proof loop", "unlock", "operating leverage",
 "surfaced", "material", "front-line execution", "decision gate", "low-friction", "at scale",
@@ -172,6 +353,7 @@ Here is the current state data:
 </state>
 
 Today's date: {date_str}
+Nearby calendar: {nearby_calendar}
 
 Output the brief in markdown format with the sections above. Do NOT include a title heading -
 the title is already set by the journal entry. Start directly with the first section.
@@ -187,7 +369,9 @@ def compact_state(state):
     """
     compact = {}
 
-    # Priorities: keep parsed sections, drop raw text
+    # Priorities: preserve a bounded copy of the source. The document's schema
+    # is allowed to evolve, so heading-specific fields are compatibility aids,
+    # not the only input to synthesis.
     pri = state.get("priorities") or {}
     compact["priorities"] = {
         "source_path": pri.get("source_path"),
@@ -201,11 +385,29 @@ def compact_state(state):
         "constraints": pri.get("constraints", []),
         "personal": pri.get("personal", []),
         "standing_instructions": pri.get("standing_instructions", []),
+        "sections": {
+            key: value[:4000]
+            for key, value in (pri.get("sections") or {}).items()
+        },
+        "source_text": (pri.get("raw") or "")[:12000],
+    }
+
+    competence = state.get("competence_priorities") or {}
+    compact["competence_priorities"] = {
+        "source_path": competence.get("source_path"),
+        "source_modified": competence.get("source_modified"),
+        "source_text": (competence.get("raw") or "")[:12_000],
     }
 
     # Projects: keep status_md (truncated), file count, newest modified — drop file lists
     projects = {}
+    private_context = {}
     for name, info in (state.get("projects") or {}).items():
+        if name.startswith("_private/"):
+            private_context[name.removeprefix("_private/")] = (
+                info.get("content") or ""
+            )[:3000]
+            continue
         if name.startswith(_USER_PROJECT_PREFIX) or name == "_docs":
             continue  # skip standalone files and docs index
         status_md = info.get("status_md") or ""
@@ -216,6 +418,7 @@ def compact_state(state):
             "status_summary": status_md[:1500] if status_md else None,
         }
     compact["projects"] = projects
+    compact["private_context"] = private_context
 
     # Nested project context vaults: canonical project-local context, compacted.
     vaults = {}
@@ -256,6 +459,29 @@ def compact_state(state):
     # Recent meetings: already compact summaries/action items from collect-state
     compact["recent_meetings"] = state.get("recent_meetings") or []
 
+    # Planning layers: monthly -> weekly -> daily. These are bounded here so a
+    # rich brief remains reliable even when historical artifacts are long.
+    life_context = state.get("life_context") or {}
+    compact_life_context = {}
+    for key, max_chars in (
+        ("weekly_plan", 8000),
+        ("previous_daily_brief", 6000),
+        ("monthly_review", 4000),
+    ):
+        artifact = life_context.get(key)
+        if not isinstance(artifact, dict):
+            compact_life_context[key] = None
+            continue
+        compact_life_context[key] = {
+            "path": artifact.get("path"),
+            "modified": artifact.get("modified"),
+            "current_for_week": artifact.get("current_for_week"),
+            "period_start": artifact.get("period_start"),
+            "period_end": artifact.get("period_end"),
+            "content": (artifact.get("content") or "")[:max_chars],
+        }
+    compact["life_context"] = compact_life_context
+
     # Tmux: keep as-is
     compact["tmux_sessions"] = state.get("tmux_sessions", [])
 
@@ -272,6 +498,19 @@ def compact_state(state):
 
     # Wiki updates: keep as-is — already small (<24h log entries + recent findings)
     compact["wiki_updates"] = state.get("wiki_updates")
+
+    # Fresh links selected by deterministic provenance, age, deduplication, and
+    # prior-brief checks. The model may rank these, but may not manufacture URLs.
+    readings = state.get("learning_readings")
+    if isinstance(readings, dict):
+        compact["learning_readings"] = {
+            "domain": readings.get("domain"),
+            "lookback_days": readings.get("lookback_days"),
+            "candidates": (readings.get("candidates") or [])[:12],
+            "fallback_candidates": (readings.get("fallback_candidates") or [])[:12],
+        }
+    else:
+        compact["learning_readings"] = None
 
     return compact
 
@@ -371,6 +610,9 @@ def mark_journal_delivered(path, today):
         "brief_path": path,
         "delivered_at": datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
     }
+    ref = latest_journal_reference(payload["title"], today)
+    if ref:
+        payload["anytype"] = ref
     try:
         with open(marker, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -383,12 +625,87 @@ def journal_delivered(path):
     return os.path.exists(journal_marker_path(path))
 
 
+def latest_journal_reference(title, today):
+    """Return the newest Jarvis journal reference for this brief, if indexed.
+
+    Jarvis writes an Anytype object and records the object reference locally.
+    The marker should carry that object id/path so "journaled" can be audited
+    without relying on a terse cron success line.
+    """
+    entries_path = os.path.expanduser("~/.jarvis/journal/entries.json")
+    expected_title = f"{today.day} - {title}"
+    expected_date = today.isoformat()
+    try:
+        with open(entries_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, IOError, json.JSONDecodeError):
+        return None
+
+    for entry in data.get("entries", []):
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("title") != expected_title:
+            continue
+        if str(entry.get("entry_date", ""))[:10] != expected_date:
+            continue
+        return {
+            "object_id": entry.get("id"),
+            "space_id": entry.get("space_id"),
+            "path": entry.get("path"),
+            "title": entry.get("title"),
+        }
+    return None
+
+
+def refresh_local_journal_preview(reference, path):
+    """Keep Jarvis's local search preview aligned after an object-body update."""
+    entries_path = os.path.expanduser("~/.jarvis/journal/entries.json")
+    try:
+        with open(entries_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        content = read_brief(path)
+        changed = False
+        for entry in data.get("entries", []):
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("id") != reference.get("object_id"):
+                continue
+            if entry.get("space_id") != reference.get("space_id"):
+                continue
+            entry["content_preview"] = content[:200]
+            changed = True
+            break
+        if not changed:
+            return
+        with open(entries_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+    except (OSError, IOError, json.JSONDecodeError, AttributeError):
+        print("Warning: could not refresh local Jarvis journal preview", file=sys.stderr)
+
+
 def configured_journal_space():
     """Return the explicit Anytype space for daily-brief journal delivery.
 
     Jarvis has a mutable selected-space cache that interactive/object commands
     can change. Cron delivery should instead use the stable configured default.
     """
+    env_space = os.environ.get("LIFE_ORCHESTRATOR_DAILY_JOURNAL_SPACE")
+    if env_space:
+        return env_space
+
+    config_path = os.path.join(AGENTS_LIFE_DIR, "config.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        configured = (config.get("journal_spaces") or {}).get("daily")
+        if configured:
+            return configured
+    except (OSError, IOError, json.JSONDecodeError, AttributeError):
+        pass
+
+    # Backward-compatible generic override. Route-specific config takes
+    # precedence so daily and weekly delivery can be separated.
     env_space = os.environ.get("LIFE_ORCHESTRATOR_JOURNAL_SPACE")
     if env_space:
         return env_space
@@ -424,34 +741,57 @@ def extract_top_items(brief, n=3):
 
 
 def jarvis_journal(path, today):
-    """Write the brief to Jarvis journal. Returns True on success, False on failure.
+    """Create or update the brief in Jarvis journal.
 
-    Failure is reported as False rather than raised so the caller can decide
-    whether to fail the whole script.
+    Today's stable title and local reference make regeneration idempotent: when
+    an Anytype object already exists, replace its body rather than creating a
+    duplicate page. Failure is returned so the caller controls the run boundary.
     """
     title = f"Daily Brief — {today.strftime('%B %d, %Y')}"
-    print(f"Writing to Jarvis journal: {title}", file=sys.stderr)
     journal_space = configured_journal_space()
     timeout_s = int(os.environ.get("LIFE_ORCHESTRATOR_JOURNAL_TIMEOUT", "180"))
+    existing = latest_journal_reference(title, today)
     try:
-        cmd = [
-            JARVIS_BIN, "journal", "write",
-            "--file", path,
-            "--title", title,
-            "--no-deep-dive",
-        ]
-        if journal_space:
-            cmd.extend(["--space", journal_space])
+        if existing and existing.get("object_id") and existing.get("space_id"):
+            print(f"Updating existing Jarvis journal: {title}", file=sys.stderr)
+            cmd = [
+                JARVIS_BIN,
+                "object",
+                "edit",
+                str(existing["object_id"]),
+                "--space",
+                str(existing["space_id"]),
+                "--backend",
+                "anytype",
+                "--body-file",
+                path,
+            ]
+            operation = "update"
+        else:
+            print(f"Writing new Jarvis journal: {title}", file=sys.stderr)
+            cmd = [
+                JARVIS_BIN, "journal", "write",
+                "--file", path,
+                "--title", title,
+                "--no-deep-dive",
+            ]
+            if journal_space:
+                cmd.extend(["--space", journal_space])
+            operation = "write"
         result = subprocess.run(
             cmd,
             capture_output=True, text=True, timeout=timeout_s,
         )
         if result.returncode == 0:
-            print("Jarvis journal write: success", file=sys.stderr)
+            print(f"Jarvis journal {operation}: success", file=sys.stderr)
+            if operation == "update":
+                refresh_local_journal_preview(existing, path)
+            if result.stdout:
+                print(f"  stdout: {result.stdout.strip()}", file=sys.stderr)
             return True
         # Non-zero exit: log everything so the failure is visible in cron logs
         print(
-            f"Jarvis journal write FAILED (exit {result.returncode})",
+            f"Jarvis journal {operation} FAILED (exit {result.returncode})",
             file=sys.stderr,
         )
         if result.stdout:
@@ -461,13 +801,13 @@ def jarvis_journal(path, today):
         return False
     except subprocess.TimeoutExpired as e:
         print(
-            f"Jarvis journal write TIMED OUT after {e.timeout}s",
+            f"Jarvis journal operation TIMED OUT after {e.timeout}s",
             file=sys.stderr,
         )
         return False
     except (FileNotFoundError, OSError) as e:
         print(
-            f"Jarvis journal write ERROR: {type(e).__name__}: {e}",
+            f"Jarvis journal operation ERROR: {type(e).__name__}: {e}",
             file=sys.stderr,
         )
         return False
@@ -516,21 +856,80 @@ def main():
         "--force", action="store_true",
         help="Generate brief even if no changes detected since last crawl"
     )
+    output_mode = parser.add_mutually_exclusive_group()
+    output_mode.add_argument(
+        "--preview-output",
+        help=(
+            "Generate an unpublished preview at this path. Does not update "
+            "crawl state, today's brief, Anytype, journal markers, or notifications."
+        ),
+    )
+    output_mode.add_argument(
+        "--publish-preview",
+        help=(
+            "Publish an already reviewed preview as today's canonical brief. "
+            "Backs up any existing local brief and does not regenerate with AI."
+        ),
+    )
     args = parser.parse_args()
+    preview = bool(args.preview_output)
+    publish_preview = bool(args.publish_preview)
 
     # Step 1: Resolve today's artifact before doing expensive work. Once the
     # brief has reached the journal, it is complete for the day unless the user
     # explicitly asks for a forced regeneration.
     today = datetime.date.today()
-    path = brief_path(today)
-    today_exists = os.path.exists(path)
-    today_journaled = journal_delivered(path)
+    path = os.path.abspath(os.path.expanduser(args.preview_output)) if preview else brief_path(today)
 
-    if today_exists and today_journaled and not args.force:
+    if publish_preview:
+        source = os.path.abspath(os.path.expanduser(args.publish_preview))
+        if not os.path.isfile(source) or not read_brief(source).strip():
+            print(f"Error: reviewed preview is missing or empty: {source}", file=sys.stderr)
+            sys.exit(1)
+        if os.path.abspath(source) == os.path.abspath(path):
+            print("Error: reviewed preview must be separate from today's canonical brief.", file=sys.stderr)
+            sys.exit(1)
+
+        if os.path.isfile(path):
+            backup_dir = os.path.join(AGENTS_LIFE_DIR, "previews")
+            os.makedirs(backup_dir, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+            backup_path = os.path.join(
+                backup_dir,
+                f"{today.isoformat()}-{stamp}-before-reviewed-publish.md",
+            )
+            shutil.copy2(path, backup_path)
+            print(f"Existing brief backed up to {backup_path}", file=sys.stderr)
+
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        shutil.copy2(source, path)
+        if not clean_text_hygiene(path):
+            print("Error: reviewed preview text hygiene cleanup failed.", file=sys.stderr)
+            sys.exit(1)
+        brief = read_brief(path)
+        sys.stdout.write(brief)
+        if not brief.endswith("\n"):
+            sys.stdout.write("\n")
+        delivered = jarvis_journal(path, today)
+        send_notification(brief)
+        if not delivered:
+            print(
+                "Error: reviewed preview was saved locally but journal delivery failed.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        mark_journal_delivered(path, today)
+        print(f"Reviewed brief published from {source}", file=sys.stderr)
+        return
+
+    today_exists = os.path.exists(path)
+    today_journaled = journal_delivered(path) if not preview else False
+
+    if not preview and today_exists and today_journaled and not args.force:
         print("Today's brief is already journaled; skipping brief", file=sys.stderr)
         sys.exit(0)
 
-    if today_exists and not today_journaled and not args.force:
+    if not preview and today_exists and not today_journaled and not args.force:
         print(
             "Today's brief exists but has not been journaled; retrying journal delivery.",
             file=sys.stderr,
@@ -556,9 +955,15 @@ def main():
 
     # Step 2: Collect state
     print("Collecting state...", file=sys.stderr)
-    state = run_collect_state()
+    state = run_collect_state(no_save=preview)
+    if not preview:
+        try:
+            state = wait_for_learning_readings(today, state)
+        except RuntimeError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
 
-    if not state.get("changed", True) and today_exists and not args.force:
+    if not preview and not state.get("changed", True) and today_exists and not args.force:
         print("No changes detected and today's brief already exists; skipping brief", file=sys.stderr)
         sys.exit(0)
 
@@ -584,6 +989,10 @@ def main():
     if not brief.endswith("\n"):
         sys.stdout.write("\n")
     print(f"Brief saved to {path}", file=sys.stderr)
+
+    if preview:
+        print("Preview mode: skipped Anytype, journal marker, and notification.", file=sys.stderr)
+        return
 
     # Step 6: Jarvis journal integration
     delivered = jarvis_journal(path, today)

@@ -1,7 +1,6 @@
 """CLI interface for Jarvis task scheduler."""
 
 import os
-import sys
 from datetime import UTC, date, datetime, timedelta
 
 import click
@@ -38,26 +37,6 @@ from jarvis.state import (
 )
 
 console = Console()
-
-
-def _ensure_utf8_console() -> None:
-    """Make CLI output able to encode unicode glyphs (✓, →, …).
-
-    On Windows the default console codepage (e.g. cp1252) raises
-    UnicodeEncodeError when these are printed; reconfigure stdout/stderr to
-    UTF-8 with a safe fallback so commands don't crash on success messages.
-    """
-
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            try:
-                reconfigure(encoding="utf-8", errors="replace")
-            except (ValueError, OSError):
-                pass
-
-
-_ensure_utf8_console()
 
 
 def get_adapter(backend: str | None = None) -> KnowledgeBaseAdapter:
@@ -248,6 +227,7 @@ cli.add_command(object_cli, name="object")
 # Create 'o' as a quick alias for object lookup/edit
 cli.add_command(quick_object, name="o")
 
+
 def _unavailable_command(name: str, message: str) -> click.Command:
     """Return a placeholder command for optional command groups that failed to load."""
 
@@ -310,6 +290,11 @@ cli.add_command(wiki_cli, name="w")
 from jarvis.meetings.cli import meeting_cli  # noqa: E402
 
 cli.add_command(meeting_cli, name="meeting")
+
+# Register public-safe weekly community briefing commands
+from jarvis.community_briefing.cli import community_cli  # noqa: E402
+
+cli.add_command(community_cli, name="community")
 
 # Register WhatsApp channel commands
 from jarvis.whatsapp.cli import whatsapp_cli  # noqa: E402
@@ -693,6 +678,9 @@ def config_show() -> None:
         get_backend_token,
         get_config_path,
         get_fathom_api_key,
+        get_whatsapp_access_token,
+        get_whatsapp_app_secret,
+        get_whatsapp_verify_token,
         load_config,
         redact_token,
     )
@@ -762,6 +750,45 @@ def config_show() -> None:
             )
     else:
         console.print("    [dim](using FATHOM_API_KEY or JARVIS_FATHOM_API_KEY)[/dim]")
+
+    console.print("  [cyan]whatsapp[/cyan]")
+    if cfg.whatsapp.accounts:
+        if cfg.whatsapp.default_account:
+            console.print(f"    default_account: {cfg.whatsapp.default_account}")
+        for name, account in cfg.whatsapp.accounts.items():
+            console.print(f"    {name}: provider={account.provider}")
+            if account.phone_number_id:
+                console.print(f"      phone_number_id: {account.phone_number_id}")
+            if account.business_account_id:
+                console.print(f"      business_account_id: {account.business_account_id}")
+            console.print(f"      api_version: {account.api_version}")
+            try:
+                token = get_whatsapp_access_token(name)
+                console.print(f"      access token: {redact_token(token)} [green]✓[/green]")
+            except Exception:
+                console.print(
+                    f"      access token env {account.access_token_env_var}: [red]not set[/red]"
+                )
+            try:
+                get_whatsapp_app_secret(name)
+                console.print(
+                    f"      app secret env {account.app_secret_env_var}: [green]set[/green]"
+                )
+            except Exception:
+                console.print(
+                    f"      app secret env {account.app_secret_env_var}: [red]not set[/red]"
+                )
+            try:
+                get_whatsapp_verify_token(name)
+                console.print(
+                    f"      verify token env {account.verify_token_env_var}: [green]set[/green]"
+                )
+            except Exception:
+                console.print(
+                    f"      verify token env {account.verify_token_env_var}: [red]not set[/red]"
+                )
+    else:
+        console.print("    [dim](using JARVIS_WHATSAPP_* fallback env vars)[/dim]")
 
     # Validation
     console.print()
@@ -1021,6 +1048,152 @@ def config_fathom_setup(
     console.print()
     console.print("[green]✓ Fathom config updated[/green]")
     console.print("[dim]Run `jarvis config show` to verify account wiring.[/dim]")
+    if wrote_env:
+        console.print(
+            "[dim]Open a new shell or source your profile to activate the new env vars.[/dim]"
+        )
+
+
+@config.command(name="whatsapp-setup")
+@click.option("--env-file", default=None, help="Managed env file path to write")
+@click.option("--shell-profile", default=None, help="Shell profile to source the env file from")
+@click.option("--no-shell-profile", is_flag=True, help="Do not modify a shell profile")
+def config_whatsapp_setup(
+    env_file: str | None,
+    shell_profile: str | None,
+    no_shell_profile: bool,
+) -> None:
+    """Interactively configure WhatsApp accounts, env vars, and shell activation."""
+    from pathlib import Path
+
+    from jarvis.config import (
+        WhatsAppAccountConfig,
+        default_shell_profile_path,
+        default_whatsapp_env_file_path,
+        ensure_default_whatsapp_accounts,
+        ensure_shell_profile_sources_env,
+        generate_whatsapp_verify_token,
+        load_config,
+        render_whatsapp_env_file,
+        save_config,
+        write_env_file,
+    )
+
+    cfg = load_config(reload=True)
+    accounts = ensure_default_whatsapp_accounts(cfg)
+
+    console.print()
+    console.print("[bold]WhatsApp Setup[/bold]")
+    console.print("[dim]Press Enter to keep current values, or type new ones.[/dim]")
+    console.print()
+
+    default_account = click.prompt(
+        "Default account",
+        default=cfg.whatsapp.default_account or (accounts[0].name if accounts else "personal"),
+        show_default=True,
+    ).strip()
+    if default_account and default_account not in cfg.whatsapp.accounts:
+        cfg.whatsapp.accounts[default_account] = WhatsAppAccountConfig()
+    cfg.whatsapp.default_account = default_account or cfg.whatsapp.default_account
+    accounts = ensure_default_whatsapp_accounts(cfg)
+
+    for account in accounts:
+        console.print()
+        console.print(f"[cyan]{account.name}[/cyan]")
+        cfg_account = cfg.whatsapp.accounts[account.name]
+        phone_number_id = click.prompt(
+            "  Meta phone number ID",
+            default=account.phone_number_id or "",
+            show_default=bool(account.phone_number_id),
+        ).strip()
+        business_account_id = click.prompt(
+            "  WhatsApp Business Account ID",
+            default=account.business_account_id or "",
+            show_default=bool(account.business_account_id),
+        ).strip()
+        cfg_account.phone_number_id = phone_number_id or None
+        cfg_account.business_account_id = business_account_id or None
+
+        access_env_var = click.prompt(
+            "  Access token env var",
+            default=account.access_token_env_var,
+            show_default=True,
+        ).strip()
+        app_secret_env_var = click.prompt(
+            "  App secret env var",
+            default=account.app_secret_env_var,
+            show_default=True,
+        ).strip()
+        verify_token_env_var = click.prompt(
+            "  Verify token env var",
+            default=account.verify_token_env_var,
+            show_default=True,
+        ).strip()
+        account.access_token_env_var = access_env_var
+        account.app_secret_env_var = app_secret_env_var
+        account.verify_token_env_var = verify_token_env_var
+        cfg_account.access_token_env_var = access_env_var
+        cfg_account.app_secret_env_var = app_secret_env_var
+        cfg_account.verify_token_env_var = verify_token_env_var
+
+        account.access_token = click.prompt(
+            "  Meta access token (leave blank to skip writing)",
+            default="",
+            show_default=False,
+            hide_input=True,
+        ).strip()
+        account.app_secret = click.prompt(
+            "  Meta app secret (leave blank to skip writing)",
+            default="",
+            show_default=False,
+            hide_input=True,
+        ).strip()
+        verify_token = click.prompt(
+            "  Webhook verify token (leave blank to generate)",
+            default="",
+            show_default=False,
+            hide_input=True,
+        ).strip()
+        account.verify_token = verify_token or generate_whatsapp_verify_token()
+
+    save_config(cfg)
+
+    env_target = Path(env_file).expanduser() if env_file else default_whatsapp_env_file_path()
+    env_content = render_whatsapp_env_file(
+        [
+            account
+            for account in accounts
+            if account.access_token or account.app_secret or account.verify_token
+        ]
+    )
+    wrote_env = False
+    if env_content.strip() and click.confirm(
+        f"Write secrets to managed env file at {env_target}?",
+        default=True,
+    ):
+        write_env_file(env_target, env_content)
+        wrote_env = True
+        console.print(f"[green]✓[/green] Wrote env file: {env_target}")
+
+    if not no_shell_profile:
+        profile_target = (
+            Path(shell_profile).expanduser() if shell_profile else default_shell_profile_path()
+        )
+        if click.confirm(
+            f"Ensure {profile_target} sources the env file?",
+            default=wrote_env,
+        ):
+            changed = ensure_shell_profile_sources_env(profile_target, env_target)
+            if changed:
+                console.print(f"[green]✓[/green] Updated shell profile: {profile_target}")
+            else:
+                console.print(
+                    f"[dim]Shell profile already sources env file: {profile_target}[/dim]"
+                )
+
+    console.print()
+    console.print("[green]✓ WhatsApp config updated[/green]")
+    console.print("[dim]Run `jarvis whatsapp webhook status --json` to verify wiring.[/dim]")
     if wrote_env:
         console.print(
             "[dim]Open a new shell or source your profile to activate the new env vars.[/dim]"
@@ -1328,8 +1501,11 @@ def _generate_command_tree(command: click.Command, path: list[str]) -> list[dict
     return entries
 
 
+
+
+
 def _generate_docs() -> dict:
-    """Generate documentation from manual examples and live Click metadata."""
+    """Generate comprehensive documentation dictionary."""
     documentation = {
         "name": "jarvis",
         "version": "0.1.0",
@@ -1437,6 +1613,21 @@ def _generate_docs() -> dict:
                             "jarvis config fathom-setup --shell-profile ~/.zshrc",
                         ],
                     },
+                    "whatsapp-setup": {
+                        "description": (
+                            "Interactively configure WhatsApp accounts, env vars, "
+                            "and shell activation"
+                        ),
+                        "options": {
+                            "--env-file": "Managed env file path to write",
+                            "--shell-profile": "Shell profile to source the env file from",
+                            "--no-shell-profile": "Do not modify a shell profile",
+                        },
+                        "examples": [
+                            "jarvis config whatsapp-setup",
+                            "jarvis config whatsapp-setup --shell-profile ~/.zshrc",
+                        ],
+                    },
                 },
             },
             "init": {
@@ -1540,6 +1731,74 @@ def _generate_docs() -> dict:
                     "jarvis j --file ./design.md",
                 ],
             },
+            "community": {
+                "description": "Prepare and deliver public-safe community updates",
+                "subcommands": {
+                    "briefing setup": {
+                        "description": (
+                            "Configure the private weekly evidence root, draft directory, "
+                            "and dedicated Discord channel"
+                        ),
+                        "options": {
+                            "--discord-channel-id": "Dedicated Discord text-channel numeric ID",
+                            "--source-path": "Private contributor context root override",
+                            "--draft-path": "Owner-only weekly artifact directory override",
+                            "--enable / --disable": "Enable only after a channel is configured",
+                        },
+                        "examples": [
+                            (
+                                "jarvis community briefing setup --discord-channel-id "
+                                "123456789012345678"
+                            )
+                        ],
+                    },
+                    "briefing generate": {
+                        "description": (
+                            "Generate the latest due Sunday draft with reboot catch-up and "
+                            "no implicit overwrite"
+                        ),
+                        "options": {
+                            "--week-start": "Explicit Monday in YYYY-MM-DD format",
+                            "--regenerate": "Back up and replace an existing draft",
+                            "--dry-run": "Classify and validate without writing artifacts",
+                            "--json": "Emit content-free counters as JSON",
+                        },
+                        "examples": [
+                            "jarvis community briefing generate --dry-run",
+                            "jarvis community briefing generate",
+                        ],
+                    },
+                    "briefing status": {
+                        "description": "Show content-free weekly briefing queue and readiness",
+                        "options": {"--json": "Emit the result as JSON"},
+                        "examples": ["jarvis community briefing status"],
+                    },
+                    "briefing preflight": {
+                        "description": (
+                            "Fail closed until collection, local review, schedules, Google, "
+                            "and Discord are ready"
+                        ),
+                        "options": {
+                            "--no-runtime": "Skip launchd health checks",
+                            "--no-providers": "Skip live Google and Discord checks",
+                            "--json": "Emit safe readiness checks as JSON",
+                        },
+                        "examples": ["jarvis community briefing preflight"],
+                    },
+                    "briefing worker": {
+                        "description": "Publish approved weekly artifacts only",
+                        "options": {
+                            "--max-items": "Maximum approved items per run",
+                            "--json": "Emit content-free counters as JSON",
+                        },
+                        "examples": ["jarvis community briefing worker"],
+                    },
+                    "briefing review open": {
+                        "description": "Open the shared authenticated local publication inbox",
+                        "examples": ["jarvis community briefing review open"],
+                    },
+                },
+            },
             "meeting": {
                 "description": "Ingest meeting transcripts and summaries into Jarvis destinations",
                 "subcommands": {
@@ -1557,7 +1816,10 @@ def _generate_docs() -> dict:
                             ),
                             "--backend": "Backend override for object-based resolvers",
                             "--title": "Override the inferred meeting title",
-                            "--project": "Attach a project slug or label",
+                            "--project": (
+                                "Attach a project slug or label; configured aliases "
+                                "are canonicalized"
+                            ),
                             "--auto-route / --no-auto-route": (
                                 "Infer project from private meeting route rules "
                                 "when --project is omitted"
@@ -1580,6 +1842,111 @@ def _generate_docs() -> dict:
                             ),
                         ],
                     },
+                    "publish setup": {
+                        "description": (
+                            "Configure approval-gated Flow meeting publication to "
+                            "Google Docs and a configurable Discord text channel"
+                        ),
+                        "options": {
+                            "--discord-channel-id": "Discord text-channel numeric ID",
+                            "--discord-token-env-var": (
+                                "Environment variable containing the Discord bot token"
+                            ),
+                            "--google-owner-email": "Required active Google owner email",
+                            "--source-path": "Canonical Flow meeting-note directory override",
+                            "--authorize-google": "Open least-privilege Google OAuth",
+                            "--install-review / --no-install-review": (
+                                "Install the localhost review inbox as a launchd service"
+                            ),
+                            "--enable / --disable": "Enable or disable worker activity",
+                        },
+                        "examples": [
+                            (
+                                "jarvis meeting publish setup --discord-channel-id "
+                                "123456789012345678 --authorize-google --install-review"
+                            )
+                        ],
+                    },
+                    "publish scan": {
+                        "description": (
+                            "Discover recent canonical Flow notes; queue writes require --enqueue"
+                        ),
+                        "options": {
+                            "--since-days": "Rolling eligibility window",
+                            "--enqueue / --dry-run": "Write metadata-only queue rows or preview",
+                            "--json": "Emit content-free counters as JSON",
+                        },
+                        "examples": [
+                            "jarvis meeting publish scan --since-days 30 --dry-run",
+                            "jarvis meeting publish scan --since-days 30 --enqueue",
+                        ],
+                    },
+                    "publish status": {
+                        "description": "Show safe queue, review, Google, and Discord readiness",
+                        "options": {"--json": "Emit the result as JSON"},
+                        "examples": ["jarvis meeting publish status"],
+                    },
+                    "publish cutover": {
+                        "description": (
+                            "Set a hard launch date and archive older unpublished meetings"
+                        ),
+                        "options": {
+                            "--date": "Earliest meeting date allowed into publication",
+                            "--apply / --dry-run": (
+                                "Persist the floor and archive older queue rows, or preview"
+                            ),
+                            "--json": "Emit content-free counters as JSON",
+                        },
+                        "examples": [
+                            "jarvis meeting publish cutover --date 2026-08-28 --dry-run",
+                            "jarvis meeting publish cutover --date 2026-08-28 --apply",
+                        ],
+                    },
+                    "publish preflight": {
+                        "description": (
+                            "Fail closed unless local runtime, Google, and Discord are ready"
+                        ),
+                        "options": {
+                            "--no-runtime": "Skip launchd and loopback health checks",
+                            "--no-providers": "Skip live Google and Discord access checks",
+                            "--json": "Emit safe readiness checks as JSON",
+                        },
+                        "examples": ["jarvis meeting publish preflight"],
+                    },
+                    "publish approve": {
+                        "description": "Approve one meeting's exact current source hash",
+                        "options": {"ITEM_ID": "Stable local queue ID"},
+                        "examples": ["jarvis meeting publish approve abc123"],
+                    },
+                    "publish reject": {
+                        "description": "Reject one meeting's current source version",
+                        "options": {"ITEM_ID": "Stable local queue ID"},
+                        "examples": ["jarvis meeting publish reject abc123"],
+                    },
+                    "publish worker": {
+                        "description": (
+                            "Scan and publish approved items with content-free scheduler output"
+                        ),
+                        "options": {
+                            "--max-items": "Maximum approved items per run",
+                            "--json": "Emit content-free counters as JSON",
+                        },
+                        "examples": ["jarvis meeting publish worker"],
+                    },
+                    "publish review serve": {
+                        "description": (
+                            "Serve the authenticated inbox with editable canonical meeting notes"
+                        ),
+                        "examples": ["jarvis meeting publish review serve"],
+                    },
+                    "publish review open": {
+                        "description": "Open the authenticated canonical-note review inbox",
+                        "examples": ["jarvis meeting publish review open"],
+                    },
+                    "publish review install": {
+                        "description": "Install and start the launchd review service",
+                        "examples": ["jarvis meeting publish review install"],
+                    },
                     "fathom list": {
                         "description": "List recent Fathom meetings and recording IDs",
                         "options": {
@@ -1600,7 +1967,10 @@ def _generate_docs() -> dict:
                         "options": {
                             "RECORDING_ID": "Fathom recording ID from `jarvis meeting fathom list`",
                             "--account": "Named Fathom account from config",
-                            "--project": "Attach a project slug or label",
+                            "--project": (
+                                "Attach a project slug or label; configured aliases "
+                                "are canonicalized"
+                            ),
                             "--auto-route / --no-auto-route": (
                                 "Infer project from private meeting route rules "
                                 "when --project is omitted"
@@ -1638,7 +2008,10 @@ def _generate_docs() -> dict:
                             ),
                             "--limit": "Meetings to fetch per Fathom page",
                             "--max-pages": "Maximum Fathom result pages to scan",
-                            "--project": "Attach a project slug or label",
+                            "--project": (
+                                "Attach a project slug or label; configured aliases "
+                                "are canonicalized"
+                            ),
                             "--auto-route / --no-auto-route": (
                                 "Infer project from private meeting route rules "
                                 "when --project is omitted"
@@ -1684,7 +2057,10 @@ def _generate_docs() -> dict:
                             ),
                             "--limit": "Meetings to fetch per Fathom page",
                             "--max-pages": "Maximum Fathom result pages to scan per account",
-                            "--project": "Attach a project slug or label",
+                            "--project": (
+                                "Attach a project slug or label; configured aliases "
+                                "are canonicalized"
+                            ),
                             "--auto-route / --no-auto-route": (
                                 "Infer project from private meeting route rules "
                                 "when --project is omitted"
@@ -1786,7 +2162,10 @@ def _generate_docs() -> dict:
                             "--auto-ingest / --no-auto-ingest": (
                                 "Automatically ingest verified payloads into destinations"
                             ),
-                            "--project": "Attach a project slug or label during auto-ingest",
+                            "--project": (
+                                "Attach a project slug or label during auto-ingest; "
+                                "configured aliases are canonicalized"
+                            ),
                             "--auto-route / --no-auto-route": (
                                 "Infer project from private meeting route rules "
                                 "when --project is omitted"
@@ -1849,7 +2228,10 @@ def _generate_docs() -> dict:
                         ),
                         "options": {
                             "--account": "Named Fathom account from config",
-                            "--project": "Attach a project slug or label",
+                            "--project": (
+                                "Attach a project slug or label; configured aliases "
+                                "are canonicalized"
+                            ),
                             "--auto-route / --no-auto-route": (
                                 "Infer project from private meeting route rules "
                                 "when --project is omitted"
@@ -1880,9 +2262,7 @@ def _generate_docs() -> dict:
                 ),
                 "subcommands": {
                     "setup": {
-                        "description": (
-                            "Show Meta WhatsApp Cloud API config and setup checklist"
-                        ),
+                        "description": ("Show Meta WhatsApp Cloud API config and setup checklist"),
                         "options": {
                             "--account": "Named WhatsApp account to show setup for",
                             "--json": "Emit setup guidance as JSON",
@@ -1890,6 +2270,41 @@ def _generate_docs() -> dict:
                         "examples": [
                             "jarvis whatsapp setup --account personal",
                             "jarvis whatsapp setup --account personal --json",
+                        ],
+                    },
+                    "start": {
+                        "description": (
+                            "Launch the WhatsApp webhook receiver and Cloudflare tunnel in tmux"
+                        ),
+                        "options": {
+                            "--account": "Named WhatsApp account from config",
+                            "--port": "Local port to bind",
+                            "--auto-ingest / --no-auto-ingest": (
+                                "Automatically ingest verified payloads"
+                            ),
+                            "--dest": (
+                                "Destination for auto-ingest: team-inbox, "
+                                "private-context, journal, memory"
+                            ),
+                            "--backend": ("Backend override when auto-ingesting to journal"),
+                            "--layout": "Tmux layout: windows or panes",
+                            "--verify-signatures / --no-verify-signatures": (
+                                "Verify X-Hub-Signature-256 before accepting payloads"
+                            ),
+                            "--session-name": "Tmux session name to create",
+                            "--tunnel-name": (
+                                "Cloudflare named tunnel to run instead of a quick URL"
+                            ),
+                            "--attach / --no-attach": ("Attach to the tmux session after launch"),
+                            "--dry-run": "Print the launch plan without creating sessions",
+                            "--json": "Emit the launch plan as JSON",
+                        },
+                        "examples": [
+                            "jarvis whatsapp start --account personal --dry-run --json",
+                            (
+                                "jarvis whatsapp start --account personal "
+                                "--auto-ingest --dest team-inbox --no-attach"
+                            ),
                         ],
                     },
                     "webhook serve": {
@@ -1910,9 +2325,7 @@ def _generate_docs() -> dict:
                                 "Destination for auto-ingest: team-inbox, "
                                 "private-context, journal, memory"
                             ),
-                            "--backend": (
-                                "Backend override when auto-ingesting to journal"
-                            ),
+                            "--backend": ("Backend override when auto-ingesting to journal"),
                         },
                         "examples": [
                             "jarvis whatsapp webhook serve --account personal --port 8787",
@@ -1928,20 +2341,16 @@ def _generate_docs() -> dict:
                             "--account": "Named WhatsApp account from config",
                             "--json": "Emit status as JSON",
                         },
-                        "examples": [
-                            "jarvis whatsapp webhook status --account personal --json"
-                        ],
+                        "examples": ["jarvis whatsapp webhook status --account personal --json"],
                     },
                     "webhook ingest-inbox": {
                         "description": (
-                            "Ingest archived webhook payloads from the local "
-                            "WhatsApp inbox"
+                            "Ingest archived webhook payloads from the local WhatsApp inbox"
                         ),
                         "options": {
                             "--account": "Named WhatsApp account from config",
                             "--dest": (
-                                "Destination(s): team-inbox, private-context, "
-                                "journal, memory"
+                                "Destination(s): team-inbox, private-context, journal, memory"
                             ),
                             "--backend": "Backend override for the journal destination",
                             "--limit": "Maximum inbox items to ingest",
@@ -1966,16 +2375,12 @@ def _generate_docs() -> dict:
                             "--text": "Message text",
                             "--preview-url / --no-preview-url": "Enable link previews",
                             "--window-check / --no-window-check": (
-                                "Require a local inbound message inside the "
-                                "customer-service window"
+                                "Require a local inbound message inside the customer-service window"
                             ),
                             "--json": "Emit the result as JSON",
                         },
                         "examples": [
-                            (
-                                "jarvis whatsapp send --account personal "
-                                "--to +234... --text 'Got it'"
-                            )
+                            ("jarvis whatsapp send --account personal --to +234... --text 'Got it'")
                         ],
                     },
                     "send-template": {
@@ -1985,9 +2390,7 @@ def _generate_docs() -> dict:
                             "--to": "Recipient phone number in E.164 form",
                             "--template": "Approved WhatsApp template name",
                             "--language": "Template language code",
-                            "--components-json": (
-                                "Optional JSON array of template components"
-                            ),
+                            "--components-json": ("Optional JSON array of template components"),
                             "--json": "Emit the result as JSON",
                         },
                         "examples": [
@@ -2024,9 +2427,7 @@ def _generate_docs() -> dict:
                             "--status": "new, triaged, waiting, or done",
                             "--json": "Emit updated thread as JSON",
                         },
-                        "examples": [
-                            "jarvis whatsapp threads set-status wa-123 --status done"
-                        ],
+                        "examples": ["jarvis whatsapp threads set-status wa-123 --status done"],
                     },
                 },
             },
@@ -2472,9 +2873,10 @@ def _generate_docs() -> dict:
             "JARVIS_FATHOM_WEBHOOK_SECRET": (
                 "Fallback env var for a single-account Fathom webhook secret"
             ),
-            "JARVIS_WHATSAPP_META_TOKEN": (
-                "Fallback Meta WhatsApp Cloud API access token"
+            "JARVIS_DISCORD_BOT_TOKEN": (
+                "Discord bot token for approval-gated meeting and weekly briefing publication"
             ),
+            "JARVIS_WHATSAPP_META_TOKEN": ("Fallback Meta WhatsApp Cloud API access token"),
             "JARVIS_WHATSAPP_META_APP_SECRET": (
                 "Fallback Meta app secret for WhatsApp webhook signatures"
             ),
@@ -2493,7 +2895,6 @@ def _generate_docs() -> dict:
     }
     documentation["command_tree"] = _generate_command_tree(cli, ["jarvis"])
     return documentation
-
 
 def _format_docs_markdown(docs: dict) -> str:
     """Format documentation as markdown."""

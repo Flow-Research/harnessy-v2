@@ -35,9 +35,7 @@ const isCapabilityRelativePath = (value: string): boolean => {
 	if (/^[A-Za-z]:/.test(normalized)) return false;
 	if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(normalized)) return false;
 	const segments = normalized.split("/");
-	return (
-		segments.every((segment) => segment !== "" && segment !== "..") && segments.some((segment) => segment !== ".")
-	);
+	return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
 };
 
 /** Relative path inside a capability package; it cannot be absolute or escape the package root. */
@@ -187,9 +185,9 @@ export class CapabilityAutoresearchMetadata extends Schema.Class<CapabilityAutor
 /** Metadata declared by a capability package for zero-effort installation. */
 export class CapabilityManifest extends Schema.Class<CapabilityManifest>("CapabilityManifest")({
 	/** Stable capability id, usually namespaced like `local:my-capability` or `npm:pkg-name`. */
-	id: Schema.String,
+	id: Schema.NonEmptyString,
 	/** Human-readable capability name. */
-	name: Schema.String,
+	name: Schema.NonEmptyString,
 	/** Optional capability type label for grouping and review. */
 	type: Schema.optional(Schema.String),
 	/** Optional semantic version supplied by the capability package. */

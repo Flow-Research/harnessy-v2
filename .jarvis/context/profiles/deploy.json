@@ -1,0 +1,50 @@
+{
+	"version": 1,
+	"configured": false,
+	"authorized": false,
+	"defaultEnvironment": null,
+	"apps": [],
+	"environments": {},
+	"commands": {
+		"preflight": "npm run release:preflight",
+		"package": "npm run release:local -- --out <reviewed-temporary-directory> --force",
+		"deploy": null,
+		"smoke": null,
+		"rollback": null
+	},
+	"triggers": [],
+	"providerPolicy": {
+		"provider": null,
+		"forbidBillingActions": true,
+		"forbidDestructiveActions": true,
+		"forbidDnsMutation": true,
+		"requireExplicitOperationalAuthorization": true
+	},
+	"operationalBoundary": {
+		"currentWriter": "original Harnessy V1 checkout",
+		"v2WritersAllowed": false,
+		"requiredOrder": [
+			"create an owner-only SQLite-consistent initial backup and verify checksums and modes",
+			"restore the initial backup into an isolated destination and verify it",
+			"stage exact reviewed V2 artifacts without activation",
+			"stop V1 writers",
+			"prove zero known writers and take a final quiesced backup",
+			"generate and review exact V2 schedules as disabled data",
+			"verify and consume the bounded one-shot smoke authorization",
+			"start and bind V2 writers",
+			"prove exactly one V2 writer",
+			"run workflow smoke tests and duplicate-write negative controls",
+			"revoke and stop V2 and prove zero V2 writers",
+			"restore and restart only V1 and prove one V1 writer with rollback smoke",
+			"stop V1 again and prove zero writers",
+			"take a new quiesced post-rollback backup and reconcile advanced state and checkpoints",
+			"verify and consume the distinct production authorization",
+			"roll forward to V2 and repeat one-writer and smoke evidence",
+			"make V1 read-only only after the roll-forward passes"
+		]
+	},
+	"evidence": {
+		"persist": false,
+		"reason": "No deployment or operational cutover is configured or authorized."
+	}
+}

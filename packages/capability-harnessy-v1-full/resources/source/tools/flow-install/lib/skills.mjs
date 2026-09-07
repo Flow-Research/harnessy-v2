@@ -47,6 +47,27 @@ const DEFAULT_TMUX_AGENT_LAUNCHER_CONFIG = {
   permissionMode: "bypass",
 };
 
+export const installSkillSupportLibraries = async (
+  flowInstallRoot,
+  { dryRun = false } = {},
+) => {
+  const sourcePath = path.join(flowInstallRoot, "lib", "dependencies.mjs");
+  if (!(await pathExists(sourcePath))) return 0;
+
+  const targetDir = path.join(path.dirname(GLOBAL_SKILLS_DIR), "lib");
+  const targetPath = path.join(targetDir, "dependencies.mjs");
+  if (dryRun) {
+    log.dryRun("Would sync skill runtime library -> ~/.agents/lib/dependencies.mjs");
+    return 1;
+  }
+
+  await ensureDir(targetDir);
+  await fs.copyFile(sourcePath, targetPath);
+  await fs.chmod(targetPath, 0o644);
+  log.ok("skill runtime library synced -> ~/.agents/lib/dependencies.mjs");
+  return 1;
+};
+
 const installTmuxAgentLauncherConfig = async ({ dryRun = false } = {}) => {
   if (await pathExists(GLOBAL_TMUX_AGENT_LAUNCHER_CONFIG)) {
     log.skip("tmux-agent-launcher user config already exists");
@@ -257,6 +278,8 @@ export const installSkills = async (flowInstallRoot, { dryRun = false, force = f
       log.dryRun("Would sync _shared/ support scripts");
     }
   }
+
+  await installSkillSupportLibraries(flowInstallRoot, { dryRun });
 
   if (!dryRun) {
     const dependencyChecks = planSkillsRoot(GLOBAL_SKILLS_DIR);

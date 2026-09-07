@@ -14,10 +14,16 @@ import { DependencyCheckResult } from "../src/runtime/dependency-checker.ts";
 import { HarnessLockfile } from "../src/runtime/lockfile.ts";
 import { ExistingHarnessState, ProjectInfo } from "../src/runtime/project-detection.ts";
 import {
+	renderCapabilityActivationJson,
+	renderCapabilityCreateJson,
+	renderCapabilityExportJson,
 	renderCapabilityInspectJson,
 	renderDepsCheckJson,
 	renderDoctorJson,
 	renderVerifyJson,
+	type StructuredCapabilityActivationOutput,
+	type StructuredCapabilityCreateOutput,
+	type StructuredCapabilityExportOutput,
 	type StructuredCapabilityInspectOutput,
 	type StructuredCapabilityMaterializeOutput,
 	type StructuredDepsCheckOutput,
@@ -210,6 +216,52 @@ describe("structured output render helpers", () => {
 		expect(parsed.ok).toBe(true);
 		expect(parsed.capability.id).toBe("local:tiny-capability");
 		expect(parsed.capability.manifest?.dependencies?.[0]?.install).toEqual({ fallback: "install tiny-tool" });
+	});
+
+	it("renders create, activation, and export capability envelopes", () => {
+		const created = JSON.parse(
+			renderCapabilityCreateJson("./demo", {
+				directory: "/tmp/demo/pack",
+				manifestPath: "/tmp/demo/pack/harnessy.capability.json",
+				manifest: new CapabilityManifest({ id: "local:pack", name: "Pack" }),
+				dryRun: false,
+				replaced: false,
+			}),
+		) as StructuredCapabilityCreateOutput;
+		expect(created).toMatchObject({
+			command: "capability create",
+			ok: true,
+			target: "./demo",
+			manifest: { id: "local:pack", name: "Pack" },
+		});
+
+		const activation = JSON.parse(
+			renderCapabilityActivationJson("capability activate", "./demo", {
+				capabilityId: "local:pack",
+				active: true,
+				changed: true,
+				dryRun: false,
+			}),
+		) as StructuredCapabilityActivationOutput;
+		expect(activation).toMatchObject({ command: "capability activate", active: true, changed: true });
+
+		const exported = JSON.parse(
+			renderCapabilityExportJson("./demo", {
+				capabilityId: "local:pack",
+				directory: "/tmp/demo/exported",
+				dryRun: false,
+				replaced: false,
+				sha256: "abc123",
+				bytes: 42,
+				fileCount: 2,
+			}),
+		) as StructuredCapabilityExportOutput;
+		expect(exported).toMatchObject({
+			command: "capability export",
+			sha256: "abc123",
+			bytes: 42,
+			fileCount: 2,
+		});
 	});
 });
 

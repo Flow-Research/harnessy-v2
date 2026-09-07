@@ -3,22 +3,48 @@
 	"version": "0.0.3",
 	"private": true,
 	"type": "module",
+	"license": "AGPL-3.0-only",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
 	"exports": {
-		".": "./src/index.ts",
-		"./plugins/anytype": "./src/plugins/anytype.ts",
-		"./engine": "./src/engine/index.ts"
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./node": {
+			"types": "./dist/node.d.ts",
+			"import": "./dist/node.js"
+		}
 	},
+	"files": [
+		"dist",
+		"README.md",
+		"CHANGELOG.md",
+		"LICENSE"
+	],
 	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsup && node scripts/audit-bundles.mjs",
 		"typecheck": "tsgo --noEmit -p tsconfig.json",
-		"test": "vitest --run"
+		"test": "vitest --run",
+		"test:fixture": "node scripts/fixture-smoke.mjs"
 	},
 	"dependencies": {
-		"@effect/platform-node": "4.0.0-beta.85",
 		"@harnessy/core": "0.0.3",
+		"@libsql/client": "0.17.3",
+		"drizzle-orm": "0.45.2",
 		"effect": "4.0.0-beta.85"
 	},
 	"devDependencies": {
+		"@effect/platform-node": "4.0.0-beta.85",
 		"@effect/vitest": "4.0.0-beta.85",
+		"@types/node": "22.19.19",
+		"shx": "0.4.0",
+		"tsup": "8.5.0",
+		"typescript": "5.9.3",
 		"vitest": "4.1.9"
+	},
+	"engines": {
+		"node": "^22.22.2 || >=24.15.0"
 	}
 }

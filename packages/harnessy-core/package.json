@@ -3,7 +3,7 @@
 	"version": "0.0.3",
 	"description": "Effect-powered Harnessy capability harness CLI and core runtime",
 	"type": "module",
-	"license": "AGPL-3.0-or-later",
+	"license": "AGPL-3.0-only",
 	"bin": {
 		"harnessy": "dist/cli.js",
 		"hsy": "dist/hsy.js"
@@ -26,10 +26,20 @@
 		"./connectors/loopback": {
 			"types": "./dist/connectors/loopback.d.ts",
 			"import": "./dist/connectors/loopback.js"
+		},
+		"./meeting-publication": {
+			"types": "./dist/meeting-publication.d.ts",
+			"import": "./dist/meeting-publication.js"
+		},
+		"./meeting-publication-inspector": {
+			"types": "./dist/meeting-publication-inspector.d.ts",
+			"import": "./dist/meeting-publication-inspector.js"
 		}
 	},
 	"files": [
 		"dist",
+		"LICENSE",
+		"!dist/jarvis/meeting-publication/authority-test-fixture.*",
 		"fixtures",
 		"resources",
 		"THIRD_PARTY_LICENSES",
@@ -43,18 +53,20 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
+		"@harnessy/executor": "0.0.3",
 		"@anthropic-ai/claude-agent-sdk": "0.2.141",
 		"@anthropic-ai/sdk": "0.73.0",
 		"@earendil-works/pi-ai": "0.80.3",
 		"@earendil-works/pi-coding-agent": "0.80.3",
 		"@earendil-works/pi-tui": "0.80.3",
 		"@effect/platform-node": "4.0.0-beta.85",
+		"@effect/platform-node-shared": "4.0.0-beta.85",
 		"cc-session-io": "0.3.1",
 		"change-case": "5.4.4",
 		"cross-spawn": "7.0.6",
 		"effect": "4.0.0-beta.85",
-		"executor": "1.5.33",
-		"shell-quote": "1.8.4",
+		"marked": "18.0.5",
+		"shell-quote": "1.10.0",
 		"typebox": "1.3.3",
 		"yaml": "2.9.0",
 		"zod": "4.3.6"
@@ -67,7 +79,7 @@
 		"vitest": "4.1.9"
 	},
 	"engines": {
-		"node": ">=22.19.0"
+		"node": "^22.22.2 || >=24.15.0"
 	},
 	"keywords": [
 		"agent",

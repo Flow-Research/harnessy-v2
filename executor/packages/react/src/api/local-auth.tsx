@@ -164,8 +164,8 @@ export function LocalAuthGate(props: { readonly children: React.ReactNode }) {
       >
         <h1 className="text-base font-semibold text-foreground">Authentication required</h1>
         <p className="text-sm text-muted-foreground">
-          Open the auth URL printed by <code>harnessy web</code> in your terminal to sign in, or paste
-          the server's token below.
+          Open the auth URL printed by <code>harnessy web</code> in your terminal to sign in, or
+          paste the server's token below.
         </p>
         {/* oxlint-disable-next-line react/forbid-elements -- token entry input */}
         <input

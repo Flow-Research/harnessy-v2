@@ -1,5 +1,4 @@
-import { type AnyPlugin, ConnectionName, type Executor, IntegrationSlug, ToolAddress } from "@executor-js/sdk/core";
-import { Effect, Schema } from "effect";
+import { type Effect, Schema } from "effect";
 
 export const EngineOwner = Schema.Literals(["org", "user"]);
 export type EngineOwner = typeof EngineOwner.Type;
@@ -47,10 +46,29 @@ export interface EngineConnectionRef {
 	readonly name: string;
 }
 
+/**
+ * Host-supplied connection material for the narrow SDK boundary. The adapter
+ * persists these values only through the credential directory selected by the
+ * host; provider handles and Executor credential types remain internal.
+ */
+export interface EngineConnectionCreateInput extends EngineConnectionRef {
+	readonly template: string;
+	readonly values: Readonly<Record<string, string>>;
+	readonly identityLabel?: string | null;
+	readonly description?: string | null;
+}
+
 /** Harnessy-owned structural boundary. No vendored engine type crosses this interface. */
 export interface HarnessyEngineHandle {
 	readonly execute: (address: string, args: unknown) => Effect.Effect<unknown, unknown>;
+	/** Per-call, in-memory approval for one Core-approved meeting mutation. */
+	readonly executeApprovedMeetingMutation: (
+		address: string,
+		args: unknown,
+		approval: { readonly itemId: string; readonly sourceHash: string },
+	) => Effect.Effect<unknown, unknown>;
 	readonly connections: {
+		readonly create: (input: EngineConnectionCreateInput) => Effect.Effect<EngineConnection, unknown>;
 		readonly list: (filter?: {
 			readonly integration?: string;
 			readonly owner?: EngineOwner;
@@ -78,84 +96,3 @@ export const engineToolAddress = (input: {
 	readonly connection: string;
 	readonly tool: string;
 }): string => `tools.${input.integration}.${input.owner}.${input.connection}.${input.tool}`;
-
-/** Adapt the full vendored Executor surface once, inside the confined engine module. */
-export const harnessyEngineHandle = <TPlugins extends readonly AnyPlugin[]>(
-	executor: Executor<TPlugins>,
-): HarnessyEngineHandle => ({
-	execute: (address, args) => executor.execute(ToolAddress.make(address), args),
-	connections: {
-		list: (filter) =>
-			executor.connections
-				.list({
-					...(filter?.integration === undefined ? {} : { integration: IntegrationSlug.make(filter.integration) }),
-					...(filter?.owner === undefined ? {} : { owner: filter.owner }),
-				})
-				.pipe(
-					Effect.map((connections) =>
-						connections.map(
-							(connection) =>
-								new EngineConnection({
-									owner: connection.owner,
-									integration: String(connection.integration),
-									name: String(connection.name),
-								}),
-						),
-					),
-				),
-		checkHealth: (ref) =>
-			executor.connections
-				.checkHealth({
-					owner: ref.owner,
-					integration: IntegrationSlug.make(ref.integration),
-					name: ConnectionName.make(ref.name),
-				})
-				.pipe(Effect.map((health) => new EngineHealth(health))),
-	},
-	tools: {
-		list: (filter) =>
-			executor.tools
-				.list({
-					...(filter?.integration === undefined ? {} : { integration: IntegrationSlug.make(filter.integration) }),
-					...(filter?.owner === undefined ? {} : { owner: filter.owner }),
-					...(filter?.connection === undefined ? {} : { connection: ConnectionName.make(filter.connection) }),
-				})
-				.pipe(
-					Effect.map((tools) =>
-						tools.map(
-							(tool) =>
-								new EngineTool({
-									address: String(tool.address),
-									owner: tool.owner,
-									integration: String(tool.integration),
-									connection: String(tool.connection),
-									name: String(tool.name),
-									description: tool.description,
-								}),
-						),
-					),
-				),
-	},
-	integrations: {
-		list: () =>
-			executor.integrations.list().pipe(
-				Effect.map((integrations) =>
-					integrations.map(
-						(integration) =>
-							new EngineIntegration({
-								slug: String(integration.slug),
-								name: integration.name,
-								description: integration.description,
-								kind: integration.kind,
-							}),
-					),
-				),
-			),
-	},
-	policies: {
-		resolve: (address) =>
-			executor.policies
-				.resolve(ToolAddress.make(address))
-				.pipe(Effect.map((decision) => new EnginePolicyDecision(decision))),
-	},
-});

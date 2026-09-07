@@ -30,6 +30,7 @@ describe("org knowledge capability pack", () => {
 				yield* project.init(targetDir, false);
 
 				const added = yield* project.addCapability(targetDir, orgKnowledgePackRoot, undefined);
+				yield* project.activateCapability(targetDir, "npm:@harnessy/capability-org-knowledge");
 				expect(added.added).toBe(true);
 				expect(added.capability.id).toBe("npm:@harnessy/capability-org-knowledge");
 				expect(added.capability.resolvedSource?.local?.root).toBe(orgKnowledgePackRoot);
@@ -72,6 +73,7 @@ describe("org knowledge capability pack", () => {
 
 				yield* run(["init", "--target", targetDir]);
 				yield* run(["capability", "add", orgKnowledgePackRoot, "--target", targetDir]);
+				yield* run(["capability", "activate", "npm:@harnessy/capability-org-knowledge", "--target", targetDir]);
 				yield* run(["verify", "--json", "--target", targetDir]);
 				yield* run(["deps", "check", "--json", "--target", targetDir]);
 

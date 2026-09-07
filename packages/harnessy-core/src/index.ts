@@ -39,9 +39,18 @@ export {
 	CapabilityMaterializer,
 	CapabilitySkippedResource,
 } from "./capabilities/materializer.ts";
-export type { AddCapabilityResult, MaterializeCapabilitiesResult } from "./capabilities/registry.ts";
+export type {
+	AddCapabilityResult,
+	CapabilityActivationResult,
+	CreateCapabilityOptions,
+	CreateCapabilityResult,
+	ExportCapabilityOptions,
+	ExportCapabilityResult,
+	MaterializeCapabilitiesResult,
+} from "./capabilities/registry.ts";
 export { CapabilityRegistry } from "./capabilities/registry.ts";
 export {
+	CapabilityArtifactMetadata,
 	CapabilityEntry,
 	CapabilityFingerprintMetadata,
 	CapabilityLocalResolution,
@@ -136,6 +145,8 @@ export {
 	JarvisFathomConfig,
 	JarvisLegacyConfig,
 	JarvisLegacyConfigOverride,
+	JarvisMeetingPublicationConfig,
+	JarvisMeetingPublicationReviewHost,
 	JarvisNotionConfig,
 	JarvisResolvedConfig,
 	JarvisWhatsAppAccountConfig,
@@ -162,6 +173,71 @@ export {
 } from "./jarvis/credentials.ts";
 export { JarvisDiagnostic, JarvisDiagnosticResult, JarvisMigrationStatus } from "./jarvis/diagnostic.ts";
 export { decodeJarvisEnvironment, JarvisEnvironment } from "./jarvis/environment.ts";
+export type { MeetingPublicationWriteGrant } from "./jarvis/meeting-publication/authority.ts";
+export {
+	MeetingPublicationWriteAuthority,
+	MeetingPublicationWriteAuthorityCode,
+	MeetingPublicationWriteAuthorityError,
+	MeetingPublicationWriteAuthorityState,
+	MeetingPublicationWriteBinding,
+	MeetingPublicationWriteOperation,
+	resolveMeetingPublicationWriteBinding,
+	validateMeetingPublicationWriteGrant,
+} from "./jarvis/meeting-publication/authority.ts";
+export {
+	MeetingPublicationAuthorityInspection,
+	MeetingPublicationInspector,
+	MeetingPublicationInspectorError,
+	MeetingPublicationStateInspection,
+} from "./jarvis/meeting-publication/inspector.ts";
+export {
+	MeetingPublicationConfigError,
+	MeetingPublicationEvent,
+	MeetingPublicationExclusionCode,
+	MeetingPublicationFailureStage,
+	MeetingPublicationItem,
+	MeetingPublicationNote,
+	MeetingPublicationPreflightCheck,
+	MeetingPublicationPreflightResult,
+	MeetingPublicationProviderError,
+	MeetingPublicationReviewAddress,
+	MeetingPublicationReviewError,
+	MeetingPublicationScanResult,
+	MeetingPublicationSourceError,
+	MeetingPublicationStatus,
+	MeetingPublicationStoreError,
+	MeetingPublicationTransitionError,
+	MeetingPublicationWorkerResult,
+	transitionMeetingPublication,
+	transitionMeetingPublicationSync,
+} from "./jarvis/meeting-publication/models.ts";
+export { MeetingPublicationSource } from "./jarvis/meeting-publication/notes.ts";
+export {
+	MeetingPublicationReviewRandom,
+	MeetingPublicationReviewServer,
+	meetingPublicationReviewRendezvousFileName,
+} from "./jarvis/meeting-publication/review.ts";
+export type {
+	MeetingPublicationDiscordRequest,
+	MeetingPublicationGoogleRequest,
+} from "./jarvis/meeting-publication/service.ts";
+export {
+	MEETING_PUBLICATION_PURPOSE_MAX_LENGTH,
+	MeetingPublicationClock,
+	MeetingPublicationDiscord,
+	MeetingPublicationDiscordCheckpoint,
+	MeetingPublicationGoogle,
+	MeetingPublicationGoogleCheckpoint,
+	MeetingPublicationNotifier,
+	MeetingPublicationService,
+	meetingPublicationDefaultPurpose,
+	normalizeMeetingPublicationPurpose,
+} from "./jarvis/meeting-publication/service.ts";
+export {
+	MEETING_PUBLICATION_STORE_SCHEMA_COLUMNS,
+	MEETING_PUBLICATION_STORE_SCHEMA_VERSION,
+	MeetingPublicationStore,
+} from "./jarvis/meeting-publication/store.ts";
 export {
 	JarvisAdapterErrorOracle,
 	JarvisAdapterOracle,

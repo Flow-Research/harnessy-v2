@@ -118,6 +118,7 @@
     "kysely": "^0.28.16",
     "kysely-typeorm": "^0.3.0",
     "semver": "^7.7.4",
+    "typeorm": "0.3.31",
     "zod": "4.3.6"
   }
 }

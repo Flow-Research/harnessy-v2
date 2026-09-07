@@ -30,6 +30,9 @@ import { parseGitRemote, parsePnpmWorkspaceGlobs } from "../src/runtime/project-
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
 
+const writeCapabilityManifest = (fs: FileSystem.FileSystem, directory: string, id: string, name: string) =>
+	fs.writeFileString(`${directory}/${CAPABILITY_MANIFEST_NAME}`, `${JSON.stringify({ id, name }, null, "\t")}\n`);
+
 describe("capability manifests", () => {
 	it.effect("parses the tiny local fixture", () =>
 		Effect.gen(function* () {
@@ -239,6 +242,12 @@ describe("Harnessy CLI", () => {
 
 					yield* run(["install", "--target", targetDir]);
 					yield* fs.makeDirectory(`${targetDir}/tiny-capability`);
+					yield* writeCapabilityManifest(
+						fs,
+						`${targetDir}/tiny-capability`,
+						"local:tiny-capability",
+						"Tiny Capability",
+					);
 					yield* run(["capability", "add", "./tiny-capability", "--target", targetDir]);
 					yield* run(["verify", "--target", targetDir]);
 					yield* run(["deps", "check", "--target", targetDir]);
@@ -246,7 +255,7 @@ describe("Harnessy CLI", () => {
 					const lockfileText = yield* fs.readFileString(`${targetDir}/.harnessy/harnessy.lock.json`);
 					expect(lockfileText).toContain("local:tiny-capability");
 					const manifestExists = yield* fs.exists(
-						`${targetDir}/.harnessy/capabilities/local-tiny-capability.json`,
+						`${targetDir}/.harnessy/capabilities/local-tiny-capability/package/${CAPABILITY_MANIFEST_NAME}`,
 					);
 					expect(manifestExists).toBe(true);
 				}),
@@ -376,6 +385,12 @@ describe("HarnessProject", () => {
 				const project = yield* HarnessProject;
 				const targetDir = yield* fs.makeTempDirectoryScoped();
 				yield* fs.makeDirectory(`${targetDir}/initial-capability`);
+				yield* writeCapabilityManifest(
+					fs,
+					`${targetDir}/initial-capability`,
+					"local:initial-capability",
+					"Initial Capability",
+				);
 
 				const install = yield* project.install(targetDir, false, "./initial-capability");
 				expect(install.init.initialized).toBe(true);
@@ -394,6 +409,12 @@ describe("HarnessProject", () => {
 				const project = yield* HarnessProject;
 				const targetDir = yield* fs.makeTempDirectoryScoped();
 				yield* fs.makeDirectory(`${targetDir}/initial-capability`);
+				yield* writeCapabilityManifest(
+					fs,
+					`${targetDir}/initial-capability`,
+					"local:initial-capability",
+					"Initial Capability",
+				);
 
 				yield* project.install(targetDir, false, "./initial-capability");
 				const forced = yield* project.install(targetDir, true, undefined);
@@ -519,6 +540,12 @@ describe("HarnessProject", () => {
 				const targetDir = yield* fs.makeTempDirectoryScoped();
 				yield* project.init(targetDir, false);
 				yield* fs.makeDirectory(`${targetDir}/tiny-capability`);
+				yield* writeCapabilityManifest(
+					fs,
+					`${targetDir}/tiny-capability`,
+					"local:tiny-capability",
+					"Tiny Capability",
+				);
 
 				const added = yield* project.addCapability(targetDir, "./tiny-capability", undefined);
 				expect(added.added).toBe(true);
@@ -603,6 +630,7 @@ describe("HarnessProject", () => {
 				);
 
 				const added = yield* project.addCapability(targetDir, "./resource-capability", undefined);
+				yield* project.activateCapability(targetDir, "local:resource-capability");
 				expect(added.capability.resolvedSource?.local?.manifestPath).toContain(CAPABILITY_MANIFEST_NAME);
 				expect(added.capability.fingerprint?.kind).toBe("directory");
 				expect(added.capability.fingerprint?.fileCount).toBe(2);
@@ -685,6 +713,14 @@ describe("HarnessProject", () => {
 				const init = yield* project.init(targetDir, false);
 				yield* fs.makeDirectory(`${targetDir}/retry-capability/context`, { recursive: true });
 				yield* fs.writeFileString(`${targetDir}/retry-capability/context/AGENTS.md`, "# Retry Capability\n");
+				yield* fs.writeFileString(
+					`${targetDir}/retry-capability/${CAPABILITY_MANIFEST_NAME}`,
+					JSON.stringify({
+						id: "local:retry-capability",
+						name: "Retry Capability",
+						resources: [{ kind: "context", path: "context/AGENTS.md" }],
+					}),
+				);
 
 				const capability = new CapabilityEntry({
 					id: "local:retry-capability",
@@ -717,7 +753,7 @@ describe("HarnessProject", () => {
 				expect(duplicate.manifestPath).not.toBeNull();
 				expect(duplicate.capability.resolvedSource?.local?.manifestPath).toContain(CAPABILITY_MANIFEST_NAME);
 				expect(duplicate.capability.fingerprint?.kind).toBe("directory");
-				expect(duplicate.capability.fingerprint?.fileCount).toBe(1);
+				expect(duplicate.capability.fingerprint?.fileCount).toBe(2);
 				expect(duplicate.materialization?.copied.map((resource) => resource.target)).toEqual(["context/AGENTS.md"]);
 				expect(yield* fs.readFileString(artifactPath)).toBe("# Retry Capability\n");
 			}),
@@ -749,6 +785,7 @@ describe("HarnessProject", () => {
 				);
 
 				yield* project.addCapability(targetDir, "./check-capability", undefined);
+				yield* project.activateCapability(targetDir, "local:check-capability");
 				const verify = yield* project.verify(targetDir);
 
 				expect(verify.checks?.requiredFailures.map((result) => result.checkId)).toEqual(["missing-required-file"]);
@@ -775,18 +812,17 @@ describe("HarnessProject", () => {
 		),
 	);
 
-	it.effect("reports missing local capability paths without throwing", () =>
+	it.effect("rejects missing local capability paths without mutating the lockfile", () =>
 		provideLive(
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
 				const project = yield* HarnessProject;
 				const targetDir = yield* fs.makeTempDirectoryScoped();
-				yield* project.init(targetDir, false);
-				yield* project.addCapability(targetDir, "./missing-capability", undefined);
-
-				const verify = yield* project.verify(targetDir);
-				expect(verify.issues).toHaveLength(1);
-				expect(verify.issues[0]).toContain("missing-capability");
+				const init = yield* project.init(targetDir, false);
+				const before = yield* fs.readFileString(init.paths.lockfile);
+				const error = yield* Effect.flip(project.addCapability(targetDir, "./missing-capability", undefined));
+				expect(error.message).toContain("missing-capability");
+				expect(yield* fs.readFileString(init.paths.lockfile)).toBe(before);
 			}),
 		),
 	);

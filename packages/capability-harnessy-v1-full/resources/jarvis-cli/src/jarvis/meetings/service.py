@@ -18,19 +18,15 @@ from jarvis.wiki.parser import slug_from_title
 
 from .fathom import FathomClient, parse_fathom_json_text, parse_fathom_payload
 from .models import MeetingIngestResult, MeetingRecord
-from .parser import (
-    meeting_filename,
-    parse_meeting_document,
-    render_meeting_markdown,
-    render_obsidian_meeting_markdown,
-)
+from .parser import meeting_filename, parse_meeting_document, render_meeting_markdown
 from .webhook import list_inbox_files, load_archived_payload, move_inbox_file
 
 console = Console()
 _USERNAME = os.environ.get("FLOW_USER", os.environ.get("USER", "default"))
 _AI_MODEL = "claude-sonnet-4-20250514"
 _MEETING_ROUTE_CONFIG = "meeting-routes.yaml"
-_ROUTE_EXCLUDED_DIRS = {"meeting-inbox", "meetings", "notes"}
+# "learn" is a content/onboarding surface, not a meeting project route.
+_ROUTE_EXCLUDED_DIRS = {"learn", "meeting-inbox", "meetings", "notes"}
 
 
 def ingest_meeting(
@@ -45,8 +41,6 @@ def ingest_meeting(
     destinations: list[str] | None = None,
     wiki_domain: str | None = None,
     journal_space_id: str | None = None,
-    vault: str | None = None,
-    folder: str = "Meetings",
     enrich_ai: bool = True,
 ) -> MeetingIngestResult:
     """Ingest a meeting transcript-like source into one or more destinations."""
@@ -69,8 +63,6 @@ def ingest_meeting(
         wiki_domain=wiki_domain,
         backend=backend,
         journal_space_id=journal_space_id,
-        vault=vault,
-        folder=folder,
     )
 
 
@@ -297,40 +289,78 @@ def apply_meeting_auto_route(
     *,
     auto_route: bool = False,
 ) -> MeetingRecord:
-    """Infer a project for a meeting when routing is explicitly enabled."""
+    """Canonicalize project aliases and optionally infer a missing project."""
 
-    if not auto_route or meeting.project:
+    root = _resolve_private_context_root()
+    aliases = _load_meeting_project_aliases(root)
+    if meeting.project:
+        project, alias_tags = _canonical_meeting_project(meeting.project, aliases)
+        if not alias_tags:
+            return meeting
+        return meeting.model_copy(
+            update={
+                "project": project,
+                "tags": _merge_meeting_tags(meeting.tags, alias_tags),
+            }
+        )
+    if not auto_route:
         return meeting
-    project = infer_meeting_project(meeting)
+    project, alias_tags = _infer_meeting_route(meeting, root=root, aliases=aliases)
     if not project:
         return meeting
-    return meeting.model_copy(update={"project": project})
+    return meeting.model_copy(
+        update={
+            "project": project,
+            "tags": _merge_meeting_tags(meeting.tags, alias_tags),
+        }
+    )
 
 
 def infer_meeting_project(meeting: MeetingRecord) -> str:
     """Infer a private-context project slug from route rules and project folders."""
 
     root = _resolve_private_context_root()
+    aliases = _load_meeting_project_aliases(root)
+    project, _alias_tags = _infer_meeting_route(meeting, root=root, aliases=aliases)
+    return project
+
+
+def _infer_meeting_route(
+    meeting: MeetingRecord,
+    *,
+    root: Path,
+    aliases: dict[str, str],
+) -> tuple[str, list[str]]:
+    """Return the winning canonical project and matched alias-source tags."""
+
     rules = _load_meeting_route_rules(root)
     if not rules:
-        return ""
+        return "", []
 
     text = _meeting_route_text(meeting)
     scores: dict[str, int] = {}
+    alias_tags: dict[str, list[str]] = {}
     for project, keywords in rules.items():
         project_slug = safe_project_slug(project)
         if not project_slug:
             continue
         score = _score_route_keywords(text, [project_slug, *keywords])
         if score > 0:
-            scores[project_slug] = max(scores.get(project_slug, 0), score)
+            canonical_project, matched_aliases = _canonical_meeting_project(
+                project_slug, aliases
+            )
+            scores[canonical_project] = scores.get(canonical_project, 0) + score
+            alias_tags[canonical_project] = _merge_meeting_tags(
+                alias_tags.get(canonical_project, []), matched_aliases
+            )
 
     if not scores:
-        return ""
+        return "", []
     ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
     if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
-        return ""
-    return ranked[0][0]
+        return "", []
+    project = ranked[0][0]
+    return project, alias_tags.get(project, [])
 
 
 def write_meeting_record(
@@ -340,14 +370,27 @@ def write_meeting_record(
     wiki_domain: str | None = None,
     backend: str | None = None,
     journal_space_id: str | None = None,
-    vault: str | None = None,
-    folder: str = "Meetings",
 ) -> MeetingIngestResult:
     """Write a normalized meeting record to one or more destinations."""
 
     resolved_destinations = destinations or ["private-context"]
     rendered = render_meeting_markdown(meeting)
     result = MeetingIngestResult(meeting=meeting, destinations=resolved_destinations)
+
+    if "journal" in resolved_destinations:
+        if not (journal_space_id or "").strip():
+            raise ValueError(
+                "Meeting journal writes require --journal-space so Jarvis can enforce "
+                "project-to-space routing."
+            )
+        skip_reason = journal_destination_skip_reason(meeting, journal_space_id)
+        if skip_reason is not None:
+            # Skip only the journal destination for this meeting instead of failing the
+            # whole ingest. This keeps one unroutable meeting from jamming an automated
+            # poll: other destinations still capture it and the poll cursor can advance.
+            resolved_destinations = [d for d in resolved_destinations if d != "journal"]
+            result.destinations = resolved_destinations
+            result.journal_skipped_reason = skip_reason
 
     for destination in resolved_destinations:
         if destination == "private-context":
@@ -357,11 +400,6 @@ def write_meeting_record(
             if not wiki_domain:
                 raise ValueError("--wiki-domain is required when using the wiki destination")
             path = write_wiki_meeting(wiki_domain, meeting, rendered)
-            result.written_paths.append(str(path))
-        elif destination == "obsidian":
-            if not vault:
-                raise ValueError("--vault is required when using the obsidian destination")
-            path = write_obsidian_meeting(vault, meeting, folder=folder)
             result.written_paths.append(str(path))
         elif destination == "journal":
             entry = write_journal_entry(
@@ -378,6 +416,49 @@ def write_meeting_record(
             raise ValueError(f"Unsupported destination: {destination}")
 
     return result
+
+
+def journal_destination_skip_reason(
+    meeting: MeetingRecord,
+    journal_space_id: str | None,
+) -> str | None:
+    """Return why the journal destination should be skipped for this meeting, or None.
+
+    Skipping (rather than raising and failing the whole ingest) keeps a single
+    unroutable meeting from jamming an automated poll: the meeting is still captured by
+    its other destinations and the poll cursor can advance past it. Recoverable cases:
+
+    - the meeting has no routed project, so project-to-space routing cannot be enforced;
+    - the meeting's project is not allowed in the target journal space's guard.
+
+    A missing ``journal_space_id`` is a caller-level misconfiguration, not a per-meeting
+    condition, so it is enforced by the caller and not treated as a skip here.
+    """
+
+    project_slug = safe_project_slug(meeting.project)
+    if not project_slug:
+        return "no routed project (pass --project or --auto-route to journal it)"
+
+    target_space = (journal_space_id or "").strip()
+    if not target_space:
+        return None
+
+    guard = _find_matching_journal_guard(_resolve_private_context_root(), target_space)
+    if guard is None:
+        return None
+
+    allowed = {
+        safe_project_slug(str(project))
+        for project in _guard_values(guard, "allowed_projects", "allowed")
+    }
+    allowed.discard("")
+    if allowed and project_slug not in allowed:
+        allowed_text = ", ".join(sorted(allowed))
+        return (
+            f"project '{project_slug}' not allowed in journal space "
+            f"'{target_space}' (allowed: {allowed_text})"
+        )
+    return None
 
 
 def enrich_meeting_record(meeting: MeetingRecord) -> MeetingRecord:
@@ -521,28 +602,6 @@ def write_wiki_meeting(domain: str, meeting: MeetingRecord, rendered: str) -> Pa
         raise FileNotFoundError(f"Wiki domain not found: {domain}")
     notes_dir = domain_root / "raw" / "notes"
     notes_dir.mkdir(parents=True, exist_ok=True)
-    path = unique_path(notes_dir / meeting_filename(meeting))
-    path.write_text(rendered, encoding="utf-8")
-    return path
-
-
-def write_obsidian_meeting(vault: str, meeting: MeetingRecord, *, folder: str = "Meetings") -> Path:
-    """Write a finished, Obsidian-formatted meeting note directly into a vault.
-
-    Unlike the ``wiki`` destination (which stages raw input for ``wiki compile``),
-    this writes a publish-ready note with YAML frontmatter, tags, checkboxes, and
-    wikilinks straight into the user's real Obsidian vault.
-    """
-
-    vault_root = Path(vault).expanduser()
-    if not vault_root.exists():
-        raise FileNotFoundError(f"Obsidian vault not found: {vault_root}")
-    resolved_root = vault_root.resolve()
-    notes_dir = (resolved_root / folder).resolve() if folder else resolved_root
-    if notes_dir != resolved_root and resolved_root not in notes_dir.parents:
-        raise ValueError(f"--folder must stay within the vault: {folder!r}")
-    notes_dir.mkdir(parents=True, exist_ok=True)
-    rendered = render_obsidian_meeting_markdown(meeting)
     path = unique_path(notes_dir / meeting_filename(meeting))
     path.write_text(rendered, encoding="utf-8")
     return path
@@ -814,6 +873,51 @@ def _load_meeting_route_rules(root: Path) -> dict[str, list[str]]:
     return rules
 
 
+def _load_meeting_project_aliases(root: Path) -> dict[str, str]:
+    """Load project aliases that canonicalize legacy or merged project slugs."""
+
+    config_path = root / _MEETING_ROUTE_CONFIG
+    if not config_path.exists():
+        return {}
+    data = _read_meeting_route_config_data(config_path)
+    raw_aliases = data.get("project_aliases")
+    if not isinstance(raw_aliases, dict):
+        return {}
+
+    aliases: dict[str, str] = {}
+    for source, target in raw_aliases.items():
+        source_slug = safe_project_slug(str(source))
+        target_slug = safe_project_slug(str(target))
+        if source_slug and target_slug and source_slug != target_slug:
+            aliases[source_slug] = target_slug
+    return aliases
+
+
+def _canonical_meeting_project(
+    project: str,
+    aliases: dict[str, str],
+) -> tuple[str, list[str]]:
+    """Resolve a project alias and retain its source slug as a meeting tag."""
+
+    source_slug = safe_project_slug(project)
+    target_slug = aliases.get(source_slug, source_slug)
+    alias_tags = [source_slug] if source_slug and target_slug != source_slug else []
+    return target_slug, alias_tags
+
+
+def _merge_meeting_tags(existing: list[str], additions: list[str]) -> list[str]:
+    """Append meeting tags without introducing case-insensitive duplicates."""
+
+    merged = list(existing)
+    seen = {tag.strip().lower() for tag in merged if tag.strip()}
+    for tag in additions:
+        cleaned = tag.strip()
+        if cleaned and cleaned.lower() not in seen:
+            merged.append(cleaned)
+            seen.add(cleaned.lower())
+    return merged
+
+
 def _discover_project_route_rules(root: Path) -> dict[str, list[str]]:
     """Use existing private project folders as exact-match route hints."""
 
@@ -835,11 +939,7 @@ def _discover_project_route_rules(root: Path) -> dict[str, list[str]]:
 def _read_meeting_route_config(path: Path) -> dict[str, list[str]]:
     """Read optional private meeting route rules."""
 
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return {}
-
+    data = _read_meeting_route_config_data(path)
     raw_routes = data.get("routes") if isinstance(data, dict) else data
     rules: dict[str, list[str]] = {}
     if isinstance(raw_routes, dict):
@@ -863,6 +963,67 @@ def _read_meeting_route_config(path: Path) -> dict[str, list[str]]:
             elif isinstance(keywords, str):
                 rules[project] = [keywords]
     return rules
+
+
+def _find_matching_journal_guard(root: Path, journal_space_id: str) -> dict[str, object] | None:
+    """Return the configured guard for a journal space target, if one exists."""
+
+    config_path = root / _MEETING_ROUTE_CONFIG
+    if not config_path.exists():
+        return None
+
+    data = _read_meeting_route_config_data(config_path)
+    raw_guards = data.get("journal_guards") or data.get("journal_guard")
+    guards = raw_guards if isinstance(raw_guards, list) else [raw_guards]
+    target = _normalize_guard_value(journal_space_id)
+    for guard in guards:
+        if not isinstance(guard, dict):
+            continue
+        candidates = _guard_values(
+            guard,
+            "space",
+            "space_id",
+            "space_ids",
+            "space_name",
+            "space_names",
+            "spaces",
+            "journal_space",
+            "journal_spaces",
+        )
+        if any(_normalize_guard_value(candidate) == target for candidate in candidates):
+            return guard
+    return None
+
+
+def _read_meeting_route_config_data(path: Path) -> dict[str, object]:
+    """Read meeting route config as a mapping for callers that need extra sections."""
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {"routes": data}
+
+
+def _guard_values(guard: dict[str, object], *keys: str) -> list[str]:
+    """Return normalized string values from one or more guard keys."""
+
+    values: list[str] = []
+    for key in keys:
+        raw_value = guard.get(key)
+        if raw_value is None:
+            continue
+        if isinstance(raw_value, list):
+            values.extend(str(item) for item in raw_value)
+        else:
+            values.append(str(raw_value))
+    return values
+
+
+def _normalize_guard_value(value: str) -> str:
+    """Normalize guard identifiers while preserving opaque IDs."""
+
+    return re.sub(r"\s+", " ", value.strip().lower())
 
 
 def _merge_route_rules(
@@ -895,8 +1056,8 @@ def _meeting_route_text(meeting: MeetingRecord) -> str:
         " ".join(meeting.decisions),
         " ".join(meeting.action_items),
         " ".join(meeting.open_questions),
-        meeting.raw_markdown[:4000],
-        meeting.transcript[:4000],
+        meeting.raw_markdown[:20000],
+        meeting.transcript[:20000],
     ]
     return _normalize_route_text("\n".join(part for part in parts if part))
 

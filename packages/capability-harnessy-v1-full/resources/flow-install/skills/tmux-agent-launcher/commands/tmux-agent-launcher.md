@@ -1,13 +1,13 @@
 ---
-description: Launch Claude, OpenCode, or Codex in a named tmux session
-argument-hint: "--runner <claude|opencode|codex> <session-name> [options] [--permission-mode bypass|default] [-- <runner-args>...]"
+description: Launch Claude, OpenCode, Codex, or Harnessy (`hsy`) in a named tmux session
+argument-hint: "--runner <claude|opencode|codex|hsy> [session-name] [options] [--permission-mode bypass|default] [-- <runner-args>...]"
 ---
 
 # Command Contract: tmux-agent-launcher
 
 ## Purpose
 
-Start `claude`, `opencode`, or `codex` in a new tmux session, or attach to an existing named session, so users or agents can keep long-running interactive CLIs isolated by session name.
+Start `claude`, `opencode`, `codex`, or Harnessy (`hsy`) in a new tmux session, or attach to an existing named session, so users or agents can keep long-running interactive CLIs isolated by session name.
 
 ## Ownership
 
@@ -18,16 +18,22 @@ Start `claude`, `opencode`, or `codex` in a new tmux session, or attach to an ex
 ## Invocation
 
 ```bash
-tmux-agent-launcher --runner <claude|opencode|codex> <session-name> [options] [-- <runner-args>...]
+tmux-agent-launcher --runner <claude|opencode|codex|hsy> [session-name] [options] [-- <runner-args>...]
 tmux-agent-launcher attach <session-name> [--dry-run] [--json]
 tmux-agent-launcher list [--json]
-t --runner <claude|opencode|codex> <session-name> [options] [-- <runner-args>...]
+t --runner <claude|opencode|codex|hsy> [session-name] [options] [-- <runner-args>...]
 t attach <session-name> [--dry-run] [--json]
 t list [--json]
 ```
 
 This command is intended to be installed into the user-local bin directory (`$XDG_BIN_HOME` or `~/.local/bin`) by Harnessy so it is runnable directly from the terminal when that directory is on `PATH`.
 Harnessy also installs a short alias command, `t`, from the same skill.
+
+The launcher uses a dedicated tmux socket named `harnessy-agents` by default. This keeps agent sessions isolated from an existing default tmux server, which may have stale environment or inherited sandbox restrictions. Set `TMUX_AGENT_LAUNCHER_TMUX_SOCKET_NAME=default` to use the normal tmux default socket.
+
+When launch mode omits `session-name`, the launcher prompts for a name segment, defaulting to the current working folder. Blank input accepts that default. In non-interactive stdin, the folder default is used without prompting. The generated session name is `{name}-{runner}-{index}` such as `harnessy-codex-1`; the index is the next number after existing tmux sessions matching the same `{name}-{runner}-N` prefix.
+
+Launch mode attaches to the newly created tmux session by default. Use `--no-attach` when a script or agent should leave the session running detached.
 
 For the `opencode` runner, the launcher injects `--log-level WARN` by default to avoid pathological INFO log growth unless you explicitly pass your own `--log-level` flag after `--`.
 
@@ -40,23 +46,27 @@ Bypass mode maps to each runner's native flag:
 | `claude` | `--permission-mode bypassPermissions` |
 | `codex` | `--dangerously-bypass-approvals-and-sandbox` |
 | `opencode` | `run --interactive --dangerously-skip-permissions` |
+| `hsy` | No injected flag. `hsy` has no sandbox or per-tool approval boundary; `--approve` controls project-resource trust and must be passed explicitly after launcher `--`. |
+
+For `hsy`, the resolved `permission_mode` and `permission_mode_source` remain in human and JSON output for schema compatibility, but neither `bypass` nor `default` changes the runner command. Harnessy runs with the permissions of the host user. Project-local settings, packages, and executable extensions are a separate trust decision: opt in with `-- --approve`, force them off with `-- --no-approve`, or let `hsy` apply its saved/default trust policy.
 
 ## Arguments
 
 | Name | Required | Description |
 |---|---|---|
-| `session-name` | yes | Name of the tmux session to create |
+| `session-name` | no | Name of the tmux session to create. If omitted in launch mode, generates `{name}-{runner}-{index}` |
 
 ## Flags
 
 | Flag | Required | Description |
 |---|---|---|
-| `--runner <name>` | yes | Runner to launch: `claude`, `opencode`, or `codex` |
+| `--runner <name>` | yes | Runner to launch: `claude`, `opencode`, `codex`, or `hsy` |
 | `--cwd <path>` | no | Working directory for the tmux session; defaults to the current directory |
 | `--permission-mode <mode>` | no | Permission behavior: `bypass` or `default`. Resolution order: CLI flag, `TMUX_AGENT_LAUNCHER_PERMISSION_MODE`, user config, built-in `bypass` |
 | `--skip-permissions` | no | Shortcut for `--permission-mode bypass` |
 | `--no-skip-permissions` | no | Shortcut for `--permission-mode default` |
-| `--attach` | no | Attach immediately after creating the session |
+| `--attach` | no | Attach immediately after creating the session; this is the launch-mode default |
+| `--no-attach` | no | Leave the created session detached |
 | `--dry-run` | no | Print the resolved launch plan without creating a tmux session |
 | `--json` | no | Emit machine-readable JSON |
 | `--help` | no | Show usage |
@@ -74,9 +84,11 @@ Bypass mode maps to each runner's native flag:
 |---|---|---|
 | `TMUX_AGENT_LAUNCHER_CONFIG` | no | Override the config file path; defaults to `${XDG_CONFIG_HOME:-~/.config}/harnessy/tmux-agent-launcher.json` |
 | `TMUX_AGENT_LAUNCHER_PERMISSION_MODE` | no | Override the configured permission mode for this process: `bypass` or `default` |
+| `TMUX_AGENT_LAUNCHER_TMUX_SOCKET_NAME` | no | Override the tmux socket name; defaults to `harnessy-agents`. Use `default` for the normal tmux default socket |
 | `TMUX_AGENT_LAUNCHER_CLAUDE_CMD` | no | Override the command used for the `claude` runner |
 | `TMUX_AGENT_LAUNCHER_OPENCODE_CMD` | no | Override the command used for the `opencode` runner |
 | `TMUX_AGENT_LAUNCHER_CODEX_CMD` | no | Override the command used for the `codex` runner |
+| `TMUX_AGENT_LAUNCHER_HSY_CMD` | no | Override the single executable name or path used for the `hsy` runner |
 
 ## User Config
 
@@ -107,9 +119,10 @@ Prints a concise success message with the session name, runner, and working dire
   "cwd": "/abs/path",
   "permission_mode": "bypass",
   "permission_mode_source": "config",
-  "attach": false,
+  "tmux_socket_name": "harnessy-agents",
+  "attach": true,
   "dry_run": false,
-  "command": ["tmux", "new-session", "-d", "-s", "agent-name", "-c", "/abs/path", "bash", "-lc", "claude --permission-mode bypassPermissions --prompt 'review the PR'"]
+  "command": ["tmux", "-L", "harnessy-agents", "new-session", "-d", "-s", "agent-name", "-c", "/abs/path", "bash", "-lc", "claude --permission-mode bypassPermissions --prompt 'review the PR'"]
 }
 ```
 
@@ -120,8 +133,9 @@ Attach dry-run example:
   "ok": true,
   "action": "attach",
   "session": "agent-name",
+  "tmux_socket_name": "harnessy-agents",
   "dry_run": true,
-  "command": ["tmux", "attach-session", "-t", "agent-name"]
+  "command": ["tmux", "-L", "harnessy-agents", "attach-session", "-t", "agent-name"]
 }
 ```
 
@@ -131,6 +145,7 @@ List example:
 {
   "ok": true,
   "action": "list",
+  "tmux_socket_name": "harnessy-agents",
   "sessions": ["agent-name", "reviewer"]
 }
 ```
@@ -156,18 +171,25 @@ List example:
 
 ```bash
 tmux-agent-launcher --runner claude reviewer
+tmux-agent-launcher --runner codex
 tmux-agent-launcher --runner opencode planner --cwd /tmp/project --attach
+tmux-agent-launcher --runner opencode planner --cwd /tmp/project --no-attach
 tmux-agent-launcher --runner codex pairer
 tmux-agent-launcher --runner codex pairer --permission-mode default
+tmux-agent-launcher --runner hsy harnessy-agent
 tmux-agent-launcher --runner claude qa-agent --dry-run --json
 tmux-agent-launcher attach reviewer
 tmux-agent-launcher attach reviewer --dry-run --json
 tmux-agent-launcher list
 tmux-agent-launcher list --json
 t --runner claude reviewer
+t --runner codex
+t --runner codex --no-attach
 t --runner claude reviewer -- --prompt "review the PR" --allowedTools "Read,Bash"
 t --runner opencode worker -- --model sonnet
 t --runner codex worker -- --model gpt-5.4
+t --runner hsy worker -- --model openai/gpt-5.4
+t --runner hsy trusted-worker -- --approve
 t --runner opencode worker -- --log-level ERROR --model sonnet
 t --runner claude worker --no-skip-permissions
 t list
@@ -178,6 +200,7 @@ t list
 ```bash
 tmux-agent-launcher --runner claude demo-agent --dry-run --json
 t --runner claude demo-agent --dry-run --json
+t --runner hsy demo-hsy --dry-run --json
 ```
 
 ## Feedback Capture

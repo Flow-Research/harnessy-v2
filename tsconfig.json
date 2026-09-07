@@ -7,6 +7,8 @@
 			"@harnessy/core/connectors/anytype": ["./packages/harnessy-core/src/connectors/anytype.ts"],
 			"@harnessy/core/connectors/knowledge": ["./packages/harnessy-core/src/connectors/knowledge.ts"],
 			"@harnessy/core/connectors/loopback": ["./packages/harnessy-core/src/connectors/loopback.ts"],
+			"@harnessy/core/meeting-publication-inspector": ["./packages/harnessy-core/src/meeting-publication-inspector.ts"],
+			"@harnessy/core/meeting-publication": ["./packages/harnessy-core/src/meeting-publication.ts"],
 			"*": [
 				"./*"
 			],

@@ -47,7 +47,7 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.15.0",
+    "@cloudflare/vitest-pool-workers": "0.21.0",
     "@effect/atom-react": "catalog:",
     "@effect/vitest": "catalog:",
     "@executor-js/react": "workspace:*",

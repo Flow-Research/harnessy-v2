@@ -1,114 +1,89 @@
-name: QA Security Sweep
-
-# Runs on every sprint cycle (weekly on Monday) and on-demand
-# Activates the /qa-security-sweep skill formally in the security workflow
-# Converts security findings into regression scenarios
+name: Security Gates
 
 on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
   schedule:
-    # Every Monday at 09:00 UTC (start of sprint cycle)
     - cron: '0 9 * * 1'
   workflow_dispatch:
-    inputs:
-      feature_slug:
-        description: 'Feature slug to scan (leave empty for full sweep)'
-        required: false
-        default: ''
-      severity_floor:
-        description: 'Minimum severity to report (critical|high|medium|low)'
-        required: false
-        default: 'medium'
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: read
 
 jobs:
-  qa-security-sweep:
-    name: QA Security Sweep
+  root-dependencies-and-invariants:
+    name: Root dependencies and invariants
     runs-on: ubuntu-latest
-    env:
-      FEATURE_SLUG_INPUT: ${{ github.event.inputs.feature_slug || '' }}
-      SEVERITY_FLOOR: ${{ github.event.inputs.severity_floor || 'medium' }}
-
+    timeout-minutes: 15
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          fetch-depth: 0
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: 22.22.2
+          cache: npm
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
-      - name: Run QA Security Sweep skill
-        id: security-sweep
-        run: |
-          FEATURE_SLUG="${FEATURE_SLUG_INPUT}"
-          SEVERITY="${SEVERITY_FLOOR}"
+      - name: Create evidence directory
+        run: mkdir -p .security-sweep-output
 
-          echo "Running /qa-security-sweep skill..."
-          echo "Feature slug: ${FEATURE_SLUG:-'all'}"
-          echo "Severity floor: ${SEVERITY}"
+      - name: Audit root dependencies
+        run: npm audit --audit-level=moderate --json > .security-sweep-output/root-npm-audit.json
 
-          # Invoke the qa-security-sweep skill command
-          if [ -n "${FEATURE_SLUG}" ]; then
-            node packages/capability-harnessy-v1-full/resources/flow-install/skills/qa-security-sweep/commands/qa-security-sweep.md \
-              --diff HEAD~1 \
-              --severity-floor ${SEVERITY} || true
-          else
-            # Full repo sweep
-            echo "Running full repository security sweep"
-            npm run qa:security-sweep --if-present || \
-            echo "Skill invocation complete - check artifacts for findings"
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Test and run repository security invariants
+        run: node --test scripts/security-invariants-lib.test.mjs && node scripts/check-security-invariants.mjs --output .security-sweep-output/security-invariants.json
 
-      - name: Upload sweep results as artifact
+      - name: Upload root security evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: qa-security-sweep-${{ github.run_id }}
-          path: |
-            .security-sweep-output/
-            security-findings.json
-          if-no-files-found: ignore
+          name: root-security-${{ github.run_id }}
+          path: .security-sweep-output/
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Create GitHub Issue for findings (if any)
-        if: failure()
-        uses: actions/github-script@v7
+  executor-dependencies:
+    name: Executor dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const severityFloor = process.env.SEVERITY_FLOOR || 'medium';
-            const title = `[Security] QA Sweep findings - ${new Date().toISOString().split('T')[0]}`;
-            const body = [
-              '## QA Security Sweep Findings',
-              '',
-              `**Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`,
-              `**Triggered:** ${{ github.event_name }}`,
-              `**Branch:** ${{ github.ref }}`,
-              '',
-              'The automated QA security sweep detected findings.',
-              'Please review the run artifacts and address all findings before the next sprint cycle.',
-              '',
-              `**Severity Floor:** ${severityFloor}`,
-              '',
-              '/cc @Flow-Research/security',
-            ].join('\n');
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              body,
-              labels: ['security', 'qa-sweep'],
-            });
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+
+      - name: Install Executor dependencies without lifecycle scripts
+        working-directory: executor
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Create evidence directory
+        run: mkdir -p .security-sweep-output
+
+      - name: Audit Executor dependency graph
+        run: node scripts/audit-executor.mjs --json > .security-sweep-output/executor-bun-audit.json
+
+      - name: Upload Executor security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: executor-security-${{ github.run_id }}
+          path: .security-sweep-output/
+          if-no-files-found: error
+          retention-days: 30

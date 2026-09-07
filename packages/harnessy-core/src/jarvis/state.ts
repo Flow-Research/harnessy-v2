@@ -452,12 +452,19 @@ export class JarvisStateReader extends Context.Service<
 					Effect.as(true),
 					Effect.catch(() => Effect.succeed(false)),
 				);
-			const hasSymlinkPath = Effect.fn("JarvisStateReader.hasSymlinkPath")(function* (candidate: string) {
+			const hasSymlinkPath = Effect.fn("JarvisStateReader.hasSymlinkPath")(function* (
+				candidate: string,
+				boundary: string,
+			) {
 				let current = path.resolve(candidate);
+				const resolvedBoundary = path.resolve(boundary);
+				const relative = path.relative(resolvedBoundary, current);
+				if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return true;
 				while (true) {
 					if (yield* isSymlink(current)) return true;
+					if (current === resolvedBoundary) return false;
 					const parent = path.dirname(current);
-					if (parent === current) return false;
+					if (parent === current) return true;
 					current = parent;
 				}
 			});
@@ -508,6 +515,17 @@ export class JarvisStateReader extends Context.Service<
 					// Node exposes no Windows openat/NtCreateFile relative-handle primitive; fail closed instead of racing junctions.
 					return Effect.succeed({ issue: "STATE_IO_UNAVAILABLE" as const, bytes: 0, data: null });
 				}
+				if (process.platform !== "linux") {
+					// macOS does not expose Linux-style /proc/self/fd traversal. The caller has already checked every
+					// component beneath the trusted boundary and resolved containment; O_NOFOLLOW closes the final-link case.
+					return Effect.acquireUseRelease(
+						Effect.tryPromise(() => open(candidate, constants.O_RDONLY | constants.O_NOFOLLOW)),
+						(handle) => readHandle(handle, remainingBytes),
+						closeHandle,
+					).pipe(
+						Effect.catch(() => Effect.succeed({ issue: "STATE_IO_UNAVAILABLE" as const, bytes: 0, data: null })),
+					);
+				}
 				const components: Array<string> = [];
 				let current = path.resolve(candidate);
 				while (true) {
@@ -532,7 +550,7 @@ export class JarvisStateReader extends Context.Service<
 				candidate: string,
 				remainingBytes: number,
 			) {
-				if (yield* hasSymlinkPath(candidate))
+				if (yield* hasSymlinkPath(candidate, root))
 					return { issue: "STATE_SYMLINK_REJECTED" as const, bytes: 0, raw: null };
 				const rootReal = yield* fs.realPath(root).pipe(Effect.catch(() => Effect.succeed(undefined)));
 				const candidateReal = yield* fs.realPath(candidate).pipe(Effect.catch(() => Effect.succeed(undefined)));
@@ -541,8 +559,6 @@ export class JarvisStateReader extends Context.Service<
 				const relative = path.relative(rootReal, candidateReal);
 				if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
 					return { issue: "STATE_PATH_ESCAPE_REJECTED" as const, bytes: 0, raw: null };
-				if (candidateReal !== path.resolve(candidate))
-					return { issue: "STATE_SYMLINK_REJECTED" as const, bytes: 0, raw: null };
 				const stable: StableRead = yield* stableNoFollowRead(candidateReal, remainingBytes);
 				if (stable.issue !== null || stable.data === null)
 					return { issue: stable.issue, bytes: stable.bytes, raw: null };
@@ -679,7 +695,8 @@ export class JarvisStateReader extends Context.Service<
 
 			const listFiles = Effect.fn("JarvisStateReader.listFiles")(function* (target: DirectoryTarget) {
 				const found: Array<string> = [];
-				if (yield* hasSymlinkPath(target.path)) return { files: found, symlink: true, bounded: false, io: false };
+				if (yield* hasSymlinkPath(target.path, target.path))
+					return { files: found, symlink: true, bounded: false, io: false };
 				const rootInfo = yield* fs.stat(target.path).pipe(Effect.catch(() => Effect.succeed(undefined)));
 				if (rootInfo?.type !== "Directory") return { files: found, symlink: false, bounded: false, io: true };
 				const pending: Array<{ dir: string; depth: number }> = [{ dir: target.path, depth: 0 }];
@@ -688,7 +705,7 @@ export class JarvisStateReader extends Context.Service<
 				while (pending.length > 0 && !bounded) {
 					const current = pending.shift();
 					if (current === undefined) break;
-					if (yield* hasSymlinkPath(current.dir))
+					if (yield* hasSymlinkPath(current.dir, target.path))
 						return { files: found, symlink: true, bounded: false, io: false };
 					const entries = yield* fs.readDirectory(current.dir).pipe(Effect.catch(() => Effect.succeed(undefined)));
 					if (entries === undefined) return { files: found, symlink: false, bounded: false, io: true };
@@ -699,7 +716,8 @@ export class JarvisStateReader extends Context.Service<
 							break;
 						}
 						const child = path.join(current.dir, entry);
-						if (yield* hasSymlinkPath(child)) return { files: found, symlink: true, bounded: false, io: false };
+						if (yield* hasSymlinkPath(child, target.path))
+							return { files: found, symlink: true, bounded: false, io: false };
 						const info = yield* fs.stat(child).pipe(Effect.catch(() => Effect.succeed(undefined)));
 						if (info === undefined) return { files: found, symlink: false, bounded: false, io: true };
 						if (info.type === "Directory" && current.depth < target.maxDepth)

@@ -354,6 +354,47 @@ class TestMeetingCli:
         assert result.exit_code == 0
         assert seen["created_after"] == "2026-05-23T01:00:00+01:00"
 
+    def test_fathom_poll_default_output_excludes_meeting_content(
+        self, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        runner = CliRunner()
+        meeting = _meeting_record()
+        cfg = SimpleNamespace(
+            fathom=SimpleNamespace(
+                accounts={"personal": SimpleNamespace()},
+                default_account="personal",
+            )
+        )
+        monkeypatch.setattr("jarvis.meetings.cli.load_config", lambda reload=False: cfg)
+        monkeypatch.setattr(
+            "jarvis.meetings.cli.get_fathom_api_key",
+            lambda account=None: "key",
+        )
+        monkeypatch.setattr("jarvis.meetings.cli.load_poll_state", lambda path=None: {})
+        monkeypatch.setattr(
+            "jarvis.meetings.cli.save_poll_state",
+            lambda state, path=None: "/tmp/poll-state.json",
+        )
+        monkeypatch.setattr(
+            "jarvis.meetings.cli.ingest_fathom_meetings_since",
+            lambda **kwargs: [
+                MeetingIngestResult(
+                    meeting=meeting,
+                    destinations=["private-context"],
+                    written_paths=["/tmp/meeting.md"],
+                )
+            ],
+        )
+
+        result = runner.invoke(meeting_cli, ["fathom", "poll"])
+
+        assert result.exit_code == 0
+        assert "personal ingested: 1" in result.output
+        assert "State: /tmp/poll-state.json" in result.output
+        assert meeting.transcript not in result.output
+        assert meeting.raw_markdown not in result.output
+        assert meeting.summary not in result.output
+
     def test_fathom_poll_command_continues_after_account_error(
         self, monkeypatch
     ) -> None:  # type: ignore[no-untyped-def]

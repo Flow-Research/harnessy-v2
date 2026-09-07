@@ -61,7 +61,7 @@ jobs:
     steps:
       - name: Verify sender permission
         id: verify
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
           ORG_READ_TOKEN: ${{ secrets.EARENDIL_ORG_READ_TOKEN }}
         with:
@@ -254,21 +254,22 @@ jobs:
     steps:
       - name: Create high-entropy working directory name
         id: workdir
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
             const crypto = require('crypto');
             core.setOutput('name', `pi-ci-${crypto.randomBytes(16).toString('hex')}`);
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           path: ${{ steps.workdir.outputs.name }}
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
-          node-version: 22
+          node-version: 22.22.2
           cache: npm
           cache-dependency-path: ${{ steps.workdir.outputs.name }}/package-lock.json
 
@@ -319,7 +320,7 @@ jobs:
 
       - name: Write auth.json
         id: write_auth
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
           PI_AUTH_JSON: ${{ secrets.PI_AUTH_JSON }}
         with:
@@ -341,7 +342,7 @@ jobs:
             }
 
       - name: Run pi /is
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
           GH_TOKEN: ${{ github.token }}
@@ -404,7 +405,7 @@ jobs:
 
       - name: Persist refreshed auth.json
         if: always() && steps.write_auth.outcome == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
           GH_TOKEN: ${{ secrets.PI_AUTH_UPDATE_TOKEN }}
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
@@ -457,7 +458,7 @@ jobs:
       - name: Export session files
         id: export_session_files
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
           PI_CODING_AGENT_DIR: ${{ runner.temp }}/pi-agent
           WORKDIR: ${{ steps.workdir.outputs.name }}
@@ -509,7 +510,7 @@ jobs:
       - name: Upload session gist
         id: gist
         if: always() && steps.export_session_files.outcome == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
           PI_GIST_TOKEN: ${{ secrets.PI_GIST_TOKEN }}
         with:
@@ -540,7 +541,7 @@ jobs:
 
       - name: Comment with session import instructions
         if: always() && steps.gist.outcome == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
           GIST_URL: ${{ steps.gist.outputs.url }}
           GIST_ID: ${{ steps.gist.outputs.id }}
@@ -619,7 +620,7 @@ jobs:
 
       - name: Remove trigger label
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
             try {

@@ -26,7 +26,13 @@
 			"kind": "reference",
 			"path": "resources/source",
 			"target": "source",
-			"description": "Complete v1 repository snapshot excluding only .git, preserved for 1:1 migration parity."
+			"description": "Reconciled v1 repository snapshot with reviewed privacy exclusions, preserved for migration parity."
+		},
+		{
+			"kind": "reference",
+			"path": "resources/SOURCE.json",
+			"target": "SOURCE.json",
+			"description": "V1 source commits, reviewed dirty-overlay digest, exclusions, full-tree digest, and projection digests."
 		},
 		{
 			"kind": "tool",
@@ -73,6 +79,13 @@
 			"path": "resources/source/package.json",
 			"required": true,
 			"description": "Ensure the full v1 repository snapshot root is preserved."
+		},
+		{
+			"id": "v1-source-provenance-present",
+			"kind": "path-exists",
+			"path": "resources/SOURCE.json",
+			"required": true,
+			"description": "Ensure the compatibility snapshot carries deterministic source provenance."
 		},
 		{
 			"id": "v1-root-flow-scripts-present",

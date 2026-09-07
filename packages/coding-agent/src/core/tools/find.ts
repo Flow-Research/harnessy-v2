@@ -54,6 +54,13 @@ const defaultFindOperations: FindOperations = {
 export interface FindToolOptions {
 	/** Custom operations for find. Default: local filesystem plus fd */
 	operations?: FindOperations;
+	/** Resolve the fd process. Intended for deterministic process-boundary tests. */
+	resolveFd?: () => Promise<string | FindExecutable | undefined> | string | FindExecutable | undefined;
+}
+
+export interface FindExecutable {
+	command: string;
+	args?: string[];
 }
 
 function formatFindCall(args: { pattern: string; path?: string; limit?: number } | undefined, theme: Theme): string {
@@ -211,15 +218,17 @@ export function createFindToolDefinition(
 						}
 
 						// Default implementation uses fd.
-						const fdPath = await ensureTool("fd", true);
+						const resolvedFd =
+							options?.resolveFd === undefined ? await ensureTool("fd", true) : await options.resolveFd();
 						if (signal?.aborted) {
 							settle(() => reject(new Error("Operation aborted")));
 							return;
 						}
-						if (!fdPath) {
+						if (!resolvedFd) {
 							settle(() => reject(new Error("fd is not available and could not be downloaded")));
 							return;
 						}
+						const fd = typeof resolvedFd === "string" ? { command: resolvedFd, args: [] } : resolvedFd;
 
 						const args: string[] = ["--glob", "--color=never", "--hidden"];
 
@@ -252,7 +261,7 @@ export function createFindToolDefinition(
 						}
 						args.push("--", effectivePattern, searchPath);
 
-						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+						const child = spawn(fd.command, [...(fd.args ?? []), ...args], { stdio: ["ignore", "pipe", "pipe"] });
 						const rl = createInterface({ input: child.stdout });
 						let stderr = "";
 						const lines: string[] = [];

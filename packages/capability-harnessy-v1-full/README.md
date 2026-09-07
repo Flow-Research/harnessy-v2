@@ -1,6 +1,8 @@
 # Harnessy v1 Full Compatibility Capability
 
-This package carries the full Harnessy v1 local capability surface into Harnessy v2 as a first-class capability pack.
+Harnessy V2 is canonical for all new Harnessy development. This deprecated package remains available only as a V1 compatibility oracle and source pack for migration, verification, rollback, and reference.
+
+It carries the full Harnessy V1 local capability surface into Harnessy V2 as a first-class capability pack without making V1 the development target.
 
 It intentionally preserves the original v1 resources for compatibility:
 

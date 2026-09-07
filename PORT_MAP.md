@@ -81,6 +81,10 @@ Remaining:
 - Remote git/npm/url fetch and extraction policy.
 - Content-addressed cache and offline install behavior for fetched sources.
 
+Local directory capabilities now have deterministic activation, deactivation,
+refresh, verification, self-contained export, and reinstall evidence. That does
+not complete the remote-source or offline-cache policies above.
+
 Done in PR #2:
 
 - Persisted `resolvedSource` metadata in lockfile capability entries.
@@ -140,6 +144,10 @@ Promote from `packages/capability-harnessy-v1-full/resources/source` into native
 
 ## Immediate next work
 
-1. Decide whether remote git refresh/clone and dependency installer commands should get an explicit command-runner service, or remain planned external actions.
-2. Port or explicitly plan the remaining v1 Autoflow installer behavior.
-3. Add multiple profile activation and capability-scoped context loading.
+1. Resolve the reconciliation, dependency, license/artifact, SBOM, and hosted-CI
+   blockers recorded in `.jarvis/context/status.md`.
+2. Promote the meeting queue/review/reminder/publication vertical slice first,
+   retaining the V1 pack as a parity oracle and rollback boundary.
+3. Continue through community briefing, life orchestration, meeting/channel
+   services, then installer/skill/host utilities as ordered in
+   `.jarvis/context/roadmap.md`.

@@ -1,4 +1,3 @@
-import type { ExecuteError } from "@executor-js/sdk/core";
 import {
 	ConnectorAuthError,
 	ConnectorAuthorizationError,
@@ -152,11 +151,6 @@ export const mapEngineExecuteErrorWire = (
 		default:
 			return assertNever(error);
 	}
-};
-
-export const mapExecuteError = (error: ExecuteError, context: EngineErrorContext): ConnectorReadError => {
-	const wire: EngineExecuteErrorWire = error;
-	return mapEngineExecuteErrorWire(wire, context);
 };
 
 // ---------------------------------------------------------------------------

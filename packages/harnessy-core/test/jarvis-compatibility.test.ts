@@ -73,7 +73,7 @@ describe("Jarvis compatibility kernel", () => {
 			const summary = yield* summarizeJarvisParity(parityManifest);
 			const paths = commandManifest.commands.map((entry) => entry.path.join(" "));
 
-			expect(commandManifest.commands).toHaveLength(131);
+			expect(commandManifest.commands).toHaveLength(156);
 			expect(JSON.stringify(commandManifest)).not.toContain("Sentinel.UNSET");
 			expect(commandManifest.source.pythonSourceSha256).toMatch(/^[a-f0-9]{64}$/);
 			const sourceRoot = resolve("../capability-harnessy-v1-full/resources/jarvis-cli/src");
@@ -101,9 +101,9 @@ describe("Jarvis compatibility kernel", () => {
 			);
 			expect(stateManifest.stores.map((store) => store.id)).toContain("whatsapp-thread-json-v1");
 			expect(stateManifest.stores.map((store) => store.id)).toContain("whatsapp-thread-markdown-v1");
-			expect(parityManifest.entries).toHaveLength(177);
-			expect(summary.counts.total).toBe(177);
-			expect(summary.surfaces.find((surface) => surface.surface === "command")?.counts.total).toBe(131);
+			expect(parityManifest.entries).toHaveLength(202);
+			expect(summary.counts.total).toBe(202);
+			expect(summary.surfaces.find((surface) => surface.surface === "command")?.counts.total).toBe(156);
 			expect(summary.surfaces.find((surface) => surface.surface === "state")?.counts.total).toBe(20);
 			expect(
 				parityManifest.entries
@@ -623,7 +623,7 @@ describe("Jarvis compatibility kernel", () => {
 				readonly summary: { readonly counts: { readonly total: number; readonly compatible: number } };
 			};
 			expect(output.ok).toBe(true);
-			expect(output.summary.counts.total).toBe(177);
+			expect(output.summary.counts.total).toBe(202);
 			expect(output.summary.counts.compatible).toBeGreaterThan(0);
 		}).pipe(Effect.provide(NodeServices.layer), Effect.provide(TestConsole.layer)),
 	);

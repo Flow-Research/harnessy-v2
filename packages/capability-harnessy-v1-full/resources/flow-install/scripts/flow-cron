@@ -35,6 +35,10 @@ SKILLS_ROOT = Path(os.environ.get("AGENTS_SKILLS_ROOT", Path.home() / ".agents" 
 CRON_STATE_DIR = Path.home() / ".agents" / "cron"
 SCHEDULES_PATH = CRON_STATE_DIR / "schedules.json"
 LOG_PATH = CRON_STATE_DIR / "flow-cron.log"
+EXEC_LOG_PATH = CRON_STATE_DIR / "exec.log.ndjson"
+TASK_LOG_DIR = CRON_STATE_DIR / "logs"
+PRIVATE_DIR_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
 CRON_TAG = "# flow-harness"
 CRON_ENV_KEYS = (
     "PATH",
@@ -45,12 +49,8 @@ CRON_ENV_KEYS = (
     "FLOW_AI_PROVIDER",
     "HARNESSY_AI_PROVIDER_ORDER",
     "FLOW_AI_PROVIDER_ORDER",
+    "LIFE_ORCHESTRATOR_JOURNAL_SPACE",
 )
-CRON_ENV_PREFIXES = (
-    "FATHOM_",
-    "JARVIS_FATHOM_",
-)
-
 LAUNCHD_PREFIX = "com.flow-harness"
 LAUNCHD_DIR = Path.home() / "Library" / "LaunchAgents"
 
@@ -99,6 +99,9 @@ def find_all_schedules() -> list[dict[str, Any]]:
                     "enabled": entry.get("enabled", False),
                     "attempts": entry.get("attempts", ""),
                     "timeout": entry.get("timeout", ""),
+                    "run_at_load": bool(
+                        entry.get("run_at_load", entry.get("runAtLoad", False))
+                    ),
                     "source": f"skill:{skill_name}",
                     "source_path": str(manifest_path),
                 })
@@ -124,6 +127,9 @@ def find_all_schedules() -> list[dict[str, Any]]:
                     "enabled": entry.get("enabled", False),
                     "attempts": entry.get("attempts", ""),
                     "timeout": entry.get("timeout", ""),
+                    "run_at_load": bool(
+                        entry.get("run_at_load", entry.get("runAtLoad", False))
+                    ),
                     "source": "project",
                     "source_path": str(project_cron),
                 })
@@ -154,9 +160,10 @@ def load_state() -> dict[str, Any]:
 
 def save_state(state: dict[str, Any]) -> None:
     """Save the schedules state file."""
-    CRON_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    secure_cron_storage()
     state["last_updated"] = datetime.now(timezone.utc).isoformat()
     SCHEDULES_PATH.write_text(json.dumps(state, indent=2))
+    SCHEDULES_PATH.chmod(PRIVATE_FILE_MODE)
 
 
 def get_schedule_key(skill: str, name: str) -> str:
@@ -170,6 +177,41 @@ def is_enabled(state: dict, skill: str, name: str) -> bool:
 
 
 # ── Shared helpers ───────────────────────────────────────────────────────
+
+def _ensure_private_directory(path: Path) -> None:
+    """Create a cron directory and remove group/world access."""
+
+    path.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIR_MODE)
+    path.chmod(PRIVATE_DIR_MODE)
+
+
+def _ensure_private_file(path: Path) -> None:
+    """Create a cron file with owner-only access and harden existing files."""
+
+    _ensure_private_directory(path.parent)
+    descriptor = os.open(
+        path,
+        os.O_APPEND | os.O_CREAT | os.O_WRONLY,
+        PRIVATE_FILE_MODE,
+    )
+    os.close(descriptor)
+    path.chmod(PRIVATE_FILE_MODE)
+
+
+def secure_cron_storage() -> None:
+    """Harden cron state and every existing cron artifact."""
+
+    _ensure_private_directory(CRON_STATE_DIR)
+    _ensure_private_directory(TASK_LOG_DIR)
+    for path in (SCHEDULES_PATH, LOG_PATH, EXEC_LOG_PATH):
+        _ensure_private_file(path)
+    for path in CRON_STATE_DIR.rglob("*"):
+        if path.is_symlink():
+            continue
+        if path.is_dir():
+            path.chmod(PRIVATE_DIR_MODE)
+        elif path.is_file():
+            path.chmod(PRIVATE_FILE_MODE)
 
 def detect_project_dir() -> str:
     """Detect the project directory (git root or cwd)."""
@@ -193,7 +235,13 @@ def collect_path_dirs() -> str:
 
 
 def build_cron_environment(path: str | None = None) -> dict[str, str]:
-    """Environment shared by launchd and crontab installs."""
+    """Return the non-secret environment shared by scheduled jobs.
+
+    launchd plists and user crontabs are configuration artifacts, not secret
+    stores. Jobs that need provider credentials must source a permissioned
+    runtime env file in their own command (for example
+    ``~/.jarvis/env/fathom.zsh``) instead of inheriting credentials here.
+    """
     provider = os.environ.get("FLOW_CRON_AI_PROVIDER", "auto")
     provider_order = os.environ.get("FLOW_CRON_AI_PROVIDER_ORDER")
     if provider_order is None:
@@ -209,11 +257,10 @@ def build_cron_environment(path: str | None = None) -> dict[str, str]:
         "HARNESSY_AI_PROVIDER_ORDER": provider_order,
         "FLOW_AI_PROVIDER_ORDER": provider_order,
     }
-    cron_env = {key: env[key] for key in CRON_ENV_KEYS}
-    for key, value in os.environ.items():
-        if key.startswith(CRON_ENV_PREFIXES):
-            cron_env[key] = value
-    return cron_env
+    journal_space = os.environ.get("LIFE_ORCHESTRATOR_JOURNAL_SPACE")
+    if journal_space:
+        env["LIFE_ORCHESTRATOR_JOURNAL_SPACE"] = journal_space
+    return {key: env[key] for key in CRON_ENV_KEYS if key in env}
 
 
 def build_shell_command(schedule: dict, project_dir: str) -> str:
@@ -406,7 +453,7 @@ def build_launchd_plist(schedule: dict, project_dir: str) -> dict:
         "WorkingDirectory": project_dir,
         "StandardOutPath": str(LOG_PATH),
         "StandardErrorPath": str(LOG_PATH),
-        "RunAtLoad": False,
+        "RunAtLoad": bool(schedule.get("run_at_load", False)),
     }
 
     return plist
@@ -415,7 +462,7 @@ def build_launchd_plist(schedule: dict, project_dir: str) -> dict:
 def install_launchd(enabled: list[dict], project_dir: str) -> None:
     """Write plist files and load them into launchd."""
     LAUNCHD_DIR.mkdir(parents=True, exist_ok=True)
-    CRON_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    secure_cron_storage()
 
     desired_plists = {
         launchd_plist_path(s["skill"], s["name"]) for s in enabled
@@ -676,7 +723,7 @@ def build_cron_entry(schedule: dict, project_dir: str) -> str:
 
 def install_crontab(enabled: list[dict], project_dir: str) -> None:
     """Write enabled schedules to crontab (Linux)."""
-    CRON_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    secure_cron_storage()
 
     current = get_current_crontab()
     cleaned = remove_flow_entries(current)

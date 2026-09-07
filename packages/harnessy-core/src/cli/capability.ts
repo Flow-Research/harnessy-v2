@@ -1,12 +1,72 @@
 import { Console } from "effect";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Argument as Args, Command } from "effect/unstable/cli";
+import { Argument as Args, Command, Flag as Options } from "effect/unstable/cli";
 
 import { HarnessError } from "../errors.ts";
 import { HarnessProject } from "../operations.ts";
-import { renderCapabilityInspectJson, renderCapabilityMaterializeJson } from "../structured-output.ts";
-import { dryRunOption, idOption, jsonOption, logMaterialization, refreshOption, targetOption } from "./shared.ts";
+import {
+	renderCapabilityActivationJson,
+	renderCapabilityCreateJson,
+	renderCapabilityExportJson,
+	renderCapabilityInspectJson,
+	renderCapabilityMaterializeJson,
+} from "../structured-output.ts";
+import {
+	dryRunOption,
+	forceOption,
+	idOption,
+	jsonOption,
+	logMaterialization,
+	refreshOption,
+	targetOption,
+} from "./shared.ts";
+
+const capabilityIdOption = Options.string("id").pipe(Options.withDescription("Stable capability id."));
+const capabilityNameOption = Options.string("name").pipe(Options.withDescription("Human-readable capability name."));
+const capabilityDescriptionOption = Options.string("description").pipe(
+	Options.optional,
+	Options.withDescription("Optional capability description."),
+);
+const capabilityVersionOption = Options.string("version").pipe(
+	Options.optional,
+	Options.withDescription("Optional capability version."),
+);
+const outOption = Options.string("out").pipe(Options.withDescription("Target-relative export directory."));
+
+/** Scaffold a manifest-only local capability pack. */
+export const capabilityCreateCommand = Command.make(
+	"create",
+	{
+		directory: Args.string("directory"),
+		id: capabilityIdOption,
+		name: capabilityNameOption,
+		description: capabilityDescriptionOption,
+		version: capabilityVersionOption,
+		target: targetOption,
+		force: forceOption,
+		dryRun: dryRunOption,
+		json: jsonOption,
+	},
+	({ directory, id, name, description, version, target, force, dryRun, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const result = yield* project.createCapability(target, directory, {
+				id,
+				name,
+				...(Option.isSome(description) ? { description: description.value } : {}),
+				...(Option.isSome(version) ? { version: version.value } : {}),
+				force,
+				dryRun,
+			});
+			if (json) {
+				yield* Console.log(renderCapabilityCreateJson(target, result));
+				return;
+			}
+			yield* Console.log(`${dryRun ? "Would create" : "Created"} capability pack: ${result.directory}`);
+			yield* Console.log(`${dryRun ? "Would write" : "Wrote"} manifest: ${result.manifestPath}`);
+		}),
+).pipe(Command.withDescription("Scaffold a local manifest-only capability pack"));
 
 /** List capability records from the lockfile. */
 export const capabilityListCommand = Command.make(
@@ -131,13 +191,70 @@ export const capabilityMaterializeCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("Materialize or refresh installed capability resources"));
 
+const activationCommand = (name: "activate" | "deactivate", active: boolean) =>
+	Command.make(
+		name,
+		{ id: Args.string("id"), target: targetOption, dryRun: dryRunOption, json: jsonOption },
+		({ id, target, dryRun, json }) =>
+			Effect.gen(function* () {
+				const project = yield* HarnessProject;
+				const result = active
+					? yield* project.activateCapability(target, id, dryRun)
+					: yield* project.deactivateCapability(target, id, dryRun);
+				if (json) {
+					yield* Console.log(renderCapabilityActivationJson(`capability ${name}`, target, result));
+					return;
+				}
+				const action = active ? "activated" : "deactivated";
+				yield* Console.log(
+					result.changed
+						? `${dryRun ? "Would mark" : "Marked"} capability ${action}: ${id}`
+						: `Capability already ${action}: ${id}`,
+				);
+			}),
+	).pipe(Command.withDescription(`${active ? "Activate" : "Deactivate"} a capability in the default profile`));
+
+/** Activate a verified installed capability. */
+export const capabilityActivateCommand = activationCommand("activate", true);
+
+/** Deactivate an installed capability. */
+export const capabilityDeactivateCommand = activationCommand("deactivate", false);
+
+/** Export a verified installed canonical package as a reusable local pack. */
+export const capabilityExportCommand = Command.make(
+	"export",
+	{
+		id: Args.string("id"),
+		out: outOption,
+		target: targetOption,
+		force: forceOption,
+		dryRun: dryRunOption,
+		json: jsonOption,
+	},
+	({ id, out, target, force, dryRun, json }) =>
+		Effect.gen(function* () {
+			const project = yield* HarnessProject;
+			const result = yield* project.exportCapability(target, id, out, { force, dryRun });
+			if (json) {
+				yield* Console.log(renderCapabilityExportJson(target, result));
+				return;
+			}
+			yield* Console.log(`${dryRun ? "Would export" : "Exported"} capability ${id}: ${result.directory}`);
+			yield* Console.log(`sha256: ${result.sha256}`);
+		}),
+).pipe(Command.withDescription("Export an installed capability as a self-contained local pack"));
+
 /** Capability command group. */
 export const capabilityCommand = Command.make("capability").pipe(
 	Command.withSubcommands([
+		capabilityCreateCommand,
 		capabilityListCommand,
 		capabilityInspectCommand,
 		capabilityAddCommand,
 		capabilityMaterializeCommand,
+		capabilityActivateCommand,
+		capabilityDeactivateCommand,
+		capabilityExportCommand,
 	] as const),
 	Command.withDescription("Manage Harnessy capabilities"),
 );

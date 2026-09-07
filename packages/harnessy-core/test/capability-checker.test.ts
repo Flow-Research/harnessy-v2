@@ -67,8 +67,11 @@ describe("CapabilityChecker", () => {
 			const paths = yield* pathsForTarget(targetDir);
 			const binDir = yield* fs.makeTempDirectoryScoped();
 
-			yield* fs.makeDirectory(`${targetDir}/capability/docs`, { recursive: true });
-			yield* fs.writeFileString(`${targetDir}/capability/docs/README.md`, "Tiny Capability\n");
+			yield* fs.makeDirectory(`${paths.capabilitiesDir}/local-checker/package/docs`, { recursive: true });
+			yield* fs.writeFileString(
+				`${paths.capabilitiesDir}/local-checker/package/docs/README.md`,
+				"Tiny Capability\n",
+			);
 			yield* fs.writeFileString(`${binDir}/tiny-tool`, "#!/bin/sh\n");
 			yield* fs.chmod(`${binDir}/tiny-tool`, 0o755);
 
@@ -104,7 +107,7 @@ describe("CapabilityChecker", () => {
 			const paths = yield* pathsForTarget(targetDir);
 			const binDir = yield* fs.makeTempDirectoryScoped();
 
-			yield* fs.makeDirectory(`${targetDir}/capability`, { recursive: true });
+			yield* fs.makeDirectory(`${paths.capabilitiesDir}/local-checker/package`, { recursive: true });
 			yield* fs.writeFileString(`${binDir}/tiny-tool.cmd`, "@echo off\r\n");
 			yield* fs.chmod(`${binDir}/tiny-tool.cmd`, 0o755);
 
@@ -128,8 +131,8 @@ describe("CapabilityChecker", () => {
 			const paths = yield* pathsForTarget(targetDir);
 			const binDir = yield* fs.makeTempDirectoryScoped();
 
-			yield* fs.makeDirectory(`${targetDir}/capability/docs`, { recursive: true });
-			yield* fs.writeFileString(`${targetDir}/capability/docs/README.md`, "Present text\n");
+			yield* fs.makeDirectory(`${paths.capabilitiesDir}/local-checker/package/docs`, { recursive: true });
+			yield* fs.writeFileString(`${paths.capabilitiesDir}/local-checker/package/docs/README.md`, "Present text\n");
 			yield* fs.writeFileString(`${binDir}/not-executable-tool`, "#!/bin/sh\n");
 			yield* fs.chmod(`${binDir}/not-executable-tool`, 0o644);
 
@@ -184,7 +187,7 @@ describe("CapabilityChecker", () => {
 		}).pipe(Effect.provide(NodeServices.layer)),
 	);
 
-	it.effect("skips remote capability checks without producing required-failure issues", () =>
+	it.effect("fails unresolved remote capability checks", () =>
 		Effect.gen(function* () {
 			const fs = yield* FileSystem.FileSystem;
 			const targetDir = yield* fs.makeTempDirectoryScoped();
@@ -202,18 +205,18 @@ describe("CapabilityChecker", () => {
 
 			const report = yield* runCheck(paths, lockfile);
 
-			expect(report.issues).toEqual([]);
-			expect(report.requiredFailures).toEqual([]);
+			expect(report.issues).toHaveLength(2);
+			expect(report.requiredFailures.map((result) => result.checkId)).toEqual(["remote-path", "remote-tool"]);
 			expect(report.results.map((result) => [result.checkId, result.status, result.message])).toEqual([
 				[
 					"remote-path",
-					"skipped",
-					"Skipped git capability git:remote-checker; source is not materialized locally.",
+					"failed",
+					"git capability git:remote-checker is unresolved and has no trusted local package.",
 				],
 				[
 					"remote-tool",
-					"skipped",
-					"Skipped git capability git:remote-checker; source is not materialized locally.",
+					"failed",
+					"git capability git:remote-checker is unresolved and has no trusted local package.",
 				],
 			]);
 		}).pipe(Effect.provide(NodeServices.layer)),
@@ -238,13 +241,21 @@ describe("CapabilityChecker", () => {
 			const report = yield* runCheck(paths, lockfile);
 
 			expect(report.results.map((result) => [result.checkId, result.status, result.message])).toEqual([
-				["needs-readme", "failed", `Local capability root does not exist: ${targetDir}/missing-capability`],
-				["needs-tool", "failed", `Local capability root does not exist: ${targetDir}/missing-capability`],
+				[
+					"needs-readme",
+					"failed",
+					`Local capability root does not exist: ${paths.capabilitiesDir}/local-missing-root/package`,
+				],
+				[
+					"needs-tool",
+					"failed",
+					`Local capability root does not exist: ${paths.capabilitiesDir}/local-missing-root/package`,
+				],
 			]);
 			expect(report.requiredFailures.map((result) => result.checkId)).toEqual(["needs-readme", "needs-tool"]);
 			expect(report.issues).toEqual([
-				`Required capability check failed for local:missing-root/needs-readme: Local capability root does not exist: ${targetDir}/missing-capability`,
-				`Required capability check failed for local:missing-root/needs-tool: Local capability root does not exist: ${targetDir}/missing-capability`,
+				`Required capability check failed for local:missing-root/needs-readme: Local capability root does not exist: ${paths.capabilitiesDir}/local-missing-root/package`,
+				`Required capability check failed for local:missing-root/needs-tool: Local capability root does not exist: ${paths.capabilitiesDir}/local-missing-root/package`,
 			]);
 		}).pipe(Effect.provide(NodeServices.layer)),
 	);

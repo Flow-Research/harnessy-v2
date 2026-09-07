@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "ignorePatterns": [
+    ".astro",
+    ".reference",
+    ".turbo",
+    "dist",
+    "vendor",
+    "e2e/runs",
+    "node_modules",
+    "packages/core/fumadb",
+    "bun.lock",
+    "*.tsbuildinfo",
+    "executor-*.tgz",
+    "**/routeTree.gen.ts",
+    "apps/cloud/src/services/executor-schema.ts"
+  ]
+}

@@ -35,7 +35,14 @@ interface EnvNode {
 
 const UnknownRecord = Schema.Record(Schema.String, Schema.Unknown);
 
-const complexTopLevelFields = new Set(["backends", "content", "analytics", "fathom", "whatsapp"]);
+const complexTopLevelFields = new Set([
+	"backends",
+	"content",
+	"analytics",
+	"fathom",
+	"whatsapp",
+	"meeting_publication",
+]);
 
 const decodeEnvironmentValue = (value: string, requireJson: boolean) => {
 	const decoded = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)(value);

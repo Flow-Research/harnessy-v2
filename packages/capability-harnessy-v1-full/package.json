@@ -3,8 +3,9 @@
 	"version": "0.0.3",
 	"description": "Full Harnessy v1 compatibility capability pack with installer, skills, hooks, context vault, and Jarvis CLI sources.",
 	"type": "module",
-	"license": "AGPL-3.0-or-later",
+	"license": "AGPL-3.0-only",
 	"files": [
+		"LICENSE",
 		"harnessy.capability.json",
 		"README.md",
 		"resources"

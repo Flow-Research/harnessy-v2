@@ -1,0 +1,1 @@
+"""Weekly community briefing tests."""
