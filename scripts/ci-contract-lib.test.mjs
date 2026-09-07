@@ -73,7 +73,6 @@ name: Build Binaries
 jobs:
   release-preflight:
     steps:
-      - run: npm install -g npm@11.16.0 --ignore-scripts
       - run: npm run release:preflight
       - uses: actions/upload-artifact@sha
         with: { name: release-supply-chain-tag, path: .supply-chain-evidence/ }
@@ -83,7 +82,6 @@ jobs:
   publish-npm:
     needs: stage-github-release
     steps:
-      - run: npm install -g npm@11.16.0 --ignore-scripts
       - run: npm run supply-chain:generate
       - run: npm run supply-chain:verify
       - run: npm run supply-chain:reproducibility

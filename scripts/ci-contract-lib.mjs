@@ -128,7 +128,6 @@ export const validateCiContract = ({ ciSource, securitySource, releaseSource, pr
 
 	if (!release.jobs["release-preflight"]) issues.push("Build Binaries must define release-preflight");
 	requireCommand(issues, "Build Binaries", release, "release-preflight", "npm run release:preflight");
-	requireCommand(issues, "Build Binaries", release, "release-preflight", "npm install -g npm@11.16.0 --ignore-scripts");
 	requireEvidenceUpload(issues, "Build Binaries", release, "release-preflight");
 	if (!normalizeNeeds(release.jobs["stage-github-release"]?.needs).includes("release-preflight")) {
 		issues.push("Build Binaries:stage-github-release must need release-preflight");
@@ -139,7 +138,7 @@ export const validateCiContract = ({ ciSource, securitySource, releaseSource, pr
 	if (!normalizeNeeds(release.jobs["publish-npm"]?.needs).includes("stage-github-release")) {
 		issues.push("Build Binaries:publish-npm must need stage-github-release");
 	}
-	requireCommandAfter(issues, "Build Binaries", release, "publish-npm", "npm run supply-chain:generate", "npm install -g npm@11.16.0 --ignore-scripts");
+	requireCommand(issues, "Build Binaries", release, "publish-npm", "npm run supply-chain:generate");
 	requireCommandAfter(issues, "Build Binaries", release, "publish-npm", "npm run supply-chain:verify", "npm run supply-chain:generate");
 	requireCommandAfter(issues, "Build Binaries", release, "publish-npm", "npm run supply-chain:reproducibility", "npm run supply-chain:verify");
 	requireEvidenceUpload(issues, "Build Binaries", release, "publish-npm");

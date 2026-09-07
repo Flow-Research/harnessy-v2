@@ -592,8 +592,8 @@ test("strict release tooling rejects npm versions other than the release pin", (
 	const pinned = {
 		node: "v22.22.2",
 		nodeReleasePin: "22.22.2",
-		npm: "11.16.0",
-		npmReleasePin: "11.16.0",
+		npm: "11.6.0",
+		npmReleasePin: "11.6.0",
 		bun: "1.4.0",
 		bunReleasePin: "1.4.0",
 		python: "Python 3.11.14",
@@ -602,7 +602,7 @@ test("strict release tooling rejects npm versions other than the release pin", (
 	assert.deepEqual(releaseToolchainIssues(pinned), []);
 	for (const [key, value] of [
 		["node", "v24.8.0"],
-		["npm", "11.6.0"],
+		["npm", "11.16.0"],
 		["bun", "1.3.5"],
 		["python", "Python 3.12.0"],
 	]) {
@@ -888,8 +888,8 @@ test("publish cannot reach registry commands when live npm differs from pinned e
 			canonicalJson({
 				node: "v22.22.2",
 				nodeReleasePin: "22.22.2",
-				npm: "11.16.0",
-				npmReleasePin: "11.16.0",
+				npm: "11.6.0",
+				npmReleasePin: "11.6.0",
 				bun: "1.4.0",
 				bunReleasePin: "1.4.0",
 				python: "Python 3.11.14",

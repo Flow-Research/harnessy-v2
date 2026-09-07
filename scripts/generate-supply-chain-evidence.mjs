@@ -294,7 +294,7 @@ const observeToolchain = () => {
 		node: process.version,
 		nodeReleasePin: readSafeEvidence(repoRoot, ".nvmrc").toString("utf8").trim(),
 		npm: run("npm", ["--version"]).trim(),
-		npmReleasePin: "11.16.0",
+		npmReleasePin: "11.6.0",
 		bun: run("bun", ["--version"]).trim(),
 		bunReleasePin: packageManager[1],
 		python: run("python3", ["--version"]).trim(),

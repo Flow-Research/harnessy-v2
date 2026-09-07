@@ -25,6 +25,11 @@ const installRoot = join(fixtureRoot, "consumer");
 mkdirSync(tarballRoot, { recursive: true });
 mkdirSync(installRoot, { recursive: true });
 
+const npmInvocation = (args) =>
+	process.env.npm_execpath === undefined
+		? { command: process.platform === "win32" ? "npm.cmd" : "npm", args }
+		: { command: process.execPath, args: [process.env.npm_execpath, ...args] };
+
 const run = (command, args, cwd) => {
 	const result = spawnSync(command, args, {
 		cwd,
@@ -51,8 +56,9 @@ const runForFailure = (command, args, cwd) =>
 	});
 
 const pack = (root) => {
+	const npm = npmInvocation(["pack", "--ignore-scripts", "--json", "--pack-destination", tarballRoot]);
 	const [packed] = JSON.parse(
-		run("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", tarballRoot], root),
+		run(npm.command, npm.args, root),
 	);
 	if (packed === undefined) throw new Error(`npm pack returned no artifact for ${root}`);
 	return { ...packed, tarball: join(tarballRoot, packed.filename) };
@@ -97,7 +103,7 @@ try {
 	const distPaths = readdirSync(join(packageRoot, "dist"))
 		.map((file) => `dist/${file}`)
 		.sort();
-	const expectedSdkPaths = ["CHANGELOG.md", "README.md", "package.json", ...distPaths].sort();
+	const expectedSdkPaths = ["CHANGELOG.md", "LICENSE", "README.md", "package.json", ...distPaths].sort();
 	assert(
 		JSON.stringify(sdkPaths) === JSON.stringify(expectedSdkPaths),
 		`Packed SDK contents differ from the audited artifact: ${JSON.stringify(sdkPaths)}`,
@@ -112,9 +118,7 @@ try {
 		join(installRoot, "package.json"),
 		`${JSON.stringify({ name: "harnessy-sdk-isolated-consumer", private: true, type: "module" }, undefined, 2)}\n`,
 	);
-	const installOutput = run(
-		"npm",
-		[
+	const npmInstall = npmInvocation([
 			"install",
 			"--ignore-scripts",
 			"--prefer-offline",
@@ -125,9 +129,8 @@ try {
 			corePack.tarball,
 			executorPack.tarball,
 			"@typescript/native-preview@7.0.0-dev.20260120.1",
-		],
-		installRoot,
-	);
+	]);
+	const installOutput = run(npmInstall.command, npmInstall.args, installRoot);
 
 	const installedSdkRoot = join(installRoot, "node_modules", "@harnessy", "sdk");
 	const installedCoreRoot = join(installRoot, "node_modules", "@harnessy", "core");

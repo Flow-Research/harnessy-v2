@@ -158,9 +158,6 @@ jobs:
       - name: Audit Executor dependency graph
         run: npm run audit:executor
 
-      - name: Select release npm toolchain
-        run: npm install -g npm@11.16.0 --ignore-scripts
-
       - name: Run release preflight before any release mutation
         run: npm run release:preflight
 
@@ -341,11 +338,6 @@ jobs:
 
       - name: Test packed Harnessy release artifacts
         run: npm run test:release-artifacts
-
-      - name: Upgrade npm for trusted publishing
-        run: |
-          npm install -g npm@11.16.0 --ignore-scripts
-          npm --version
 
       - name: Regenerate supply-chain evidence with the release toolchain
         run: npm run supply-chain:generate
