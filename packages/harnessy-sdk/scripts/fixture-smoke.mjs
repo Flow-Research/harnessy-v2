@@ -29,7 +29,7 @@ const npmInvocation = (args) =>
 	process.env.npm_execpath === undefined
 		? { command: process.platform === "win32" ? "npm.cmd" : "npm", args }
 		: {
-			command: process.env.npm_node_execpath ?? process.execPath,
+			command: process.env.HARNESSY_NODE_RUNTIME ?? process.env.npm_node_execpath ?? process.execPath,
 			args: [process.env.npm_execpath, ...args],
 		};
 

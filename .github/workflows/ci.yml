@@ -79,7 +79,9 @@ jobs:
         run: |
           private_node_root="$RUNNER_TEMP/harnessy-node"
           install -d -m 700 "$private_node_root/bin"
-          install -m 700 "$(command -v node)" "$private_node_root/bin/node"
+          node_runtime="$(command -v node)"
+          install -m 700 "$node_runtime" "$private_node_root/bin/node"
+          echo "HARNESSY_NODE_RUNTIME=$node_runtime" >> "$GITHUB_ENV"
           echo "$private_node_root/bin" >> "$GITHUB_PATH"
 
       - name: Execute canonical-cutover QA scenarios
