@@ -54,6 +54,9 @@ jobs:
       - name: Audit Executor dependency graph
         run: npm run audit:executor
 
+      - name: Build current-platform Executor fixture input
+        run: npm run build:executor-runtime
+
       - name: Build
         run: npm run build
 
