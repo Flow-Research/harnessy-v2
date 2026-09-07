@@ -28,7 +28,10 @@ mkdirSync(installRoot, { recursive: true });
 const npmInvocation = (args) =>
 	process.env.npm_execpath === undefined
 		? { command: process.platform === "win32" ? "npm.cmd" : "npm", args }
-		: { command: process.execPath, args: [process.env.npm_execpath, ...args] };
+		: {
+			command: process.env.npm_node_execpath ?? process.execPath,
+			args: [process.env.npm_execpath, ...args],
+		};
 
 const run = (command, args, cwd) => {
 	const result = spawnSync(command, args, {
