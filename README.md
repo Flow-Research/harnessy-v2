@@ -7,7 +7,7 @@ a push, release, hosted CI result, or operational cutover. Start with the
 [context vault](.jarvis/context/README.md) for exact status, evidence levels,
 blockers, and continuation order.
 
-**Harnessy gives an agent a portable project context — and a governed engine
+**Harnessy gives an agent a portable context; a governed engine
 for everything it connects to.**
 
 Capabilities, skills, memory, connectors, and checks live with the repo instead
