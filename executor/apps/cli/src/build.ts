@@ -294,33 +294,6 @@ const resolveWorkerdBinary = (t: Target): string | null => {
   return null;
 };
 
-const installMissingWorkerdPackages = async (targets: Target[]) => {
-  const missing = targets.filter((target) => resolveWorkerdBinary(target) === null);
-  const requested = new Set<string>();
-  for (const target of missing) {
-    const key = `${target.os}:${target.arch}`;
-    if (requested.has(key)) continue;
-    requested.add(key);
-    console.log(`Installing missing Workerd sidecar for ${target.os}/${target.arch}...`);
-    const proc = Bun.spawn(
-      ["bun", "install", "--frozen-lockfile", `--cpu=${target.arch}`, `--os=${target.os}`],
-      {
-        cwd: repoRoot,
-        stdio: ["ignore", "inherit", "inherit"],
-      },
-    );
-    if ((await proc.exited) !== 0) {
-      throw new Error(`bun install for Workerd ${target.os}/${target.arch} failed`);
-    }
-  }
-  const unresolved = targets.filter((target) => resolveWorkerdBinary(target) === null);
-  if (unresolved.length > 0) {
-    throw new Error(
-      `Workerd sidecars unavailable: ${unresolved.map((target) => `${target.os}/${target.arch}`).join(", ")}`,
-    );
-  }
-};
-
 // ---------------------------------------------------------------------------
 // Build mode
 // ---------------------------------------------------------------------------
@@ -431,7 +404,6 @@ const buildBinaries = async (targets: Target[], mode: BuildMode) => {
     if ((await proc.exited) !== 0) {
       throw new Error("bun install --cpu=* --os=* failed");
     }
-    await installMissingWorkerdPackages(targets);
   }
 
   console.log(`Generating embedded web UI bundle (${mode})...`);

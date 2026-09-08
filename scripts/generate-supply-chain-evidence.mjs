@@ -358,6 +358,17 @@ const artifactRoot = join(temporaryRoot, "artifacts");
 mkdirSync(artifactRoot, { recursive: true });
 
 try {
+	// The cross-platform build materializes dependency metadata and license texts.
+	// Collect evidence only after that install, as reproducibility reruns do.
+	if (useExistingExecutorArtifacts) {
+		for (const descriptor of descriptors.filter((entry) => entry.provenance === "inherited-executor")) {
+			if (!existsSync(join(repoRoot, descriptor.directory, "package.json"))) {
+				throw new Error(`Verified Executor artifact is missing: ${descriptor.directory}`);
+			}
+		}
+	} else {
+		run(process.execPath, ["scripts/build-harnessy-executor.mjs", "--all"], { capture: false });
+	}
 	const componentEvidence = new Map();
 	const componentIssues = [];
 	const textByHash = new Map();
@@ -429,15 +440,6 @@ try {
 	if (pythonGraphIssues.length > 0) throw new Error(`Embedded V1 Python graph failed: ${pythonGraphIssues.join("; ")}`);
 	writeCanonical("v1-python.cdx.json", pythonGraph);
 
-	if (useExistingExecutorArtifacts) {
-		for (const descriptor of descriptors.filter((entry) => entry.provenance === "inherited-executor")) {
-			if (!existsSync(join(repoRoot, descriptor.directory, "package.json"))) {
-				throw new Error(`Verified Executor artifact is missing: ${descriptor.directory}`);
-			}
-		}
-	} else {
-		run(process.execPath, ["scripts/build-harnessy-executor.mjs", "--all"], { capture: false });
-	}
 	const piLicense = readSafeEvidence(repoRoot, "LICENSE");
 	const executorLicense = readSafeEvidence(repoRoot, "executor/LICENSE");
 	const harnessyLicense = readSafeEvidence(repoRoot, "packages/capability-harnessy-v1-full/resources/source/LICENSE");
