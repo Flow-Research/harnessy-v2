@@ -267,8 +267,10 @@ const resolveWorkerdBinary = (t: Target): string | null => {
     if (resolved !== null) return resolved;
   } catch {}
   const storeRoot = join(repoRoot, "node_modules/.bun");
-  const packagePrefix = `${pkg.replace("/", "+")}@`;
-  for (const entry of readdirSync(storeRoot).filter((name) => name.startsWith(packagePrefix))) {
+  // Bun may materialize optional dependencies either as a direct store entry
+  // or beneath the parent `workerd@...` entry. Check each store entry so both
+  // layouts produce the same artifact.
+  for (const entry of readdirSync(storeRoot)) {
     const resolved = findBinary(join(storeRoot, entry, "node_modules", pkg));
     if (resolved !== null) return resolved;
   }
