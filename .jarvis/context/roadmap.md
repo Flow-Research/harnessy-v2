@@ -174,9 +174,10 @@ in that same Core runtime; omitted mode remains bounded. The owner-only
 rendezvous/open consumer and signed notification binding are now locally
 implemented with a signed 24-hour maximum; production authorization and
 operational acceptance remain.
-Preserve the separate operational gates. V2 retains a deliberate cumulative
-five-attempt transient retry cap, unlike V1's unbounded retry policy; explicit
-owner acceptance of that difference remains open. Notification acceptance must also preserve
+Preserve the separate operational gates. Current V2 retains retryable failures
+without a V2-only attempt cap, using the provider retry delay or 60 seconds;
+the earlier five-attempt-cap proposal is no longer an open owner decision.
+Notification acceptance must also preserve
 V1's click-through route into review, not only delivery of desktop messages.
 The QA profile now tracks this migration slice as `MEET-001`; its scenario passes
 under the pinned loopback-enabled environment. The existing full-review owner
