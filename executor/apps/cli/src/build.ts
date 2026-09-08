@@ -397,10 +397,13 @@ const buildBinaries = async (targets: Target[], mode: BuildMode) => {
   const needsCrossPlatform = targets.some((t) => !isCurrentPlatform(t));
   if (needsCrossPlatform) {
     console.log("Installing optional native deps for all platforms...");
-    const proc = Bun.spawn(["bun", "install", "--frozen-lockfile", "--force", "--cpu=*", "--os=*"], {
-      cwd: repoRoot,
-      stdio: ["ignore", "inherit", "inherit"],
-    });
+    const proc = Bun.spawn(
+      ["bun", "install", "--frozen-lockfile", "--force", "--cpu=*", "--os=*"],
+      {
+        cwd: repoRoot,
+        stdio: ["ignore", "inherit", "inherit"],
+      },
+    );
     if ((await proc.exited) !== 0) {
       throw new Error("bun install --cpu=* --os=* failed");
     }
