@@ -267,6 +267,8 @@ const resolveWorkerdBinary = (t: Target): string | null => {
     if (resolved !== null) return resolved;
   } catch {}
   const storeRoot = join(repoRoot, "node_modules/.bun");
+  const sharedStoreBinary = findBinary(join(storeRoot, "node_modules", pkg));
+  if (sharedStoreBinary !== null) return sharedStoreBinary;
   // Bun may materialize optional dependencies either as a direct store entry
   // or beneath the parent `workerd@...` entry. Check each store entry so both
   // layouts produce the same artifact.
