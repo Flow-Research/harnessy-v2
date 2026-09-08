@@ -75,7 +75,14 @@ const V1_LINUX_CRONTAB_MARKERS = [
 	"# flow-harness: project/flow-meeting-publication-worker",
 	"jarvis meeting publish worker",
 ] as const;
-const V1_PROCESS_MARKERS = ["jarvis meeting publish worker", "jarvis meeting review serve"] as const;
+/** @internal Exact signed and observed V1 meeting writer command markers. */
+export const MEETING_PUBLICATION_V1_PROCESS_MARKERS = [
+	"jarvis meeting publish worker",
+	"jarvis meeting publish review serve",
+	"jarvis meeting review serve",
+] as const;
+export const isMeetingPublicationV1WriterCommand = (command: string) =>
+	MEETING_PUBLICATION_V1_PROCESS_MARKERS.some((marker) => command.includes(marker));
 const ARTIFACT_ANCHOR_ROLES = ["core", "host", "sdk", "dependencies"] as const;
 const MAX_INPUT_BYTES = 1_000_000;
 const MAX_MANIFEST_BYTES = 32 * 1024 * 1024;
@@ -733,7 +740,7 @@ const validateProviderPayload = (
 		!safeText(payload.runtime.bootId, 512) ||
 		!exactValues(payload.oneWriter.darwinSchedulerLabels, V1_DARWIN_SCHEDULER_LABELS) ||
 		!exactValues(payload.oneWriter.linuxCrontabMarkers, V1_LINUX_CRONTAB_MARKERS) ||
-		!exactValues(payload.oneWriter.processMarkers, V1_PROCESS_MARKERS)
+		!exactValues(payload.oneWriter.processMarkers, MEETING_PUBLICATION_V1_PROCESS_MARKERS)
 	)
 		fail("invalid_input");
 	if (payload.transport.mode === "loopback") {

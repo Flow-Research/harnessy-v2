@@ -2,6 +2,16 @@
 
 ## Accepted
 
+- **Reuse-first completion (2026-09-08):** The owner approved using verified
+  preserved implementations inside a V2-owned installation instead of requiring
+  every workflow to be rewritten in TypeScript/Effect before migration. The
+  final installation must not depend on the original V1 checkout or its running
+  services. Preserve existing features; replace only the boundaries needed for
+  safe packaging, ownership, authorization, and recovery. Source preservation
+  alone does not prove runnable packaging or operational safety. This changes
+  the native-rewrite completion criterion, not ADR 0006's operational gates.
+  V1 remains live until the separately authorized handover passes; a permanent
+  V1 community-review service is not the selected outcome.
 - **V2 is canonical:** ADR 0004 makes this repository the source for new
   Harnessy runtime, capability, workflow, package, product, QA, and release
   work. V1 remains a compatibility oracle and live-writer owner until cutover.

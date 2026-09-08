@@ -7,6 +7,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { currentExecutorPlatformTag, packedReleasePackages } from "./harnessy-release-contract.mjs";
+import { stageV1Compatibility } from "./v1-compatibility-lib.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = mkdtempSync(join(tmpdir(), "harnessy-release-"));
@@ -44,6 +45,7 @@ const assertJsonOk = (label, output) => {
 };
 
 try {
+	run(process.execPath, ["--test", join(repoRoot, "scripts/v1-npm-transport.test.mjs")]);
 	mkdirSync(artifactRoot, { recursive: true });
 	mkdirSync(consumerRoot, { recursive: true });
 	mkdirSync(projectRoot, { recursive: true });
@@ -98,6 +100,7 @@ try {
 	}
 
 	const binRoot = join(consumerRoot, "node_modules", ".bin");
+	await stageV1Compatibility(installedRoots.get("@harnessy/capability-harnessy-v1-full"), join(temporaryRoot, "reused-source"));
 	const harnessyBin = join(binRoot, process.platform === "win32" ? "harnessy.cmd" : "harnessy");
 	const hsyBin = join(binRoot, process.platform === "win32" ? "hsy.cmd" : "hsy");
 	if (!existsSync(harnessyBin) || !existsSync(hsyBin)) {

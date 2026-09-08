@@ -228,7 +228,11 @@ export const createMeetingPublicationWorkerAuthorizationFixture = (
 				"# flow-harness: project/flow-meeting-publication-worker",
 				"jarvis meeting publish worker",
 			],
-			processMarkers: ["jarvis meeting publish worker", "jarvis meeting review serve"],
+			processMarkers: [
+				"jarvis meeting publish worker",
+				"jarvis meeting publish review serve",
+				"jarvis meeting review serve",
+			],
 		},
 	};
 	const writeAuthorization = () => {

@@ -30,6 +30,7 @@ import { MeetingPublicationSource } from "./notes.ts";
 import {
 	assertMeetingPublicationReviewDirectoriesCurrent,
 	assertMeetingPublicationSmokeArtifactInventoryCurrent,
+	isMeetingPublicationV1WriterCommand,
 	MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS,
 	MEETING_PUBLICATION_REVIEW_OPERATIONS,
 	MEETING_PUBLICATION_SMOKE_OPERATIONS,
@@ -180,7 +181,7 @@ const proveProcessAbsent = () => {
 		const parsed = match ?? fail("writer_present");
 		if (Number(parsed[1]) !== uid || Number(parsed[2]) === process.pid) continue;
 		const command = parsed[3] ?? "";
-		if (command.includes("jarvis meeting publish worker") || command.includes("jarvis meeting review serve")) {
+		if (isMeetingPublicationV1WriterCommand(command)) {
 			fail("writer_present");
 		}
 	}
