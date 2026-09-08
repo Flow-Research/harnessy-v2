@@ -1,5 +1,5 @@
 import { cp, mkdir, rm, writeFile, chmod } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -251,25 +251,25 @@ const resolveWorkerdBinary = (t: Target): string | null => {
   const pkg = platformMap[key];
   if (!pkg) return null;
   const binary = workerdBinaryName(t);
+  const findBinary = (packageRoot: string): string | null => {
+    for (const candidate of [join(packageRoot, "bin", binary), join(packageRoot, binary)]) {
+      if (existsSync(candidate)) return candidate;
+    }
+    return null;
+  };
   try {
     const req = createRequire(
       join(repoRoot, "packages/kernel/runtime-workerd-subprocess/package.json"),
     );
     const pkgJson = req.resolve(`${pkg}/package.json`);
-    for (const candidate of [
-      join(dirname(pkgJson), "bin", binary),
-      join(dirname(pkgJson), binary),
-    ]) {
-      if (existsSync(candidate)) return candidate;
-    }
-  } catch {
-    const packageRoot = join(
-      repoRoot,
-      `node_modules/.bun/${pkg.replace("/", "+")}@${WORKERD_VERSION}/node_modules/${pkg}`,
-    );
-    for (const candidate of [join(packageRoot, "bin", binary), join(packageRoot, binary)]) {
-      if (existsSync(candidate)) return candidate;
-    }
+    const resolved = findBinary(dirname(pkgJson));
+    if (resolved !== null) return resolved;
+  } catch {}
+  const storeRoot = join(repoRoot, "node_modules/.bun");
+  const packagePrefix = `${pkg.replace("/", "+")}@`;
+  for (const entry of readdirSync(storeRoot).filter((name) => name.startsWith(packagePrefix))) {
+    const resolved = findBinary(join(storeRoot, entry, "node_modules", pkg));
+    if (resolved !== null) return resolved;
   }
   return null;
 };
