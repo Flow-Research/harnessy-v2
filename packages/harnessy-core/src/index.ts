@@ -283,6 +283,20 @@ export {
 	JarvisStateStoreResult,
 	JarvisStateStoreStatus,
 } from "./jarvis/state.ts";
+export {
+	backfillLifeReadingLedger,
+	canonicalizeReadingUrl,
+	inspectLifeStatus,
+	LifeOrchestratorError,
+	LifeReadingCandidate,
+	LifeReadingLedger,
+	readingIdentity,
+	replaceWorthReadingSection,
+	resolveLifeOrchestratorSettings,
+	runLifeDaily,
+	runLifeResearch,
+	runLifeWeekly,
+} from "./life-orchestrator.ts";
 export type {
 	DoctorResult,
 	InitResult,

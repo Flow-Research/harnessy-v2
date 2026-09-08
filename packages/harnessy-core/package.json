@@ -34,6 +34,10 @@
 		"./meeting-publication-inspector": {
 			"types": "./dist/meeting-publication-inspector.d.ts",
 			"import": "./dist/meeting-publication-inspector.js"
+		},
+		"./life-orchestrator": {
+			"types": "./dist/life-orchestrator.d.ts",
+			"import": "./dist/life-orchestrator.js"
 		}
 	},
 	"files": [
