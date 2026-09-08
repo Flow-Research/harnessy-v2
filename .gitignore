@@ -47,3 +47,5 @@ harnessy-v1/
 .supply-chain-evidence/
 .supply-chain-repro/
 .supply-chain-python/
+# Generated Executor task cache; source and other untracked output remain checked.
+/executor/.turbo/cache/

@@ -50,6 +50,20 @@ try {
 		{ label: "run-a", files: inventory(outputs[0]) },
 		{ label: "run-b", files: inventory(outputs[1]) },
 	];
+	const canonicalFiles = new Map(inventories[0].files.map((file) => [file.path, file.sha256]));
+	for (const inventory of inventories.slice(1)) {
+		const files = new Map(inventory.files.map((file) => [file.path, file.sha256]));
+		for (const path of [...new Set([...canonicalFiles.keys(), ...files.keys()])].sort()) {
+			if (canonicalFiles.get(path) !== files.get(path)) {
+				console.error(JSON.stringify({
+					comparison: inventory.label,
+					path,
+					canonical: canonicalFiles.get(path) ?? null,
+					actual: files.get(path) ?? null,
+				}));
+			}
+		}
+	}
 	assertEvidenceInventoriesMatch(inventories);
 	const toolchain = JSON.parse(readFileSync(join(outputs[0], "toolchain.json"), "utf8"));
 	if (toolchain.matchesReleasePins !== true) {
