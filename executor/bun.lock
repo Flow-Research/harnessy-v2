@@ -27,6 +27,7 @@
         "turbo": "^2.5.6",
         "typescript": "^5.9.3",
         "vitest": "catalog:",
+        "workerd": "1.20260708.1",
       },
     },
     "apps/cli": {
