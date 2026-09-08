@@ -29,6 +29,13 @@
         "vitest": "catalog:",
         "workerd": "1.20260708.1",
       },
+      "optionalDependencies": {
+        "@cloudflare/workerd-darwin-64": "1.20260708.1",
+        "@cloudflare/workerd-darwin-arm64": "1.20260708.1",
+        "@cloudflare/workerd-linux-64": "1.20260708.1",
+        "@cloudflare/workerd-linux-arm64": "1.20260708.1",
+        "@cloudflare/workerd-windows-64": "1.20260708.1",
+      },
     },
     "apps/cli": {
       "name": "executor",
