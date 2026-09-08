@@ -168,8 +168,9 @@ recovery state machine. V1 remains the only live writer.
 
 ## Phase 6 — Full verification and false-green audit
 
-- Run all root, Harnessy, Executor, compatibility, packed consumer, security,
-  QA, and release-contract gates from a clean reviewable checkout.
+- Run all root, Harnessy, Executor, packed consumer, security, QA, and
+  release-contract gates from a clean reviewable checkout. Keep the deprecated
+  V1 compatibility oracle visible as informational evidence.
 - Obtain hosted Linux, macOS, and Windows evidence.
 - Continue monitoring lower-severity dependency findings and the owner-selected
   Miniflare prerelease; resolve the Windows ARM64 libSQL runtime blocker, then

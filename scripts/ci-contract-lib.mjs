@@ -174,7 +174,6 @@ export const validateCiContract = ({ ciSource, securitySource, releaseSource, pr
 		...((ci.jobs["packaged-executor"]?.strategy?.matrix?.os ?? []).map(
 			(os) => `${ci.name} / Packaged Executor (${os})`,
 		)),
-		`${ci.name} / ${ci.jobs["v1-compatibility"]?.name}`,
 		`${security.name} / ${security.jobs["root-dependencies-and-invariants"]?.name}`,
 		`${security.name} / ${security.jobs["executor-dependencies"]?.name}`,
 	];

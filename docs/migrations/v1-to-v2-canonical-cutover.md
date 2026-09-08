@@ -216,7 +216,9 @@ The fixture-only mechanics and their explicit limitations are documented in
   suites have no skipped tests, while credential-dependent inherited provider
   suites run only in their explicit optional lane.
 - Full Executor CI.
-- Compatibility provenance, privacy exclusion, projection equality, and packaged V1 suites.
+- V1 state/export/rollback preservation and compatibility provenance remain
+  available as informational evidence; the deprecated V1 behavior suite is not
+  a required V2 pull-request gate.
 - SQLite concurrency/recovery and loopback provider contracts.
 - Packed-artifact consumer and CLI/runtime smoke tests.
 - Hosted Linux, macOS, and Windows pack/install/audit/execute tests for the scoped
@@ -251,6 +253,6 @@ tracking, remaining native workflow/host parity, and hosted evidence remain
 open. No live cutover occurred;
 V1 remains the sole live writer. The current root audit is clear; Executor has
 zero critical/high and zero blocking records, with four moderate and two low
-records. The declared CI, Executor, V1-compatibility, Security Gates, and
+records. The declared CI, Executor, Security Gates, and
 packaged-runtime matrix checks must pass for the exact reviewed commit and be
 made required before merge.

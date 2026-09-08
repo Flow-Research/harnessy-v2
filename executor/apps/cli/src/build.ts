@@ -276,6 +276,21 @@ const resolveWorkerdBinary = (t: Target): string | null => {
     const resolved = findBinary(join(storeRoot, entry, "node_modules", pkg));
     if (resolved !== null) return resolved;
   }
+  // Keep a bounded fallback for future Bun store layouts. This still resolves
+  // only the exact scoped package and binary required by the target.
+  const findNested = (root: string, depth: number): string | null => {
+    if (depth > 6) return null;
+    const direct = findBinary(join(root, pkg));
+    if (direct !== null) return direct;
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const nested = findNested(join(root, entry.name), depth + 1);
+      if (nested !== null) return nested;
+    }
+    return null;
+  };
+  const nested = findNested(storeRoot, 0);
+  if (nested !== null) return nested;
   return null;
 };
 

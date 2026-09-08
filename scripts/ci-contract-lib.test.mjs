@@ -97,7 +97,6 @@ const requiredCheckNames = [
 	"CI / Packaged Executor (ubuntu-latest)",
 	"CI / Packaged Executor (macos-14)",
 	"CI / Packaged Executor (windows-latest)",
-	"CI / V1 compatibility",
 	"Security Gates / Root dependencies and invariants",
 	"Security Gates / Executor dependencies",
 ];

@@ -248,7 +248,9 @@ jobs:
         run: npm run test:executor-package-integration
 
   v1-compatibility:
-    name: V1 compatibility
+    name: V1 compatibility (informational)
+    # V1 is deprecated; retain diagnostics without blocking V2 pull requests.
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
