@@ -165,18 +165,21 @@ the current Effect dependency graph requires that maintenance release (or Node
 24.15+). The packed Engine fixture separately typechecks and performs a Wrangler
 dry-run from the tarball.
 
-The production publication contract expands the scoped Executor runtime to all
-eight declared platform variants, for 17 ordered npm artifacts in total. It
-compares local and registry integrity for existing versions and stops before
-the first mutation if any version would conceal changed contents.
+The production publication contract expands the scoped Executor runtime to seven
+publishable platform variants, for 16 ordered npm artifacts in total. Windows
+ARM64 is explicitly deferred until its native libSQL runtime is available. The
+contract compares local and registry integrity for existing versions and stops
+before the first mutation if any version would conceal changed contents.
 
 Deterministic SBOM, license-report, artifact-ledger, evidence-index, and
-reproducibility gates are implemented and their focused contracts pass 46/46.
-The all-platform evidence path remains deliberately fail-closed: the locked
-libSQL graph has no Windows ARM64 native binding even though that compiled CLI
-imports libSQL at startup. V2D-006 therefore stays open until a compatible
-sidecar or proven alternative exists and a real packed Windows ARM64 wrapper
-passes both `--version` and local SQLite/health smoke testing.
+reproducibility gates are implemented and their focused contracts pass. The
+evidence path is deliberately fail-closed for the seven publishable targets.
+Windows ARM64 remains deferred because the locked libSQL graph has no native
+binding even though that compiled CLI imports libSQL at startup. V2D-006 stays
+open for the deferred-target decision and remaining evidence work; the target
+may be restored after a compatible sidecar or proven alternative exists and a
+real packed wrapper passes both `--version` and local SQLite/health smoke
+testing.
 
 ## Phase 5: operational cutover
 

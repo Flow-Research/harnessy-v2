@@ -7,7 +7,7 @@
 | V2D-003 | open | dependency | SDK declarations | Upgrade or otherwise resolve the Effect beta.85 declaration defect | Separate dependency-cohort change |
 | V2D-004 | open | implementation | Native workflows | Promote preserved V1 workflow families as vertical slices | Phase 5 |
 | V2D-005 | open | CI | hosted evidence | Run Linux/macOS/Windows matrices and configure exact protected-branch checks | Phase 6 |
-| V2D-006 | open | supply chain | release evidence | Complete canonical SBOM/license evidence after the Windows ARM64 runtime blocker is resolved | Before publication |
+| V2D-006 | open | supply chain | release evidence | Complete canonical SBOM/license evidence for the seven publishable Executor targets; Windows ARM64 publication is explicitly deferred | Before publication |
 | V2D-007 | open | operations | scheduler/state cutover | Backup, one-writer proof, smoke, and rollback remain unauthorized and unrun | Phase 7 |
 | V2D-008 | resolved | security | Executor dependency graph | Removed all 20 high advisory records without waivers | Phase 4 |
 | V2D-009 | resolved | security | Root dependency graph | Removed all `fast-uri`, `toml`, and `qs` findings without waivers | Phase 4 |
@@ -196,21 +196,18 @@
 
 - **Context:** Deterministic SBOM, license-report, artifact-ledger, evidence-index,
   and reproducibility commands are implemented and wired into local, CI,
-  preflight, and publication contracts. Focused contract evidence passes 46/46
-  tests and the CI contract is green. Normal generation still requires all eight
-  declared Executor platform artifacts, while the locked libSQL graph has no
-  Windows ARM64 native binding and the compiled CLI imports that binding at
-  startup.
-- **Impact:** The implementation fails closed instead of attesting an unusable
-  Windows ARM64 artifact, but canonical normal-generation, two-run
-  reproducibility, strict V2D-002-only failure evidence, and hosted artifact
-  evidence cannot yet be completed.
-- **Proposed resolution:** Supply a compatible Windows ARM64 `libsql.node` or a
-  proven runtime alternative, then run a real packed-wrapper smoke covering
-  `--version` and local SQLite/health before regenerating, reproducing, and
-  strictly validating the complete evidence set. The ADR 0007 package-license
-  decision is approved; remaining V2D-002 notice and corresponding-source
-  evidence is tracked separately.
+  preflight, and publication contracts. The publishable contract now contains
+  seven Executor targets. Windows ARM64 remains technically understood but is
+  explicitly deferred because the locked libSQL graph has no native binding.
+- **Impact:** Canonical evidence and publication can proceed for the seven
+  declared targets. Windows ARM64 users are not promised a published runtime;
+  the platform must not be re-added without a compatible native sidecar and
+  packed `--version` plus SQLite/health evidence.
+- **Proposed resolution:** Leave Windows ARM64 deferred until a compatible
+  `libsql.node` or proven runtime alternative exists. Then restore the target,
+  regenerate and reproduce the complete evidence set, and rerun publication
+  validation. The ADR 0007 package-license decision is approved; remaining
+  V2D-002 notice and corresponding-source evidence is tracked separately.
 - **2026-09-05 investigation:** Published `libsql@0.5.29` and
   `0.6.0-pre.41` still list only Windows x64; the ARM64 package is absent from
   the registry and upstream [PR #208](https://github.com/tursodatabase/libsql-js/pull/208)
@@ -221,21 +218,15 @@
   those vendored files requires a reviewed vendor decision. The independent
   Windows package-test launcher defect is fixed and locally verified (see
   `status.md`), but neither Windows ARM64 support nor hosted evidence is proved.
-  Retain the eight-target contract and its blocker; reducing declared platform
-  support also requires an explicit decision.
+  The owner-approved decision on 2026-09-08 is to defer Windows ARM64
+  publication rather than weaken the gate or ship an unusable artifact.
 - **2026-09-06 build evidence:** The repository's pinned Bun build produced the
-  other seven Executor targets locally, but `bun build --compile` fails at the
-  declared `bun-windows-arm64` target (`Unsupported compile target`) on the
-  current macOS arm64 host. No supported local cross-compiler or compatible
-  Windows ARM64 libSQL sidecar is present; leave the platform contract and
-  fail-closed blocker unchanged pending hosted/toolchain evidence.
-- **2026-09-06 pinned-toolchain follow-up:** With the repository-pinned Bun
-  1.4.0 toolchain, all eight Executor binaries compile, including
-  `windows-arm64`. Packaging then fails closed because the locked dependency
-  graph has no `@libsql/win32-arm64-msvc` sidecar, so the required
-  `bin/libsql.node` is absent. The compiler/toolchain portion is therefore
-  resolved; only the native SQLite runtime and its packed `--version` plus
-  SQLite/health smoke remain before canonical evidence can run.
+  other seven Executor targets locally. Windows ARM64 remains deferred pending
+  a compatible native SQLite sidecar and packed runtime evidence.
+- **2026-09-06 pinned-toolchain follow-up:** The repository-pinned Bun 1.4.0
+  toolchain can compile the executable, but the locked dependency graph has no
+  `@libsql/win32-arm64-msvc` sidecar. The target is therefore excluded from
+  publication until the native runtime exists.
 - **2026-09-06 registry recheck:** The npm registry still returns `404` for
   `@libsql/win32-arm64-msvc`; no compatible published sidecar is available to
   resolve this locally.

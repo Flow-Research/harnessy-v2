@@ -7,6 +7,7 @@ import {
 	assertPublishedArtifactIntegrity,
 	assertPublicationMatchesEvidence,
 	currentExecutorPlatformTag,
+	DEFERRED_EXECUTOR_PLATFORM_TAGS,
 	executorPlatformTags,
 	executorReleasePackages,
 	intentionallyUnpublishedPackages,
@@ -35,18 +36,16 @@ test("canonical packed release includes Harnessy packages and a platform runtime
 
 test("publication retains every declared Executor target and orders variants before the wrapper", () => {
 	const tags = executorPlatformTags();
-	assert.equal(tags.length, 8);
+	assert.equal(tags.length, 7);
+	assert.deepEqual(DEFERRED_EXECUTOR_PLATFORM_TAGS, ["windows-arm64"]);
 	const packages = executorReleasePackages(tags);
 	assert.deepEqual(packages.slice(0, -1).map((pkg) => pkg.distTag), tags);
 	assert.equal(packages.at(-1)?.name, "@harnessy/executor");
-	const windowsArm64 = packages.find((pkg) => pkg.executorPlatformTag === "windows-arm64");
-	assert(windowsArm64?.requiredFiles.includes("bin/libsql.node"));
-	assert.match(windowsArm64?.releaseBlockers.join("\n") ?? "", /compatible libSQL native sidecar/u);
-	assert.match(windowsArm64?.releaseBlockers.join("\n") ?? "", /real packed Windows arm64 wrapper passes --version/u);
+	assert.equal(packages.some((pkg) => pkg.executorPlatformTag === "windows-arm64"), false);
 });
 
 test("platform normalization is explicit and rejects unrecognized targets", () => {
-	assert.equal(currentExecutorPlatformTag({ platform: "win32", arch: "arm64" }), "windows-arm64");
+	assert.throws(() => currentExecutorPlatformTag({ platform: "win32", arch: "arm64" }), /platform is deferred/u);
 	assert.equal(currentExecutorPlatformTag({ platform: "darwin", arch: "x64" }), "darwin-x64");
 	assert.throws(() => currentExecutorPlatformTag({ platform: "freebsd", arch: "x64" }), /Unsupported/);
 });
@@ -75,15 +74,8 @@ test("publication validation rejects a false-green tarball and bad variant versi
 	assert.match(issues.join("\n"), /tarball is missing bin\/libsql\.node/);
 });
 
-test("Windows arm64 cannot pass publication validation without resolving its explicit native blocker", () => {
-	const [variant] = executorReleasePackages(["windows-arm64"]);
-	const issues = validateReleaseManifest({
-		descriptor: variant,
-		manifest: { name: "@harnessy/executor", version: "0.0.3-windows-arm64", license: "MIT" },
-		packedPaths: variant.requiredFiles,
-	});
-	assert.match(issues.join("\n"), /release blocker: Windows arm64 publication is blocked/u);
-	assert.match(variant.runtimeLimitations.join("\n"), /workerd-backed custom app execution is unavailable/u);
+test("Windows arm64 is deferred from publication until its native runtime is available", () => {
+	assert.throws(() => executorReleasePackages(["windows-arm64"]), /Unsupported Harnessy Executor platform tag/u);
 });
 
 test("Pi and Harnessy release cohorts must each stay lockstep versioned", () => {

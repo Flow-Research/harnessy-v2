@@ -31,8 +31,9 @@ The local implementation phase is complete. The portable context vault,
 deterministic QA contract, local/CI gate wiring, release preflight, workflow
 lint, both dependency-audit thresholds, and the full integration surface pass
 locally. Deterministic SBOM/license-report and artifact-ledger gates are now
-wired, but their canonical evidence is blocked by the declared Windows ARM64
-libSQL runtime gap. Remote matrices and branch protection, license/artifact
+wired, and canonical evidence now covers the seven publishable Executor
+targets. Windows ARM64 publication is explicitly deferred because its libSQL
+runtime is unavailable. Remote matrices and branch protection, license/artifact
 decisions, complete supply-chain evidence, and operational authorization remain
 explicit later release blockers; no hosted or operational result is inferred.
 

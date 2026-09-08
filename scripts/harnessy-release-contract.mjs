@@ -8,8 +8,9 @@ const DECLARED_EXECUTOR_PLATFORM_TAGS = Object.freeze([
 	"darwin-x64",
 	"darwin-arm64",
 	"windows-x64",
-	"windows-arm64",
 ]);
+
+export const DEFERRED_EXECUTOR_PLATFORM_TAGS = Object.freeze(["windows-arm64"]);
 
 const SOURCE_PACKAGES = Object.freeze([
 	{
@@ -87,6 +88,9 @@ export const executorPlatformTags = () => [...DECLARED_EXECUTOR_PLATFORM_TAGS];
 export const currentExecutorPlatformTag = ({ platform = process.platform, arch = process.arch } = {}) => {
 	const normalizedPlatform = platform === "win32" ? "windows" : platform;
 	const tag = `${normalizedPlatform}-${arch}`;
+	if (DEFERRED_EXECUTOR_PLATFORM_TAGS.includes(tag)) {
+		throw new Error(`Harnessy Executor platform is deferred pending native runtime support: ${tag}`);
+	}
 	if (!DECLARED_EXECUTOR_PLATFORM_TAGS.includes(tag)) {
 		throw new Error(`Unsupported Harnessy Executor platform: ${platform} ${arch}`);
 	}

@@ -241,7 +241,7 @@ const applyLicenseEvidence = (graph, scope, evidenceByPackage, componentEvidence
 const descriptorKey = (descriptor) => descriptor.key ?? descriptor.name;
 const descriptors = packedReleasePackages(executorPlatformTags());
 const descriptorKeys = descriptors.map(descriptorKey);
-if (descriptors.length !== 17 || new Set(descriptorKeys).size !== 17) throw new Error("Canonical release descriptor set must contain exactly 17 unique artifacts");
+if (descriptors.length !== 16 || new Set(descriptorKeys).size !== 16) throw new Error("Canonical release descriptor set must contain exactly 16 unique artifacts");
 
 const inputPaths = [
 	".nvmrc",
@@ -343,7 +343,7 @@ if (verify) {
 		}
 	}
 	if (issues.length > 0) throw new Error(`Supply-chain evidence verification failed:\n${issues.map((issue) => `  - ${issue}`).join("\n")}`);
-	console.log(`Supply-chain evidence verified: ${index.files.length} evidence files, 17 release artifacts${strict ? ", strict license gate passed" : ""}.`);
+	console.log(`Supply-chain evidence verified: ${index.files.length} evidence files, 16 release artifacts${strict ? ", strict license gate passed" : ""}.`);
 	process.exit(0);
 }
 

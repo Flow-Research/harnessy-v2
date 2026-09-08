@@ -255,9 +255,14 @@ test("real Executor Bun graph has one component per lock identity and no depende
 	);
 });
 
-test("real Executor lock and Windows arm64 release contract stay mutually fail-closed", () => {
+test("real Executor lock retains the deferred Windows arm64 native-runtime evidence", () => {
 	const lock = parseBunLock(readFileSync(new URL("../executor/bun.lock", import.meta.url), "utf8"));
-	const [descriptor] = executorReleasePackages(["windows-arm64"]);
+	const descriptor = {
+		requiredFiles: ["bin/libsql.node"],
+		releaseBlockers: [
+			"Windows arm64 publication is deferred until a compatible libSQL native sidecar or a proven alternative is available and a real packed Windows arm64 wrapper passes --version and local SQLite/health smoke testing",
+		],
+	};
 	assert.deepEqual(windowsArm64LibsqlTruthIssues({ lock, descriptor }), []);
 	assert.equal(lock.packages.libsql[0], "libsql@0.5.29");
 	assert.equal(lock.packages.libsql[2].optionalDependencies["@libsql/win32-x64-msvc"], "0.5.29");

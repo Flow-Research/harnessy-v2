@@ -54,13 +54,13 @@ files. Packaging and supply-chain evidence fail closed when any of those files
 is absent. Targets supported by upstream workerd packaging must also contain
 the workerd binary.
 
-The intentional `windows-arm64` variant remains in the eight-target contract,
-but publication is blocked until a compatible Windows arm64 libSQL native
-sidecar (or a separately proven replacement) exists and a real packed Windows
-arm64 wrapper passes `--version` and local SQLite/health smoke testing. The
-current locked libSQL package publishes Windows x64 only, while the local server
-imports libSQL eagerly even for `--version`; an executable-only Windows arm64
-tarball would be a false-green artifact.
+The `windows-arm64` variant is intentionally deferred from publication. A
+compatible Windows arm64 libSQL native sidecar (or a separately proven
+replacement) and a real packed wrapper passing `--version` plus local
+SQLite/health smoke testing are required before it may be restored to the
+release contract. The current locked libSQL package publishes Windows x64 only,
+while the local server imports libSQL eagerly even for `--version`; an
+executable-only Windows arm64 tarball would be a false-green artifact.
 
 Workerd-backed custom app execution is a separate capability. Upstream workerd
 has no Windows arm64 or Linux musl binary; those runtimes report the capability

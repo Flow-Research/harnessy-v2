@@ -1016,14 +1016,12 @@ un-pinned run; it is not the pinned gate evidence.
 
 ### Pinned Executor release follow-up — 2026-09-06
 
-The repository-pinned Bun 1.4.0 toolchain compiled all eight declared Executor
-targets, including Windows ARM64. The packaging gate then failed closed because
-the locked Executor graph has no `@libsql/win32-arm64-msvc` package, leaving the
-required `bin/libsql.node` absent from that variant. The compiler/toolchain gap
-is closed; Windows ARM64 native SQLite support and a real packed `--version`
-plus SQLite/health smoke remain required before supply-chain evidence or
-publication can proceed. No source, provider, scheduler, Garden, or V1 state
-was changed.
+The repository-pinned Bun 1.4.0 toolchain compiled the seven publishable
+Executor targets. Windows ARM64 is explicitly deferred because the locked
+Executor graph has no `@libsql/win32-arm64-msvc` package, leaving the required
+`bin/libsql.node` absent from that variant. Restoring that target requires a
+compatible native runtime and a real packed `--version` plus SQLite/health
+smoke. No source, provider, scheduler, Garden, or V1 state was changed.
 
 Release preflight now fails before any build or evidence generation unless the
 declared Node `22.22.2` and Bun `1.4.0` toolchain is active. This prevents an
