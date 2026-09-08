@@ -30,6 +30,10 @@ export default defineConfig({
 				find: /^@harnessy\/core\/connectors\/loopback$/,
 				replacement: harnessyCoreSource("connectors/loopback.ts"),
 			},
+			{
+				find: /^@harnessy\/core\/meeting-publication$/,
+				replacement: harnessyCoreSource("meeting-publication.ts"),
+			},
 			{ find: /^@executor-js\/fumadb$/, replacement: executorSource("packages/core/fumadb/src/index.ts") },
 			{
 				find: /^@executor-js\/fumadb\/adapters\/drizzle$/,
@@ -62,6 +66,10 @@ export default defineConfig({
 			{ find: /^@executor-js\/sdk$/, replacement: executorSource("packages/core/sdk/src/index.ts") },
 			{ find: /^@executor-js\/sdk\/core$/, replacement: executorSource("packages/core/sdk/src/index.ts") },
 			{
+				find: /^@executor-js\/sdk\/host-internal$/,
+				replacement: executorSource("packages/core/sdk/src/host-internal.ts"),
+			},
+			{
 				find: /^@executor-js\/sdk\/http-auth$/,
 				replacement: executorSource("packages/core/sdk/src/http-auth/index.ts"),
 			},
@@ -71,5 +79,16 @@ export default defineConfig({
 			},
 		],
 	},
-	test: { testTimeout: 30_000, hookTimeout: 30_000 },
+	test: {
+		testTimeout: 30_000,
+		hookTimeout: 30_000,
+		coverage: {
+			provider: "v8",
+			include: ["src/**/*.ts"],
+			exclude: ["src/**/*.d.ts"],
+			reporter: ["text"],
+			reportsDirectory: "coverage",
+			thresholds: { statements: 56, branches: 58, functions: 35, lines: 56 },
+		},
+	},
 });

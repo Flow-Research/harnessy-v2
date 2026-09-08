@@ -1,6 +1,6 @@
 name: life-orchestrator
 type: opencode
-version: 0.1.2
+version: 0.1.18
 owner: julian
 status: experimental
 blast_radius: medium
@@ -8,7 +8,7 @@ description: "Monthly, weekly, and daily life orchestration — reads priorities
 install_scope: global
 permissions: [terminal, filesystem, network]
 data_categories: [personal]
-egress: [api.anthropic.com, api.openai.com]
+egress: [api.anthropic.com, api.openai.com, rekt.news]
 invoke: /life
 location: tools/flow-install/skills/life-orchestrator
 traces:
@@ -30,6 +30,13 @@ state:
   - path: "~/.agents/life/feedback/"
     description: "Feedback annotations captured via /life feedback"
 schedule:
+  - name: learning-research
+    cron: "15 4 * * *"
+    type: shell
+    command: 'python3 "${AGENTS_SKILLS_ROOT:-$HOME/.agents/skills}/life-orchestrator/scripts/learning-research"'
+    description: "Bounded strategy-aligned reading research before the morning brief (daily at 04:15)"
+    timeout: 5700
+    enabled: false
   - name: daily-brief
     cron: "30 5 * * *"
     type: shell

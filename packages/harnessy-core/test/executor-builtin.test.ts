@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -22,12 +23,14 @@ describe("bundled Executor launcher", () => {
 		expect(existsSync(launch.args[1]!)).toBe(true);
 	});
 
-	it("packages the official platform-selecting Executor npm wrapper", () => {
+	it("packages the Harnessy-scoped platform-selecting Executor wrapper", () => {
 		const launch = resolvePackagedExecutor();
 		expect(launch.command).toBe(process.execPath);
 		expect(launch.args).toHaveLength(1);
-		expect(launch.args[0]).toMatch(/node_modules[/\\]executor[/\\]bin[/\\]executor$/);
+		expect(launch.args[0]).toMatch(/harnessy-executor[/\\]bin[/\\]harnessy-executor$/);
 		expect(existsSync(launch.args[0]!)).toBe(true);
+		const manifest = JSON.parse(readFileSync(join(dirname(launch.args[0]!), "..", "package.json"), "utf8"));
+		expect(manifest).toMatchObject({ name: "@harnessy/executor", license: "MIT" });
 	});
 
 	it("does not report a signal-terminated child as successful", async () => {

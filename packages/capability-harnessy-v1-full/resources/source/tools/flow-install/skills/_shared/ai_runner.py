@@ -9,6 +9,7 @@ timed out" instead of opaque subprocess errors.
 from __future__ import annotations
 
 import argparse
+import errno
 import os
 import re
 import shutil
@@ -25,7 +26,7 @@ DEFAULT_CLAUDE_MODEL = "sonnet"
 DEFAULT_CODEX_MODEL = "gpt-5.4-mini"
 CLAUDE_MODEL_ALIASES = {"sonnet", "haiku", "opus"}
 TRANSIENT_FAILURES = {"timeout", "rate_limited", "quota", "hook_failed", "cli_error"}
-PERMANENT_FAILURES = {"auth_required", "unavailable", "invalid_provider"}
+PERMANENT_FAILURES = {"auth_required", "unavailable", "invalid_provider", "prompt_too_large"}
 
 
 @dataclass
@@ -141,7 +142,7 @@ def _run_subprocess(
     prompt: str,
     cwd: str | None,
     timeout_s: int,
-) -> subprocess.CompletedProcess[str] | TimeoutError | FileNotFoundError:
+) -> subprocess.CompletedProcess[str] | TimeoutError | OSError:
     try:
         return subprocess.run(
             cmd,
@@ -153,8 +154,24 @@ def _run_subprocess(
         )
     except subprocess.TimeoutExpired as exc:
         return TimeoutError(f"timed out after {exc.timeout}s")
-    except FileNotFoundError as exc:
+    except OSError as exc:
         return exc
+
+
+def _subprocess_os_error(provider: str, error: OSError) -> AIResult:
+    if error.errno == errno.E2BIG:
+        return AIResult(
+            ok=False,
+            provider=provider,
+            error_type="prompt_too_large",
+            error=(
+                "Provider command exceeded the operating-system argument limit. "
+                "Pass the prompt through standard input or compact the source state."
+            ),
+        )
+    if isinstance(error, FileNotFoundError):
+        return AIResult(ok=False, provider=provider, error_type="unavailable", error=str(error))
+    return AIResult(ok=False, provider=provider, error_type="cli_error", error=str(error))
 
 
 def _claude_command(model: str | None, fallback_model: str | None, budget_usd: str | None) -> list[str]:
@@ -183,8 +200,8 @@ def _run_claude(prompt: str, *, cwd: str | None, model: str | None, fallback_mod
     result = _run_subprocess(_claude_command(model, fallback_model, budget_usd), prompt=prompt, cwd=cwd, timeout_s=timeout_s)
     if isinstance(result, TimeoutError):
         return AIResult(ok=False, provider="claude", error_type="timeout", error=str(result))
-    if isinstance(result, FileNotFoundError):
-        return AIResult(ok=False, provider="claude", error_type="unavailable", error=str(result))
+    if isinstance(result, OSError):
+        return _subprocess_os_error("claude", result)
     stdout = _strip_ansi(result.stdout)
     stderr = _strip_ansi(result.stderr)
     if result.returncode == 0:
@@ -221,6 +238,12 @@ def _run_codex(prompt: str, *, cwd: str | None, model: str | None, timeout_s: in
         cmd = [
             codex_cmd,
             "exec",
+            "-c",
+            (
+                'model_reasoning_effort="'
+                + (_env("HARNESSY_AI_CODEX_REASONING_EFFORT", "high") or "high")
+                + '"'
+            ),
             "-C",
             cwd or os.getcwd(),
             "-s",
@@ -243,8 +266,8 @@ def _run_codex(prompt: str, *, cwd: str | None, model: str | None, timeout_s: in
         Path(output_path).unlink(missing_ok=True)
     if isinstance(result, TimeoutError):
         return AIResult(ok=False, provider="codex", error_type="timeout", error=str(result))
-    if isinstance(result, FileNotFoundError):
-        return AIResult(ok=False, provider="codex", error_type="unavailable", error=str(result))
+    if isinstance(result, OSError):
+        return _subprocess_os_error("codex", result)
     stdout = _strip_ansi(result.stdout)
     stderr = _strip_ansi(result.stderr)
     text = final_text.strip() or stdout.strip()
@@ -273,8 +296,8 @@ def _run_opencode(prompt: str, *, cwd: str | None, model: str | None, timeout_s:
     result = _run_subprocess(cmd, prompt="", cwd=cwd, timeout_s=timeout_s)
     if isinstance(result, TimeoutError):
         return AIResult(ok=False, provider="opencode", error_type="timeout", error=str(result))
-    if isinstance(result, FileNotFoundError):
-        return AIResult(ok=False, provider="opencode", error_type="unavailable", error=str(result))
+    if isinstance(result, OSError):
+        return _subprocess_os_error("opencode", result)
     stdout = _strip_ansi(result.stdout)
     stderr = _strip_ansi(result.stderr)
     if result.returncode == 0 and stdout.strip():

@@ -87,6 +87,11 @@ export class CapabilityFingerprinter extends Context.Service<
 					.realPath(filePath)
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not resolve ${filePath}`, cause)));
 
+			const canonicalIdentity = (value: string): string => {
+				const resolved = path.resolve(value);
+				return resolved.includes("\\") ? resolved.toLowerCase() : resolved;
+			};
+
 			/** Read one file and return its fingerprint entry. */
 			const fingerprintFile = (
 				root: string,
@@ -117,19 +122,20 @@ export class CapabilityFingerprinter extends Context.Service<
 
 					for (const entry of entries.sort()) {
 						const entryPath = path.join(directory, entry);
-						const entryStat = yield* stat(entryPath);
-						if (entryStat.type === "SymbolicLink") {
+						const resolved = yield* realPath(entryPath);
+						const expected = path.resolve(entryPath);
+						if (canonicalIdentity(resolved) !== canonicalIdentity(expected)) {
 							issues.push(`Skipped symbolic link: ${path.relative(root, entryPath).replaceAll("\\", "/")}`);
 							continue;
 						}
-
-						const resolved = yield* realPath(entryPath);
 						if (!isWithin(root, resolved)) {
 							issues.push(
 								`Skipped path resolving outside root: ${path.relative(root, entryPath).replaceAll("\\", "/")}`,
 							);
 							continue;
 						}
+
+						const entryStat = yield* stat(entryPath);
 
 						if (entryStat.type === "Directory") {
 							const nested = yield* walkDirectory(root, entryPath);
@@ -153,6 +159,14 @@ export class CapabilityFingerprinter extends Context.Service<
 
 			const fingerprintPath = Effect.fn("CapabilityFingerprinter.fingerprintPath")(function* (inputPath: string) {
 				const absolutePath = path.resolve(inputPath);
+				const canonicalParent = yield* realPath(path.dirname(absolutePath));
+				const canonicalPath = yield* realPath(absolutePath);
+				if (
+					canonicalIdentity(canonicalPath) !==
+					canonicalIdentity(path.resolve(canonicalParent, path.basename(absolutePath)))
+				) {
+					return yield* new HarnessError({ message: `Cannot fingerprint symbolic link root: ${absolutePath}` });
+				}
 				const rootStat = yield* stat(absolutePath);
 
 				if (rootStat.type === "File") {
@@ -173,7 +187,7 @@ export class CapabilityFingerprinter extends Context.Service<
 					});
 				}
 
-				const realRoot = yield* realPath(absolutePath);
+				const realRoot = canonicalPath;
 				const walked = yield* walkDirectory(realRoot, realRoot);
 				const files = [...walked.files].sort((left, right) => left.path.localeCompare(right.path));
 				const bytes = files.reduce((total, file) => total + file.bytes, 0);

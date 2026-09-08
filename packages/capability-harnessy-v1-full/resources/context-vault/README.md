@@ -38,6 +38,7 @@ For specialized maintenance tasks, read as needed:
 |------|------|
 | `README.md` | Knowledge-base protocol and loading guidance |
 | `AGENTS.md` | Context-vault agent instructions |
+| `projects.md` | Portable inventory for tracked workspace projects |
 | `skills/_catalog.md` | Installed project skill inventory |
 | `scopes/_scopes.yaml` | Scope registry for memory files |
 
@@ -59,6 +60,9 @@ For specialized maintenance tasks, read as needed:
 | `docs/personal-context-protocol.md` | Personal-context layout and ownership rules |
 | `docs/autoflow-autoresearch-system.md` | Autoflow and autoresearch reference |
 | `docs/operations/fathom-local-automation.md` | Local Fathom webhook + tunnel + auto-ingest runbook |
+| `docs/operations/meeting-publication.md` | Approval-gated Flow meeting publishing to Google Docs and Discord |
+| `docs/operations/community-weekly-briefing.md` | Sunday community briefing generation, review, and publication runbook |
+| `docs/operations/whatsapp-local-automation.md` | Local WhatsApp Cloud API webhook + tunnel + thread-ingest runbook |
 
 ## Template Syntax
 

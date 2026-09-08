@@ -31,10 +31,13 @@ DEFAULT_TIMEOUT_SECONDS = 600
 BACKOFF_SECONDS = [30, 60, 120, 300]  # delay after attempt 1, 2, 3, 4
 TASK_LOG_MAX_BYTES = 50_000  # 50KB per-task log cap
 PERMANENT_EXIT = 2           # exit code meaning "don't retry"
+PRIVATE_DIR_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
 
 CRON_DIR = Path.home() / ".agents" / "cron"
 EXEC_LOG = CRON_DIR / "exec.log.ndjson"
 TASK_LOG_DIR = CRON_DIR / "logs"
+LAUNCHD_LOG = CRON_DIR / "flow-cron.log"
 
 NOTIFY_SCRIPT = (
     Path(__file__).resolve().parent.parent
@@ -44,10 +47,45 @@ NOTIFY_SCRIPT = (
 
 # ── Logging ───────────────────────────────────────────────────────────────
 
+def _ensure_private_directory(path: Path) -> None:
+    """Create a cron directory and remove group/world access."""
+
+    path.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIR_MODE)
+    path.chmod(PRIVATE_DIR_MODE)
+
+
+def _ensure_private_file(path: Path) -> None:
+    """Create a cron file with owner-only access and harden existing files."""
+
+    _ensure_private_directory(path.parent)
+    descriptor = os.open(
+        path,
+        os.O_APPEND | os.O_CREAT | os.O_WRONLY,
+        PRIVATE_FILE_MODE,
+    )
+    os.close(descriptor)
+    path.chmod(PRIVATE_FILE_MODE)
+
+
+def secure_cron_storage() -> None:
+    """Harden shared cron state plus every existing cron artifact."""
+
+    _ensure_private_directory(CRON_DIR)
+    _ensure_private_directory(TASK_LOG_DIR)
+    _ensure_private_file(EXEC_LOG)
+    _ensure_private_file(LAUNCHD_LOG)
+    for path in CRON_DIR.rglob("*"):
+        if path.is_symlink():
+            continue
+        if path.is_dir():
+            path.chmod(PRIVATE_DIR_MODE)
+        elif path.is_file():
+            path.chmod(PRIVATE_FILE_MODE)
+
 def log_event(task: str, event: str, attempt: int, exit_code: int | None = None,
               duration_s: float | None = None, error: str | None = None) -> None:
     """Append a structured NDJSON entry to exec.log.ndjson."""
-    CRON_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_private_file(EXEC_LOG)
 
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -81,6 +119,8 @@ def rotate_task_log(log_path: Path) -> None:
             content = log_path.read_text()
             # Keep the last ~40KB
             log_path.write_text(content[-40_000:])
+        if log_path.exists():
+            log_path.chmod(PRIVATE_FILE_MODE)
     except OSError:
         pass
 
@@ -113,6 +153,7 @@ def notify_failure(task: str, exit_code: int, attempts: int) -> None:
 
 def run_command(cmd: list[str], task: str, attempt: int, task_log: Path, timeout_s: int) -> int:
     """Run a command, capturing output to the per-task log. Returns exit code."""
+    _ensure_private_file(task_log)
     env = os.environ.copy()
     env["FLOW_CRON_ATTEMPT"] = str(attempt)
 
@@ -175,10 +216,11 @@ def main() -> None:
         print("Error: no command specified after --", file=sys.stderr)
         sys.exit(2)
 
-    # Set up per-task log
-    TASK_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # Set up owner-only cron state and per-task logs before running a command.
+    secure_cron_storage()
     safe_name = task.replace("/", "-")
     task_log = TASK_LOG_DIR / f"{safe_name}.log"
+    _ensure_private_file(task_log)
     rotate_task_log(task_log)
 
     # Execute with retries

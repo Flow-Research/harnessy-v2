@@ -1,0 +1,418 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "kind": "preserved-v1-explicit-contract",
+    "sources": [
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/models.py",
+        "sha256": "0237b2235c22e7e00c66d016122381518eb8b388dff941528b0c15aab9f89e42"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notes.py",
+        "sha256": "3703fe92a31c46ecaf00538ec4f664336c63b6261f2c3680907009050f08cbbd"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/store.py",
+        "sha256": "b0fe832c5d1aa8ddec181cb597959320b0eba208cb045d05ef256784647db59d"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/service.py",
+        "sha256": "1c7b0b8f889a3c404defa229b9414311d25efb8bda8074cafdf95cd8f36923f0"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/review.py",
+        "sha256": "2f9370d40c3c2a49993e06622e2df2cab0330ee02dd59c018cf3659d4be188a1"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/discord.py",
+        "sha256": "84153d3324030b3b60ee4ce268c8030b0384979090af010208b211d6a5fd8fb1"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/google.py",
+        "sha256": "4fe2ccaea2500859ea9c35fa6a501e9e1752abd6c48669464d3d315bc4564637"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notify.py",
+        "sha256": "38701ebf21c578b5d7ce10b5399c846e92e39ff081f2e3a3f9254e86f2423431"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/markdown.py",
+        "sha256": "121482bceac9ac987e2c2fa84ae53f330e075b75094c47c977a87a43e1a9b9c6"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/errors.py",
+        "sha256": "987ed2430ca12e7430c7892315aca959069457e689b2842fc4c089c7933def58"
+      }
+    ]
+  },
+  "statuses": {
+    "v1": [
+      "pending_review",
+      "approved",
+      "publishing",
+      "published",
+      "rejected",
+      "blocked",
+      "archived"
+    ],
+    "v2": [
+      "pending_review",
+      "approved",
+      "publishing",
+      "published",
+      "rejected",
+      "blocked",
+      "archived"
+    ]
+  },
+  "transitionCases": [
+    {
+      "id": "update-pending",
+      "from": "pending_review",
+      "event": "update",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    },
+    {
+      "id": "approve-pending",
+      "from": "pending_review",
+      "event": "approve",
+      "v1": "approved",
+      "v2": "approved"
+    },
+    {
+      "id": "reject-pending",
+      "from": "pending_review",
+      "event": "reject",
+      "v1": "rejected",
+      "v2": "rejected"
+    },
+    {
+      "id": "archive-pending",
+      "from": "pending_review",
+      "event": "archive",
+      "v1": "archived",
+      "v2": "archived"
+    },
+    {
+      "id": "claim-approved",
+      "from": "approved",
+      "event": "claim",
+      "v1": "publishing",
+      "v2": "publishing"
+    },
+    {
+      "id": "archive-approved",
+      "from": "approved",
+      "event": "archive",
+      "v1": "archived",
+      "v2": "archived"
+    },
+    {
+      "id": "retry-publishing",
+      "from": "publishing",
+      "event": "retry",
+      "v1": "approved",
+      "v2": "approved"
+    },
+    {
+      "id": "block-publishing",
+      "from": "publishing",
+      "event": "block",
+      "v1": "blocked",
+      "v2": "blocked"
+    },
+    {
+      "id": "publish-publishing",
+      "from": "publishing",
+      "event": "publish",
+      "v1": "published",
+      "v2": "published"
+    },
+    {
+      "id": "approve-blocked",
+      "from": "blocked",
+      "event": "approve",
+      "v1": "approved",
+      "v2": "approved"
+    },
+    {
+      "id": "restore-archived",
+      "from": "archived",
+      "event": "restore",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    },
+    {
+      "id": "change-approved",
+      "from": "approved",
+      "event": "source_changed",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    },
+    {
+      "id": "change-publishing",
+      "from": "publishing",
+      "event": "source_changed",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    },
+    {
+      "id": "change-rejected",
+      "from": "rejected",
+      "event": "source_changed",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    },
+    {
+      "id": "change-blocked",
+      "from": "blocked",
+      "event": "source_changed",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    }
+  ],
+  "invalidTransitionCases": [
+    {
+      "id": "update-blocked",
+      "from": "blocked",
+      "event": "update",
+      "v1": "rejected",
+      "v2": "rejected"
+    },
+    {
+      "id": "publish-unreviewed",
+      "from": "pending_review",
+      "event": "publish",
+      "v1": "rejected",
+      "v2": "rejected"
+    },
+    {
+      "id": "claim-rejected",
+      "from": "rejected",
+      "event": "claim",
+      "v1": "rejected",
+      "v2": "rejected"
+    },
+    {
+      "id": "approve-published",
+      "from": "published",
+      "event": "approve",
+      "v1": "rejected",
+      "v2": "rejected"
+    }
+  ],
+  "recoveryCases": [
+    {
+      "id": "expired-lease-google-checkpoint",
+      "input": {
+        "status": "publishing",
+        "lease": "expired",
+        "googleDocId": "doc-1"
+      },
+      "v1Expected": {
+        "status": "publishing",
+        "attemptsDelta": 1,
+        "existingGoogleDocId": "doc-1"
+      }
+    },
+    {
+      "id": "discord-retry-after",
+      "input": {
+        "status": "publishing",
+        "retryAfterSeconds": 10,
+        "googleDocId": "doc-1"
+      },
+      "v1Expected": {
+        "status": "approved",
+        "retryScheduled": true,
+        "existingGoogleDocId": "doc-1"
+      }
+    },
+    {
+      "id": "terminal-provider-failure",
+      "input": {
+        "status": "publishing",
+        "retryAfterSeconds": null
+      },
+      "v1Expected": {
+        "status": "blocked",
+        "retryScheduled": false
+      }
+    }
+  ],
+  "reviewCases": [
+    {
+      "id": "reviewed-purpose-normalization",
+      "input": "  Publish the owner reviewed outcome  ",
+      "v1Expected": {
+        "outcome": "accepted",
+        "discordPurpose": "Publish the owner reviewed outcome."
+      }
+    },
+    {
+      "id": "empty-reviewed-purpose",
+      "input": "   ",
+      "v1Expected": {
+        "outcome": "rejected"
+      }
+    },
+    {
+      "id": "oversized-reviewed-purpose",
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "v1Expected": {
+        "outcome": "rejected"
+      }
+    }
+  ],
+  "reviewLifecycle": {
+    "retry": "retained",
+    "restart": "retained",
+    "sourceChanged": "cleared",
+    "archive": "cleared",
+    "published": "cleared"
+  },
+  "canonicalNoteEditing": {
+    "maxCodePoints": 50000,
+    "normalization": "crlf-and-cr-to-lf-trim-single-terminal-newline",
+    "validation": [
+      "project",
+      "iso-date",
+      "executive-summary",
+      "no-transcript",
+      "item-identity"
+    ],
+    "path": "existing-non-symlink-under-explicit-source-root",
+    "write": "same-directory-atomic-replace-preserve-mode",
+    "lifecycle": "pending-review-only-hash-refreshed-approval-cleared",
+    "providerSideEffects": "none-until-separate-approval",
+    "reviewAction": "separate-update-note-post",
+    "defaultMaxFormBytes": 1000000
+  },
+  "privacy": {
+    "persistedContent": "metadata-digests-and-bounded-transient-purpose-only",
+    "reviewerPurposeOverride": "bounded-transient-owner-only-queue-state",
+    "providerResponseBody": "never"
+  },
+  "providerContract": {
+    "order": [
+      "google",
+      "discord"
+    ],
+    "google": {
+      "identity": "exact-owner-before-every-write",
+      "credentialAuthority": "oauth-drive.file",
+      "folderIdentity": "deterministic-app-property",
+      "documentIdentity": "meeting-item-app-property",
+      "update": "replace-existing-document-content",
+      "publicPermission": "anyone-reader-idempotent",
+      "duplicateMatch": "terminal-without-duplicate-document-write"
+    },
+    "discord": {
+      "identity": "bot-and-exact-target-channel-before-every-write",
+      "create": "item-id-nonce-with-enforcement",
+      "update": "checkpointed-channel-and-message-without-create-fallback",
+      "mentions": "suppressed",
+      "content": "approved-purpose-and-stable-google-url-only"
+    },
+    "failures": {
+      "terminal": [
+        "authentication_failed",
+        "permission_denied",
+        "provider_not_found",
+        "identity_mismatch",
+        "duplicate_resource",
+        "checkpoint_mismatch",
+        "unsafe_redirect"
+      ],
+      "transient": [
+        "request_timeout",
+        "rate_limited",
+        "provider_unavailable",
+        "network_error",
+        "timeout",
+        "invalid_response",
+        "response_too_large"
+      ],
+      "retryAfter": "bounded-positive-seconds-or-safe-default"
+    },
+    "notifier": "content-free-kind-and-count-with-bounded-process-lifecycle",
+    "persistence": "provider-bodies-and-credentials-never-in-workflow-state"
+  },
+  "providerCases": {
+    "httpFailures": [
+      {
+        "id": "authentication",
+        "status": 401,
+        "code": "authentication_failed",
+        "retryable": false,
+        "retryAfterSeconds": null
+      },
+      {
+        "id": "permission",
+        "status": 403,
+        "code": "permission_denied",
+        "retryable": false,
+        "retryAfterSeconds": null
+      },
+      {
+        "id": "not-found",
+        "status": 404,
+        "code": "provider_not_found",
+        "retryable": false,
+        "retryAfterSeconds": null
+      },
+      {
+        "id": "request-timeout",
+        "status": 408,
+        "code": "request_timeout",
+        "retryable": true,
+        "retryAfter": "2",
+        "retryAfterSeconds": 2
+      },
+      {
+        "id": "rate-limit",
+        "status": 429,
+        "code": "rate_limited",
+        "retryable": true,
+        "retryAfter": "7",
+        "retryAfterSeconds": 7
+      },
+      {
+        "id": "unavailable",
+        "status": 503,
+        "code": "provider_unavailable",
+        "retryable": true,
+        "retryAfter": "4",
+        "retryAfterSeconds": 4
+      },
+      {
+        "id": "redirect",
+        "status": 302,
+        "code": "unsafe_redirect",
+        "retryable": false,
+        "retryAfterSeconds": null
+      }
+    ],
+    "retryPolicy": {
+      "providerMaxAttempts": null,
+      "terminalAttemptSchedulesRetry": true
+    },
+    "unsafeLoopbackOrigins": [
+      "https://127.0.0.1:9443",
+      "http://localhost:9443",
+      "http://example.test:9443",
+      "http://user:secret@127.0.0.1:9443",
+      "http://127.0.0.1:9443/provider"
+    ],
+    "discordContent": {
+      "maxCodePoints": 2000,
+      "maxBytes": 8000,
+      "escapesMarkupBeforeMeasuring": true
+    },
+    "lostResponseRecovery": {
+      "googleDocumentIdentity": "harnessyMeetingItemId",
+      "discordCreateIdentity": "enforced-item-id-nonce"
+    }
+  }
+}

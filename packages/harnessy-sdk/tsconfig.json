@@ -11,9 +11,12 @@
 		"noEmit": true,
 		"types": ["node"],
 		"paths": {
+			"@packed/core-operational-runtime": ["../harnessy-core/src/jarvis/meeting-publication/operational-runtime.ts"],
+			"@packed/local-host-smoke-command": ["../harnessy-local-host/src/meeting-smoke-command.ts"],
 			"@harnessy/core/connectors/anytype": ["../harnessy-core/src/connectors/anytype.ts"],
 			"@harnessy/core/connectors/knowledge": ["../harnessy-core/src/connectors/knowledge.ts"],
 			"@harnessy/core/connectors/loopback": ["../harnessy-core/src/connectors/loopback.ts"],
+			"@harnessy/core/meeting-publication": ["../harnessy-core/src/meeting-publication.ts"],
 			"@executor-js/fumadb": ["../../executor/packages/core/fumadb/src/index.ts"],
 			"@executor-js/fumadb/adapters/drizzle": [
 				"../../executor/packages/core/fumadb/src/adapters/drizzle/index.ts"
@@ -31,6 +34,7 @@
 			"@executor-js/sdk": ["../../executor/packages/core/sdk/src/index.ts"],
 			"@executor-js/sdk/core": ["../../executor/packages/core/sdk/src/index.ts"],
 			"@executor-js/sdk/http-auth": ["../../executor/packages/core/sdk/src/http-auth/index.ts"],
+			"@executor-js/sdk/host-internal": ["../../executor/packages/core/sdk/src/host-internal.ts"],
 			"@executor-js/sdk/shared": ["../../executor/packages/core/sdk/src/shared.ts"],
 			// /executor has a self-contained beta.59 runtime for hsy web. Source
 			// composition must always bind to Harnessy's beta.85 instance.

@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+"""Build a bounded weekly-plan prompt from file-backed context.
+
+The shared AI runner accepts prompts on stdin, but some provider adapters must
+forward that prompt as a single CLI argument. Keeping the final prompt below a
+conservative ceiling prevents large collect-state payloads from reaching the OS
+argument limit while retaining the planning-relevant shape of the state.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+
+MAX_PROMPT_BYTES = 64_000
+STATE_BYTES = 24_000
+SECTION_BYTES = {
+    "priorities": 12_000,
+    "competence priorities": 12_000,
+    "status": 4_000,
+    "roadmap": 4_000,
+    "monthly review": 8_000,
+    "weekly plan template": 4_000,
+}
+
+TOP_LEVEL_KEY_ORDER = (
+    "priorities",
+    "competence_priorities",
+    "projects",
+    "project_context_vaults",
+    "notes",
+    "recent_meetings",
+    "git",
+    "agents",
+    "tmux_sessions",
+    "cron",
+    "jarvis",
+    "wiki_updates",
+    "changed",
+    "timestamp",
+)
+
+# Progressively smaller deterministic shapes. The first shape that fits the
+# state budget wins, so ordinary state retains substantially more detail than a
+# pathological multi-megabyte payload.
+COMPACTION_PROFILES = (
+    (2_000, 40, 100),
+    (1_200, 25, 70),
+    (700, 16, 50),
+    (400, 10, 32),
+    (240, 7, 24),
+    (140, 5, 18),
+    (80, 4, 14),
+    (48, 3, 10),
+)
+
+
+def byte_length(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def truncate_text(text: str, max_bytes: int) -> str:
+    """Return a UTF-8-safe prefix that includes its own truncation marker."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+
+    marker = f"\n\n[truncated from {len(encoded)} bytes]\n"
+    marker_bytes = marker.encode("utf-8")
+    prefix_bytes = encoded[: max(0, max_bytes - len(marker_bytes))]
+    prefix = prefix_bytes.decode("utf-8", errors="ignore")
+    result = prefix + marker
+    while byte_length(result) > max_bytes and prefix:
+        prefix = prefix[:-1]
+        result = prefix + marker
+    return result
+
+
+def ordered_keys(value: dict[str, Any], depth: int) -> list[str]:
+    keys = [str(key) for key in value]
+    if depth != 0:
+        return sorted(keys)
+    preferred = [key for key in TOP_LEVEL_KEY_ORDER if key in value]
+    remaining = sorted(key for key in keys if key not in preferred)
+    return preferred + remaining
+
+
+def shrink_value(
+    value: Any,
+    *,
+    string_limit: int,
+    list_limit: int,
+    dict_limit: int,
+    depth: int = 0,
+) -> Any:
+    if isinstance(value, str):
+        return truncate_text(value, string_limit)
+    if isinstance(value, list):
+        items = [
+            shrink_value(
+                item,
+                string_limit=string_limit,
+                list_limit=list_limit,
+                dict_limit=dict_limit,
+                depth=depth + 1,
+            )
+            for item in value[:list_limit]
+        ]
+        omitted = len(value) - len(items)
+        if omitted:
+            items.append({"_compacted_omitted_items": omitted})
+        return items
+    if isinstance(value, dict):
+        keys = ordered_keys(value, depth)
+        selected = keys[:dict_limit]
+        result = {
+            key: shrink_value(
+                value[key],
+                string_limit=string_limit,
+                list_limit=list_limit,
+                dict_limit=dict_limit,
+                depth=depth + 1,
+            )
+            for key in selected
+        }
+        omitted = len(keys) - len(selected)
+        if omitted:
+            result["_compacted_omitted_keys"] = omitted
+        return result
+    return value
+
+
+def serialize_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+
+
+def compact_state(state: Any, max_bytes: int = STATE_BYTES) -> tuple[str, int]:
+    """Serialize state to valid JSON no larger than ``max_bytes``."""
+    original = serialize_json(state)
+    original_bytes = byte_length(original)
+    if original_bytes <= max_bytes:
+        return original, original_bytes
+
+    for string_limit, list_limit, dict_limit in COMPACTION_PROFILES:
+        compacted = shrink_value(
+            state,
+            string_limit=string_limit,
+            list_limit=list_limit,
+            dict_limit=dict_limit,
+        )
+        if isinstance(compacted, dict):
+            compacted = {
+                "_weekly_compaction": {
+                    "original_bytes": original_bytes,
+                    "string_limit": string_limit,
+                    "list_limit": list_limit,
+                    "dict_limit": dict_limit,
+                },
+                **compacted,
+            }
+        candidate = serialize_json(compacted)
+        if byte_length(candidate) <= max_bytes:
+            return candidate, original_bytes
+
+    # This fallback is intentionally small and deterministic. It should be
+    # unreachable for collect-state's known schema, but still guarantees the
+    # provider never receives an unbounded argument if that schema expands.
+    if isinstance(state, dict):
+        key_summary = [
+            {"key": key, "type": type(state[key]).__name__}
+            for key in ordered_keys(state, 0)[:50]
+        ]
+    else:
+        key_summary = [{"type": type(state).__name__}]
+    fallback = serialize_json(
+        {
+            "_weekly_compaction": {
+                "original_bytes": original_bytes,
+                "detail": "State exceeded all compaction profiles; top-level shape retained.",
+            },
+            "top_level": key_summary,
+        }
+    )
+    if byte_length(fallback) > max_bytes:
+        raise ValueError("weekly state summary exceeded the fixed state budget")
+    return fallback, original_bytes
+
+
+def read_section(label: str, path: Path, *, required: bool = False) -> str:
+    if not path.is_file():
+        if required:
+            raise FileNotFoundError(f"{label} missing at {path}")
+        print(f"WARN: {label} not found at {path}", file=sys.stderr)
+        return f"(no {label} available)"
+    text = path.read_text(encoding="utf-8", errors="replace")
+    return truncate_text(text, SECTION_BYTES[label])
+
+
+def build_prompt(args: argparse.Namespace) -> tuple[str, int, int]:
+    with args.state_file.open("r", encoding="utf-8") as handle:
+        state = json.load(handle)
+    state_json, original_state_bytes = compact_state(state)
+
+    priorities = read_section("priorities", args.priorities)
+    competence_priorities = read_section(
+        "competence priorities",
+        args.competence_priorities,
+    )
+    status = read_section("status", args.status)
+    roadmap = read_section("roadmap", args.roadmap)
+    monthly_review = read_section("monthly review", args.monthly_review)
+    template = read_section("weekly plan template", args.template, required=True)
+
+    prompt = f"""You are writing the user's weekly planning note. Output ONLY the plan in markdown - no preamble, no commentary, no questions.
+
+Voice and style:
+- Write like a sharp teammate who knows the work, not like an AI report or strategy memo.
+- Use plain human language, short paragraphs, and concrete verbs.
+- Be specific about names, projects, dates, blockers, and decisions.
+- Avoid grand framing and consultant phrases such as "center of gravity", "proof loop", "unlock",
+  "operating leverage", "surfaced", "material", "front-line execution", "decision gate",
+  "low-friction", "at scale", and "lane-based".
+- If a sentence sounds like a memo headline, rewrite it as the direct fact.
+- Do not scold the user for having many active projects. Treat the portfolio as intentional and
+  focus on owners, cadence, decisions, and follow-through.
+
+Output contract:
+- Follow the weekly executive-pack template headings exactly and keep the full plan to roughly
+  1,200 words or fewer.
+- Include no more than five items in each of What Changed, Decisions For Julian, and Risks And
+  Stale Claims. Prefer the few signals that can change a decision this week.
+- Keep Flow Research/nonprofit money and Company money separate. Never merge their pipeline,
+  signed value, cash received, or next actions. When an amount has not been reconciled, write
+  "Unknown — not reconciled"; never convert missing evidence into a numeric zero.
+- Do not return delegated work to Julian when an owner misses a date. Name the blocker and have
+  the operating owner propose a replacement owner, escalation, or stop decision for Julian.
+- Use Competence Priorities as the durable learning contract. Reserve its current weekly learning
+  block and use the specific allocation and subjects under its Current Cycle. Name at least one
+  study or experiment for the technical strand and one study, case analysis, or practitioner
+  conversation for the institutional/economic strand. Ordinary product steering does not count as
+  technical study merely because the product uses AI. A short synthesis may connect both strands.
+  Keep immediate commitments in Priorities sovereign and do not paste the full curriculum into the
+  plan.
+- For every material changed signal, buyer/programme update, decision, money item, or risk, state
+  the evidence available and a concrete next action with its owner and date. Mark unknown or
+  stale evidence explicitly and assign a verification action/date instead of guessing.
+
+# Priorities
+{priorities}
+
+# Competence Priorities
+{competence_priorities}
+
+# Status
+{status}
+
+# Roadmap
+{roadmap}
+
+# Monthly Review
+{monthly_review}
+
+# Weekly Plan Template (follow this structure)
+{template}
+
+# Current Project State (JSON)
+```json
+{state_json}
+```
+
+Produce the weekly plan for Week {args.week} of {args.year} ({args.month}). Use the template structure, but keep
+the language direct and natural. Output the markdown plan only.
+"""
+    prompt_bytes = byte_length(prompt)
+    if prompt_bytes > MAX_PROMPT_BYTES:
+        raise ValueError(
+            f"bounded weekly prompt is {prompt_bytes} bytes; limit is {MAX_PROMPT_BYTES}"
+        )
+    return prompt, original_state_bytes, byte_length(state_json)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build a bounded weekly planning prompt.")
+    parser.add_argument("--state-file", type=Path, required=True)
+    parser.add_argument("--priorities", type=Path, required=True)
+    parser.add_argument("--competence-priorities", type=Path, required=True)
+    parser.add_argument("--status", type=Path, required=True)
+    parser.add_argument("--roadmap", type=Path, required=True)
+    parser.add_argument("--monthly-review", type=Path, required=True)
+    parser.add_argument("--template", type=Path, required=True)
+    parser.add_argument("--week", required=True)
+    parser.add_argument("--year", required=True)
+    parser.add_argument("--month", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    try:
+        prompt, original_state_bytes, compacted_state_bytes = build_prompt(args)
+        args.output.write_text(prompt, encoding="utf-8")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"ERROR: could not prepare weekly prompt: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        "Weekly prompt prepared: "
+        f"state {original_state_bytes} -> {compacted_state_bytes} bytes; "
+        f"prompt {byte_length(prompt)} bytes",
+        file=sys.stderr,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

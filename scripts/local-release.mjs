@@ -5,17 +5,21 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const packages = [
-	{ directory: "packages/ai", name: "@earendil-works/pi-ai" },
-	{ directory: "packages/tui", name: "@earendil-works/pi-tui" },
-	{ directory: "packages/agent", name: "@earendil-works/pi-agent-core" },
-	{ directory: "packages/coding-agent", name: "@earendil-works/pi-coding-agent" },
-];
+import { currentExecutorPlatformTag, packedReleasePackages } from "./harnessy-release-contract.mjs";
+
+const packages = packedReleasePackages([currentExecutorPlatformTag()]).map((pkg) => ({
+	...pkg,
+	build:
+		pkg.directory.startsWith("executor/") || pkg.directory.startsWith("packages/capability-")
+			? false
+			: undefined,
+	buildScript: pkg.directory === "packages/ai" ? "build:ts" : undefined,
+}));
 
 function printUsage() {
 	console.log(`Usage: node scripts/local-release.mjs [options]
 
-Builds and packs the publishable packages, then installs the tarballs into an
+Builds and packs the Harnessy and inherited Pi packages, then installs the tarballs into an
 isolated directory outside the repository for local release testing.
 
 Options:
@@ -99,7 +103,7 @@ function isInsidePath(child, parent) {
 
 function prepareOutputDirectory(options, repoRoot) {
 	if (!options.outDir) {
-		return mkdtempSync(join(tmpdir(), "pi-local-release-"));
+		return mkdtempSync(join(tmpdir(), "harnessy-local-release-"));
 	}
 
 	const outDir = resolve(options.outDir);
@@ -173,12 +177,20 @@ function packPackage(pkg, tarballDirectory) {
 	if (packageJson.name !== pkg.name) {
 		throw new Error(`${pkg.directory}/package.json has name ${packageJson.name}, expected ${pkg.name}`);
 	}
+	for (const [path, expectedText] of Object.entries(pkg.requiredText ?? {})) {
+		const content = readFileSync(join(pkg.directory, path), "utf8");
+		if (!content.includes(expectedText)) throw new Error(`${pkg.name} build output ${path} is stale or missing ${expectedText}`);
+	}
 
-	const output = run("npm", ["pack", "--json", "--pack-destination", tarballDirectory], {
+	const output = run("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", tarballDirectory], {
 		capture: true,
 		cwd: pkg.directory,
 	});
 	const packed = JSON.parse(output)[0];
+	const packedPaths = new Set(packed.files.map((file) => file.path));
+	for (const requiredFile of pkg.requiredFiles ?? []) {
+		if (!packedPaths.has(requiredFile)) throw new Error(`${pkg.name} tarball is missing ${requiredFile}`);
+	}
 	return join(tarballDirectory, packed.filename);
 }
 
@@ -186,7 +198,7 @@ const options = parseArgs();
 const repoRoot = process.cwd();
 const rootPackageJson = readPackageJson(repoRoot);
 
-if (rootPackageJson.name !== "pi-monorepo") {
+if (rootPackageJson.name !== "harnessy-v2") {
 	throw new Error("Run this script from the repository root");
 }
 
@@ -202,14 +214,17 @@ if (!options.skipCheck) {
 }
 
 for (const pkg of packages) {
+	if (pkg.build === false) continue;
 	run("npm", ["run", "clean"], { cwd: pkg.directory });
-	run("npm", ["run", "build"], { cwd: pkg.directory });
+	run("npm", ["run", pkg.buildScript ?? "build"], { cwd: pkg.directory });
 }
+
+run(process.execPath, [join(repoRoot, "scripts/build-harnessy-executor.mjs")], { cwd: repoRoot });
 
 const tarballs = new Map();
 for (const pkg of packages) {
 	const tarball = packPackage(pkg, tarballDirectory);
-	tarballs.set(pkg.name, tarball);
+	tarballs.set(pkg.key ?? pkg.name, tarball);
 }
 
 let binaryPlatform;
@@ -218,12 +233,13 @@ if (!options.skipInstall) {
 
 	mkdirSync(nodeInstallDirectory, { recursive: true });
 	const dependencies = Object.fromEntries(
-		packages.map((pkg) => [pkg.name, fileSpecifier(nodeInstallDirectory, tarballs.get(pkg.name))]),
+		packages.map((pkg) => [pkg.installName ?? pkg.name, fileSpecifier(nodeInstallDirectory, tarballs.get(pkg.key ?? pkg.name))]),
 	);
 	const installPackageJson = `${JSON.stringify({ private: true, dependencies, overrides: dependencies }, undefined, "\t")}\n`;
 	writeFileSync(join(nodeInstallDirectory, "package.json"), installPackageJson);
 
 	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: nodeInstallDirectory });
+	run("npm", ["audit", "--omit=dev", "--audit-level=moderate"], { cwd: nodeInstallDirectory });
 	createPiShim(nodeInstallDirectory);
 
 	if (!options.skipBunInstall) {
@@ -232,7 +248,7 @@ if (!options.skipInstall) {
 		}
 		mkdirSync(bunInstallDirectory, { recursive: true });
 		const bunDependencies = Object.fromEntries(
-			packages.map((pkg) => [pkg.name, fileSpecifier(bunInstallDirectory, tarballs.get(pkg.name))]),
+			packages.map((pkg) => [pkg.installName ?? pkg.name, fileSpecifier(bunInstallDirectory, tarballs.get(pkg.key ?? pkg.name))]),
 		);
 		writeFileSync(join(bunInstallDirectory, "package.json"), `${JSON.stringify({ private: true, dependencies: bunDependencies, overrides: bunDependencies }, undefined, "\t")}\n`);
 		run("bun", ["install", "--production", "--ignore-scripts"], { cwd: bunInstallDirectory });
@@ -258,6 +274,8 @@ if (!options.skipInstall) {
 	console.log(`  ${nodeInstallDirectory}`);
 	console.log("\nRun the locally packed npm CLI from outside the repository:");
 	console.log(`  ${join(nodeInstallDirectory, process.platform === "win32" ? "pi.cmd" : "pi")} --help`);
+	console.log(`  ${join(nodeInstallDirectory, "node_modules", ".bin", process.platform === "win32" ? "harnessy.cmd" : "harnessy")} --help`);
+	console.log(`  ${join(nodeInstallDirectory, "node_modules", ".bin", process.platform === "win32" ? "hsy.cmd" : "hsy")} --help`);
 
 	if (!options.skipBunInstall) {
 		console.log("\nIsolated Bun package install:");

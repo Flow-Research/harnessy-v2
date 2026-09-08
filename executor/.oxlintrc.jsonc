@@ -1,0 +1,167 @@
+{
+  "plugins": ["react"],
+  "jsPlugins": [{ "name": "executor", "specifier": "./scripts/oxlint-plugin-executor.js" }],
+  "rules": {
+    "typescript/no-explicit-any": "error",
+    "executor/no-vitest-import": "error",
+    "executor/no-conditional-tests": "error",
+    "executor/no-double-cast": "error",
+    "executor/no-cross-package-relative-imports": "error",
+    "executor/no-direct-cloud-executor-schema-import": "error",
+    "executor/require-reactivity-keys": "error",
+    "executor/no-effect-escape-hatch": "error",
+    "executor/no-effect-internal-tags": "error",
+    "executor/no-error-constructor": "error",
+    "executor/no-inline-schema-compile": "error",
+    "executor/no-instanceof-error": "error",
+    "executor/no-instanceof-tagged-error": "error",
+    "executor/no-json-parse": "error",
+    "executor/no-manual-tag-check": "error",
+    "executor/no-match-orelse": "error",
+    "executor/no-promise-catch": "error",
+    "executor/no-promise-reject": "error",
+    "executor/no-raw-durable-object-id": "error",
+    "executor/no-raw-fetch": "error",
+    "executor/no-redundant-primitive-cast": "error",
+    "executor/no-redundant-error-factory": "error",
+    "executor/no-schema-class": "error",
+    "executor/no-switch-statement": "error",
+    "executor/no-ts-nocheck": "error",
+    "executor/no-try-catch-or-throw": "error",
+    "executor/no-unknown-error-message": "error",
+    "executor/no-unsupported-effect-api": "error",
+    "executor/prefer-effect-predicate": "error",
+    "executor/prefer-schema-inferred-types": "error",
+    "executor/prefer-value-inferred-extension-types": "error",
+    "executor/prefer-yield-tagged-error": "error",
+    "react/forbid-elements": [
+      "error",
+      {
+        "forbid": [
+          {
+            "element": "button",
+            "message": "Use <Button> from @executor/react",
+          },
+          { "element": "input", "message": "Use <Input> from @executor/react" },
+          {
+            "element": "textarea",
+            "message": "Use <Textarea> from @executor/react",
+          },
+          {
+            "element": "select",
+            "message": "Use <Select> or <NativeSelect> from @executor/react",
+          },
+          { "element": "table", "message": "Use <Table> from @executor/react" },
+          { "element": "label", "message": "Use <Label> from @executor/react" },
+        ],
+      },
+    ],
+  },
+  "overrides": [
+    {
+      "files": [
+        "apps/cli/src/**/*.{ts,tsx}",
+        "apps/desktop/src/main.ts",
+        "scripts/**/*.{ts,js}",
+        "apps/*/scripts/**/*.{ts,js}",
+        "packages/kernel/runtime-*/src/**/*.{ts,tsx,js,mjs}",
+      ],
+      "rules": {
+        "executor/no-effect-escape-hatch": "off",
+        "executor/no-error-constructor": "off",
+        "executor/no-instanceof-error": "off",
+        "executor/no-json-parse": "off",
+        "executor/no-promise-catch": "off",
+        "executor/no-promise-reject": "off",
+        "executor/no-switch-statement": "off",
+        "executor/no-try-catch-or-throw": "off",
+        "executor/no-unknown-error-message": "off",
+      },
+    },
+    {
+      // The e2e harness internals are adapter boundaries over promise-native
+      // drivers (Playwright, PTY, mcporter, raw HTTP) plus build tooling (the
+      // run viewer); they normalize untyped failures into the recorded
+      // transcript. Scenario code (e2e/scenarios, e2e/cloud, …) stays strict.
+      "files": ["e2e/**/*.{ts,tsx}"],
+      "rules": {
+        // The viewer is standalone tooling — it deliberately doesn't pull the
+        // product design system or Effect in.
+        "react/forbid-elements": "off",
+        "executor/no-switch-statement": "off",
+        "executor/no-effect-escape-hatch": "off",
+        "executor/no-error-constructor": "off",
+        "executor/no-instanceof-error": "off",
+        "executor/no-instanceof-tagged-error": "off",
+        "executor/no-json-parse": "off",
+        "executor/no-manual-tag-check": "off",
+        "executor/no-promise-catch": "off",
+        "executor/no-redundant-primitive-cast": "off",
+        "executor/no-try-catch-or-throw": "off",
+        "executor/no-unknown-error-message": "off",
+      },
+    },
+    {
+      "files": ["apps/marketing/src/**/*.{astro,ts,tsx}"],
+      "rules": {
+        "executor/no-effect-escape-hatch": "off",
+        "executor/no-error-constructor": "off",
+        "executor/no-instanceof-error": "off",
+        "executor/no-json-parse": "off",
+        "executor/no-promise-catch": "off",
+        "executor/no-try-catch-or-throw": "off",
+        "executor/no-unknown-error-message": "off",
+      },
+    },
+    {
+      "files": ["packages/core/vite-plugin/src/**/*.{ts,tsx}"],
+      "rules": {
+        "executor/no-try-catch-or-throw": "off",
+      },
+    },
+    {
+      "files": ["packages/kernel/core/src/code-recovery.ts"],
+      "rules": {
+        "executor/no-switch-statement": "off",
+      },
+    },
+    {
+      "files": ["packages/react/src/components/**/*.{ts,tsx}"],
+      "rules": {
+        "executor/no-error-constructor": "off",
+        "executor/no-try-catch-or-throw": "off",
+      },
+    },
+    {
+      "files": ["packages/plugins/workos-vault/src/**/*.{ts,tsx}"],
+      "rules": {
+        "executor/no-inline-object-type-assertion": "error",
+        "executor/no-instanceof-tagged-error": "error",
+        "executor/no-manual-tag-check": "error",
+        "executor/no-promise-client-surface": "error",
+        "executor/no-raw-error-throw": "error",
+        "executor/no-redundant-error-factory": "error",
+        "executor/no-unknown-shape-probing": "error",
+      },
+    },
+  ],
+  "ignorePatterns": [
+    ".astro/",
+    ".reference/",
+    ".references/",
+    ".turbo/",
+    ".worktrees/",
+    "dist/",
+    "vendor/",
+    "emulators/",
+    "e2e/runs/",
+    "e2e/desktop-packaged/linux-vm/repro.mjs",
+    "node_modules/",
+    "packages/core/fumadb/",
+    "packages/core/sdk/src/vendor/json-schema-to-typescript/",
+    "bun.lock",
+    "*.tsbuildinfo",
+    "executor-*.tgz",
+    "**/routeTree.gen.ts",
+  ],
+}

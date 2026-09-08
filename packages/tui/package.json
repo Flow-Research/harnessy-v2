@@ -14,6 +14,7 @@
 		"dist/**/*",
 		"native/win32/prebuilds/**/*.node",
 		"native/darwin/prebuilds/**/*.node",
+		"LICENSE",
 		"README.md"
 	],
 	"keywords": [

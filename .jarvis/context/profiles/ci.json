@@ -1,0 +1,124 @@
+{
+	"version": 1,
+	"project": {
+		"name": "harnessy-v2",
+		"integrationBranch": "dev",
+		"productionBranch": "main",
+		"checkpointBase": "7782ac8635754b15c008f41b3b828557f68e75c2"
+	},
+	"triggers": {
+		"required": [
+			"pull_request:main",
+			"pull_request:dev",
+			"push:main",
+			"push:dev"
+		],
+		"release": "tag:v*"
+	},
+	"gates": [
+		{
+			"name": "non-mutating build and check",
+			"commands": [
+				"npm run build",
+				"npm run check",
+				"git diff --exit-code"
+			],
+			"required": true
+		},
+		{
+			"name": "QA contract",
+			"commands": [
+				"npm run qa:check",
+				"npm run test:qa-contract",
+				"npm run test:qa-scenarios"
+			],
+			"required": true
+		},
+		{
+			"name": "workspace and Harnessy coverage",
+			"commands": [
+				"./test.sh",
+				"npm run test:coverage"
+			],
+			"required": true
+		},
+		{
+			"name": "compatibility",
+			"commands": [
+				"npm run verify:v1-compatibility",
+				"npm run test:compatibility"
+			],
+			"required": false
+		},
+		{
+			"name": "Executor",
+			"commands": [
+				"npm run test:executor",
+				"npm run test:executor-package-contract",
+				"npm run test:executor-package-integration"
+			],
+			"required": true
+		},
+		{
+			"name": "packed consumers and release contracts",
+			"commands": [
+				"npm run test:engine-fixture",
+				"npm run test:sdk-fixture",
+				"npm run test:local-host-fixture",
+				"npm run test:release-artifacts",
+				"git diff --exit-code",
+				"npm run check:clean-worktree"
+			],
+			"required": true
+		},
+		{
+			"name": "security",
+			"commands": [
+				"npm run security:check",
+				"npm audit --audit-level=moderate",
+				"npm run audit:executor"
+			],
+			"required": true
+		},
+		{
+			"name": "supply-chain evidence",
+			"commands": [
+				"npm run test:supply-chain",
+				"npm run supply-chain:generate",
+				"npm run supply-chain:verify",
+				"npm run supply-chain:reproducibility"
+			],
+			"required": true
+		}
+	],
+	"remote": {
+		"hostedEvidenceForCheckpoint": false,
+		"branchProtectionConfiguredByThisCheckpoint": false,
+		"requiredCheckNames": [
+			"CI / Harnessy build, QA, and packages",
+			"CI / Executor source",
+			"CI / Supply-chain evidence",
+			"CI / Packaged Executor (ubuntu-latest)",
+			"CI / Packaged Executor (macos-14)",
+			"CI / Packaged Executor (windows-latest)",
+			"Security Gates / Root dependencies and invariants",
+			"Security Gates / Executor dependencies"
+		]
+	},
+	"release": {
+		"productionTrigger": "semver-tag",
+		"tagPattern": "v*",
+		"preflightCommand": "npm run release:preflight",
+		"sdkPublished": false,
+		"blockers": [
+			"authoritative Harnessy license and package artifacts",
+			"hosted required checks",
+			"explicit publication approval"
+		]
+	},
+	"evidence": {
+		"local": "command output plus independent verifier handoff",
+		"hosted": "GitHub Actions run for the exact reviewed commit",
+		"operational": "separate authorized cutover record"
+	}
+}

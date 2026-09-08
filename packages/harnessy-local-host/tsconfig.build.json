@@ -1,0 +1,19 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"noEmit": false,
+		"outDir": "./dist",
+		"rootDir": "./src",
+		"paths": {
+			"@harnessy/core/meeting-publication": ["../harnessy-core/dist/meeting-publication.d.ts"],
+			"@harnessy/core/meeting-publication-inspector": [
+				"../harnessy-core/dist/meeting-publication-inspector.d.ts"
+			]
+		},
+		"sourceMap": false,
+		"declarationMap": false,
+		"inlineSources": false
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["node_modules", "dist", "test"]
+}

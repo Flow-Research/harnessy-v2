@@ -1,0 +1,21 @@
+{
+	"name": "@harnessy/executor",
+	"version": "0.0.3",
+	"description": "Harnessy-branded Executor runtime wrapper",
+	"type": "commonjs",
+	"license": "MIT",
+	"bin": {
+		"harnessy-executor": "bin/harnessy-executor"
+	},
+	"files": [
+		"bin",
+		"LICENSE",
+		"README.md"
+	],
+	"engines": {
+		"node": "^22.22.2 || >=24.15.0"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}

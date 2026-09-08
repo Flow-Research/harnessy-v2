@@ -23,6 +23,6 @@
     "@effect/vitest": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "wrangler": "^4.81.0"
+    "wrangler": "4.120.1"
   }
 }

@@ -3,7 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
 import * as Effect from "effect/Effect";
 
-import { CapabilityManifest, CapabilityResource } from "../src/capabilities/manifest.ts";
+import { CAPABILITY_MANIFEST_NAME, CapabilityManifest, CapabilityResource } from "../src/capabilities/manifest.ts";
 import { CapabilityMaterializer } from "../src/capabilities/materializer.ts";
 import { CapabilityEntry, CapabilitySource } from "../src/capabilities/source.ts";
 import { pathsForTarget } from "../src/paths.ts";
@@ -67,6 +67,8 @@ describe("CapabilityMaterializer", () => {
 				]);
 				expect(result.skipped).toEqual([]);
 				expect(result.issues).toEqual([]);
+				expect(yield* fs.exists(`${artifactDir}/package/${CAPABILITY_MANIFEST_NAME}`)).toBe(true);
+				expect(yield* fs.readFileString(`${artifactDir}/package/context/AGENTS.md`)).toBe("# Demo Context\n");
 				expect(yield* fs.readFileString(`${artifactDir}/resources/context/AGENTS.md`)).toBe("# Demo Context\n");
 				expect(yield* fs.readFileString(`${artifactDir}/resources/bin/run`)).toBe("#!/bin/sh\necho demo\n");
 				expect(yield* fs.readFileString(`${artifactDir}/resources/skills/tiny/README.md`)).toBe("# Tiny Skill\n");
@@ -77,13 +79,20 @@ describe("CapabilityMaterializer", () => {
 		),
 	);
 
-	it.effect("succeeds without writes when a capability has no manifest resources", () =>
+	it.effect("installs a self-contained manifest-only capability", () =>
 		provideLive(
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
 				const targetDir = yield* fs.makeTempDirectoryScoped();
 				const paths = yield* pathsForTarget(targetDir);
-				const capability = localCapability("local:no-resources", "./missing-capability", undefined);
+				const sourceRoot = `${targetDir}/manifest-only`;
+				const manifest = new CapabilityManifest({ id: "local:no-resources", name: "No Resources" });
+				yield* fs.makeDirectory(sourceRoot);
+				yield* fs.writeFileString(
+					`${sourceRoot}/${CAPABILITY_MANIFEST_NAME}`,
+					`${JSON.stringify(manifest, null, "\t")}\n`,
+				);
+				const capability = localCapability("local:no-resources", "./manifest-only", manifest);
 
 				const materializer = yield* CapabilityMaterializer;
 				const result = yield* materializer.materialize(paths, capability);
@@ -91,12 +100,12 @@ describe("CapabilityMaterializer", () => {
 				expect(result.copied).toEqual([]);
 				expect(result.skipped).toEqual([]);
 				expect(result.issues).toEqual([]);
-				expect(yield* fs.exists(result.artifactDir)).toBe(false);
+				expect(yield* fs.exists(`${result.packageDir}/${CAPABILITY_MANIFEST_NAME}`)).toBe(true);
 			}),
 		),
 	);
 
-	it.effect("skips remote capability resources without fetching", () =>
+	it.effect("fails remote capability resources without fetching or writing", () =>
 		provideLive(
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
@@ -114,18 +123,15 @@ describe("CapabilityMaterializer", () => {
 				});
 
 				const materializer = yield* CapabilityMaterializer;
-				const result = yield* materializer.materialize(paths, capability);
+				const error = yield* Effect.flip(materializer.materialize(paths, capability));
 
-				expect(result.copied).toEqual([]);
-				expect(result.skipped.map((resource) => resource.path)).toEqual(["context/AGENTS.md"]);
-				expect(result.issues).toHaveLength(1);
-				expect(result.issues[0]).toContain("remote or unresolved");
-				expect(yield* fs.exists(result.artifactDir)).toBe(false);
+				expect(error.message).toContain("remote fetching is not supported");
+				expect(yield* fs.exists(`${paths.capabilitiesDir}/npm-demo-capability`)).toBe(false);
 			}),
 		),
 	);
 
-	it.effect("skips resources that would escape source or artifact boundaries", () =>
+	it.effect("fails resources that would escape source or artifact boundaries", () =>
 		provideLive(
 			Effect.gen(function* () {
 				const fs = yield* FileSystem.FileSystem;
@@ -154,13 +160,11 @@ describe("CapabilityMaterializer", () => {
 				);
 
 				const materializer = yield* CapabilityMaterializer;
-				const result = yield* materializer.materialize(paths, capability);
+				const error = yield* Effect.flip(materializer.materialize(paths, capability));
 
-				expect(result.copied).toEqual([]);
-				expect(result.skipped.map((resource) => resource.path)).toEqual(["../outside.md", "docs/in-root.md"]);
-				expect(result.issues[0]).toContain("escapes capability root");
-				expect(result.issues[1]).toContain("escapes capability artifact resources");
+				expect(error.message).toContain("escapes its pack");
 				expect(yield* fs.exists(`${paths.capabilitiesDir}/outside-target.md`)).toBe(false);
+				expect(yield* fs.exists(`${paths.capabilitiesDir}/local-bounded-capability`)).toBe(false);
 			}),
 		),
 	);

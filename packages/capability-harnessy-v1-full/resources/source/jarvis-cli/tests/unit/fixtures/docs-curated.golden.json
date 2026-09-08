@@ -59,6 +59,72 @@
       ],
       "options": {}
     },
+    "community": {
+      "description": "Prepare and deliver public-safe community updates",
+      "subcommands": {
+        "briefing generate": {
+          "description": "Generate the latest due Sunday draft with reboot catch-up and no implicit overwrite",
+          "examples": [
+            "jarvis community briefing generate --dry-run",
+            "jarvis community briefing generate"
+          ],
+          "options": {
+            "--dry-run": "Classify and validate without writing artifacts",
+            "--json": "Emit content-free counters as JSON",
+            "--regenerate": "Back up and replace an existing draft",
+            "--week-start": "Explicit Monday in YYYY-MM-DD format"
+          }
+        },
+        "briefing preflight": {
+          "description": "Fail closed until collection, local review, schedules, Google, and Discord are ready",
+          "examples": [
+            "jarvis community briefing preflight"
+          ],
+          "options": {
+            "--json": "Emit safe readiness checks as JSON",
+            "--no-providers": "Skip live Google and Discord checks",
+            "--no-runtime": "Skip launchd health checks"
+          }
+        },
+        "briefing review open": {
+          "description": "Open the shared authenticated local publication inbox",
+          "examples": [
+            "jarvis community briefing review open"
+          ]
+        },
+        "briefing setup": {
+          "description": "Configure the private weekly evidence root, draft directory, and dedicated Discord channel",
+          "examples": [
+            "jarvis community briefing setup --discord-channel-id 123456789012345678"
+          ],
+          "options": {
+            "--discord-channel-id": "Dedicated Discord text-channel numeric ID",
+            "--draft-path": "Owner-only weekly artifact directory override",
+            "--enable / --disable": "Enable only after a channel is configured",
+            "--source-path": "Private contributor context root override"
+          }
+        },
+        "briefing status": {
+          "description": "Show content-free weekly briefing queue and readiness",
+          "examples": [
+            "jarvis community briefing status"
+          ],
+          "options": {
+            "--json": "Emit the result as JSON"
+          }
+        },
+        "briefing worker": {
+          "description": "Publish approved weekly artifacts only",
+          "examples": [
+            "jarvis community briefing worker"
+          ],
+          "options": {
+            "--json": "Emit content-free counters as JSON",
+            "--max-items": "Maximum approved items per run"
+          }
+        }
+      }
+    },
     "config": {
       "description": "Manage Jarvis configuration",
       "subcommands": {
@@ -115,6 +181,18 @@
           "examples": [
             "jarvis config show"
           ]
+        },
+        "whatsapp-setup": {
+          "description": "Interactively configure WhatsApp accounts, env vars, and shell activation",
+          "examples": [
+            "jarvis config whatsapp-setup",
+            "jarvis config whatsapp-setup --shell-profile ~/.zshrc"
+          ],
+          "options": {
+            "--env-file": "Managed env file path to write",
+            "--no-shell-profile": "Do not modify a shell profile",
+            "--shell-profile": "Shell profile to source the env file from"
+          }
         }
       }
     },
@@ -346,7 +424,7 @@
             "--created-after": "Limit Fathom search to meetings after this ISO timestamp",
             "--dest": "Destination(s): private-context, wiki, journal, memory",
             "--json": "Emit the result as JSON",
-            "--project": "Attach a project slug or label",
+            "--project": "Attach a project slug or label; configured aliases are canonicalized",
             "--tag": "Tags to attach (repeatable)",
             "--wiki-domain": "Wiki domain when using the wiki destination",
             "RECORDING_ID": "Fathom recording ID from `jarvis meeting fathom list`"
@@ -370,7 +448,7 @@
             "--limit": "Meetings to fetch per Fathom page",
             "--lookback-hours": "Use a rolling lookback window instead of local midnight/date",
             "--max-pages": "Maximum Fathom result pages to scan",
-            "--project": "Attach a project slug or label",
+            "--project": "Attach a project slug or label; configured aliases are canonicalized",
             "--skip-existing / --no-skip-existing": "Skip recordings already present in private meeting context",
             "--tag": "Tags to attach (repeatable)",
             "--wiki-domain": "Wiki domain when using the wiki destination"
@@ -405,7 +483,7 @@
             "--limit": "Meetings to fetch per Fathom page",
             "--max-pages": "Maximum Fathom result pages to scan per account",
             "--overlap-hours": "Safety overlap subtracted from the previous successful poll watermark",
-            "--project": "Attach a project slug or label",
+            "--project": "Attach a project slug or label; configured aliases are canonicalized",
             "--skip-existing / --no-skip-existing": "Skip recordings already present in private meeting context",
             "--state-file": "Override the local poll state file path",
             "--tag": "Tags to attach (repeatable)",
@@ -477,7 +555,7 @@
             "--json": "Emit the result as JSON",
             "--keep": "Keep inbox files in pending after ingestion",
             "--limit": "Maximum inbox items to ingest",
-            "--project": "Attach a project slug or label",
+            "--project": "Attach a project slug or label; configured aliases are canonicalized",
             "--tag": "Tags to attach (repeatable)",
             "--wiki-domain": "Wiki domain when using the wiki destination"
           }
@@ -495,7 +573,7 @@
             "--backend": "Backend override when auto-ingesting to the journal destination",
             "--dest": "Destination for auto-ingest: private-context, wiki, journal, memory",
             "--port": "Local port to bind",
-            "--project": "Attach a project slug or label during auto-ingest",
+            "--project": "Attach a project slug or label during auto-ingest; configured aliases are canonicalized",
             "--tag": "Tags to attach during auto-ingest",
             "--tolerance-seconds": "Maximum allowed webhook timestamp skew",
             "--verify-signatures / --no-verify-signatures": "Verify webhook signatures before accepting payloads",
@@ -526,12 +604,117 @@
             "--dest": "Destination(s): private-context, wiki, journal, memory",
             "--enrich-ai / --no-enrich-ai": "Use AI to fill missing sections",
             "--json": "Emit the result as JSON",
-            "--project": "Attach a project slug or label",
+            "--project": "Attach a project slug or label; configured aliases are canonicalized",
             "--resolver": "Override source resolution (anytype, notion, file, url, stdin)",
             "--tag": "Tags to attach (repeatable)",
             "--title": "Override the inferred meeting title",
             "--wiki-domain": "Wiki domain when using the wiki destination",
             "SOURCE": "File path, AnyType/Notion URL, generic URL, or '-' for stdin"
+          }
+        },
+        "publish approve": {
+          "description": "Approve one meeting's exact current source hash",
+          "examples": [
+            "jarvis meeting publish approve abc123"
+          ],
+          "options": {
+            "ITEM_ID": "Stable local queue ID"
+          }
+        },
+        "publish cutover": {
+          "description": "Set a hard launch date and archive older unpublished meetings",
+          "examples": [
+            "jarvis meeting publish cutover --date 2026-08-28 --dry-run",
+            "jarvis meeting publish cutover --date 2026-08-28 --apply"
+          ],
+          "options": {
+            "--apply / --dry-run": "Persist the floor and archive older queue rows, or preview",
+            "--date": "Earliest meeting date allowed into publication",
+            "--json": "Emit content-free counters as JSON"
+          }
+        },
+        "publish preflight": {
+          "description": "Fail closed unless local runtime, Google, and Discord are ready",
+          "examples": [
+            "jarvis meeting publish preflight"
+          ],
+          "options": {
+            "--json": "Emit safe readiness checks as JSON",
+            "--no-providers": "Skip live Google and Discord access checks",
+            "--no-runtime": "Skip launchd and loopback health checks"
+          }
+        },
+        "publish reject": {
+          "description": "Reject one meeting's current source version",
+          "examples": [
+            "jarvis meeting publish reject abc123"
+          ],
+          "options": {
+            "ITEM_ID": "Stable local queue ID"
+          }
+        },
+        "publish review install": {
+          "description": "Install and start the launchd review service",
+          "examples": [
+            "jarvis meeting publish review install"
+          ]
+        },
+        "publish review open": {
+          "description": "Open the authenticated canonical-note review inbox",
+          "examples": [
+            "jarvis meeting publish review open"
+          ]
+        },
+        "publish review serve": {
+          "description": "Serve the authenticated inbox with editable canonical meeting notes",
+          "examples": [
+            "jarvis meeting publish review serve"
+          ]
+        },
+        "publish scan": {
+          "description": "Discover recent canonical Flow notes; queue writes require --enqueue",
+          "examples": [
+            "jarvis meeting publish scan --since-days 30 --dry-run",
+            "jarvis meeting publish scan --since-days 30 --enqueue"
+          ],
+          "options": {
+            "--enqueue / --dry-run": "Write metadata-only queue rows or preview",
+            "--json": "Emit content-free counters as JSON",
+            "--since-days": "Rolling eligibility window"
+          }
+        },
+        "publish setup": {
+          "description": "Configure approval-gated Flow meeting publication to Google Docs and a configurable Discord text channel",
+          "examples": [
+            "jarvis meeting publish setup --discord-channel-id 123456789012345678 --authorize-google --install-review"
+          ],
+          "options": {
+            "--authorize-google": "Open least-privilege Google OAuth",
+            "--discord-channel-id": "Discord text-channel numeric ID",
+            "--discord-token-env-var": "Environment variable containing the Discord bot token",
+            "--enable / --disable": "Enable or disable worker activity",
+            "--google-owner-email": "Required active Google owner email",
+            "--install-review / --no-install-review": "Install the localhost review inbox as a launchd service",
+            "--source-path": "Canonical Flow meeting-note directory override"
+          }
+        },
+        "publish status": {
+          "description": "Show safe queue, review, Google, and Discord readiness",
+          "examples": [
+            "jarvis meeting publish status"
+          ],
+          "options": {
+            "--json": "Emit the result as JSON"
+          }
+        },
+        "publish worker": {
+          "description": "Scan and publish approved items with content-free scheduler output",
+          "examples": [
+            "jarvis meeting publish worker"
+          ],
+          "options": {
+            "--json": "Emit content-free counters as JSON",
+            "--max-items": "Maximum approved items per run"
           }
         }
       }
@@ -826,6 +1009,27 @@
             "--json": "Emit setup guidance as JSON"
           }
         },
+        "start": {
+          "description": "Launch the WhatsApp webhook receiver and Cloudflare tunnel in tmux",
+          "examples": [
+            "jarvis whatsapp start --account personal --dry-run --json",
+            "jarvis whatsapp start --account personal --auto-ingest --dest team-inbox --no-attach"
+          ],
+          "options": {
+            "--account": "Named WhatsApp account from config",
+            "--attach / --no-attach": "Attach to the tmux session after launch",
+            "--auto-ingest / --no-auto-ingest": "Automatically ingest verified payloads",
+            "--backend": "Backend override when auto-ingesting to journal",
+            "--dest": "Destination for auto-ingest: team-inbox, private-context, journal, memory",
+            "--dry-run": "Print the launch plan without creating sessions",
+            "--json": "Emit the launch plan as JSON",
+            "--layout": "Tmux layout: windows or panes",
+            "--port": "Local port to bind",
+            "--session-name": "Tmux session name to create",
+            "--tunnel-name": "Cloudflare named tunnel to run instead of a quick URL",
+            "--verify-signatures / --no-verify-signatures": "Verify X-Hub-Signature-256 before accepting payloads"
+          }
+        },
         "threads list": {
           "description": "List local WhatsApp conversation threads",
           "examples": [
@@ -930,6 +1134,7 @@
     "EDITOR": "Editor for context/journal editing (default: vim)",
     "FATHOM_API_KEY": "Required for Fathom meeting pull commands",
     "FATHOM_WEBHOOK_SECRET": "Required for verifying a single-account Fathom webhook",
+    "JARVIS_DISCORD_BOT_TOKEN": "Discord bot token for approval-gated meeting and weekly briefing publication",
     "JARVIS_FATHOM_API_KEY": "Fallback env var for a single Fathom account",
     "JARVIS_FATHOM_WEBHOOK_SECRET": "Fallback env var for a single-account Fathom webhook secret",
     "JARVIS_WHATSAPP_META_APP_SECRET": "Fallback Meta app secret for WhatsApp webhook signatures",

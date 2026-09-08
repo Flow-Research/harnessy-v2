@@ -12,8 +12,14 @@ import type {
 	DependencyRequirement,
 } from "../capabilities/manifest.ts";
 import type { CapabilityMaterializationResult } from "../capabilities/materializer.ts";
-import type { MaterializeCapabilitiesResult } from "../capabilities/registry.ts";
 import type {
+	CapabilityActivationResult,
+	CreateCapabilityResult,
+	ExportCapabilityResult,
+	MaterializeCapabilitiesResult,
+} from "../capabilities/registry.ts";
+import type {
+	CapabilityArtifactMetadata,
 	CapabilityEntry,
 	CapabilityFingerprintMetadata,
 	CapabilityLocalResolution,
@@ -94,6 +100,14 @@ export interface StructuredCapabilityFingerprint {
 	readonly fileCount: number;
 	/** Non-fatal skipped paths such as symlinks. */
 	readonly issues: ReadonlyArray<string>;
+}
+
+/** Installed artifact integrity payload emitted in structured command output. */
+export interface StructuredCapabilityArtifact {
+	readonly path: string;
+	readonly sha256: string;
+	readonly bytes: number;
+	readonly fileCount: number;
 }
 
 /** Capability manifest dependency payload emitted in structured command output. */
@@ -242,6 +256,8 @@ export interface StructuredCapability {
 	readonly resolvedSource?: StructuredCapabilityResolvedSource;
 	/** Local content fingerprint metadata recorded for local capability sources. */
 	readonly fingerprint?: StructuredCapabilityFingerprint;
+	/** Installed self-contained artifact integrity metadata. */
+	readonly artifact?: StructuredCapabilityArtifact;
 	/** ISO timestamp for when the capability was recorded. */
 	readonly addedAt: string;
 	/** Optional metadata read from a capability-owned manifest file. */
@@ -462,6 +478,43 @@ export interface StructuredCapabilityInspectOutput {
 	readonly capability: StructuredCapability;
 }
 
+/** Structured JSON envelope for `harnessy capability create --json`. */
+export interface StructuredCapabilityCreateOutput {
+	readonly command: "capability create";
+	readonly ok: true;
+	readonly target: string;
+	readonly directory: string;
+	readonly manifestPath: string;
+	readonly manifest: StructuredCapabilityManifest;
+	readonly dryRun: boolean;
+	readonly replaced: boolean;
+}
+
+/** Structured JSON envelope for capability activation changes. */
+export interface StructuredCapabilityActivationOutput {
+	readonly command: "capability activate" | "capability deactivate";
+	readonly ok: true;
+	readonly target: string;
+	readonly capabilityId: string;
+	readonly active: boolean;
+	readonly changed: boolean;
+	readonly dryRun: boolean;
+}
+
+/** Structured JSON envelope for `harnessy capability export --json`. */
+export interface StructuredCapabilityExportOutput {
+	readonly command: "capability export";
+	readonly ok: true;
+	readonly target: string;
+	readonly capabilityId: string;
+	readonly directory: string;
+	readonly dryRun: boolean;
+	readonly replaced: boolean;
+	readonly sha256: string;
+	readonly bytes: number;
+	readonly fileCount: number;
+}
+
 /** Materialized resource payload emitted in structured command output. */
 export interface StructuredCapabilityMaterializedResource {
 	/** Resource family declared by the capability manifest. */
@@ -494,6 +547,10 @@ export interface StructuredCapabilityMaterializationResult {
 	readonly capabilityId: string;
 	/** Absolute artifact directory for this capability. */
 	readonly artifactDir: string;
+	/** Absolute canonical self-contained package directory. */
+	readonly packageDir: string;
+	/** Installed artifact integrity metadata. */
+	readonly artifact: StructuredCapabilityArtifact;
 	/** Resources copied or planned during this pass. */
 	readonly copied: ReadonlyArray<StructuredCapabilityMaterializedResource>;
 	/** Resources intentionally skipped. */
@@ -621,6 +678,13 @@ const fingerprintPayload = (fingerprint: CapabilityFingerprintMetadata): Structu
 	issues: [...fingerprint.issues],
 });
 
+const artifactPayload = (artifact: CapabilityArtifactMetadata): StructuredCapabilityArtifact => ({
+	path: artifact.path,
+	sha256: artifact.sha256,
+	bytes: artifact.bytes,
+	fileCount: artifact.fileCount,
+});
+
 const manifestPayload = (manifest: CapabilityManifest): StructuredCapabilityManifest => ({
 	id: manifest.id,
 	name: manifest.name,
@@ -653,6 +717,7 @@ const capabilityPayload = (capability: CapabilityEntry): StructuredCapability =>
 		? {}
 		: { resolvedSource: resolvedSourcePayload(capability.resolvedSource) }),
 	...(capability.fingerprint === undefined ? {} : { fingerprint: fingerprintPayload(capability.fingerprint) }),
+	...(capability.artifact === undefined ? {} : { artifact: artifactPayload(capability.artifact) }),
 	addedAt: capability.addedAt,
 	...(capability.manifest === undefined ? {} : { manifest: manifestPayload(capability.manifest) }),
 });
@@ -691,6 +756,8 @@ const materializationResultPayload = (
 ): StructuredCapabilityMaterializationResult => ({
 	capabilityId: result.capabilityId,
 	artifactDir: result.artifactDir,
+	packageDir: result.packageDir,
+	artifact: artifactPayload(result.artifact),
 	copied: result.copied.map(materializedResourcePayload),
 	skipped: result.skipped.map(skippedResourcePayload),
 	issues: [...result.issues],
@@ -827,6 +894,50 @@ export const capabilityInspectJsonOutput = (
 /** Render the stable structured JSON text for `harnessy capability inspect --json`. */
 export const renderCapabilityInspectJson = (target: string, capability: CapabilityEntry): string =>
 	renderStructuredJson(capabilityInspectJsonOutput(target, capability));
+
+/** Render the stable structured JSON text for `harnessy capability create --json`. */
+export const renderCapabilityCreateJson = (target: string, result: CreateCapabilityResult): string =>
+	renderStructuredJson({
+		command: "capability create",
+		ok: true,
+		target,
+		directory: result.directory,
+		manifestPath: result.manifestPath,
+		manifest: manifestPayload(result.manifest),
+		dryRun: result.dryRun,
+		replaced: result.replaced,
+	} satisfies StructuredCapabilityCreateOutput);
+
+/** Render stable activation/deactivation JSON. */
+export const renderCapabilityActivationJson = (
+	command: "capability activate" | "capability deactivate",
+	target: string,
+	result: CapabilityActivationResult,
+): string =>
+	renderStructuredJson({
+		command,
+		ok: true,
+		target,
+		capabilityId: result.capabilityId,
+		active: result.active,
+		changed: result.changed,
+		dryRun: result.dryRun,
+	} satisfies StructuredCapabilityActivationOutput);
+
+/** Render the stable structured JSON text for `harnessy capability export --json`. */
+export const renderCapabilityExportJson = (target: string, result: ExportCapabilityResult): string =>
+	renderStructuredJson({
+		command: "capability export",
+		ok: true,
+		target,
+		capabilityId: result.capabilityId,
+		directory: result.directory,
+		dryRun: result.dryRun,
+		replaced: result.replaced,
+		sha256: result.sha256,
+		bytes: result.bytes,
+		fileCount: result.fileCount,
+	} satisfies StructuredCapabilityExportOutput);
 
 /** Build the stable structured payload for `harnessy capability materialize --json`. */
 export const capabilityMaterializeJsonOutput = (

@@ -15,7 +15,12 @@ import { CapabilityFingerprinter } from "./capabilities/fingerprint.ts";
 import { CapabilityMaterializer } from "./capabilities/materializer.ts";
 import {
 	type AddCapabilityResult,
+	type CapabilityActivationResult,
 	CapabilityRegistry,
+	type CreateCapabilityOptions,
+	type CreateCapabilityResult,
+	type ExportCapabilityOptions,
+	type ExportCapabilityResult,
 	type MaterializeCapabilitiesResult,
 } from "./capabilities/registry.ts";
 import type { CapabilityEntry } from "./capabilities/source.ts";
@@ -95,7 +100,14 @@ import { SkillScaffolder, type SkillScaffoldOptions, type SkillScaffoldResult } 
 import { type SkillTraceStats, type SkillTraceStatsOptions, SkillTraces } from "./skills/traces.ts";
 import { type SkillValidationReport, SkillValidator } from "./skills/validator.ts";
 
-export type { AddCapabilityResult } from "./capabilities/registry.ts";
+export type {
+	AddCapabilityResult,
+	CapabilityActivationResult,
+	CreateCapabilityOptions,
+	CreateCapabilityResult,
+	ExportCapabilityOptions,
+	ExportCapabilityResult,
+} from "./capabilities/registry.ts";
 
 /** Native v1 install.sh bootstrap options. */
 export interface NativeBootstrapOptions {
@@ -379,6 +391,12 @@ export class HarnessProject extends Context.Service<
 		readonly skillMetricsTrend: (options: SkillTrendOptions) => Effect.Effect<SkillTrend, HarnessError>;
 		/** Read installed capability records from the lockfile. */
 		readonly listCapabilities: (target: string) => Effect.Effect<ReadonlyArray<CapabilityEntry>, HarnessError>;
+		/** Scaffold a manifest-only local capability pack. */
+		readonly createCapability: (
+			target: string,
+			directory: string,
+			options: CreateCapabilityOptions,
+		) => Effect.Effect<CreateCapabilityResult, HarnessError>;
 		/** Check dependency declarations from installed capability manifests. */
 		readonly checkDependencies: (target: string) => Effect.Effect<DependencyReport, HarnessError>;
 		/** Read one installed capability by id. */
@@ -395,6 +413,25 @@ export class HarnessProject extends Context.Service<
 			rawSource: string,
 			rawId: string | undefined,
 		) => Effect.Effect<AddCapabilityResult, HarnessError>;
+		/** Activate an installed capability in the default profile. */
+		readonly activateCapability: (
+			target: string,
+			id: string,
+			dryRun?: boolean,
+		) => Effect.Effect<CapabilityActivationResult, HarnessError>;
+		/** Deactivate an installed capability in the default profile. */
+		readonly deactivateCapability: (
+			target: string,
+			id: string,
+			dryRun?: boolean,
+		) => Effect.Effect<CapabilityActivationResult, HarnessError>;
+		/** Export an installed canonical package as a reusable local pack. */
+		readonly exportCapability: (
+			target: string,
+			id: string,
+			out: string,
+			options?: ExportCapabilityOptions,
+		) => Effect.Effect<ExportCapabilityResult, HarnessError>;
 	}
 >()("@harnessy/core/HarnessProject") {
 	/** Orchestration layer that depends on narrower Harnessy services. */
@@ -728,8 +765,16 @@ export class HarnessProject extends Context.Service<
 					? profileCapabilityIssues(lockfile, profileVerification.profile.capabilities)
 					: [];
 				const capabilityIssues = yield* capabilities.verify(resolved, lockfile);
-				const capabilityCheckReport = yield* capabilityChecks.checkLockfile(resolved, lockfile);
-				const dependencyIssues = yield* dependencies.verificationIssues(lockfile);
+				const activeIds = new Set(profileVerification?.profile.capabilities ?? []);
+				const activeLockfile = new HarnessLockfile({
+					...lockfile,
+					capabilities:
+						capabilityIssues.length === 0
+							? lockfile.capabilities.filter((capability) => activeIds.has(capability.id))
+							: [],
+				});
+				const capabilityCheckReport = yield* capabilityChecks.checkLockfile(resolved, activeLockfile);
+				const dependencyIssues = yield* dependencies.verificationIssues(activeLockfile);
 				return {
 					lockfile,
 					checks: capabilityCheckReport,
@@ -933,6 +978,15 @@ export class HarnessProject extends Context.Service<
 				return yield* capabilities.list(resolved);
 			});
 
+			const createCapability = Effect.fn("HarnessProject.createCapability")(function* (
+				target: string,
+				directory: string,
+				options: CreateCapabilityOptions,
+			) {
+				const resolved = yield* paths.resolve(target);
+				return yield* capabilities.create(resolved, directory, options);
+			});
+
 			const checkDependencies = Effect.fn("HarnessProject.checkDependencies")(function* (target: string) {
 				const resolved = yield* paths.resolve(target);
 				const lockfile = yield* lockfiles.read(resolved);
@@ -963,6 +1017,34 @@ export class HarnessProject extends Context.Service<
 			) {
 				const resolved = yield* paths.resolve(target);
 				return yield* capabilities.add(resolved, rawSource, rawId);
+			});
+
+			const activateCapability = Effect.fn("HarnessProject.activateCapability")(function* (
+				target: string,
+				id: string,
+				dryRun = false,
+			) {
+				const resolved = yield* paths.resolve(target);
+				return yield* capabilities.activate(resolved, id, dryRun);
+			});
+
+			const deactivateCapability = Effect.fn("HarnessProject.deactivateCapability")(function* (
+				target: string,
+				id: string,
+				dryRun = false,
+			) {
+				const resolved = yield* paths.resolve(target);
+				return yield* capabilities.deactivate(resolved, id, dryRun);
+			});
+
+			const exportCapability = Effect.fn("HarnessProject.exportCapability")(function* (
+				target: string,
+				id: string,
+				out: string,
+				options: ExportCapabilityOptions = {},
+			) {
+				const resolved = yield* paths.resolve(target);
+				return yield* capabilities.exportPack(resolved, id, out, options);
 			});
 
 			return {
@@ -998,10 +1080,14 @@ export class HarnessProject extends Context.Service<
 				skillMetricsTrend,
 				doctor,
 				listCapabilities,
+				createCapability,
 				checkDependencies,
 				inspectCapability,
 				materializeCapabilities,
 				addCapability,
+				activateCapability,
+				deactivateCapability,
+				exportCapability,
 			};
 		}),
 	);

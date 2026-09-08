@@ -1,204 +1,66 @@
 #!/usr/bin/env node
-/**
- * Release script for pi-mono
- *
- * Usage:
- *   node scripts/release.mjs <major|minor|patch>
- *   node scripts/release.mjs <x.y.z>
- *
- * Steps:
- * 1. Check for uncommitted changes
- * 2. Bump version via npm run version:xxx or set an explicit version
- * 3. Update CHANGELOG.md files: [Unreleased] -> [version] - date
- * 4. Regenerate release artifacts
- * 5. Run checks
- * 6. Commit and tag the release
- * 7. Add new [Unreleased] section to changelogs
- * 8. Commit next-cycle changelog updates
- * 9. Push main and the tag to trigger CI publishing
- */
 
-import { execSync } from "child_process";
-import { readFileSync, writeFileSync, readdirSync, existsSync } from "fs";
-import { join } from "path";
+import { spawnSync } from "node:child_process";
 
-const RELEASE_TARGET = process.argv[2];
-const BUMP_TYPES = new Set(["major", "minor", "patch"]);
-const SEMVER_RE = /^\d+\.\d+\.\d+$/;
-
-if (!RELEASE_TARGET || (!BUMP_TYPES.has(RELEASE_TARGET) && !SEMVER_RE.test(RELEASE_TARGET))) {
+const target = process.argv[2];
+if (target === undefined || process.argv.length !== 3 || !/^(?:major|minor|patch|\d+\.\d+\.\d+)$/.test(target)) {
 	console.error("Usage: node scripts/release.mjs <major|minor|patch|x.y.z>");
 	process.exit(1);
 }
 
-function run(cmd, options = {}) {
-	console.log(`$ ${cmd}`);
-	try {
-		return execSync(cmd, { encoding: "utf-8", stdio: options.silent ? "pipe" : "inherit", ...options });
-	} catch (e) {
-		if (!options.ignoreError) {
-			console.error(`Command failed: ${cmd}`);
-			process.exit(1);
-		}
-		return null;
+const run = (command, args, options = {}) => {
+	console.log(`$ ${[command, ...args].join(" ")}`);
+	const result = spawnSync(command, args, {
+		encoding: "utf8",
+		stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
+	});
+	if (result.status !== 0) {
+		const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
+		throw new Error(output ? `${command} ${args.join(" ")} failed:\n${output}` : `${command} ${args.join(" ")} failed`);
 	}
+	return result.stdout ?? "";
+};
+
+const status = run("git", ["status", "--porcelain"], { capture: true });
+if (status.trim() !== "") {
+	throw new Error("Release preparation requires a clean worktree; commit the reviewed canonicalization changes first.");
 }
 
-function getVersion() {
-	const pkg = JSON.parse(readFileSync("packages/ai/package.json", "utf-8"));
-	return pkg.version;
+console.log("Preparing a Harnessy release without committing, tagging, pushing, or publishing.\n");
+run(process.execPath, ["scripts/version-harnessy.mjs", target]);
+run(process.execPath, ["scripts/version-pi.mjs", "patch"]);
+run("npm", ["install", "--package-lock-only", "--ignore-scripts"]);
+run("npm", ["run", "shrinkwrap:coding-agent"]);
+run("npm", ["run", "install-lock:coding-agent"]);
+run("npm", ["run", "clean"]);
+run("npm", ["run", "build"]);
+run("npm", ["run", "test:supply-chain"]);
+run("npm", ["run", "supply-chain:generate"]);
+run("npm", ["run", "supply-chain:strict"]);
+run("npm", ["run", "check"]);
+run("npm", ["run", "qa:check"]);
+run("npm", ["run", "test:qa-contract"]);
+run("npm", ["run", "test:qa-scenarios"]);
+run("npm", ["run", "test:sdk-fixture"]);
+const localHostDiffBefore = run("git", ["diff", "--binary"], { capture: true });
+const localHostStatusBefore = run("git", ["status", "--porcelain=v1"], { capture: true });
+run("npm", ["run", "test:local-host-fixture"]);
+const localHostDiffAfter = run("git", ["diff", "--binary"], { capture: true });
+const localHostStatusAfter = run("git", ["status", "--porcelain=v1"], { capture: true });
+if (localHostDiffAfter !== localHostDiffBefore || localHostStatusAfter !== localHostStatusBefore) {
+	throw new Error("The packed local-host fixture changed release-candidate files.");
 }
+run("npm", ["run", "security:check"]);
+run("npm", ["run", "test:executor-package-contract"]);
+run("./test.sh", []);
+run("npm", ["run", "test:coverage"]);
+run("npm", ["run", "test:engine-fixture"]);
+run("npm", ["run", "test:compatibility"]);
+run("npm", ["run", "test:executor"]);
+run("npm", ["run", "test:release-artifacts"]);
+run(process.execPath, ["scripts/publish.mjs", "--dry-run"]);
 
-function compareVersions(a, b) {
-	const aParts = a.split(".").map(Number);
-	const bParts = b.split(".").map(Number);
-
-	for (let i = 0; i < 3; i++) {
-		const diff = (aParts[i] || 0) - (bParts[i] || 0);
-		if (diff !== 0) {
-			return diff;
-		}
-	}
-
-	return 0;
-}
-
-function shellQuote(value) {
-	return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function stageChangedFiles() {
-	const output = run("git ls-files -m -o -d --exclude-standard", { silent: true });
-	const paths = [...new Set((output || "").split("\n").map((line) => line.trim()).filter(Boolean))];
-	if (paths.length === 0) {
-		return;
-	}
-
-	run(`git add -- ${paths.map(shellQuote).join(" ")}`);
-}
-
-function bumpOrSetVersion(target) {
-	const currentVersion = getVersion();
-
-	if (BUMP_TYPES.has(target)) {
-		console.log(`Bumping version (${target})...`);
-		run(`npm run version:${target}`);
-		return getVersion();
-	}
-
-	if (compareVersions(target, currentVersion) <= 0) {
-		console.error(`Error: explicit version ${target} must be greater than current version ${currentVersion}.`);
-		process.exit(1);
-	}
-
-	console.log(`Setting explicit version (${target})...`);
-	run(`npm version ${target} -ws --no-git-tag-version && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts`);
-	return getVersion();
-}
-
-function getChangelogs() {
-	const packagesDir = "packages";
-	const packages = readdirSync(packagesDir);
-	return packages
-		.map((pkg) => join(packagesDir, pkg, "CHANGELOG.md"))
-		.filter((path) => existsSync(path));
-}
-
-function updateChangelogsForRelease(version) {
-	const date = new Date().toISOString().split("T")[0];
-	const changelogs = getChangelogs();
-
-	for (const changelog of changelogs) {
-		const content = readFileSync(changelog, "utf-8");
-
-		if (!content.includes("## [Unreleased]")) {
-			console.log(`  Skipping ${changelog}: no [Unreleased] section`);
-			continue;
-		}
-
-		const updated = content.replace(
-			"## [Unreleased]",
-			`## [${version}] - ${date}`
-		);
-		writeFileSync(changelog, updated);
-		console.log(`  Updated ${changelog}`);
-	}
-}
-
-function addUnreleasedSection() {
-	const changelogs = getChangelogs();
-	const unreleasedSection = "## [Unreleased]\n\n";
-
-	for (const changelog of changelogs) {
-		const content = readFileSync(changelog, "utf-8");
-
-		// Insert after "# Changelog\n\n"
-		const updated = content.replace(
-			/^(# Changelog\n\n)/,
-			`$1${unreleasedSection}`
-		);
-		writeFileSync(changelog, updated);
-		console.log(`  Added [Unreleased] to ${changelog}`);
-	}
-}
-
-// Main flow
-console.log("\n=== Release Script ===\n");
-
-// 1. Check for uncommitted changes
-console.log("Checking for uncommitted changes...");
-const status = run("git status --porcelain", { silent: true });
-if (status && status.trim()) {
-	console.error("Error: Uncommitted changes detected. Commit or stash first.");
-	console.error(status);
-	process.exit(1);
-}
-console.log("  Working directory clean\n");
-
-// 2. Bump or set version
-const version = bumpOrSetVersion(RELEASE_TARGET);
-console.log(`  New version: ${version}\n`);
-
-// 3. Update changelogs
-console.log("Updating CHANGELOG.md files...");
-updateChangelogsForRelease(version);
-console.log();
-
-// 4. Regenerate release artifacts
-console.log("Regenerating release artifacts...");
-run("npm --prefix packages/ai run generate-models");
-run("npm --prefix packages/ai run generate-image-models");
-run("npm run shrinkwrap:coding-agent");
-run("npm run install-lock:coding-agent");
-console.log();
-
-// 5. Run checks
-console.log("Running checks...");
-run("npm run check");
-console.log();
-
-// 6. Commit and tag
-console.log("Committing and tagging...");
-stageChangedFiles();
-run(`git commit -m "Release v${version}"`);
-run(`git tag v${version}`);
-console.log();
-
-// 7. Add new [Unreleased] sections
-console.log("Adding [Unreleased] sections for next cycle...");
-addUnreleasedSection();
-console.log();
-
-// 8. Commit
-console.log("Committing changelog updates...");
-stageChangedFiles();
-run(`git commit -m "Add [Unreleased] section for next cycle"`);
-console.log();
-
-// 9. Push
-console.log("Pushing to remote...");
-run("git push origin main");
-run(`git push origin v${version}`);
-console.log();
-
-console.log(`=== Prepared release v${version}; CI publishing starts after the tag push ===`);
+const version = run(process.execPath, ["-p", "require('./package.json').version"], { capture: true }).trim();
+console.log(`\nHarnessy v${version} is prepared and locally verified.`);
+console.log("Review the version and lockfile diff, commit it through the normal review path, then create the tag from the protected canonical branch.");
+console.log("This command intentionally did not commit, tag, push, or publish anything.");

@@ -4,7 +4,7 @@
     "kind": "jarvis-click",
     "version": "0.1.0",
     "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli",
-    "pythonSourceSha256": "25bfa0161d6353d366e202e87da7b4d7a9424722e0531d838fe2c4fc83f64c46"
+    "pythonSourceSha256": "4d4b3d8846e4c42541ac8e6924bd6c0605fc521809f16df4c9ba072261e5c377"
   },
   "generatedBy": "scripts/export-jarvis-command-manifest.py",
   "normalization": {
@@ -414,6 +414,276 @@
     {
       "path": [
         "jarvis",
+        "community"
+      ],
+      "kind": "group",
+      "semanticName": "community",
+      "alias": false,
+      "help": "Prepare and deliver community-facing updates.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing"
+      ],
+      "kind": "group",
+      "semanticName": "briefing",
+      "alias": false,
+      "help": "Generate, review, and publish the weekly Flow Research briefing.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "generate"
+      ],
+      "kind": "command",
+      "semanticName": "generate",
+      "alias": false,
+      "help": "Generate the latest due Sunday draft, catching up safely after downtime.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--week-start"
+          ],
+          "type": "datetime",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--regenerate"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "preflight"
+      ],
+      "kind": "command",
+      "semanticName": "preflight",
+      "alias": false,
+      "help": "Fail closed until collection, review, scheduling, and providers are ready.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--no-runtime"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-providers"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "review"
+      ],
+      "kind": "group",
+      "semanticName": "review",
+      "alias": false,
+      "help": "Open the shared authenticated publication inbox.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "review",
+        "open"
+      ],
+      "kind": "command",
+      "semanticName": "open",
+      "alias": false,
+      "help": "Open the authenticated local review inbox.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "setup"
+      ],
+      "kind": "command",
+      "semanticName": "setup",
+      "alias": false,
+      "help": "Configure non-secret paths and the dedicated briefing destination.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--discord-channel-id"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--source-path"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--draft-path"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--enable",
+            "--disable"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show content-free configuration and queue health.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "worker"
+      ],
+      "kind": "command",
+      "semanticName": "worker",
+      "alias": false,
+      "help": "Publish approved briefing artifacts with content-free scheduler output.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--max-items"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 3
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
         "config"
       ],
       "kind": "group",
@@ -565,6 +835,50 @@
       "help": "Show current configuration.",
       "arguments": [],
       "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "config",
+        "whatsapp-setup"
+      ],
+      "kind": "command",
+      "semanticName": "whatsapp-setup",
+      "alias": false,
+      "help": "Interactively configure WhatsApp accounts, env vars, and shell activation.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--env-file"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--shell-profile"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--no-shell-profile"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
     },
     {
       "path": [
@@ -2912,8 +3226,7 @@
             "private-context",
             "wiki",
             "journal",
-            "memory",
-            "obsidian"
+            "memory"
           ]
         },
         {
@@ -2925,26 +3238,6 @@
           "multiple": false,
           "count": false,
           "default": null
-        },
-        {
-          "names": [
-            "--vault"
-          ],
-          "type": "text",
-          "required": false,
-          "multiple": false,
-          "count": false,
-          "default": null
-        },
-        {
-          "names": [
-            "--folder"
-          ],
-          "type": "text",
-          "required": false,
-          "multiple": false,
-          "count": false,
-          "default": "Meetings"
         },
         {
           "names": [
@@ -2966,6 +3259,427 @@
           "multiple": false,
           "count": false,
           "default": true
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish"
+      ],
+      "kind": "group",
+      "semanticName": "publish",
+      "alias": false,
+      "help": "Review and publish Flow meeting notes to Google Docs and Discord.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "approve"
+      ],
+      "kind": "command",
+      "semanticName": "approve",
+      "alias": false,
+      "help": "Approve the exact current source hash for one meeting.",
+      "arguments": [
+        {
+          "name": "item_id",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "cutover"
+      ],
+      "kind": "command",
+      "semanticName": "cutover",
+      "alias": false,
+      "help": "Set a launch floor and reversibly archive older unpublished meetings.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--date"
+          ],
+          "type": "datetime",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--apply",
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "preflight"
+      ],
+      "kind": "command",
+      "semanticName": "preflight",
+      "alias": false,
+      "help": "Fail closed unless the meeting publication runtime is ready to go live.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--no-runtime"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-providers"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "reject"
+      ],
+      "kind": "command",
+      "semanticName": "reject",
+      "alias": false,
+      "help": "Reject one meeting's current version.",
+      "arguments": [
+        {
+          "name": "item_id",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review"
+      ],
+      "kind": "group",
+      "semanticName": "review",
+      "alias": false,
+      "help": "Run or manage the authenticated localhost review inbox.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review",
+        "install"
+      ],
+      "kind": "command",
+      "semanticName": "install",
+      "alias": false,
+      "help": "Install and start the owner-local launchd review service.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review",
+        "open"
+      ],
+      "kind": "command",
+      "semanticName": "open",
+      "alias": false,
+      "help": "Open the authenticated local inbox in the default browser.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review",
+        "serve"
+      ],
+      "kind": "command",
+      "semanticName": "serve",
+      "alias": false,
+      "help": "Serve the review inbox on the configured loopback address.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review",
+        "uninstall"
+      ],
+      "kind": "command",
+      "semanticName": "uninstall",
+      "alias": false,
+      "help": "Stop and remove the generated launchd review service.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "scan"
+      ],
+      "kind": "command",
+      "semanticName": "scan",
+      "alias": false,
+      "help": "Discover eligible Flow notes; dry-run unless --enqueue is supplied.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--since-days"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--enqueue",
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "setup"
+      ],
+      "kind": "command",
+      "semanticName": "setup",
+      "alias": false,
+      "help": "Configure non-secret destinations and optionally authorize Google.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--discord-channel-id"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--discord-token-env-var"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--google-owner-email"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--source-path"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--authorize-google"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--install-review",
+            "--no-install-review"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--enable",
+            "--disable"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show queue health and configured destination without exposing secrets.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "worker"
+      ],
+      "kind": "command",
+      "semanticName": "worker",
+      "alias": false,
+      "help": "Scan and publish approved items; output contains counters only.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--max-items"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 10
         },
         {
           "names": [
@@ -5800,6 +6514,155 @@
           "multiple": false,
           "count": false,
           "default": "personal"
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "start"
+      ],
+      "kind": "command",
+      "semanticName": "start",
+      "alias": false,
+      "help": "Launch the WhatsApp webhook receiver and tunnel together in tmux.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--port"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 8787
+        },
+        {
+          "names": [
+            "--auto-ingest",
+            "--no-auto-ingest"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "team-inbox",
+            "private-context",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--layout"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "windows",
+          "choices": [
+            "windows",
+            "panes"
+          ]
+        },
+        {
+          "names": [
+            "--verify-signatures",
+            "--no-verify-signatures"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--session-name"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--tunnel-name"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--attach",
+            "--no-attach"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
         },
         {
           "names": [

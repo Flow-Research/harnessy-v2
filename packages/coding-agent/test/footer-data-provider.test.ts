@@ -190,24 +190,37 @@ describe("FooterDataProvider reftable branch detection", () => {
 		}
 	});
 
-	it("debounces rapid reftable updates into a single async refresh", async () => {
-		const { worktreeDir, reftableDir } = createReftableWorktree(tempDir);
-		process.chdir(worktreeDir);
+	it("debounces rapid refresh signals into a single async refresh", async () => {
+		vi.useFakeTimers();
+		const repoDir = createPlainRepo(tempDir);
+		process.chdir(repoDir);
 
-		const provider = new FooterDataProvider(worktreeDir);
+		const provider = new FooterDataProvider(repoDir);
 		try {
 			expect(provider.getGitBranch()).toBe("main");
-			vi.mocked(execFile).mockClear();
+			const providerWithInternals = provider as unknown as {
+				scheduleRefresh: () => void;
+				refreshGitBranchAsync: () => Promise<void>;
+			};
+			const refreshSpy = vi.spyOn(providerWithInternals, "refreshGitBranchAsync");
 
-			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			writeFileSync(join(reftableDir, "tables.list"), "2\n");
-			writeFileSync(join(reftableDir, "tables.list"), "3\n");
-			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
-			await new Promise((resolve) => setTimeout(resolve, 650));
+			providerWithInternals.scheduleRefresh();
+			providerWithInternals.scheduleRefresh();
+			providerWithInternals.scheduleRefresh();
+			expect(refreshSpy).not.toHaveBeenCalled();
 
-			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
+			await vi.advanceTimersByTimeAsync(499);
+			expect(refreshSpy).not.toHaveBeenCalled();
+
+			await vi.advanceTimersByTimeAsync(1);
+			expect(refreshSpy).toHaveBeenCalledTimes(1);
+
+			await vi.advanceTimersByTimeAsync(650);
+
+			expect(refreshSpy).toHaveBeenCalledTimes(1);
 		} finally {
 			provider.dispose();
+			vi.useRealTimers();
 		}
 	});
 

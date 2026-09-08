@@ -186,14 +186,14 @@ def test_deploy_local_override_records_mock_evidence(tmp_path: Path) -> None:
     assert (evidence_dir / "trace.json").exists()
 
 
-def test_live_hostinger_without_dry_run_is_blocked(tmp_path: Path) -> None:
+def test_live_hostinger_requires_explicit_target_before_execution(tmp_path: Path) -> None:
     write_profiles(tmp_path, adapter="mcp")
     (tmp_path / "dist").mkdir()
     (tmp_path / "dist" / "index.html").write_text("<h1>ok</h1>")
 
     result = run_deploy(tmp_path, "deploy", "--local-override", "--run-id", "run-live", "--json")
     assert result.returncode != 0
-    assert "Live Hostinger execution is not enabled in v1" in result.stderr
+    assert "Missing HOSTINGER_VPS_ID" in result.stderr
 
 
 def test_systemd_runtime_is_supported_when_profile_is_complete(tmp_path: Path) -> None:

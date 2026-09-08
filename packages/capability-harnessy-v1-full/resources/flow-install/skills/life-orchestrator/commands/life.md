@@ -49,6 +49,43 @@ cat ".jarvis/context/private/${FLOW_USER:-${USER}}/priorities.md"
 
 This repo-private file is the user's voice. It defines what matters right now, what to deprioritize, and what to ignore. All subsequent state collection and synthesis must be filtered through this lens. `~/.agents/life/priorities.md` is a legacy fallback for older weekly-plan installs, not the primary source.
 
+When `.jarvis/context/private/${FLOW_USER:-${USER}}/competence-priorities.md` exists,
+the collector also loads it as the durable learning contract. It may protect a
+weekly learning allocation and named outputs, but it never overrides immediate
+commitments in `priorities.md`. Daily briefs surface it only when a session,
+conversation, review, or output is due or at risk.
+
+When `.jarvis/context/private/${FLOW_USER:-${USER}}/learning-research.md` exists,
+the separate `learning-research` schedule rotates through its current topics and
+stores provenance-checked sources in the `founder-learning` Jarvis Wiki. The
+daily collector removes stale, malformed, and duplicate links. Previously
+surfaced, still-recent links remain available only as a resilience reserve.
+Daily synthesis includes two or three candidates under `Worth Reading` and uses
+the supplied URLs exactly. If fewer than two valid candidates survive the wait
+and reserve checks, publication fails instead of inventing a source or publishing
+an empty section.
+
+The daily brief waits up to `LIFE_READING_WAIT_SECONDS` (30 minutes by default)
+for at least `LIFE_READING_MINIMUM` verified links. Research has its own
+configurable `LIFE_RESEARCH_CUTOFF_SECONDS` (90 minutes by default), validated
+against the research start, daily-brief start, wait period, and safety margin.
+If fresh discovery fails, recent provenance-checked sources form a bounded
+reserve. Publication fails rather than silently producing an empty reading
+section when even that reserve cannot supply the minimum.
+
+Optional watched RSS/Atom sources live under `reading.sources` in
+`~/.agents/life/config.json`. The research job polls them before agent discovery,
+stores only content supplied by the feed, uses the article publication date for
+freshness, canonicalizes URLs before deduplication, and carries source-tier and
+per-brief-cap metadata into the daily candidate set. Secondary sources add
+synthesis; they do not replace primary evidence.
+
+When a source enables its evergreen lane, older feed items are ranked using the
+human-configured keyword vocabulary and admitted at the configured per-poll cap.
+Their original `published_at` is preserved, while `selected_at` determines how
+long they remain eligible for the brief. An evergreen URL found in any previously
+published daily brief is permanently excluded rather than recycled as fallback.
+
 ---
 
 ## Command Router
@@ -173,7 +210,7 @@ Produce a weekly plan based on the monthly review and current state.
 
 Two-step daily brief: collect state, then synthesize focus.
 
-**Cost:** Cheap (scripted collection + short provider-agnostic AI prompt)
+**Cost:** Cheap (scripted collection + one bounded provider-agnostic AI prompt)
 
 **Steps:**
 
@@ -182,42 +219,37 @@ Two-step daily brief: collect state, then synthesize focus.
    ```bash
    python3 "${AGENTS_SKILLS_ROOT}/life-orchestrator/scripts/collect-state"
    ```
-   This script outputs a JSON summary of: git activity across repos, open PRs, calendar events, recent Jarvis tasks, and any changes since yesterday.
-3. Check if there are meaningful changes. If the script reports `"changes_detected": false`, write a minimal brief ("No significant changes — carry forward yesterday's focus") and skip to step 7.
-4. Read the current weekly plan:
+   This script outputs a JSON summary of priorities, project context, recent notes and
+   meetings, planning artifacts, git activity, and agent state.
+3. If today's brief is already journaled, stop. If the local brief exists without a
+   delivery marker, clean it and retry journal delivery instead of regenerating it.
+4. Read the current weekly plan and previous daily brief. The collector resolves
+   both artifacts and uses an explicit date range in the plan heading when available;
+   this prevents a mislabeled ISO-week filename from making a live plan look stale.
    ```bash
    cat "$OUTPUT_DIR/week-$WEEK-plan.md" 2>/dev/null || echo "No weekly plan — synthesizing from priorities"
    ```
-5. Read the daily brief template and chief-of-staff prompt:
+5. Run the daily-brief script. Its bounded chief-of-staff prompt restores interpretation,
+   routes each meeting commitment once, keeps delegated work separate, and preserves
+   carry-forward continuity:
    ```bash
-   cat "${AGENTS_SKILLS_ROOT}/life-orchestrator/templates/daily-brief.md"
-   cat "${AGENTS_SKILLS_ROOT}/life-orchestrator/templates/chief-of-staff-prompt.md"
-   ```
-6. Run the daily-brief script with the chief-of-staff prompt:
-   ```bash
-   python3 "${AGENTS_SKILLS_ROOT}/life-orchestrator/scripts/daily-brief" \
-       --state-file "/tmp/life-collect-state-$(date +%Y%m%d).json" \
-       --priorities ".jarvis/context/private/${FLOW_USER:-${USER}}/priorities.md" \
-       --weekly-plan "$OUTPUT_DIR/week-$WEEK-plan.md" \
-       --template "${AGENTS_SKILLS_ROOT}/life-orchestrator/templates/daily-brief.md" \
-       --prompt "${AGENTS_SKILLS_ROOT}/life-orchestrator/templates/chief-of-staff-prompt.md" \
-       --output "$OUTPUT_DIR/$DAY-daily-brief.md"
+   python3 "${AGENTS_SKILLS_ROOT}/life-orchestrator/scripts/daily-brief"
    ```
    This script internally calls the shared Harnessy AI runner. Set `HARNESSY_AI_PROVIDER=auto|claude|codex|opencode` to choose the runtime; `auto` tries the configured provider order and falls back when possible.
-7. Write the brief to `$OUTPUT_DIR/$DAY-daily-brief.md`.
-8. Run text hygiene cleanup:
+6. Write the brief to `$OUTPUT_DIR/$DAY-daily-brief.md`.
+7. Run text hygiene cleanup:
    ```bash
    jarvis text-hygiene clean "$OUTPUT_DIR/$DAY-daily-brief.md" --report
    ```
-9. Journal to Anytype:
+8. Journal to Anytype:
    ```bash
    jarvis journal write --file "$OUTPUT_DIR/$DAY-daily-brief.md"
    ```
-10. Send desktop notification:
+9. Send desktop notification:
    ```bash
    osascript -e 'display notification "Daily brief ready" with title "Life Orchestrator"'
    ```
-11. Capture trace:
+10. Capture trace:
     ```bash
     python3 "${AGENTS_SKILLS_ROOT}/_shared/trace_capture.py" capture \
         --skill "life-orchestrator" --gate "daily_brief" --gate-type "quality" \
@@ -225,6 +257,27 @@ Two-step daily brief: collect state, then synthesize focus.
     ```
 
 **Output:** `~/.agents/life/YYYY/Mon/dd-daily-brief.md` + Anytype journal entry + desktop notification
+
+**Safe preview:**
+
+```bash
+python3 "${AGENTS_SKILLS_ROOT}/life-orchestrator/scripts/daily-brief" \
+  --preview-output ~/.agents/life/previews/$(date +%Y-%m-%d)-daily-brief.md
+```
+
+Preview mode does not update crawl state, today's canonical brief, Anytype,
+journal markers, or notifications.
+
+After review, publish that exact artifact without another model generation:
+
+```bash
+python3 "${AGENTS_SKILLS_ROOT}/life-orchestrator/scripts/daily-brief" \
+  --publish-preview ~/.agents/life/previews/$(date +%Y-%m-%d)-daily-brief.md
+```
+
+This backs up an existing local brief, promotes the reviewed file, updates the
+existing daily Anytype object when one exists (otherwise creates it), records
+delivery, and sends the notification.
 
 ---
 
@@ -306,6 +359,6 @@ Capture a feedback annotation for future planning cycles.
 1. **Privacy:** Life orchestration data is personal. Never commit `~/.agents/life/` contents to any repository.
 2. **Cost awareness:** Monthly is expensive (goal-agent). Don't run monthly more than once per month unless explicitly asked. Weekly should run once per week. Daily is cheap and can run multiple times.
 3. **Priorities are sovereign:** Never override or reinterpret `priorities.md`. If project state conflicts with stated priorities, flag the conflict but follow the priorities.
-4. **Graceful degradation:** If a monthly review is missing, weekly still works (uses priorities directly). If weekly is missing, daily still works (uses priorities + state). Never block on a missing upstream artifact.
+4. **Graceful degradation:** If a monthly review is missing, weekly still works (uses priorities directly). If weekly is missing, daily still works (uses priorities + state). A stale weekly plan is labelled, not silently treated as current.
 5. **Jarvis integration:** Always use the Jarvis CLI for task creation and journaling. Do not write directly to Anytype.
 6. **Idempotent outputs:** Running the same rhythm twice on the same day should overwrite the previous output, not create duplicates.

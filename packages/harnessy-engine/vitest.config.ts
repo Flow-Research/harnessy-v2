@@ -34,5 +34,13 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
     sequence: { concurrent: false },
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.d.ts"],
+      reporter: ["text"],
+      reportsDirectory: "coverage",
+      thresholds: { statements: 91, branches: 75, functions: 99, lines: 99 },
+    },
   },
 });

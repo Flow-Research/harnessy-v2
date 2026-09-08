@@ -45,13 +45,15 @@ Here is the complete command documentation from Jarvis:
 
 ## Maintenance Rule
 
-This skill depends on live `jarvis docs --json` output, but the human-written guidance in this file must still be updated whenever important CLI commands are added, changed, or removed. Keep `src/jarvis/cli.py`, `jarvis-cli/AGENTS.md`, and this file in sync, then refresh installed artifacts with `pnpm skills:register` and `uv tool install --force ./jarvis-cli`.
+This skill depends on live `jarvis docs --json` output, but the human-written guidance in this file must still be updated whenever important CLI commands are added, changed, or removed. Keep `src/jarvis/cli.py`, `jarvis-cli/AGENTS.md`, and this file in sync. For a shared skill edit, bump its manifest version and run `node tools/flow-install/index.mjs --skills --yes`; then refresh agent registration with `pnpm skills:register` and reinstall the CLI with `uv tool install --force --refresh-package jarvis-scheduler ./jarvis-cli` when CLI behavior changed. The explicit refresh prevents a same-version local wheel from masking source changes.
 
 ## High-Signal Command Families
 
 Use `jarvis docs --json` as the source of truth, but these command families are common enough to keep in mind:
 
 - `jarvis meeting ...`: ingest files, stdin, URLs, Fathom recordings, or Fathom webhook inbox payloads into private context, memory, wiki, or journal destinations.
+- `jarvis meeting publish ...`: stage recent Flow notes in a local queue, review one at a time on localhost, update the canonical local Markdown before approval, and publish approved notes to Google Docs plus a configurable Discord text channel.
+- `jarvis community briefing ...`: collect a Lagos week of sanitized Flow-relevant evidence, create a private public-safe draft, edit both Google and Discord copy in the shared local inbox, and publish only after exact hash-bound approval.
 - `jarvis whatsapp ...`: capture Meta WhatsApp Cloud API webhooks into a local inbox, ingest them into local-first threads/private context/journal/memory, send service-window replies, send approved templates, and review thread status.
 - `jarvis reading-list ...` / `jarvis rl`: organize, prioritize, extract, and cache reading-list sources.
 - `jarvis content ...`: manage Flow-style content pieces. Use `jarvis content package <piece>` to write `journal.md`, `jarvis content verify <piece> --require <text> --forbid <text>` to enforce canonical wording and configured text hygiene patterns, `jarvis content publish-draft <piece>` to clean/package/verify/sync/dedupe, and `jarvis content audit-anytype <piece>` to check a synced AnyType Collection for duplicate links.
@@ -258,7 +260,20 @@ jarvis android run ./builds/demo.apk --avd Medium_Phone_API_36.1 --reinstall
 | Launch Fathom webhook + tunnel tmux stack | `jarvis meeting fathom start` |
 | Run Fathom webhook receiver | `jarvis meeting fathom webhook serve` |
 | Ingest Fathom webhook inbox | `jarvis meeting fathom webhook ingest-inbox` |
+| Preview/stage Flow meeting publication | `jarvis meeting publish scan --since-days 30 --dry-run`; rerun with `--enqueue` |
+| Establish publication launch floor | `jarvis meeting publish cutover --date YYYY-MM-DD --dry-run`; rerun with `--apply` |
+| Verify publication readiness | `jarvis meeting publish preflight` |
+| Configure Discord meeting channel | `jarvis meeting publish setup --discord-channel-id <numeric-id>` |
+| Open local meeting review | `jarvis meeting publish review open` |
+| Run approved publication worker | `jarvis meeting publish worker` |
+| Configure dedicated weekly briefing channel | `jarvis community briefing setup --discord-channel-id <numeric-id>` |
+| Generate or preview weekly community briefing | `jarvis community briefing generate [--dry-run] [--week-start YYYY-MM-DD] [--regenerate]` |
+| Verify weekly briefing readiness | `jarvis community briefing preflight` |
+| Open weekly briefing review | `jarvis community briefing review open` |
+| Publish approved weekly briefing | `jarvis community briefing worker` |
 | Show WhatsApp Meta Cloud API setup guidance | `jarvis whatsapp setup --account personal` |
+| Configure WhatsApp accounts and env activation | `jarvis config whatsapp-setup` |
+| Launch WhatsApp webhook + tunnel tmux stack | `jarvis whatsapp start --account personal` |
 | Run WhatsApp webhook receiver | `jarvis whatsapp webhook serve --account personal --port 8787` |
 | Check WhatsApp webhook inbox and config | `jarvis whatsapp webhook status --account personal --json` |
 | Ingest WhatsApp webhook inbox | `jarvis whatsapp webhook ingest-inbox --account personal --dest team-inbox` |
@@ -277,6 +292,43 @@ jarvis android run ./builds/demo.apk --avd Medium_Phone_API_36.1 --reinstall
 | Install and launch an APK | `jarvis android run` or `jarvis apk` |
 | **Initialize context** | Use the context initialization flow above |
 | Show docs | `jarvis docs` |
+
+Meeting project aliases live in
+`.jarvis/context/private/<user>/meeting-routes.yaml`. A mapping such as
+`project_aliases: {garden: flow}` sends both inferred Garden matches and
+explicit `--project garden` ingests to the Flow meeting folder, combines
+Garden and Flow route scores, and retains `garden` once in the note tags.
+
+Scheduled Fathom polls must omit `--json`, because full JSON includes transcript
+and raw markdown in cron-captured output. Use the normal count/state output and
+keep `~/.agents/cron/` directories at `0700` with files at `0600`.
+
+Meeting publication is approval-gated and Flow-only. The SQLite queue stores
+paths, hashes, state, and remote IDs, plus reviewer-edited Discord copy during
+approval or retry. The local review inbox can validate and atomically update the
+actual canonical Markdown while leaving the item pending review. A source update
+clears stale approval and Discord override state. Google receives the approved
+formatted canonical note; Discord
+receives one approved purpose sentence (defaulting to the note's Meeting Purpose
+section) and the Google Doc link. `meeting_publication.discord_channel_id` is configurable.
+Existing published items retain their stored channel/message coordinates when
+an edited source note is reapproved.
+The preflight command fails unless the cutover, owner-only local state, review
+service, worker schedule, exact Google owner, Discord bot, and configured channel
+are ready. Notes without a non-empty Executive Summary or with a transcript
+section never become eligible. Cutover archives older unpublished rows without
+deleting queue history.
+
+Weekly community briefings use a separate owner-only SQLite queue and stable
+Monday artifact key. Sunday generation does not publish and does not overwrite
+an existing draft. Collection strips direct identifiers, links, credentials,
+participant metadata, and local paths before a classifier sees bounded excerpts;
+the writer sees only accepted public fact cards. Reviewers edit `briefing.md` and
+the at-most-three-sentence Discord copy together, and approval binds their exact
+combined hash. Google Docs use `Flow Research/Weekly Briefings/YYYY`; Discord
+uses its dedicated configured channel. The generator and five-minute worker may
+use launchd `RunAtLoad` for reboot catch-up, but both schedules remain explicit
+machine opt-ins.
 
 ### 5. Reading List Reorganization
 

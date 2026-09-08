@@ -1,0 +1,63 @@
+{
+	"name": "@harnessy/local-host",
+	"version": "0.0.3",
+	"description": "Private migration planning host with guarded meeting smoke, review, and offline import runtimes",
+	"private": true,
+	"type": "module",
+	"license": "AGPL-3.0-only",
+	"bin": {
+		"harnessy-local-host": "dist/cli.js",
+		"harnessy-meeting-full-review": "dist/meeting-full-review-cli.js",
+		"harnessy-meeting-review-open": "dist/meeting-review-open-cli.js",
+		"harnessy-meeting-import": "dist/meeting-import-cli.js",
+		"harnessy-meeting-review": "dist/meeting-review-cli.js",
+		"harnessy-meeting-smoke": "dist/meeting-smoke-cli.js",
+		"harnessy-meeting-worker": "dist/meeting-worker-cli.js"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./meeting-runtime": {
+			"types": "./dist/meeting-runtime.d.ts",
+			"import": "./dist/meeting-runtime.js"
+		},
+		"./meeting-review-runtime": {
+			"types": "./dist/meeting-review-runtime.d.ts",
+			"import": "./dist/meeting-review-runtime.js"
+		},
+		"./meeting-import-runtime": {
+			"types": "./dist/meeting-import-runtime.d.ts",
+			"import": "./dist/meeting-import-runtime.js"
+		}
+	},
+	"files": [
+		"dist",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js",
+		"typecheck": "tsgo --noEmit -p tsconfig.json",
+		"test": "vitest --run",
+		"test:fixture": "node scripts/test-fixture.mjs"
+	},
+	"dependencies": {
+		"@harnessy/core": "0.0.3",
+		"@harnessy/sdk": "0.0.3",
+		"effect": "4.0.0-beta.85"
+	},
+	"devDependencies": {
+		"@effect/vitest": "4.0.0-beta.85",
+		"@types/node": "22.19.19",
+		"shx": "0.4.0",
+		"vitest": "4.1.9"
+	},
+	"engines": {
+		"node": "^22.22.2 || >=24.15.0"
+	}
+}

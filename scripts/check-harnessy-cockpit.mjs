@@ -8,6 +8,8 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { assertIsolatedRuntimeScope } from "./cockpit-smoke-lib.mjs";
+
 const COMMAND_TIMEOUT_MS = 90_000;
 const MANIFEST_TIMEOUT_MS = 10_000;
 const MAX_CAPTURED_OUTPUT = 50_000;
@@ -17,6 +19,17 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const harnessyCli = join(repoRoot, "packages/harnessy-core/dist/cli.js");
 const executorCli = join(repoRoot, "executor/apps/cli/src/main.ts");
+const configuredHarnessyCli = process.env.HARNESSY_COCKPIT_CLI_JS?.trim();
+const configuredExecutorCli = process.env.HARNESSY_COCKPIT_EXECUTOR_JS?.trim();
+const smokeScope = resolve(process.env.HARNESSY_COCKPIT_SCOPE?.trim() || repoRoot);
+const smokeLabel = process.env.HARNESSY_COCKPIT_LABEL?.trim() || "source";
+const harnessyLaunch = {
+	command: process.execPath,
+	args: [configuredHarnessyCli || harnessyCli],
+};
+const executorLaunch = configuredExecutorCli
+	? { command: process.execPath, args: [configuredExecutorCli] }
+	: { command: "bun", args: ["run", executorCli] };
 
 const redactSecrets = (value) =>
 	value
@@ -44,7 +57,7 @@ const runCommand = (command, args, env, timeoutMillis = COMMAND_TIMEOUT_MS) =>
 	new Promise((resolvePromise, reject) => {
 		const useProcessGroup = process.platform !== "win32";
 		const child = spawn(command, args, {
-			cwd: repoRoot,
+			cwd: smokeScope,
 			detached: useProcessGroup,
 			env,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -206,9 +219,12 @@ const verifyAnytype = async (origin, token) => {
 };
 
 const verifyCockpit = async (manifest, expectedDataDir, commandOutput) => {
-	if (resolve(manifest.dataDir) !== resolve(expectedDataDir) || resolve(manifest.scopeDir) !== repoRoot) {
-		throw new Error("Executor advertised the wrong data directory or workspace scope.");
-	}
+	assertIsolatedRuntimeScope({
+		manifest,
+		expectedDataDir,
+		expectedScopeDir: smokeScope,
+		message: "Executor advertised the wrong data directory or workspace scope.",
+	});
 	const origin = loopbackOrigin(manifest.connection.origin);
 	if (!commandOutput.includes(`Opening ${origin}/?_token=${manifest.connection.auth.token}`)) {
 		throw new Error("Harnessy did not print the authenticated cockpit URL.");
@@ -247,9 +263,12 @@ const signalPid = (pid, signal) => {
 const stopIsolatedDaemon = async (manifest, env) => {
 	const origin = loopbackOrigin(manifest.connection.origin);
 	for (let attempt = 0; attempt < 2; attempt += 1) {
-		await runCommand("bun", ["run", executorCli, "daemon", "stop", "--base-url", origin], env, 15_000).catch(
-			() => undefined,
-		);
+		await runCommand(
+			executorLaunch.command,
+			[...executorLaunch.args, "daemon", "stop", "--base-url", origin],
+			env,
+			15_000,
+		).catch(() => undefined);
 		if (!(await isReachable(origin))) return;
 		await wait(250);
 	}
@@ -270,9 +289,12 @@ const stopIsolatedDaemon = async (manifest, env) => {
 const cleanupTemporaryRuntime = async (temporaryRoot, dataDir, manifest, env) => {
 	try {
 		if (manifest === undefined) return;
-		if (resolve(manifest.dataDir) !== resolve(dataDir) || resolve(manifest.scopeDir) !== repoRoot) {
-			throw new Error("Refusing to clean up a daemon outside the smoke-test scope.");
-		}
+		assertIsolatedRuntimeScope({
+			manifest,
+			expectedDataDir: dataDir,
+			expectedScopeDir: smokeScope,
+			message: "Refusing to clean up a daemon outside the smoke-test scope.",
+		});
 		await stopIsolatedDaemon(manifest, env);
 	} finally {
 		await rm(temporaryRoot, { recursive: true, force: true });
@@ -281,16 +303,19 @@ const cleanupTemporaryRuntime = async (temporaryRoot, dataDir, manifest, env) =>
 
 const main = async () => {
 	if (process.argv.length !== 2) throw new Error("Usage: node scripts/check-harnessy-cockpit.mjs");
-	const temporaryRoot = await mkdtemp(join(tmpdir(), "harnessy-cockpit-source-"));
+	const temporaryRoot = await mkdtemp(join(tmpdir(), `harnessy-cockpit-${smokeLabel}-`));
 	const dataDir = join(temporaryRoot, "executor");
 	const manifestPath = join(dataDir, "server-control", "server.json");
 	const browserStubDir = join(temporaryRoot, "bin");
 	await mkdir(browserStubDir, { recursive: true });
-	await writeFile(join(browserStubDir, "xdg-open"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+	const browserStub = join(browserStubDir, "xdg-open");
+	await writeFile(browserStub, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+	await writeFile(join(browserStubDir, "open"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 	const env = {
 		...process.env,
+		BROWSER: browserStub,
 		EXECUTOR_DATA_DIR: dataDir,
-		EXECUTOR_SCOPE_DIR: repoRoot,
+		EXECUTOR_SCOPE_DIR: smokeScope,
 		HOME: temporaryRoot,
 		PATH: `${browserStubDir}${delimiter}${process.env.PATH ?? ""}`,
 		USERPROFILE: temporaryRoot,
@@ -303,19 +328,19 @@ const main = async () => {
 
 	try {
 		const port = await freeLoopbackPort();
-		const output = await runCommand(process.execPath, [
-			harnessyCli,
+		const output = await runCommand(harnessyLaunch.command, [
+			...harnessyLaunch.args,
 			"web",
 			"--port",
 			String(port),
 			"--data-dir",
 			dataDir,
 			"--scope",
-			repoRoot,
+			smokeScope,
 		], env);
 		manifest = await waitForManifest(manifestPath);
 		await verifyCockpit(manifest, dataDir, output);
-		console.log("Harnessy source cockpit smoke passed.");
+		console.log(`Harnessy ${smokeLabel} cockpit smoke passed.`);
 	} finally {
 		if (manifest === undefined) {
 			try {

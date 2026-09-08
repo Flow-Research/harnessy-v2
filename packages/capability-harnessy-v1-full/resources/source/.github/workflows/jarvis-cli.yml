@@ -1,0 +1,43 @@
+name: Jarvis CLI
+
+on:
+  push:
+    paths:
+      - 'jarvis-cli/**'
+      - '.github/workflows/jarvis-cli.yml'
+  pull_request:
+    paths:
+      - 'jarvis-cli/**'
+      - '.github/workflows/jarvis-cli.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: jarvis-cli/uv.lock
+
+      - name: Install locked dependencies
+        working-directory: jarvis-cli
+        run: uv sync --frozen --all-groups
+
+      - name: Lint
+        working-directory: jarvis-cli
+        run: uv run ruff check src tests
+
+      - name: Test
+        working-directory: jarvis-cli
+        run: uv run pytest -q

@@ -1,0 +1,2596 @@
+{
+  "schemaVersion": 2,
+  "kind": "reconciled-v1-source",
+  "source": {
+    "repository": "https://github.com/Flow-Research/harnessy.git",
+    "snapshotBaseCommit": "bae3fdddd99eabe649d0d53cea5d2a0b501aa8b3",
+    "reconciliationBase": "511acb5d0c564dda8b1cfcdd7d2898ebdf2b8e63",
+    "currentHead": "d47f817a072f49a652b280f4873fedb7d0f9c753",
+    "overlayCommits": [
+      "9abb4d557c7be0f53bd87127e9fb7dacee426711",
+      "ec83bdcf1102b492a894157c1a82a52e455f4a02",
+      "807d5c0156c0f8ef1ae41a759b80ebc6c904736a",
+      "afffffb082e0267e1029f3eac4f9af4d7a736ebc"
+    ],
+    "dirtyPatchSha256": "d1c482569a9cfbf6e77badc8ea186529c62bc81bc976e19a84edc3ee2a6f8e06",
+    "dirtyInput": {
+      "algorithm": "sha256",
+      "digest": "41940da79ef523c42ba052a0eca632597504df21cb6c7113ec6e0895e3893bb9",
+      "trackedPatchSha256": "d1c482569a9cfbf6e77badc8ea186529c62bc81bc976e19a84edc3ee2a6f8e06",
+      "untrackedInputs": {
+        "algorithm": "sha256",
+        "digest": "9c63b8fb26928faba2de1d39a363d183babeb6d64ff0431f43b9edb0f8933886",
+        "pathCount": 40,
+        "byteCount": 368008,
+        "entries": [
+          {
+            "path": ".github/workflows/jarvis-cli.yml",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 916,
+            "executable": false,
+            "sha256": "23a6ce2b0175a27f6df7becb4195b2efadf15d61e9929f946cfaa8070c161ee2"
+          },
+          {
+            "path": ".jarvis/context/docs/operations/community-weekly-briefing.md",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 4739,
+            "executable": false,
+            "sha256": "e6d67055eb564d040a648a9619d873c68abc422272b4276e57a039d3128fb67c"
+          },
+          {
+            "path": ".jarvis/context/docs/operations/meeting-publication.md",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 6574,
+            "executable": false,
+            "sha256": "16c54ab53cc4e10b382c45a08cdd2e8c0f9ec1dadef387fd7decb80905a9e4c9"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/community_briefing/__init__.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 229,
+            "executable": false,
+            "sha256": "ed70b77e8a00119e8ea425127341ede7ec8007e4f13d991129103e6e6fe7b112"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/community_briefing/ai.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 4172,
+            "executable": false,
+            "sha256": "6affd7688a82a1cc4698f8eab00af6aecdc343f6077f6fa49050f62e227ac224"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/community_briefing/cli.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 9599,
+            "executable": false,
+            "sha256": "3f57c6a3057c1d1bc23e1d98506414a5164b637b0a6ae97f04e5f7232ebf841b"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/community_briefing/collector.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 6985,
+            "executable": false,
+            "sha256": "2f69c284c3ac5bd47ccc657e76c2f344c1186c1b11fb33fa56e09e37a2ed3935"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/community_briefing/models.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 1323,
+            "executable": false,
+            "sha256": "c41063e8852c063bb8a2de4ca09ddbd079814ec2d5eedb7565bb27d18aed7217"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/community_briefing/safety.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 3494,
+            "executable": false,
+            "sha256": "fd838704f8ef54ec9f654f95974ccc5b15474c84f19791faa3fc95e324fca5ec"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/community_briefing/service.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 30975,
+            "executable": false,
+            "sha256": "79b4a47958fe6757e6f5e4a0deb693dc9b0247a8bb61fa343c09fca012bd54ae"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/community_briefing/store.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 15425,
+            "executable": false,
+            "sha256": "afc7563471e16d4f06be852f3a7645e1a76a1ee2b2669a90dac554ef109265b9"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/__init__.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 259,
+            "executable": false,
+            "sha256": "65f6555de64a43aab918fb2820075a1967589a113bf64d6c844d90588ecf0b08"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/cli.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 15099,
+            "executable": false,
+            "sha256": "a7a7e543bbbbbef8c06dff5a33e581c02a23f682b4cac75b4f3f69d74617b7a8"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/discord.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 8978,
+            "executable": false,
+            "sha256": "84153d3324030b3b60ee4ce268c8030b0384979090af010208b211d6a5fd8fb1"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/errors.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 764,
+            "executable": false,
+            "sha256": "987ed2430ca12e7430c7892315aca959069457e689b2842fc4c089c7933def58"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/google.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 13617,
+            "executable": false,
+            "sha256": "4fe2ccaea2500859ea9c35fa6a501e9e1752abd6c48669464d3d315bc4564637"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/launchd.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 3853,
+            "executable": false,
+            "sha256": "12c88139b3dae2ad539368fd572fb52ad88ba9c5d345889b5d38399c4086e5c9"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/markdown.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 9189,
+            "executable": false,
+            "sha256": "121482bceac9ac987e2c2fa84ae53f330e075b75094c47c977a87a43e1a9b9c6"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/models.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 1513,
+            "executable": false,
+            "sha256": "0237b2235c22e7e00c66d016122381518eb8b388dff941528b0c15aab9f89e42"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/notes.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 9281,
+            "executable": false,
+            "sha256": "3703fe92a31c46ecaf00538ec4f664336c63b6261f2c3680907009050f08cbbd"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/notify.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 3342,
+            "executable": false,
+            "sha256": "38701ebf21c578b5d7ce10b5399c846e92e39ff081f2e3a3f9254e86f2423431"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/review.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 35662,
+            "executable": false,
+            "sha256": "2f9370d40c3c2a49993e06622e2df2cab0330ee02dd59c018cf3659d4be188a1"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/service.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 15923,
+            "executable": false,
+            "sha256": "1c7b0b8f889a3c404defa229b9414311d25efb8bda8074cafdf95cd8f36923f0"
+          },
+          {
+            "path": "jarvis-cli/src/jarvis/meetings/publication/store.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 20040,
+            "executable": false,
+            "sha256": "b0fe832c5d1aa8ddec181cb597959320b0eba208cb045d05ef256784647db59d"
+          },
+          {
+            "path": "jarvis-cli/tests/unit/community_briefing/__init__.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 39,
+            "executable": false,
+            "sha256": "8d55530638d36edcc5c3916ed386514ac433d861c54818a8b1812872a3d18ca8"
+          },
+          {
+            "path": "jarvis-cli/tests/unit/community_briefing/test_collector_safety.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 2869,
+            "executable": false,
+            "sha256": "1393c6364759d725fcffba3ebb9ec04bd9aa573803a232666a7154bf270e1674"
+          },
+          {
+            "path": "jarvis-cli/tests/unit/community_briefing/test_service_review.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 13633,
+            "executable": false,
+            "sha256": "664b2ec0cb95bf66199e6137c5de5a7aeee21c94bea04c5121a3fb68f0712af9"
+          },
+          {
+            "path": "jarvis-cli/tests/unit/meetings/publication/__init__.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 38,
+            "executable": false,
+            "sha256": "65987f764336e9e877624d17d584188b42350bf29e85f3ad3bafd558db39aed9"
+          },
+          {
+            "path": "jarvis-cli/tests/unit/meetings/publication/test_cli_launchd_notify.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 12094,
+            "executable": false,
+            "sha256": "203bf70320f40e5caa804c0308566f456aff8e34ab0d9b961f6e9cc69e4f620b"
+          },
+          {
+            "path": "jarvis-cli/tests/unit/meetings/publication/test_google.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 5694,
+            "executable": false,
+            "sha256": "1b05526ef509a7c96f76d889436b1b797041caebbf8e16ed5f8af4791627d2f2"
+          },
+          {
+            "path": "jarvis-cli/tests/unit/meetings/publication/test_markdown_discord.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 9562,
+            "executable": false,
+            "sha256": "753fa312ff1ab16238899669b239e91b006c12f7878b7ca9e98201491d4bb1b7"
+          },
+          {
+            "path": "jarvis-cli/tests/unit/meetings/publication/test_notes_store.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 11942,
+            "executable": false,
+            "sha256": "531daac27ff45102ab534cea61632f20b326879e890fda32b555056fac4c2e4a"
+          },
+          {
+            "path": "jarvis-cli/tests/unit/meetings/publication/test_service_review.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 20805,
+            "executable": false,
+            "sha256": "5741611aeeec362fa2b7cccb3e9cb3a47f917fa5f055372a86c9e5dd7951d215"
+          },
+          {
+            "path": "tools/flow-install/skills/life-orchestrator/scripts/learning-research",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 19659,
+            "executable": true,
+            "sha256": "376d2905c76651e7ca0f6264969b4e97e987913e7b9c423d8cc7f2cdfa7107ad"
+          },
+          {
+            "path": "tools/flow-install/skills/life-orchestrator/scripts/prepare-weekly-prompt",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 11517,
+            "executable": false,
+            "sha256": "c0a32de4debbd1beffa8e86d2cba4a7e6d3d88883227043de3f37af97ff89c9c"
+          },
+          {
+            "path": "tools/flow-install/tests/test_flow_cron_exec.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 2613,
+            "executable": false,
+            "sha256": "8e469635d2a61841b4fe7eca003bdbb4b8c870b0e5ac984a66a7246160d7618a"
+          },
+          {
+            "path": "tools/flow-install/tests/test_flow_install_cli.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 2889,
+            "executable": false,
+            "sha256": "5d9b3ed753261df8e208241dd87f8a568928d1bc916b0331d07b83f5da7973d8"
+          },
+          {
+            "path": "tools/flow-install/tests/test_life_orchestrator_daily_brief.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 12220,
+            "executable": false,
+            "sha256": "207a4028bfec54315bac0fe07eeec9425cb244889466dd62f227e3c6849b8f5c"
+          },
+          {
+            "path": "tools/flow-install/tests/test_life_orchestrator_learning_research.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 9968,
+            "executable": false,
+            "sha256": "0ac7b8678d39b0bb60a7d0734db136ccdeb651bfb0be3935d2795790ebb714d6"
+          },
+          {
+            "path": "tools/flow-install/tests/test_life_orchestrator_weekly_plan.py",
+            "origins": [
+              "dirty"
+            ],
+            "dirtyStatuses": [
+              "??"
+            ],
+            "trackedAtHead": false,
+            "trackedInIndex": false,
+            "state": "present",
+            "size": 10515,
+            "executable": false,
+            "sha256": "59b9e4536026f03dec036b3145264a09bd83c1a76ad419c33cacfd469e32ddfd"
+          }
+        ]
+      }
+    },
+    "dirtyPaths": 110,
+    "selectedPaths": 120,
+    "selectedInputs": {
+      "algorithm": "sha256",
+      "digest": "ed52459e91a22f037cdc0ae1921c23fcd3eab6d80f493c2e2c81f0b8f6b5b5e8",
+      "pathCount": 120,
+      "byteCount": 1632610,
+      "entries": [
+        {
+          "path": ".github/workflows/jarvis-cli.yml",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 916,
+          "executable": false,
+          "sha256": "23a6ce2b0175a27f6df7becb4195b2efadf15d61e9929f946cfaa8070c161ee2"
+        },
+        {
+          "path": ".gitignore",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1437,
+          "executable": false,
+          "sha256": "a2bef2ab5bf9893b128e47508847a249905e0873ad6fddb40145a7f2e90bfc2e"
+        },
+        {
+          "path": ".jarvis/context/README.md",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 4855,
+          "executable": false,
+          "sha256": "3fcc67ffe4c81f0b1d452101058bbc0023db44ea049b825d7c05b405a817f473"
+        },
+        {
+          "path": ".jarvis/context/docs/operations/community-weekly-briefing.md",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 4739,
+          "executable": false,
+          "sha256": "e6d67055eb564d040a648a9619d873c68abc422272b4276e57a039d3128fb67c"
+        },
+        {
+          "path": ".jarvis/context/docs/operations/fathom-local-automation.md",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 9796,
+          "executable": false,
+          "sha256": "4e5184c3bcb341530aa74cf6277fa3268743a6983b0e4cacd10f28cfb2daf08e"
+        },
+        {
+          "path": ".jarvis/context/docs/operations/meeting-publication.md",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 6574,
+          "executable": false,
+          "sha256": "16c54ab53cc4e10b382c45a08cdd2e8c0f9ec1dadef387fd7decb80905a9e4c9"
+        },
+        {
+          "path": ".jarvis/context/docs/operations/whatsapp-local-automation.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 3855,
+          "executable": false,
+          "sha256": "eab0501cb7cdd47129e27b3a99a59c9b2fa01658c47a36e66ecd9a7b12b1564b"
+        },
+        {
+          "path": ".jarvis/context/docs/reusable-script-standard.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 8899,
+          "executable": false,
+          "sha256": "cfb21c3f243b38ab6c60adf364344ba7f908b859a1ef29abe4836c61ccfe676a"
+        },
+        {
+          "path": ".jarvis/context/docs/standards/ci-process.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 5652,
+          "executable": false,
+          "sha256": "c6b2e9aed6af87ec4e2f03c8463b33068952fb50bb81fbb0af635214bed5cf71"
+        },
+        {
+          "path": ".jarvis/context/docs/standards/worktree-protocol.md",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 9152,
+          "executable": false,
+          "sha256": "5c51c2a75cea8dabae63cacbe296612a3cf852b6aade5ace07244255970fcca0"
+        },
+        {
+          "path": ".jarvis/context/profiles/ci.json",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1256,
+          "executable": false,
+          "sha256": "2d8ba02f965fd20845f5326b58a7ebb8ccfb6f04e721e8d310a9bd5b224473e8"
+        },
+        {
+          "path": ".jarvis/context/skills/_catalog.md",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 23182,
+          "executable": false,
+          "sha256": "e979d56ff1d978f2373b96593c7b10503b791bf31bf26c7592a3b7435c94443f"
+        },
+        {
+          "path": "jarvis-cli/AGENTS.md",
+          "origins": [
+            "dirty",
+            "overlay:807d5c0",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 32419,
+          "executable": false,
+          "sha256": "e849f6609e30364751597d0599e25b6ab9fa8b5f3380b8e8fb8e700d2cf16980"
+        },
+        {
+          "path": "jarvis-cli/pyproject.toml",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 2757,
+          "executable": false,
+          "sha256": "0418b455091d58cf808d1255d877f32b5b2215dd8b54f6d31e14a2bba066e2bc"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/cli.py",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 152134,
+          "executable": false,
+          "sha256": "a9cf44bb2295a8815bd1c2ea66373832ae65fc3fc5af7a453d2df153ad34449a"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/community_briefing/__init__.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 229,
+          "executable": false,
+          "sha256": "ed70b77e8a00119e8ea425127341ede7ec8007e4f13d991129103e6e6fe7b112"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/community_briefing/ai.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 4172,
+          "executable": false,
+          "sha256": "6affd7688a82a1cc4698f8eab00af6aecdc343f6077f6fa49050f62e227ac224"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/community_briefing/cli.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 9599,
+          "executable": false,
+          "sha256": "3f57c6a3057c1d1bc23e1d98506414a5164b637b0a6ae97f04e5f7232ebf841b"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/community_briefing/collector.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 6985,
+          "executable": false,
+          "sha256": "2f69c284c3ac5bd47ccc657e76c2f344c1186c1b11fb33fa56e09e37a2ed3935"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/community_briefing/models.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 1323,
+          "executable": false,
+          "sha256": "c41063e8852c063bb8a2de4ca09ddbd079814ec2d5eedb7565bb27d18aed7217"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/community_briefing/safety.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 3494,
+          "executable": false,
+          "sha256": "fd838704f8ef54ec9f654f95974ccc5b15474c84f19791faa3fc95e324fca5ec"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/community_briefing/service.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 30975,
+          "executable": false,
+          "sha256": "79b4a47958fe6757e6f5e4a0deb693dc9b0247a8bb61fa343c09fca012bd54ae"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/community_briefing/store.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 15425,
+          "executable": false,
+          "sha256": "afc7563471e16d4f06be852f3a7645e1a76a1ee2b2669a90dac554ef109265b9"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/config/__init__.py",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 3242,
+          "executable": false,
+          "sha256": "84a41c6dbd31cc44a831ec8360573ab9bf30c0890069effbf700420b3e5e5b76"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/config/defaults.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 4060,
+          "executable": false,
+          "sha256": "2781764a18252cd1dfa40858dfa966b064b7692a28f7fc1e34503f8310f02ae5"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/config/loader.py",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 16871,
+          "executable": false,
+          "sha256": "29c53d21ec0b7a2547952a02d61623a4d02fbb0103181428913654fb668458d8"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/config/schema.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 14061,
+          "executable": false,
+          "sha256": "e89f759909963ea1696636245ad15e82aa701413a1bcf4c8b13c8c6ef5d6011f"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/config/whatsapp_setup.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 4469,
+          "executable": false,
+          "sha256": "7ffa464fbda92e9bec10addaf568ed6e55b4fa1ce9de7feb37cb330ec136ca0b"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/cli.py",
+          "origins": [
+            "dirty",
+            "overlay:ec83bdc"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 39135,
+          "executable": false,
+          "sha256": "3ceb607ff29c207069048a800296d396f207f060489fc1dc41c6425a4dd42448"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/models.py",
+          "origins": [
+            "overlay:ec83bdc"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1086,
+          "executable": false,
+          "sha256": "b5a9c13e7e770cb92bbccb2139c94a5c60e48dcc01ab7b946516eb6edf977c7a"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/__init__.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 259,
+          "executable": false,
+          "sha256": "65f6555de64a43aab918fb2820075a1967589a113bf64d6c844d90588ecf0b08"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/cli.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 15099,
+          "executable": false,
+          "sha256": "a7a7e543bbbbbef8c06dff5a33e581c02a23f682b4cac75b4f3f69d74617b7a8"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/discord.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 8978,
+          "executable": false,
+          "sha256": "84153d3324030b3b60ee4ce268c8030b0384979090af010208b211d6a5fd8fb1"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/errors.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 764,
+          "executable": false,
+          "sha256": "987ed2430ca12e7430c7892315aca959069457e689b2842fc4c089c7933def58"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/google.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 13617,
+          "executable": false,
+          "sha256": "4fe2ccaea2500859ea9c35fa6a501e9e1752abd6c48669464d3d315bc4564637"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/launchd.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 3853,
+          "executable": false,
+          "sha256": "12c88139b3dae2ad539368fd572fb52ad88ba9c5d345889b5d38399c4086e5c9"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/markdown.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 9189,
+          "executable": false,
+          "sha256": "121482bceac9ac987e2c2fa84ae53f330e075b75094c47c977a87a43e1a9b9c6"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/models.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 1513,
+          "executable": false,
+          "sha256": "0237b2235c22e7e00c66d016122381518eb8b388dff941528b0c15aab9f89e42"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/notes.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 9281,
+          "executable": false,
+          "sha256": "3703fe92a31c46ecaf00538ec4f664336c63b6261f2c3680907009050f08cbbd"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/notify.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 3342,
+          "executable": false,
+          "sha256": "38701ebf21c578b5d7ce10b5399c846e92e39ff081f2e3a3f9254e86f2423431"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/review.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 35662,
+          "executable": false,
+          "sha256": "2f9370d40c3c2a49993e06622e2df2cab0330ee02dd59c018cf3659d4be188a1"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/service.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 15923,
+          "executable": false,
+          "sha256": "1c7b0b8f889a3c404defa229b9414311d25efb8bda8074cafdf95cd8f36923f0"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/publication/store.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 20040,
+          "executable": false,
+          "sha256": "b0fe832c5d1aa8ddec181cb597959320b0eba208cb045d05ef256784647db59d"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/meetings/service.py",
+          "origins": [
+            "dirty",
+            "overlay:ec83bdc"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 38074,
+          "executable": false,
+          "sha256": "e5525f10366e44b60450aaa467eb93e01a34394f57cbb3b64d29a7c816f6bf75"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/text_hygiene.py",
+          "origins": [
+            "dirty",
+            "overlay:807d5c0"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 20891,
+          "executable": false,
+          "sha256": "d3b656b992c183887d913f587216f5793521b7c18f3dfcad0c2d6066e6812786"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/whatsapp/automation.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 4724,
+          "executable": false,
+          "sha256": "ea8de07c31d6a0104f065ef270e5f26bcb4f00a825f5533f48bc3a66ab648387"
+        },
+        {
+          "path": "jarvis-cli/src/jarvis/whatsapp/cli.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 20892,
+          "executable": false,
+          "sha256": "34cd7c2cec3477bf3415d9bb36167e62ecb6410a7be4b28179e0bda4f69b384c"
+        },
+        {
+          "path": "jarvis-cli/tests/plan/test_alignment.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 7364,
+          "executable": false,
+          "sha256": "7c3bc7d56c7f09d3f786b50a4447822e0d2915f98bafbf54be37e58455c65b7a"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/community_briefing/__init__.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 39,
+          "executable": false,
+          "sha256": "8d55530638d36edcc5c3916ed386514ac433d861c54818a8b1812872a3d18ca8"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/community_briefing/test_collector_safety.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 2869,
+          "executable": false,
+          "sha256": "1393c6364759d725fcffba3ebb9ec04bd9aa573803a232666a7154bf270e1674"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/community_briefing/test_service_review.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 13633,
+          "executable": false,
+          "sha256": "664b2ec0cb95bf66199e6137c5de5a7aeee21c94bea04c5121a3fb68f0712af9"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/config/test_cli.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 6641,
+          "executable": false,
+          "sha256": "e15791957cfb734ec152a817ddce6d7781eeff8c017e40d33473eac4dc54a7d1"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/config/test_loader.py",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 18279,
+          "executable": false,
+          "sha256": "c9ee3b642631605c5033711efa16039b152c4d7591209ac95dd14963560edf16"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/config/test_schema.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 11710,
+          "executable": false,
+          "sha256": "5db411e078a5e8dc0770ebb9248dc936096e628a908e346fc90c73b13986e8e5"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/config/test_whatsapp_setup.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 2186,
+          "executable": false,
+          "sha256": "19567bcd4a815ec68e9a6f213f3f5aeef8c2f06bbac5863a0d1975238ce53732"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/meetings/publication/__init__.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 38,
+          "executable": false,
+          "sha256": "65987f764336e9e877624d17d584188b42350bf29e85f3ad3bafd558db39aed9"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/meetings/publication/test_cli_launchd_notify.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 12094,
+          "executable": false,
+          "sha256": "203bf70320f40e5caa804c0308566f456aff8e34ab0d9b961f6e9cc69e4f620b"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/meetings/publication/test_google.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 5694,
+          "executable": false,
+          "sha256": "1b05526ef509a7c96f76d889436b1b797041caebbf8e16ed5f8af4791627d2f2"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/meetings/publication/test_markdown_discord.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 9562,
+          "executable": false,
+          "sha256": "753fa312ff1ab16238899669b239e91b006c12f7878b7ca9e98201491d4bb1b7"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/meetings/publication/test_notes_store.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 11942,
+          "executable": false,
+          "sha256": "531daac27ff45102ab534cea61632f20b326879e890fda32b555056fac4c2e4a"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/meetings/publication/test_service_review.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 20805,
+          "executable": false,
+          "sha256": "5741611aeeec362fa2b7cccb3e9cb3a47f917fa5f055372a86c9e5dd7951d215"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/meetings/test_cli.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 31552,
+          "executable": false,
+          "sha256": "2441baabc2dc3bfffc5f92a955164c8b9adb2d8c4da85812097a58c3bfd8582e"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/meetings/test_service.py",
+          "origins": [
+            "dirty",
+            "overlay:ec83bdc"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 19387,
+          "executable": false,
+          "sha256": "6fe2f056dc7a2609c41daf1dbc8198a6e68b84e756c9762930572af9e25593eb"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/test_text_hygiene.py",
+          "origins": [
+            "dirty",
+            "overlay:807d5c0"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 5450,
+          "executable": false,
+          "sha256": "ff639d39cb9499e2f64ead3978625c594511473eef79e9a8af72523034957f09"
+        },
+        {
+          "path": "jarvis-cli/tests/unit/whatsapp/test_cli.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 7502,
+          "executable": false,
+          "sha256": "21972d33e868bf76acf1d2c72be2db89db915301268d1b4cfbc19a99eb87f6c0"
+        },
+        {
+          "path": "jarvis-cli/uv.lock",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 239588,
+          "executable": false,
+          "sha256": "830295fd95c0090863a754e395a6159941471ce59f8c7631c581d6cc7ecc7f9f"
+        },
+        {
+          "path": "tools/flow-install/index.mjs",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 16440,
+          "executable": true,
+          "sha256": "40687f02d022f48cc769cda98e07ca34cd9c4e30372e4d14e5f1c8013984f71b"
+        },
+        {
+          "path": "tools/flow-install/lib/dependencies.mjs",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 6957,
+          "executable": false,
+          "sha256": "f6eb81b70db0a37033420900cea6aec50dcf8dbc93b2a6dca23892fb86cd4015"
+        },
+        {
+          "path": "tools/flow-install/lib/skills.mjs",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 11860,
+          "executable": false,
+          "sha256": "e9c81a9135c03e74c599a86b92f53edf064302a62f79098a93d0b4747252f8d2"
+        },
+        {
+          "path": "tools/flow-install/scripts/flow-cron",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 33659,
+          "executable": true,
+          "sha256": "08d449296eb1bfa74d098baf3676b4c81982d5106e06b3f680e2c69afc28b648"
+        },
+        {
+          "path": "tools/flow-install/scripts/flow-cron-exec",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 9109,
+          "executable": true,
+          "sha256": "f8febea94aa97f5760ebf3d09b09045ad4398c2675e5a5efcde160c300a158c5"
+        },
+        {
+          "path": "tools/flow-install/skills/_shared/ai_runner.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 16020,
+          "executable": false,
+          "sha256": "3732e2cd1070b20048ae50904c7500039073621282a58d4f1aa9f13185491a1c"
+        },
+        {
+          "path": "tools/flow-install/skills/_shared/text-hygiene.md",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 769,
+          "executable": false,
+          "sha256": "89ed6eb67d4501f37e8df416d121ea70b438a83b4c64bebb10d094d9d1818325"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/SKILL.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 3681,
+          "executable": false,
+          "sha256": "153920bfcb7b7145da914f78f6fc050620dc4d98b94b3df574ba4b0d8fdddf12"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/capability.yaml",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 2231,
+          "executable": false,
+          "sha256": "e2b3d2c4a93029aacf00b2d958061cedfa1bc7b5b93e534de29fd7e3d848707d"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/commands/code-review.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 8759,
+          "executable": false,
+          "sha256": "022bd2556d49d01f2d1ed5555b5e9962cf3e19eed98001a70c79a8812342caee"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/contracts/evidence.schema.json",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 2462,
+          "executable": false,
+          "sha256": "e32e7e53fc59d753408a6bf480c7bb05d091b9cf3d6610fe7bda215a775e86ce"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/contracts/input.schema.json",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1182,
+          "executable": false,
+          "sha256": "cf9da4775d5350ec54919bef74514116bb0c016d925ade3ca9a153d4fa1c7022"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/contracts/output.schema.json",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 2787,
+          "executable": false,
+          "sha256": "154a1052dcc68207d18fabdece6c57e4c0dd744b37ec6f8f907629dfa1d8a44e"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/manifest.yaml",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 826,
+          "executable": false,
+          "sha256": "8f85a0271019cb12947a61dd6970b6ef32b4ab815a13b0659a6e6f0423e5936f"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/materials/report-template.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 554,
+          "executable": false,
+          "sha256": "11d5ab335cdab7a103d83166d027d47ea0380b5a2906e7acbaf46c0a61d45bf5"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/materials/review-rubric.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 2008,
+          "executable": false,
+          "sha256": "960f1a7e9f4e9dc2ee1a73d24658929d8b95a56c2355a4f9cb024d83b5ba9351"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/materials/severity-taxonomy.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1560,
+          "executable": false,
+          "sha256": "1d4c16a28168fa8dc8b21f8a2cd91ae8c5c408a719da2bd1cd5152e057c79773"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/materials/verifier-rubric.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1257,
+          "executable": false,
+          "sha256": "d3cbf1869ee2972f07235d65732a57b3f679760a10766f02f3a4c9cdf9564d7c"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/projections/README.md",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1846,
+          "executable": false,
+          "sha256": "7fd143a486632a85aac30853abfe6ef2b0fd3516ee04d028c290a8b23bc6da4f"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/scripts/build-evidence.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 3522,
+          "executable": false,
+          "sha256": "393809d9ec8062615ecfacfe21d428086fece04ffe8f2a42655a7b176517cf3a"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/scripts/discover-diff.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 6105,
+          "executable": false,
+          "sha256": "cccbd173c6efd05132dff49fed6f7ff007c7c4e6e003c8b6ac0568ccc2e169be"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/scripts/harness-code-review",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 23808,
+          "executable": true,
+          "sha256": "e13360b71a5a88e6cfc722952d673a03fede53c0b43c4c3bfa5f107ed09e0a48"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/scripts/validate-evidence.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 11878,
+          "executable": true,
+          "sha256": "fa07fe9b6365d4eb3275540844b2d4c9c00870b40a73a2ce2dbe1e3e4abc3fd3"
+        },
+        {
+          "path": "tools/flow-install/skills/code-review/scripts/validate-output.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 5467,
+          "executable": false,
+          "sha256": "da5917721b72fef0f3a7d78271a68ceb3d87787227499f15acc4d5689d2a9ac3"
+        },
+        {
+          "path": "tools/flow-install/skills/dependency-manager/manifest.yaml",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 838,
+          "executable": false,
+          "sha256": "772a3ad62e115f55dd1d47dccb664f1aa62ae357ad5fcc8fc03ed9a03632c0cc"
+        },
+        {
+          "path": "tools/flow-install/skills/dependency-manager/scripts/dependency-manager-lib.mjs",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 8871,
+          "executable": false,
+          "sha256": "045d531991a30d5614e5dd2bf3e3e4358cf1f5666e140f3efbb423a7f7ffe20c"
+        },
+        {
+          "path": "tools/flow-install/skills/jarvis/commands/jarvis.md",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 26856,
+          "executable": false,
+          "sha256": "ad80e730ce461a7632d7b143cbb1077c6a8c4dccb81a2384fcb9591fcebae0db"
+        },
+        {
+          "path": "tools/flow-install/skills/jarvis/manifest.yaml",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1410,
+          "executable": false,
+          "sha256": "dadb1e4ce1181965c1dc7312a5535aace29fb1da2698cacd2db9d36365c26578"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/SKILL.md",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 6866,
+          "executable": false,
+          "sha256": "15582a5b346428a491e0c29b09304c4bf17488293536b2dfad2fefa73f0dc028"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/commands/life.md",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 14473,
+          "executable": false,
+          "sha256": "cb67c0c3a42838eceabfdac7d7d0b5907f1bead642d30b7d2a9e5874ad0414ee"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/manifest.yaml",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 2673,
+          "executable": false,
+          "sha256": "d407b027f3949ed2e78e39b5bd8dd6b5fdbb52df0bc936ca72bb2051839f1e9e"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/scripts/collect-state",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 50634,
+          "executable": true,
+          "sha256": "d12c5ff728aa020532ca8193b81ee3c39911cfa381fadb1431e9d150f1d8b515"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/scripts/daily-brief",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 43019,
+          "executable": true,
+          "sha256": "5e596bdcfb64e47aae629fb5e2806c0388363729f68220f69bb545d8fc763778"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/scripts/learning-research",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 19659,
+          "executable": true,
+          "sha256": "376d2905c76651e7ca0f6264969b4e97e987913e7b9c423d8cc7f2cdfa7107ad"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/scripts/prepare-weekly-prompt",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 11517,
+          "executable": false,
+          "sha256": "c0a32de4debbd1beffa8e86d2cba4a7e6d3d88883227043de3f37af97ff89c9c"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/scripts/weekly-plan",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 9667,
+          "executable": true,
+          "sha256": "5c5b1e5d143bb62295760de4e02ff4cc8d87f7c53e7a1a6285219419e740df7e"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/templates/daily-focus.md",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 410,
+          "executable": false,
+          "sha256": "b98c4d9b892938b0cdebaa8419384dd3a4071be1bb84b8664f34fb60cec1670e"
+        },
+        {
+          "path": "tools/flow-install/skills/life-orchestrator/templates/weekly-plan.md",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1193,
+          "executable": false,
+          "sha256": "4ac39793193effc7d5f6cf11ddda690ace079b3636ca422d29bb946a405fe2f5"
+        },
+        {
+          "path": "tools/flow-install/skills/service-deploy/scripts/harness-deploy",
+          "origins": [
+            "overlay:9abb4d5",
+            "overlay:afffffb"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 59760,
+          "executable": true,
+          "sha256": "5f8d82d5dbc583692cf20888ecfcf33a9ce0df826efcb02fcfde07731226babb"
+        },
+        {
+          "path": "tools/flow-install/skills/tmux-agent-launcher/SKILL.md",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 2281,
+          "executable": false,
+          "sha256": "538b380a3d17486db742dafbc4443c0676d7b4c74b9ddb2541fa535b1af473e0"
+        },
+        {
+          "path": "tools/flow-install/skills/tmux-agent-launcher/commands/tmux-agent-launcher.md",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 9184,
+          "executable": false,
+          "sha256": "d8254e9d5b440bf03f510954b2aad91b1502c742d2818d61b91dd4d04142902e"
+        },
+        {
+          "path": "tools/flow-install/skills/tmux-agent-launcher/manifest.yaml",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1013,
+          "executable": false,
+          "sha256": "250fbb177d24d17370b5fda986650a21c7f009e7b9fb7889aece4ac0b2163776"
+        },
+        {
+          "path": "tools/flow-install/skills/tmux-agent-launcher/scripts/tmux-agent-launcher",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 13743,
+          "executable": true,
+          "sha256": "e912b6ea3816895cd572db70a481c4d012b0671248c3be1f705ea855b0eb29d8"
+        },
+        {
+          "path": "tools/flow-install/templates/harness-code-review.yml",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 1008,
+          "executable": false,
+          "sha256": "107763f918ac552404be796ed98883dd9b982354b1f22e61dfb1ddeaa9d7bf39"
+        },
+        {
+          "path": "tools/flow-install/tests/test_ai_runner.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 4797,
+          "executable": false,
+          "sha256": "4a80e1c1f29af085fc9a9bc8e5338e493c6d12c1df3d5ce5fc81cb7c32fccfd8"
+        },
+        {
+          "path": "tools/flow-install/tests/test_code_review_capability.py",
+          "origins": [
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 16325,
+          "executable": false,
+          "sha256": "81bd4aec518d35e9d8222593ea150f8e8f5771a4cc7c24b4b0b4f79b7f728a98"
+        },
+        {
+          "path": "tools/flow-install/tests/test_flow_cron.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 5935,
+          "executable": false,
+          "sha256": "b034e91d90b348c2436db73c0debe3d1238427a6ec1686c1c38b2639a69181b0"
+        },
+        {
+          "path": "tools/flow-install/tests/test_flow_cron_exec.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 2613,
+          "executable": false,
+          "sha256": "8e469635d2a61841b4fe7eca003bdbb4b8c870b0e5ac984a66a7246160d7618a"
+        },
+        {
+          "path": "tools/flow-install/tests/test_flow_install_cli.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 2889,
+          "executable": false,
+          "sha256": "5d9b3ed753261df8e208241dd87f8a568928d1bc916b0331d07b83f5da7973d8"
+        },
+        {
+          "path": "tools/flow-install/tests/test_life_orchestrator_collect_state.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 20552,
+          "executable": false,
+          "sha256": "2df74b690c221a0d340205871fdf9f5b92625d7af814ee884ad046c50b8db063"
+        },
+        {
+          "path": "tools/flow-install/tests/test_life_orchestrator_daily_brief.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 12220,
+          "executable": false,
+          "sha256": "207a4028bfec54315bac0fe07eeec9425cb244889466dd62f227e3c6849b8f5c"
+        },
+        {
+          "path": "tools/flow-install/tests/test_life_orchestrator_learning_research.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 9968,
+          "executable": false,
+          "sha256": "0ac7b8678d39b0bb60a7d0734db136ccdeb651bfb0be3935d2795790ebb714d6"
+        },
+        {
+          "path": "tools/flow-install/tests/test_life_orchestrator_weekly_plan.py",
+          "origins": [
+            "dirty"
+          ],
+          "dirtyStatuses": [
+            "??"
+          ],
+          "trackedAtHead": false,
+          "trackedInIndex": false,
+          "state": "present",
+          "size": 10515,
+          "executable": false,
+          "sha256": "59b9e4536026f03dec036b3145264a09bd83c1a76ad419c33cacfd469e32ddfd"
+        },
+        {
+          "path": "tools/flow-install/tests/test_tmux_agent_launcher.py",
+          "origins": [
+            "dirty",
+            "overlay:9abb4d5"
+          ],
+          "dirtyStatuses": [
+            " M"
+          ],
+          "trackedAtHead": true,
+          "trackedInIndex": true,
+          "state": "present",
+          "size": 15789,
+          "executable": false,
+          "sha256": "6cd4fdace8a64495c6473331a74cc49020b369a5f7bfd3e80df12ce3011f6357"
+        }
+      ]
+    },
+    "reviewedExclusions": [
+      {
+        "path": ".jarvis/context/projects.md",
+        "category": "private-live-state",
+        "reason": "workspace-project-inventory"
+      },
+      {
+        "path": ".tmp-sgci-visual-review.PV2p4C/current.pdf",
+        "category": "non-runtime-generated",
+        "reason": "temporary-visual-review-artifact"
+      },
+      {
+        "path": ".tmp-sgci-visual-review.PV2p4C/current.png",
+        "category": "non-runtime-generated",
+        "reason": "temporary-visual-review-artifact"
+      },
+      {
+        "path": "checkin-reworded-pipeline.png",
+        "category": "non-runtime-generated",
+        "reason": "rendered-review-artifact"
+      },
+      {
+        "path": "download.html",
+        "category": "non-runtime-generated",
+        "reason": "download-artifact"
+      },
+      {
+        "path": "flow-discord-qr.png",
+        "category": "private-live-state",
+        "reason": "sensitive-qr-artifact"
+      },
+      {
+        "path": "flow-harnessy-strategy-brief.pdf",
+        "category": "non-runtime-generated",
+        "reason": "strategy-brief-artifact"
+      },
+      {
+        "path": "flow-harnessy-strategy-brief.txt",
+        "category": "non-runtime-generated",
+        "reason": "strategy-brief-artifact"
+      },
+      {
+        "path": "founder-investments-offer.png",
+        "category": "private-live-state",
+        "reason": "private-account-screenshot"
+      },
+      {
+        "path": "investments-list-loggedin.png",
+        "category": "private-live-state",
+        "reason": "private-account-screenshot"
+      },
+      {
+        "path": "proposals/CLA.md",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/DCO.md",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/README.md",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/build_etranzact_discovery_deck.py",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/content-batch-jul6-11.md",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/dual-entity-flow-itana.md",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/etranzact-flow-discovery-deck.pdf",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/etranzact-flow-discovery-deck.pptx",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/partnership-3mtt.md",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/partnership-inubu.md",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      },
+      {
+        "path": "proposals/partnership-nithub.md",
+        "category": "non-runtime-generated",
+        "reason": "proposal-artifact"
+      }
+    ],
+    "reviewedMigrationControlExclusions": [
+      {
+        "path": "AGENTS.md",
+        "category": "migration-control",
+        "reason": "v2-canonical-deprecation-pointer",
+        "tracking": "tracked-at-head"
+      },
+      {
+        "path": "README.md",
+        "category": "migration-control",
+        "reason": "v2-canonical-deprecation-pointer",
+        "tracking": "tracked-at-head"
+      }
+    ],
+    "startingTree": {
+      "algorithm": "sha256",
+      "digest": "ea210b9eb8bbcfaeb79e6eae4362b1af32b43937ae0e1108ffe4946b4ed95ef8",
+      "fileCount": 706,
+      "byteCount": 4862126
+    },
+    "mode": "reviewed-dirty-overlay"
+  },
+  "exclusions": [
+    "git-metadata",
+    "nested-projects",
+    "private-context",
+    "local-schedule",
+    "runtime-state",
+    "review-secret",
+    "environment-secret",
+    "generated-cache",
+    "coverage-artifact",
+    "agent-run-state",
+    "proposal-artifact",
+    "sensitive-image"
+  ],
+  "tree": {
+    "algorithm": "sha256",
+    "digest": "d21b6249030d11df40c1f3b07169adb868ef8e417e5fbc70e7bdc0676c7642c2",
+    "fileCount": 706,
+    "byteCount": 4862127
+  },
+  "projections": [
+    {
+      "id": "flow-install",
+      "source": "tools/flow-install",
+      "projection": "flow-install",
+      "digest": "75bc9286dc60b18fe09989841db8cca8cb59d1cd79109aa086284b119d1fd839",
+      "fileCount": 338,
+      "byteCount": 1864483
+    },
+    {
+      "id": "context-vault",
+      "source": ".jarvis/context",
+      "projection": "context-vault",
+      "digest": "1e7b07f607affd63c5e64755c58a5af8c37d934c05f2101f381a85fc184985a9",
+      "fileCount": 44,
+      "byteCount": 165924
+    },
+    {
+      "id": "jarvis-cli",
+      "source": "jarvis-cli",
+      "projection": "jarvis-cli",
+      "digest": "39241ac4ccaa6057391fee37a3c6004be8771331e2387c9c439ee1d8c284eafe",
+      "fileCount": 280,
+      "byteCount": 2634899
+    },
+    {
+      "id": "root-installer",
+      "source": "install.sh",
+      "projection": "install.sh",
+      "digest": "bd1d1af591cc94a3bb04ae3662abe728653b07ebd9ac1aaa3e8df0d674417954",
+      "fileCount": 1,
+      "byteCount": 7671
+    },
+    {
+      "id": "root-readme",
+      "source": "README.md",
+      "projection": "README.v1.md",
+      "digest": "42cf0af482f71d0204ffef9a51be80db8caa20a933b8cc2219f79fe10d643460",
+      "fileCount": 1,
+      "byteCount": 21053
+    },
+    {
+      "id": "root-agents",
+      "source": "AGENTS.md",
+      "projection": "AGENTS.v1.md",
+      "digest": "98f00ba91906fc6cc05e58b0636dddc4aa6309d3b9f57e1dad8077836a7fcd33",
+      "fileCount": 1,
+      "byteCount": 5349
+    }
+  ]
+}
