@@ -43,8 +43,10 @@ export const scanDeliveredLifeBriefs = (lifeDirectory: string): LifeDeliveredHis
 	const entries: Array<{ readonly url: string; readonly briefPath: string; readonly deliveredAt: string }> = [];
 	const briefs = walk(lifeDirectory);
 	for (const briefPath of briefs) {
+		const journalMarker = `${briefPath}.journaled`;
+		if (!existsSync(journalMarker)) continue;
 		const markdown = readFileSync(briefPath, "utf8");
-		const deliveredAt = statSync(briefPath).mtime.toISOString();
+		const deliveredAt = statSync(journalMarker).mtime.toISOString();
 		for (const url of extractWorthReadingUrls(markdown)) entries.push({ url, briefPath, deliveredAt });
 	}
 	return {

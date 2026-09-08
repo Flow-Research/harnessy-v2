@@ -66,13 +66,22 @@ const lifeSettings = (target: string, homeRoot: Option.Option<string>, compatibi
 		compatibilityRoot: Option.getOrUndefined(compatibilityRoot),
 	});
 
-const researchDate = (date: Option.Option<string>): Date | undefined => {
-	const value = Option.getOrUndefined(date);
-	if (value === undefined) return undefined;
+export const parseResearchDate = (value: string): Date => {
+	const calendarDate = new Date(`${value}T00:00:00.000Z`);
 	const parsed = new Date(`${value}T12:00:00+01:00`);
-	if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(parsed.getTime()))
+	if (
+		!/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+		!Number.isFinite(calendarDate.getTime()) ||
+		calendarDate.toISOString().slice(0, 10) !== value ||
+		!Number.isFinite(parsed.getTime())
+	)
 		throw new Error(`Invalid date: ${value}`);
 	return parsed;
+};
+
+const researchDate = (date: Option.Option<string>): Date | undefined => {
+	const value = Option.getOrUndefined(date);
+	return value === undefined ? undefined : parseResearchDate(value);
 };
 
 const lifeOptions = {

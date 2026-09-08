@@ -16,11 +16,33 @@ const sectionRange = (markdown: string): { readonly start: number; readonly end:
 	return { start: heading.index, end: bodyStart + skippedNewline + next.index };
 };
 
+const MARKDOWN_INLINE_ENTITY: Readonly<Record<string, string>> = {
+	"&": "&amp;",
+	"<": "&lt;",
+	">": "&gt;",
+	"\\": "&#92;",
+	"`": "&#96;",
+	"*": "&#42;",
+	_: "&#95;",
+	"{": "&#123;",
+	"}": "&#125;",
+	"[": "&#91;",
+	"]": "&#93;",
+	"(": "&#40;",
+	")": "&#41;",
+	"#": "&#35;",
+	"+": "&#43;",
+	"-": "&#45;",
+	"!": "&#33;",
+	"|": "&#124;",
+};
+
 const cleanInline = (value: string) =>
 	value
 		.replace(/[\r\n]+/g, " ")
 		.replace(/\s+/g, " ")
-		.trim();
+		.trim()
+		.replace(/[&<>\\`*_{}[\]()#+!|-]/g, (character) => MARKDOWN_INLINE_ENTITY[character] ?? character);
 
 const ageLabel = (publishedAt: string | null, now: Date): string => {
 	if (publishedAt === null) return "publication date unavailable";

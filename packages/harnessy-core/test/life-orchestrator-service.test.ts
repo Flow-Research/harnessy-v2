@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { resolveLifeOrchestratorSettings } from "../src/jarvis/life-orchestrator/config.ts";
-import { canonicalLifeBriefPath } from "../src/jarvis/life-orchestrator/history.ts";
+import { canonicalLifeBriefPath, scanDeliveredLifeBriefs } from "../src/jarvis/life-orchestrator/history.ts";
 import { runLifeDaily } from "../src/jarvis/life-orchestrator/service.ts";
 import { LifeReadingLedger } from "../src/jarvis/life-orchestrator/store.ts";
 import { CommandRunner } from "../src/runtime/command-runner.ts";
@@ -49,6 +49,24 @@ raise SystemExit(2)
 `;
 
 describe("Life Orchestrator daily service", () => {
+	it("backfills only briefs with confirmed journal delivery markers", () => {
+		const root = makeRoot();
+		const brief = join(root, "2026", "Sep", "08-daily-brief.md");
+		mkdirSync(dirname(brief), { recursive: true });
+		writeFileSync(brief, "# Daily Brief\n\n## Worth Reading\n\n- [Old](https://example.test/delivered)\n");
+
+		expect(scanDeliveredLifeBriefs(root)).toMatchObject({
+			result: { briefsScanned: 1, linksFound: 0 },
+			entries: [],
+		});
+
+		writeFileSync(`${brief}.journaled`, "{}");
+		expect(scanDeliveredLifeBriefs(root)).toMatchObject({
+			result: { briefsScanned: 1, linksFound: 1 },
+			entries: [{ url: "https://example.test/delivered", briefPath: brief }],
+		});
+	});
+
 	it("publishes exactly the V2-reserved reading and consumes it only after the journal marker", async () => {
 		const root = makeRoot();
 		const project = join(root, "project");

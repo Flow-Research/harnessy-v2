@@ -52,4 +52,20 @@ describe("Life Orchestrator brief artifact", () => {
 			"Previously delivered reading",
 		);
 	});
+
+	it("escapes untrusted feed metadata without creating extra Markdown links", () => {
+		const hostile = new LifeReadingCandidate({
+			...candidate,
+			title: "Foo](https://title.example) [Bar",
+			topic: "[Topic](https://topic.example)",
+			sourceName: "Source [name](https://source.example)",
+		});
+		const rewritten = replaceWorthReadingSection("# Daily Brief\n", [hostile], new Date("2026-09-08T06:00:00.000Z"));
+
+		expect(extractWorthReadingUrls(rewritten)).toEqual([candidate.canonicalUrl]);
+		expect(rewritten).not.toContain("(https://title.example)");
+		expect(rewritten).not.toContain("(https://topic.example)");
+		expect(rewritten).not.toContain("(https://source.example)");
+		validateWorthReadingSection(rewritten, [hostile], new Set());
+	});
 });
