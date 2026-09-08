@@ -24,6 +24,29 @@ afterEach(() => {
 });
 
 describe("Life Orchestrator schedule cutover", () => {
+	it("rejects a relative LaunchAgents target", async () => {
+		const root = makeRoot();
+		const project = join(root, "project");
+		const scripts = join(root, "scripts");
+		const node = join(root, "node");
+		const cli = join(root, "cli.js");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(scripts, { recursive: true });
+		writeFileSync(node, "node");
+		writeFileSync(cli, "cli");
+		const settings = resolveLifeOrchestratorSettings({
+			projectRoot: project,
+			homeRoot: root,
+			compatibilityRoot: scripts,
+		});
+
+		await expect(
+			Effect.runPromise(
+				planLifeSchedule(settings, { nodePath: node, cliPath: cli, launchAgentsDirectory: "Library/LaunchAgents" }),
+			),
+		).rejects.toThrow("not an absolute path");
+	});
+
 	it("pins V2 argv without a shell and backs up only the three Life labels", async () => {
 		const root = makeRoot();
 		const project = join(root, "project");

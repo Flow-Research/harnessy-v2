@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import * as Effect from "effect/Effect";
@@ -103,6 +103,90 @@ const runCompatibilityCommand = (runner: CompatibilityRunner, command: ExternalC
 				}),
 		),
 	);
+
+interface DailyRunLock {
+	readonly path: string;
+	readonly token: string;
+}
+
+const errorCode = (cause: unknown): string | null =>
+	typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string" ? cause.code : null;
+
+const processIsRunning = (pid: number): boolean => {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (cause) {
+		return errorCode(cause) === "EPERM";
+	}
+};
+
+const withDailyRunLock = <A>(
+	settings: LifeOrchestratorSettings,
+	date: string,
+	use: Effect.Effect<A, LifeOrchestratorError>,
+): Effect.Effect<A, LifeOrchestratorError> => {
+	const acquire = Effect.try({
+		try: (): DailyRunLock => {
+			mkdirSync(settings.paths.stateDirectory, { recursive: true, mode: 0o700 });
+			const path = join(settings.paths.stateDirectory, `daily-${date}.lock`);
+			const token = randomUUID();
+			for (let attempt = 0; attempt < 2; attempt += 1) {
+				try {
+					writeFileSync(path, `${JSON.stringify({ pid: process.pid, token })}\n`, {
+						encoding: "utf8",
+						flag: "wx",
+						mode: 0o600,
+					});
+					return { path, token };
+				} catch (cause) {
+					if (errorCode(cause) !== "EEXIST") throw cause;
+					let ownerPid: number | null = null;
+					try {
+						const lock = JSON.parse(readFileSync(path, "utf8")) as { readonly pid?: unknown };
+						ownerPid = typeof lock.pid === "number" && Number.isSafeInteger(lock.pid) ? lock.pid : null;
+					} catch {
+						ownerPid = null;
+					}
+					if (ownerPid !== null && processIsRunning(ownerPid)) {
+						throw new LifeOrchestratorError({
+							code: "compatibility_failed",
+							message: `A Life daily run is already active for ${date}.`,
+						});
+					}
+					unlinkSync(path);
+				}
+			}
+			throw new Error(`Unable to acquire daily lock for ${date}.`);
+		},
+		catch: (cause) =>
+			cause instanceof LifeOrchestratorError
+				? cause
+				: new LifeOrchestratorError({
+						code: "store_write_failed",
+						message: `Unable to acquire the Life daily lock for ${date}.`,
+						cause,
+					}),
+	});
+	return Effect.acquireUseRelease(
+		acquire,
+		() => use,
+		(lock) =>
+			Effect.try({
+				try: () => {
+					if (!existsSync(lock.path)) return;
+					const stored = JSON.parse(readFileSync(lock.path, "utf8")) as { readonly token?: unknown };
+					if (stored.token === lock.token) unlinkSync(lock.path);
+				},
+				catch: (cause) =>
+					new LifeOrchestratorError({
+						code: "store_write_failed",
+						message: `Unable to release the Life daily lock for ${date}.`,
+						cause,
+					}),
+			}),
+	);
+};
 
 /** Backfill every historically delivered Worth Reading URL into the permanent V2 ledger. */
 export const backfillLifeReadingLedger = (
@@ -232,127 +316,145 @@ export const runLifeDaily = (
 		const runner = yield* CommandRunner;
 		const now = options.now ?? new Date();
 		const date = dateInLagos(now);
-		const canonicalBrief = canonicalLifeBriefPath(settings.paths.lifeDirectory, now);
-		if (options.force !== true && options.publish !== false && existsSync(`${canonicalBrief}.journaled`)) {
-			return new LifeDailyResult({
-				runId: `daily:${date}`,
-				briefPath: canonicalBrief,
-				selected: 0,
-				shortage: false,
-				published: true,
-			});
-		}
-		const script = compatibilityScriptPath(settings.paths.compatibilityScriptsDirectory, "daily-brief");
-		if (!existsSync(script)) {
-			return yield* Effect.fail(
-				new LifeOrchestratorError({
-					code: "compatibility_missing",
-					message: `Daily brief compatibility adapter is missing: ${script}`,
-				}),
-			);
-		}
-		return yield* withLedger(settings, (ledger) =>
+		return yield* withDailyRunLock(
+			settings,
+			date,
 			Effect.gen(function* () {
-				yield* backfillLedger(settings, ledger);
-				const runId = `daily:${date}:${randomUUID()}`;
-				const staleBefore = new Date(now.getTime() - 2 * 60 * 60 * 1_000).toISOString();
-				const sourceMaximums = new Map(
-					settings.sources.map((source) => [source.name, source.maxPerBrief ?? settings.maximumReadings]),
-				);
-				const selected = yield* ledger.reserve(
-					runId,
-					now.toISOString(),
-					settings.maximumReadings,
-					staleBefore,
-					sourceMaximums,
-				);
-				const execute = Effect.gen(function* () {
-					mkdirSync(settings.paths.reviewDirectory, { recursive: true, mode: 0o700 });
-					const previewPath = join(settings.paths.reviewDirectory, `${date}-${runId.slice(-8)}.md`);
-					const preview = yield* runCompatibilityCommand(runner, {
-						id: `${runId}:preview`,
-						label: "Daily brief preview",
-						executable: "python3",
-						args: [script, "--preview-output", previewPath],
-						cwd: settings.paths.projectRoot,
-						env: {
-							FLOW_PROJECT_ROOT: settings.paths.projectRoot,
-							HOME: settings.paths.homeRoot,
-							AGENTS_LIFE_DIR: settings.paths.lifeDirectory,
-						},
-					});
-					if (preview.status === "failed")
-						return yield* Effect.fail(commandFailure("Daily preview", preview.stderr || preview.error || ""));
-					const draft = yield* Effect.try({
-						try: () => readFileSync(previewPath, "utf8"),
-						catch: (cause) =>
-							new LifeOrchestratorError({
-								code: "artifact_invalid",
-								message: "Daily preview was not created.",
-								cause,
-							}),
-					});
-					const delivered = yield* ledger.deliveredIdentities();
-					const reviewed = replaceWorthReadingSection(draft, selected, now);
-					validateWorthReadingSection(reviewed, selected, delivered);
-					yield* Effect.try({
-						try: () => {
-							const temporary = `${previewPath}.${process.pid}.tmp`;
-							writeFileSync(temporary, reviewed, { encoding: "utf8", mode: 0o600 });
-							renameSync(temporary, previewPath);
-						},
-						catch: (cause) =>
-							new LifeOrchestratorError({
-								code: "artifact_invalid",
-								message: "Unable to save the reviewed daily preview.",
-								cause,
-							}),
-					});
-					if (options.publish === false) {
-						yield* ledger.release(runId);
-						return new LifeDailyResult({
-							runId,
-							briefPath: previewPath,
-							selected: selected.length,
-							shortage: selected.length < settings.targetReadings,
-							published: false,
-						});
-					}
-					const publication = yield* runCompatibilityCommand(runner, {
-						id: `${runId}:publish`,
-						label: "Daily brief publication",
-						executable: "python3",
-						args: [script, "--publish-preview", previewPath],
-						cwd: settings.paths.projectRoot,
-						env: {
-							FLOW_PROJECT_ROOT: settings.paths.projectRoot,
-							HOME: settings.paths.homeRoot,
-							AGENTS_LIFE_DIR: settings.paths.lifeDirectory,
-						},
-					});
-					if (publication.status === "failed")
-						return yield* Effect.fail(
-							commandFailure("Daily publication", publication.stderr || publication.error || ""),
-						);
-					if (!existsSync(`${canonicalBrief}.journaled`)) {
-						return yield* Effect.fail(
-							new LifeOrchestratorError({
-								code: "compatibility_failed",
-								message: "Daily publication returned success without its journal marker.",
-							}),
-						);
-					}
-					yield* ledger.markDelivered(runId, canonicalBrief, new Date().toISOString());
+				const canonicalBrief = canonicalLifeBriefPath(settings.paths.lifeDirectory, now);
+				if (options.force !== true && options.publish !== false && existsSync(`${canonicalBrief}.journaled`)) {
 					return new LifeDailyResult({
-						runId,
+						runId: `daily:${date}`,
 						briefPath: canonicalBrief,
-						selected: selected.length,
-						shortage: selected.length < settings.targetReadings,
+						selected: 0,
+						shortage: false,
 						published: true,
 					});
-				});
-				return yield* execute.pipe(
-					Effect.catch((error) => ledger.release(runId).pipe(Effect.flatMap(() => Effect.fail(error)))),
+				}
+				const script = compatibilityScriptPath(settings.paths.compatibilityScriptsDirectory, "daily-brief");
+				if (!existsSync(script)) {
+					return yield* Effect.fail(
+						new LifeOrchestratorError({
+							code: "compatibility_missing",
+							message: `Daily brief compatibility adapter is missing: ${script}`,
+						}),
+					);
+				}
+				return yield* withLedger(settings, (ledger) =>
+					Effect.gen(function* () {
+						yield* backfillLedger(settings, ledger);
+						const runId = `daily:${date}:${randomUUID()}`;
+						const staleBefore = new Date(now.getTime() - 2 * 60 * 60 * 1_000).toISOString();
+						const sourceMaximums = new Map(
+							settings.sources.map((source) => [source.name, source.maxPerBrief ?? settings.maximumReadings]),
+						);
+						const selected = yield* ledger.reserve(
+							runId,
+							now.toISOString(),
+							settings.maximumReadings,
+							staleBefore,
+							sourceMaximums,
+						);
+						const execute = Effect.gen(function* () {
+							mkdirSync(settings.paths.reviewDirectory, { recursive: true, mode: 0o700 });
+							const previewPath = join(settings.paths.reviewDirectory, `${date}-${runId.slice(-8)}.md`);
+							const preview = yield* runCompatibilityCommand(runner, {
+								id: `${runId}:preview`,
+								label: "Daily brief preview",
+								executable: "python3",
+								args: [script, "--date", date, "--preview-output", previewPath],
+								cwd: settings.paths.projectRoot,
+								env: {
+									FLOW_PROJECT_ROOT: settings.paths.projectRoot,
+									HOME: settings.paths.homeRoot,
+									AGENTS_LIFE_DIR: settings.paths.lifeDirectory,
+								},
+							});
+							if (preview.status === "failed")
+								return yield* Effect.fail(
+									commandFailure("Daily preview", preview.stderr || preview.error || ""),
+								);
+							const draft = yield* Effect.try({
+								try: () => readFileSync(previewPath, "utf8"),
+								catch: (cause) =>
+									new LifeOrchestratorError({
+										code: "artifact_invalid",
+										message: "Daily preview was not created.",
+										cause,
+									}),
+							});
+							const delivered = yield* ledger.deliveredIdentities();
+							const reviewed = replaceWorthReadingSection(draft, selected, now);
+							yield* Effect.try({
+								try: () => validateWorthReadingSection(reviewed, selected, delivered),
+								catch: (cause) =>
+									cause instanceof LifeOrchestratorError
+										? cause
+										: new LifeOrchestratorError({
+												code: "artifact_invalid",
+												message: "Unable to validate the reviewed daily preview.",
+												cause,
+											}),
+							});
+							yield* Effect.try({
+								try: () => {
+									const temporary = `${previewPath}.${process.pid}.tmp`;
+									writeFileSync(temporary, reviewed, { encoding: "utf8", mode: 0o600 });
+									renameSync(temporary, previewPath);
+								},
+								catch: (cause) =>
+									new LifeOrchestratorError({
+										code: "artifact_invalid",
+										message: "Unable to save the reviewed daily preview.",
+										cause,
+									}),
+							});
+							if (options.publish === false) {
+								yield* ledger.release(runId);
+								return new LifeDailyResult({
+									runId,
+									briefPath: previewPath,
+									selected: selected.length,
+									shortage: selected.length < settings.targetReadings,
+									published: false,
+								});
+							}
+							const publication = yield* runCompatibilityCommand(runner, {
+								id: `${runId}:publish`,
+								label: "Daily brief publication",
+								executable: "python3",
+								args: [script, "--date", date, "--publish-preview", previewPath],
+								cwd: settings.paths.projectRoot,
+								env: {
+									FLOW_PROJECT_ROOT: settings.paths.projectRoot,
+									HOME: settings.paths.homeRoot,
+									AGENTS_LIFE_DIR: settings.paths.lifeDirectory,
+								},
+							});
+							if (publication.status === "failed")
+								return yield* Effect.fail(
+									commandFailure("Daily publication", publication.stderr || publication.error || ""),
+								);
+							if (!existsSync(`${canonicalBrief}.journaled`)) {
+								return yield* Effect.fail(
+									new LifeOrchestratorError({
+										code: "compatibility_failed",
+										message: "Daily publication returned success without its journal marker.",
+									}),
+								);
+							}
+							yield* ledger.markDelivered(runId, canonicalBrief, new Date().toISOString());
+							return new LifeDailyResult({
+								runId,
+								briefPath: canonicalBrief,
+								selected: selected.length,
+								shortage: selected.length < settings.targetReadings,
+								published: true,
+							});
+						});
+						return yield* execute.pipe(
+							Effect.catch((error) => ledger.release(runId).pipe(Effect.flatMap(() => Effect.fail(error)))),
+						);
+					}),
 				);
 			}),
 		);

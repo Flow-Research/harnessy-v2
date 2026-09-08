@@ -242,7 +242,7 @@ delivered_brief=COALESCE(reading_candidates.delivered_brief,excluded.delivered_b
 		runId: string,
 		now: string,
 		maximum = 3,
-		staleBefore = now,
+		staleBefore = new Date(new Date(now).getTime() - 2 * 60 * 60 * 1_000).toISOString(),
 		sourceMaximums: ReadonlyMap<string, number> = new Map(),
 	): Effect.Effect<ReadonlyArray<LifeReadingCandidate>, LifeOrchestratorError> {
 		return this.#transact(() => {

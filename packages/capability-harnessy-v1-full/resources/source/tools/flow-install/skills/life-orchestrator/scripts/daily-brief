@@ -856,6 +856,10 @@ def main():
         "--force", action="store_true",
         help="Generate brief even if no changes detected since last crawl"
     )
+    parser.add_argument(
+        "--date",
+        help="Effective date supplied by the V2 scheduler (YYYY-MM-DD)",
+    )
     output_mode = parser.add_mutually_exclusive_group()
     output_mode.add_argument(
         "--preview-output",
@@ -878,7 +882,10 @@ def main():
     # Step 1: Resolve today's artifact before doing expensive work. Once the
     # brief has reached the journal, it is complete for the day unless the user
     # explicitly asks for a forced regeneration.
-    today = datetime.date.today()
+    try:
+        today = datetime.date.fromisoformat(args.date) if args.date else datetime.date.today()
+    except ValueError:
+        parser.error("--date must be a valid calendar date in YYYY-MM-DD format")
     path = os.path.abspath(os.path.expanduser(args.preview_output)) if preview else brief_path(today)
 
     if publish_preview:

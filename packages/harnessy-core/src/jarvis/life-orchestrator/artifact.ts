@@ -1,9 +1,10 @@
+import * as Result from "effect/Result";
 import { canonicalizeReadingUrl } from "./identity.ts";
 import { LifeOrchestratorError, type LifeReadingCandidate } from "./models.ts";
 
 const WORTH_READING_HEADING = /^##\s+Worth Reading\s*$/im;
 const NEXT_SECTION = /^#{1,2}\s+/m;
-const MARKDOWN_LINK = /\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/gi;
+const MARKDOWN_LINK = /\[[^\]]*\]\((?:<(https?:\/\/[^>\s]+)>|(https?:\/\/[^\s)]+))\)/gi;
 
 const sectionRange = (markdown: string): { readonly start: number; readonly end: number } | null => {
 	const heading = WORTH_READING_HEADING.exec(markdown);
@@ -64,7 +65,10 @@ export const extractWorthReadingUrls = (markdown: string): ReadonlyArray<string>
 	const section = markdown.slice(range.start, range.end);
 	const urls = new Set<string>();
 	for (const match of section.matchAll(MARKDOWN_LINK)) {
-		if (match[1] !== undefined) urls.add(canonicalizeReadingUrl(match[1]));
+		const rawUrl = match[1] ?? match[2];
+		if (rawUrl === undefined) continue;
+		const canonical = Result.try(() => canonicalizeReadingUrl(rawUrl));
+		if (Result.isSuccess(canonical)) urls.add(canonical.success);
 	}
 	return [...urls];
 };
@@ -86,7 +90,7 @@ export const replaceWorthReadingSection = (
 	}
 	for (const candidate of candidates) {
 		lines.push(
-			`- [${cleanInline(candidate.title)}](${candidate.canonicalUrl}) — ${cleanInline(candidate.topic)}; ${ageLabel(candidate.publishedAt, now)}; ${cleanInline(candidate.sourceName)}`,
+			`- [${cleanInline(candidate.title)}](<${candidate.canonicalUrl}>) — ${cleanInline(candidate.topic)}; ${ageLabel(candidate.publishedAt, now)}; ${cleanInline(candidate.sourceName)}`,
 		);
 	}
 	const replacement = `${lines.join("\n").trimEnd()}\n`;

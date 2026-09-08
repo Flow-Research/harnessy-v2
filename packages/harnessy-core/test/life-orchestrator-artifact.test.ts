@@ -68,4 +68,21 @@ describe("Life Orchestrator brief artifact", () => {
 		expect(rewritten).not.toContain("(https://source.example)");
 		validateWorthReadingSection(rewritten, [hostile], new Set());
 	});
+
+	it("round-trips URL parentheses and ignores malformed historical links", () => {
+		const parenthesized = new LifeReadingCandidate({
+			...candidate,
+			identity: "url:parenthesized",
+			canonicalUrl: "https://en.wikipedia.org/wiki/Foo_(bar)",
+		});
+		const rewritten = replaceWorthReadingSection(
+			"# Daily Brief\n",
+			[parenthesized],
+			new Date("2026-09-08T06:00:00Z"),
+		);
+
+		expect(extractWorthReadingUrls(rewritten)).toEqual([parenthesized.canonicalUrl]);
+		expect(extractWorthReadingUrls("## Worth Reading\n\n- [Bad](https://%)\n")).toEqual([]);
+		validateWorthReadingSection(rewritten, [parenthesized], new Set());
+	});
 });

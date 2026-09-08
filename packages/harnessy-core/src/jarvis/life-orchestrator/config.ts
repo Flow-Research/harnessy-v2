@@ -66,7 +66,7 @@ const feedSources = (reading: Record<string, unknown>): ReadonlyArray<LifeFeedSo
 		const value = record(rawValue);
 		if (value === null) continue;
 		const url = stringValue(value.url, "");
-		if (!/^https?:\/\//i.test(url)) continue;
+		if (!/^https?:\/\//i.test(url) || !URL.canParse(url)) continue;
 		sources.push({
 			name: stringValue(value.name, new URL(url).hostname),
 			url,

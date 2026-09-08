@@ -223,4 +223,63 @@ describe("Life Orchestrator research", () => {
 		);
 		expect(maximumActive).toBe(1);
 	});
+
+	it("isolates malformed source URLs before request grouping", async () => {
+		const fakeFetch: typeof globalThis.fetch = async () =>
+			new Response(JSON.stringify({ message: { items: [] } }), { status: 200 });
+		const result = await Effect.runPromise(
+			discoverLifeReadings({
+				topic: "Local-first AI",
+				now: new Date("2026-09-08T12:00:00.000Z"),
+				lookbackDays: 21,
+				maximum: 3,
+				fetch: fakeFetch,
+				sources: [
+					{
+						name: "Malformed",
+						url: "https://%",
+						topic: "Systems",
+						enabled: true,
+						maxItemsPerPoll: 1,
+						evergreenEnabled: false,
+						maxEvergreenPerPoll: 0,
+						evergreenKeywords: [],
+					},
+				],
+			}),
+		);
+
+		expect(result.sourcesAttempted).toBe(2);
+		expect(result.sourceFailures).toEqual(["Malformed: invalid URL"]);
+	});
+
+	it("rejects oversized external responses without aborting other sources", async () => {
+		const fakeFetch: typeof globalThis.fetch = async (input) =>
+			String(input).includes("large")
+				? new Response("x".repeat(2_097_153), { status: 200 })
+				: new Response(JSON.stringify({ message: { items: [] } }), { status: 200 });
+		const result = await Effect.runPromise(
+			discoverLifeReadings({
+				topic: "Local-first AI",
+				now: new Date("2026-09-08T12:00:00.000Z"),
+				lookbackDays: 21,
+				maximum: 3,
+				fetch: fakeFetch,
+				sources: [
+					{
+						name: "Large feed",
+						url: "https://large.example/feed.xml",
+						topic: "Systems",
+						enabled: true,
+						maxItemsPerPoll: 1,
+						evergreenEnabled: false,
+						maxEvergreenPerPoll: 0,
+						evergreenKeywords: [],
+					},
+				],
+			}),
+		);
+
+		expect(result.sourceFailures).toEqual(["Large feed: response exceeds 2097152 bytes"]);
+	});
 });

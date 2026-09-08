@@ -32,7 +32,7 @@ import sys
 
 args = sys.argv[1:]
 life = pathlib.Path(os.environ["AGENTS_LIFE_DIR"])
-today = datetime.date.today()
+today = datetime.date.fromisoformat(args[args.index("--date") + 1])
 canonical = life / today.strftime("%Y") / today.strftime("%b") / today.strftime("%d-daily-brief.md")
 if "--preview-output" in args:
     path = pathlib.Path(args[args.index("--preview-output") + 1])
@@ -102,14 +102,14 @@ describe("Life Orchestrator daily service", () => {
 			ledger.close();
 		}
 
-		const now = new Date();
+		const now = new Date("2026-09-08T04:30:00.000Z");
 		const result = await Effect.runPromise(
 			runLifeDaily(settings, { now }).pipe(Effect.provide(CommandRunner.layer), Effect.provide(NodeServices.layer)),
 		);
 		const canonical = canonicalLifeBriefPath(settings.paths.lifeDirectory, now);
 		const markdown = readFileSync(canonical, "utf8");
 		expect(result).toMatchObject({ published: true, selected: 1, shortage: true, briefPath: canonical });
-		expect(markdown).toContain("[Brand new paper](https://doi.org/10.1000/brand-new)");
+		expect(markdown).toContain("[Brand new paper](<https://doi.org/10.1000/brand-new>)");
 		expect(markdown).not.toContain("example.test/repeated");
 
 		const reopened = await Effect.runPromise(LifeReadingLedger.open(settings.paths.databasePath));
@@ -133,7 +133,7 @@ describe("Life Orchestrator daily service", () => {
 			compatibilityRoot: scripts,
 			user: "test",
 		});
-		const now = new Date();
+		const now = new Date("2026-09-08T04:30:00.000Z");
 		const canonical = canonicalLifeBriefPath(settings.paths.lifeDirectory, now);
 		mkdirSync(dirname(canonical), { recursive: true });
 		writeFileSync(canonical, "# Existing brief\n\n## Worth Reading\n");
@@ -175,7 +175,32 @@ describe("Life Orchestrator daily service", () => {
 		);
 		expect(refreshed).toMatchObject({ published: true, selected: 1, briefPath: canonical });
 		expect(readFileSync(canonical, "utf8")).toContain(
-			"[Forced refresh paper](https://doi.org/10.1000/forced-refresh)",
+			"[Forced refresh paper](<https://doi.org/10.1000/forced-refresh>)",
 		);
+	});
+
+	it("rejects a concurrent daily run while its process lock is active", async () => {
+		const root = makeRoot();
+		const project = join(root, "project");
+		const scripts = join(root, "compatibility");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(scripts, { recursive: true });
+		writeFileSync(join(scripts, "daily-brief"), dailyFixture);
+		const settings = resolveLifeOrchestratorSettings({
+			projectRoot: project,
+			homeRoot: root,
+			compatibilityRoot: scripts,
+		});
+		mkdirSync(settings.paths.stateDirectory, { recursive: true });
+		writeFileSync(join(settings.paths.stateDirectory, "daily-2026-09-08.lock"), JSON.stringify({ pid: process.pid }));
+
+		await expect(
+			Effect.runPromise(
+				runLifeDaily(settings, { now: new Date("2026-09-08T04:30:00.000Z") }).pipe(
+					Effect.provide(CommandRunner.layer),
+					Effect.provide(NodeServices.layer),
+				),
+			),
+		).rejects.toThrow("already active");
 	});
 });

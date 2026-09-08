@@ -129,6 +129,12 @@ ${argumentsList.map((argument) => `\t\t<string>${xml(argument)}</string>`).join(
 };
 
 const validateScheduleInputs = (settings: LifeOrchestratorSettings, options: LifeScheduleOptions) => {
+	if (!isAbsolute(options.launchAgentsDirectory)) {
+		throw new LifeOrchestratorError({
+			code: "cutover_unsafe",
+			message: `LaunchAgents directory is not an absolute path: ${options.launchAgentsDirectory}`,
+		});
+	}
 	for (const [name, path] of [
 		["Node", options.nodePath],
 		["V2 CLI", options.cliPath],

@@ -42,6 +42,37 @@ interface ParsedFeedEntry {
 	readonly description: string;
 }
 
+const MAX_RESEARCH_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+const readBoundedResponseText = async (response: Response): Promise<string> => {
+	const contentLength = Number(response.headers.get("content-length"));
+	if (Number.isFinite(contentLength) && contentLength > MAX_RESEARCH_RESPONSE_BYTES) {
+		throw new Error(`response exceeds ${MAX_RESEARCH_RESPONSE_BYTES} bytes`);
+	}
+	if (response.body === null) {
+		const body = await response.text();
+		if (new TextEncoder().encode(body).byteLength > MAX_RESEARCH_RESPONSE_BYTES) {
+			throw new Error(`response exceeds ${MAX_RESEARCH_RESPONSE_BYTES} bytes`);
+		}
+		return body;
+	}
+	const reader = response.body.getReader();
+	const decoder = new TextDecoder();
+	let bytes = 0;
+	let body = "";
+	while (true) {
+		const chunk = await reader.read();
+		if (chunk.done) break;
+		bytes += chunk.value.byteLength;
+		if (bytes > MAX_RESEARCH_RESPONSE_BYTES) {
+			await reader.cancel();
+			throw new Error(`response exceeds ${MAX_RESEARCH_RESPONSE_BYTES} bytes`);
+		}
+		body += decoder.decode(chunk.value, { stream: true });
+	}
+	return body + decoder.decode();
+};
+
 /** Parse Hacker News Algolia story search results while retaining the submitted project URL. */
 export const parseHnSearch = (value: unknown): ReadonlyArray<ParsedFeedEntry> => {
 	const root = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
@@ -257,16 +288,14 @@ export const discoverLifeReadings = (
 			const requests: ReadonlyArray<{
 				readonly name: string;
 				readonly url: string;
-				readonly parse: (response: Response) => Promise<ReadonlyArray<LifeReadingInput>>;
+				readonly parse: (body: string) => ReadonlyArray<LifeReadingInput>;
 			}> = [
 				...activeSources.map((source) => ({
 					name: source.name,
 					url: source.url,
-					parse: async (response: Response) =>
+					parse: (body: string) =>
 						feedCandidates(
-							source.format === "hn-search"
-								? parseHnSearch(await response.json())
-								: parseLifeFeed(await response.text()),
+							source.format === "hn-search" ? parseHnSearch(JSON.parse(body) as unknown) : parseLifeFeed(body),
 							source,
 							options.now,
 							options.lookbackDays,
@@ -275,14 +304,19 @@ export const discoverLifeReadings = (
 				{
 					name: "Crossref",
 					url: crossrefUrl.toString(),
-					parse: async (response: Response) => parseCrossrefWorks(await response.json(), options.topic),
+					parse: (body: string) => parseCrossrefWorks(JSON.parse(body) as unknown, options.topic),
 				},
 			];
+			const failures: Array<string> = [];
 			const requestGroups = new Map<
 				string,
 				Array<{ readonly index: number; readonly request: (typeof requests)[number] }>
 			>();
 			for (const [index, request] of requests.entries()) {
+				if (!URL.canParse(request.url)) {
+					failures.push(`${request.name}: invalid URL`);
+					continue;
+				}
 				const hostname = new URL(request.url).hostname;
 				const group = requestGroups.get(hostname) ?? [];
 				group.push({ index, request });
@@ -303,14 +337,13 @@ export const discoverLifeReadings = (
 									signal: AbortSignal.timeout(20_000),
 								});
 								if (!response.ok) throw new Error(`HTTP ${response.status}`);
-								return request.parse(response);
+								return request.parse(await readBoundedResponseText(response));
 							})(),
 						]);
 						outcomes[index] = outcome;
 					}
 				}),
 			);
-			const failures: Array<string> = [];
 			const groups: Array<ReadonlyArray<LifeReadingInput>> = [];
 			const identities = new Set<string>();
 			for (const [index, outcome] of outcomes.entries()) {

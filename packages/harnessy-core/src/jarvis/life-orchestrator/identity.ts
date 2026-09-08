@@ -31,10 +31,11 @@ export const canonicalizeReadingUrl = (rawUrl: string): string => {
 			message: `Unsupported reading URL protocol: ${url.protocol}`,
 		});
 	}
-	url.protocol = "https:";
 	url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
 	url.hash = "";
-	if (url.port === "80" || url.port === "443") url.port = "";
+	if ((url.protocol === "http:" && url.port === "80") || (url.protocol === "https:" && url.port === "443")) {
+		url.port = "";
+	}
 
 	const arxiv = arxivIdentifier(url);
 	if (arxiv !== null) return `https://arxiv.org/abs/${arxiv}`;

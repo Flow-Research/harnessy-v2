@@ -137,4 +137,29 @@ describe("LifeReadingLedger", () => {
 			ledger.close();
 		}
 	});
+
+	it("does not reclaim fresh reservations when callers omit the stale cutoff", async () => {
+		const ledger = await Effect.runPromise(LifeReadingLedger.open(makeDatabasePath()));
+		try {
+			await Effect.runPromise(
+				ledger.upsertCandidates(
+					[
+						{
+							url: "https://example.com/fresh-reservation",
+							title: "Fresh reservation",
+							topic: "Operations",
+							publishedAt: null,
+							sourceName: "Example",
+							sourceKind: "rss",
+						},
+					],
+					"2026-09-08T05:00:00.000Z",
+				),
+			);
+			expect(await Effect.runPromise(ledger.reserve("run-one", "2026-09-08T05:30:00.000Z"))).toHaveLength(1);
+			expect(await Effect.runPromise(ledger.reserve("run-two", "2026-09-08T05:31:00.000Z"))).toEqual([]);
+		} finally {
+			ledger.close();
+		}
+	});
 });
