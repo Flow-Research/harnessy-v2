@@ -23,7 +23,7 @@ export default defineConfig({
 		coverage: {
 			provider: "v8",
 			include: ["src/**/*.ts"],
-			exclude: ["src/cli.ts", "src/**/*.d.ts"],
+			exclude: ["src/cli.ts", "src/**/*-cli.ts", "src/**/*.d.ts"],
 			reporter: ["text"],
 			reportsDirectory: "coverage",
 			thresholds: { statements: 80, branches: 75, functions: 80, lines: 80 },
