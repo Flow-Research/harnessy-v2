@@ -11,7 +11,6 @@ const cliRoot = resolve(repoRoot, "apps/cli");
 const webRoot = resolve(repoRoot, "apps/local");
 const distDir = resolve(cliRoot, "dist");
 const ONEPASSWORD_CORE_WASM_FILENAME = "onepassword-core_bg.wasm";
-const WORKERD_VERSION = "1.20260708.1";
 const WORKER_BUNDLER_DIRNAME = "worker-bundler";
 
 const resolveQuickJsWasmPath = (): string => {
@@ -245,6 +244,8 @@ const resolveWorkerdBinary = (t: Target): string | null => {
     "darwin-x64": "@cloudflare/workerd-darwin-64",
     "linux-arm64": "@cloudflare/workerd-linux-arm64",
     "linux-x64": "@cloudflare/workerd-linux-64",
+    "linux-arm64-musl": "@cloudflare/workerd-linux-arm64",
+    "linux-x64-musl": "@cloudflare/workerd-linux-64",
     "win32-x64": "@cloudflare/workerd-windows-64",
   };
   const key = [t.os, t.arch, t.abi].filter(Boolean).join("-");

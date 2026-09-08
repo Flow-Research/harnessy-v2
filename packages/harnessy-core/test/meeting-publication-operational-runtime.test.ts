@@ -351,7 +351,7 @@ describe("meeting publication operational smoke runtime", () => {
 		const provider = providers(fixture, {
 			beforeGoogleMutation: () =>
 				Effect.sync(() => {
-					fixture.authorization.advanceTimeBy(61_000);
+					fixture.authorization.advanceTimeBy(120_000);
 				}),
 		});
 		const result = await Effect.runPromise(

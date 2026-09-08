@@ -443,7 +443,7 @@ describe("meeting publication operational worker runtime", () => {
 	it("revalidates the current publishing lease after a provider grant is issued", async () => {
 		const fixture = await setup();
 		const provider = providers(fixture, {
-			beforeGoogleValidation: () => fixture.authorization.advanceTimeBy(61_000),
+			beforeGoogleValidation: () => fixture.authorization.advanceTimeBy(120_000),
 		});
 		const result = await Effect.runPromise(
 			fixture.authorization
