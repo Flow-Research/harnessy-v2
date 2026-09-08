@@ -35,7 +35,7 @@
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
 		"test": "npm run test --workspaces --if-present",
-		"test:coverage": "npm --workspace @harnessy/core exec -- vitest run --coverage && npm --workspace @harnessy/local-host exec -- vitest run --coverage && npm --workspace @harnessy/engine exec -- vitest run --coverage && npm --workspace @harnessy/sdk exec -- vitest run --coverage",
+		"test:coverage": "npm --workspace @harnessy/core exec -- vitest run --coverage --exclude test/v1-full-pack.test.ts && npm --workspace @harnessy/local-host exec -- vitest run --coverage && npm --workspace @harnessy/engine exec -- vitest run --coverage && npm --workspace @harnessy/sdk exec -- vitest run --coverage",
 		"test:compatibility": "bash scripts/test-v1-compatibility.sh",
 		"test:engine-fixture": "npm --workspace @harnessy/engine run test:fixture",
 		"test:local-host-fixture": "npm --workspace @harnessy/local-host run test:fixture",
