@@ -387,6 +387,7 @@ incomplete. Synthetic Chromium acceptance does not substitute for those gates.
   from V1.
 - The current six local-host commands, disabled scheduler data, and V1 live
   ownership remain unchanged.
-- V1 behavior compatibility remains an informational deprecation oracle, not a
-  required V2 pull-request gate. V1 state/export, backup, one-writer, smoke,
-  rollback, reconciliation, and roll-forward evidence remain migration gates.
+- The deprecated V1 behavior suite is not run in CI. Its preserved source and
+  optional local diagnostic command remain available. Source integrity and V1
+  state/export, backup, one-writer, smoke, rollback, reconciliation, and
+  roll-forward evidence remain migration gates.
