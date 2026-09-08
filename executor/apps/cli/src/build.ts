@@ -101,7 +101,6 @@ const ALL_TARGETS: Target[] = [
   { os: "darwin", arch: "x64" },
   { os: "darwin", arch: "arm64" },
   { os: "win32", arch: "x64" },
-  { os: "win32", arch: "arm64" },
 ];
 
 const platformName = (t: Target) => (t.os === "win32" ? "windows" : t.os);
@@ -123,7 +122,6 @@ const bunTargetKeys = [
   "darwin-x64",
   "darwin-arm64",
   "win32-x64",
-  "win32-arm64",
 ] as const;
 type BunTargetKey = (typeof bunTargetKeys)[number];
 
@@ -135,7 +133,6 @@ const bunTargets = {
   "darwin-x64": "bun-darwin-x64",
   "darwin-arm64": "bun-darwin-arm64",
   "win32-x64": "bun-windows-x64",
-  "win32-arm64": "bun-windows-arm64",
 } satisfies Record<BunTargetKey, Bun.Build.CompileTarget>;
 
 const isBunTargetKey = (key: string): key is BunTargetKey =>
