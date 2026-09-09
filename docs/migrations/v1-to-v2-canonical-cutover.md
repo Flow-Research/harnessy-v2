@@ -216,9 +216,9 @@ The fixture-only mechanics and their explicit limitations are documented in
   suites have no skipped tests, while credential-dependent inherited provider
   suites run only in their explicit optional lane.
 - Full Executor CI.
-- V1 state/export/rollback preservation and compatibility provenance remain
-  available as informational evidence; the deprecated V1 behavior suite is not
-  a required V2 pull-request gate.
+- V1 state/export/rollback preservation and source provenance remain required
+  migration evidence. The deprecated V1 behavior suite is not run in CI; its
+  preserved source and optional local diagnostic command remain available.
 - SQLite concurrency/recovery and loopback provider contracts.
 - Packed-artifact consumer and CLI/runtime smoke tests.
 - Hosted Linux, macOS, and Windows pack/install/audit/execute tests for the scoped

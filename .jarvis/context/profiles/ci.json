@@ -43,12 +43,11 @@
 			"required": true
 		},
 		{
-			"name": "compatibility",
+			"name": "migration source integrity",
 			"commands": [
-				"npm run verify:v1-compatibility",
-				"npm run test:compatibility"
+				"npm run verify:v1-compatibility"
 			],
-			"required": false
+			"required": true
 		},
 		{
 			"name": "Executor",

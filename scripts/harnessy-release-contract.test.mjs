@@ -127,6 +127,20 @@ test("release preparation tests the post-build local-host candidate without rewr
 	assert.match(source, /localHostStatusAfter = run\("git", \["status", "--porcelain=v1"\]/u);
 });
 
+test("automated CI and release paths retain source integrity without running deprecated V1 behavior", () => {
+	for (const path of [
+		"../.github/workflows/ci.yml",
+		"../.github/workflows/build-binaries.yml",
+		"../.jarvis/context/profiles/ci.json",
+		"./release-preflight.mjs",
+		"./release.mjs",
+	]) {
+		const source = readFileSync(new URL(path, import.meta.url), "utf8");
+		assert.doesNotMatch(source, /test:compatibility|test-v1-compatibility\.sh/u, path);
+		assert.match(source, /verify:v1-compatibility/u, path);
+	}
+});
+
 test("an existing version cannot hide changed local package contents", () => {
 	assert.doesNotThrow(() =>
 		assertPublishedArtifactIntegrity([

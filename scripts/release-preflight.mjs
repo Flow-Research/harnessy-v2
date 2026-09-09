@@ -36,7 +36,7 @@ run("npm", ["run", "test:qa-scenarios"]);
 run("npm", ["run", "test:sdk-fixture"]);
 run("./test.sh", []);
 run("npm", ["run", "test:coverage"]);
-run("npm", ["run", "test:compatibility"]);
+run("npm", ["run", "verify:v1-compatibility"]);
 run("npm", ["run", "test:executor"]);
 run("npm", ["run", "test:release-artifacts"]);
 run("npm", ["run", "security:check"]);

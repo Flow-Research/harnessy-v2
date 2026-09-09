@@ -76,6 +76,7 @@ export const validateCiContract = ({ ciSource, securitySource, releaseSource, pr
 
 	for (const command of [
 		"npm run build",
+		"npm run verify:v1-compatibility",
 		"npm run check",
 		"git diff --exit-code",
 		"npm run qa:check",
@@ -121,7 +122,6 @@ export const validateCiContract = ({ ciSource, securitySource, releaseSource, pr
 	]) {
 		if (!packagedCommands.includes(command)) issues.push(`CI:packaged-executor must run ${command}`);
 	}
-	requireCommand(issues, "CI", ci, "v1-compatibility", "./scripts/test-v1-compatibility.sh");
 	requireCommand(issues, "Security Gates", security, "root-dependencies-and-invariants", "npm audit --audit-level=moderate");
 	requireCommand(issues, "Security Gates", security, "root-dependencies-and-invariants", "node scripts/check-security-invariants.mjs");
 	requireCommand(issues, "Security Gates", security, "executor-dependencies", "node scripts/audit-executor.mjs --json");
