@@ -39,6 +39,47 @@ explicit later release blockers; no hosted or operational result is inferred.
 
 ## Phase 5 — Native V1 workflow promotion
 
+### Owner-approved reuse-first completion — 2026-09-08
+
+The migration outcome is one V2-owned installation preserving the existing
+workflows, not a mandatory rewrite of every preserved component. First verify
+the packaged implementations outside the old checkout, including their runtime
+dependencies, source/data paths, subprocesses, and feature behavior. Reuse them
+where those boundaries can be made safe; retain working native V2 components.
+Do not reintroduce deleted prototypes or build parallel workflow engines merely
+to change implementation language.
+
+Complete community review/publication, life orchestration, Fathom ingestion,
+and remaining installed-command dependencies under this criterion. A preserved
+Python command is not automatically covered by Core's private grants: prove
+effective authorization and one-writer controls before exposing its mutations.
+Keep all new operational execution disabled until the existing cutover gates
+pass. The original checkout and its services must not remain a final runtime
+dependency. Native promotion below remains useful sequencing and feature
+evidence, but is no longer mandatory for every reused implementation.
+
+The initial reuse checkpoint now proves real npm-tarball source reconstruction
+with the original 706-file digest, locked non-editable Python installation,
+nine isolated CLI help surfaces, and 45 selected meeting/community behavior
+tests (real SQLite and loopback review; external providers substituted). The
+full packed-release smoke passes with reconstruction enforced. This is local
+packaging and selected behavior evidence, not whole-workflow acceptance or
+authorization for reused Python mutations. The staging helper is also consumed
+by local-release preparation; it does not install or activate Python.
+The complete local-release preparation also passes on macOS ARM64. Another
+58 Fathom/planning tests pass from the installed Python wheel. Life script
+tests report 31 passed and one aged, fixed-date reading fixture failure at the
+current clock; all 32 pass with that fixture's clock fixed to its sample date.
+No preserved source/test bytes were changed. These checks do not prove live
+AI/Jarvis subprocess bindings or scheduled execution. The rebuilt installed
+local-host gate passes its 43-file review/publication fixture.
+
+One-writer inspection now recognizes the actual preserved command
+`jarvis meeting publish review serve`, alongside the worker and legacy review
+spelling. The signed process-marker policy uses the same list. Previously
+issued operational authorizations with the old two-marker list must be
+reissued; they fail closed, and no live authorization was changed.
+
 Promote one vertical slice at a time while retaining V1 as the behavior oracle:
 
 1. Meeting queue, review, reminders, Google Docs publication, and Discord
@@ -133,9 +174,10 @@ in that same Core runtime; omitted mode remains bounded. The owner-only
 rendezvous/open consumer and signed notification binding are now locally
 implemented with a signed 24-hour maximum; production authorization and
 operational acceptance remain.
-Preserve the separate operational gates. V2 retains a deliberate cumulative
-five-attempt transient retry cap, unlike V1's unbounded retry policy; explicit
-owner acceptance of that difference remains open. Notification acceptance must also preserve
+Preserve the separate operational gates. Current V2 retains retryable failures
+without a V2-only attempt cap, using the provider retry delay or 60 seconds;
+the earlier five-attempt-cap proposal is no longer an open owner decision.
+Notification acceptance must also preserve
 V1's click-through route into review, not only delivery of desktop messages.
 The QA profile now tracks this migration slice as `MEET-001`; its scenario passes
 under the pinned loopback-enabled environment. The existing full-review owner
@@ -173,8 +215,9 @@ recovery state machine. V1 remains the only live writer.
   behavior suite is off CI; retain source-integrity and state/rollback checks.
 - Obtain hosted Linux, macOS, and Windows evidence.
 - Continue monitoring lower-severity dependency findings and the owner-selected
-  Miniflare prerelease; resolve the Windows ARM64 libSQL runtime blocker, then
-  complete the SBOM, license-report, reproducibility, and artifact evidence.
+  Miniflare prerelease. Keep Windows ARM64 explicitly deferred; complete the
+  SBOM, license-report, reproducibility, and artifact evidence for the seven
+  declared publishable targets.
 - Configure exact required checks on protected `dev` and `main` branches after
   maintainer approval.
 

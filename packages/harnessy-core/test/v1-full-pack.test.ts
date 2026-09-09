@@ -39,71 +39,77 @@ const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
 
 describe("Harnessy v1 full compatibility pack", () => {
-	it.effect("adds, materializes, and verifies the full v1 source surface", () =>
-		provideLive(
-			Effect.gen(function* () {
-				const fs = yield* FileSystem.FileSystem;
-				const project = yield* HarnessProject;
-				const targetDir = yield* fs.makeTempDirectoryScoped();
-				yield* project.init(targetDir, false);
+	it.effect(
+		"adds, materializes, and verifies the full v1 source surface",
+		() =>
+			provideLive(
+				Effect.gen(function* () {
+					const fs = yield* FileSystem.FileSystem;
+					const project = yield* HarnessProject;
+					const targetDir = yield* fs.makeTempDirectoryScoped();
+					yield* project.init(targetDir, false);
 
-				const added = yield* project.addCapability(targetDir, v1FullPackRoot, undefined);
-				yield* project.activateCapability(targetDir, "npm:@harnessy/capability-harnessy-v1-full");
-				expect(added.added).toBe(true);
-				expect(added.capability.id).toBe("npm:@harnessy/capability-harnessy-v1-full");
-				expect(added.capability.resolvedSource?.local?.root).toBe(v1FullPackRoot);
-				expect(added.capability.fingerprint?.kind).toBe("directory");
-				expect(added.capability.fingerprint?.fileCount).toBeGreaterThan(1000);
-				expect(added.materialization?.issues).toEqual([]);
-				expect(added.materialization?.copied.map((resource) => resource.target)).toEqual([
-					"source",
-					"SOURCE.json",
-					"flow-install",
-					"context-vault",
-					"jarvis-cli",
-					"install.sh",
-					"README.v1.md",
-					"AGENTS.v1.md",
-				]);
+					const added = yield* project.addCapability(targetDir, v1FullPackRoot, undefined);
+					yield* project.activateCapability(targetDir, "npm:@harnessy/capability-harnessy-v1-full");
+					expect(added.added).toBe(true);
+					expect(added.capability.id).toBe("npm:@harnessy/capability-harnessy-v1-full");
+					expect(added.capability.resolvedSource?.local?.root).toBe(v1FullPackRoot);
+					expect(added.capability.fingerprint?.kind).toBe("directory");
+					expect(added.capability.fingerprint?.fileCount).toBeGreaterThan(1000);
+					expect(added.materialization?.issues).toEqual([]);
+					expect(added.materialization?.copied.map((resource) => resource.target)).toEqual([
+						"source",
+						"SOURCE.json",
+						"flow-install",
+						"context-vault",
+						"jarvis-cli",
+						"install.sh",
+						"README.v1.md",
+						"AGENTS.v1.md",
+					]);
 
-				const artifactRoot = `${targetDir}/${v1ArtifactResources}`;
-				expect(yield* fs.exists(`${artifactRoot}/source/package.json`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/SOURCE.json`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/source/scripts/flow/verify-harness.mjs`)).toBe(true);
-				expect(
-					yield* fs.exists(`${artifactRoot}/source/jarvis-cli/src/jarvis/meetings/publication/service.py`),
-				).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/source/jarvis-cli/src/jarvis/community_briefing/service.py`)).toBe(
-					true,
-				);
-				expect(
-					yield* fs.exists(
-						`${artifactRoot}/source/tools/flow-install/skills/life-orchestrator/scripts/learning-research`,
-					),
-				).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/source/.github/workflows/harness-verify.yml`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/source/tests/harness/run-flow-install-eval.sh`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/flow-install/index.mjs`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/flow-install/skills/goal-agent/SKILL.md`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/context-vault/AGENTS.md`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/jarvis-cli/pyproject.toml`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/install.sh`)).toBe(true);
+					const artifactRoot = `${targetDir}/${v1ArtifactResources}`;
+					expect(yield* fs.exists(`${artifactRoot}/source/package.json`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/SOURCE.json`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/scripts/flow/verify-harness.mjs`)).toBe(true);
+					expect(
+						yield* fs.exists(`${artifactRoot}/source/jarvis-cli/src/jarvis/meetings/publication/service.py`),
+					).toBe(true);
+					expect(
+						yield* fs.exists(`${artifactRoot}/source/jarvis-cli/src/jarvis/community_briefing/service.py`),
+					).toBe(true);
+					expect(
+						yield* fs.exists(
+							`${artifactRoot}/source/tools/flow-install/skills/life-orchestrator/scripts/learning-research`,
+						),
+					).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/.github/workflows/harness-verify.yml`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/tests/harness/run-flow-install-eval.sh`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/flow-install/index.mjs`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/flow-install/skills/goal-agent/SKILL.md`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/context-vault/AGENTS.md`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/jarvis-cli/pyproject.toml`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/install.sh`)).toBe(true);
 
-				const verify = yield* project.verify(targetDir);
-				expect(verify.issues).toEqual([]);
-				expect(verify.checks?.results.map((result) => [result.checkId, result.status])).toEqual(expectedV1Checks);
+					const verify = yield* project.verify(targetDir);
+					expect(verify.issues).toEqual([]);
+					expect(verify.checks?.results.map((result) => [result.checkId, result.status])).toEqual(
+						expectedV1Checks,
+					);
 
-				const dependencyReport = yield* project.checkDependencies(targetDir);
-				expect(dependencyReport.missingRequired).toEqual([]);
-				expect(dependencyReport.results.map((result) => [result.name, result.required])).toEqual([
-					["node", false],
-					["python3", false],
-					["git", false],
-					["uv", false],
-					["pnpm", false],
-				]);
-			}),
-		),
+					const dependencyReport = yield* project.checkDependencies(targetDir);
+					expect(dependencyReport.missingRequired).toEqual([]);
+					expect(dependencyReport.results.map((result) => [result.name, result.required])).toEqual([
+						["node", false],
+						["python3", false],
+						["git", false],
+						["uv", false],
+						["pnpm", false],
+					]);
+				}),
+			),
+		// Full-tree copying and verification exceeded 30s on two hosted runs.
+		{ timeout: 60_000 },
 	);
 
 	it("verifies provenance, privacy exclusions, and every compatibility projection in a real subprocess", () => {

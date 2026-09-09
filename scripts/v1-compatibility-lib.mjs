@@ -1,9 +1,63 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, readFile, readdir, writeFile } from "node:fs/promises";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { chmod, cp, lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 export const V1_PROVENANCE_SCHEMA_VERSION = 2;
 export const V1_LEGACY_PROVENANCE_SCHEMA_VERSION = 1;
+
+// npm omits these ignore files even when the directory is explicitly packed.
+// Keep their original bytes in transport metadata, never change the source digest.
+const npmOmittedSourceFiles = [".gitignore", "jarvis-cli/.gitignore"];
+
+export const writeV1NpmTransport = async (packageRoot) => {
+	const resources = join(resolve(packageRoot), "resources");
+	const files = Object.fromEntries(await Promise.all(npmOmittedSourceFiles.map(async (path) =>
+		[path, (await readFile(join(resources, "source", path))).toString("base64")],
+	)));
+	await writeFile(join(resources, "npm-transport.json"), `${JSON.stringify(files, null, 2)}\n`, { mode: 0o644 });
+};
+
+/** Reconstruct a fresh inert source candidate from a packed capability; never activate it. */
+export const stageV1Compatibility = async (packageRoot, destination) => {
+	const input = await realpath(packageRoot);
+	const output = join(await realpath(dirname(resolve(destination))), basename(destination));
+	if (input === output || input.startsWith(`${output}${sep}`) || output.startsWith(`${input}${sep}`)) {
+		throw new Error("V1 staging input and output must be disjoint");
+	}
+	const resources = join(input, "resources");
+	const transportStat = await lstat(join(resources, "npm-transport.json"));
+	if (!transportStat.isFile() || transportStat.size > 100_000) throw new Error("Unsafe V1 npm transport file");
+	const before = await describeV1Tree(resources);
+	const transport = JSON.parse(await readFile(join(resources, "npm-transport.json"), "utf8"));
+	if (transport === null || Array.isArray(transport) || typeof transport !== "object" ||
+		Object.keys(transport).sort().join("\0") !== [...npmOmittedSourceFiles].sort().join("\0")) {
+		throw new Error("Invalid V1 npm transport inventory");
+	}
+	const files = npmOmittedSourceFiles.map((path) => {
+		const value = transport[path];
+		if (typeof value !== "string" || value.length > 32_768 || Buffer.from(value, "base64").toString("base64") !== value) {
+			throw new Error("Invalid V1 npm transport bytes");
+		}
+		return [path, Buffer.from(value, "base64")];
+	});
+	// Validate source/projection paths before copying; the full provenance check
+	// below is authoritative only after the exact omitted bytes are reconstructed.
+	await inspectV1Compatibility(packageRoot);
+	await mkdir(output, { mode: 0o700 });
+	await cp(resources, join(output, "resources"), { recursive: true, errorOnExist: true, force: false });
+	if ((await describeV1Tree(join(output, "resources"))).digest !== before.digest ||
+		(await describeV1Tree(resources)).digest !== before.digest) throw new Error("V1 staging input changed");
+	for (const [path, bytes] of [...files.map(([path, bytes]) => [`source/${path}`, bytes]),
+		["jarvis-cli/.gitignore", files[1][1]]]) {
+		const target = join(output, "resources", path);
+		const existing = await lstat(target).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
+		if (existing === null) await writeFile(target, bytes, { flag: "wx", mode: 0o644 });
+		else if (!existing.isFile() || !(await readFile(target)).equals(bytes)) throw new Error("V1 npm transport conflicts with source");
+	}
+	const result = await verifyV1Compatibility(output);
+	if (!result.ok) throw new Error(`Reconstructed V1 provenance failed: ${result.issues.join(", ")}`);
+	return result;
+};
 
 const normalizePath = (value) => value.split(sep).join("/");
 

@@ -6,6 +6,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import { currentExecutorPlatformTag, packedReleasePackages } from "./harnessy-release-contract.mjs";
+import { stageV1Compatibility } from "./v1-compatibility-lib.mjs";
 
 const packages = packedReleasePackages([currentExecutorPlatformTag()]).map((pkg) => ({
 	...pkg,
@@ -240,6 +241,10 @@ if (!options.skipInstall) {
 
 	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: nodeInstallDirectory });
 	run("npm", ["audit", "--omit=dev", "--audit-level=moderate"], { cwd: nodeInstallDirectory });
+	await stageV1Compatibility(
+		join(nodeInstallDirectory, "node_modules/@harnessy/capability-harnessy-v1-full"),
+		join(outDir, "reused-source"),
+	);
 	createPiShim(nodeInstallDirectory);
 
 	if (!options.skipBunInstall) {
@@ -272,6 +277,8 @@ if (!options.skipInstall) {
 
 	console.log("\nIsolated npm install:");
 	console.log(`  ${nodeInstallDirectory}`);
+	console.log("\nVerified inert workflow source (not activated; Python dependencies are not installed):");
+	console.log(`  ${join(outDir, "reused-source/resources/source")}`);
 	console.log("\nRun the locally packed npm CLI from outside the repository:");
 	console.log(`  ${join(nodeInstallDirectory, process.platform === "win32" ? "pi.cmd" : "pi")} --help`);
 	console.log(`  ${join(nodeInstallDirectory, "node_modules", ".bin", process.platform === "win32" ? "harnessy.cmd" : "harnessy")} --help`);

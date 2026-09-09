@@ -27,6 +27,10 @@ import { meetingPublicationTestWriteAuthorityLayer } from "../src/jarvis/meeting
 import { MeetingPublicationProviderError } from "../src/jarvis/meeting-publication/models.ts";
 import { MeetingPublicationSource } from "../src/jarvis/meeting-publication/notes.ts";
 import {
+	isMeetingPublicationV1WriterCommand,
+	MEETING_PUBLICATION_V1_PROCESS_MARKERS,
+} from "../src/jarvis/meeting-publication/operational-input.ts";
+import {
 	type MeetingPublicationSmokeProviderFactory,
 	runAuthorizedMeetingPublicationSmoke,
 } from "../src/jarvis/meeting-publication/operational-runtime.ts";
@@ -253,6 +257,38 @@ const run = (fixture: Awaited<ReturnType<typeof setup>>, factory: MeetingPublica
 	);
 
 describe("meeting publication operational smoke runtime", () => {
+	it.each([
+		["canonical review", "/opt/harnessy/bin/jarvis meeting publish review serve --host 127.0.0.1", true],
+		["legacy review", "/opt/harnessy/bin/jarvis meeting review serve --host 127.0.0.1", true],
+		["publication worker", "/opt/harnessy/bin/jarvis meeting publish worker --max-items 3", true],
+		["review opener", "/opt/harnessy/bin/jarvis meeting publish review open", false],
+		["community worker", "/opt/harnessy/bin/jarvis community briefing worker", false],
+	] as const)("classifies the %s command in the bounded V1 writer proof", (_name, command, expected) => {
+		expect(isMeetingPublicationV1WriterCommand(command)).toBe(expected);
+	});
+
+	it("requires both canonical and legacy review markers in signed one-writer evidence", async () => {
+		const fixture = await setup();
+		expect(fixture.authorization.payload.oneWriter.processMarkers).toEqual([
+			...MEETING_PUBLICATION_V1_PROCESS_MARKERS,
+		]);
+		fixture.authorization.resign((payload) => {
+			payload.oneWriter.processMarkers = payload.oneWriter.processMarkers.filter(
+				(marker) => marker !== "jarvis meeting publish review serve",
+			);
+		});
+		const provider = providers(fixture);
+		const result = await Effect.runPromise(
+			fixture.authorization
+				.withSystem(runAuthorizedMeetingPublicationSmoke(fixture.authorization.input, provider.factory))
+				.pipe(Effect.result),
+		);
+
+		expect(result).toMatchObject({ _tag: "Failure", failure: { code: "invalid_input" } });
+		expect(provider.calls.setup).toBe(0);
+		expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 0, leases: 0 });
+	});
+
 	it("publishes one exact approved revision and retains the nonce while releasing the lease", async () => {
 		const fixture = await setup();
 		const provider = providers(fixture);
