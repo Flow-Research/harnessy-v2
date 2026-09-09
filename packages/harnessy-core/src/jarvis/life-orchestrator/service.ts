@@ -138,18 +138,25 @@ const withDailyRunLock = <A>(
 				});
 				if (Result.isSuccess(created)) return { path, token };
 				if (errorCode(created.failure) !== "EEXIST") throw created.failure;
-				const owner = Result.try(() => {
+				// Serialize stale-owner inspection and removal. Never reclaim this guard:
+				// an interrupted recovery requires an operator checkpoint, not another race.
+				const recoveryPath = `${path}.recovery`;
+				writeFileSync(recoveryPath, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+				const recovery = Result.try(() => {
 					const lock = JSON.parse(readFileSync(path, "utf8")) as { readonly pid?: unknown };
-					return typeof lock.pid === "number" && Number.isSafeInteger(lock.pid) ? lock.pid : null;
+					if (typeof lock.pid !== "number" || !Number.isSafeInteger(lock.pid) || lock.pid <= 0) {
+						throw new Error(`Daily lock owner is incomplete or invalid: ${path}`);
+					}
+					if (processIsRunning(lock.pid)) {
+						throw new LifeOrchestratorError({
+							code: "compatibility_failed",
+							message: `A Life daily run is already active for ${date}.`,
+						});
+					}
+					unlinkSync(path);
 				});
-				const ownerPid = Result.isSuccess(owner) ? owner.success : null;
-				if (ownerPid !== null && processIsRunning(ownerPid)) {
-					throw new LifeOrchestratorError({
-						code: "compatibility_failed",
-						message: `A Life daily run is already active for ${date}.`,
-					});
-				}
-				unlinkSync(path);
+				unlinkSync(recoveryPath);
+				if (Result.isFailure(recovery)) throw recovery.failure;
 			}
 			throw new Error(`Unable to acquire daily lock for ${date}.`);
 		},

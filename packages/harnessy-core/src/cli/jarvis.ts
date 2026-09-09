@@ -1,4 +1,3 @@
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { Console } from "effect";
@@ -189,10 +188,8 @@ export const jarvisLifeScheduleCommand = Command.make(
 			const options = {
 				nodePath: resolve(nodePath),
 				cliPath: resolve(cliEntry),
-				launchAgentsDirectory: resolve(
-					Option.getOrUndefined(launchAgentsDirectory) ??
-						join(Option.getOrUndefined(homeRoot) ?? homedir(), "Library", "LaunchAgents"),
-				),
+				launchAgentsDirectory:
+					Option.getOrUndefined(launchAgentsDirectory) ?? join(settings.paths.homeRoot, "Library", "LaunchAgents"),
 			};
 			const result = apply
 				? yield* installLifeSchedule(settings, options)

@@ -910,9 +910,8 @@ def main():
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
         shutil.copy2(source, path)
-        if not clean_text_hygiene(path):
-            print("Error: reviewed preview text hygiene cleanup failed.", file=sys.stderr)
-            sys.exit(1)
+        # Preview generation already ran text hygiene. Publish the reviewed
+        # bytes unchanged; another cleanup could alter validated source URLs.
         brief = read_brief(path)
         sys.stdout.write(brief)
         if not brief.endswith("\n"):

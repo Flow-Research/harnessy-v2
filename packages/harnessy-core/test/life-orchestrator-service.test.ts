@@ -1,6 +1,8 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { NodeServices } from "@effect/platform-node";
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -28,6 +30,7 @@ import json
 import os
 import pathlib
 import shutil
+import runpy
 import sys
 
 args = sys.argv[1:]
@@ -40,10 +43,18 @@ if "--preview-output" in args:
     path.write_text("# Daily Brief\\n\\n## Worth Reading\\n\\n- [Old](https://example.test/repeated)\\n\\n## Reflection\\n\\nKeep going.\\n")
     raise SystemExit(0)
 if "--publish-preview" in args:
-    source = pathlib.Path(args[args.index("--publish-preview") + 1])
-    canonical.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, canonical)
-    pathlib.Path(str(canonical) + ".journaled").write_text(json.dumps({"delivered_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}))
+    sys.dont_write_bytecode = True
+    adapter = runpy.run_path(${JSON.stringify(fileURLToPath(new URL("../../capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/daily-brief", import.meta.url)))})
+    boundary = adapter["main"].__globals__
+    def hygiene(path):
+        raise AssertionError("Reviewed artifact must not be cleaned again")
+    def journal(path, today):
+        shutil.copy2(path, life / "delivered.md")
+        return True
+    boundary["clean_text_hygiene"] = hygiene
+    boundary["jarvis_journal"] = journal
+    boundary["send_notification"] = lambda brief: None
+    adapter["main"]()
     raise SystemExit(0)
 raise SystemExit(2)
 `;
@@ -86,7 +97,7 @@ describe("Life Orchestrator daily service", () => {
 				ledger.upsertCandidates(
 					[
 						{
-							url: "https://doi.org/10.1000/brand-new",
+							url: "https://doi.org/10.1000/unlocking-ai",
 							title: "Brand new paper",
 							topic: "Systems",
 							publishedAt: "2026-09-01T00:00:00.000Z",
@@ -103,13 +114,18 @@ describe("Life Orchestrator daily service", () => {
 		}
 
 		const now = new Date("2026-09-08T04:30:00.000Z");
+		const exited = spawnSync(process.execPath, ["-e", ""], { encoding: "utf8" });
+		expect(exited.status).toBe(0);
+		mkdirSync(settings.paths.stateDirectory, { recursive: true });
+		writeFileSync(join(settings.paths.stateDirectory, "daily-2026-09-08.lock"), JSON.stringify({ pid: exited.pid }));
 		const result = await Effect.runPromise(
 			runLifeDaily(settings, { now }).pipe(Effect.provide(CommandRunner.layer), Effect.provide(NodeServices.layer)),
 		);
 		const canonical = canonicalLifeBriefPath(settings.paths.lifeDirectory, now);
 		const markdown = readFileSync(canonical, "utf8");
 		expect(result).toMatchObject({ published: true, selected: 1, shortage: true, briefPath: canonical });
-		expect(markdown).toContain("[Brand new paper](<https://doi.org/10.1000/brand-new>)");
+		expect(markdown).toContain("[Brand new paper](<https://doi.org/10.1000/unlocking-ai>)");
+		expect(readFileSync(join(settings.paths.lifeDirectory, "delivered.md"), "utf8")).toBe(markdown);
 		expect(markdown).not.toContain("example.test/repeated");
 
 		const reopened = await Effect.runPromise(LifeReadingLedger.open(settings.paths.databasePath));
@@ -179,28 +195,37 @@ describe("Life Orchestrator daily service", () => {
 		);
 	});
 
-	it("rejects a concurrent daily run while its process lock is active", async () => {
-		const root = makeRoot();
-		const project = join(root, "project");
-		const scripts = join(root, "compatibility");
-		mkdirSync(project, { recursive: true });
-		mkdirSync(scripts, { recursive: true });
-		writeFileSync(join(scripts, "daily-brief"), dailyFixture);
-		const settings = resolveLifeOrchestratorSettings({
-			projectRoot: project,
-			homeRoot: root,
-			compatibilityRoot: scripts,
-		});
-		mkdirSync(settings.paths.stateDirectory, { recursive: true });
-		writeFileSync(join(settings.paths.stateDirectory, "daily-2026-09-08.lock"), JSON.stringify({ pid: process.pid }));
+	it.each(["active", "incomplete", "recovery"])(
+		"preserves the %s lock when another daily run is rejected",
+		async (state) => {
+			const root = makeRoot();
+			const project = join(root, "project");
+			const scripts = join(root, "compatibility");
+			mkdirSync(project, { recursive: true });
+			mkdirSync(scripts, { recursive: true });
+			writeFileSync(join(scripts, "daily-brief"), dailyFixture);
+			const settings = resolveLifeOrchestratorSettings({
+				projectRoot: project,
+				homeRoot: root,
+				compatibilityRoot: scripts,
+			});
+			mkdirSync(settings.paths.stateDirectory, { recursive: true });
+			const path = join(settings.paths.stateDirectory, "daily-2026-09-08.lock");
+			const owner = state === "active" ? JSON.stringify({ pid: process.pid }) : "{}";
+			writeFileSync(path, owner);
+			if (state === "recovery") writeFileSync(`${path}.recovery`, "another recovery owns this guard\n");
 
-		await expect(
-			Effect.runPromise(
-				runLifeDaily(settings, { now: new Date("2026-09-08T04:30:00.000Z") }).pipe(
-					Effect.provide(CommandRunner.layer),
-					Effect.provide(NodeServices.layer),
+			await expect(
+				Effect.runPromise(
+					runLifeDaily(settings, { now: new Date("2026-09-08T04:30:00.000Z") }).pipe(
+						Effect.provide(CommandRunner.layer),
+						Effect.provide(NodeServices.layer),
+					),
 				),
-			),
-		).rejects.toThrow("already active");
-	});
+			).rejects.toThrow(state === "active" ? "already active" : "Unable to acquire");
+			expect(readFileSync(path, "utf8")).toBe(owner);
+			if (state === "recovery")
+				expect(readFileSync(`${path}.recovery`, "utf8")).toBe("another recovery owns this guard\n");
+		},
+	);
 });
