@@ -96,7 +96,7 @@
 		"@types/node": "22.19.19",
 		"@types/semver": "7.7.1",
 		"@typescript/native-preview": "7.0.0-dev.20260120.1",
-		"@vitest/coverage-v8": "4.1.9",
+		"@vitest/coverage-v8": "4.1.11",
 		"esbuild": "0.28.1",
 		"husky": "9.1.7",
 		"jiti": "2.7.0",
@@ -105,7 +105,8 @@
 		"oxlint-plugin-eslint": "1.67.0",
 		"shx": "0.4.0",
 		"tsx": "4.22.1",
-		"typescript": "5.9.3"
+		"typescript": "5.9.3",
+		"wrangler": "4.128.0"
 	},
 	"engines": {
 		"node": "^22.22.2 || >=24.15.0"
@@ -126,7 +127,7 @@
 		"brace-expansion": "5.0.9",
 		"browserslist": "4.28.8",
 		"fast-uri": "3.1.6",
-		"hono": "4.12.34",
+		"hono": "4.13.7",
 		"ip-address": "10.7.0",
 		"postcss": {
 			".": "8.5.26",
@@ -138,6 +139,7 @@
 			"undici": "6.28.0"
 		},
 		"rimraf": "6.1.2",
+		"sharp": "0.35.4",
 		"toml": "4.3.0",
 		"gaxios": {
 			"rimraf": "6.1.2"

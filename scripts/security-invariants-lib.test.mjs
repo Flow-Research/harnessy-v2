@@ -89,7 +89,7 @@ const dependencyContractFiles = () =>
 	new Map([
 		[
 			"package.json",
-			JSON.stringify({ overrides: { "fast-uri": "3.1.6", qs: "6.16.0", toml: "4.3.0" } }),
+			JSON.stringify({ overrides: { "fast-uri": "3.1.6", qs: "6.16.0", sharp: "0.35.4", toml: "4.3.0" } }),
 		],
 		[
 			"package-lock.json",
@@ -97,13 +97,14 @@ const dependencyContractFiles = () =>
 				packages: {
 					"node_modules/fast-uri": { version: "3.1.6" },
 					"node_modules/qs": { version: "6.16.0" },
+					"node_modules/sharp": { version: "0.35.4" },
 					"node_modules/toml": { version: "4.3.0" },
 				},
 			}),
 		],
 		[
 			"executor/package.json",
-			JSON.stringify({ overrides: { axios: "1.20.0", "form-data": "4.0.6", toml: "4.2.0" } }),
+			JSON.stringify({ overrides: { axios: "1.20.0", "form-data": "4.0.6", sharp: "0.35.4", toml: "4.2.0" } }),
 		],
 		[
 			"executor/packages/core/test-servers/package.json",
@@ -126,7 +127,7 @@ const dependencyContractFiles = () =>
 				'    "axios": ["axios@1.20.0", "", {}],',
 				'    "form-data": ["form-data@4.0.6", "", {}],',
 				'    "miniflare": ["miniflare@5.20260804.0-alpha", "", { "dependencies": { "sharp": "0.35.2", "undici": "7.29.0", "ws": "8.21.0" } }],',
-				'    "sharp": ["sharp@0.35.2", "", {}],',
+				'    "sharp": ["sharp@0.35.4", "", {}],',
 				'    "toml": ["toml@4.2.0", "", {}],',
 				'    "undici": ["undici@8.10.1", "", {}],',
 				'    "miniflare/undici": ["undici@7.29.0", "", {}],',
@@ -172,6 +173,15 @@ describe("dependency resolution security contract", () => {
 	});
 
 	it("rejects an incoherent Cloudflare owner lock", () => {
+		const files = dependencyContractFiles();
+		files.set("executor/bun.lock", files.get("executor/bun.lock").replace("sharp@0.35.4", "sharp@0.35.2"));
+		assert.deepEqual(
+			new Set(checkDependencyResolutionContract(files).map((finding) => finding.rule)),
+			new Set(["unsafe-executor-lock-resolution", "incoherent-cloudflare-owner-lock"]),
+		);
+	});
+
+	it("rejects mismatched Cloudflare owner versions", () => {
 		const files = dependencyContractFiles();
 		files.set(
 			"executor/bun.lock",

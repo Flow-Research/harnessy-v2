@@ -14,6 +14,7 @@ jobs:
     steps:
       - run: |
           npm run build
+          npm run verify:v1-compatibility
           npm run check
           git diff --exit-code
           npm run qa:check
@@ -47,9 +48,6 @@ jobs:
     steps:
       - run: node --test scripts/harnessy-executor-package-lib.test.mjs
       - run: npm run test:executor-package-integration
-  v1-compatibility:
-    name: V1 compatibility
-    steps: [{ run: ./scripts/test-v1-compatibility.sh }]
 `;
 
 const securitySource = `
@@ -124,7 +122,7 @@ const validate = (overrides = {}) =>
 		...overrides,
 	});
 
-test("CI contract accepts complete local, hosted, security, and release-preflight wiring", () => {
+test("CI contract accepts complete V2 gates without the deprecated V1 behavior job", () => {
 	const result = validate();
 	assert.equal(result.ok, true);
 	assert.deepEqual(result.expectedChecks, requiredCheckNames);
@@ -149,6 +147,7 @@ test("CI contract requires npm to provide the packaged Executor gate's CLI path"
 
 test("CI contract rejects omission of the full package contracts or matrix launcher regressions", () => {
 	for (const command of [
+		"npm run verify:v1-compatibility",
 		"npm run test:executor-package-contract",
 		"node --test scripts/harnessy-executor-package-lib.test.mjs",
 	]) {

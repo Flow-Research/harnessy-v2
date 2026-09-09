@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { join } from "node:path";
 
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 
 import type { HarnessError } from "../../errors.ts";
 import { CommandRunner, type CommandRunResult, type ExternalCommand } from "../../runtime/command-runner.ts";
@@ -113,12 +114,8 @@ const errorCode = (cause: unknown): string | null =>
 	typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string" ? cause.code : null;
 
 const processIsRunning = (pid: number): boolean => {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (cause) {
-		return errorCode(cause) === "EPERM";
-	}
+	const result = Result.try(() => process.kill(pid, 0));
+	return Result.isSuccess(result) || errorCode(result.failure) === "EPERM";
 };
 
 const withDailyRunLock = <A>(
@@ -132,30 +129,27 @@ const withDailyRunLock = <A>(
 			const path = join(settings.paths.stateDirectory, `daily-${date}.lock`);
 			const token = randomUUID();
 			for (let attempt = 0; attempt < 2; attempt += 1) {
-				try {
+				const created = Result.try(() => {
 					writeFileSync(path, `${JSON.stringify({ pid: process.pid, token })}\n`, {
 						encoding: "utf8",
 						flag: "wx",
 						mode: 0o600,
 					});
-					return { path, token };
-				} catch (cause) {
-					if (errorCode(cause) !== "EEXIST") throw cause;
-					let ownerPid: number | null = null;
-					try {
-						const lock = JSON.parse(readFileSync(path, "utf8")) as { readonly pid?: unknown };
-						ownerPid = typeof lock.pid === "number" && Number.isSafeInteger(lock.pid) ? lock.pid : null;
-					} catch {
-						ownerPid = null;
-					}
-					if (ownerPid !== null && processIsRunning(ownerPid)) {
-						throw new LifeOrchestratorError({
-							code: "compatibility_failed",
-							message: `A Life daily run is already active for ${date}.`,
-						});
-					}
-					unlinkSync(path);
+				});
+				if (Result.isSuccess(created)) return { path, token };
+				if (errorCode(created.failure) !== "EEXIST") throw created.failure;
+				const owner = Result.try(() => {
+					const lock = JSON.parse(readFileSync(path, "utf8")) as { readonly pid?: unknown };
+					return typeof lock.pid === "number" && Number.isSafeInteger(lock.pid) ? lock.pid : null;
+				});
+				const ownerPid = Result.isSuccess(owner) ? owner.success : null;
+				if (ownerPid !== null && processIsRunning(ownerPid)) {
+					throw new LifeOrchestratorError({
+						code: "compatibility_failed",
+						message: `A Life daily run is already active for ${date}.`,
+					});
 				}
+				unlinkSync(path);
 			}
 			throw new Error(`Unable to acquire daily lock for ${date}.`);
 		},
