@@ -8,6 +8,7 @@ import {
 	describeV1Tree,
 	digestV1InputEntries,
 	verifyV1Compatibility,
+	writeV1NpmTransport,
 	writeV1Provenance,
 } from "./v1-compatibility-lib.mjs";
 
@@ -871,6 +872,7 @@ export const reconcileV1Compatibility = async ({
 			mode: input.dirtyPaths.length > 0 ? "reviewed-dirty-overlay" : "committed-overlay",
 		};
 		await writeV1Provenance(candidatePackageRoot, sourceMetadata);
+		await writeV1NpmTransport(candidatePackageRoot);
 		const candidateVerification = await verifyV1Compatibility(candidatePackageRoot);
 		if (!candidateVerification.ok)
 			throw new Error(`Candidate compatibility pack is invalid:\n${candidateVerification.issues.join("\n")}`);

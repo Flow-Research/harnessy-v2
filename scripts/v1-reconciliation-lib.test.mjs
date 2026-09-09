@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { describeV1Tree, verifyV1Compatibility, writeV1Provenance } from "./v1-compatibility-lib.mjs";
+import {
+	describeV1Tree,
+	stageV1Compatibility,
+	verifyV1Compatibility,
+	writeV1NpmTransport,
+	writeV1Provenance,
+} from "./v1-compatibility-lib.mjs";
 import {
 	classifyReviewedV1Exclusion,
 	classifyReviewedV1MigrationControlExclusion,
@@ -58,6 +64,7 @@ const requiredFiles = () =>
 		[".jarvis/context/README.md", "context baseline\n"],
 		["tools/flow-install/base.txt", "installer baseline\n"],
 		["jarvis-cli/base.txt", "jarvis baseline\n"],
+		["jarvis-cli/.gitignore", ".venv/\n"],
 		["install.sh", "#!/usr/bin/env bash\necho install\n"],
 		["README.md", "V1 fixture\n"],
 		["AGENTS.md", "fixture rules\n"],
@@ -117,6 +124,7 @@ const createCompatibilityPackage = async (packageRoot, files, sourceMetadata) =>
 	await cp(join(source, "README.md"), join(resources, "README.v1.md"));
 	await cp(join(source, "AGENTS.md"), join(resources, "AGENTS.v1.md"));
 	await writeV1Provenance(packageRoot, sourceMetadata, { schemaVersion: 1 });
+	await writeV1NpmTransport(packageRoot);
 };
 
 const provenanceFor = ({ base, overlays, head = overlays.at(-1) ?? base }) => ({
@@ -422,6 +430,7 @@ test("reconciles committed and dirty renames/deletions and binds untracked bytes
 		".gitignore",
 		".jarvis/context/deployments/\nsource-only-ignore\n",
 	);
+	await writeFixtureFile(sourceRoot, "jarvis-cli/.gitignore", ".venv/\nnew-cache/\n");
 	await writeFixtureFile(
 		sourceRoot,
 		"jarvis-cli/pyproject.toml",
@@ -436,6 +445,7 @@ test("reconciles committed and dirty renames/deletions and binds untracked bytes
 		sourceRoot,
 		[
 			".gitignore",
+			"jarvis-cli/.gitignore",
 			".jarvis/context/docs/merge.md",
 			".jarvis/context/docs/standards/ci-process.md",
 			"jarvis-cli/pyproject.toml",
@@ -568,6 +578,19 @@ test("reconciles committed and dirty renames/deletions and binds untracked bytes
 	await assert.rejects(readFile(join(packageRoot, "resources/flow-install/dirty-old.txt")));
 	const verification = await verifyV1Compatibility(packageRoot);
 	assert.equal(verification.ok, true, verification.issues.join("\n"));
+	const transport = JSON.parse(await readFile(join(packageRoot, "resources/npm-transport.json"), "utf8"));
+	assert.equal(
+		Buffer.from(transport[".gitignore"], "base64").toString("utf8"),
+		".jarvis/context/deployments/\n.jarvis/context/evidence/\n",
+	);
+	assert.equal(Buffer.from(transport["jarvis-cli/.gitignore"], "base64").toString("utf8"), ".venv/\nnew-cache/\n");
+	const packed = join(dirname(packageRoot), "packed");
+	await cp(packageRoot, packed, { recursive: true });
+	for (const path of ["source/.gitignore", "source/jarvis-cli/.gitignore", "jarvis-cli/.gitignore"])
+		await rm(join(packed, "resources", path));
+	const staged = await stageV1Compatibility(packed, join(dirname(packageRoot), "staged"));
+	assert.equal(staged.ok, true);
+	assert.equal(staged.source.digest, verification.source.digest);
 	assert.equal(verification.provenance.schemaVersion, 2);
 	assert.equal(
 		verification.provenance.source.dirtyPatchSha256,
