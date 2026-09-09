@@ -187,6 +187,7 @@ export const checkDependencyResolutionContract = (files) => {
 
 	const rootVulnerableRanges = new Map([
 		["fast-uri", ">=3.0.0 <3.1.6"],
+		["sharp", "<0.35.4"],
 		["qs", ">=2.2.5 <6.16.0"],
 		["toml", "<4.2.0"],
 	]);
@@ -209,6 +210,7 @@ export const checkDependencyResolutionContract = (files) => {
 	const executorOverrideRanges = new Map([
 		["axios", ">=1.0.0 <1.18.0"],
 		["form-data", ">=4.0.0 <4.0.6"],
+		["sharp", "<0.35.4"],
 		["toml", "<4.2.0"],
 	]);
 	for (const [packageName, vulnerableRange] of executorOverrideRanges) {
@@ -244,7 +246,7 @@ export const checkDependencyResolutionContract = (files) => {
 		const resolvedRanges = new Map([
 			["axios", ">=1.0.0 <1.18.0"],
 			["form-data", ">=4.0.0 <4.0.6"],
-			["sharp", "<0.35.0"],
+			["sharp", "<0.35.4"],
 			["toml", "<4.2.0"],
 			["undici", ">=7.0.0 <7.29.0"],
 			["ws", ">=8.0.0 <8.21.0"],
@@ -279,12 +281,12 @@ export const checkDependencyResolutionContract = (files) => {
 		}
 
 		const miniflareDependencyRanges = new Map([
-			["sharp", "<0.35.0"],
+			["sharp", "<0.35.4"],
 			["undici", ">=7.0.0 <7.29.0"],
 			["ws", ">=8.0.0 <8.21.0"],
 		]);
 		for (const [packageName, vulnerableRange] of miniflareDependencyRanges) {
-			const dependencyVersion = bunDependencyVersion(miniflareLine, packageName);
+			const dependencyVersion = executorManifest?.overrides?.[packageName] ?? bunDependencyVersion(miniflareLine, packageName);
 			const nestedLine = bunEntryLine(executorLock, packageName === "sharp" ? packageName : `miniflare/${packageName}`);
 			if (!isExactSafeVersion(dependencyVersion, vulnerableRange)) {
 				findings.push({ rule: "unsafe-executor-owner-dependency", path: executorLockPath, line: 1 });

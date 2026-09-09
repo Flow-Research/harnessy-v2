@@ -9,6 +9,7 @@ import { JarvisDiagnostic } from "./jarvis/diagnostic.ts";
 import { JarvisParityReporter } from "./jarvis/parity-report.ts";
 import { JarvisRuntimeRoots } from "./jarvis/paths.ts";
 import { HarnessProject } from "./operations.ts";
+import { CommandRunner } from "./runtime/command-runner.ts";
 
 /** Render Effect failures as concise CLI output by default. */
 const renderCliError = (cause: Cause.Cause<unknown>): string => {
@@ -28,6 +29,7 @@ const program = runCli.pipe(
 	Effect.provide(JarvisDiagnostic.liveLayer),
 	Effect.provide(JarvisParityReporter.layer),
 	Effect.provide(JarvisRuntimeRoots.liveLayer),
+	Effect.provide(CommandRunner.layer),
 	Effect.provide(NodeServices.layer),
 	Effect.catchCause((cause) =>
 		Effect.sync(() => {

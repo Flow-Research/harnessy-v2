@@ -54,7 +54,7 @@
     "tsup": "8.5.0",
     "typescript": "5.9.3",
     "urlpattern-polyfill": "10.1.0",
-    "vitest": "4.1.9",
+    "vitest": "4.1.11",
     "wrangler": "4.128.0",
     "zod": "4.3.6"
   },

@@ -55,7 +55,7 @@
 		"@effect/vitest": "4.0.0-beta.85",
 		"@types/node": "22.19.19",
 		"shx": "0.4.0",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
 	},
 	"engines": {
 		"node": "^22.22.2 || >=24.15.0"
