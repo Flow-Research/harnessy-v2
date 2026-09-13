@@ -33,4 +33,29 @@ describe("Life Orchestrator configuration", () => {
 		const settings = resolveLifeOrchestratorSettings({ projectRoot: root, homeRoot: root });
 		expect(settings.sources.map((source) => source.name)).toEqual(["Valid"]);
 	});
+
+	it("loads known reading curricula and ignores disabled, duplicate, or unknown entries", () => {
+		const root = mkdtempSync(join(realpathSync(tmpdir()), "harnessy-life-config-"));
+		roots.push(root);
+		const lifeDirectory = join(root, ".agents", "life");
+		mkdirSync(lifeDirectory, { recursive: true });
+		writeFileSync(
+			join(lifeDirectory, "config.json"),
+			JSON.stringify({
+				reading: {
+					curricula: [
+						{ id: "gitcoin-funding-mechanisms", max_per_brief: 2 },
+						{ id: "gitcoin-funding-mechanisms", max_per_brief: 3 },
+						{ id: "unknown" },
+						{ id: "gitcoin-funding-mechanisms", enabled: false },
+					],
+				},
+			}),
+		);
+
+		const settings = resolveLifeOrchestratorSettings({ projectRoot: root, homeRoot: root });
+		expect(settings.curricula).toHaveLength(1);
+		expect(settings.curricula[0]?.curriculum.id).toBe("gitcoin-funding-mechanisms");
+		expect(settings.curricula[0]?.maxPerBrief).toBe(2);
+	});
 });
