@@ -16,4 +16,16 @@ export {
 	engineMeetingPublicationDiscordLayer,
 	engineMeetingPublicationGoogleLayer,
 } from "./meeting-publication/providers.ts";
+export type {
+	MeetingPublicationGoogleSetupConfig,
+	MeetingPublicationGoogleSetupHandle,
+	MeetingPublicationSetupConfig,
+	MeetingPublicationSetupConsent,
+	MeetingPublicationSetupHandle,
+} from "./meeting-publication/setup.ts";
+export {
+	MeetingPublicationSetupError,
+	openMeetingPublicationGoogleSetup,
+	openMeetingPublicationSetup,
+} from "./meeting-publication/setup.ts";
 export type { MeetingProviderTransportConfig } from "./meeting-publication/transport.ts";

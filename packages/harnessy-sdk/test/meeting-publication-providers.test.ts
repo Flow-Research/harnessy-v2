@@ -26,6 +26,7 @@ import {
 } from "../../harnessy-core/src/jarvis/meeting-publication/authority.ts";
 import { meetingPublicationTestWriteAuthorityLayer } from "../../harnessy-core/src/jarvis/meeting-publication/authority-test-fixture.ts";
 import { MeetingPublicationSource } from "../../harnessy-core/src/jarvis/meeting-publication/notes.ts";
+import type { MeetingProviderHealth } from "../../harnessy-core/src/jarvis/meeting-publication/provider-health.ts";
 import {
 	MeetingPublicationClock,
 	MeetingPublicationDiscord,
@@ -580,8 +581,12 @@ describe("meeting publication provider integrations", () => {
 								const pending = yield* store.get(scan.itemIds[0] as string);
 								if (pending === null) return yield* Effect.die("missing 408 item");
 								yield* service.approve(pending.itemId, pending.sourceHash);
-								yield* service.worker(1);
-								return { itemId: pending.itemId, item: yield* store.get(pending.itemId) };
+								yield* service.publishOne(pending.itemId, pending.sourceHash);
+								return {
+									itemId: pending.itemId,
+									sourceHash: pending.sourceHash,
+									item: yield* store.get(pending.itemId),
+								};
 							}),
 						);
 						const snapshots = [first.item];
@@ -593,7 +598,7 @@ describe("meeting publication provider integrations", () => {
 								handle,
 								now,
 								Effect.gen(function* () {
-									yield* (yield* MeetingPublicationService).worker(1);
+									yield* (yield* MeetingPublicationService).publishOne(first.itemId, first.sourceHash);
 									return yield* (yield* MeetingPublicationStore).get(first.itemId);
 								}),
 							);
@@ -615,211 +620,95 @@ describe("meeting publication provider integrations", () => {
 		}
 	});
 
-	it("recovers post-commit Google and Discord lost responses without duplicate creates", async () => {
-		const root = makeRoot();
-		mkdirSync(join(root, "notes"));
-		writeFileSync(join(root, "notes", "first.md"), note("First lost response.", "Publish the first result."));
-		const wire = makeWireState();
-		wire.lostGoogleDocumentCreateResponses = 1;
-		const server = await startWireServer(wire);
-		const transport = {
-			kind: "test-loopback",
-			googleDriveBaseUrl: server.origin,
-			googleDocsBaseUrl: server.origin,
-			discordBaseUrl: server.origin,
-		} as const;
-		try {
-			await Effect.runPromise(
-				withEngine(root, transport, ({ handle }) =>
-					Effect.gen(function* () {
-						const now = { value: Date.parse("2026-09-04T12:00:00.000Z") };
-						const googleLost = yield* runProviderCore(
-							root,
-							wire,
-							handle,
-							now,
-							Effect.gen(function* () {
-								const service = yield* MeetingPublicationService;
-								const store = yield* MeetingPublicationStore;
-								const scan = yield* service.scan();
-								const pending = yield* store.get(scan.itemIds[0] as string);
-								if (pending === null) return yield* Effect.die("missing Google lost-response item");
-								yield* service.approve(pending.itemId, pending.sourceHash);
-								yield* service.worker(1);
-								return { itemId: pending.itemId, item: yield* store.get(pending.itemId) };
-							}),
-						);
-						expect(googleLost.item).toMatchObject({ status: "approved", googleDocId: null });
-						now.value += 61_000;
-						const googleRecovered = yield* runProviderCore(
-							root,
-							wire,
-							handle,
-							now,
-							Effect.gen(function* () {
-								yield* (yield* MeetingPublicationService).worker(1);
-								return yield* (yield* MeetingPublicationStore).get(googleLost.itemId);
-							}),
-						);
-						expect(googleRecovered?.status).toBe("published");
-						const firstDocumentCreates = wire.requests.filter(
-							(request) =>
-								request.method === "POST" &&
-								request.path === "/files" &&
-								isRecord(request.body) &&
-								isRecord(request.body.appProperties) &&
-								request.body.appProperties.harnessyMeetingItemId === googleLost.itemId,
-						);
-						expect(firstDocumentCreates).toHaveLength(1);
-						const discordCreatesBeforeLostResponse = wire.requests.filter(
-							(request) => request.method === "POST" && request.path === `/channels/${wire.channelId}/messages`,
-						).length;
-
-						const secondBody = note("Second lost response.", "Publish the second result.")
-							.replace("Provider Integration Meeting", "Second Provider Integration Meeting")
-							.replace("provider-integration", "provider-integration-2");
-						writeFileSync(join(root, "notes", "second.md"), secondBody);
-						wire.lostDiscordMessageCreateResponses = 1;
-						now.value += 1_000;
-						const discordLost = yield* runProviderCore(
-							root,
-							wire,
-							handle,
-							now,
-							Effect.gen(function* () {
-								const service = yield* MeetingPublicationService;
-								const store = yield* MeetingPublicationStore;
-								yield* service.scan();
-								const pending = (yield* store.list()).find((item) => item.status === "pending_review");
-								if (pending === undefined) return yield* Effect.die("missing Discord lost-response item");
-								yield* service.approve(pending.itemId, pending.sourceHash);
-								yield* service.worker(1);
-								return { itemId: pending.itemId, item: yield* store.get(pending.itemId) };
-							}),
-						);
-						expect(discordLost.item).toMatchObject({ status: "approved", discordMessageId: null });
-						expect(discordLost.item?.googleDocId).not.toBeNull();
-						now.value += 61_000;
-						const discordRecovered = yield* runProviderCore(
-							root,
-							wire,
-							handle,
-							now,
-							Effect.gen(function* () {
-								yield* (yield* MeetingPublicationService).worker(1);
-								return yield* (yield* MeetingPublicationStore).get(discordLost.itemId);
-							}),
-						);
-						expect(discordRecovered?.status).toBe("published");
-						const discordCreates = wire.requests
-							.filter(
-								(request) =>
-									request.method === "POST" && request.path === `/channels/${wire.channelId}/messages`,
-							)
-							.slice(discordCreatesBeforeLostResponse);
-						expect(discordCreates).toHaveLength(2);
-						for (const request of discordCreates) {
-							expect(request.body).toMatchObject({ enforce_nonce: true });
-						}
-						const discordNonces = discordCreates.map((request) => nonceFrom(request.body));
-						expect(new Set(discordNonces).size).toBe(1);
-						expect(discordNonces[0]).not.toBe(discordLost.itemId);
-						expect(discordNonces.every((nonce) => nonce.length > 0 && nonce.length <= 25)).toBe(true);
-						expect(wire.messagesByNonce.has(discordNonces[0] ?? "")).toBe(true);
-					}),
-				),
-			);
-		} finally {
-			await server.close();
-		}
-	});
-
-	it("does not checkpoint an earlier Discord revision after its create response is lost", async () => {
-		const root = makeRoot();
-		mkdirSync(join(root, "notes"));
-		const notePath = join(root, "notes", "meeting.md");
-		writeFileSync(notePath, note("Initial source revision.", "Publish the initial revision."));
-		const wire = makeWireState();
-		wire.lostDiscordMessageCreateResponses = 1;
-		const server = await startWireServer(wire);
-		const transport = {
-			kind: "test-loopback",
-			googleDriveBaseUrl: server.origin,
-			googleDocsBaseUrl: server.origin,
-			discordBaseUrl: server.origin,
-		} as const;
-		try {
-			await Effect.runPromise(
-				withEngine(root, transport, ({ handle }) =>
-					Effect.gen(function* () {
-						const now = { value: Date.parse("2026-09-04T12:00:00.000Z") };
-						const lost = yield* runProviderCore(
-							root,
-							wire,
-							handle,
-							now,
-							Effect.gen(function* () {
-								const service = yield* MeetingPublicationService;
-								const store = yield* MeetingPublicationStore;
-								const scan = yield* service.scan();
-								const pending = yield* store.get(scan.itemIds[0] as string);
-								if (pending === null) return yield* Effect.die("missing revised-source fixture item");
-								yield* service.approve(pending.itemId, pending.sourceHash);
-								yield* service.worker(1);
-								return { itemId: pending.itemId, item: yield* store.get(pending.itemId) };
-							}),
-						);
-						expect(lost.item).toMatchObject({
-							status: "approved",
-							failureStage: "discord",
-							discordMessageId: null,
-						});
-						expect(wire.messagesByNonce.size).toBe(1);
-						expect([...wire.messagesByNonce.values()][0]?.content).toContain("Publish the initial revision.");
-
-						writeFileSync(notePath, note("Revised source revision.", "Publish only the revised revision."));
-						now.value += 61_000;
-						const revised = yield* runProviderCore(
-							root,
-							wire,
-							handle,
-							now,
-							Effect.gen(function* () {
-								const service = yield* MeetingPublicationService;
-								const store = yield* MeetingPublicationStore;
-								yield* service.scan();
-								const pending = yield* store.get(lost.itemId);
-								if (pending === null) return yield* Effect.die("missing revised fixture item");
-								yield* service.approve(pending.itemId, pending.sourceHash);
-								yield* service.worker(1);
-								return { sourceHash: pending.sourceHash, item: yield* store.get(pending.itemId) };
-							}),
-						);
-						expect(revised.item).toMatchObject({
-							status: "published",
-							sourceHash: revised.sourceHash,
-							approvedHash: revised.sourceHash,
-						});
-						const creates = wire.requests.filter(
-							(request) => request.method === "POST" && request.path === `/channels/${wire.channelId}/messages`,
-						);
-						expect(creates).toHaveLength(2);
-						const nonces = creates.map((request) => nonceFrom(request.body));
-						expect(nonces[0]).not.toBe(nonces[1]);
-						expect(nonces.every((nonce) => nonce.length > 0 && nonce.length <= 25)).toBe(true);
-						expect(wire.messagesByNonce.size).toBe(2);
-						const published = [...wire.messagesByNonce.values()].find(
-							(message) => message.id === revised.item?.discordMessageId,
-						);
-						expect(published?.content).toContain("Publish only the revised revision.");
-						expect(published?.content).not.toContain("Publish the initial revision.");
-					}),
-				),
-			);
-		} finally {
-			await server.close();
-		}
-	});
+	for (const stage of ["google", "discord"] as const) {
+		it(`stops after committed ${stage} response loss and preserves evidence across restart and edits`, async () => {
+			const root = makeRoot();
+			mkdirSync(join(root, "notes"));
+			const notePath = join(root, "notes", "meeting.md");
+			writeFileSync(notePath, note("Initial approved revision.", "Publish the approved result."));
+			const wire = makeWireState();
+			if (stage === "google") wire.lostGoogleDocumentCreateResponses = 1;
+			else wire.lostDiscordMessageCreateResponses = 1;
+			const server = await startWireServer(wire);
+			const transport = {
+				kind: "test-loopback",
+				googleDriveBaseUrl: server.origin,
+				googleDocsBaseUrl: server.origin,
+				discordBaseUrl: server.origin,
+			} as const;
+			try {
+				await Effect.runPromise(
+					withEngine(root, transport, ({ handle }) =>
+						Effect.gen(function* () {
+							const now = { value: Date.parse("2026-09-04T12:00:00.000Z") };
+							const lost = yield* runProviderCore(
+								root,
+								wire,
+								handle,
+								now,
+								Effect.gen(function* () {
+									const service = yield* MeetingPublicationService;
+									const store = yield* MeetingPublicationStore;
+									const scan = yield* service.scan();
+									const pending = yield* store.get(scan.itemIds[0] as string);
+									if (pending === null) return yield* Effect.die("missing lost-response item");
+									yield* service.approve(pending.itemId, pending.sourceHash);
+									expect(yield* service.worker(2).pipe(Effect.result)).toMatchObject({
+										_tag: "Failure",
+										failure: { code: "delivery_uncertain", retryable: false },
+									});
+									expect(yield* service.deliveryUncertain.pipe(Effect.result)).toMatchObject({
+										_tag: "Failure",
+										failure: { code: "delivery_uncertain" },
+									});
+									return yield* store.get(pending.itemId);
+								}),
+							);
+							if (lost === null) return yield* Effect.die("missing stopped row");
+							expect(lost).toMatchObject({
+								status: "blocked",
+								failureStage: stage,
+								nextAttemptAt: null,
+								approvedHash: lost.sourceHash,
+								discordMessageId: null,
+							});
+							if (stage === "google") expect(lost.googleDocId).toBeNull();
+							else expect(lost.googleDocId).not.toBeNull();
+							const mutations = wire.requests.filter((request) => request.method !== "GET");
+							expect(stage === "google" ? wire.files.size : wire.messagesByNonce.size).toBeGreaterThan(0);
+							now.value += 24 * 60 * 60_000;
+							writeFileSync(notePath, note("Changed after uncertainty.", "Do not publish this revision."));
+							yield* runProviderCore(
+								root,
+								wire,
+								handle,
+								now,
+								Effect.gen(function* () {
+									const service = yield* MeetingPublicationService;
+									const store = yield* MeetingPublicationStore;
+									const actions: ReadonlyArray<Effect.Effect<unknown, unknown>> = [
+										service.worker(2),
+										service.publishOne(lost.itemId, lost.sourceHash),
+										service.scan(),
+										service.approve(lost.itemId, lost.sourceHash),
+										store.archive(lost.itemId, lost.sourceHash, new Date(now.value).toISOString()),
+										store.archivePaths([lost.notePath], new Date(now.value).toISOString()),
+										store.resumeAuthBlocked(lost, new Date(now.value).toISOString()),
+									];
+									for (const action of actions)
+										expect(Result.isFailure(yield* action.pipe(Effect.result))).toBe(true);
+									expect(yield* store.get(lost.itemId)).toEqual(lost);
+								}),
+							);
+							expect(wire.requests.filter((request) => request.method !== "GET")).toEqual(mutations);
+						}),
+					),
+				);
+			} finally {
+				await server.close();
+			}
+		});
+	}
 
 	it("prevalidates scoped approval proof even when policy bypasses elicitation", async () => {
 		const root = makeRoot();
@@ -1542,6 +1431,45 @@ describe("meeting publication provider integrations", () => {
 		}
 	});
 
+	it("keeps provider composition available when its configured connection is absent", async () => {
+		const root = makeRoot();
+		const wire = makeWireState();
+		const server = await startWireServer(wire);
+		const transport = {
+			kind: "test-loopback",
+			googleDriveBaseUrl: server.origin,
+			googleDocsBaseUrl: server.origin,
+			discordBaseUrl: server.origin,
+		} as const;
+		try {
+			await Effect.runPromise(
+				withEngine(root, transport, ({ handle }) =>
+					Effect.gen(function* () {
+						const provider = yield* MeetingPublicationGoogle;
+						const result = yield* provider.preflight.pipe(Effect.result);
+						expect(result).toMatchObject({
+							_tag: "Failure",
+							failure: { stage: "google", code: "missing_credential", retryable: false },
+						});
+						expect(wire.requests).toHaveLength(0);
+					}).pipe(
+						Effect.provide(
+							engineMeetingPublicationGoogleLayer({
+								handle,
+								owner: "org",
+								connection: "absentConnection",
+								expectedOwnerEmail: "owner@example.test",
+								folderPath: "Published/Meetings",
+							}),
+						),
+					),
+				),
+			);
+		} finally {
+			await server.close();
+		}
+	});
+
 	it("runs the content-free notifier process fixture and terminates bounded hangs", async () => {
 		const root = makeRoot();
 		const notificationGrant = await makeTestGrant(
@@ -1684,6 +1612,101 @@ describe("meeting publication provider integrations", () => {
 			`${JSON.stringify(reviewOpenPath)} --state-path ${JSON.stringify(statePath)}`,
 		]);
 		expect(readFileSync(recordPath, "utf8")).not.toContain("meeting-publication-v2-review.token");
+	});
+
+	it("delivers bounded provider-health guidance through the bearer-free notifier fixture", async () => {
+		const root = makeRoot();
+		const grant = await makeTestGrant(makeCoreConfig(root, "888888888888888888"), "provider_notification");
+		const recordPath = join(root, "health-notifier-args.json");
+		const notifierPath = join(root, "health-notifier-fixture");
+		const reviewOpenPath = join(root, "review-open-fixture");
+		const statePath = join(root, "state");
+		writeFileSync(
+			notifierPath,
+			`#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify(process.argv.slice(2)));\n`,
+			{ mode: 0o700 },
+		);
+		const health: MeetingProviderHealth = {
+			provider: "google",
+			account: "owner@example.test",
+			failure: "authentication",
+			checkedAt: "2026-09-11T12:00:00.000Z",
+			lastSuccessAt: null,
+			incidentAt: "2026-09-11T12:00:00.000Z",
+			notifiedAt: null,
+			recoveryPending: false,
+		};
+		await Effect.runPromise(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const notifier = yield* MeetingPublicationNotifier;
+					for (const entry of [
+						{
+							failure: "authentication",
+							guidance: "Check the native connection credentials; sign in again if required.",
+						},
+						{ failure: "transient", guidance: "Harnessy will check again automatically." },
+						{ failure: "identity", guidance: "Check the account and permissions in Harnessy connections." },
+						{ failure: null, guidance: "Eligible approved meetings will resume automatically." },
+					] as const) {
+						const lastSuccessAt = entry.failure === null ? health.checkedAt : null;
+						const current = { ...health, failure: entry.failure, lastSuccessAt };
+						expect(yield* notifier.notify("error", 0, grant, current)).toBe(true);
+						const message = `google (owner@example.test): ${entry.failure === null ? "connection recovered" : `${entry.failure} check failed`}. 0 meetings affected. Last successful check: ${lastSuccessAt ?? "none"}. ${entry.guidance}`;
+						expect(JSON.parse(readFileSync(recordPath, "utf8"))).toEqual([
+							"-title",
+							"Harnessy meeting publication",
+							"-message",
+							message,
+							"-group",
+							"harnessy-meeting-publication-google",
+							"-execute",
+							`${JSON.stringify(reviewOpenPath)} --state-path ${JSON.stringify(statePath)}`,
+						]);
+						if (entry.failure !== "authentication") expect(message).not.toContain("sign in again");
+					}
+					expect(
+						yield* notifier.notify("error", 1_000_000, grant, {
+							...health,
+							provider: "discord",
+							account: "x".repeat(320),
+						}),
+					).toBe(true);
+					const boundaryArgs = JSON.parse(readFileSync(recordPath, "utf8"));
+					expect(boundaryArgs[3]).toContain("1000000 meetings affected.");
+					expect(boundaryArgs[5]).toBe("harnessy-meeting-publication-discord");
+					expect(boundaryArgs[7]).toBe(
+						`${JSON.stringify(reviewOpenPath)} --state-path ${JSON.stringify(statePath)}`,
+					);
+					// A marker proves rejected inputs never spawn the configured executable.
+					writeFileSync(recordPath, "NOT_SPAWNED");
+					for (const account of [
+						"owner\n@example.test",
+						"owner\u0000@example.test",
+						"owner\u007f@example.test",
+						"x".repeat(321),
+					]) {
+						expect(yield* notifier.notify("error", 0, grant, { ...health, account })).toBe(false);
+						expect(readFileSync(recordPath, "utf8")).toBe("NOT_SPAWNED");
+					}
+					for (const count of [-1, 0.5, Number.NaN, 1_000_001]) {
+						expect(yield* notifier.notify("error", count, grant, health)).toBe(false);
+						expect(readFileSync(recordPath, "utf8")).toBe("NOT_SPAWNED");
+					}
+					expect(yield* notifier.notify("review", 0, grant)).toBe(false);
+					expect(readFileSync(recordPath, "utf8")).toBe("NOT_SPAWNED");
+				}).pipe(
+					Effect.provide(
+						localMeetingPublicationNotifierLayer({
+							kind: "terminal-notifier",
+							executablePath: notifierPath,
+							reviewOpen: { executablePath: reviewOpenPath, statePath },
+							timeoutMillis: 2_000,
+						}),
+					),
+				),
+			),
+		);
 	});
 
 	it("executes generated unsafe-origin and Discord size-boundary cases", () => {

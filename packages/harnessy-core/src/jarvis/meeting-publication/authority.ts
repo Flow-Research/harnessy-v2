@@ -26,11 +26,13 @@ export const MeetingPublicationWriteOperation = Schema.Literals([
 	"store_claim",
 	"store_checkpoint",
 	"store_failure",
+	"store_auth_resume",
 	"store_publish",
 	"store_notification",
 	"service_worker",
 	"review_serve",
 	"provider_google",
+	"provider_google_reconnect",
 	"provider_discord",
 	"provider_notification",
 ]);

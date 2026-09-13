@@ -19,8 +19,6 @@ import {
 } from "@harnessy/sdk/node";
 import { Effect, Layer } from "effect";
 
-import type { LocalHostMeetingReviewReady } from "./meeting-review-runtime.ts";
-
 const artifactAnchors = Object.freeze({
 	host: fileURLToPath(import.meta.url),
 	sdk: fileURLToPath(import.meta.resolve("@harnessy/sdk/node")),
@@ -49,15 +47,9 @@ const makeProviders = (
 							discordBaseUrl: binding.transport.discordBaseUrl,
 						},
 		});
-		for (const [integration, expected] of [
-			["google-meeting-publication", binding.google],
-			["discord-meeting-publication", binding.discord],
-		] as const) {
-			const connections = yield* handle.connections.list({ integration, owner: expected.owner });
-			if (!connections.some((connection) => connection.name === expected.connection)) {
-				return yield* Effect.fail(new Error("Required meeting publication connection is not configured."));
-			}
-		}
+		// Provider preflight reports missing connections through the health service,
+		// so the reviewer and notifier remain available during credential recovery.
+		// The scoped Engine and exact connection bindings still gate every write.
 		return Layer.merge(
 			engineMeetingPublicationGoogleLayer({
 				handle,
@@ -118,8 +110,13 @@ export const runLocalHostMeetingWorker: (
 	runAuthorizedMeetingPublicationWorker(input, workerProviders);
 
 /** Full review and manual dispatch share one authorized runtime and provider owner. */
-export const runLocalHostMeetingFullReview = (
+export const runLocalHostMeetingFullReview: (
 	input: MeetingPublicationFullReviewRuntimeInput,
-	onReady: LocalHostMeetingReviewReady,
-): ReturnType<typeof runAuthorizedMeetingPublicationFullReview> =>
-	runAuthorizedMeetingPublicationFullReview(input, workerProviders, { artifactAnchors, onReady });
+	onReady: Parameters<typeof runAuthorizedMeetingPublicationFullReview>[2]["onReady"],
+	drain?: Parameters<typeof runAuthorizedMeetingPublicationFullReview>[2]["drain"],
+) => ReturnType<typeof runAuthorizedMeetingPublicationFullReview> = (input, onReady, drain) =>
+	runAuthorizedMeetingPublicationFullReview(input, workerProviders, {
+		artifactAnchors,
+		onReady,
+		...(drain === undefined ? {} : { drain }),
+	});

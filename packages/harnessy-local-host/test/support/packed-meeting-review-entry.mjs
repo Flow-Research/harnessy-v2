@@ -100,16 +100,27 @@ let closed = false;
 let resolveReady;
 let rejectReady;
 const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+const safeFailureCode = () => {
+	const allowed = new Set(["unsupported_platform", "unsafe_input", "invalid_input", "invalid_signature",
+		"expired_authorization", "binding_mismatch", "artifact_drift", "evidence_drift", "state_drift",
+		"replay_unavailable", "replayed", "lease_unavailable", "revoked", "writer_present",
+		"provider_setup_failed", "publication_failed", "worker_failed", "review_failed",
+		"invalid_arguments", "runtime_failed", "interrupted"]);
+	try {
+		const failure = JSON.parse(stderr);
+		return failure.error === "meeting_review_failed" && allowed.has(failure.code) ? failure.code : "unknown";
+	} catch { return "unknown"; }
+};
 const completion = new Promise(resolve => {
 	child.once("error", () => { rejectReady(new Error("Review CLI spawn failed")); });
 	child.once("close", (code, signal) => {
 		closed = true;
-		rejectReady(new Error("Review CLI closed before readiness"));
+		rejectReady(new Error(`Review CLI closed before readiness (exit=${code}, code=${safeFailureCode()})`));
 		resolve({code, signal});
 	});
 });
 const failOutput = () => {
-	outputError = new Error(`Unexpected review CLI output: stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderr)}`);
+	outputError = new Error(`Unexpected review CLI output (code=${safeFailureCode()})`);
 	rejectReady(outputError);
 	child.kill("SIGTERM");
 };

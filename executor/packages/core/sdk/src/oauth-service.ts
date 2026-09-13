@@ -1161,6 +1161,7 @@ export const makeOAuthService = (deps: OAuthServiceDeps): OAuthService => {
   // -----------------------------------------------------------------------
   const complete = (
     input: OAuthCompleteInput,
+    options?: { readonly beforeCommit: Effect.Effect<void, OAuthCompleteError> },
   ): Effect.Effect<Connection, OAuthCompleteError | OAuthSessionNotFoundError | StorageFailure> =>
     Effect.gen(function* () {
       const sessionRow = yield* deps.fuma.use("oauth_session.findFirst", (db) =>
@@ -1250,6 +1251,9 @@ export const makeOAuthService = (deps: OAuthServiceDeps): OAuthService => {
         ),
       );
 
+      // This admission hook runs after asynchronous exchange AND token parsing.
+      // It does not make the existing credential-file/connection writes atomic.
+      if (options !== undefined) yield* options.beforeCommit;
       const connection = yield* mintFromToken(
         {
           owner: session.owner,

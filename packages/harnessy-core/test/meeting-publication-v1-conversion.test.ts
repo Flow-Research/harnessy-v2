@@ -167,7 +167,7 @@ describe("Python V1 queue conversion rehearsal (not operational migration)", () 
 		expect(JSON.stringify(projected)).not.toContain("PRIVATE TITLE");
 		expect(JSON.stringify(projected)).not.toContain("PRIVATE FAILURE TEXT");
 		convertFixture(fixture.source, fixture.target);
-		expect(validateMeetingPublicationStoreSchema(fixture.target).version).toBe(3);
+		expect(validateMeetingPublicationStoreSchema(fixture.target).version).toBe(4);
 		for (const row of original) {
 			const converted = fixture.target.prepare("SELECT * FROM publication_items WHERE item_id=?").get(row.item_id);
 			for (const key of [
@@ -249,7 +249,7 @@ describe("Python V1 queue conversion rehearsal (not operational migration)", () 
 			fixture.target.prepare("SELECT discord_purpose_override FROM publication_items WHERE status='approved'").get()
 				?.discord_purpose_override,
 		).toBe("Previously reviewed purpose.");
-		expect(validateMeetingPublicationStoreSchema(fixture.target).version).toBe(3);
+		expect(validateMeetingPublicationStoreSchema(fixture.target).version).toBe(4);
 	});
 
 	it("does not advance a microsecond retry deadline or reset the claim attempt counter", async () => {

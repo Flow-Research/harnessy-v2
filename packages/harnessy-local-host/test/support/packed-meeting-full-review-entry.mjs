@@ -1,4 +1,5 @@
 import assertStrict from "node:assert/strict";
+import { url as inspectorUrl } from "node:inspector";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
@@ -24,8 +25,8 @@ import {
 	Subject,
 	Tenant,
 } from "@executor-js/sdk/core";
-import { runMeetingFullReviewCommand } from "@packed/local-host-full-review-command";
-import { Cause, Effect, Exit, Layer } from "effect";
+import { makeMeetingFullReviewSignalDrain, runMeetingFullReviewCommand } from "@packed/local-host-full-review-command";
+import { Cause, Effect, Exit, Fiber, Layer } from "effect";
 import { JarvisMeetingPublicationConfig } from "../../../harnessy-core/src/jarvis/config-model.ts";
 import { meetingPublicationTestWriteAuthorityLayer } from "../../../harnessy-core/src/jarvis/meeting-publication/authority-test-fixture.ts";
 import { MeetingPublicationSource } from "../../../harnessy-core/src/jarvis/meeting-publication/notes.ts";
@@ -57,18 +58,33 @@ const privateParent = realpathSync(process.argv[3] ?? tmpdir());
 const root = mkdtempSync(join(privateParent, "packed-meeting-full-review-"));
 chmodSync(root, 0o700);
 
+let failedAssertion;
+let requestPhase = "startup";
+const requestTimings = [];
+let heartbeat;
+let maximumHeartbeatStallMs = 0;
 const assert = (condition, message) => {
-	if (!condition) throw new Error(message);
+	if (!condition) {
+		failedAssertion = message;
+		throw new Error(message);
+	}
 };
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const call = async (origin, path, init = {}) => {
-	const response = await fetch(`${origin}${path}`, {
-		...init,
-		redirect: "manual",
-		signal: AbortSignal.timeout(120_000),
-		headers: { Connection: "close", ...init.headers },
-	});
-	return { status: response.status, headers: response.headers, body: await response.text() };
+	const route = `${init.method ?? "GET"} ${path.split("?", 1)[0].replace(/[a-f0-9]{24}/gu, ":item")}`;
+	requestPhase = route;
+	const started = performance.now();
+	try {
+		const response = await fetch(`${origin}${path}`, {
+			...init,
+			redirect: "manual",
+			signal: AbortSignal.timeout(120_000),
+			headers: { Connection: "close", ...init.headers },
+		});
+		return { status: response.status, headers: response.headers, body: await response.text() };
+	} finally {
+		requestTimings.push({ route, durationMs: Math.round(performance.now() - started) });
+	}
 };
 const formRequest = (origin, cookie, values) => ({
 	method: "POST",
@@ -130,6 +146,11 @@ Publish this second note through the same authorized review session.
 The second canonical purpose also remains independent.
 `;
 const secondReviewedPurpose = "Second independent Discord purpose.";
+const secondEditedSummary = "The reviewer edited and approved this exact second revision in one action.";
+const secondEditedMarkdown = secondMarkdown.replace(
+	"Publish this second note through the same authorized review session.",
+	secondEditedSummary,
+);
 
 const makeConfig = (channelId) =>
 	new JarvisMeetingPublicationConfig({
@@ -256,8 +277,9 @@ const provisionEngine = async (origins) => {
 };
 
 const wire = makeWireState();
-const googleServer = await startWireServer(wire);
-const discordServer = await startWireServer(wire);
+// Artifact revalidation can outlast a loopback keep-alive socket between preflight and dispatch.
+const googleServer = await startWireServer(wire, { keepAlive: false });
+const discordServer = await startWireServer(wire, { keepAlive: false });
 let reviewOrigin = "";
 try {
 	mkdirSync(join(root, "notes"), { mode: 0o700 });
@@ -279,7 +301,7 @@ try {
 	const installedHost = join(installationRoot, "node_modules", "@harnessy", "local-host");
 	const privateRoot = join(root, "authorization");
 	mkdirSync(privateRoot, { mode: 0o700 });
-	const fixture = createMeetingPublicationFullReviewAuthorizationFixture({
+	const fixtureOptions = {
 		privateRoot,
 		config,
 		credentialDirectory: engine.credentialDirectory,
@@ -293,7 +315,8 @@ try {
 			sdk: join(installedSdk, "dist", "node.js"),
 			dependencies: join(installationRoot, "node_modules", "effect", "dist", "index.js"),
 		},
-	});
+	};
+	const fixture = createMeetingPublicationFullReviewAuthorizationFixture(fixtureOptions);
 	fixture.resign((payload) => {
 		payload.google.connection = engine.googleConnection;
 		payload.discord.connection = engine.discordConnection;
@@ -324,6 +347,13 @@ try {
 				(address) =>
 				Effect.promise(async () => {
 					reviewOrigin = address.origin;
+					// Startup is excluded: measure responsiveness only while the HTTP owner is ready.
+					let previousHeartbeat = performance.now();
+					heartbeat = setInterval(() => {
+						const now = performance.now();
+						maximumHeartbeatStallMs = Math.max(maximumHeartbeatStallMs, now - previousHeartbeat - 20);
+						previousHeartbeat = now;
+					}, 20);
 					assert(new URL(address.origin).port === "18773", "Long-running review did not bind the signed fixed port.");
 					assert(
 						existsSync(join(config.statePath, "meeting-publication-v2-review.rendezvous.json")),
@@ -383,11 +413,27 @@ try {
 								!inbox.body.includes('name="max_items"'),
 							"Authenticated signed-batch dispatch form was not rendered.",
 						);
+						let dispatchSettled = false;
+						let concurrentUnauthenticated;
+						// A provider mutation proves this signed dispatch is admitted, rather than
+						// merely testing an HTTP request queued before dispatch started.
+						wire.onRequest = ({ method, path }) => {
+							if (method !== "POST" || path !== "/files" || concurrentUnauthenticated !== undefined) return;
+							assert(!dispatchSettled, "Responsiveness probe started after dispatch settled.");
+							concurrentUnauthenticated = call(address.origin, "/").then(
+								(response) => ({ status: response.status, completedDuringDispatch: !dispatchSettled }),
+								() => ({ status: 0, completedDuringDispatch: false }),
+							);
+						};
 						const dispatch = await call(
 							address.origin,
 							"/dispatch",
 							formRequest(address.origin, cookie, { csrf: dispatchCsrf }),
-						);
+						).finally(() => { dispatchSettled = true; wire.onRequest = undefined; });
+						assert(concurrentUnauthenticated !== undefined, "Signed dispatch never admitted the responsiveness probe.");
+						const concurrentResult = await concurrentUnauthenticated;
+						assert(concurrentResult.status === 401 && concurrentResult.completedDuringDispatch,
+							"Installed review did not answer an unauthenticated request while signed dispatch was ongoing.");
 						assert(
 							dispatch.status === 200 && hasDispatchResult(dispatch.body, 1),
 							"Manual dispatch did not render its bounded result.",
@@ -418,6 +464,11 @@ try {
 							secondPage.status === 200 && secondCsrf === csrf && secondHash === secondItem.sourceHash,
 							"Second review item binding drifted.",
 						);
+						assert(
+							/<textarea[^>]*name="meeting_markdown"[^>]*form="approve-form"|<textarea[^>]*form="approve-form"[^>]*name="meeting_markdown"/u.test(secondPage.body),
+							"Installed meeting editor is not submitted with approval.",
+						);
+						const writesBeforeSecondApproval = wire.requests.filter(({ method }) => method !== "GET").length;
 						const secondApproval = await call(
 							address.origin,
 							`/approve/${secondItem.itemId}`,
@@ -426,11 +477,30 @@ try {
 								item_id: secondItem.itemId,
 								source_hash: secondHash,
 								purpose: secondReviewedPurpose,
+								meeting_markdown: secondEditedMarkdown,
 							}),
 						);
 						assert(
 							secondApproval.status === 303 && secondApproval.headers.get("location") === "/",
 							"Second review approval failed.",
+						);
+						assertStrict.equal(
+							readFileSync(join(config.sourcePath, "second.md"), "utf8"),
+							secondEditedMarkdown,
+							"Combined approval must save the reviewed canonical text",
+						);
+						const approvedDatabase = new DatabaseSync(join(config.statePath, "meeting-publication.sqlite3"), { readOnly: true });
+						try {
+							assertStrict.deepEqual(
+								{ ...approvedDatabase.prepare("SELECT status,source_hash,approved_hash,discord_purpose_override,google_doc_id,discord_message_id FROM publication_items WHERE item_id=?").get(secondItem.itemId) },
+								{ status: "approved", source_hash: sha256(secondEditedMarkdown), approved_hash: sha256(secondEditedMarkdown), discord_purpose_override: secondReviewedPurpose, google_doc_id: null, discord_message_id: null },
+								"Combined approval must bind the exact edited disk revision before dispatch",
+							);
+						} finally { approvedDatabase.close(); }
+						assertStrict.equal(
+							wire.requests.filter(({ method }) => method !== "GET").length,
+							writesBeforeSecondApproval,
+							"Combined approval must not publish to a provider",
 						);
 						const secondInbox = await call(address.origin, "/", { headers: { Cookie: cookie } });
 						const secondDispatchCsrf =
@@ -448,6 +518,12 @@ try {
 							secondDispatch.status === 200 && hasDispatchResult(secondDispatch.body, 0),
 							"Second manual dispatch did not reuse the authorized review session.",
 						);
+						// Let the ready-owner heartbeat account for the final HTTP handler too.
+						await new Promise((resolve) => setTimeout(resolve, 20));
+						clearInterval(heartbeat);
+						heartbeat = undefined;
+						assert(maximumHeartbeatStallMs <= 1_000,
+							`Ready installed review stalled its event loop for ${Math.round(maximumHeartbeatStallMs)} ms (budget 1000 ms).`);
 						completedReviewJourney = true;
 						controller.abort();
 					}),
@@ -455,8 +531,18 @@ try {
 		),
 		{ signal: controller.signal },
 	);
+	if (!completedReviewJourney) {
+		process.stderr.write(`${JSON.stringify({
+			phase: requestPhase,
+			assertion: failedAssertion ?? "callback-or-runtime-failure",
+			requests: wire.requests.slice(-12).map(({ method, path }) => ({ method, path })),
+			maximumHeartbeatStallMs: Math.round(maximumHeartbeatStallMs),
+			requestTimings,
+		})}\n`);
+	}
+	assert(completedReviewJourney, failedAssertion ?? "Full-review journey failed before interruption was requested.");
 	assert(
-		completedReviewJourney && Exit.isFailure(commandExit) && Cause.hasInterruptsOnly(commandExit.cause),
+		Exit.isFailure(commandExit) && Cause.hasInterruptsOnly(commandExit.cause),
 		"Full-review command did not preserve interruption through its installed adapter.",
 	);
 	assert(
@@ -517,7 +603,7 @@ try {
 
 	assertStrict.equal(secondPublished.item_id, secondItem.itemId, "second stored item ID");
 	assertStrict.equal(secondPublished.status, "published", "second terminal status");
-	assertStrict.equal(secondPublished.source_hash, sha256(secondMarkdown), "second source hash");
+	assertStrict.equal(secondPublished.source_hash, sha256(secondEditedMarkdown), "second edited source hash");
 	assertStrict.equal(secondPublished.approved_hash, secondPublished.source_hash, "second approved revision hash");
 	assertStrict.equal(secondPublished.discord_purpose_override, null, "second terminal purpose override cleanup");
 	assertStrict.equal(secondPublished.google_doc_id, secondDocument.id, "second Google document checkpoint ID");
@@ -551,6 +637,14 @@ try {
 		JSON.stringify(wire.documents.get(secondDocument.id)).includes("Second Full Review Meeting"),
 		"second Google document contains canonical title",
 	);
+	assertStrict.ok(
+		JSON.stringify(wire.documents.get(secondDocument.id)).includes(secondEditedSummary),
+		"second Google document contains the combined approved edit",
+	);
+	assertStrict.ok(
+		!JSON.stringify(wire.documents.get(secondDocument.id)).includes("Publish this second note through the same authorized review session."),
+		"second Google document must not publish the superseded review text",
+	);
 	assertStrict.equal(
 		wire.requests.filter(
 			(request) => request.method === "POST" && request.path === `/channels/${wire.channelId}/messages`,
@@ -576,10 +670,103 @@ try {
 			)),
 		"Full-review server survived command scope cleanup.",
 	);
+	// Separate fresh signed owner: exercise shipped signal wiring during startup, never republish old meetings.
+	const queueSnapshot = () => {
+		const db = new DatabaseSync(join(config.statePath, "meeting-publication.sqlite3"), { readOnly: true });
+		try { return db.prepare("SELECT * FROM publication_items ORDER BY item_id").all(); }
+		finally { db.close(); }
+	};
+	const beforeDrain = queueSnapshot();
+	// The preceding session legitimately populated the 60-second health cache. Make this
+	// isolated fixture check due before signing its new state, without touching publication rows.
+	const healthSetup = new DatabaseSync(join(config.statePath, "meeting-publication.sqlite3"));
+	let previousHealthCached = false;
+	try {
+		const previous = healthSetup.prepare("SELECT checked_at,failure FROM provider_health WHERE provider='google'").get();
+		assert(previous?.failure === null && typeof previous.checked_at === "string" &&
+			Number.isFinite(Date.parse(previous.checked_at)) && new Date(previous.checked_at).toISOString() === previous.checked_at,
+			"Drain fixture lacks a valid successful health check from the preceding session.");
+		previousHealthCached = Date.now() - Date.parse(previous.checked_at) < 60_000;
+		const changed = healthSetup.prepare("UPDATE provider_health SET checked_at=? WHERE provider='google'")
+			.run(new Date(Date.now() - 120_000).toISOString());
+		assert(changed.changes === 1, "Drain fixture did not find its persisted Google health check.");
+	} finally { healthSetup.close(); }
+	assertStrict.deepEqual(queueSnapshot(), beforeDrain, "Drain fixture setup changed publication rows.");
+	const drainPrivateRoot = join(root, "drain-authorization");
+	mkdirSync(drainPrivateRoot, { mode: 0o700 });
+	const drainFixture = createMeetingPublicationFullReviewAuthorizationFixture({ ...fixtureOptions, privateRoot: drainPrivateRoot });
+	drainFixture.resign((payload) => {
+		payload.google.connection = engine.googleConnection;
+		payload.discord.connection = engine.discordConnection;
+		payload.transport = { mode: "loopback", ...transport };
+	});
+	const drainInput = drainFixture.input;
+	const drainArgs = [
+		"--authorization", drainInput.authorizationPath,
+		"--trusted-keyring", drainInput.trustedKeyring.path,
+		"--trusted-keyring-device", drainInput.trustedKeyring.device,
+		"--trusted-keyring-inode", drainInput.trustedKeyring.inode,
+		"--trusted-keyring-sha256", drainInput.trustedKeyring.sha256,
+	];
+	const requestOffset = wire.requests.length;
+	const listenersBefore = process.listenerCount("SIGUSR2");
+	assert(inspectorUrl() === undefined, "Fixture must not start with an active inspector.");
+	let startPreflight;
+	const preflightStarted = new Promise((resolve) => { startPreflight = resolve; });
+	wire.onRequest = ({ method, path }) => { if (method === "GET" && path === "/about") startPreflight(); };
+	wire.failures.push({ method: "GET", path: "/about", status: 200, delayMillis: 1_500, body: { user: { emailAddress: wire.ownerEmail } } });
+	let drainReady = false;
+	let drainFinished = false;
+	let drainPhase = "authorization-or-provider-setup";
+	const drainResult = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+		const drain = yield* makeMeetingFullReviewSignalDrain();
+		assert(process.listenerCount("SIGUSR2") === listenersBefore + 1, "Drain listener was not scoped to its owner.");
+		const fiber = yield* drainFixture.withSystem(runMeetingFullReviewCommand(
+			drainArgs,
+			() => Effect.sync(() => {
+				drainPhase = "unexpected-readiness";
+				drainReady = true;
+				assert(false, "Drain fixture exposed readiness before its required preflight.");
+			}),
+			drain,
+		)).pipe(Effect.onExit(() => Effect.sync(() => { drainFinished = true; })), Effect.forkScoped);
+		yield* Effect.raceFirst(
+			Effect.promise(() => preflightStarted),
+			Fiber.join(fiber).pipe(Effect.andThen((result) => Effect.die(
+				new Error(`Drain fixture command exited before preflight: ${result.exitCode === 0 ? "completed" : result.value.code}`),
+			))),
+		).pipe(Effect.timeoutOrElse({
+			duration: 30_000,
+			orElse: () => Effect.die(new Error(`Drain fixture did not admit preflight within 30 seconds: ${drainPhase}`)),
+		}));
+		drainPhase = "preflight-admitted";
+		process.kill(process.pid, "SIGUSR2");
+		yield* Effect.sleep(50);
+		process.kill(process.pid, "SIGUSR2");
+		yield* Effect.sleep(50);
+		assert(!drainFinished, "Drain interrupted its admitted provider preflight.");
+		assert(process.listenerCount("SIGUSR2") === listenersBefore + 1, "Repeated drain lost its signal listener.");
+		assert(inspectorUrl() === undefined, "Drain signal activated the Node inspector.");
+		return yield* Fiber.join(fiber);
+	})));
+	wire.onRequest = undefined;
+	assert(drainResult.exitCode === 0 && !drainReady, "Startup drain did not finish before exposing readiness.");
+	assert(process.listenerCount("SIGUSR2") === listenersBefore, "Drain leaked its signal listener.");
+	assert(inspectorUrl() === undefined, "Drain left an inspector active.");
+	assertStrict.deepEqual(queueSnapshot(), beforeDrain, "Drain changed existing approvals or external receipts.");
+	assert(wire.requests.slice(requestOffset).every(({ method }) => method === "GET"), "Startup drain wrote to a provider.");
+	const drainReplay = new DatabaseSync(drainFixture.replayPath, { readOnly: true });
+	try {
+		assert(drainReplay.prepare("SELECT COUNT(*) AS count FROM consumed_authorizations").get()?.count === 1 &&
+			drainReplay.prepare("SELECT COUNT(*) AS count FROM active_lease").get()?.count === 0,
+			"Startup drain did not consume its own nonce and release its own lease.");
+	} finally { drainReplay.close(); }
+	assert(!existsSync(join(config.statePath, "meeting-publication-v2-review.rendezvous.json")), "Startup drain left a rendezvous.");
 	process.stdout.write(
-		`${JSON.stringify({ edited: true, approved: 2, published: 2, purposeBound: true, boundedDispatches: 2, providerRequests: wire.requests.length, leaseReleased: true })}\n`,
+		`${JSON.stringify({ edited: true, approved: 2, published: 2, purposeBound: true, boundedDispatches: 2, providerRequests: wire.requests.length, leaseReleased: true, startupDrain: "SIGUSR2", drainSignals: 2, inspectorEnabled: false, previousHealthCached, concurrentUnauthenticatedDuringDispatch: true, maximumHeartbeatStallMs: Math.round(maximumHeartbeatStallMs), requestTimings })}\n`,
 	);
 } finally {
+	clearInterval(heartbeat);
 	await Promise.all([googleServer.close(), discordServer.close()]);
 	rmSync(root, { recursive: true, force: true });
 }

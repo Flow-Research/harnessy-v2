@@ -18,6 +18,9 @@ export default defineConfig({
 			"@effect/vitest",
 		],
 		alias: [
+			{ find: /^@executor-js\/plugin-graphql$/, replacement: executorSource("packages/plugins/graphql/src/sdk/index.ts") },
+			{ find: /^@executor-js\/plugin-provider-service-split$/, replacement: executorSource("packages/plugins/provider-service-split/src/index.ts") },
+			{ find: /^@executor-js\/plugin-openapi\/providers\/google$/, replacement: executorSource("packages/plugins/openapi/src/providers/google/index.ts") },
 			{
 				find: /^@harnessy\/core\/connectors\/anytype$/,
 				replacement: harnessyCoreSource("connectors/anytype.ts"),

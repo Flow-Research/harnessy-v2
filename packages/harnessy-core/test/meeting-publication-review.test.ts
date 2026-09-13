@@ -288,6 +288,123 @@ const provePortReleased = (host: string, port: number) =>
 	});
 
 describe("MeetingPublicationReviewServer", () => {
+	it.each([
+		"edited",
+		"unchanged",
+		"stale",
+		"invalid-purpose",
+		"invalid-markdown",
+		"save",
+		"decision-only",
+		"denied-approval",
+	] as const)("preserves the reviewed Markdown and approval boundary for %s form submission", async (variant) => {
+		const root = makeRoot();
+		const notePath = join(root, "notes", "meeting.md");
+		const original = markdown({ summary: "Original review text." });
+		const edited = markdown({ summary: "Explicitly reviewed replacement." });
+		writeFileSync(notePath, original);
+		const config = makeConfig(root, { reviewMaxBodyBytes: 32_000 });
+		const state = makeState();
+		let deniedApproval = false;
+		const deniedAuthority = meetingPublicationTestWriteAuthorityLayer(config, {
+			allows: (operation) => {
+				if (operation !== "store_approve") return true;
+				deniedApproval = true;
+				return false;
+			},
+		});
+		const result = await Effect.runPromise(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const service = yield* MeetingPublicationService;
+					const store = yield* MeetingPublicationStore;
+					const review = yield* MeetingPublicationReviewServer;
+					yield* service.scan();
+					const item = (yield* store.list())[0];
+					if (item === undefined) return yield* Effect.die("missing item");
+					const token = readFileSync(
+						join(config.statePath as string, "meeting-publication-v2-review.token"),
+						"utf8",
+					).trim();
+					const exchange = yield* Effect.promise(() => call(review.address.origin, `/exchange?token=${token}`));
+					const session = cookieFrom(exchange).cookie;
+					const page = yield* Effect.promise(() =>
+						call(review.address.origin, `/item/${item.itemId}`, { cookie: session }),
+					);
+					if (variant === "stale") writeFileSync(notePath, markdown({ summary: "Newer disk revision." }));
+					const before = readFileSync(notePath);
+					const beforeStat = lstatSync(notePath);
+					const submitted =
+						variant === "unchanged" ? original : variant === "invalid-markdown" ? "# Missing metadata" : edited;
+					const response = yield* Effect.promise(() =>
+						post(
+							review.address.origin,
+							session,
+							`/${variant === "save" ? "update-note" : "approve"}/${item.itemId}`,
+							form({
+								csrf: csrfFrom(page.body),
+								item_id: item.itemId,
+								source_hash: item.sourceHash,
+								meeting_markdown: submitted,
+								purpose: variant === "invalid-purpose" ? "javascript:bad" : "Owner reviewed purpose.",
+							}),
+						),
+					);
+					return { response, page, item, before, beforeStat, current: yield* store.get(item.itemId) };
+				}).pipe(
+					Effect.provide(
+						variant === "denied-approval"
+							? MeetingPublicationReviewServer.layer(config).pipe(
+									Layer.provideMerge(
+										Layer.merge(makeServiceLayer(config, state, deniedAuthority), testRandomLayer()),
+									),
+								)
+							: variant === "decision-only"
+								? makeDecisionOnlyReviewLayer(config, state)
+								: makeReviewLayer(config, state),
+					),
+				),
+			),
+		);
+		const after = readFileSync(notePath);
+		if (variant === "edited" || variant === "unchanged" || variant === "save") {
+			expect(result.response.status).toBe(303);
+			expect(after.toString("utf8").trim()).toBe((variant === "unchanged" ? original : edited).trim());
+			expect(result.current?.status).toBe(variant === "save" ? "pending_review" : "approved");
+			expect(result.current?.approvedHash).toBe(variant === "save" ? null : result.current?.sourceHash);
+			expect(result.current?.sourceHash).toBe(createHash("sha256").update(after).digest("hex"));
+			expect(result.current?.discordPurposeOverride).toBe(variant === "save" ? null : "Owner reviewed purpose.");
+			if (variant === "unchanged") {
+				expect(after.equals(result.before)).toBe(true);
+				expect(lstatSync(notePath).ino).toBe(result.beforeStat.ino);
+				expect(lstatSync(notePath).mtimeMs).toBe(result.beforeStat.mtimeMs);
+			} else expect(result.current?.sourceHash).not.toBe(result.item.sourceHash);
+		} else if (variant === "denied-approval") {
+			expect(result.response.status).toBe(409);
+			expect(deniedApproval).toBe(true);
+			expect(after.toString("utf8").trim()).toBe(edited.trim());
+			expect(result.current).toMatchObject({
+				status: "pending_review",
+				approvedHash: null,
+				discordPurposeOverride: null,
+			});
+			expect(result.current?.sourceHash).toBe(createHash("sha256").update(after).digest("hex"));
+			expect(result.current?.sourceHash).not.toBe(result.item.sourceHash);
+		} else {
+			expect(result.response.status).toBe(variant === "decision-only" ? 400 : 409);
+			expect(after.equals(result.before)).toBe(true);
+			expect(result.current?.status).toBe("pending_review");
+			expect(result.current?.approvedHash).toBeNull();
+		}
+		if (variant !== "decision-only") {
+			expect(result.page.body).toMatch(
+				/<textarea[^>]*name="meeting_markdown"[^>]*form="approve-form"|<textarea[^>]*form="approve-form"[^>]*name="meeting_markdown"/u,
+			);
+			expect(result.page.body).toContain("Approve &amp; publish");
+		}
+		expect(state.calls).toEqual({ google: 0, discord: 0, notifier: 0 });
+	});
+
 	it("limits decision-only review to exact state decisions and keeps source and providers idle", async () => {
 		const root = makeRoot();
 		const notePath = join(root, "notes", "meeting.md");
@@ -478,6 +595,10 @@ describe("MeetingPublicationReviewServer", () => {
 		const root = makeRoot();
 		const notePath = join(root, "notes", "meeting.md");
 		writeFileSync(notePath, markdown({ title: "Current next meeting" }));
+		writeFileSync(
+			join(root, "notes", "second.md"),
+			markdown({ title: "Another meeting", fingerprint: "another-meeting" }).replace("2026-09-03", "2026-09-04"),
+		);
 		const config = makeConfig(root);
 		const state = makeState();
 		const result = await Effect.runPromise(
@@ -524,6 +645,11 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(result.current).toMatchObject({ status: 200 });
 		expect(result.current.body).toContain("<h2>Current next meeting</h2>");
 		expect(result.current.body).not.toContain("Meeting title unavailable");
+		expect(result.current.body).toContain("Next meeting");
+		expect(result.current.body).toMatch(/<details[^>]*><summary>Other meetings/u);
+		expect(result.current.body.indexOf("Next meeting")).toBeLessThan(
+			result.current.body.indexOf("Publication connection health"),
+		);
 		for (const unavailable of [result.stale, result.missing]) {
 			expect(unavailable).toMatchObject({ status: 200 });
 			expect(unavailable.body).toContain("<h2>Meeting title unavailable</h2>");
@@ -641,7 +767,7 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(first.itemPage.headers["referrer-policy"]).toBe("same-origin");
 		expect(first.newest.body).toContain('<header class="page-intro">');
 		expect(first.newest.body).toContain('<section class="card queue-card">');
-		expect(first.newest.body).toContain('<span class="count-badge">1 in queue</span>');
+		expect(first.newest.body).toContain('<span class="count-badge">1 waiting</span>');
 		expect(first.newest.body).toContain('<span class="status-pill status-pending_review">Pending Review</span>');
 		expect(first.expired.status).toBe(401);
 		expect(first.logout.status).toBe(303);
@@ -805,6 +931,7 @@ describe("MeetingPublicationReviewServer", () => {
 						item_id: item.itemId,
 						source_hash: item.sourceHash,
 						meeting_markdown: editedInput,
+						purpose: "This unsaved purpose is not approval.",
 					});
 					const updateBodyBytes = Buffer.byteLength(updateBody);
 					const invalidEncodingPrefix = form({
@@ -916,7 +1043,7 @@ describe("MeetingPublicationReviewServer", () => {
 		);
 
 		expect(result.itemPage.status).toBe(200);
-		expect(result.itemPage.body).toContain(`action="/update-note/${result.updated.itemId}"`);
+		expect(result.itemPage.body).toContain(`formaction="/update-note/${result.updated.itemId}"`);
 		expect(result.itemPage.body).toContain('name="meeting_markdown"');
 		expect(result.itemPage.body).not.toContain('maxlength="50000"');
 		expect(result.itemPage.body).toContain('data-max-code-points="50000"');
@@ -1109,16 +1236,12 @@ credential=TOP_SECRET`;
 		expect(result.page.body).toContain("&lt;script&gt;");
 		expect(result.page.body).not.toContain("<script>");
 		expect(result.page.body).not.toContain("<img");
-		const preview = result.page.body.slice(0, result.page.body.indexOf('<form method="post" action="/update-note/'));
-		const renderedSummary = /<div class="summary-block markdown-body">([\s\S]*?)<\/div>/u.exec(result.page.body)?.[1];
+		const preview = result.page.body.slice(0, result.page.body.indexOf('<textarea class="meeting-note-editor"'));
 		const renderedNote = /<article class="canonical-markdown markdown-body">([\s\S]*?)<\/article>/u.exec(
 			result.page.body,
 		)?.[1];
-		expect(renderedSummary).toBeDefined();
-		expect(renderedSummary).toContain("<strong>Reviewed emphasis</strong>");
-		expect(renderedSummary).toContain("<em>review context</em>");
-		expect(renderedSummary).toContain("<code>npm test</code>");
-		expect(renderedSummary).toContain("<ul>");
+		expect(result.page.body).not.toContain('class="summary-block markdown-body"');
+		expect(result.page.body.match(/<strong>Reviewed emphasis<\/strong>/gu)).toHaveLength(1);
 		expect(renderedNote).toBeDefined();
 		expect(renderedNote).not.toContain("<h1>Weekly Sync</h1>");
 		expect(renderedNote).toContain('<details class="metadata-card"><summary>Meeting metadata</summary>');
@@ -1127,7 +1250,7 @@ credential=TOP_SECRET`;
 		expect(renderedNote).toContain("<code>npm test</code>");
 		expect(renderedNote).toContain("<ul>");
 		expect(renderedNote).toContain("[Image: tracking pixel]");
-		for (const renderedMarkdown of [renderedSummary, renderedNote]) {
+		for (const renderedMarkdown of [renderedNote]) {
 			expect(renderedMarkdown).not.toContain("<script");
 			expect(renderedMarkdown).not.toContain("<img");
 			expect(renderedMarkdown).not.toContain("<iframe");

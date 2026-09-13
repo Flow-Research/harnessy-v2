@@ -850,7 +850,7 @@ describe("MeetingPublicationInspector", () => {
 		expect(result.state).toMatchObject({
 			exists: true,
 			schemaState: "current",
-			schemaVersion: 3,
+			schemaVersion: 4,
 			totalItems: 1,
 			statusCounts: { pending_review: 1 },
 			failureCounts: {},
@@ -1046,7 +1046,7 @@ describe("MeetingPublicationInspector", () => {
 			mkdirSync(statePath, { mode: variant === "permissive" ? 0o755 : 0o700 });
 			const dbPath = join(statePath, "meeting-publication.sqlite3");
 			const database = new DatabaseSync(dbPath);
-			if (variant === "newer") database.exec("PRAGMA user_version = 4");
+			if (variant === "newer") database.exec("PRAGMA user_version = 5");
 			else database.exec("CREATE TABLE publication_items (item_id TEXT PRIMARY KEY); PRAGMA user_version = 1");
 			database.close();
 			if (process.platform !== "win32") chmodSync(dbPath, 0o600);

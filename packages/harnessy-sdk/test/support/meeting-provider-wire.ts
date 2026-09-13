@@ -40,6 +40,7 @@ export interface WireState {
 		readonly body: unknown;
 	}>;
 	readonly failures: Array<FailureResponse>;
+	readonly fileQueries: Array<string>;
 	lostGoogleDocumentCreateResponses: number;
 	lostDiscordMessageCreateResponses: number;
 	fileSequence: number;
@@ -59,6 +60,7 @@ export const makeWireState = (): WireState => ({
 	messagesByNonce: new Map(),
 	requests: [],
 	failures: [],
+	fileQueries: [],
 	lostGoogleDocumentCreateResponses: 0,
 	lostDiscordMessageCreateResponses: 0,
 	fileSequence: 0,
@@ -125,12 +127,29 @@ const serveWireRequest = async (state: WireState, request: IncomingMessage, resp
 		json(response, 200, { user: { emailAddress: state.ownerEmail }, ignored: "UPSTREAM_SUCCESS_BODY_SENTINEL" });
 		return;
 	}
+	if (method === "GET" && path === "/files/root") return json(response, 200, { id: "drive-root-id" });
 	if (method === "GET" && path === "/files") {
 		const q = requestUrl.searchParams.get("q") ?? "";
-		const property = q.includes("harnessyMeetingFolderKey") ? "harnessyMeetingFolderKey" : "harnessyMeetingItemId";
+		state.fileQueries.push(q);
+		const property =
+			["harnessyMeetingFolderKey", "jarvisMeetingFolder", "jarvisMeetingId", "harnessyMeetingItemId"].find((key) =>
+				q.includes(`key='${key}'`),
+			) ?? "";
 		const value = /value='([^']+)'/u.exec(q)?.[1] ?? "";
-		let files = [...state.files.values()].filter((file) => file.appProperties[property] === value);
-		if (state.duplicateDocumentMatches && property === "harnessyMeetingItemId" && files.length === 1) {
+		const parent = /'([^']+)' in parents/u.exec(q)?.[1];
+		const resolvedParent = parent === "root" ? "drive-root-id" : parent;
+		let files = [...state.files.values()].filter(
+			(file) =>
+				(q.includes(" or ")
+					? file.appProperties.harnessyMeetingItemId === value || file.appProperties.jarvisMeetingId === value
+					: file.appProperties[property] === value) &&
+				(resolvedParent === undefined || file.parents.includes(resolvedParent)),
+		);
+		if (
+			state.duplicateDocumentMatches &&
+			(property === "harnessyMeetingItemId" || property === "jarvisMeetingId") &&
+			files.length === 1
+		) {
 			files = [...files, { ...files[0]!, id: "duplicate-document" }];
 		}
 		json(response, 200, { files });
@@ -146,7 +165,9 @@ const serveWireRequest = async (state: WireState, request: IncomingMessage, resp
 			name: typeof input.name === "string" ? input.name : "",
 			mimeType,
 			parents: Array.isArray(input.parents)
-				? input.parents.filter((entry): entry is string => typeof entry === "string")
+				? input.parents
+						.filter((entry): entry is string => typeof entry === "string")
+						.map((entry) => (entry === "root" ? "drive-root-id" : entry))
 				: [],
 			appProperties: asStringRecord(input.appProperties),
 			trashed: false,
@@ -233,8 +254,9 @@ const serveWireRequest = async (state: WireState, request: IncomingMessage, resp
 	json(response, 404, { code: "unhandled" });
 };
 
-export const startWireServer = async (state: WireState) => {
+export const startWireServer = async (state: WireState, options: { readonly keepAlive?: boolean } = {}) => {
 	const server = createServer((request, response) => {
+		if (options.keepAlive === false) response.setHeader("Connection", "close");
 		void serveWireRequest(state, request, response).catch(() => json(response, 500, { code: "fixture_failed" }));
 	});
 	await new Promise<void>((resolve, reject) => {

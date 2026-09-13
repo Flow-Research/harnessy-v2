@@ -9,14 +9,16 @@ A separate `harnessy-meeting-worker` binary uses the same runtime ownership and
 provider construction for one explicitly authorized batch; it does not install
 or enable a scheduler.
 A separate `harnessy-meeting-full-review` binary composes full review and manual
-dispatch in one session; it has local installed-fixture evidence and is
-not authorized for live use.
+dispatch in one session. Live use requires independently signed finite authority
+and separately approved operational handover; installing this package grants neither.
 A separate `harnessy-meeting-review` command prepares and reviews only V2-owned
 queue state, in a disjoint or exactly shared state directory. It does not load
 the SDK or activate publication.
 A separate `harnessy-meeting-import` command prepares an inert V1-derived queue
 candidate from supplied offline snapshots; it cannot activate or review it.
-V1 remains the sole live meeting-publication writer.
+Keep the existing meeting writer in place until the deployment's authorized
+backup, reconciliation and one-writer handover gates pass. Weekly briefing
+review may remain separate, but must not expose a competing meeting writer.
 
 The CLI accepts an explicit, secret-free resolved JSON configuration. Its
 `status`, `inspect`, `scan-dry`, and `offline-preflight` commands compose only
@@ -214,25 +216,48 @@ CSRF, Host/Origin checks, and current runtime authority. A concurrent mutation
 is rejected rather than queued behind publication. Clients cannot override
 the signed batch size.
 
-The rebuilt 42-file packed-host fixture verifies canonical editing, two
+The packed-host fixture verifies canonical editing, two
 independent purpose approvals, and two dispatches in the same long-running
 runtime, including the fixed-port owner rendezvous, exact state/provider
 checkpoints, interruption, and listener/lease cleanup. Its providers,
 credentials, authorization, and OS observation are synthetic. The focused Core
-and host suites pass 116 tests; root check has no new diagnostics.
+and host suites provide additional isolated coverage; use results for the exact
+candidate rather than treating historical counts as release acceptance.
 
-This is not the V1-compatible long-running production service yet. The signed
-authorization defaults to at most 15 minutes. An explicit signed
+The signed authorization defaults to at most 15 minutes. An explicit signed
 `runtimeMode: "long_running"` binds a nonzero fixed loopback port, runs the
 recurring worker in the same owner, and is capped at 24 hours. The review
 server publishes an owner-only rendezvous file; the fixed
 `harnessy-meeting-review-open --state-path STATE_PATH` consumer validates that
 file and opens only the active loopback owner without receiving a bearer in
 notification arguments. The signed notifier binding supplies only the launcher
-and state paths. Production lease lifetime and
-renewal, live click-through reminder acceptance, recurring dispatch,
-cross-browser/owner acceptance, and cutover remain open. Source edits and provider writes
-require the separately authorized operational gates before live execution.
+and state paths. A supervised launch can use a shorter owner-approved finite
+window without unattended renewal, reboot restart or automatic crash recovery.
+Source edits and provider writes require the separately authorized operational
+gates before live execution. Fixture success alone does not satisfy those gates.
+
+Provider health failures are surfaced in review and notifications. Reconnect
+uses the same owning Executor and configured Google account; completing consent
+requires the authenticated review session and CSRF check. It preserves approvals
+and existing receipts, and does not authorize retry of uncertain delivery.
+
+`SIGUSR2` requests graceful drain: reject new work and wait for admitted work and
+cleanup, within the bounded deadline. `SIGTERM` remains interruption, not drain.
+Expiry, revocation, crash and uncertain delivery require operator reconciliation;
+never clear a stale lease, replay consumed authority or restore a stale backup
+over newer external receipts. Automatic restart and renewal are not provided.
+
+For an explicit local macOS stop alert, put `--notify-on-stop` before the existing
+authorization arguments. After failure cleanup it attempts a generic desktop
+notification without credentials or dispatch authority. Notification failure
+does not change the original exit status. SIGKILL/power loss cannot trigger an
+in-process alert; OS acceptance does not prove the user saw a banner.
+
+The packed `dist/meeting-setup-cli.js` is a separate one-time native connection
+setup adapter, not a scheduler or publication command. It accepts protected local
+input, uses loopback Google consent and preserves partial setup on failure.
+Google-only continuation uses `--resume-google`; inspect preserved state before
+retrying. Do not put credentials in shell arguments, URLs, logs or chat.
 
 ## State-only preparation and review
 

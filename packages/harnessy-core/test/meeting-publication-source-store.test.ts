@@ -697,7 +697,7 @@ describe("MeetingPublicationStore", () => {
 			discordPurposeOverride: null,
 		});
 		const migrated = new DatabaseSync(dbPath);
-		expect(migrated.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+		expect(migrated.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
 		expect(() => validateMeetingPublicationStoreSchema(migrated)).not.toThrow();
 		expect(
 			migrated
@@ -788,7 +788,7 @@ describe("MeetingPublicationStore", () => {
 			});
 		}
 		const migrated = new DatabaseSync(dbPath);
-		expect(migrated.prepare("PRAGMA user_version").get()?.user_version).toBe(3);
+		expect(migrated.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
 		expect(() => validateMeetingPublicationStoreSchema(migrated)).not.toThrow();
 		expect(
 			migrated
@@ -845,7 +845,7 @@ describe("MeetingPublicationStore", () => {
 		expect(result.archived).toMatchObject({ status: "archived", discordPurposeOverride: null });
 	});
 
-	it("claims atomically across independent contender scopes and reclaims an expired lease", async () => {
+	it("claims atomically across independent contender scopes and refuses expired-lease recovery", async () => {
 		const root = makeRoot();
 		const config = makeConfig(root);
 		const source = awaitSource(join(root, "note.md"), note(), "b".repeat(64));
@@ -862,28 +862,38 @@ describe("MeetingPublicationStore", () => {
 			runStore(
 				config,
 				Effect.gen(function* () {
-					return yield* (yield* MeetingPublicationStore).claim(
-						"2026-09-04T12:00:02.000Z",
-						"2026-09-04T12:01:02.000Z",
-					);
+					return yield* (yield* MeetingPublicationStore)
+						.claim("2026-09-04T12:00:02.000Z", "2026-09-04T12:01:02.000Z")
+						.pipe(Effect.result);
 				}),
 			);
 		const claims = await Promise.all([contend(), contend()]);
-		const winners = claims.filter((claim) => claim !== null);
+		const winners = claims.flatMap((claim) =>
+			claim._tag === "Success" && claim.success !== null ? [claim.success] : [],
+		);
 		expect(winners).toHaveLength(1);
 		expect(winners[0]?.attempts).toBe(1);
+		expect(claims.filter((claim) => claim._tag === "Failure")).toHaveLength(1);
 
 		const reclaimed = await runStore(
 			config,
 			Effect.gen(function* () {
-				return yield* (yield* MeetingPublicationStore).claim(
-					"2026-09-04T12:01:03.000Z",
-					"2026-09-04T12:02:03.000Z",
-				);
+				const store = yield* MeetingPublicationStore;
+				const beforeBytes = readFileSync(store.dbPath);
+				const attempt = yield* store
+					.claim("2026-09-04T12:01:03.000Z", "2026-09-04T12:02:03.000Z")
+					.pipe(Effect.result);
+				return {
+					attempt,
+					beforeBytes,
+					afterBytes: readFileSync(store.dbPath),
+					item: yield* store.get(source.itemId),
+				};
 			}),
 		);
-		expect(reclaimed?.itemId).toBe(source.itemId);
-		expect(reclaimed?.attempts).toBe(2);
+		expect(reclaimed.attempt).toMatchObject({ _tag: "Failure", failure: { code: "write_failed" } });
+		expect(reclaimed.item).toEqual(winners[0]);
+		expect(reclaimed.afterBytes).toEqual(reclaimed.beforeBytes);
 	});
 
 	it("fails closed without mutation for unsafe state and unacceptable existing schemas", async () => {
@@ -901,7 +911,7 @@ describe("MeetingPublicationStore", () => {
 			chmodSync(statePath, 0o700);
 			const dbPath = join(statePath, "meeting-publication.sqlite3");
 			const db = new DatabaseSync(dbPath);
-			if (variant === "newer") db.exec("PRAGMA user_version = 4");
+			if (variant === "newer") db.exec("PRAGMA user_version = 5");
 			else if (variant === "malformed") {
 				db.exec("CREATE TABLE publication_items (item_id TEXT PRIMARY KEY); PRAGMA user_version = 1");
 			} else {

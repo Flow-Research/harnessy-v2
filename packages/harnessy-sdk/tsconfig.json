@@ -11,6 +11,9 @@
 		"noEmit": true,
 		"types": ["node"],
 		"paths": {
+			"@executor-js/plugin-graphql": ["../../executor/packages/plugins/graphql/src/sdk/index.ts"],
+			"@executor-js/plugin-provider-service-split": ["../../executor/packages/plugins/provider-service-split/src/index.ts"],
+			"@executor-js/plugin-openapi/providers/google": ["../../executor/packages/plugins/openapi/src/providers/google/index.ts"],
 			"@packed/core-operational-runtime": ["../harnessy-core/src/jarvis/meeting-publication/operational-runtime.ts"],
 			"@packed/local-host-smoke-command": ["../harnessy-local-host/src/meeting-smoke-command.ts"],
 			"@harnessy/core/connectors/anytype": ["../harnessy-core/src/connectors/anytype.ts"],

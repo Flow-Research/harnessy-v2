@@ -28,6 +28,7 @@ const tarballRoot = join(fixtureRoot, "tarballs");
 const consumerRoot = join(fixtureRoot, "consumer");
 const protectedRoot = join(fixtureRoot, "read-only-inputs");
 const cacheRoot = join(fixtureRoot, "npm-cache");
+const fixtureNode = join(fixtureRoot, "node");
 
 const assert = (condition, message) => {
 	if (!condition) throw new Error(message);
@@ -55,7 +56,7 @@ const withTemporaryMode = (path, mode, operation) => {
 };
 
 const run = (command, args, cwd, expectedStatus = 0) => {
-	const result = spawnSync(command, args, {
+	const result = spawnSync(command === process.execPath ? fixtureNode : command, args, {
 		cwd,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
@@ -160,6 +161,8 @@ const exactHostInventory = [
 	"dist/meeting-full-review-cli.js",
 	"dist/meeting-full-review-command.d.ts",
 	"dist/meeting-full-review-command.js",
+	"dist/meeting-full-review-stop-notification.d.ts",
+	"dist/meeting-full-review-stop-notification.js",
 	"dist/meeting-import-cli.d.ts",
 	"dist/meeting-import-cli.js",
 	"dist/meeting-import-command.d.ts",
@@ -176,6 +179,12 @@ const exactHostInventory = [
 	"dist/meeting-review-runtime.js",
 	"dist/meeting-runtime.d.ts",
 	"dist/meeting-runtime.js",
+	"dist/meeting-setup-cli.d.ts",
+	"dist/meeting-setup-cli.js",
+	"dist/meeting-setup-consent.d.ts",
+	"dist/meeting-setup-consent.js",
+	"dist/meeting-setup-input.d.ts",
+	"dist/meeting-setup-input.js",
 	"dist/meeting-smoke-cli.d.ts",
 	"dist/meeting-smoke-cli.js",
 	"dist/meeting-smoke-command.d.ts",
@@ -190,6 +199,11 @@ const exactHostInventory = [
 ].sort();
 
 try {
+	// Signed runtime validation rejects group-writable executable ancestors (for example Homebrew's Cellar).
+	// Use the same Node bytes in our private fixture root without changing machine permissions or weakening validation.
+	cpSync(realpathSync(process.execPath), fixtureNode);
+	chmodSync(fixtureNode, 0o500);
+	assert(sha256(fixtureNode) === sha256(process.execPath), "Fixture Node bytes differ from the invoking runtime");
 	makePrivateDirectory(tarballRoot);
 	makePrivateDirectory(protectedRoot);
 	makePrivateDirectory(join(protectedRoot, "notes"));
@@ -560,6 +574,11 @@ try {
 	extract(sdkPack.tarball, join(consumerRoot, "node_modules", "@harnessy", "sdk"));
 	copyRuntimePackage("@libsql/client");
 	copyRuntimePackage("drizzle-orm");
+	for (const args of [[], ["--token", "must-not-leak"], ["--input", "relative.json"], ["--resume-google"], ["--resume-google", "--input", "relative.json"], ["--resume-google", "--token", "must-not-leak"]]) {
+		const result = run(process.execPath, [join(installedHostRoot, "dist/meeting-setup-cli.js"), ...args], consumerRoot, 1);
+		assert(result.stdout === "", "Rejected setup input wrote stdout");
+		assert(result.stderr === '{"error":"meeting_setup_failed","next":"Inspect preserved setup state before retrying; no activation occurred."}\n', "Setup input rejection was not content-free");
+	}
 	const smokeCliPath = join(installedHostRoot, manifest.bin["harnessy-meeting-smoke"]);
 	assert((statSync(smokeCliPath).mode & 0o777) === 0o755, "Packed smoke CLI is not executable");
 	const workerCliPath = join(installedHostRoot, manifest.bin["harnessy-meeting-worker"]);
@@ -581,7 +600,7 @@ try {
 		assert(result.stdout === "", "Rejected worker arguments wrote stdout");
 		assert(result.stderr === '{"error":"meeting_worker_failed","code":"invalid_arguments"}\n', "Worker argv rejection was not content-free");
 	}
-	for (const args of [[], ["--receipt", "must-not-leak"], smokeArgs.slice(0, -2), [...smokeArgs, "--activate", "true"], [...smokeArgs.slice(0, 9), "must-not-leak"]]) {
+	for (const args of [[], ["--receipt", "must-not-leak"], smokeArgs.slice(0, -2), [...smokeArgs, "--activate", "true"], [...smokeArgs.slice(0, 9), "must-not-leak"], ["--notify-on-stop"], ["--notify-on-stop", "--notify-on-stop", ...smokeArgs], [...smokeArgs, "--notify-on-stop"]]) {
 		const result = run(process.execPath, [fullReviewCliPath, ...args], consumerRoot, 1);
 		assert(result.stdout === "", "Rejected full-review arguments wrote stdout");
 		assert(
@@ -613,12 +632,22 @@ console.log(JSON.stringify({ denied: true }));
 	);
 	assert(positive.published === true && positive.providerRequests > 0, "Packed runtime did not publish through loopback providers");
 	assert(
+		positive.reconnect?.installedSdk === true && positive.reconnect.freshSetup === true && positive.reconnect.googleSetupContinuation === true && positive.reconnect.googleSetupCliContinuation === true && positive.reconnect.nativeConsent === true &&
+			positive.reconnect.revokedBeforeCommit === true && positive.reconnect.exactConnection === true &&
+			positive.reconnect.wrongIdentityRejected === true && positive.reconnect.replayRejected === true &&
+			positive.reconnect.reopened === true && positive.reconnect.publicationWrites === 0,
+		"Packed SDK native reconnect did not preserve its authority and ownership boundaries",
+	);
+	assert(
 		positive.worker?.published === 1 &&
 			positive.worker.remainingAfterFirst === 1 &&
 			positive.worker.failed === 1 &&
 			positive.worker.retryCheckpoint === true &&
+			positive.worker.notificationReviewOpen === true &&
+			positive.worker.uncertainDeliveryStopped === true &&
+			positive.worker.freshOwnerStopped === true &&
 			positive.worker.providerRequests > 0,
-		"Packed worker did not preserve its signed batch and retry checkpoint",
+		"Packed worker did not preserve its signed batch, safe retry and uncertainty stop",
 	);
 	assert(
 		positive.fullReview?.edited === true &&

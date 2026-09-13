@@ -2,6 +2,8 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { isAbsolute } from "node:path";
 
 import {
+	type MeetingProviderHealth,
+	type MeetingPublicationFailureStage,
 	MeetingPublicationNotifier,
 	MeetingPublicationProviderError,
 	type MeetingPublicationWriteGrant,
@@ -42,10 +44,26 @@ const boundedTimeout = (value: number | undefined) =>
 const boundedTerminationGrace = (value: number | undefined) =>
 	value !== undefined && Number.isSafeInteger(value) && value >= 50 && value <= 5_000 ? value : 500;
 
-const messageFor = (kind: "review" | "error", count: number) =>
-	kind === "review"
-		? `${count} meeting publication item${count === 1 ? " awaits" : "s await"} review.`
-		: `${count} meeting publication item${count === 1 ? " requires" : "s require"} attention.`;
+const failureLabels: Record<MeetingPublicationFailureStage, string> = {
+	configuration: "configuration",
+	source: "meeting source",
+	store: "state storage",
+	notification: "notifications",
+	google: "Google",
+	discord: "Discord",
+};
+
+const messageFor = (
+	kind: "review" | "error",
+	count: number,
+	health?: MeetingProviderHealth,
+	failureStages: ReadonlyArray<MeetingPublicationFailureStage> = [],
+) =>
+	health !== undefined
+		? `${health.provider} (${health.account}): ${health.failure === null ? "connection recovered" : `${health.failure} check failed`}. ${count} meetings affected. Last successful check: ${health.lastSuccessAt ?? "none"}.${health.failure === null ? " Eligible approved meetings will resume automatically." : health.failure === "authentication" ? " Check the native connection credentials; sign in again if required." : health.failure === "transient" ? " Harnessy will check again automatically." : " Check the account and permissions in Harnessy connections."}`
+		: kind === "review"
+			? `${count} meeting publication item${count === 1 ? " awaits" : "s await"} review.`
+			: `${count} meeting publication item${count === 1 ? " requires" : "s require"} attention.${failureStages.length === 0 ? "" : ` Failed stage: ${[...new Set(failureStages)].map((stage) => failureLabels[stage]).join(", ")}.`} Publication is not complete. Open review for details; reconcile delivery receipts before retrying.`;
 
 const requireNotificationGrant = (grant: MeetingPublicationWriteGrant) =>
 	validateMeetingPublicationWriteGrant(grant, "provider_notification").pipe(
@@ -79,13 +97,22 @@ export const localMeetingPublicationNotifierLayer = (
 				}
 				const children = new Map<ChildProcess, TrackedProcess>();
 				let closed = false;
-				const deliver = (kind: "review" | "error", count: number): Effect.Effect<boolean> => {
+				const deliver = (
+					kind: "review" | "error",
+					count: number,
+					health?: MeetingProviderHealth,
+					failureStages: ReadonlyArray<MeetingPublicationFailureStage> = [],
+				): Effect.Effect<boolean> => {
 					if (
 						closed ||
 						config.kind === "unavailable" ||
 						!Number.isSafeInteger(count) ||
-						count < 1 ||
+						count < (health === undefined ? 1 : 0) ||
+						(health !== undefined &&
+							(health.account.length > 320 || /[\u0000-\u001f\u007f]/u.test(health.account))) ||
 						count > 1_000_000 ||
+						failureStages.length > 6 ||
+						failureStages.some((stage) => !Object.hasOwn(failureLabels, stage)) ||
 						!safeExecutable(config.executablePath) ||
 						(config.kind === "terminal-notifier" &&
 							config.reviewOpen !== undefined &&
@@ -95,7 +122,7 @@ export const localMeetingPublicationNotifierLayer = (
 						return Effect.succeed(false);
 					}
 					return Effect.promise(() => {
-						const message = messageFor(kind, count);
+						const message = messageFor(kind, count, health, failureStages);
 						const args =
 							config.kind === "terminal-notifier"
 								? [
@@ -104,7 +131,11 @@ export const localMeetingPublicationNotifierLayer = (
 										"-message",
 										message,
 										"-group",
-										"harnessy-meeting-publication",
+										health === undefined
+											? kind === "error"
+												? "harnessy-meeting-publication-error"
+												: "harnessy-meeting-publication"
+											: `harnessy-meeting-publication-${health.provider}`,
 										...(config.kind === "terminal-notifier" && config.reviewOpen !== undefined
 											? [
 													"-execute",
@@ -170,8 +201,14 @@ export const localMeetingPublicationNotifierLayer = (
 						return completion;
 					});
 				};
-				const notify = (kind: "review" | "error", count: number, grant: MeetingPublicationWriteGrant) =>
-					requireNotificationGrant(grant).pipe(Effect.flatMap(() => deliver(kind, count)));
+				const notify = (
+					kind: "review" | "error",
+					count: number,
+					grant: MeetingPublicationWriteGrant,
+					health?: MeetingProviderHealth,
+					failureStages?: ReadonlyArray<MeetingPublicationFailureStage>,
+				) =>
+					requireNotificationGrant(grant).pipe(Effect.flatMap(() => deliver(kind, count, health, failureStages)));
 				const close = Effect.promise(async () => {
 					closed = true;
 					const pending = [...children.values()];

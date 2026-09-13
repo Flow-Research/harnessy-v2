@@ -165,6 +165,115 @@ const makeLayer = (config: JarvisMeetingPublicationConfig, now: number) => {
 };
 
 describe("MeetingPublicationReviewServer dispatch attention", () => {
+	for (const exhausted of [false, true]) {
+		it(`shows account health ${exhausted ? "and exhausted retry guidance" : "with an empty queue"} without changing state`, async () => {
+			const root = mkdtempSync(join(realpathSync(tmpdir()), "harnessy-review-health-"));
+			roots.push(root);
+			mkdirSync(join(root, "notes"));
+			if (exhausted)
+				writeFileSync(
+					join(root, "notes", "meeting.md"),
+					markdown("Auth blocked meeting", "2026-09-03", "auth-blocked"),
+				);
+			const config = makeConfig(root);
+			const now = Date.parse("2026-09-04T12:00:00.000Z");
+			const nowIso = new Date(now).toISOString();
+			const result = await Effect.runPromise(
+				Effect.scoped(
+					Effect.gen(function* () {
+						const service = yield* MeetingPublicationService;
+						const store = yield* MeetingPublicationStore;
+						const review = yield* MeetingPublicationReviewServer;
+						if (exhausted) {
+							yield* service.scan();
+							const item = (yield* store.list())[0];
+							if (item === undefined) return yield* Effect.die("missing item");
+							yield* service.approve(item.itemId, item.sourceHash);
+							for (let attempt = 0; attempt < 5; attempt += 1) {
+								const claim = yield* store.claim(nowIso, new Date(now + 60_000).toISOString());
+								if (claim === null) return yield* Effect.die("missing claim");
+								yield* store.markFailure(
+									claim,
+									"google",
+									"authentication_failed",
+									attempt < 4 ? nowIso : null,
+									nowIso,
+								);
+							}
+						}
+						yield* store.recordProviderHealth({
+							provider: "google",
+							account: config.googleOwnerEmail as string,
+							failure: "authentication",
+							checkedAt: nowIso,
+							lastSuccessAt: new Date(now - 60_000).toISOString(),
+							incidentAt: nowIso,
+							notifiedAt: null,
+							recoveryPending: false,
+						});
+						const token = readFileSync(
+							join(config.statePath as string, "meeting-publication-v2-review.token"),
+							"utf8",
+						).trim();
+						const exchange = yield* Effect.promise(() =>
+							call(review.address.origin, `/exchange?token=${encodeURIComponent(token)}`),
+						);
+						const before = readFileSync(store.dbPath);
+						const denied = yield* Effect.promise(() => call(review.address.origin, "/"));
+						const inbox = yield* Effect.promise(() => call(review.address.origin, "/", cookieFrom(exchange)));
+						const after = readFileSync(store.dbPath);
+						yield* store.recordProviderHealth({
+							provider: "google",
+							account: config.googleOwnerEmail as string,
+							failure: null,
+							checkedAt: nowIso,
+							lastSuccessAt: nowIso,
+							incidentAt: null,
+							notifiedAt: null,
+							recoveryPending: false,
+						});
+						const beforeHealthy = readFileSync(store.dbPath);
+						const healthy = yield* Effect.promise(() => call(review.address.origin, "/", cookieFrom(exchange)));
+						return {
+							denied,
+							inbox,
+							before,
+							after,
+							healthy,
+							beforeHealthy,
+							afterHealthy: readFileSync(store.dbPath),
+						};
+					}).pipe(Effect.provide(makeLayer(config, now))),
+				),
+			);
+			expect(result.denied.status).toBe(401);
+			expect(result.denied.body).not.toContain("owner@example.test");
+			expect(result.inbox.status).toBe(200);
+			expect(result.inbox.body).toContain("Publication connection health");
+			const failedDisclosure = /<details\b[^>]*class="[^"]*connection-details[^"]*"[^>]*>/u.exec(
+				result.inbox.body,
+			)?.[0];
+			expect(failedDisclosure).toBeDefined();
+			expect(failedDisclosure).toMatch(/\sopen(?:\s|>)/u);
+			const healthyDisclosure = /<details\b[^>]*class="[^"]*connection-details[^"]*"[^>]*>/u.exec(
+				result.healthy.body,
+			)?.[0];
+			expect(result.healthy.status).toBe(200);
+			expect(healthyDisclosure).toBeDefined();
+			expect(healthyDisclosure).not.toMatch(/\sopen(?:\s|>)/u);
+			expect(result.healthy.body).toContain("Last check passed");
+			expect(result.afterHealthy.equals(result.beforeHealthy)).toBe(true);
+			expect(result.inbox.body).toContain("Credentials rejected");
+			expect(result.inbox.body).toContain("owner@example.test");
+			expect(result.inbox.body).toContain(exhausted ? "1 meeting affected." : "0 meetings affected.");
+			expect(result.inbox.body).toContain("2026-09-04T11:59:00.000Z");
+			expect(result.inbox.body).toContain("2026-09-04T12:01:00.000Z");
+			expect(result.inbox.body).toContain("Reconnection is not available from this review page yet.");
+			if (exhausted) expect(result.inbox.body).toContain("reached 5 or more attempts");
+			expect(result.inbox.body).not.toContain('href="/reconnect');
+			expect(result.after.equals(result.before)).toBe(true);
+		});
+	}
 	it("shows retrying and blocked work with safe diagnostics and keeps GET requests read-only", async () => {
 		const root = mkdtempSync(join(realpathSync(tmpdir()), "harnessy-review-attention-"));
 		roots.push(root);

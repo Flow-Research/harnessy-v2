@@ -37,16 +37,15 @@ import {
 	MeetingPublicationStatus,
 } from "./models.ts";
 import { MEETING_PUBLICATION_NOTE_MAX_LENGTH, MeetingPublicationSource } from "./notes.ts";
-import {
-	redactMeetingPublicationReviewText,
-	renderMeetingPublicationReviewMarkdown,
-	renderMeetingPublicationReviewNote,
-} from "./review-markdown.ts";
+import { MEETING_AUTH_RECOVERY_ATTEMPT_LIMIT, type MeetingProviderHealth } from "./provider-health.ts";
+import { redactMeetingPublicationReviewText, renderMeetingPublicationReviewNote } from "./review-markdown.ts";
 import {
 	MEETING_PUBLICATION_PURPOSE_MAX_LENGTH,
 	MeetingPublicationClock,
+	type MeetingPublicationReconnect,
 	MeetingPublicationService,
 	meetingPublicationDefaultPurpose,
+	normalizeMeetingPublicationPurpose,
 } from "./service.ts";
 import { MeetingPublicationStore } from "./store.ts";
 
@@ -228,7 +227,7 @@ width: 100%; }
 .intro-row { align-items: flex-end; display: flex; gap: 2rem; justify-content: space-between; }
 .eyebrow, .section-label { color: var(--accent); font-size: .73rem; font-weight: 800;
 letter-spacing: .1em; margin: 0 0 .45rem; text-transform: uppercase; }
-h1, h2, h3 { color: var(--ink); line-height: 1.22; }
+h1, h2, h3, h4 { color: var(--ink); line-height: 1.22; }
 h1 { font-size: clamp(2rem, 5vw, 3.35rem); letter-spacing: -.035em; margin: .15rem 0 .8rem;
 max-width: 980px; }
 h2 { letter-spacing: -.018em; }
@@ -271,15 +270,31 @@ margin: 0 auto; max-width: 1220px; padding: 0 1.5rem 4rem; width: 100%; }
 .section-heading { align-items: center; border-bottom: 1px solid var(--line); display: flex;
 justify-content: space-between; margin-bottom: 1.3rem; padding-bottom: 1rem; }
 .section-heading h2, .action-card h2 { font-size: 1.25rem; margin: 0; }
-.summary-block { background: #f6f8f7; border-left: 4px solid #8dc4a4; border-radius: 0 10px 10px 0;
-color: #39483f; margin: 0 0 2rem; padding: 1rem 1.15rem; white-space: pre-wrap; }
 .markdown-body { color: #2c3831; overflow-wrap: anywhere; }
 .markdown-body > :first-child { margin-top: 0; }
-.markdown-body h2, .markdown-body h3 { margin: 1.8rem 0 .8rem; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body h2 { border-top: 1px solid var(--line); font-size: 1.55rem;
+margin: 2.6rem 0 1rem; padding-top: 2rem; }
+.markdown-body h2:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.markdown-body h3 { font-size: 1.2rem; margin: 2rem 0 .75rem; }
+.markdown-body h4 { font-size: 1rem; margin: 1.5rem 0 .55rem; }
+.markdown-body p { margin: .6rem 0 1rem; }
+.markdown-body ul, .markdown-body ol { margin: .65rem 0 1.25rem; padding-left: 1.45rem; }
+.markdown-body li { margin: .42rem 0; padding-left: .18rem; }
+.markdown-body li::marker { color: #4c8d68; }
+.markdown-body li > ul, .markdown-body li > ol { border-left: 2px solid #dce9e1;
+margin: .5rem 0; padding-left: 1.25rem; }
 .markdown-body pre { background: #f6f8f7; border-radius: 8px; overflow-x: auto; padding: 1rem; }
 .markdown-body code { font: .9em/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.markdown-body blockquote { border-left: 3px solid #8dc4a4; margin-left: 0; padding-left: 1rem; }
-.markdown-body a { color: var(--accent-dark); }
+.markdown-body blockquote { border-left: 4px solid #8dc4a4; color: #526159; margin: 1rem 0;
+padding: .15rem 1rem; }
+.markdown-body a { color: var(--accent-dark); font-weight: 600;
+text-decoration-color: #9ac7ae; text-underline-offset: 3px; }
+.metadata-body ul { font-size: .83rem; }
+.operations > .card { box-shadow: none; margin: 1rem 0 0; width: 100%; }
+.other-meetings a { color: var(--accent-dark); }
+.connection-details dl { color: var(--muted); font-size: .85rem; }
+.connection-details dd { margin: 0 0 .65rem; overflow-wrap: anywhere; }
 .metadata-card { background: #f6f8f7; border: 1px solid var(--line); border-radius: 12px;
 margin-bottom: 2rem; padding: .8rem 1rem; }
 .metadata-card summary { cursor: pointer; font-weight: 750; }
@@ -296,7 +311,7 @@ padding: .1rem .25rem; vertical-align: 2px; }
 .discord-date { color: #949ba4; font-size: .78rem; margin: .08rem 0 .65rem; }
 .discord-summary { background: #383a40; border: 1px solid #4e5058; border-radius: 6px;
 color: #dbdee1; display: block; font: inherit; line-height: 1.45; margin-top: .3rem;
-min-height: 8rem; padding: .65rem; resize: vertical; width: 100%; }
+min-height: 11rem; padding: .65rem; resize: vertical; width: 100%; }
 .discord-summary:focus { border-color: #80848e; outline: 2px solid #5865f2; outline-offset: 1px; }
 .discord-editor-label { color: #b5bac1; display: block; font-size: .72rem; font-weight: 700;
 margin-top: .65rem; }
@@ -307,7 +322,7 @@ margin-top: .65rem; }
 .meeting-editor label { display: block; font-size: .82rem; font-weight: 750; }
 .meeting-note-editor { background: #fbfcfb; border: 1px solid var(--line); border-radius: 9px;
 color: var(--ink); display: block; font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo,
-monospace; margin-top: .5rem; min-height: 24rem; padding: 1rem; resize: vertical; width: 100%; }
+monospace; margin-top: .5rem; min-height: 32rem; padding: 1rem; resize: vertical; width: 100%; }
 .meeting-note-editor:focus { border-color: var(--accent); outline: 2px solid #6db88d;
 outline-offset: 1px; }
 .editor-help, .privacy-note { color: var(--muted); font-size: .76rem; }
@@ -321,7 +336,7 @@ text-decoration: none; transition: .15s ease; }
 .save-note { background: #e8f2ec; color: var(--accent-dark); margin-top: .6rem; width: 100%; }
 .reject, .archive { background: #fff; border: 1px solid #e3c0bd; color: var(--danger); width: 100%; }
 .reject:hover, .archive:hover { background: #fff4f3; }
-button:focus-visible, .button:focus-visible, a:focus-visible { outline: 3px solid #6db88d;
+button:focus-visible, .button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid #6db88d;
 outline-offset: 3px; }
 .privacy-note { border-top: 1px solid var(--line); margin: 1rem 0 0; padding-top: .9rem; }
 .logout { margin: 1.5rem auto 3rem; max-width: 920px; text-align: right; width: calc(100% - 3rem); }
@@ -506,6 +521,11 @@ const statusLabel = (status: string) =>
 		.map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
 		.join(" ");
 
+const reviewDate = (value: string) =>
+	new Intl.DateTimeFormat("en", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }).format(
+		new Date(`${value}T00:00:00Z`),
+	);
+
 const statusClass = (status: string) =>
 	(["pending_review", "approved", "publishing", "published", "rejected", "blocked"] as ReadonlyArray<string>).includes(
 		status,
@@ -577,14 +597,72 @@ const renderInbox = (
 	nextMeeting: { readonly itemId: string; readonly title: string | null } | null,
 	mode: MeetingPublicationReviewMode,
 	dispatch: MeetingPublicationReviewDispatch | undefined,
+	health: ReadonlyArray<MeetingProviderHealth>,
+	now: number,
+	reconnectAvailable = false,
+	project = "",
 ) => {
-	const reviewItems = items.filter((item) => item.status === "pending_review" || item.status === "blocked");
+	const reviewItems = items.filter((item) => item.status === "pending_review");
 	const attentionItems = items.filter(
 		(item) => item.status === "blocked" || (item.status === "approved" && item.failureStage !== null),
 	);
-	const header = `<header class="page-intro"><div class="intro-row"><div><p class="eyebrow">Local publication queue</p>
-<h1>Meeting review</h1><p class="lede">Review decisions and local dispatch status are shown below.</p></div>
-${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} in queue</span>` : ""}</div></header>`;
+	const header = `<header class="page-intro"><div class="intro-row"><div><p class="eyebrow">${safeReviewText(statusLabel(project))} · Publication queue</p>
+<h1>Meeting review</h1><p class="lede">Review one meeting at a time before anything is published.</p></div>
+${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} waiting</span>` : ""}</div></header>`;
+	const connectionFailure = health.some((entry) => entry.failure !== null);
+	const providerStatus = `<details class="card queue-status connection-details${connectionFailure ? " attention-card" : ""}"${connectionFailure ? " open" : ""}><summary>${connectionFailure ? "Connections need attention" : health.length === 0 ? "Connection status" : "Connections · Last checks passed"}</summary><h2 id="provider-health-title">Publication connection health</h2>${
+		health.length === 0
+			? "<p>No provider health checks have been recorded yet.</p>"
+			: health
+					.slice(0, 2)
+					.map((entry) => {
+						const checked = Date.parse(entry.checkedAt);
+						const lastSuccess = entry.lastSuccessAt === null ? Number.NaN : Date.parse(entry.lastSuccessAt);
+						const labels = {
+							authentication: "Credentials rejected",
+							identity: "Wrong account or destination",
+							credential_store: "Stored credentials unavailable",
+							permission: "Permission required",
+							transient: "Temporary connection problem",
+							other: "Connection check failed",
+						} as const;
+						const affected =
+							entry.failure === null
+								? 0
+								: items.filter(
+										(item) =>
+											item.status === "approved" ||
+											item.status === "publishing" ||
+											(item.status === "blocked" && item.failureStage === entry.provider),
+									).length;
+						const nextCheck =
+							Number.isFinite(checked) && checked + 60_000 > now
+								? `On the first worker run after ${new Date(checked + 60_000).toISOString()}`
+								: "Due on the next worker run";
+						const action =
+							entry.failure === "authentication"
+								? reconnectAvailable && entry.provider === "google"
+									? "Reconnect the configured Google account below. This does not approve or publish meetings."
+									: "Check the credentials using the native connection owner; sign in again if required. Reconnection is not available from this review page yet."
+								: entry.failure === "transient"
+									? "The worker will check again automatically; signing in again is not required for a temporary network failure."
+									: entry.failure === null
+										? "Unchanged approved meetings can resume automatically after a successful check."
+										: "Check the configured account, destination and access with the native connection owner.";
+						return `<h3>${entry.provider === "google" ? "Google" : "Discord"}</h3><p><strong>${entry.failure === null ? "Last check passed" : labels[entry.failure]}</strong> · ${safeReviewText(entry.account.slice(0, 320))}</p><p>${affected} meeting${affected === 1 ? "" : "s"} affected.</p><dl><dt>Last check</dt><dd>${Number.isFinite(checked) ? new Date(checked).toISOString() : "Unavailable"}</dd><dt>Last successful check</dt><dd>${Number.isFinite(lastSuccess) ? new Date(lastSuccess).toISOString() : "None recorded"}</dd><dt>Next scheduled check</dt><dd>${nextCheck}</dd></dl><p>${action}</p>`;
+					})
+					.join("")
+	}${reconnectAvailable ? `<h3>Reconnect Google</h3><form method="post" action="/google-reconnect/start"><input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><button type="submit">Reconnect configured Google account</button></form><a href="/google-reconnect/confirm">Continue an existing reconnect</a>` : ""}</details>`;
+	const exhausted = items.filter(
+		(item) =>
+			item.status === "blocked" &&
+			item.attempts >= MEETING_AUTH_RECOVERY_ATTEMPT_LIMIT &&
+			(item.failureStage === "google" || item.failureStage === "discord"),
+	);
+	const recoveryGuidance =
+		exhausted.length === 0
+			? ""
+			: `<section class="card attention-card"><h2>Review needed before another attempt</h2><p>${exhausted.length} blocked meeting${exhausted.length === 1 ? " has" : "s have"} reached ${MEETING_AUTH_RECOVERY_ATTEMPT_LIMIT} or more attempts. Restoring the connection will not automatically retry these meetings. Check the failure, then review and explicitly approve the current note to allow another attempt. Previous attempts and delivery receipts are retained.</p></section>`;
 	const queue =
 		reviewItems.length === 0
 			? attentionItems.length === 0
@@ -593,15 +671,26 @@ ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} in q
 				: `<section class="card empty-card"><h2>No review decisions are waiting</h2>
 <p class="lede">Local dispatch still needs attention below.</p></section>`
 			: reviewItems
+					.slice(0, 1)
 					.map(
 						(item) =>
-							`<section class="card queue-card"><p class="section-label">Meeting note</p>
+							`<section class="card queue-card"><p class="section-label">Next meeting</p>
 <h2>${nextMeeting?.itemId === item.itemId ? (nextMeeting.title === null ? "Meeting title unavailable" : safeReviewText(nextMeeting.title)) : `Meeting · ${escapeHtml(item.meetingDate)}`}</h2><div class="meta-row">
-<span class="meta-pill">${escapeHtml(item.meetingDate)}</span>
+<span class="meta-pill">${escapeHtml(reviewDate(item.meetingDate))}</span><span class="meta-pill">${safeReviewText(statusLabel(project))}</span>
 <span class="status-pill status-${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></div>
 <a class="button primary-button" href="/item/${item.itemId}">Review meeting</a></section>`,
 					)
 					.join("");
+	const otherMeetings =
+		reviewItems.length < 2
+			? ""
+			: `<details class="card queue-status other-meetings"><summary>Other meetings waiting (${reviewItems.length - 1})</summary><ul>${reviewItems
+					.slice(1)
+					.map(
+						(item) =>
+							`<li><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></li>`,
+					)
+					.join("")}</ul></details>`;
 	const attention =
 		attentionItems.length === 0
 			? ""
@@ -616,7 +705,7 @@ ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} in q
 							item.failureCode !== null && failureCodePattern.test(item.failureCode)
 								? `Diagnostic ${escapeHtml(item.failureCode)}`
 								: "Diagnostic unavailable";
-						return `<li><strong>${item.status === "blocked" ? "Blocked" : "Retry scheduled"}</strong> · ${escapeHtml(item.meetingDate)}<br><span>${stage}</span><details><summary>Technical details</summary><code>${diagnostic}</code></details></li>`;
+						return `<li><a href="/item/${item.itemId}"><strong>${item.status === "blocked" ? "Blocked" : "Retry scheduled"}</strong> · ${escapeHtml(item.meetingDate)}</a><br><span>${stage}</span><details><summary>Technical details</summary><code>${diagnostic}</code></details></li>`;
 					})
 					.join("")}</ul></section>`;
 	const counts = `<details class="card queue-status"><summary>Queue status</summary><div class="status-grid">${MeetingPublicationStatus.literals
@@ -627,7 +716,7 @@ ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} in q
 		.join("")}</div></details>`;
 	return page(
 		"Meeting publication review",
-		`${header}${queue}${attention}${counts}${preflightForm(csrf, mode)}${dispatchForm(csrf, dispatch)}${logoutForm(csrf)}`,
+		`${header}${queue}${otherMeetings}${attention}${recoveryGuidance}${providerStatus}${counts}${mode === "full" ? `<details class="card queue-status operations"><summary>Publication controls</summary>${preflightForm(csrf, mode)}${dispatchForm(csrf, dispatch)}</details>` : ""}${logoutForm(csrf)}`,
 	);
 };
 
@@ -637,18 +726,17 @@ const renderItem = (
 	purpose: string,
 	csrf: string,
 	mode: MeetingPublicationReviewMode,
+	project: string,
 ) => {
 	const hidden = `<input type="hidden" name="csrf" value="${csrf}">
 <input type="hidden" name="item_id" value="${item.itemId}">
 <input type="hidden" name="source_hash" value="${item.sourceHash}">`;
 	const noteEditor =
 		mode === "full" && item.status === "pending_review"
-			? `<form method="post" action="/update-note/${item.itemId}" class="meeting-editor">${hidden}
-<label for="meeting-markdown">Edit canonical note Markdown</label>
-<textarea class="meeting-note-editor" id="meeting-markdown" name="meeting_markdown" data-max-code-points="${MEETING_PUBLICATION_NOTE_MAX_LENGTH}" aria-describedby="meeting-markdown-limit" required spellcheck="true">${escapeHtml(note.markdown)}</textarea>
+			? `<div class="meeting-editor"><label for="meeting-markdown">Edit meeting note Markdown</label>
+<textarea class="meeting-note-editor" id="meeting-markdown" name="meeting_markdown" form="approve-form" data-max-code-points="${MEETING_PUBLICATION_NOTE_MAX_LENGTH}" aria-describedby="meeting-markdown-limit" required spellcheck="true">${escapeHtml(note.markdown)}</textarea>
 <p class="editor-help" id="meeting-markdown-limit">Maximum ${MEETING_PUBLICATION_NOTE_MAX_LENGTH} Unicode characters; checked when submitted.</p>
-<button class="save-note" type="submit">Update meeting note</button></form>
-<p class="privacy-note">Updating writes the canonical local Markdown and keeps this meeting unapproved.</p>`
+<p class="editor-help">Update meeting note saves locally without approval. Approve &amp; publish saves and approves the exact edited note shown here.</p></div>`
 			: "";
 	const purposePreview =
 		item.status === "pending_review" || item.status === "blocked"
@@ -660,22 +748,21 @@ const renderItem = (
 		item.status === "pending_review" || item.status === "blocked"
 			? `<section class="card action-card"><p class="section-label">Decision</p><h2>Ready to publish?</h2>
 <p class="lede">Approval applies only to this exact version of the note.</p><div class="actions">
-<form id="approve-form" method="post" action="/approve/${item.itemId}">${hidden}<button class="approve" type="submit">Approve for publication</button></form>
+<form id="approve-form" method="post" action="/approve/${item.itemId}">${hidden}<button class="approve" type="submit">Approve &amp; publish</button>${noteEditor === "" ? "" : `<button class="save-note" type="submit" formaction="/update-note/${item.itemId}">Update meeting note</button>`}</form>
 ${item.status === "pending_review" ? `<form method="post" action="/reject/${item.itemId}">${hidden}<button class="reject" type="submit">Reject</button></form>` : ""}
 <form method="post" action="/archive/${item.itemId}">${hidden}<button class="archive" type="submit">Archive</button></form>
-</div><p class="privacy-note">These actions update only the local publication queue.</p></section>`
+</div><p class="privacy-note">Approval allows the publication worker to send this exact note to Google Docs and Discord. Updating writes the canonical local Markdown and keeps this meeting unapproved.</p></section>`
 			: `<section class="card action-card"><p class="section-label">Decision</p>
 <h2>${escapeHtml(statusLabel(item.status))}</h2><p class="lede">This meeting is no longer awaiting review.</p></section>`;
 	return page(
 		note.title,
 		`<a class="back-link" href="/"><span aria-hidden="true">←</span> Review inbox</a>
-<header class="meeting-header"><p class="eyebrow">Meeting publication · Local review</p>
-<h1>${escapeHtml(note.title)}</h1><div class="meta-row"><span class="meta-pill">${escapeHtml(note.meetingDate)}</span>
+<header class="meeting-header"><p class="eyebrow">${safeReviewText(statusLabel(project))} · Meeting review</p>
+<h1>${escapeHtml(note.title)}</h1><div class="meta-row"><span class="meta-pill">${escapeHtml(reviewDate(note.meetingDate))}</span><span class="meta-pill">${safeReviewText(statusLabel(project))}</span>
 <span class="status-pill status-${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></div></header>
 <div class="review-grid"><main class="card note-card"><div class="section-heading">
 <div><p class="section-label">Canonical source</p><h2>Meeting note</h2></div><span class="local-badge">Local Markdown</span></div>
-<h3>Executive Summary</h3><div class="summary-block markdown-body">${renderMeetingPublicationReviewMarkdown(note.summary)}</div>
-<h3>Canonical note</h3><article class="canonical-markdown markdown-body">${renderMeetingPublicationReviewNote(note.markdown)}</article>${noteEditor}</main>
+<article class="canonical-markdown markdown-body">${renderMeetingPublicationReviewNote(note.markdown)}</article>${noteEditor}</main>
 <aside class="review-sidebar"><section class="card preview-card"><div class="section-heading">
 <div><p class="section-label">Destination preview</p><h2>Discord</h2></div><span class="summary-badge">Purpose only</span></div>
 <div class="discord-shell"><div class="discord-avatar" aria-hidden="true">M</div><div class="discord-message">
@@ -698,12 +785,17 @@ const closeServer = (server: Server) =>
 /** Scoped, loopback-only HTTP review boundary with in-memory session state. */
 export class MeetingPublicationReviewServer extends Context.Service<
 	MeetingPublicationReviewServer,
-	{ readonly address: MeetingPublicationReviewAddress }
+	{
+		readonly address: MeetingPublicationReviewAddress;
+		/** Stop admission synchronously, then await only requests already admitted. */
+		readonly drain: Effect.Effect<void>;
+	}
 >()("@harnessy/core/MeetingPublicationReviewServer") {
 	static layer(
 		config: JarvisMeetingPublicationConfig,
 		mode: MeetingPublicationReviewMode = "full",
 		dispatch?: MeetingPublicationReviewDispatch,
+		isDraining: () => boolean = () => false,
 	) {
 		const boundedDispatch = dispatch === undefined ? undefined : Object.freeze({ maxItems: dispatch.maxItems });
 		return Layer.effect(
@@ -767,10 +859,21 @@ export class MeetingPublicationReviewServer extends Context.Service<
 				const sessions = new Map<string, ReviewSession>();
 				const requestController = new AbortController();
 				const activeHandlers = new Set<Promise<void>>();
+				let admissionsClosed = false;
 				let randomCounter = 0;
 				let authority = "";
 				let origin = "";
 				let mutationInFlight = false;
+				let pendingReconnect:
+					| {
+							readonly sessionId: string;
+							readonly expiresAt: number;
+							readonly flow: MeetingPublicationReconnect;
+							code?: string;
+					  }
+					| undefined;
+				const reconnectAvailable =
+					mode === "full" && boundedDispatch !== undefined && publication.reconnectGoogle !== undefined;
 
 				const runRequestEffect = <A, E>(effect: Effect.Effect<A, E>) =>
 					Effect.runPromise(effect, { signal: requestController.signal });
@@ -779,12 +882,23 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					const bytes = await runRequestEffect(random.bytes(32));
 					return encodeRandom(deriveRandom(bytes, `${kind}:${randomCounter++}`), 32);
 				};
-				const purgeSessions = (current: number) => {
+				const cancelReconnect = async () => {
+					const pending = pendingReconnect;
+					pendingReconnect = undefined;
+					// Authority loss leaves only the native OAuth TTL row; never bypass its grant to delete it.
+					if (pending !== undefined) await runRequestEffect(pending.flow.cancel()).catch(() => undefined);
+				};
+				const purgeSessions = async (current: number) => {
 					for (const [id, session] of sessions) if (session.expiresAt <= current) sessions.delete(id);
+					if (
+						pendingReconnect !== undefined &&
+						(pendingReconnect.expiresAt <= current || !sessions.has(pendingReconnect.sessionId))
+					)
+						await cancelReconnect();
 				};
 				const sessionFor = async (request: IncomingMessage) => {
 					const current = await now();
-					purgeSessions(current);
+					await purgeSessions(current);
 					const supplied = cookieSessionId(request);
 					if (supplied === null) return null;
 					for (const [id, session] of sessions) if (secureEqual(id, supplied)) return { id, session };
@@ -795,6 +909,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						authorizeMeetingPublicationWrite(authorityService, "review_serve", binding),
 					).catch(() => {
 						sessions.clear();
+						pendingReconnect = undefined;
 						throw new ReviewHttpError(503, "authorization");
 					});
 				};
@@ -817,6 +932,56 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					}
 					const url = new URL(request.url, origin);
 					const head = request.method === "HEAD";
+					if (request.method === "GET" && url.pathname === "/google-reconnect/callback") {
+						if (!reconnectAvailable || url.search.length > 8_192 || !validPercentEncoding(url.search))
+							throw new ReviewHttpError(400, "callback");
+						const allowed = [
+							"state",
+							"code",
+							"error",
+							"error_description",
+							"scope",
+							"authuser",
+							"prompt",
+							"hd",
+							"iss",
+						];
+						for (const key of url.searchParams.keys())
+							if (!allowed.includes(key) || url.searchParams.getAll(key).length !== 1)
+								throw new ReviewHttpError(400, "callback");
+						const current = await now();
+						if (
+							pendingReconnect !== undefined &&
+							(pendingReconnect.expiresAt <= current || !sessions.has(pendingReconnect.sessionId))
+						)
+							pendingReconnect = undefined;
+						const pending = pendingReconnect;
+						if (
+							pending === undefined ||
+							pending.code !== undefined ||
+							!secureEqual(url.searchParams.get("state") ?? "", pending.flow.state)
+						)
+							throw new ReviewHttpError(409, "callback");
+						const code = url.searchParams.get("code");
+						if (url.searchParams.has("error")) {
+							// The unauthenticated callback may invalidate its own state, but may not exchange or cancel credentials.
+							pendingReconnect = undefined;
+						} else {
+							if (code === null || !/^[\x21-\x7e]{1,4096}$/u.test(code))
+								throw new ReviewHttpError(400, "callback");
+							pending.code = code;
+						}
+						// Cross-site SameSite=Strict callbacks have no session cookie. This page contains no secret or CSRF value.
+						send(
+							response,
+							200,
+							page(
+								"Google reconnect",
+								'<section class="card message-card"><h1>Return to your review session</h1><p>Complete reconnection from the same browser session that started it.</p><a href="/google-reconnect/confirm">Continue in local review</a></section>',
+							),
+						);
+						return;
+					}
 					if (request.method === "GET" && url.pathname === "/exchange") {
 						if (
 							!validPercentEncoding(url.search) ||
@@ -829,12 +994,13 @@ export class MeetingPublicationReviewServer extends Context.Service<
 							throw new ReviewHttpError(401, "token");
 						}
 						const current = await now();
-						purgeSessions(current);
+						await purgeSessions(current);
 						while (sessions.size >= config.reviewMaxSessions) {
 							const oldest = [...sessions].sort((left, right) => left[1].createdAt - right[1].createdAt)[0];
 							if (oldest === undefined) break;
 							sessions.delete(oldest[0]);
 						}
+						await purgeSessions(current);
 						let sessionId = "";
 						let csrf = "";
 						for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -876,6 +1042,22 @@ export class MeetingPublicationReviewServer extends Context.Service<
 
 					if (request.method === "GET" || request.method === "HEAD") {
 						if (url.search.length > 0) throw new ReviewHttpError(400, "query");
+						if (url.pathname === "/google-reconnect/confirm") {
+							const pending = pendingReconnect;
+							if (!reconnectAvailable || pending === undefined || pending.sessionId !== authenticated.id)
+								throw new ReviewHttpError(404, "reconnect");
+							send(
+								response,
+								200,
+								page(
+									"Complete Google reconnect",
+									`<section class="card message-card"><h1>Complete Google reconnect</h1><p>No meeting will be approved or published by this action.</p>${pending.code === undefined ? "<p>Finish Google consent first.</p>" : `<form method="post" action="/google-reconnect/complete"><input type="hidden" name="csrf" value="${escapeHtml(authenticated.session.csrf)}"><button type="submit">Verify configured Google account</button></form>`}<form method="post" action="/google-reconnect/cancel"><input type="hidden" name="csrf" value="${escapeHtml(authenticated.session.csrf)}"><button type="submit">Cancel reconnect</button></form></section>`,
+								),
+								head,
+								"same-origin",
+							);
+							return;
+						}
 						if (url.pathname === "/") {
 							const items = await runRequestEffect(store.list());
 							const next = items.find((item) => item.status === "pending_review");
@@ -896,7 +1078,17 @@ export class MeetingPublicationReviewServer extends Context.Service<
 							send(
 								response,
 								200,
-								renderInbox(items, authenticated.session.csrf, nextMeeting, mode, boundedDispatch),
+								renderInbox(
+									items,
+									authenticated.session.csrf,
+									nextMeeting,
+									mode,
+									boundedDispatch,
+									await runRequestEffect(store.providerHealth()),
+									await now(),
+									reconnectAvailable,
+									config.project ?? "Local",
+								),
 								head,
 								"same-origin",
 							);
@@ -912,7 +1104,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						send(
 							response,
 							200,
-							renderItem(item, note, purpose, authenticated.session.csrf, mode),
+							renderItem(item, note, purpose, authenticated.session.csrf, mode, config.project ?? "Local"),
 							head,
 							"same-origin",
 						);
@@ -922,16 +1114,92 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					if (exactHeader(request, "origin") !== origin) throw new ReviewHttpError(403, "origin");
 					const contentType = exactHeader(request, "content-type")?.split(";", 1)[0]?.trim().toLowerCase();
 					if (contentType !== formContentType) throw new ReviewHttpError(415, "content-type");
+					if (url.pathname.startsWith("/google-reconnect/")) {
+						if (!reconnectAvailable || url.search.length > 0) throw new ReviewHttpError(404, "reconnect");
+						await runMutation(async () => {
+							const form = parseForm(await readBody(request, config.reviewMaxBodyBytes), ["csrf"]);
+							if (!secureEqual(form.csrf ?? "", authenticated.session.csrf))
+								throw new ReviewHttpError(403, "csrf");
+							const current = await now();
+							await purgeSessions(current);
+							if (!sessions.has(authenticated.id)) throw new ReviewHttpError(401, "session");
+							if (url.pathname === "/google-reconnect/start") {
+								if (pendingReconnect !== undefined || publication.reconnectGoogle === undefined)
+									throw new ReviewHttpError(409, "reconnect");
+								const flow = await runRequestEffect(
+									publication.reconnectGoogle(`${origin}/google-reconnect/callback`),
+								);
+								let valid = false;
+								if (URL.canParse(flow.authorizationUrl)) {
+									const target = new URL(flow.authorizationUrl);
+									valid =
+										/^[A-Za-z0-9_-]{16,256}$/u.test(flow.state) &&
+										flow.authorizationUrl.length <= 8_192 &&
+										target.origin === "https://accounts.google.com" &&
+										target.username === "" &&
+										target.password === "" &&
+										target.hash === "";
+								}
+								if (
+									!valid ||
+									authenticated.session.expiresAt <= (await now()) ||
+									!sessions.has(authenticated.id)
+								) {
+									await runRequestEffect(flow.cancel()).catch(() => undefined);
+									throw new ReviewHttpError(409, "reconnect");
+								}
+								pendingReconnect = {
+									sessionId: authenticated.id,
+									expiresAt: Math.min(current + 5 * 60_000, authenticated.session.expiresAt),
+									flow,
+								};
+								send(
+									response,
+									200,
+									page(
+										"Reconnect Google",
+										`<section class="card message-card"><h1>Reconnect configured Google account</h1><p>Sign in with ${safeReviewText(config.googleOwnerEmail ?? "the configured account")}. This does not approve or publish meetings.</p><a rel="noreferrer" href="${escapeHtml(flow.authorizationUrl)}">Continue to Google</a><p><a href="/google-reconnect/confirm">Return to local reconnect</a></p></section>`,
+									),
+								);
+								return;
+							}
+							const pending = pendingReconnect;
+							if (pending === undefined || pending.sessionId !== authenticated.id)
+								throw new ReviewHttpError(409, "reconnect");
+							if (url.pathname === "/google-reconnect/cancel") {
+								await cancelReconnect();
+							} else if (url.pathname === "/google-reconnect/complete") {
+								if (pending.code === undefined) throw new ReviewHttpError(409, "reconnect");
+								pendingReconnect = undefined;
+								await runRequestEffect(
+									pending.flow
+										.complete(pending.code)
+										.pipe(Effect.timeout(Math.max(1, pending.expiresAt - current))),
+								);
+							} else throw new ReviewHttpError(404, "reconnect");
+							send(
+								response,
+								200,
+								page(
+									"Google reconnect finished",
+									'<section class="card message-card"><h1>Reconnect finished</h1><p>No meeting was approved or published. Check connection health in the review inbox.</p><a href="/">Return to review</a></section>',
+								),
+							);
+						});
+						return;
+					}
 					if (mode === "decision_only" && /^\/(?:update-note|restore)\/[a-f0-9]{24}$/u.test(url.pathname)) {
 						throw new ReviewHttpError(404, "route");
 					}
 					if (url.pathname === "/logout") {
-						const body = await readBody(request, config.reviewMaxBodyBytes);
-						const form = parseForm(body, ["csrf"]);
-						if (!secureEqual(form.csrf ?? "", authenticated.session.csrf)) {
-							throw new ReviewHttpError(403, "csrf");
-						}
-						sessions.delete(authenticated.id);
+						await runMutation(async () => {
+							const body = await readBody(request, config.reviewMaxBodyBytes);
+							const form = parseForm(body, ["csrf"]);
+							if (!secureEqual(form.csrf ?? "", authenticated.session.csrf))
+								throw new ReviewHttpError(403, "csrf");
+							sessions.delete(authenticated.id);
+							await purgeSessions(await now());
+						});
 						redirect(response, "/", `${cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
 						return;
 					}
@@ -966,9 +1234,13 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					const item = await runMutation(async () => {
 						const body = await readBody(request, config.reviewMaxBodyBytes);
 						let allowed: ReadonlyArray<string>;
-						if (action[1] === "approve") allowed = ["csrf", "item_id", "source_hash", "purpose"];
-						else if (action[1] === "update-note") {
+						if (action[1] === "approve") {
+							allowed = ["csrf", "item_id", "source_hash", "purpose"];
+							if (mode === "full" && new URLSearchParams(body).has("meeting_markdown"))
+								allowed = [...allowed, "meeting_markdown"];
+						} else if (action[1] === "update-note") {
 							allowed = ["csrf", "item_id", "source_hash", "meeting_markdown"];
+							if (new URLSearchParams(body).has("purpose")) allowed = [...allowed, "purpose"];
 						} else allowed = ["csrf", "item_id", "source_hash"];
 						const form = parseForm(body, allowed);
 						if (!secureEqual(form.csrf ?? "", authenticated.session.csrf)) {
@@ -989,7 +1261,21 @@ export class MeetingPublicationReviewServer extends Context.Service<
 									publication.updateNote(item.itemId, form.source_hash ?? "", form.meeting_markdown ?? ""),
 								);
 							} else if (action[1] === "approve") {
-								await runRequestEffect(publication.approve(item.itemId, form.source_hash ?? "", form.purpose));
+								let reviewedHash = form.source_hash ?? "";
+								if (form.meeting_markdown !== undefined) {
+									if (item.status !== "pending_review") throw new ReviewHttpError(409, "status");
+									// Validate the whole decision before saving. Reuse the existing exact-revision
+									// update/approval boundaries; interruption between them leaves the note pending.
+									await runRequestEffect(normalizeMeetingPublicationPurpose(form.purpose ?? ""));
+									const current = await runRequestEffect(source.read(item.notePath));
+									if (current.markdown !== form.meeting_markdown) {
+										const updated = await runRequestEffect(
+											publication.updateNote(item.itemId, reviewedHash, form.meeting_markdown),
+										);
+										reviewedHash = updated.sourceHash;
+									}
+								}
+								await runRequestEffect(publication.approve(item.itemId, reviewedHash, form.purpose));
 							} else if (action[1] === "reject") {
 								await runRequestEffect(publication.reject(item.itemId, form.source_hash));
 							} else {
@@ -1023,6 +1309,10 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						maxHeaderSize: 8_192,
 					},
 					(request, response) => {
+						if (admissionsClosed || isDraining()) {
+							send(response, 503, messagePage(503), request.method === "HEAD");
+							return;
+						}
 						const active = handler(request, response);
 						activeHandlers.add(active);
 						void active.then(
@@ -1055,6 +1345,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 							Effect.ensuring(
 								Effect.sync(() => {
 									sessions.clear();
+									pendingReconnect = undefined;
 									const rendezvous = resolve(stateRoot, meetingPublicationReviewRendezvousFileName);
 									if (existsSync(rendezvous)) unlinkSync(rendezvous);
 								}),
@@ -1068,9 +1359,13 @@ export class MeetingPublicationReviewServer extends Context.Service<
 				const port = (address as AddressInfo).port;
 				authority = config.reviewHost === "::1" ? `[::1]:${port}` : `127.0.0.1:${port}`;
 				origin = `http://${authority}`;
-				if (port !== 0) publishRendezvous(stateRoot, origin, port);
+				if (port !== 0 && !isDraining()) publishRendezvous(stateRoot, origin, port);
 				return MeetingPublicationReviewServer.of({
 					address: new MeetingPublicationReviewAddress({ host: config.reviewHost, port, origin }),
+					drain: Effect.promise(async () => {
+						admissionsClosed = true;
+						await Promise.allSettled(activeHandlers);
+					}),
 				});
 			}),
 		);

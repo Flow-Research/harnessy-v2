@@ -12,6 +12,7 @@ import {
 	realpathSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
 
@@ -45,6 +46,7 @@ export const MEETING_PUBLICATION_SMOKE_OPERATIONS = [
 	"store_publish",
 ] as const;
 export const MEETING_PUBLICATION_WORKER_OPERATIONS = [
+	"store_auth_resume",
 	"store_open",
 	"store_migrate",
 	"service_worker",
@@ -61,6 +63,7 @@ export const MEETING_PUBLICATION_WORKER_OPERATIONS = [
 ] as const;
 export const MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS = [
 	...MEETING_PUBLICATION_WORKER_OPERATIONS,
+	"provider_google_reconnect",
 	"source_update",
 	"store_approve",
 	"store_reject",
@@ -560,42 +563,45 @@ const sameFile = (left: BigIntStats, right: BigIntStats) =>
 	left.size === right.size &&
 	left.mtimeNs === right.mtimeNs &&
 	left.ctimeNs === right.ctimeNs;
-const directoryChain = (path: string, uid: bigint) => {
+const directoryChain = (path: string, uid: bigint, inventoryDirectories?: Map<string, BigIntStats>) => {
 	const paths = [path];
 	for (let parent = dirname(path); parent !== paths[0]; parent = dirname(parent)) paths.unshift(parent);
 	const entries: Array<readonly [string, BigIntStats]> = [];
 	let sharedParent = false;
 	for (const current of paths) {
-		const stat = lstatSync(current, { bigint: true });
+		const known = inventoryDirectories?.get(current);
+		const stat = known ?? lstatSync(current, { bigint: true });
 		const mode = stat.mode & 0o7777n;
 		const shared = current !== path && stat.uid === 0n && mode === 0o1777n;
 		if (
 			!stat.isDirectory() ||
-			realpathSync(current) !== current ||
+			(known === undefined && realpathSync(current) !== current) ||
 			(stat.uid !== uid && stat.uid !== 0n) ||
 			(sharedParent && stat.uid !== uid) ||
 			(!shared && (mode & 0o7022n) !== 0n)
 		)
 			fail("unsafe_input");
 		entries.push([current, stat]);
+		inventoryDirectories?.set(current, stat);
 		sharedParent = shared;
 	}
 	return entries;
 };
 
 /** @internal Shared read-only filesystem binding check; grants no write authority. */
-export const meetingPublicationDirectoryChain = directoryChain;
+export const meetingPublicationDirectoryChain = (path: string, uid: bigint) => directoryChain(path, uid);
 
-export const readStableMeetingPublicationSmokeFile = (
+const readStableFile = (
 	path: string,
 	uid: bigint,
 	role: "private" | "artifact",
 	maximumBytes = MAX_INPUT_BYTES,
+	inventoryDirectories?: Map<string, BigIntStats>,
 ) => {
 	const result = Result.try({
 		try: () => {
 			if (!absolutePath(path)) fail("unsafe_input");
-			const parents = directoryChain(dirname(path), uid);
+			const parents = directoryChain(dirname(path), uid, inventoryDirectories);
 			const before = lstatSync(path, { bigint: true });
 			const mode = before.mode & 0o7777n;
 			if (
@@ -626,7 +632,7 @@ export const readStableMeetingPublicationSmokeFile = (
 					realpathSync(path) !== path
 				)
 					fail("unsafe_input");
-				for (const [parent, stat] of parents) {
+				for (const [parent, stat] of inventoryDirectories === undefined ? parents : []) {
 					if (!sameIdentity(stat, lstatSync(parent, { bigint: true })) || realpathSync(parent) !== parent)
 						fail("unsafe_input");
 				}
@@ -645,6 +651,13 @@ export const readStableMeetingPublicationSmokeFile = (
 	if (result.failure instanceof MeetingPublicationSmokeRuntimeError) throw result.failure;
 	return fail("unsafe_input");
 };
+
+export const readStableMeetingPublicationSmokeFile = (
+	path: string,
+	uid: bigint,
+	role: "private" | "artifact",
+	maximumBytes = MAX_INPUT_BYTES,
+) => readStableFile(path, uid, role, maximumBytes);
 
 const decodeUtf8 = (bytes: Uint8Array) => {
 	const decoded = Result.try({
@@ -779,34 +792,39 @@ const validateWorkerPayload = (
 		fail("invalid_input");
 };
 
-const enumerateRoot = (root: string, uid: bigint) => {
+function* enumerateRoot(
+	root: string,
+	uid: bigint,
+	inventoryDirectories: Map<string, BigIntStats>,
+): Generator<void, Array<string>> {
 	if (!absolutePath(root)) fail("artifact_drift");
-	directoryChain(root, uid);
 	const files: Array<string> = [];
-	const visit = (directory: string) => {
+	function* visit(directory: string): Generator<void> {
+		directoryChain(directory, uid, inventoryDirectories);
 		for (const name of readdirSync(directory).sort()) {
 			const path = join(directory, name);
 			const stat = lstatSync(path, { bigint: true });
 			if (stat.isSymbolicLink() || realpathSync(path) !== path || (stat.mode & 0o0022n) !== 0n)
 				fail("artifact_drift");
-			if (stat.isDirectory()) visit(path);
+			if (stat.isDirectory()) yield* visit(path);
 			else if (stat.isFile()) files.push(path);
 			else fail("artifact_drift");
 			if (files.length > MAX_ARTIFACT_FILES) fail("artifact_drift");
+			yield;
 		}
-	};
-	visit(root);
+	}
+	yield* visit(root);
 	return files;
-};
+}
 const within = (root: string, path: string) => {
 	const value = relative(root, path);
 	return value === "" || (!isAbsolute(value) && value !== ".." && !value.startsWith(`..${sep}`));
 };
-const validateArtifactInventory = (
+function* artifactInventorySteps(
 	manifest: ArtifactManifest,
 	uid: bigint,
 	kind: "smoke" | "review" | "worker" | "full_review" = "smoke",
-) => {
+): Generator<void> {
 	if (
 		!absolutePath(manifest.root) ||
 		!exactValues(
@@ -815,7 +833,10 @@ const validateArtifactInventory = (
 		)
 	)
 		fail("artifact_drift");
-	const actual = enumerateRoot(manifest.root, uid).sort();
+	// This snapshot belongs to one complete validation only. Every file is still
+	// opened, checked and hashed; ancestors are checked once and rechecked below.
+	const directories = new Map<string, BigIntStats>();
+	const actual = (yield* enumerateRoot(manifest.root, uid, directories)).sort();
 	const declared = manifest.files.map((file) => file.path);
 	if (
 		new Set(declared).size !== declared.length ||
@@ -830,13 +851,40 @@ const validateArtifactInventory = (
 	)
 		fail("artifact_drift");
 	let totalBytes = 0;
+	const files = new Map<string, BigIntStats>();
 	for (const file of manifest.files) {
-		const checked = checkedFile(file, uid, "artifact", MAX_ARTIFACT_BYTES);
-		totalBytes += checked.file.bytes.length;
-		if (totalBytes > MAX_ARTIFACT_BYTES || !checked.matches) fail("artifact_drift");
+		const checked = readStableFile(file.path, uid, "artifact", MAX_ARTIFACT_BYTES, directories);
+		totalBytes += checked.bytes.length;
+		if (totalBytes > MAX_ARTIFACT_BYTES || sha256MeetingPublicationSmokeBytes(checked.bytes) !== file.sha256)
+			fail("artifact_drift");
+		files.set(file.path, checked.stat);
+		// No file descriptor or database transaction survives this checkpoint.
+		yield;
+	}
+	for (const [path, before] of files) {
+		if (!sameFile(before, lstatSync(path, { bigint: true })) || realpathSync(path) !== path) fail("artifact_drift");
+	}
+	for (const [path, before] of directories) {
+		const after = lstatSync(path, { bigint: true });
+		if (
+			!(within(manifest.root, path) ? sameFile(before, after) : sameIdentity(before, after)) ||
+			realpathSync(path) !== path
+		)
+			fail("artifact_drift");
 	}
 	const coreAnchor = realpathSync(fileURLToPath(import.meta.url));
 	if (manifest.anchors[0]?.role !== "core" || manifest.anchors[0].path !== coreAnchor) fail("artifact_drift");
+}
+
+const validateArtifactInventory = (
+	manifest: ArtifactManifest,
+	uid: bigint,
+	kind: "smoke" | "review" | "worker" | "full_review" = "smoke",
+) => {
+	const steps = artifactInventorySteps(manifest, uid, kind);
+	while (!steps.next().done) {
+		// Startup has no listening browser server; use the identical checks synchronously.
+	}
 };
 
 const readSignedAuthorization = <
@@ -1213,6 +1261,14 @@ const verifyMeetingPublicationWorkerLikeInput = <
 				: Object.freeze({
 						kind: payload.notifier.kind,
 						executable: Object.freeze({ ...payload.notifier.executable }),
+						...(payload.notifier.reviewOpen === undefined
+							? {}
+							: {
+									reviewOpen: Object.freeze({
+										executable: Object.freeze({ ...payload.notifier.reviewOpen.executable }),
+										statePath: payload.notifier.reviewOpen.statePath,
+									}),
+								}),
 					}),
 		transport: Object.freeze({ ...payload.transport }),
 	});
@@ -1515,6 +1571,23 @@ export const assertMeetingPublicationSmokeArtifactInventoryCurrent = (
 	verified: VerifiedMeetingPublicationRuntimeInput,
 	observation: MeetingPublicationSmokeRuntimeObservation,
 ) => validateArtifactInventory(verified.artifactManifest, observation.uid, verified.kind);
+
+/** @internal Same complete inventory proof, allowing the review server to service I/O between checks. */
+export const assertMeetingPublicationArtifactInventoryCurrentAsync = async (
+	verified: VerifiedMeetingPublicationRuntimeInput,
+	observation: MeetingPublicationSmokeRuntimeObservation,
+	signal?: AbortSignal,
+) => {
+	await yieldToEventLoop(undefined, { signal });
+	let deadline = performance.now() + 8;
+	for (const _step of artifactInventorySteps(verified.artifactManifest, observation.uid, verified.kind)) {
+		signal?.throwIfAborted();
+		if (performance.now() >= deadline) {
+			await yieldToEventLoop(undefined, { signal });
+			deadline = performance.now() + 8;
+		}
+	}
+};
 
 /** @internal Exact signed anchors expected from the acquired provider implementation. */
 export const meetingPublicationSmokeArtifactAnchors = (

@@ -9,7 +9,12 @@ import {
 } from "@harnessy/core/meeting-publication";
 import { Effect, Layer, Schema } from "effect";
 
-import { type EngineOwner, engineToolAddress, type HarnessyEngineHandle } from "../engine/compose.ts";
+import {
+	EngineMeetingReconnectError,
+	type EngineOwner,
+	engineToolAddress,
+	type HarnessyEngineHandle,
+} from "../engine/compose.ts";
 import {
 	DISCORD_MEETING_INTEGRATION,
 	DISCORD_MEETING_PREFLIGHT_TOOL,
@@ -72,16 +77,21 @@ const providerErrorFromToolFailure = (
 		retryAfterSeconds: safeRetryAfter(error),
 	});
 
-const providerErrorFromEngine = (stage: "google" | "discord", error: unknown): MeetingPublicationProviderError => {
+export const providerErrorFromEngine = (
+	stage: "google" | "discord",
+	error: unknown,
+): MeetingPublicationProviderError => {
 	const tag = isRecord(error) && typeof error._tag === "string" ? error._tag : "";
 	const code =
 		tag === "ToolBlockedError" || tag === "ElicitationDeclinedError" || tag === "EngineMeetingApprovalRejected"
 			? "policy_denied"
-			: tag === "ConnectionNotFoundError" ||
-					tag === "CredentialProviderNotRegisteredError" ||
-					tag === "CredentialResolutionError"
-				? "missing_credential"
-				: "engine_unavailable";
+			: tag === "CredentialResolutionError" && isRecord(error) && error.reauthRequired === true
+				? "reauth_required"
+				: tag === "CredentialResolutionError" || tag === "CredentialProviderNotRegisteredError"
+					? "credential_store_failed"
+					: tag === "ConnectionNotFoundError"
+						? "missing_credential"
+						: "engine_unavailable";
 	return new MeetingPublicationProviderError({
 		stage,
 		code,
@@ -142,6 +152,17 @@ const executeApproved = <S extends Schema.Top & { readonly DecodingServices: nev
 	handle.executeApprovedMeetingMutation(address, args, approval).pipe(
 		Effect.mapError((error) => providerErrorFromEngine(stage, error)),
 		Effect.flatMap((result) => decodeToolResult(stage, result, schema)),
+		// At this boundary an unknown Engine/result failure cannot prove no write occurred.
+		Effect.mapError((error) =>
+			["engine_unavailable", "invalid_provider_result", "provider_internal"].includes(error.code)
+				? new MeetingPublicationProviderError({
+						stage,
+						code: "delivery_uncertain",
+						retryable: false,
+						retryAfterSeconds: null,
+					})
+				: error,
+		),
 	);
 
 export interface EngineMeetingGoogleBinding {
@@ -160,6 +181,28 @@ export interface EngineMeetingDiscordBinding {
 }
 
 const BooleanResult = Schema.Boolean;
+const configuredConnection = (
+	handle: HarnessyEngineHandle,
+	stage: "google" | "discord",
+	owner: EngineOwner,
+	integration: string,
+	connection: string,
+) =>
+	Effect.suspend(() => handle.connections.list({ owner, integration })).pipe(
+		Effect.mapError((error) => providerErrorFromEngine(stage, error)),
+		Effect.flatMap((connections) =>
+			connections.some((entry) => entry.name === connection)
+				? Effect.void
+				: Effect.fail(
+						new MeetingPublicationProviderError({
+							stage,
+							code: "missing_credential",
+							retryable: false,
+							retryAfterSeconds: null,
+						}),
+					),
+		),
+	);
 const GoogleCheckpoint = Schema.Struct({ docId: Schema.String, docUrl: Schema.String });
 const DiscordCheckpoint = Schema.Struct({ channelId: Schema.String, messageId: Schema.String });
 
@@ -177,12 +220,57 @@ export const engineMeetingPublicationGoogleLayer = (
 	return Layer.succeed(
 		MeetingPublicationGoogle,
 		MeetingPublicationGoogle.of({
-			preflight: execute(
+			startReconnect: (redirectUri, grant) => {
+				const safeFailure = (error: unknown) =>
+					new MeetingPublicationProviderError({
+						stage: "google",
+						code: error instanceof EngineMeetingReconnectError ? error.code : "invalid_grant",
+						retryable: false,
+						retryAfterSeconds: null,
+					});
+				const authorize = (current: MeetingPublicationWriteGrant) =>
+					validateMeetingPublicationWriteGrant(current, "provider_google_reconnect").pipe(
+						Effect.asVoid,
+						Effect.mapError(safeFailure),
+					);
+				return binding.handle.connections
+					.startGoogleMeetingReconnect(
+						{
+							owner: binding.owner,
+							name: binding.connection,
+							expectedOwnerEmail: binding.expectedOwnerEmail,
+							redirectUri,
+						},
+						authorize(grant),
+					)
+					.pipe(
+						Effect.mapError(safeFailure),
+						Effect.map((session) => ({
+							state: session.state,
+							authorizationUrl: session.authorizationUrl,
+							complete: (code: string, freshGrant: MeetingPublicationWriteGrant) =>
+								session.complete(code, authorize(freshGrant)).pipe(Effect.mapError(safeFailure)),
+							cancel: (freshGrant: MeetingPublicationWriteGrant) =>
+								session.cancel(authorize(freshGrant)).pipe(Effect.mapError(safeFailure)),
+						})),
+					);
+			},
+			preflight: configuredConnection(
 				binding.handle,
 				"google",
-				address(GOOGLE_MEETING_PREFLIGHT_TOOL),
-				{ expectedOwnerEmail: binding.expectedOwnerEmail },
-				BooleanResult,
+				binding.owner,
+				GOOGLE_MEETING_INTEGRATION,
+				binding.connection,
+			).pipe(
+				Effect.andThen(
+					execute(
+						binding.handle,
+						"google",
+						address(GOOGLE_MEETING_PREFLIGHT_TOOL),
+						{ expectedOwnerEmail: binding.expectedOwnerEmail },
+						BooleanResult,
+					),
+				),
 			),
 			upsert: (request, grant) => {
 				const guard = requireProviderGrant(grant, "provider_google", "google", {
@@ -230,12 +318,22 @@ export const engineMeetingPublicationDiscordLayer = (
 	return Layer.succeed(
 		MeetingPublicationDiscord,
 		MeetingPublicationDiscord.of({
-			preflight: execute(
+			preflight: configuredConnection(
 				binding.handle,
 				"discord",
-				address(DISCORD_MEETING_PREFLIGHT_TOOL),
-				{ expectedChannelId: binding.expectedChannelId },
-				BooleanResult,
+				binding.owner,
+				DISCORD_MEETING_INTEGRATION,
+				binding.connection,
+			).pipe(
+				Effect.andThen(
+					execute(
+						binding.handle,
+						"discord",
+						address(DISCORD_MEETING_PREFLIGHT_TOOL),
+						{ expectedChannelId: binding.expectedChannelId },
+						BooleanResult,
+					),
+				),
 			),
 			upsert: (request, grant) => {
 				const guard = requireProviderGrant(grant, "provider_discord", "discord", {
