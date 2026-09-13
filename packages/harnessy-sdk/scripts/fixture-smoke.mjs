@@ -308,6 +308,7 @@ assert.deepEqual(Object.keys(HarnessySdk).sort(), [
   "EngineConnection",
   "EngineHealth",
   "EngineIntegration",
+  "EngineMeetingReconnectError",
   "EngineOwner",
   "EnginePolicyDecision",
   "EngineTool",
@@ -317,10 +318,13 @@ assert.deepEqual(Object.keys(HarnessySdk).sort(), [
   "mapUnknownEngineError",
 ]);
 assert.deepEqual(Object.keys(HarnessyNodeSdk).sort(), [
+  "MeetingPublicationSetupError",
   "engineMeetingPublicationDiscordLayer",
   "engineMeetingPublicationGoogleLayer",
   "localMeetingPublicationNotifierLayer",
   "makeHarnessyEngine",
+  "openMeetingPublicationGoogleSetup",
+  "openMeetingPublicationSetup",
 ]);
 
 const requests = [];
