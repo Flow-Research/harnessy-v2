@@ -1025,8 +1025,18 @@ describe("meeting publication authorized full-review runtime", () => {
 			expect(callback.body).not.toContain(csrf);
 			expect(callback.body).not.toContain("synthetic-consent-code");
 			expect(provider.calls.reconnectCompleted).toBe(0);
-			const finished = await post(origin, cookie, "/google-reconnect/complete", { csrf });
-			expect(finished.status).toBe(outcome === "verified" ? 200 : 500);
+			// Revocation may close the owner before its HTTP error response is flushed.
+			const finished = await post(origin, cookie, "/google-reconnect/complete", { csrf }).catch((error: unknown) => {
+				if (outcome === "verified") throw error;
+				expect(error).toMatchObject({ code: "ECONNRESET" });
+				return null;
+			});
+			if (finished !== null) expect(finished.status).toBe(outcome === "verified" ? 200 : 500);
+			if (outcome !== "verified") {
+				const exit = await settleWithin(Effect.runPromise(Fiber.await(running.fiber)));
+				expect(Exit.isFailure(exit)).toBe(true);
+				if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toMatchObject({ code: "revoked" });
+			}
 			expect(provider.calls.reconnectCompleted).toBe(outcome === "verified" ? 1 : 0);
 			expect(stateRow(fixture)).toEqual(before);
 			expect(provider.calls.google).toEqual([]);
