@@ -280,6 +280,19 @@ export const executeMeetingJson = <S extends Schema.Top & { readonly DecodingSer
 				failure("network_error", { retryable: true, retryAfterSeconds: 60 }),
 			),
 		),
+		Effect.mapError((error) =>
+			input.method !== "GET" &&
+			[
+				"network_error",
+				"timeout",
+				"request_timeout",
+				"provider_unavailable",
+				"invalid_response",
+				"response_too_large",
+			].includes(error.code)
+				? failure("delivery_uncertain")
+				: error,
+		),
 	);
 };
 

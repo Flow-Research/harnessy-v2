@@ -15,7 +15,10 @@ export {
 	MeetingPublicationInspectorError,
 	MeetingPublicationStateInspection,
 } from "./jarvis/meeting-publication/inspector.ts";
-export { MeetingPublicationProviderError } from "./jarvis/meeting-publication/models.ts";
+export {
+	type MeetingPublicationFailureStage,
+	MeetingPublicationProviderError,
+} from "./jarvis/meeting-publication/models.ts";
 export type {
 	MeetingPublicationFullReviewRuntimeInput,
 	MeetingPublicationReviewArtifactAnchors,
@@ -30,6 +33,8 @@ export type {
 export {
 	MeetingPublicationSmokeRuntimeError,
 	MeetingPublicationSmokeRuntimeErrorCode,
+	meetingPublicationDirectoryChain,
+	readStableMeetingPublicationSmokeFile,
 } from "./jarvis/meeting-publication/operational-input.ts";
 export type {
 	MeetingPublicationReviewRuntimeHost,
@@ -42,9 +47,11 @@ export {
 	runAuthorizedMeetingPublicationSmoke,
 	runAuthorizedMeetingPublicationWorker,
 } from "./jarvis/meeting-publication/operational-runtime.ts";
+export type { MeetingProviderHealth } from "./jarvis/meeting-publication/provider-health.ts";
 export { meetingPublicationReviewRendezvousFileName } from "./jarvis/meeting-publication/review.ts";
 export type {
 	MeetingPublicationDiscordRequest,
+	MeetingPublicationGoogleReconnect,
 	MeetingPublicationGoogleRequest,
 } from "./jarvis/meeting-publication/service.ts";
 export {

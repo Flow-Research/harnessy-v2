@@ -38,6 +38,7 @@ import { makeKeychainProvider } from "@executor-js/plugin-keychain";
 import { createSqliteFumaDb } from "./sqlite-fumadb";
 import embeddedLegacyMigrations from "./embedded-migrations.gen";
 import { executeSql, openLocalLibsql, queryFirst, queryRows } from "./libsql";
+import { LOCAL_V1_V2_LEDGER_NAME } from "./local-migration-name";
 
 type Row = Record<string, unknown>;
 
@@ -171,7 +172,7 @@ const isLocalV1Database = async (client: Client): Promise<boolean> => {
 // probing — the stamp row, not the data shape, is the source of truth.
 // ---------------------------------------------------------------------------
 
-export const LOCAL_V1_V2_LEDGER_NAME = "2026-06-11-local-v1-to-v2";
+export { LOCAL_V1_V2_LEDGER_NAME } from "./local-migration-name";
 
 const hasV1GateStamp = async (client: Client): Promise<boolean> => {
   if (!(await tableExists(client, "data_migration"))) return false;

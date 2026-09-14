@@ -14,6 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -32,6 +33,7 @@ import {
 } from "../src/jarvis/meeting-publication/operational-input.ts";
 import {
 	type MeetingPublicationSmokeProviderFactory,
+	MeetingPublicationSmokeRuntimeSystemReference,
 	runAuthorizedMeetingPublicationSmoke,
 } from "../src/jarvis/meeting-publication/operational-runtime.ts";
 import {
@@ -402,6 +404,157 @@ describe("meeting publication operational smoke runtime", () => {
 		expect(provider.calls.discord).toBe(0);
 	});
 
+	it.each(["inventory-expiry", "writer-expiry", "writer-revocation", "writer-claim-expiry"] as const)(
+		"rechecks current authority after %s before issuing a provider grant",
+		async (boundary) => {
+			const fixture = await setup();
+			let armed = false;
+			let changed = false;
+			const change = () => {
+				changed = true;
+				if (boundary === "writer-revocation") {
+					const replay = new DatabaseSync(fixture.authorization.replayPath, { allowExtension: false });
+					try {
+						replay.exec("BEGIN IMMEDIATE;");
+						replay
+							.prepare(
+								"INSERT INTO revocations (sequence,subject_type,subject_id,created_at) VALUES (1,'authorization',?,?)",
+							)
+							.run(fixture.authorization.payload.authorizationId, new Date().toISOString());
+						replay.exec("UPDATE runtime_metadata SET revocation_sequence=1 WHERE singleton=1; COMMIT;");
+					} finally {
+						replay.close();
+					}
+				} else fixture.authorization.advanceTimeBy(boundary === "writer-claim-expiry" ? 120_000 : 360_000);
+			};
+			const system = {
+				observe: () => {
+					const observation = fixture.authorization.system.observe();
+					// Return the old timestamp, then advance the clock as though the
+					// following synchronous artifact scan consumed the remaining window.
+					if (armed && !changed && boundary === "inventory-expiry") change();
+					return observation;
+				},
+				proveNoKnownV1Writers: () => {
+					fixture.authorization.system.proveNoKnownV1Writers();
+					if (armed && !changed && boundary !== "inventory-expiry") change();
+				},
+			};
+			const provider = providers(fixture, {
+				beforeGoogleMutation: () =>
+					Effect.sync(() => {
+						armed = true;
+					}),
+			});
+			const result = await Effect.runPromise(
+				runAuthorizedMeetingPublicationSmoke(fixture.authorization.input, provider.factory).pipe(
+					Effect.provideService(MeetingPublicationSmokeRuntimeSystemReference, system),
+					Effect.result,
+				),
+			);
+			expect(changed).toBe(true);
+			expect(result).toMatchObject({ _tag: "Failure", failure: { code: "publication_failed" } });
+			expect(provider.calls).toEqual({ setup: 1, google: 0, discord: 0 });
+			expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
+		},
+	);
+
+	it.each(["expiry", "revocation", "revision", "cancellation"] as const)(
+		"rejects provider mutation after %s while artifact validation yields",
+		async (change) => {
+			const fixture = await setup();
+			const controller = new AbortController();
+			let armed = false;
+			let scheduled = false;
+			let changed = false;
+			const system = {
+				...fixture.authorization.system,
+				observe: () => {
+					const observation = fixture.authorization.system.observe();
+					if (armed && !scheduled) {
+						scheduled = true;
+						setImmediate(() => {
+							changed = true;
+							if (change === "cancellation") controller.abort();
+							else if (change === "expiry") fixture.authorization.advanceTimeBy(360_000);
+							else {
+								const database = new DatabaseSync(
+									change === "revocation"
+										? fixture.authorization.replayPath
+										: join(fixture.config.statePath as string, "meeting-publication.sqlite3"),
+									{ allowExtension: false },
+								);
+								try {
+									if (change === "revocation") {
+										database.exec("BEGIN IMMEDIATE;");
+										database
+											.prepare(
+												"INSERT INTO revocations (sequence,subject_type,subject_id,created_at) VALUES (1,'authorization',?,?)",
+											)
+											.run(fixture.authorization.payload.authorizationId, new Date().toISOString());
+										database.exec(
+											"UPDATE runtime_metadata SET revocation_sequence=1 WHERE singleton=1; COMMIT;",
+										);
+									} else
+										database
+											.prepare("UPDATE publication_items SET source_hash=? WHERE item_id=?")
+											.run("0".repeat(64), fixture.item.itemId);
+								} finally {
+									database.close();
+								}
+							}
+						});
+					}
+					return observation;
+				},
+			};
+			const provider = providers(fixture, {
+				beforeGoogleMutation: () =>
+					Effect.sync(() => {
+						armed = true;
+					}),
+			});
+			const result = await Effect.runPromiseExit(
+				runAuthorizedMeetingPublicationSmoke(fixture.authorization.input, provider.factory).pipe(
+					Effect.provideService(MeetingPublicationSmokeRuntimeSystemReference, system),
+				),
+				{ signal: controller.signal },
+			);
+			expect(changed).toBe(true);
+			expect(result._tag).toBe("Failure");
+			if (change === "cancellation" && result._tag === "Failure")
+				expect(Cause.hasInterruptsOnly(result.cause)).toBe(true);
+			expect(provider.calls).toEqual({ setup: 1, google: 0, discord: 0 });
+			expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
+		},
+	);
+
+	it("keeps simultaneous validations of one authentic grant independent", async () => {
+		const fixture = await setup();
+		let completed = 0;
+		const provider = providers(fixture, {
+			beforeGoogleMutation: (grant) =>
+				Effect.all(
+					[0, 1].map(() =>
+						validateMeetingPublicationWriteGrant(grant, "provider_google", fixture.item).pipe(
+							Effect.orDie,
+							Effect.tap(() =>
+								Effect.sync(() => {
+									completed += 1;
+								}),
+							),
+						),
+					),
+					{ concurrency: "unbounded" },
+				).pipe(Effect.asVoid),
+		});
+		const result = await run(fixture, provider.factory);
+		expect(completed).toBe(2);
+		expect(result.status).toBe("published");
+		expect(provider.calls).toEqual({ setup: 1, google: 1, discord: 1 });
+		expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
+	});
+
 	it("rejects the provider mutation when the replay lease is removed", async () => {
 		const fixture = await setup();
 		const provider = providers(fixture, {
@@ -504,11 +657,12 @@ describe("meeting publication operational smoke runtime", () => {
 		expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
 	});
 
-	it("recovers the exact checkpointed revision after its workflow lease expires", async () => {
+	it("preserves an expired checkpoint for reconciliation without resuming delivery", async () => {
 		const fixture = await setup();
 		const state = new DatabaseSync(join(fixture.config.statePath ?? "", "meeting-publication.sqlite3"), {
 			allowExtension: false,
 		});
+		let checkpoint: unknown;
 		try {
 			state
 				.prepare(
@@ -521,24 +675,30 @@ describe("meeting publication operational smoke runtime", () => {
 					fixture.item.sourceHash,
 					fixture.item.itemId,
 				);
+			checkpoint = state.prepare("SELECT * FROM publication_items WHERE item_id=?").get(fixture.item.itemId);
 		} finally {
 			state.close();
 		}
 		fixture.authorization.rebindStateDatabaseAndResign();
 		const provider = providers(fixture);
-		const result = await run(fixture, provider.factory);
+		const result = await Effect.runPromise(
+			fixture.authorization
+				.withSystem(runAuthorizedMeetingPublicationSmoke(fixture.authorization.input, provider.factory))
+				.pipe(Effect.result),
+		);
 
-		expect(result.status).toBe("published");
+		expect(result._tag).toBe("Failure");
+		if (result._tag === "Failure") expect(result.failure.code).toBe("publication_failed");
 		expect(provider.calls.google).toBe(0);
-		expect(provider.calls.discord).toBe(1);
+		expect(provider.calls.discord).toBe(0);
 		const current = new DatabaseSync(join(fixture.config.statePath ?? "", "meeting-publication.sqlite3"), {
 			readOnly: true,
 			allowExtension: false,
 		});
 		try {
-			expect(
-				current.prepare("SELECT status,attempts FROM publication_items WHERE item_id=?").get(fixture.item.itemId),
-			).toMatchObject({ status: "published", attempts: 2 });
+			expect(current.prepare("SELECT * FROM publication_items WHERE item_id=?").get(fixture.item.itemId)).toEqual(
+				checkpoint,
+			);
 		} finally {
 			current.close();
 		}

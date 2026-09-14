@@ -148,7 +148,7 @@ describe("MeetingPublicationStore claim fencing", () => {
 		expect(result.second).toEqual(result.claimed);
 	});
 
-	it("rejects every expired owner mutation after reclaim and accepts the exact current claim", async () => {
+	it("rejects every old owner mutation after a known failed attempt and accepts the exact current claim", async () => {
 		const root = makeRoot();
 		const config = makeConfig(root);
 		const result = await runStore(
@@ -159,9 +159,17 @@ describe("MeetingPublicationStore claim fencing", () => {
 				const first = yield* store.claim("2026-09-04T12:00:02.000Z", "2026-09-04T12:01:02.000Z");
 				if (first === null) return yield* Effect.die("missing first claim");
 
+				// A provider-confirmed retryable failure is eligible again; expiry alone is not.
+				yield* store.markFailure(
+					first,
+					"google",
+					"rate_limited",
+					"2026-09-04T12:01:02.000Z",
+					"2026-09-04T12:00:03.000Z",
+				);
 				const expired = yield* Effect.result(store.getClaim(first, "2026-09-04T12:01:02.000Z"));
 				const second = yield* store.claim("2026-09-04T12:01:02.000Z", "2026-09-04T12:02:02.000Z");
-				if (second === null) return yield* Effect.die("missing reclaimed claim");
+				if (second === null) return yield* Effect.die("missing retry claim");
 				const sameTimestampsOldAttempt = new MeetingPublicationItem({
 					...first,
 					leaseUntil: second.leaseUntil,
@@ -235,6 +243,8 @@ describe("MeetingPublicationStore claim fencing", () => {
 				const first = yield* store.claim("2026-09-04T12:00:02.000Z", "2026-09-04T12:01:02.000Z");
 				if (first === null) return yield* Effect.die("missing first claim");
 				const changed = note(root, "2".repeat(64));
+				// The current claimant establishes no provider was called before source refresh.
+				yield* store.markFailure(first, "source", "source_changed", null, "2026-09-04T12:00:03.000Z");
 				yield* store.upsert(changed, "2026-09-04T12:00:03.000Z");
 				yield* store.approve(changed.itemId, changed.sourceHash, null, "2026-09-04T12:00:04.000Z");
 				const second = yield* store.claim("2026-09-04T12:00:05.000Z", "2026-09-04T12:01:05.000Z");

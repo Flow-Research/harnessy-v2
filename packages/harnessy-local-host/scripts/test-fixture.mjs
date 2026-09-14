@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fixtureEnvironment } from "../test/support/fixture-environment.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "../..");
@@ -15,6 +16,7 @@ const run = (command, args, options = {}) => {
 		encoding: options.encoding ?? "utf8",
 		stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
 		maxBuffer: 64 * 1024 * 1024,
+		env: fixtureEnvironment(),
 	});
 	if (result.status !== 0) {
 		const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -57,6 +59,7 @@ const before = snapshot();
 assertNoCoreSourceEmit();
 let executionError;
 try {
+	run(process.execPath, ["--test", join(packageRoot, "test", "fixture-isolation-check.mjs")]);
 	run(npmCommand, ["exec", "--", "tsgo", "-p", "packages/harnessy-core/tsconfig.build.json"]);
 	run(npmCommand, ["run", "build", "--workspace", "@harnessy/sdk"]);
 	run(npmCommand, ["run", "build"], { cwd: packageRoot });

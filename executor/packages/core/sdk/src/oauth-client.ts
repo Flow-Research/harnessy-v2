@@ -281,6 +281,8 @@ export interface OAuthService {
   ) => Effect.Effect<ConnectResult, OAuthStartError | StorageFailure>;
   readonly complete: (
     input: OAuthCompleteInput,
+    /** Host-only admission check after token parsing, before credential writes. Never an HTTP payload. */
+    options?: { readonly beforeCommit: Effect.Effect<void, OAuthCompleteError> },
   ) => Effect.Effect<Connection, OAuthCompleteError | OAuthSessionNotFoundError | StorageFailure>;
   readonly cancel: (state: OAuthState) => Effect.Effect<void, StorageFailure>;
   readonly probe: (

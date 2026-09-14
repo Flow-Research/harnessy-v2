@@ -2,7 +2,17 @@ import type { DatabaseSync } from "node:sqlite";
 
 import * as Result from "effect/Result";
 
-export const MEETING_PUBLICATION_STORE_SCHEMA_VERSION = 3;
+export const MEETING_PUBLICATION_STORE_SCHEMA_VERSION = 4;
+export const MEETING_PUBLICATION_HEALTH_TABLE_SQL = `CREATE TABLE provider_health (
+provider TEXT PRIMARY KEY CHECK(provider IN ('google','discord')),
+account TEXT NOT NULL,
+failure TEXT CHECK(failure IS NULL OR failure IN ('authentication','identity','credential_store','permission','transient','other')),
+checked_at TEXT NOT NULL,
+last_success_at TEXT,
+incident_at TEXT,
+notified_at TEXT,
+recovery_pending INTEGER NOT NULL CHECK(recovery_pending IN (0,1))
+) STRICT`;
 const columnDefinitions = [
 	["item_id", "TEXT PRIMARY KEY", 1],
 	["note_path", "TEXT NOT NULL UNIQUE", 1],
@@ -52,7 +62,8 @@ export const MEETING_PUBLICATION_STORE_STATUS_INDEX_SQL =
 	"CREATE INDEX publication_status_idx ON publication_items(status, next_attempt_at, meeting_date)";
 export const MEETING_PUBLICATION_STORE_SCHEMA_SQL = `${MEETING_PUBLICATION_STORE_TABLE_SQL};
 ${MEETING_PUBLICATION_STORE_STATUS_INDEX_SQL};
-PRAGMA user_version = 3;
+${MEETING_PUBLICATION_HEALTH_TABLE_SQL};
+PRAGMA user_version = 4;
 `;
 
 export class MeetingPublicationStoreSchemaContractError extends Error {
@@ -130,9 +141,24 @@ export const validateMeetingPublicationStoreSchema = (
 			if (version > MEETING_PUBLICATION_STORE_SCHEMA_VERSION) {
 				throw new MeetingPublicationStoreSchemaContractError("schema_newer");
 			}
-			const objects = database
+			const allObjects = database
 				.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name")
 				.all() as Array<SchemaRow>;
+			if (version >= 4) {
+				const healthObjects = allObjects.filter((row) => row.tbl_name === "provider_health");
+				if (
+					healthObjects.length !== 2 ||
+					compactSql(String(healthObjects.find((row) => row.name === "provider_health")?.sql ?? "")) !==
+						compactSql(MEETING_PUBLICATION_HEALTH_TABLE_SQL) ||
+					!healthObjects.some(
+						(row) =>
+							row.name === "sqlite_autoindex_provider_health_1" && row.type === "index" && row.sql === null,
+					)
+				) {
+					throw new MeetingPublicationStoreSchemaContractError("schema_invalid");
+				}
+			}
+			const objects = version >= 4 ? allObjects.filter((row) => row.tbl_name !== "provider_health") : allObjects;
 			if (version === 0) {
 				if (!options.allowUninitialized || objects.length !== 0) {
 					throw new MeetingPublicationStoreSchemaContractError("schema_invalid");

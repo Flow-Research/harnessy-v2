@@ -7,6 +7,85 @@ import { describe, expect, it } from "vitest";
 import { executeMeetingJson, resolveMeetingProviderTransport } from "../src/meeting-publication/transport.ts";
 
 describe("meeting HTTP response lifetime", () => {
+	for (const method of ["GET", "POST", "PATCH"] as const) {
+		it.each([
+			{ kind: "status", status: 401, code: "authentication_failed", retryable: false },
+			{ kind: "status", status: 403, code: "permission_denied", retryable: false },
+			{ kind: "status", status: 429, code: "rate_limited", retryable: true },
+			{ kind: "status", status: 408, code: "request_timeout", retryable: true },
+			{ kind: "status", status: 503, code: "provider_unavailable", retryable: true },
+			{ kind: "invalid", status: 200, code: "invalid_response", retryable: true },
+			{ kind: "oversized", status: 200, code: "response_too_large", retryable: true },
+			{ kind: "disconnect", status: 200, code: "network_error", retryable: true },
+			{ kind: "timeout", status: 200, code: "timeout", retryable: true },
+		])(
+			`${method} classifies $kind/$status without retrying the request`,
+			async ({ kind, status, code, retryable }) => {
+				let requests = 0;
+				const server = createServer((request, response) => {
+					requests += 1;
+					expect(request.method).toBe(method);
+					if (kind === "disconnect") {
+						request.socket.destroy();
+						return;
+					}
+					if (kind === "timeout") return;
+					response.writeHead(status, { "content-type": "application/json", "retry-after": "17" });
+					response.end(
+						kind === "invalid"
+							? "PRIVATE_RESPONSE_CANARY"
+							: kind === "oversized"
+								? "x".repeat(256)
+								: '{"ok":true}',
+					);
+				});
+				await new Promise<void>((resolve, reject) => {
+					server.once("error", reject);
+					server.listen(0, "127.0.0.1", resolve);
+				});
+				try {
+					const address = server.address();
+					if (address === null || typeof address === "string") throw new Error("Fixture did not bind TCP");
+					const origin = `http://127.0.0.1:${address.port}`;
+					const transport = resolveMeetingProviderTransport({
+						kind: "test-loopback",
+						googleDriveBaseUrl: origin,
+						googleDocsBaseUrl: origin,
+						discordBaseUrl: origin,
+						timeoutMillis: 500,
+						maxResponseBytes: 128,
+					});
+					if (transport === null) throw new Error("Fixture transport was rejected");
+					const result = await Effect.runPromise(
+						executeMeetingJson({
+							method,
+							url: origin,
+							token: "FIXTURE_TOKEN",
+							schema: Schema.Struct({ ok: Schema.Boolean }),
+							transport,
+							httpClientLayer: FetchHttpClient.layer,
+						}).pipe(Effect.result),
+					);
+					expect(Result.isFailure(result)).toBe(true);
+					if (Result.isFailure(result)) {
+						const uncertain = method !== "GET" && ![401, 403, 429].includes(status);
+						expect(result.failure.code).toBe(uncertain ? "delivery_uncertain" : code);
+						expect(result.failure.retryable).toBe(uncertain ? false : retryable);
+						if (uncertain) expect(result.failure.retryAfterSeconds).toBeNull();
+						if (status === 429) expect(result.failure.retryAfterSeconds).toBe(17);
+					}
+					expect(JSON.stringify(result)).not.toContain("PRIVATE_RESPONSE_CANARY");
+					expect(JSON.stringify(result)).not.toContain("FIXTURE_TOKEN");
+					expect(requests).toBe(1);
+				} finally {
+					server.closeAllConnections();
+					await new Promise<void>((resolve, reject) =>
+						server.close((error) => (error ? reject(error) : resolve())),
+					);
+				}
+			},
+		);
+	}
 	it.each([
 		{ status: 403, length: undefined, expected: "permission_denied" },
 		{ status: 302, length: undefined, expected: "unsafe_redirect" },

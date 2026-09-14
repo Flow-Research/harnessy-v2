@@ -45,6 +45,7 @@ import { makeWireState, startWireServer } from "../../../harnessy-sdk/test/suppo
 
 const workerAudience = "harnessy.meeting-publication.worker.v1";
 const workerOperations = [
+	"store_auth_resume",
 	"store_open",
 	"store_migrate",
 	"service_worker",
@@ -235,8 +236,9 @@ const provisionEngine = async (origins) => {
 };
 
 const wire = makeWireState();
-const googleServer = await startWireServer(wire);
-const discordServer = await startWireServer(wire);
+// Artifact checks run synchronously in this same process; avoid racing expired pooled test-server sockets.
+const googleServer = await startWireServer(wire, { keepAlive: false });
+const discordServer = await startWireServer(wire, { keepAlive: false });
 try {
 	mkdirSync(join(root, "notes"), { mode: 0o700 });
 	writeFileSync(join(root, "notes", "first.md"), markdown("First Worker Meeting", "2026-09-03", "worker-first"), {
@@ -257,6 +259,11 @@ try {
 	const installedCore = join(installationRoot, "node_modules", "@harnessy", "core");
 	const installedSdk = join(installationRoot, "node_modules", "@harnessy", "sdk");
 	const installedHost = join(installationRoot, "node_modules", "@harnessy", "local-host");
+	const notifierPath = join(root, "capture-notifier.mjs");
+	const notificationArgsPath = join(root, "notification-args.json");
+	const reviewOpenPath = join(installedHost, "dist", "meeting-review-open-cli.js");
+	writeFileSync(notifierPath, `#!${process.execPath}\nimport { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(notificationArgsPath)}, JSON.stringify(process.argv.slice(2)), { mode: 0o600 });\n`, { mode: 0o700 });
+	chmodSync(notifierPath, 0o700);
 
 	const makeAuthorization = (name) => {
 		const privateRoot = join(root, name);
@@ -305,7 +312,11 @@ try {
 			audience: workerAudience,
 			operations: workerOperations,
 			maxItems: 1,
-			notifier: { kind: "unavailable" },
+			notifier: {
+				kind: "terminal-notifier",
+				executable: boundFile(notifierPath),
+				reviewOpen: { executable: boundFile(reviewOpenPath), statePath: config.statePath },
+			},
 		});
 		payload.google.connection = engine.googleConnection;
 		payload.discord.connection = engine.discordConnection;
@@ -354,7 +365,7 @@ try {
 		try {
 			return database
 				.prepare(
-					"SELECT item_id,status,source_hash,approved_hash,google_source_hash,failure_stage,failure_code,next_attempt_at FROM publication_items ORDER BY meeting_date,item_id",
+					"SELECT item_id,status,source_hash,approved_hash,google_doc_id,google_doc_url,google_source_hash,discord_message_id,failure_stage,failure_code,next_attempt_at FROM publication_items ORDER BY meeting_date,item_id",
 				)
 				.all();
 		} finally {
@@ -383,20 +394,26 @@ try {
 		JSON.stringify(replayState(firstAuthorization.replayPath)) !== JSON.stringify({ consumed: 1, leases: 0 })
 	) {
 		throw new Error(
-			`Packed worker did not honor its signed single-item batch: ${JSON.stringify({ command: first, rows: afterFirst })}`,
+			`Packed worker did not honor its signed single-item batch: ${JSON.stringify({ command: first, rows: afterFirst, requests: wire.requests.map(({ method, path }) => ({ method, path })) })}`,
 		);
 	}
 
 	wire.failures.push({
 		method: "POST",
 		path: `/channels/${wire.channelId}/messages`,
-		status: 503,
+		status: 429,
+		headers: { "retry-after": "1" },
 		body: { message: "PACKED_WORKER_FAILURE_BODY_MUST_NOT_ESCAPE" },
 	});
 	const failedAuthorization = makeAuthorization("failed-pass");
 	const failed = await runCommand(failedAuthorization);
 	const afterFailure = publicationRows();
 	const failedRow = afterFailure[1];
+	const notificationArgs = JSON.parse(readFileSync(notificationArgsPath, "utf8"));
+	const executeIndex = notificationArgs.indexOf("-execute");
+	if (executeIndex < 0 || notificationArgs[executeIndex + 1] !== `${JSON.stringify(reviewOpenPath)} --state-path ${JSON.stringify(config.statePath)}`) {
+		throw new Error("Packed worker lost the signed review-open command before notification delivery.");
+	}
 	if (
 		JSON.stringify(failed) !==
 			JSON.stringify({
@@ -424,8 +441,72 @@ try {
 		);
 	}
 
+	// Only an explicit rate limit above permits a retry. Wait for its real,
+	// bounded deadline; do not edit queue state or bypass the installed clock.
+	const retryDelay = Date.parse(failedRow.next_attempt_at) - Date.now();
+	if (!Number.isFinite(retryDelay) || retryDelay > 1_500) {
+		throw new Error("Packed worker did not honor the explicit one-second retry deadline.");
+	}
+	if (retryDelay > 0) await new Promise((resolve) => setTimeout(resolve, retryDelay + 25));
+	const beforeUncertainRequests = wire.requests.length;
+	wire.failures.push({
+		method: "POST",
+		path: `/channels/${wire.channelId}/messages`,
+		status: 503,
+		body: { message: "PACKED_WORKER_FAILURE_BODY_MUST_NOT_ESCAPE" },
+	});
+	const uncertainAuthorization = makeAuthorization("uncertain-pass");
+	const uncertain = await runCommand(uncertainAuthorization);
+	const afterUncertain = publicationRows();
+	const uncertainRow = afterUncertain[1];
+	const expectedOwnerFailure = {
+		exitCode: 1,
+		stream: "stderr",
+		value: { error: "meeting_worker_failed", code: "worker_failed" },
+	};
+	const uncertainRequests = wire.requests.slice(beforeUncertainRequests);
+	const queuePath = join(config.statePath, "meeting-publication.sqlite3");
+	if (
+		JSON.stringify(uncertain) !== JSON.stringify(expectedOwnerFailure) ||
+		uncertainRow?.status !== "blocked" ||
+		uncertainRow.failure_stage !== "discord" ||
+		uncertainRow.failure_code !== `sha256:${sha256("delivery_uncertain").slice(0, 24)}` ||
+		uncertainRow.next_attempt_at !== null ||
+		uncertainRow.approved_hash !== failedRow.approved_hash ||
+		uncertainRow.google_doc_id === null ||
+		uncertainRow.google_doc_id !== failedRow.google_doc_id ||
+		uncertainRow.google_doc_url !== failedRow.google_doc_url ||
+		uncertainRow.google_source_hash !== failedRow.google_source_hash ||
+		uncertainRow.discord_message_id !== null ||
+		JSON.stringify(afterUncertain[0]) !== JSON.stringify(afterFailure[0]) ||
+		uncertainRequests.filter(({ method, path }) => method === "POST" && path === `/channels/${wire.channelId}/messages`)
+			.length !== 1 ||
+		uncertainRequests.filter(({ method }) => method !== "GET").length !== 1 ||
+		wire.failures.length !== 0 ||
+		readFileSync(queuePath, "latin1").includes("PACKED_WORKER_FAILURE_BODY_MUST_NOT_ESCAPE") ||
+		JSON.stringify(replayState(uncertainAuthorization.replayPath)) !== JSON.stringify({ consumed: 1, leases: 0 })
+	) {
+		throw new Error(
+			`Packed worker did not stop with its uncertain receipt preserved: ${JSON.stringify({ command: uncertain, rows: afterUncertain })}`,
+		);
+	}
+	// A newly signed fixture owner is not permission to retry an ambiguous delivery.
+	const freshAuthorization = makeAuthorization("reconciliation-required-pass");
+	const beforeFreshBytes = readFileSync(queuePath);
+	const beforeFreshRequests = wire.requests.length;
+	const fresh = await runCommand(freshAuthorization);
+	if (
+		JSON.stringify(fresh) !== JSON.stringify(expectedOwnerFailure) ||
+		wire.requests.length !== beforeFreshRequests ||
+		!readFileSync(queuePath).equals(beforeFreshBytes) ||
+		JSON.stringify(publicationRows()) !== JSON.stringify(afterUncertain) ||
+		JSON.stringify(replayState(freshAuthorization.replayPath)) !== JSON.stringify({ consumed: 1, leases: 0 })
+	) {
+		throw new Error(`Packed worker retried or changed unresolved delivery state: ${JSON.stringify(fresh)}`);
+	}
+
 	process.stdout.write(
-		`${JSON.stringify({ published: 1, remainingAfterFirst: 1, failed: 1, retryCheckpoint: true, providerRequests: wire.requests.length })}\n`,
+		`${JSON.stringify({ published: 1, remainingAfterFirst: 1, failed: 1, retryCheckpoint: true, notificationReviewOpen: true, uncertainDeliveryStopped: true, freshOwnerStopped: true, providerRequests: wire.requests.length })}\n`,
 	);
 } finally {
 	await Promise.all([googleServer.close(), discordServer.close()]);

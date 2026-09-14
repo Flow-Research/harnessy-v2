@@ -1,8 +1,8 @@
 import type { MeetingPublicationSmokeRuntimeErrorCode } from "@harnessy/core/meeting-publication";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
 import { parseMeetingRuntimeCommandInput } from "./meeting-command-input.ts";
-import type { LocalHostMeetingReviewReady } from "./meeting-review-runtime.ts";
 import { runLocalHostMeetingFullReview } from "./meeting-runtime.ts";
 
 export type MeetingFullReviewCommandResult =
@@ -15,13 +15,32 @@ export type MeetingFullReviewCommandResult =
 			};
 	  };
 
+/** Explicit CLI-owned graceful stop; keep the listener until the entire owner scope closes. */
+export const makeMeetingFullReviewSignalDrain = Effect.fn("MeetingFullReviewCommand.signalDrain")(function* () {
+	const requested = yield* Deferred.make<void>();
+	const listener = () => {
+		Effect.runSync(Deferred.succeed(requested, undefined));
+	};
+	yield* Effect.acquireRelease(
+		Effect.sync(() => {
+			process.on("SIGUSR2", listener);
+		}),
+		() =>
+			Effect.sync(() => {
+				process.off("SIGUSR2", listener);
+			}),
+	);
+	return { requested: Deferred.await(requested), timeoutMs: 30_000 } as const;
+});
+
 /** Separate full-review argv consumer; decision-only imports remain SDK-free. */
-export const runMeetingFullReviewCommand = (
+export const runMeetingFullReviewCommand: (
 	args: ReadonlyArray<string>,
-	onReady: LocalHostMeetingReviewReady,
-): Effect.Effect<MeetingFullReviewCommandResult> =>
+	onReady: Parameters<typeof runLocalHostMeetingFullReview>[1],
+	drain?: Parameters<typeof runLocalHostMeetingFullReview>[2],
+) => Effect.Effect<MeetingFullReviewCommandResult> = (args, onReady, drain) =>
 	parseMeetingRuntimeCommandInput(args).pipe(
-		Effect.flatMap((input) => runLocalHostMeetingFullReview(input, onReady)),
+		Effect.flatMap((input) => runLocalHostMeetingFullReview(input, onReady, drain)),
 		Effect.match({
 			onFailure: (cause): MeetingFullReviewCommandResult => ({
 				exitCode: 1,

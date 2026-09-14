@@ -3,7 +3,16 @@
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import { runMeetingFullReviewCommand } from "./meeting-full-review-command.ts";
+import { parseMeetingRuntimeCommandInput } from "./meeting-command-input.ts";
+import { makeMeetingFullReviewSignalDrain, runMeetingFullReviewCommand } from "./meeting-full-review-command.ts";
+import { notifyMeetingFullReviewStopped } from "./meeting-full-review-stop-notification.ts";
+
+// Only this explicit first-position flag opts into a local post-exit alert.
+// Duplicated flags and malformed remaining options still fail the shared parser.
+const args = process.argv.slice(2);
+const notifyOnStop = args[0] === "--notify-on-stop";
+const runtimeArgs = notifyOnStop ? args.slice(1) : args;
+const validArguments = Exit.isSuccess(Effect.runSyncExit(parseMeetingRuntimeCommandInput(runtimeArgs)));
 
 const controller = new AbortController();
 let signalExitCode: number | undefined;
@@ -23,10 +32,24 @@ const handlers = signals.map(([signal, code]) => {
 
 try {
 	const exit = await Effect.runPromiseExit(
-		runMeetingFullReviewCommand(process.argv.slice(2), (address) =>
-			Effect.sync(() => {
-				process.stdout.write(
-					`${JSON.stringify({ kind: "harnessy.meeting-publication.full-review-ready", origin: address.origin })}\n`,
+		Effect.scoped(
+			Effect.gen(function* () {
+				const drain = yield* makeMeetingFullReviewSignalDrain();
+				return yield* runMeetingFullReviewCommand(
+					runtimeArgs,
+					(address) =>
+						Effect.sync(() => {
+							process.stdout.write(
+								`${JSON.stringify({
+									kind: "harnessy.meeting-publication.full-review-ready",
+									origin: address.origin,
+									authorizationId: address.authorizationId,
+									expiresAt: address.expiresAt,
+									runtimeMode: address.runtimeMode,
+								})}\n`,
+							);
+						}),
+					drain,
 				);
 			}),
 		),
@@ -40,6 +63,13 @@ try {
 			`${JSON.stringify({ error: "meeting_full_review_failed", code: signalExitCode === undefined ? "runtime_failed" : "interrupted" })}\n`,
 		);
 		process.exitCode = signalExitCode ?? 1;
+	}
+	// runPromiseExit has awaited every runtime finalizer. Notification failure
+	// must neither mask the original status nor extend dispatch authority.
+	if (notifyOnStop && validArguments && process.exitCode !== 0) {
+		if (!(await notifyMeetingFullReviewStopped())) {
+			process.stderr.write('{"warning":"meeting_stop_notification_unavailable"}\n');
+		}
 	}
 } finally {
 	for (const [signal, listener] of handlers) process.off(signal, listener);

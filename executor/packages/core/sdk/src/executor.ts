@@ -2454,8 +2454,11 @@ export const createExecutor = <const TPlugins extends readonly AnyPlugin[] = rea
       input: MintOAuthConnectionInput,
     ): Effect.Effect<Connection, StorageFailure> =>
       Effect.gen(function* () {
-        const name = connectionIdentifier(String(input.name));
         yield* requireUserSubject(input.owner);
+        // Reconnect targets an existing exact address; normalizing it again can
+        // turn a saved camelCase name into a different connection.
+        const previous = yield* findConnectionRow(input);
+        const name = previous ? input.name : connectionIdentifier(String(input.name));
         const integrationRow = yield* findIntegrationRow(input.integration);
         if (!integrationRow) {
           return yield* new StorageError({
