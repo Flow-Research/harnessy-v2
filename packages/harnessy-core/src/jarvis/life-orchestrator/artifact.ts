@@ -45,9 +45,10 @@ const cleanInline = (value: string) =>
 		.trim()
 		.replace(/[&<>\\`*_{}[\]()#+!|-]/g, (character) => MARKDOWN_INLINE_ENTITY[character] ?? character);
 
-const ageLabel = (publishedAt: string | null, now: Date): string => {
-	if (publishedAt === null) return "publication date unavailable";
-	const published = new Date(publishedAt);
+const ageLabel = (candidate: LifeReadingCandidate, now: Date): string => {
+	if (candidate.sourceKind === "curated") return "curated reference";
+	if (candidate.publishedAt === null) return "publication date unavailable";
+	const published = new Date(candidate.publishedAt);
 	if (!Number.isFinite(published.getTime())) return "publication date unavailable";
 	const ageDays = Math.max(0, Math.floor((now.getTime() - published.getTime()) / 86_400_000));
 	if (ageDays < 2) return ageDays === 0 ? "published today" : "1 day old";
@@ -90,7 +91,7 @@ export const replaceWorthReadingSection = (
 	}
 	for (const candidate of candidates) {
 		lines.push(
-			`- [${cleanInline(candidate.title)}](<${candidate.canonicalUrl}>) — ${cleanInline(candidate.topic)}; ${ageLabel(candidate.publishedAt, now)}; ${cleanInline(candidate.sourceName)}`,
+			`- [${cleanInline(candidate.title)}](<${candidate.canonicalUrl}>) — ${cleanInline(candidate.topic)}; ${ageLabel(candidate, now)}; ${cleanInline(candidate.sourceName)}`,
 		);
 	}
 	const replacement = `${lines.join("\n").trimEnd()}\n`;

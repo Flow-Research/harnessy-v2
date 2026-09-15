@@ -9,6 +9,16 @@ export type {
 	ResolveLifeSettingsOptions,
 } from "./jarvis/life-orchestrator/config.ts";
 export { resolveLifeOrchestratorSettings } from "./jarvis/life-orchestrator/config.ts";
+export type {
+	LifeCurriculumItem,
+	LifeCurriculumSelection,
+	LifeReadingCurriculum,
+} from "./jarvis/life-orchestrator/curriculum.ts";
+export {
+	findLifeReadingCurriculum,
+	GITCOIN_FUNDING_MECHANISMS_CURRICULUM,
+	nextLifeCurriculumReadings,
+} from "./jarvis/life-orchestrator/curriculum.ts";
 export { canonicalLifeBriefPath, scanDeliveredLifeBriefs } from "./jarvis/life-orchestrator/history.ts";
 export { canonicalizeReadingUrl, readingIdentity } from "./jarvis/life-orchestrator/identity.ts";
 export type { LifeReadingInput } from "./jarvis/life-orchestrator/models.ts";
