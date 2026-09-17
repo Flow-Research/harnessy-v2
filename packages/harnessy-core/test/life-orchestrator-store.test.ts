@@ -19,6 +19,90 @@ afterEach(() => {
 });
 
 describe("LifeReadingLedger", () => {
+	it("reconciles legacy scheme-normalized delivery using evidenced original history after reopen", async () => {
+		const databasePath = makeDatabasePath();
+		const historical = {
+			briefPath: "/synthetic/brief.md",
+			deliveredAt: "2026-09-07T05:30:00.000Z",
+		};
+		const legacy = await Effect.runPromise(LifeReadingLedger.open(databasePath));
+		try {
+			// The old normalizer persisted HTTPS even when the original source was HTTP.
+			await Effect.runPromise(legacy.backfillDelivered([{ ...historical, url: "https://example.test/article" }]));
+		} finally {
+			legacy.close();
+		}
+		const ledger = await Effect.runPromise(LifeReadingLedger.open(databasePath));
+		try {
+			const preserved = await Effect.runPromise(ledger.list("delivered"));
+			await Effect.runPromise(
+				ledger.upsertCandidates(
+					[
+						{
+							url: "http://example.test/article",
+							title: "Rediscovered article",
+							topic: "Migration",
+							publishedAt: null,
+							sourceName: "Synthetic feed",
+							sourceKind: "rss",
+						},
+					],
+					"2026-09-08T04:15:00.000Z",
+				),
+			);
+			// Opening schema v1 alone cannot recover the discarded original scheme.
+			expect(await Effect.runPromise(ledger.counts())).toMatchObject({ delivered: 1, available: 1 });
+			const evidence = [{ ...historical, url: "http://example.test/article" }];
+			expect(await Effect.runPromise(ledger.backfillDelivered(evidence))).toMatchObject({ deliveredInserted: 1 });
+			expect(await Effect.runPromise(ledger.backfillDelivered(evidence))).toMatchObject({ deliveredInserted: 0 });
+			expect(await Effect.runPromise(ledger.reserve("after-upgrade", "2026-09-08T05:30:00.000Z"))).toEqual([]);
+			expect(await Effect.runPromise(ledger.list("delivered"))).toEqual(expect.arrayContaining([...preserved]));
+		} finally {
+			ledger.close();
+		}
+		const reopened = await Effect.runPromise(LifeReadingLedger.open(databasePath));
+		try {
+			expect(await Effect.runPromise(reopened.counts())).toMatchObject({ delivered: 2, available: 0, reserved: 0 });
+			expect(await Effect.runPromise(reopened.reserve("next-day", "2026-09-09T05:30:00.000Z"))).toEqual([]);
+		} finally {
+			reopened.close();
+		}
+	});
+
+	it("does not infer HTTP delivery from an unrelated HTTPS delivery", async () => {
+		const ledger = await Effect.runPromise(LifeReadingLedger.open(makeDatabasePath()));
+		try {
+			await Effect.runPromise(
+				ledger.backfillDelivered([
+					{
+						url: "https://example.test/distinct",
+						briefPath: "/synthetic/https-only.md",
+						deliveredAt: "2026-09-07T05:30:00.000Z",
+					},
+				]),
+			);
+			await Effect.runPromise(
+				ledger.upsertCandidates(
+					[
+						{
+							url: "http://example.test/distinct",
+							title: "Different resource",
+							topic: "Migration",
+							publishedAt: null,
+							sourceName: "Synthetic feed",
+							sourceKind: "rss",
+						},
+					],
+					"2026-09-08T04:15:00.000Z",
+				),
+			);
+			const selected = await Effect.runPromise(ledger.reserve("distinct", "2026-09-08T05:30:00.000Z"));
+			expect(selected.map((item) => item.canonicalUrl)).toEqual(["http://example.test/distinct"]);
+		} finally {
+			ledger.close();
+		}
+	});
+
 	it("backfills historical delivery and never makes that URL available again", async () => {
 		const ledger = await Effect.runPromise(LifeReadingLedger.open(makeDatabasePath()));
 		try {
