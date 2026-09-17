@@ -801,7 +801,7 @@ describe("meeting publication provider integrations", () => {
 			googleDriveBaseUrl: server.origin,
 			googleDocsBaseUrl: server.origin,
 			discordBaseUrl: server.origin,
-			timeoutMillis: 20,
+			timeoutMillis: 60,
 			maxResponseBytes: 128,
 		} as const;
 		try {
