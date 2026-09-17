@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Retain sibling project-vault discovery when private Jarvis context moves to a separate canonical V2 workspace.",
+  "baseline": {
+    "path": "packages/capability-harnessy-v1-full/resources/source",
+    "provenancePath": "packages/capability-harnessy-v1-full/resources/SOURCE.json",
+    "provenanceSha256": "e205c776a04f46f5ed44e01b32077e7fafb03ad23c681ef625682011461545ec"
+  },
+  "origin": "V2-authored migration correction; not part of the unchanged preserved V1 source",
+  "patch": {
+    "path": "scripts/migrations/life-projects-root.patch",
+    "sha256": "64d87feb75740dad18970959e52dcb6c0f7941978b6810c772b91e4ea2075156",
+    "root": "preserved source tree directory"
+  },
+  "files": [
+    {
+      "path": "tools/flow-install/skills/life-orchestrator/scripts/collect-state",
+      "baselineSha256": "d12c5ff728aa020532ca8193b81ee3c39911cfa381fadb1431e9d150f1d8b515",
+      "resultSha256": "c58694eb24fbe92c8179e6b3d4504782b10ca19ea38cac6f4e4811dfd801b43b"
+    },
+    {
+      "path": "tools/flow-install/tests/test_life_orchestrator_collect_state.py",
+      "baselineSha256": "2df74b690c221a0d340205871fdf9f5b92625d7af814ee884ad046c50b8db063",
+      "resultSha256": "0c1cd2b4facdc7a62bceb9a2c5709853a6d97cd33a5428e36a928c39f53d4d55"
+    }
+  ],
+  "limitations": [
+    "Apply only to separately derived installation source; preserve baseline and provenance unchanged.",
+    "Set LIFE_PROJECTS_ROOT explicitly for external workspace data; FLOW_PROJECT_ROOT continues to select canonical private context.",
+    "No global installation, service resumption or provider operation is authorized by this patch."
+  ]
+}

@@ -1,0 +1,1059 @@
+--- a/src/jarvis/state.py
++++ b/src/jarvis/state.py
+@@ -1,6 +1,13 @@
+ """State management for pending suggestions."""
+ 
++import fcntl
++import hashlib
+ import json
++import os
++import tempfile
++from collections.abc import Iterator
++from contextlib import contextmanager
++from dataclasses import dataclass
+ from datetime import datetime
+ from pathlib import Path
+ from typing import Any
+@@ -13,6 +20,10 @@
+ CONFIG_FILE = DATA_DIR / "config.json"
+ 
+ 
++class SuggestionStateError(RuntimeError):
++    """Permanent scheduler stop: operator reconciliation or a fresh invocation required."""
++
++
+ def save_selected_space(space_id: str) -> None:
+     """Save the selected space ID to config.
+ 
+@@ -60,24 +71,220 @@
+         return {}
+ 
+ 
+-def save_suggestions(suggestions: list[Suggestion], space_id: str) -> None:
+-    """Save suggestions to pending.json.
++def _sync_directory(path: Path) -> None:
++    descriptor = os.open(path, os.O_RDONLY)
++    try:
++        os.fsync(descriptor)
++    finally:
++        os.close(descriptor)
+ 
+-    Args:
+-        suggestions: List of suggestions to save
+-        space_id: AnyType space ID these suggestions belong to
+-    """
+-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+ 
+-    data = {
+-        "generated_at": datetime.now().isoformat(),
+-        "space_id": space_id,
+-        "suggestions": [_suggestion_to_dict(s) for s in suggestions],
+-    }
++def _write_pending(data: dict[str, Any]) -> None:
++    """Replace a complete checkpoint durably before any external mutation."""
++    descriptor, name = tempfile.mkstemp(prefix=".pending-", dir=PENDING_FILE.parent)
++    temporary = Path(name)
++    try:
++        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
++            json.dump(data, stream, indent=2, allow_nan=False)
++            stream.flush()
++            os.fsync(stream.fileno())
++        os.replace(temporary, PENDING_FILE)
++        _sync_directory(PENDING_FILE.parent)
++    finally:
++        temporary.unlink(missing_ok=True)
+ 
+-    PENDING_FILE.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
++
++def _read_pending() -> dict[str, Any] | None:
++    if PENDING_FILE.is_symlink():
++        raise SuggestionStateError("Pending suggestions must not be a symlink")
++    try:
++        raw = PENDING_FILE.read_text(encoding="utf-8")
++    except FileNotFoundError:
++        return None
++    except UnicodeDecodeError as exc:
++        raise SuggestionStateError(
++            "Damaged pending suggestions; preserve the file and reconcile"
++        ) from exc
++    try:
++        data = json.loads(raw)
++        if not isinstance(data, dict):
++            raise ValueError("Expected an object")
++        if not isinstance(data["space_id"], str) or not data["space_id"].strip():
++            raise ValueError("Missing space")
++        datetime.fromisoformat(data["generated_at"])
++        if "backend" in data and (
++            not isinstance(data["backend"], str) or not data["backend"].strip()
++        ):
++            raise ValueError("Missing generation backend")
++        rows = data["suggestions"]
++        if not isinstance(rows, list):
++            raise ValueError("Expected suggestions")
++        suggestions = [_dict_to_suggestion(row) for row in rows]
++        for key in ("id", "task_id"):
++            values = [getattr(item, key) for item in suggestions]
++            if any(not value.strip() for value in values) or len(values) != len(set(values)):
++                raise ValueError("Empty or duplicate suggestion/task identity")
++        attempts = data.get("attempts", {})
++        if not isinstance(attempts, dict):
++            raise ValueError("Invalid attempts")
++        indexed = {item.id: item for item in suggestions}
++        for identity, attempt in attempts.items():
++            item = indexed[identity]
++            if not isinstance(attempt, dict) or set(attempt) != {"backend", "phase", "started_at"}:
++                raise ValueError("Invalid attempt")
++            if not isinstance(attempt["backend"], str) or not attempt["backend"].strip():
++                raise ValueError("Missing attempt backend")
++            datetime.fromisoformat(attempt["started_at"])
++            if (attempt["phase"], item.status) not in {
++                ("attempting", "pending"),
++                ("applied", "applied"),
++            }:
++                raise ValueError("Inconsistent attempt outcome")
++        return data
++    except (ValueError, KeyError, TypeError, AttributeError) as exc:
++        raise SuggestionStateError(
++            "Damaged pending suggestions; preserve the file and reconcile before continuing"
++        ) from exc
++
++
++@dataclass
++class SuggestionBatch:
++    """One locked pending file; no automatic recovery of uncertain task updates."""
++
++    data: dict[str, Any] | None
++
++    def require_resolved(self) -> None:
++        if self.data and (
++            any(a["phase"] == "attempting" for a in self.data.get("attempts", {}).values())
++            or any(s["status"] == "failed" for s in self.data["suggestions"])
++        ):
++            raise SuggestionStateError(
++                "Uncertain task update; keep pending.json and reconcile the exact backend, "
++                "space, task and dates before retrying or replacing suggestions"
++            )
++
++    def archive(self) -> None:
++        self.require_resolved()
++        if not self.data or not self.data.get("attempts"):
++            return
++        content = PENDING_FILE.read_bytes()
++        directory = PENDING_FILE.parent / "suggestion-history"
++        directory.mkdir(mode=0o700, exist_ok=True)
++        if directory.is_symlink():
++            raise SuggestionStateError("Suggestion history must not be a symlink")
++        directory.chmod(0o700)
++        target = directory / (hashlib.sha256(content).hexdigest() + ".json")
++        try:
++            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
++        except FileExistsError:
++            if target.is_symlink() or target.read_bytes() != content:
++                raise SuggestionStateError(
++                    "Suggestion history collision; preserve pending.json"
++                ) from None
++            target.chmod(0o600)
++            with target.open("rb") as stream:
++                os.fsync(stream.fileno())
++        else:
++            with os.fdopen(descriptor, "wb") as stream:
++                stream.write(content)
++                stream.flush()
++                os.fsync(stream.fileno())
++        _sync_directory(directory)
++        _sync_directory(directory.parent)
+ 
++    def save(
++        self, suggestions: list[Suggestion], space_id: str, *, backend: str | None = None
++    ) -> None:
++        self.archive()
++        values = [(s.id, s.task_id) for s in suggestions]
++        if not space_id.strip() or any(not a.strip() or not b.strip() for a, b in values):
++            raise ValueError("Missing suggestion identity or space")
++        if len({a for a, _ in values}) != len(values) or len({b for _, b in values}) != len(values):
++            raise ValueError("Duplicate suggestion or task identity")
++        data = {
++            "generated_at": datetime.now().isoformat(),
++            "space_id": space_id,
++            "suggestions": [_suggestion_to_dict(s) for s in suggestions],
++        }
++        if backend is not None:
++            if not isinstance(backend, str) or not backend.strip():
++                raise ValueError("Missing generation backend")
++            data["backend"] = backend
++        _write_pending(data)
++        self.data = data
+ 
++    def checkpoint(self, suggestion: Suggestion, backend: str, *, applied: bool = False) -> None:
++        assert self.data is not None
++        if not isinstance(backend, str) or not backend.strip():
++            raise ValueError("Missing backend identity")
++        previous = next(
++            (row for row in self.data["suggestions"] if row["id"] == suggestion.id), None
++        )
++        current = _suggestion_to_dict(suggestion)
++        if previous is None or any(
++            previous[key] != value for key, value in current.items() if key != "status"
++        ):
++            raise ValueError("Suggestion changed before checkpoint")
++        attempts = self.data.setdefault("attempts", {})
++        if applied:
++            if attempts[suggestion.id]["phase"] != "attempting" or suggestion.status != "applied":
++                raise ValueError("Invalid completed attempt")
++            attempts[suggestion.id]["phase"] = "applied"
++        else:
++            self.require_resolved()
++            if suggestion.status != "pending" or suggestion.id in attempts:
++                raise ValueError("Suggestion is not eligible for an attempt")
++            attempts[suggestion.id] = {
++                "backend": backend,
++                "phase": "attempting",
++                "started_at": datetime.now().astimezone().isoformat(),
++            }
++        self.data["suggestions"] = [
++            _suggestion_to_dict(suggestion) if row["id"] == suggestion.id else row
++            for row in self.data["suggestions"]
++        ]
++        _write_pending(self.data)
++
++    def reject(self, suggestion: Suggestion) -> None:
++        assert self.data is not None
++        suggestion.reject()
++        self.data["suggestions"] = [
++            _suggestion_to_dict(suggestion) if row["id"] == suggestion.id else row
++            for row in self.data["suggestions"]
++        ]
++        _write_pending(self.data)
++
++
++@contextmanager
++def suggestion_transaction() -> Iterator[SuggestionBatch]:
++    """Serialize complete suggest/apply commands, including provider work and prompts.
++
++    A busy command fails immediately, rather than waiting to apply an unseen batch.
++    The stable lock file is never unlinked; process death releases only the OS lock.
++    """
++    PENDING_FILE.parent.mkdir(parents=True, exist_ok=True)
++    lock_path = PENDING_FILE.with_suffix(".lock")
++    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
++    try:
++        os.fchmod(descriptor, 0o600)
++        try:
++            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError:
++            raise SuggestionStateError(
++                "Another suggestion/apply command is running; try again later"
++            ) from None
++        yield SuggestionBatch(_read_pending())
++    finally:
++        os.close(descriptor)
++
++
++def save_suggestions(
++    suggestions: list[Suggestion], space_id: str, *, backend: str | None = None
++) -> None:
++    with suggestion_transaction() as batch:
++        batch.save(suggestions, space_id, backend=backend)
++
++
+ def load_suggestions() -> tuple[list[Suggestion], str]:
+     """Load pending suggestions from disk.
+ 
+@@ -85,22 +292,18 @@
+         Tuple of (suggestions list, space_id)
+         Returns empty list and empty string if no pending file
+     """
+-    if not PENDING_FILE.exists():
++    data = _read_pending()
++    if data is None:
+         return [], ""
++    return [_dict_to_suggestion(s) for s in data["suggestions"]], data["space_id"]
+ 
+-    try:
+-        data = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
+-        suggestions = [_dict_to_suggestion(s) for s in data.get("suggestions", [])]
+-        space_id = data.get("space_id", "")
+-        return suggestions, space_id
+-    except (json.JSONDecodeError, KeyError, ValueError):
+-        return [], ""
+ 
+-
+ def clear_suggestions() -> None:
+     """Remove the pending suggestions file."""
+-    if PENDING_FILE.exists():
+-        PENDING_FILE.unlink()
++    with suggestion_transaction() as batch:
++        batch.archive()
++        PENDING_FILE.unlink(missing_ok=True)
++        _sync_directory(PENDING_FILE.parent)
+ 
+ 
+ def has_pending_suggestions() -> bool:
+@@ -109,17 +312,10 @@
+     Returns:
+         True if pending.json exists and has suggestions
+     """
+-    if not PENDING_FILE.exists():
+-        return False
++    suggestions, _ = load_suggestions()
++    return any(s.status == "pending" for s in suggestions)
+ 
+-    try:
+-        data = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
+-        suggestions = data.get("suggestions", [])
+-        return any(s.get("status") == "pending" for s in suggestions)
+-    except (json.JSONDecodeError, KeyError):
+-        return False
+ 
+-
+ def _suggestion_to_dict(s: Suggestion) -> dict[str, Any]:
+     """Convert Suggestion to JSON-serializable dict.
+ 
+--- a/src/jarvis/cli.py
++++ b/src/jarvis/cli.py
+@@ -29,11 +29,11 @@
+     parse_work_hours_from_context,
+ )
+ from jarvis.state import (
+-    clear_suggestions,
++    SuggestionStateError,
+     get_selected_space,
+     load_suggestions,
+     save_selected_space,
+-    save_suggestions,
++    suggestion_transaction,
+ )
+ 
+ console = Console()
+@@ -3079,43 +3079,48 @@
+     from jarvis.ai_client import AIClient
+ 
+     try:
+-        # Check for API key
+-        api_key = os.environ.get("ANTHROPIC_API_KEY")
+-        if not api_key:
+-            raise RuntimeError(
+-                "ANTHROPIC_API_KEY environment variable not set.\n"
+-                "Get your API key from https://console.anthropic.com/"
+-            )
+-
+-        adapter = get_adapter(backend)
+-        adapter.connect()
+-
+-        space_id, space_name = _get_space(adapter, space)
+-        console.print(f"[dim]Space: {space_name}[/dim]")
+-        console.print(f"[dim]Backend: {adapter.backend_name}[/dim]")
++        with suggestion_transaction() as batch:
++            batch.require_resolved()
++            # Check for API key
++            api_key = os.environ.get("ANTHROPIC_API_KEY")
++            if not api_key:
++                raise RuntimeError(
++                    "ANTHROPIC_API_KEY environment variable not set.\n"
++                    "Get your API key from https://console.anthropic.com/"
++                )
+ 
+-        start = date.today()
+-        end = start + timedelta(days=days)
++            adapter = get_adapter(backend)
++            adapter.connect()
++
++            space_id, space_name = _get_space(adapter, space)
++            console.print(f"[dim]Space: {space_name}[/dim]")
++            console.print(f"[dim]Backend: {adapter.backend_name}[/dim]")
++
++            start = date.today()
++            end = start + timedelta(days=days)
+ 
+-        tasks = adapter.get_tasks(
+-            space_id=space_id,
+-            start_date=start,
+-            end_date=end,
+-            include_done=False,
+-        )
+-        analysis = analyze_workload(tasks, start, end)
+-        context = load_context()
++            tasks = adapter.get_tasks(
++                space_id=space_id,
++                start_date=start,
++                end_date=end,
++                include_done=False,
++            )
++            analysis = analyze_workload(tasks, start, end)
++            context = load_context()
+ 
+-        ai_client = AIClient(api_key)
+-        suggestions = ai_client.generate_suggestions(tasks, analysis, context)
++            ai_client = AIClient(api_key)
++            suggestions = ai_client.generate_suggestions(tasks, analysis, context)
+ 
+-        if suggestions:
+-            save_suggestions(suggestions, space_id)
+-            _display_suggestions(suggestions)
+-        else:
+-            console.print(
+-                "[yellow]No suggestions generated. Your schedule looks balanced![/yellow]"
+-            )
++            batch.save(suggestions, space_id, backend=adapter.backend_name)
++            if suggestions:
++                _display_suggestions(suggestions)
++            else:
++                console.print(
++                    "[yellow]No suggestions generated. Your schedule looks balanced![/yellow]"
++                )
++    except SuggestionStateError as e:
++        console.print(f"[red]{e}[/red]")
++        raise SystemExit(2)
+     except AdapterConnectionError as e:
+         console.print(f"[red]Connection error: {e}[/red]")
+         raise SystemExit(1)
+@@ -3156,66 +3161,77 @@
+ @click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+ def apply(yes: bool, backend: str | None) -> None:
+     """Apply pending suggestions to the backend."""
+-    suggestions, space_id = load_suggestions()
+-
+-    if not suggestions:
+-        console.print("[yellow]No pending suggestions. Run 'jarvis suggest' first.[/yellow]")
+-        return
+-
+-    pending = [s for s in suggestions if s.status == "pending"]
+-    if not pending:
+-        console.print("[yellow]No pending suggestions to apply.[/yellow]")
+-        return
+-
+     try:
+-        adapter = get_adapter(backend)
+-        adapter.connect()
++        with suggestion_transaction() as batch:
++            batch.require_resolved()
++            suggestions, space_id = load_suggestions()
++            pending = [s for s in suggestions if s.status == "pending"]
++            if not pending:
++                console.print("[yellow]No pending suggestions to apply.[/yellow]")
++                return
++            adapter = get_adapter(backend)
++            adapter.connect()
++            assert batch.data is not None
++            generation_backend = batch.data.get("backend")
++            if generation_backend and generation_backend != adapter.backend_name:
++                raise SuggestionStateError(
++                    "Generation backend differs; preserve and reconcile the batch"
++                )
++            if generation_backend is None and yes and backend is None:
++                raise SuggestionStateError(
++                    "Legacy suggestions have no backend binding; review interactively or "
++                    "reconcile first and explicitly select --backend"
++                )
++            if any(
++                attempt["backend"] != adapter.backend_name
++                for attempt in batch.data.get("attempts", {}).values()
++            ):
++                raise RuntimeError("Suggestion batch backend changed; reconcile before continuing")
+ 
+-        console.print()
+-        console.print(Panel.fit("[bold]📋 Review Suggestions[/bold]", border_style="blue"))
+-        console.print(f"[dim]Backend: {adapter.backend_name}[/dim]")
+-        console.print()
+-
+-        applied = 0
+-        skipped = 0
+-
+-        for i, s in enumerate(pending, 1):
+-            console.print(
+-                f'[bold][{i}/{len(pending)}][/bold] Move [cyan]"{s.task_name}"[/cyan] '
+-                f"{s.current_date.strftime('%a %b %d')} → {s.proposed_date.strftime('%a %b %d')}?"
+-            )
+-
+-            if yes or Confirm.ask("   Apply this change?", default=True):
+-                try:
++            console.print()
++            console.print(Panel.fit("[bold]📋 Review Suggestions[/bold]", border_style="blue"))
++            console.print(f"[dim]Backend: {adapter.backend_name}[/dim]")
++            console.print()
++            applied = 0
++            skipped = 0
++            for i, s in enumerate(pending, 1):
++                console.print(
++                    f'[bold][{i}/{len(pending)}][/bold] Move [cyan]"{s.task_name}"[/cyan] '
++                    f"{s.current_date.strftime('%a %b %d')} → "
++                    f"{s.proposed_date.strftime('%a %b %d')}?"
++                )
++                if yes or Confirm.ask("   Apply this change?", default=True):
++                    # Persist exact intent before calling the backend. Exceptions, process
++                    # death, or failure to persist success leave an unreplayable checkpoint.
++                    batch.checkpoint(s, adapter.backend_name)
+                     adapter.update_task(
+                         space_id=space_id,
+                         task_id=s.task_id,
+                         due_date=s.proposed_date,
+                     )
+                     s.mark_applied()
++                    batch.checkpoint(s, adapter.backend_name, applied=True)
+                     console.print("   [green]✓ Applied[/green]")
+                     applied += 1
+-                except Exception:
+-                    s.mark_failed()
+-                    console.print("   [red]✗ Failed[/red]")
++                else:
++                    batch.reject(s)
++                    console.print("   [dim]✗ Skipped[/dim]")
+                     skipped += 1
+-            else:
+-                s.reject()
+-                console.print("   [dim]✗ Skipped[/dim]")
+-                skipped += 1
+-
++                console.print()
+             console.print()
+-
+-        clear_suggestions()
+-        console.print()
+-        console.print(f"[green]Done![/green] Applied: {applied} | Skipped: {skipped}")
+-        console.print()
+-    except AdapterConnectionError as e:
+-        console.print(f"[red]Connection error: {e}[/red]")
+-        raise SystemExit(1)
++            console.print(f"[green]Done![/green] Applied: {applied} | Skipped: {skipped}")
++            console.print()
++    except AdapterConnectionError:
++        console.print(
++            "[red]Backend connection failed; preserve pending.json and reconcile any attempt.[/red]"
++        )
++        raise SystemExit(2)
+     except Exception as e:
+-        console.print(f"[red]Error: {e}[/red]")
+-        raise SystemExit(1)
++        console.print(f"[red]Apply stopped ({type(e).__name__}).[/red]")
++        console.print(
++            "[red]Preserve pending.json; reconcile any attempting update before retrying.[/red]"
++        )
++        raise SystemExit(2)
+ 
+ 
+ @cli.command()
+@@ -3411,35 +3427,42 @@
+ @click.option("--dry-run", is_flag=True, help="Show plan without saving suggestions")
+ def reorganize(days: int, space: str | None, backend: str | None, dry_run: bool) -> None:
+     try:
+-        adapter = get_adapter(backend)
+-        adapter.connect()
+-
+-        space_id, space_name = _get_space(adapter, space)
+-        console.print(f"[dim]Space: {space_name}[/dim]")
+-        console.print(f"[dim]Backend: {adapter.backend_name}[/dim]")
++        with suggestion_transaction() as batch:
++            batch.require_resolved()
++            adapter = get_adapter(backend)
++            adapter.connect()
+ 
+-        start = date.today()
+-        end = start + timedelta(days=days)
+-        tasks = adapter.get_tasks(
+-            space_id=space_id,
+-            start_date=start,
+-            end_date=end,
+-            include_done=False,
+-        )
++            space_id, space_name = _get_space(adapter, space)
++            console.print(f"[dim]Space: {space_name}[/dim]")
++            console.print(f"[dim]Backend: {adapter.backend_name}[/dim]")
+ 
+-        suggestions = build_reorganize_suggestions(tasks, start, end)
+-        if not suggestions:
+-            console.print("[green]No reorganize moves needed in this horizon.[/green]")
+-            return
+-
+-        _display_suggestions(suggestions)
+-        if dry_run:
+-            console.print("[yellow]Dry run mode: no pending suggestions saved.[/yellow]")
+-            return
++            start = date.today()
++            end = start + timedelta(days=days)
++            tasks = adapter.get_tasks(
++                space_id=space_id,
++                start_date=start,
++                end_date=end,
++                include_done=False,
++            )
+ 
+-        save_suggestions(suggestions, space_id)
+-        console.print("[green]Saved as pending suggestions.[/green]")
+-        console.print("[dim]Run jarvis apply to approve and apply changes.[/dim]")
++            suggestions = build_reorganize_suggestions(tasks, start, end)
++            if not suggestions:
++                if not dry_run:
++                    batch.save([], space_id, backend=adapter.backend_name)
++                console.print("[green]No reorganize moves needed in this horizon.[/green]")
++                return
++
++            _display_suggestions(suggestions)
++            if dry_run:
++                console.print("[yellow]Dry run mode: no pending suggestions saved.[/yellow]")
++                return
++
++            batch.save(suggestions, space_id, backend=adapter.backend_name)
++            console.print("[green]Saved as pending suggestions.[/green]")
++            console.print("[dim]Run jarvis apply to approve and apply changes.[/dim]")
++    except SuggestionStateError as e:
++        console.print(f"[red]{e}[/red]")
++        raise SystemExit(2)
+     except AdapterConnectionError as e:
+         console.print(f"[red]Connection error: {e}[/red]")
+         raise SystemExit(1)
+--- a/tests/test_state.py
++++ b/tests/test_state.py
+@@ -22,7 +22,7 @@
+     """Helper to create a suggestion for testing."""
+     return Suggestion(
+         id=id,
+-        task_id="task_1",
++        task_id=f"task_{id}",
+         task_name=task_name,
+         current_date=date.today(),
+         proposed_date=date.today() + timedelta(days=2),
+--- /dev/null
++++ b/tests/test_suggestion_safety.py
+@@ -0,0 +1,442 @@
++import importlib
++import json
++import subprocess
++import sys
++from datetime import date, datetime
++from pathlib import Path
++from types import SimpleNamespace
++
++import pytest
++from click.testing import CliRunner
++
++from jarvis.models import Suggestion
++
++cli_module = importlib.import_module("jarvis.cli")
++state = importlib.import_module("jarvis.state")
++
++
++@pytest.fixture
++def isolated_state(tmp_path, monkeypatch):
++    assert (
++        Path(cli_module.__file__)
++        .resolve()
++        .is_relative_to(Path(__file__).resolve().parents[1] / "src")
++    )
++    monkeypatch.setattr(state, "DATA_DIR", tmp_path)
++    monkeypatch.setattr(state, "PENDING_FILE", tmp_path / "pending.json")
++    monkeypatch.setattr(state, "CONFIG_FILE", tmp_path / "config.json")
++    return state.PENDING_FILE
++
++
++def test_partial_backend_failure_must_report_failure_and_preserve_evidence(
++    isolated_state, monkeypatch
++):
++    suggestions = [
++        Suggestion(
++            id=str(i),
++            task_id=str(i),
++            task_name=f"Synthetic task {i}",
++            current_date=date(2026, 9, 15),
++            proposed_date=date(2026, 9, 16),
++            reasoning="Isolated fixture",
++            confidence=1.0,
++            created_at=datetime(2026, 9, 15),
++        )
++        for i in (1, 2)
++    ]
++    state.save_suggestions(suggestions, "synthetic-space")
++    calls = []
++
++    class Backend:
++        backend_name = "synthetic"
++
++        def connect(self):
++            pass
++
++        def update_task(self, **kwargs):
++            calls.append(kwargs)
++            if kwargs["task_id"] == "2":
++                raise TimeoutError("Synthetic uncertain backend response")
++
++    monkeypatch.setattr(cli_module, "get_adapter", lambda backend: Backend())
++    result = CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"])
++    assert [call["task_id"] for call in calls] == ["1", "2"]
++    observed = {"exit_code": result.exit_code, "evidence_exists": isolated_state.exists()}
++    assert result.exit_code == 2 and isolated_state.exists(), observed
++
++
++def test_corrupt_pending_state_must_not_report_success(isolated_state):
++    isolated_state.write_text("{broken", encoding="utf-8")
++    result = CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"])
++    assert isolated_state.read_text() == "{broken"
++    assert result.exit_code == 2, {"exit_code": result.exit_code, "output": result.output}
++
++
++def test_empty_suggestion_generation_must_invalidate_old_pending(isolated_state, monkeypatch):
++    old = Suggestion(
++        id="old",
++        task_id="old-task",
++        task_name="Synthetic old task",
++        current_date=date(2026, 9, 15),
++        proposed_date=date(2026, 9, 16),
++        reasoning="Prior generation",
++        confidence=1.0,
++        created_at=datetime(2026, 9, 15),
++    )
++    state.save_suggestions([old], "synthetic-space")
++    context = importlib.import_module("jarvis.context_reader")
++    for name in ("GLOBAL_CONTEXT_DIR", "FOLDER_CONTEXT_DIR", "LEGACY_CONTEXT_DIR"):
++        monkeypatch.setattr(context, name, isolated_state.parent / name)
++    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-not-a-credential")
++
++    class Backend:
++        backend_name = "synthetic"
++
++        def connect(self):
++            pass
++
++        def list_spaces(self):
++            return [SimpleNamespace(id="synthetic-space", name="Fixture")]
++
++        def get_tasks(self, **kwargs):
++            return []
++
++    class Provider:
++        def __init__(self, api_key):
++            assert api_key == "synthetic-not-a-credential"
++
++        def generate_suggestions(self, *args):
++            return []
++
++    monkeypatch.setattr(cli_module, "get_adapter", lambda backend: Backend())
++    monkeypatch.setattr(importlib.import_module("jarvis.ai_client"), "AIClient", Provider)
++    result = CliRunner().invoke(
++        cli_module.cli, ["suggest", "--days", "14", "--space", "synthetic-space"]
++    )
++    assert result.exit_code == 0, result.output
++    assert not state.has_pending_suggestions(), (
++        "Successful empty generation left old suggestions eligible"
++    )
++
++
++def item(identity="1", status="pending"):
++    return Suggestion(
++        id=identity,
++        task_id=f"task-{identity}",
++        task_name="Synthetic task",
++        current_date=date(2026, 9, 15),
++        proposed_date=date(2026, 9, 16),
++        reasoning="Fixture",
++        confidence=1.0,
++        created_at=datetime(2026, 9, 15),
++        status=status,
++    )
++
++
++def backend(monkeypatch, callback):
++    class Backend:
++        backend_name = "synthetic"
++
++        def connect(self):
++            pass
++
++        def update_task(self, **kwargs):
++            callback(kwargs)
++
++    monkeypatch.setattr(cli_module, "get_adapter", lambda name: Backend())
++
++
++def test_uncertain_attempt_blocks_retry_save_and_clear(isolated_state, monkeypatch):
++    state.save_suggestions([item(), item("2")], "space")
++    calls = []
++
++    def uncertain(kwargs):
++        calls.append(kwargs)
++        assert json.loads(isolated_state.read_text())["attempts"]["1"]["phase"] == "attempting"
++        raise TimeoutError("Fixture timeout")
++
++    backend(monkeypatch, uncertain)
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        != 0
++    )
++    original = isolated_state.read_bytes()
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        != 0
++    )
++    for operation in (lambda: state.save_suggestions([], "space"), state.clear_suggestions):
++        with pytest.raises(RuntimeError, match="Uncertain"):
++            operation()
++    assert isolated_state.read_bytes() == original
++    assert calls == [{"space_id": "space", "task_id": "task-1", "due_date": date(2026, 9, 16)}]
++
++
++def test_success_is_durable_not_replayed_and_archived_on_new_generation(
++    isolated_state, monkeypatch
++):
++    state.save_suggestions([item()], "space")
++    calls = []
++    backend(monkeypatch, calls.append)
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        == 0
++    )
++    evidence = isolated_state.read_bytes()
++    assert json.loads(evidence)["attempts"]["1"]["phase"] == "applied"
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        == 0
++    )
++    assert len(calls) == 1
++    state.save_suggestions([], "space")
++    archives = list((isolated_state.parent / "suggestion-history").glob("*.json"))
++    assert len(archives) == 1 and archives[0].read_bytes() == evidence
++    assert archives[0].stat().st_mode & 0o777 == 0o600
++    assert archives[0].parent.stat().st_mode & 0o777 == 0o700
++    assert isolated_state.stat().st_mode & 0o777 == 0o600
++
++
++def test_interactive_reject_and_accept_preserve_other_statuses(isolated_state, monkeypatch):
++    state.save_suggestions([item(), item("2"), item("3", "accepted")], "space")
++    calls = []
++    backend(monkeypatch, calls.append)
++    result = CliRunner().invoke(cli_module.cli, ["apply"], input="n\ny\n")
++    assert result.exit_code == 0, result.output
++    assert [s.status for s in state.load_suggestions()[0]] == ["rejected", "applied", "accepted"]
++    assert [c["task_id"] for c in calls] == ["task-2"]
++
++
++@pytest.mark.parametrize("failure", ["replace", "fsync"])
++def test_checkpoint_io_failure_prevents_external_update(isolated_state, monkeypatch, failure):
++    state.save_suggestions([item()], "space")
++    calls = []
++    backend(monkeypatch, calls.append)
++
++    def fail(*args):
++        raise OSError("Synthetic storage failure")
++
++    monkeypatch.setattr(state.os, failure, fail)
++    result = CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"])
++    assert result.exit_code != 0 and calls == []
++    assert isolated_state.exists()
++
++
++def test_post_delivery_checkpoint_failure_leaves_unreplayable_intent(isolated_state, monkeypatch):
++    state.save_suggestions([item()], "space")
++    calls = []
++    original = state._write_pending
++
++    def write(data):
++        if any(a["phase"] == "applied" for a in data.get("attempts", {}).values()):
++            raise OSError("Synthetic completion failure")
++        original(data)
++
++    monkeypatch.setattr(state, "_write_pending", write)
++    backend(monkeypatch, calls.append)
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        != 0
++    )
++    assert json.loads(isolated_state.read_text())["attempts"]["1"]["phase"] == "attempting"
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        != 0
++    )
++    assert len(calls) == 1
++
++
++@pytest.mark.parametrize("corrupt", ["[]", "{}", "null", '{"suggestions": []}', "{broken"])
++def test_invalid_state_preserved_and_reported(isolated_state, corrupt):
++    isolated_state.write_text(corrupt)
++    result = CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"])
++    assert result.exit_code != 0 and isolated_state.read_text() == corrupt
++    with pytest.raises(RuntimeError):
++        state.save_suggestions([], "space")
++
++
++def test_duplicates_refused_without_replacing_old_batch(isolated_state):
++    state.save_suggestions([item()], "space")
++    before = isolated_state.read_bytes()
++    duplicate = item("2")
++    duplicate.task_id = item().task_id
++    with pytest.raises(ValueError, match="Duplicate"):
++        state.save_suggestions([item(), duplicate], "space")
++    assert isolated_state.read_bytes() == before
++
++
++def test_legacy_failed_is_reconciliation_blocker(isolated_state, monkeypatch):
++    state.save_suggestions([item(status="failed")], "space")
++    calls = []
++    backend(monkeypatch, calls.append)
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        != 0
++    )
++    assert calls == []
++
++
++def test_busy_lock_rejects_other_process_without_touching_batch(isolated_state, tmp_path):
++    state.save_suggestions([item()], "space")
++    before = isolated_state.read_bytes()
++    script = tmp_path / "contender.py"
++    script.write_text(
++        "from pathlib import Path\nfrom jarvis import state\n"
++        "import sys\nstate.PENDING_FILE = Path(sys.argv[1])\n"
++        "state.save_suggestions([], 'space')\n"
++    )
++    with state.suggestion_transaction():
++        result = subprocess.run(
++            [sys.executable, str(script), str(isolated_state)],
++            capture_output=True,
++            text=True,
++            timeout=10,
++        )
++    assert result.returncode != 0 and "Another suggestion/apply" in result.stderr
++    assert isolated_state.read_bytes() == before
++
++
++def test_process_death_after_intent_prevents_replay(isolated_state, tmp_path, monkeypatch):
++    state.save_suggestions([item()], "space")
++    script = tmp_path / "crash.py"
++    script.write_text(
++        "from pathlib import Path\nfrom jarvis import state\nimport os, sys\n"
++        "state.PENDING_FILE = Path(sys.argv[1])\n"
++        "with state.suggestion_transaction() as batch:\n"
++        "    batch.checkpoint(state.load_suggestions()[0][0], 'synthetic')\n"
++        "    os._exit(71)\n"
++    )
++    result = subprocess.run([sys.executable, str(script), str(isolated_state)], timeout=10)
++    assert result.returncode == 71
++    calls = []
++    backend(monkeypatch, calls.append)
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        != 0
++    )
++    assert calls == []
++
++
++def test_checkpoint_rejects_changed_identity_and_blank_backend(isolated_state):
++    state.save_suggestions([item()], "space")
++    with state.suggestion_transaction() as batch:
++        with pytest.raises(ValueError, match="backend"):
++            batch.checkpoint(item(), "")
++        changed = item()
++        changed.proposed_date = date(2027, 1, 1)
++        with pytest.raises(ValueError, match="changed"):
++            batch.checkpoint(changed, "synthetic")
++    assert "attempts" not in json.loads(isolated_state.read_text())
++
++
++def test_unbound_legacy_auto_apply_requires_explicit_backend(isolated_state, monkeypatch):
++    state.save_suggestions([item()], "space")
++    calls = []
++    backend(monkeypatch, calls.append)
++    assert CliRunner().invoke(cli_module.cli, ["apply", "--yes"]).exit_code == 2
++    assert calls == []
++
++
++def test_generation_backend_mismatch_refused(isolated_state, monkeypatch):
++    state.save_suggestions([item()], "space", backend="original")
++    calls = []
++    backend(monkeypatch, calls.append)
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        == 2
++    )
++    assert calls == [] and "attempts" not in json.loads(isolated_state.read_text())
++
++
++@pytest.mark.parametrize(
++    "data_change",
++    [
++        {"space_id": ""},
++        {"backend": ""},
++        {"suggestions": {}},
++        {"attempts": []},
++        {"attempts": {"missing": {}}},
++        {
++            "attempts": {
++                "1": {"backend": "synthetic", "phase": "applied", "started_at": "2026-09-15"}
++            }
++        },
++        {"attempts": {"1": {"backend": "", "phase": "attempting", "started_at": "2026-09-15"}}},
++        {"attempts": {"1": {}}},
++    ],
++)
++def test_damaged_metadata_blocks_mutation(isolated_state, data_change):
++    state.save_suggestions([item()], "space")
++    data = json.loads(isolated_state.read_text())
++    data.update(data_change)
++    isolated_state.write_text(json.dumps(data))
++    with pytest.raises(state.SuggestionStateError, match="Damaged"):
++        state.load_suggestions()
++
++
++def test_invalid_utf8_is_permanent_stop_before_provider(isolated_state, monkeypatch):
++    isolated_state.write_bytes(b"\xff")
++    monkeypatch.setattr(cli_module, "get_adapter", lambda name: pytest.fail("No provider access"))
++    result = CliRunner().invoke(cli_module.cli, ["suggest", "--days", "14"])
++    assert result.exit_code == 2 and isolated_state.read_bytes() == b"\xff"
++
++
++def test_completed_archive_collision_preserves_evidence(isolated_state, monkeypatch):
++    import hashlib
++
++    state.save_suggestions([item()], "space")
++    backend(monkeypatch, lambda kwargs: None)
++    assert (
++        CliRunner().invoke(cli_module.cli, ["apply", "--yes", "--backend", "synthetic"]).exit_code
++        == 0
++    )
++    original = isolated_state.read_bytes()
++    directory = isolated_state.parent / "suggestion-history"
++    directory.mkdir()
++    target = directory / (hashlib.sha256(original).hexdigest() + ".json")
++    target.write_bytes(b"collision")
++    with pytest.raises(state.SuggestionStateError, match="collision"):
++        state.save_suggestions([], "space")
++    assert isolated_state.read_bytes() == original and target.read_bytes() == b"collision"
++    target.write_bytes(original)
++    state.save_suggestions([], "space")
++    assert target.read_bytes() == original
++
++
++def test_generation_holds_lock_through_provider_and_keeps_first_result(isolated_state, monkeypatch):
++    state.save_suggestions([item()], "space")
++    context = importlib.import_module("jarvis.context_reader")
++    for name in ("GLOBAL_CONTEXT_DIR", "FOLDER_CONTEXT_DIR", "LEGACY_CONTEXT_DIR"):
++        monkeypatch.setattr(context, name, isolated_state.parent / name)
++    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-not-a-credential")
++
++    class Backend:
++        backend_name = "synthetic"
++
++        def connect(self):
++            pass
++
++        def list_spaces(self):
++            return [SimpleNamespace(id="space", name="Fixture")]
++
++        def get_tasks(self, **kwargs):
++            return []
++
++    class Provider:
++        def __init__(self, api_key):
++            pass
++
++        def generate_suggestions(self, *args):
++            with pytest.raises(state.SuggestionStateError, match="Another"):
++                state.save_suggestions([item("late")], "space")
++            with pytest.raises(state.SuggestionStateError, match="Another"):
++                with state.suggestion_transaction():
++                    pytest.fail("Apply contender acquired active generation lock")
++            return [item("new")]
++
++    monkeypatch.setattr(cli_module, "get_adapter", lambda name: Backend())
++    monkeypatch.setattr(importlib.import_module("jarvis.ai_client"), "AIClient", Provider)
++    result = CliRunner().invoke(cli_module.cli, ["suggest", "--days", "14"])
++    assert result.exit_code == 0, result.output
++    assert [s.id for s in state.load_suggestions()[0]] == ["new"]
++    assert json.loads(isolated_state.read_text())["backend"] == "synthetic"

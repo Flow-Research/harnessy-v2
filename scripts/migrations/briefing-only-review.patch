@@ -1,0 +1,2768 @@
+diff --git a/src/jarvis/community_briefing/cli.py b/src/jarvis/community_briefing/cli.py
+--- a/src/jarvis/community_briefing/cli.py
++++ b/src/jarvis/community_briefing/cli.py
+@@ -19,7 +19,9 @@
+     save_config,
+ )
+ from jarvis.config.schema import CommunityBriefingConfig
+-from jarvis.meetings.publication.launchd import review_plist_path
++from jarvis.meetings.publication.launchd import briefing_review_plist_path
++from jarvis.meetings.publication.notify import build_review_url, review_token
++from jarvis.meetings.publication.review import create_briefing_review_server
+ 
+ from .collector import resolve_draft_root, resolve_source_root
+ from .service import CommunityBriefingService
+@@ -150,7 +152,7 @@
+             "draft_path": str(resolve_draft_root(config)),
+             "state_path": str(service.state_root),
+             "review_url": f"http://{config.review_host}:{config.review_port}/",
+-            "review_service_installed": review_plist_path().exists(),
++            "review_service_installed": briefing_review_plist_path().exists(),
+             "discord_channel_id": config.discord_channel_id,
+             "discord_token_available": _discord_token_available(config.discord_bot_token_env_var),
+             "google_owner_email": config.google_owner_email,
+@@ -236,6 +238,8 @@
+         "published": result.published,
+         "failed": result.failed,
+         "pending_review": result.pending_review,
++        "blocked": result.blocked,
++        "unresolved": result.unresolved,
+     }
+     if as_json:
+         click.echo(json.dumps(payload))
+@@ -243,20 +247,58 @@
+         console.print(
+             "Weekly briefing: " + ", ".join(f"{key}={value}" for key, value in payload.items())
+         )
++    if result.failed or result.blocked or result.unresolved:
++        raise SystemExit(2)
+ 
+ 
+ @briefing_group.group(name="review")
+ def review_group() -> None:
+-    """Open the shared authenticated publication inbox."""
++    """Review weekly briefings locally."""
++
++
++@review_group.command(name="serve")
++@click.option(
++    "--port",
++    type=click.IntRange(1, 65535),
++    required=True,
++    help="Separate loopback port for briefing-only review",
++)
++def review_serve_command(port: int) -> None:
++    """Serve only briefing review; no meeting queue or publication worker is opened."""
++
++    config = load_config(reload=True).community_briefing.model_copy(
++        update={"review_host": "127.0.0.1", "review_port": port}
++    )
++    service = CommunityBriefingService(config)
++    try:
++        server = create_briefing_review_server(service)
++        try:
++            console.print(f"Weekly briefing review: http://127.0.0.1:{port}/")
++            server.serve_forever()
++        finally:
++            server.server_close()
++    finally:
++        service.close()
+ 
+ 
+ @review_group.command(name="open")
+-def review_open_command() -> None:
++@click.option(
++    "--port",
++    type=click.IntRange(1, 65535),
++    default=None,
++    help="Open a separate briefing-only loopback listener",
++)
++def review_open_command(port: int | None) -> None:
+     """Open the authenticated local review inbox."""
+ 
+     service = _service()
+     try:
+-        opened = webbrowser.open(service.review_url)
++        url = (
++            build_review_url("127.0.0.1", port, review_token(service.state_root))
++            if port is not None
++            else service.review_url
++        )
++        opened = webbrowser.open(url)
+     finally:
+         service.close()
+     if not opened:
+diff --git a/src/jarvis/community_briefing/service.py b/src/jarvis/community_briefing/service.py
+--- a/src/jarvis/community_briefing/service.py
++++ b/src/jarvis/community_briefing/service.py
+@@ -4,9 +4,13 @@
+ 
+ import hashlib
+ import json
++import os
+ import re
++import secrets
+ import shutil
+ import stat
++import tempfile
++import threading
+ from dataclasses import dataclass, field
+ from datetime import date, datetime, time, timedelta
+ from pathlib import Path
+@@ -23,7 +27,7 @@
+ from jarvis.meetings.publication.launchd import (
+     briefing_generation_worker_running,
+     briefing_publication_worker_running,
+-    review_launch_agent_running,
++    briefing_review_launch_agent_running,
+ )
+ from jarvis.meetings.publication.models import PublicationStatus
+ from jarvis.meetings.publication.notify import LocalNotifier, build_review_url, review_token
+@@ -39,6 +43,7 @@
+ from .safety import (
+     REQUIRED_SECTIONS,
+     public_safety_issues,
++    sanitize_excerpt,
+     validate_briefing,
+     validate_discord_summary,
+ )
+@@ -108,6 +113,8 @@
+     published: int = 0
+     failed: int = 0
+     pending_review: int = 0
++    blocked: int = 0
++    unresolved: int = 0
+ 
+ 
+ @dataclass(frozen=True, slots=True)
+@@ -145,7 +152,9 @@
+         self.store = store or BriefingStore(self.state_root)
+         token = review_token(self.state_root)
+         self.review_url = build_review_url(config.review_host, config.review_port, token)
+-        self.notifier = notifier or LocalNotifier(review_url=self.review_url)
++        self.notifier = notifier or LocalNotifier(
++            review_url=self.review_url, briefing_port=config.review_port
++        )
+         self._ai = ai
+         self._google = google
+         self._discord = discord
+@@ -165,6 +174,7 @@
+         regenerate: bool = False,
+         dry_run: bool = False,
+         now: datetime | None = None,
++        _job: dict | None = None,
+     ) -> GenerationResult:
+         """Generate one stable weekly draft; existing drafts are never overwritten implicitly."""
+ 
+@@ -176,6 +186,20 @@
+         if existing is not None and not regenerate:
+             return GenerationResult(item=existing, existing=True)
+ 
++        if existing is not None and regenerate and _job is None and not dry_run:
++            job = self._reserve_revision(
++                existing.briefing_id,
++                REGENERATION_INSTRUCTION,
++                self.config.ai_provider,
++                allow_approved=True,
++                expected_item=existing,
++            )
++            try:
++                return self.generate(week_start=target_start, regenerate=True, now=now, _job=job)
++            except Exception as exc:
++                self._fail_revision(existing.briefing_id, job, exc)
++                raise
++
+         collection = collect_sources(
+             self.config,
+             week_start=target_start,
+@@ -229,8 +253,6 @@
+         briefing_path = artifact_dir / "briefing.md"
+         discord_path = artifact_dir / "discord.txt"
+         provenance_path = artifact_dir / "provenance.json"
+-        if regenerate and existing is not None:
+-            _backup_artifacts(existing)
+         artifact_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+         artifact_dir.chmod(0o700)
+         provenance = _provenance_manifest(
+@@ -241,25 +263,75 @@
+             provider=provider,
+             quiet_week=quiet_week,
+         )
+-        _write_private(briefing_path, markdown.rstrip() + "\n")
+-        _write_private(discord_path, discord_summary.rstrip() + "\n")
+-        _write_private(provenance_path, json.dumps(provenance, indent=2) + "\n")
++        if _job is not None:
++            with self.store.connect() as connection:
++                current = self._locked_item(connection, existing.briefing_id)
++                if self._snapshot(current) != _job["expected"]:
++                    raise ValueError("revision superseded; newer work was preserved")
++                _backup_artifacts(current)
++                self._commit_artifacts(
++                    connection,
++                    current,
++                    markdown,
++                    discord_summary,
++                    action="save",
++                    job=_job,
++                    provenance=json.dumps(provenance, indent=2) + "\n",
++                    provider=provider,
++                )
++            result.item = self.store.get(existing.briefing_id)
++            return result
+         briefing_id = hashlib.sha256(f"community:{target_start.isoformat()}".encode()).hexdigest()[
+             :24
+         ]
+-        item, created = self.store.upsert_generated(
+-            briefing_id=briefing_id,
+-            week_start=target_start,
+-            week_end=target_end,
+-            artifact_dir=artifact_dir,
+-            briefing_path=briefing_path,
+-            discord_path=discord_path,
+-            provenance_path=provenance_path,
+-            draft_hash=combined_hash,
+-            provider=provider,
+-        )
+-        result.item = item
+-        result.created = created
++        marker_path = artifact_dir / REVISION_STATUS_NAME
++        with self.store.connect() as connection:
++            connection.execute("BEGIN IMMEDIATE")
++            appeared = connection.execute(
++                "SELECT * FROM community_briefings WHERE week_start=?", (target_start.isoformat(),)
++            ).fetchone()
++            if appeared is not None:
++                return GenerationResult(item=self.store._from_row(appeared), existing=True)
++            if any(artifact_dir.iterdir()):
++                raise ValueError("orphan briefing artifacts; operator reconciliation required")
++            marker = {
++                "nonce": secrets.token_hex(16),
++                "state": "running",
++                "phase": "committing",
++                "ts": datetime.now(ZoneInfo("UTC")).isoformat(),
++                "instruction": "Initial generation",
++            }
++            _write_private(marker_path, json.dumps(marker) + "\n")
++            _write_private(briefing_path, markdown.rstrip() + "\n")
++            _write_private(discord_path, discord_summary.rstrip() + "\n")
++            _write_private(provenance_path, json.dumps(provenance, indent=2) + "\n")
++            now_text = datetime.now(ZoneInfo("UTC")).isoformat()
++            connection.execute(
++                """INSERT INTO community_briefings
++                (briefing_id, week_start, week_end, artifact_dir, briefing_path, discord_path,
++                provenance_path, draft_hash, status, provider, created_at, updated_at)
++                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
++                (
++                    briefing_id,
++                    target_start.isoformat(),
++                    target_end.isoformat(),
++                    str(artifact_dir),
++                    str(briefing_path),
++                    str(discord_path),
++                    str(provenance_path),
++                    combined_hash,
++                    PublicationStatus.PENDING_REVIEW.value,
++                    provider,
++                    now_text,
++                    now_text,
++                ),
++            )
++            connection.commit()
++            connection.execute("BEGIN IMMEDIATE")
++            marker.update(state="completed", phase="finished")
++            _write_private(marker_path, json.dumps(marker) + "\n")
++        result.item = self.store.get(briefing_id)
++        result.created = True
+         self.notify_due()
+         return result
+ 
+@@ -271,40 +343,439 @@
+             item.discord_path.read_text(encoding="utf-8").strip(),
+         )
+ 
+-    def save_draft(self, briefing_id: str, *, markdown: str, discord_summary: str) -> BriefingItem:
+-        """Save both reviewer-edited artifacts atomically and invalidate stale approval."""
++    def _locked_item(self, connection, briefing_id: str) -> BriefingItem:
++        connection.execute("BEGIN IMMEDIATE")
++        row = connection.execute(
++            "SELECT * FROM community_briefings WHERE briefing_id = ?", (briefing_id,)
++        ).fetchone()
++        if row is None:
++            raise KeyError(briefing_id)
++        return self.store._from_row(row)
++
++    def _read_job(self, item: BriefingItem) -> dict | None:
++        path = item.artifact_dir / REVISION_STATUS_NAME
++        if not path.exists():
++            return None
++        try:
++            job = json.loads(path.read_text(encoding="utf-8"))
++            if not isinstance(job, dict) or not isinstance(job.get("nonce"), str):
++                raise ValueError("invalid reservation")
++            if (job.get("state"), job.get("phase")) not in {
++                ("running", "generating"),
++                ("running", "committing"),
++                ("failed", "finished"),
++                ("completed", "finished"),
++                ("superseded", "finished"),
++            }:
++                raise ValueError("invalid state/phase")
++            return job
++        except (OSError, ValueError):
++            raise ValueError(
++                "revision state is ambiguous; operator reconciliation required"
++            ) from None
++
++    def _snapshot(self, item: BriefingItem) -> dict:
++        artifact_hashes = {
++            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
++            for path in (item.briefing_path, item.discord_path, item.provenance_path)
++        }
++        collection = collect_sources(
++            self.config, week_start=item.week_start, week_end=item.week_end
++        )
++        return {
++            "updated_at": item.updated_at,
++            "draft_hash": item.draft_hash,
++            "status": item.status.value,
++            "approved_hash": item.approved_hash,
++            "artifacts": artifact_hashes,
++            "sources": {source.source_id: source.source_hash for source in collection.sources},
++        }
++
++    def _reserve_revision(
++        self,
++        briefing_id: str,
++        instruction: str,
++        provider: str,
++        *,
++        allow_approved: bool = False,
++        expected_item: BriefingItem | None = None,
++    ) -> dict:
++        with self.store.connect() as connection:
++            item = self._locked_item(connection, briefing_id)
++            if expected_item is not None and item != expected_item:
++                raise ValueError("briefing changed since revision input validation")
++            allowed = {PublicationStatus.PENDING_REVIEW}
++            if allow_approved:
++                allowed.add(PublicationStatus.APPROVED)
++            if item.status not in allowed or (item.approved_hash and not allow_approved):
++                raise ValueError("only a pending briefing can be revised")
++            previous = self._read_job(item)
++            if previous and (previous["state"] == "running" or previous["phase"] == "committing"):
++                raise ValueError(
++                    "revision in progress or interrupted; operator reconciliation required"
++                )
++            job = {
++                "nonce": secrets.token_hex(16),
++                "state": "running",
++                "phase": "generating",
++                "ts": datetime.now(ZoneInfo("UTC")).isoformat(),
++                "instruction": instruction,
++                "provider": provider,
++                "expected": self._snapshot(item),
++            }
++            _write_private(item.artifact_dir / REVISION_STATUS_NAME, json.dumps(job) + "\n")
++            return job
+ 
++    def _fail_revision(self, briefing_id: str, job: dict, error: Exception) -> None:
++        with self.store.connect() as connection:
++            item = self._locked_item(connection, briefing_id)
++            current = self._read_job(item)
++            if current is None or current["nonce"] != job["nonce"]:
++                return
++            if current["phase"] == "committing":
++                return  # Never disguise a possibly partial artifact commit as retryable.
++            current.update(state="failed", phase="finished", error=str(error)[:500])
++            _write_private(item.artifact_dir / REVISION_STATUS_NAME, json.dumps(current) + "\n")
++        try:
++            self.notifier.briefing_error()
++        except OSError:
++            pass  # Durable failure remains visible even if the desktop notifier fails.
++
++    def _commit_artifacts(
++        self,
++        connection,
++        item,
++        markdown,
++        summary,
++        *,
++        action,
++        job=None,
++        provenance=None,
++        provider=None,
++    ):
++        current = self._read_job(item)
++        if current and current["phase"] == "committing":
++            raise ValueError("interrupted artifact commit; operator reconciliation required")
++        if job is None and action == "save" and briefing_hash(markdown, summary) == item.draft_hash:
++            # A true no-op must not revoke approval, clear failure/receipt metadata,
++            # overwrite a current reservation, or rewrite files behind a worker.
++            live_markdown, live_summary = self.read_artifacts(item)
++            if briefing_hash(live_markdown, live_summary) == item.draft_hash:
++                return
++        if job is not None:
++            if current is None or current["nonce"] != job["nonce"]:
++                raise ValueError("revision superseded; newer work was preserved")
++            if self._snapshot(item) != job["expected"]:
++                current.update(
++                    state="superseded",
++                    phase="finished",
++                    error="Draft, approval or source evidence changed; provider output discarded.",
++                )
++                _write_private(item.artifact_dir / REVISION_STATUS_NAME, json.dumps(current) + "\n")
++                raise ValueError("revision superseded; newer work was preserved")
++        if item.status in {PublicationStatus.PUBLISHING, PublicationStatus.PUBLISHED}:
++            raise ValueError("a publishing or published briefing cannot be replaced")
++        marker = (
++            dict(job)
++            if job
++            else {
++                "nonce": secrets.token_hex(16),
++                "ts": datetime.now(ZoneInfo("UTC")).isoformat(),
++                "instruction": "Manual review",
++                "provider": "manual",
++            }
++        )
++        marker.update(state="running", phase="committing")
++        marker_path = item.artifact_dir / REVISION_STATUS_NAME
++        # This barrier survives SQLite rollback, so partial file replacement never
++        # looks like a retryable provider failure after a crash.
++        _write_private(marker_path, json.dumps(marker) + "\n")
++        _write_private(item.briefing_path, markdown.rstrip() + "\n")
++        _write_private(item.discord_path, summary.rstrip() + "\n")
++        if provenance is not None:
++            _write_private(item.provenance_path, provenance)
++        digest = briefing_hash(markdown, summary)
++        now = datetime.now(ZoneInfo("UTC")).isoformat()
++        approved = action == "approve"
++        status = PublicationStatus.APPROVED if approved else PublicationStatus.PENDING_REVIEW
++        connection.execute(
++            """UPDATE community_briefings SET draft_hash=?, status=?, approved_hash=?,
++            approved_at=?, updated_at=?, error_stage=NULL, error_message=NULL,
++            next_attempt_at=NULL, provider=COALESCE(?, provider) WHERE briefing_id=?""",
++            (
++                digest,
++                status.value,
++                digest if approved else None,
++                now if approved else None,
++                now,
++                provider,
++                item.briefing_id,
++            ),
++        )
++        connection.commit()
++        connection.execute("BEGIN IMMEDIATE")
++        latest = self._read_job(item)
++        if latest and latest["nonce"] == marker["nonce"]:
++            marker.update(state="completed", phase="finished")
++            _write_private(marker_path, json.dumps(marker) + "\n")
++
++    def _review_pair(self, briefing_id, markdown, discord_summary, action):
++        with self.store.connect() as connection:
++            item = self._locked_item(connection, briefing_id)
++            normalized = markdown.replace("\r\n", "\n").replace("\r", "\n").strip()
++            validate_briefing(normalized, quiet_week=_quiet_from_provenance(item.provenance_path))
++            summary = validate_discord_summary(discord_summary)
++            self._commit_artifacts(connection, item, normalized, summary, action=action)
++        return self.store.get(briefing_id)
++
++    def save_draft(self, briefing_id: str, *, markdown: str, discord_summary: str) -> BriefingItem:
++        return self._review_pair(briefing_id, markdown, discord_summary, "save")
++
++    def approve(self, briefing_id: str, *, markdown: str, discord_summary: str) -> BriefingItem:
++        return self._review_pair(briefing_id, markdown, discord_summary, "approve")
++
++    def revise(
++        self,
++        briefing_id: str,
++        *,
++        instruction: str,
++        markdown: str,
++        discord_summary: str,
++        provider: str | None = None,
++    ) -> tuple[BriefingItem, str]:
+         item = self.store.get(briefing_id)
+         if item is None:
+             raise KeyError(briefing_id)
+-        quiet = _quiet_from_provenance(item.provenance_path)
+-        normalized_markdown = markdown.replace("\r\n", "\n").replace("\r", "\n").strip()
+-        validate_briefing(normalized_markdown, quiet_week=quiet)
+-        normalized_summary = validate_discord_summary(discord_summary)
+-        _write_private(item.briefing_path, normalized_markdown + "\n")
+-        _write_private(item.discord_path, normalized_summary + "\n")
+-        return self.store.save_draft(
+-            briefing_id,
+-            briefing_hash(normalized_markdown, normalized_summary),
++        text, requested, current_markdown, current_summary = _validated_revision_inputs(
++            item, instruction, markdown, discord_summary, provider
+         )
++        job = self._reserve_revision(briefing_id, text, requested, expected_item=item)
++        return self._run_revision(briefing_id, job, current_markdown, current_summary)
+ 
+-    def approve(self, briefing_id: str, *, markdown: str, discord_summary: str) -> BriefingItem:
+-        """Save reviewer edits and bind approval to the exact combined artifact hash."""
++    def _run_revision(self, briefing_id, job, markdown, summary):
++        try:
++            item = self.store.get(briefing_id)
++            if item is None:
++                raise KeyError(briefing_id)
++            quiet = _quiet_from_provenance(item.provenance_path)
++            evidence = _revision_evidence(self.config, item)
++            client = self._ai_client(provider=job["provider"])
++            revised, discord, used = self._rewrite_briefing(
++                client, item, job["instruction"], markdown, summary, evidence, quiet_week=quiet
++            )
++            try:
++                validate_briefing(revised, quiet_week=quiet)
++                discord = validate_discord_summary(discord)
++            except ValueError as exc:
++                revised, discord, used = self._rewrite_briefing(
++                    client,
++                    item,
++                    job["instruction"],
++                    markdown,
++                    summary,
++                    evidence,
++                    quiet_week=quiet,
++                    repair_reason=str(exc),
++                )
++                validate_briefing(revised, quiet_week=quiet)
++                discord = validate_discord_summary(discord)
++            with self.store.connect() as connection:
++                latest = self._locked_item(connection, briefing_id)
++                self._commit_artifacts(
++                    connection, latest, revised, discord, action="save", job=job, provider=used
++                )
++                _append_revision_log(latest, instruction=job["instruction"], provider=used)
++            return self.store.get(briefing_id), used
++        except Exception as exc:
++            self._fail_revision(briefing_id, job, exc)
++            raise
+ 
+-        item = self.save_draft(
+-            briefing_id,
+-            markdown=markdown,
+-            discord_summary=discord_summary,
++    def start_revision(
++        self,
++        briefing_id: str,
++        *,
++        instruction: str,
++        markdown: str,
++        discord_summary: str,
++        provider: str | None = None,
++    ) -> None:
++        item = self.store.get(briefing_id)
++        if item is None:
++            raise KeyError(briefing_id)
++        text, requested, current_markdown, current_summary = _validated_revision_inputs(
++            item, instruction, markdown, discord_summary, provider
+         )
+-        return self.store.approve(briefing_id, item.draft_hash)
++        job = self._reserve_revision(briefing_id, text, requested, expected_item=item)
+ 
++        def run():
++            try:
++                self._run_revision(briefing_id, job, current_markdown, current_summary)
++            except Exception:
++                pass  # Durable status is the UI error channel.
++
++        try:
++            threading.Thread(
++                target=run, name=f"briefing-revision-{briefing_id[:8]}", daemon=True
++            ).start()
++        except Exception as exc:
++            self._fail_revision(briefing_id, job, exc)
++            raise
++
++    def start_regeneration(self, briefing_id: str) -> None:
++        item = self.store.get(briefing_id)
++        if item is None:
++            raise KeyError(briefing_id)
++        job = self._reserve_revision(
++            briefing_id, REGENERATION_INSTRUCTION, self.config.ai_provider, expected_item=item
++        )
++
++        def run():
++            try:
++                self.generate(week_start=item.week_start, regenerate=True, _job=job)
++            except Exception as exc:
++                self._fail_revision(briefing_id, job, exc)
++
++        try:
++            threading.Thread(
++                target=run, name=f"briefing-regeneration-{briefing_id[:8]}", daemon=True
++            ).start()
++        except Exception as exc:
++            self._fail_revision(briefing_id, job, exc)
++            raise
++
++    def revision_status(self, item: BriefingItem) -> dict[str, str] | None:
++        try:
++            job = self._read_job(item)
++        except ValueError as exc:
++            return {
++                "state": "failed",
++                "error": str(exc),
++                "ts": "",
++                "instruction": "",
++                "reconciliation_required": "true",
++            }
++        if not job or job["state"] == "completed":
++            return None
++        result = {key: str(job.get(key, "")) for key in ("state", "ts", "instruction", "error")}
++        if job["phase"] == "committing":
++            result.update(
++                state="failed",
++                error=(
++                    "Artifact commit interrupted or in progress; operator reconciliation required."
++                ),
++                reconciliation_required="true",
++            )
++        elif job["state"] == "superseded":
++            result["state"] = "failed"
++        elif job["state"] == "running":
++            try:
++                age = (
++                    datetime.now(ZoneInfo("UTC")) - datetime.fromisoformat(job["ts"])
++                ).total_seconds()
++            except (ValueError, TypeError):
++                age = REVISION_STALE_SECONDS + 1
++            if age > REVISION_STALE_SECONDS:
++                result.update(
++                    state="failed",
++                    error="Revision interrupted or stale; operator reconciliation required.",
++                    reconciliation_required="true",
++                )
++        return result
++
++    def revision_log(self, item: BriefingItem, *, limit: int = 5) -> list[dict[str, str]]:
++        """Return the most recent reviewer revision instructions, oldest first."""
++
++        try:
++            lines = (item.artifact_dir / REVISION_LOG_NAME).read_text(encoding="utf-8").splitlines()
++        except OSError:
++            return []
++        entries: list[dict[str, str]] = []
++        for line in lines[-limit:]:
++            try:
++                record = json.loads(line)
++            except ValueError:
++                continue
++            if isinstance(record, dict):
++                entries.append(
++                    {
++                        "ts": str(record.get("ts") or ""),
++                        "instruction": str(record.get("instruction") or ""),
++                        "provider": str(record.get("provider") or ""),
++                    }
++                )
++        return entries
++
++    def _rewrite_briefing(
++        self,
++        client: BriefingAI,
++        item: BriefingItem,
++        instruction: str,
++        markdown: str,
++        discord_summary: str,
++        evidence: list[dict[str, str]],
++        *,
++        quiet_week: bool,
++        repair_reason: str | None = None,
++    ) -> tuple[str, str, str]:
++        repair_instruction = (
++            f" A previous revision failed validation: {repair_reason}. Correct that issue."
++            if repair_reason
++            else ""
++        )
++        prompt = (
++            "Revise Flow Research's public weekly community briefing according to the reviewer "
++            "instruction below. Ground every stated fact in the current draft or the accepted "
++            "source excerpts; never invent progress, dates, people, commitments, links, or calls "
++            "to action, and keep people at team level. Use simple, direct, general-audience "
++            "language and Flow Research 'we' voice. Return JSON only with keys title, "
++            "discord_summary, and sections. sections must be an object with exactly these keys: "
++            + ", ".join(REQUIRED_SECTIONS)
++            + ". The full briefing must be 400-700 words unless quiet_week is true, in which case "
++            "write an honest shorter update. discord_summary must be no more than three concise "
++            "sentences and 600 characters. The title should be one sentence summarizing the week."
++            + repair_instruction
++            + "\n\n"
++            + json.dumps(
++                {
++                    "week_start": item.week_start.isoformat(),
++                    "week_end": item.week_end.isoformat(),
++                    "quiet_week": quiet_week,
++                    "reviewer_instruction": instruction,
++                    "current_briefing_markdown": markdown,
++                    "current_discord_summary": discord_summary,
++                    "accepted_source_excerpts": evidence,
++                },
++                ensure_ascii=False,
++            )
++        )
++        response = client.generate_json(prompt)
++        revised_markdown, revised_summary = _briefing_from_response(response.data)
++        return revised_markdown, revised_summary, response.provider
++
+     def reject(self, briefing_id: str) -> BriefingItem:
+-        return self.store.reject(briefing_id)
++        with self.store.connect() as connection:
++            item = self._locked_item(connection, briefing_id)
++            job = self._read_job(item)
++            if job and job["phase"] == "committing":
++                raise ValueError("interrupted artifact commit; operator reconciliation required")
++            if item.status in {PublicationStatus.PUBLISHING, PublicationStatus.PUBLISHED}:
++                raise ValueError("a publishing or published briefing cannot be rejected")
++            now = datetime.now(ZoneInfo("UTC")).isoformat()
++            connection.execute(
++                "UPDATE community_briefings SET status=?, approved_hash=NULL, "
++                "rejected_at=?, updated_at=? WHERE briefing_id=?",
++                (PublicationStatus.REJECTED.value, now, now, briefing_id),
++            )
++        return self.store.get(briefing_id)
+ 
+     def notify_due(self) -> int:
+         due = self.store.pending_due_for_notification(self.config.reminder_hours)
+         review = [item for item in due if item.status == PublicationStatus.PENDING_REVIEW]
+-        errors = [item for item in due if item.status == PublicationStatus.BLOCKED]
++        errors = [
++            item
++            for item in due
++            if item.status in {PublicationStatus.BLOCKED, PublicationStatus.PUBLISHING}
++        ]
+         notified: list[str] = []
+         pending_method = getattr(self.notifier, "briefing_pending", None)
+         error_method = getattr(self.notifier, "briefing_error", None)
+@@ -332,7 +803,10 @@
+                 result.published += 1
+             else:
+                 result.failed += 1
+-        result.pending_review = self.store.counts()[PublicationStatus.PENDING_REVIEW.value]
++        counts = self.store.counts()
++        result.pending_review = counts[PublicationStatus.PENDING_REVIEW.value]
++        result.blocked = counts[PublicationStatus.BLOCKED.value]
++        result.unresolved = counts[PublicationStatus.PUBLISHING.value]
+         return result
+ 
+     def preflight(
+@@ -373,7 +847,7 @@
+         )
+         add("state_permissions", permissions_ok, "briefing queue is owner-only")
+         if check_runtime:
+-            review_loaded = review_launch_agent_running()
++            review_loaded = briefing_review_launch_agent_running()
+             review_responding = False
+             if review_loaded:
+                 try:
+@@ -424,17 +898,30 @@
+         return result
+ 
+     def _classify(self, collection: CollectionResult) -> tuple[list[SourceDecision], str]:
++        """Classify sources in bounded batches so one oversized prompt cannot time out the run."""
++
+         if not collection.sources:
+             return [], "none"
++        decisions: list[SourceDecision] = []
++        providers: list[str] = []
++        for start in range(0, len(collection.sources), CLASSIFIER_BATCH_SIZE):
++            batch = collection.sources[start : start + CLASSIFIER_BATCH_SIZE]
++            batch_decisions, provider = self._classify_batch(batch)
++            decisions.extend(batch_decisions)
++            providers.append(provider)
++        provider = ",".join(sorted(set(providers))) if providers else "none"
++        return decisions, provider
++
++    def _classify_batch(self, sources: list[BriefingSource]) -> tuple[list[SourceDecision], str]:
+         payload = [
+             {
+                 "source_id": source.source_id,
+                 "title": source.title,
+                 "kind": source.kind,
+                 "date": source.observed_date.isoformat(),
+-                "excerpt": source.excerpt,
++                "excerpt": source.excerpt[:CLASSIFIER_EXCERPT_CHARS],
+             }
+-            for source in collection.sources
++            for source in sources
+         ]
+         prompt = (
+             "You are the public-safety classifier for Flow Research's weekly community briefing. "
+@@ -451,8 +938,16 @@
+         raw = response.data.get("decisions")
+         if not isinstance(raw, list):
+             raise ValueError("classifier response is missing decisions")
++        expected_ids = {source.source_id for source in sources}
++        returned_ids = [entry.get("source_id") for entry in raw if isinstance(entry, dict)]
++        if (
++            len(returned_ids) != len(sources)
++            or len(raw) != len(sources)
++            or set(returned_ids) != expected_ids
++        ):
++            raise ValueError("classifier must return exactly one decision per supplied source")
+         decisions: list[SourceDecision] = []
+-        valid_ids = {source.source_id for source in collection.sources}
++        valid_ids = {source.source_id for source in sources}
+         for entry in raw:
+             if not isinstance(entry, dict):
+                 continue
+@@ -547,13 +1042,16 @@
+         )
+         return markdown, summary, response.provider
+ 
+-    def _ai_client(self) -> BriefingAI:
+-        if self._ai is None:
+-            self._ai = HarnessyAI(
+-                provider=self.config.ai_provider,
+-                cwd=resolve_source_root(self.config),
+-            )
+-        return self._ai
++    def _ai_client(self, provider: str | None = None) -> BriefingAI:
++        requested = (provider or "").strip().lower()
++        if self._ai is not None or not requested or requested == "auto":
++            if self._ai is None:
++                self._ai = HarnessyAI(
++                    provider=self.config.ai_provider,
++                    cwd=resolve_source_root(self.config),
++                )
++            return self._ai
++        return HarnessyAI(provider=requested, cwd=resolve_source_root(self.config))
+ 
+     def _google_publisher(self) -> BriefingGooglePublisher:
+         if self._google is None:
+@@ -579,6 +1077,7 @@
+         return self._discord
+ 
+     def _publish_claimed(self, item: BriefingItem) -> bool:
++        stage = "source"
+         try:
+             markdown, summary = self.read_artifacts(item)
+             current_hash = briefing_hash(markdown, summary)
+@@ -586,6 +1085,7 @@
+                 self.store.save_draft(item.briefing_id, current_hash)
+                 return False
+             title = _markdown_title(markdown)
++            stage = "google"
+             document = self._google_publisher().publish_markdown(
+                 title=title,
+                 markdown=markdown,
+@@ -604,6 +1104,7 @@
+             if refreshed is None:
+                 raise RuntimeError("briefing disappeared after Google checkpoint")
+             content = f"{summary}\n\n[Read the weekly briefing]({document.url})"
++            stage = "discord"
+             message = self._discord_publisher().publish_content(
+                 content,
+                 item_id=item.briefing_id,
+@@ -617,18 +1118,22 @@
+             )
+             return True
+         except PublicationError as exc:
++            safe_retry = getattr(exc, "safe_to_retry", False)
++            uncertain = not isinstance(exc, PublicationConfigError) and not safe_retry
+             self.store.mark_failure(
+                 item.briefing_id,
+-                stage=_failure_stage(exc),
++                stage=f"uncertain-{stage}" if uncertain else _failure_stage(exc),
+                 message=str(exc),
+-                retry_after_seconds=exc.retry_after_seconds,
++                retry_after_seconds=exc.retry_after_seconds if safe_retry else None,
++                uncertain=uncertain,
+             )
+         except (OSError, UnicodeError, RuntimeError, ValueError) as exc:
+             self.store.mark_failure(
+                 item.briefing_id,
+-                stage="source",
++                stage=f"uncertain-{stage}" if stage != "source" else stage,
+                 message=str(exc),
+                 retry_after_seconds=None,
++                uncertain=stage != "source",
+             )
+         self.notify_due()
+         return False
+@@ -652,8 +1157,126 @@
+     normalized_markdown = markdown.replace("\r\n", "\n").replace("\r", "\n").strip()
+     normalized_summary = discord_summary.replace("\r\n", "\n").replace("\r", "\n").strip()
+     return hashlib.sha256(f"{normalized_markdown}\0{normalized_summary}".encode()).hexdigest()
++
++
++REVISION_LOG_NAME = "revisions.ndjson"
++REVISION_STATUS_NAME = "revision-status.json"
++REGENERATION_INSTRUCTION = "Regenerate the briefing from this week's accepted sources."
++CLASSIFIER_BATCH_SIZE = 12
++CLASSIFIER_EXCERPT_CHARS = 2500
++REVISION_STALE_SECONDS = 1800
++MAX_REVISION_INSTRUCTION_CHARS = 2000
++MAX_REVISION_EXCERPT_CHARS = 1200
++ALLOWED_REVISION_PROVIDERS = ("auto", "claude", "codex", "opencode")
++
++
++def _validated_revision_inputs(
++    item: BriefingItem,
++    instruction: str,
++    markdown: str,
++    discord_summary: str,
++    provider: str | None,
++) -> tuple[str, str, str, str]:
++    """Normalize and fail-closed-validate a revision request."""
++
++    if item.status != PublicationStatus.PENDING_REVIEW:
++        raise ValueError("only a pending briefing can be revised")
++    text = instruction.replace("\r\n", "\n").replace("\r", "\n").strip()
++    if not text:
++        raise ValueError("a revision instruction is required")
++    if len(text) > MAX_REVISION_INSTRUCTION_CHARS:
++        raise ValueError(
++            f"revision instruction is longer than {MAX_REVISION_INSTRUCTION_CHARS} characters"
++        )
++    requested = (provider or "auto").strip().lower()
++    if requested not in ALLOWED_REVISION_PROVIDERS:
++        raise ValueError("provider must be one of: " + ", ".join(ALLOWED_REVISION_PROVIDERS))
++    current_markdown = markdown.replace("\r\n", "\n").replace("\r", "\n").strip()
++    current_summary = discord_summary.strip()
++    if not current_markdown or not current_summary:
++        raise ValueError("the current briefing and Discord copy are required to revise")
++    return text, requested, current_markdown, current_summary
++
++
++def _briefing_from_response(data: dict[str, object]) -> tuple[str, str]:
++    """Assemble the canonical briefing markdown and Discord copy from writer JSON."""
++
++    title = str(data.get("title") or "").strip()
++    summary = str(data.get("discord_summary") or "").strip()
++    sections = data.get("sections")
++    if not title or not isinstance(sections, dict):
++        raise ValueError("writer response is missing title or sections")
++    section_text: dict[str, str] = {}
++    for heading in REQUIRED_SECTIONS:
++        value = sections.get(heading)
++        if isinstance(value, list):
++            text = "\n".join(f"- {str(item).strip()}" for item in value if str(item).strip())
++        else:
++            text = str(value or "").strip()
++        if not text:
++            raise ValueError(f"writer response is missing section: {heading}")
++        section_text[heading] = text
++    sentence_title = title if title[-1] in ".!?" else title + "."
++    markdown = (
++        "# "
++        + sentence_title
++        + "\n\n"
++        + "\n\n".join(f"## {heading}\n\n{section_text[heading]}" for heading in REQUIRED_SECTIONS)
++    )
++    return markdown, summary
+ 
+ 
++def _revision_evidence(config: CommunityBriefingConfig, item: BriefingItem) -> list[dict[str, str]]:
++    """Re-read the week's accepted sources as sanitized excerpts for grounded revision."""
++
++    try:
++        manifest = json.loads(item.provenance_path.read_text(encoding="utf-8"))
++        included_ids = {
++            str(source.get("source_id"))
++            for source in manifest.get("sources", [])
++            if isinstance(source, dict) and source.get("included")
++        }
++    except (OSError, ValueError, AttributeError):
++        return []
++    if not included_ids:
++        return []
++    try:
++        collection = collect_sources(
++            config,
++            week_start=item.week_start,
++            week_end=item.week_end,
++        )
++    except (OSError, ValueError):
++        return []
++    cards: list[dict[str, str]] = []
++    for source in collection.sources:
++        if source.source_id not in included_ids:
++            continue
++        cards.append(
++            {
++                "source_id": source.source_id,
++                "date": source.observed_date.isoformat(),
++                "kind": source.kind,
++                "excerpt": sanitize_excerpt(source.excerpt)[:MAX_REVISION_EXCERPT_CHARS],
++            }
++        )
++    return cards
++
++
++def _append_revision_log(item: BriefingItem, *, instruction: str, provider: str) -> None:
++    path = item.artifact_dir / REVISION_LOG_NAME
++    record = {
++        "ts": datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds"),
++        "instruction": instruction,
++        "provider": provider,
++    }
++    try:
++        existing = path.read_text(encoding="utf-8")
++    except OSError:
++        existing = ""
++    _write_private(path, existing + json.dumps(record, ensure_ascii=False) + "\n")
++
++
+ def _accepted_fact_cards(
+     sources: list[BriefingSource], decisions: list[SourceDecision]
+ ) -> list[dict[str, object]]:
+@@ -766,11 +1389,22 @@
+ def _write_private(path: Path, content: str) -> None:
+     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+     path.parent.chmod(0o700)
+-    temporary = path.with_suffix(path.suffix + ".tmp")
+-    temporary.write_text(content, encoding="utf-8")
+-    temporary.chmod(0o600)
+-    temporary.replace(path)
+-    path.chmod(0o600)
++    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
++    temporary = Path(name)
++    try:
++        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
++            output.write(content)
++            output.flush()
++            os.fsync(output.fileno())
++        temporary.replace(path)
++        path.chmod(0o600)
++        directory = os.open(path.parent, os.O_RDONLY)
++        try:
++            os.fsync(directory)
++        finally:
++            os.close(directory)
++    finally:
++        temporary.unlink(missing_ok=True)
+ 
+ 
+ def _markdown_title(markdown: str) -> str:
+diff --git a/src/jarvis/meetings/publication/launchd.py b/src/jarvis/meetings/publication/launchd.py
+--- a/src/jarvis/meetings/publication/launchd.py
++++ b/src/jarvis/meetings/publication/launchd.py
+@@ -10,6 +10,7 @@
+ from pathlib import Path
+ 
+ _LABEL = "tech.flowresearch.jarvis.meeting-review"
++_BRIEFING_REVIEW_LABEL = "tech.flowresearch.jarvis.briefing-review"
+ _WORKER_LABEL = "com.flow-harness.project.flow-meeting-publication-worker"
+ _BRIEFING_GENERATION_LABEL = (
+     "com.flow-harness.project.weekly-community-briefing-generate"
+@@ -29,6 +30,18 @@
+     return _launch_agent_running(_LABEL)
+ 
+ 
++def briefing_review_plist_path() -> Path:
++    """Return the separate briefing-only review owner's definition path."""
++
++    return Path.home() / "Library" / "LaunchAgents" / f"{_BRIEFING_REVIEW_LABEL}.plist"
++
++
++def briefing_review_launch_agent_running() -> bool:
++    """Require the briefing-only owner, never the retired shared meeting owner."""
++
++    return _launch_agent_running(_BRIEFING_REVIEW_LABEL)
++
++
+ def publication_worker_running() -> bool:
+     """Return whether launchd currently has the publication worker loaded."""
+ 
+diff --git a/src/jarvis/meetings/publication/notify.py b/src/jarvis/meetings/publication/notify.py
+--- a/src/jarvis/meetings/publication/notify.py
++++ b/src/jarvis/meetings/publication/notify.py
+@@ -36,8 +36,9 @@
+ class LocalNotifier:
+     """Use terminal-notifier for click-through, with a safe macOS fallback."""
+ 
+-    def __init__(self, *, review_url: str):
++    def __init__(self, *, review_url: str, briefing_port: int | None = None):
+         self.review_url = review_url
++        self.briefing_port = briefing_port
+ 
+     @property
+     def clickable(self) -> bool:
+@@ -70,9 +71,19 @@
+     def _send(self, title: str, message: str) -> bool:
+         notifier = shutil.which("terminal-notifier")
+         if notifier:
+-            open_command = shlex.join(
+-                [sys.executable, "-m", "jarvis", "meeting", "publish", "review", "open"]
+-            )
++            command = [sys.executable, "-m", "jarvis"]
++            if self.briefing_port is None:
++                command += ["meeting", "publish", "review", "open"]
++            else:
++                command += [
++                    "community",
++                    "briefing",
++                    "review",
++                    "open",
++                    "--port",
++                    str(self.briefing_port),
++                ]
++            open_command = shlex.join(command)
+             result = subprocess.run(
+                 [
+                     notifier,
+diff --git a/src/jarvis/meetings/publication/review.py b/src/jarvis/meetings/publication/review.py
+--- a/src/jarvis/meetings/publication/review.py
++++ b/src/jarvis/meetings/publication/review.py
+@@ -52,8 +52,18 @@
+         server.server_close()
+ 
+ 
++def create_briefing_review_server(service: CommunityBriefingService) -> ThreadingHTTPServer:
++    """Serve only briefing review without constructing a meeting service or queue."""
++
++    token = review_token(service.state_root)
++    return ThreadingHTTPServer(
++        (service.config.review_host, service.config.review_port),
++        _handler_class(None, token, service),
++    )
++
++
+ def _handler_class(
+-    service: PublicationService,
++    service: PublicationService | None,
+     token: str,
+     briefing_service: CommunityBriefingService | None,
+ ) -> type[BaseHTTPRequestHandler]:
+@@ -92,7 +102,7 @@
+                     headers=headers,
+                 )
+                 return
+-            if parsed.path.startswith("/item/"):
++            if parsed.path.startswith("/item/") and service is not None:
+                 item_id = parsed.path.removeprefix("/item/").strip("/")
+                 self._write(HTTPStatus.OK, _item_page(service, item_id, token), headers=headers)
+                 return
+@@ -133,7 +143,7 @@
+                     self.send_header("Location", f"/briefing/{destination}")
+                     self.end_headers()
+                     return
+-                if path.startswith("/update-note/"):
++                if path.startswith("/update-note/") and service is not None:
+                     destination = path.removeprefix("/update-note/").strip("/")
+                     service.update_note(
+                         destination,
+@@ -143,6 +153,26 @@
+                     self.send_header("Location", f"/item/{destination}")
+                     self.end_headers()
+                     return
++                if path.startswith("/briefing/regenerate/") and briefing_service is not None:
++                    destination = path.removeprefix("/briefing/regenerate/").strip("/")
++                    briefing_service.start_regeneration(destination)
++                    self.send_response(HTTPStatus.SEE_OTHER)
++                    self.send_header("Location", f"/briefing/{destination}")
++                    self.end_headers()
++                    return
++                if path.startswith("/briefing/revise/") and briefing_service is not None:
++                    destination = path.removeprefix("/briefing/revise/").strip("/")
++                    briefing_service.start_revision(
++                        destination,
++                        instruction=form.get("revise_instruction", [""])[0],
++                        markdown=form.get("briefing_markdown", [""])[0],
++                        discord_summary=form.get("discord_summary", [""])[0],
++                        provider=form.get("revise_provider", ["auto"])[0],
++                    )
++                    self.send_response(HTTPStatus.SEE_OTHER)
++                    self.send_header("Location", f"/briefing/{destination}")
++                    self.end_headers()
++                    return
+                 if path.startswith("/briefing/approve/") and briefing_service is not None:
+                     briefing_service.approve(
+                         path.removeprefix("/briefing/approve/").strip("/"),
+@@ -151,7 +181,7 @@
+                     )
+                 elif path.startswith("/briefing/reject/") and briefing_service is not None:
+                     briefing_service.reject(path.removeprefix("/briefing/reject/").strip("/"))
+-                elif path.startswith("/approve/"):
++                elif path.startswith("/approve/") and service is not None:
+                     reviewed_summary = form.get("discord_summary")
+                     meeting_markdown = form.get("meeting_markdown")
+                     service.approve(
+@@ -159,7 +189,7 @@
+                         meeting_markdown=(meeting_markdown[0] if meeting_markdown else None),
+                         discord_summary=reviewed_summary[0] if reviewed_summary else None,
+                     )
+-                elif path.startswith("/reject/"):
++                elif path.startswith("/reject/") and service is not None:
+                     service.reject(path.removeprefix("/reject/").strip("/"))
+                 else:
+                     self._write(
+@@ -209,19 +239,29 @@
+ 
+ 
+ def _inbox_page(
+-    service: PublicationService,
++    service: PublicationService | None,
+     token: str,
+     briefing_service: CommunityBriefingService | None = None,
+ ) -> str:
+-    pending = service.store.list_items(PublicationStatus.PENDING_REVIEW)
+-    blocked = service.store.list_items(PublicationStatus.BLOCKED)
+-    counts = service.store.counts()
++    pending = service.store.list_items(PublicationStatus.PENDING_REVIEW) if service else []
++    blocked = service.store.list_items(PublicationStatus.BLOCKED) if service else []
++    counts = service.store.counts() if service else {}
+     briefing_pending = (
+         briefing_service.store.list_items(PublicationStatus.PENDING_REVIEW)
+         if briefing_service is not None
+         else []
+     )
+-    if pending:
++    if service is None:
++        body = """
++        <header class="page-intro">
++          <p class="eyebrow">Flow Research · Weekly briefings</p>
++          <h1>Weekly briefing review</h1>
++          <p class="lede">Review weekly drafts before publication.</p>
++        </header>
++        """
++        if not briefing_pending:
++            body += '<section class="card empty-card"><h2>No weekly drafts waiting</h2></section>'
++    elif pending:
+         item = pending[0]
+         body = f"""
+         <header class="page-intro">
+@@ -264,6 +304,19 @@
+         """
+     if briefing_service is not None:
+         briefing_blocked = briefing_service.store.list_items(PublicationStatus.BLOCKED)
++        briefing_publishing = briefing_service.store.list_items(PublicationStatus.PUBLISHING)
++        if briefing_publishing:
++            body += (
++                '<section class="card attention-card"><p class="section-label">'
++                "Briefing publication in progress or interrupted</p>"
++                "<p>Do not restart or retry an uncertain delivery. "
++                "Reconcile its existing receipts before taking further action.</p><ul>"
++                + "".join(
++                    f"<li>Week of {_format_date(item.week_start)}</li>"
++                    for item in briefing_publishing
++                )
++                + "</ul></section>"
++            )
+         if briefing_pending:
+             briefing = briefing_pending[0]
+             briefing_range = f"{briefing.week_start.isoformat()} to {briefing.week_end.isoformat()}"
+@@ -344,7 +397,10 @@
+     except (OSError, UnicodeError) as exc:
+         return _message_page("Cannot read briefing", html.escape(str(exc)))
+     csrf = _csrf(token)
+-    editable = item.status == PublicationStatus.PENDING_REVIEW
++    revision = service.revision_status(item)
++    reconciliation = revision is not None and revision.get("reconciliation_required") == "true"
++    editable = item.status == PublicationStatus.PENDING_REVIEW and not reconciliation
++    refresh: int | None = None
+     item_range = f"{item.week_start.isoformat()} to {item.week_end.isoformat()}"
+     item_status = _status_label(item.status)
+     if editable:
+@@ -378,6 +434,71 @@
+           spellcheck="true">{html.escape(discord_summary)}</textarea>
+         <p class="discord-editor-help">Use no more than three concise sentences.</p>
+         """
++        history = service.revision_log(item)
++        history_html = ""
++        if history:
++            rows = "".join(
++                '<li><span class="revision-meta">'
++                + html.escape(entry["ts"][:16].replace("T", " "))
++                + (" · " + html.escape(entry["provider"]) if entry["provider"] else "")
++                + "</span><br>"
++                + html.escape(entry["instruction"])
++                + "</li>"
++                for entry in reversed(history)
++            )
++            history_html = (
++                '<p class="section-label">Recent AI revisions</p>'
++                f'<ul class="revision-log">{rows}</ul>'
++            )
++        revision_notice = ""
++        if revision is not None and revision["state"] == "running":
++            refresh = 8
++            started = revision["ts"][:16].replace("T", " ")
++            revise_form = f"""
++          <p>Revision in progress since {html.escape(started)} UTC. This page refreshes
++          automatically until the updated draft arrives — usually within a couple of
++          minutes.</p>
++          <p class="privacy-note">Instruction: {html.escape(revision["instruction"])}</p>
++            """
++        else:
++            if revision is not None and revision["state"] == "failed":
++                revision_notice = (
++                    '<p class="revision-error">The last revision failed: '
++                    + html.escape(revision["error"] or "unknown error")
++                    + " You can try again.</p>"
++                )
++            revise_form = f"""
++          <p>The assistant rewrites the draft from your instruction, the text shown here, and
++          the week's accepted sources. Nothing publishes until you approve.</p>
++          <textarea class="revise-instruction" name="revise_instruction" form="briefing-approve"
++            maxlength="2000" spellcheck="true"
++            placeholder="e.g. Lead with the platform progress and make the Discord copy warmer."
++            ></textarea>
++          <label class="meeting-editor-label" for="revise-provider">Provider</label>
++          <select class="revise-provider" id="revise-provider" name="revise_provider"
++            form="briefing-approve">
++            <option value="auto">Auto</option>
++            <option value="claude">Claude</option>
++            <option value="codex">Codex</option>
++            <option value="opencode">OpenCode</option>
++          </select>
++          <button class="save-draft" type="submit" form="briefing-approve"
++            formaction="/briefing/revise/{item.briefing_id}">Revise draft</button>
++          <button class="regenerate" type="submit" form="briefing-approve"
++            formaction="/briefing/regenerate/{item.briefing_id}">Regenerate from sources</button>
++          <p class="privacy-note">Both run in the background; this page shows their progress and
++          reloads with the updated draft. Regenerate rebuilds the whole briefing from the week's
++          meeting notes and context (the current draft is backed up first).</p>
++            """
++        revise_card = f"""
++        <section class="card action-card">
++          <p class="section-label">Revise with AI</p>
++          <h2>Ask for changes</h2>
++          {revision_notice}
++          {revise_form}
++          {history_html}
++        </section>
++        """
+     else:
+         actions = f"""
+         <section class="card action-card"><p class="section-label">Decision</p>
+@@ -385,6 +506,7 @@
+         <p>This briefing is no longer awaiting review.</p></section>
+         """
+         editors = ""
++        revise_card = ""
+     body = f"""
+       <a class="back-link" href="/"><span aria-hidden="true">←</span> Review inbox</a>
+       <header class="meeting-header">
+@@ -412,10 +534,19 @@
+             <div class="discord-doc-link">↗ Read the weekly briefing</div></div></div>
+           </section>
+           {actions}
++          {revise_card}
+         </aside>
+       </div>
+     """
+-    return _page("Weekly community briefing review", body)
++    if reconciliation:
++        body = (
++            '<section class="card attention-card"><h2>Operator reconciliation required</h2><p>'
++            + html.escape(revision["error"])
++            + " Do not retry or publish until the artifacts and queue "
++            "have been reconciled.</p></section>"
++            + body
++        )
++    return _page("Weekly community briefing review", body, refresh=refresh)
+ 
+ 
+ def _item_page(service: PublicationService, item_id: str, token: str) -> str:
+@@ -612,10 +743,13 @@
+     )
+ 
+ 
+-def _page(title: str, body: str) -> str:
++def _page(title: str, body: str, *, refresh: int | None = None) -> str:
++    refresh_meta = (
++        f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh is not None else ""
++    )
+     return f"""<!doctype html>
+ <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+-<title>{html.escape(title)}</title><style>
++{refresh_meta}<title>{html.escape(title)}</title><style>
+ :root {{ color-scheme:light; --canvas:#f3f6f4; --surface:#fff; --ink:#15201a;
+ --muted:#647068; --line:#dce4df; --accent:#167449; --accent-dark:#105b39;
+ --danger:#a33b3b; --discord:#313338; }}
+@@ -751,6 +885,23 @@
+ outline:3px solid #6db88d; outline-offset:3px; }}
+ .privacy-note {{ border-top:1px solid var(--line); color:var(--muted); font-size:.76rem;
+ margin:1rem 0 0; padding-top:.9rem; }}
++.revise-instruction {{ background:#fbfcfb; border:1px solid var(--line); border-radius:9px;
++color:var(--ink); display:block; font:inherit; line-height:1.5; margin-top:.6rem;
++min-height:6.5rem; padding:.65rem; resize:vertical; width:100%; }}
++.revise-instruction:focus {{ border-color:var(--accent); outline:2px solid #6db88d;
++outline-offset:1px; }}
++.revise-provider {{ background:#fff; border:1px solid var(--line); border-radius:9px;
++color:var(--ink); display:block; font:inherit; margin-top:.4rem; padding:.5rem .65rem;
++width:100%; }}
++.revision-log {{ color:var(--muted); font-size:.78rem; list-style:none; margin:.5rem 0 0;
++padding:0; }}
++.revision-log li {{ border-top:1px solid var(--line); padding:.55rem 0; }}
++.revision-meta {{ color:var(--muted); font-size:.7rem; font-weight:700; }}
++.revision-error {{ background:#fff4f3; border:1px solid #e3c0bd; border-radius:9px;
++color:var(--danger); font-size:.8rem; margin-top:.6rem; padding:.6rem .7rem; }}
++.regenerate {{ background:#fff; border:1px solid var(--line); color:var(--ink);
++margin-top:.6rem; width:100%; }}
++.regenerate:hover {{ background:#f3f6f4; }}
+ .message-card {{ margin-top:4rem; }}
+ @media (max-width:880px) {{ .review-grid {{ grid-template-columns:1fr; }}
+ .review-sidebar {{ position:static; }} .preview-card {{ order:1; }} .action-card {{ order:2; }} }}
+diff --git a/tests/unit/community_briefing/test_briefing_only_review.py b/tests/unit/community_briefing/test_briefing_only_review.py
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/community_briefing/test_briefing_only_review.py
+@@ -0,0 +1,102 @@
++"""Migration separation through real loopback HTTP and temporary SQLite state."""
++
++import re
++import shlex
++import threading
++from datetime import date
++from pathlib import Path
++from unittest.mock import Mock
++
++import httpx
++
++from jarvis.community_briefing.service import CommunityBriefingService
++from jarvis.meetings.publication.models import PublicationStatus
++from jarvis.meetings.publication.notify import LocalNotifier, review_token
++from jarvis.meetings.publication.review import create_briefing_review_server
++
++from .test_service_review import (
++    FakeAI,
++    FakeDiscord,
++    FakeGoogle,
++    FakeNotifier,
++    _config,
++    _write_source,
++)
++
++
++def test_briefing_only_review_never_opens_meeting_queue(tmp_path, monkeypatch):
++    source = tmp_path / "private"
++    _write_source(source)
++    google, discord = FakeGoogle(), FakeDiscord()
++    service = CommunityBriefingService(
++        _config(tmp_path, source).model_copy(update={"review_port": 0}),
++        ai=FakeAI(),
++        google=google,
++        discord=discord,
++        notifier=FakeNotifier(),
++    )
++    generated = service.generate(week_start=date(2026, 8, 24))
++    assert generated.item is not None
++    # A broken sentinel would fail if any meeting store tried to open it.
++    meeting_queue = Path(service.state_root) / "queue.sqlite3"
++    meeting_queue.write_bytes(b"not a meeting database; must remain untouched")
++    before = meeting_queue.read_bytes()
++    monkeypatch.setattr(
++        "jarvis.meetings.publication.review.PublicationService",
++        Mock(side_effect=AssertionError("meeting service forbidden")),
++    )
++    server = create_briefing_review_server(service)
++    thread = threading.Thread(target=server.serve_forever, daemon=True)
++    thread.start()
++    try:
++        with httpx.Client(
++            base_url=f"http://127.0.0.1:{server.server_port}", trust_env=False
++        ) as client:
++            assert client.get("/").status_code == 401
++            inbox = client.get("/", params={"token": review_token(service.state_root)})
++            assert inbox.status_code == 200
++            assert "Weekly briefing review" in inbox.text
++            assert "Review meeting" not in inbox.text
++            page = client.get(f"/briefing/{generated.item.briefing_id}")
++            assert page.status_code == 200
++            match = re.search(r'name="csrf" value="([a-f0-9]+)"', page.text)
++            assert match is not None
++            csrf = match.group(1)
++            assert client.get("/item/anything").status_code == 404
++            for action in ("approve", "reject", "update-note", "dispatch", "scan", "restore"):
++                assert client.post(f"/{action}/anything", data={"csrf": csrf}).status_code == 404
++            markdown, summary = service.read_artifacts(generated.item)
++            form = {"csrf": csrf, "briefing_markdown": markdown, "discord_summary": summary}
++            assert (
++                client.post(f"/briefing/save/{generated.item.briefing_id}", data=form).status_code
++                == 303
++            )
++            assert (
++                client.post(
++                    f"/briefing/approve/{generated.item.briefing_id}", data=form
++                ).status_code
++                == 303
++            )
++            item = service.store.get(generated.item.briefing_id)
++            assert item is not None and item.status == PublicationStatus.APPROVED
++            assert google.calls == [] and discord.calls == []
++            assert meeting_queue.read_bytes() == before
++    finally:
++        server.shutdown()
++        server.server_close()
++        thread.join(timeout=2)
++        service.close()
++
++
++def test_briefing_notification_opens_briefing_command_without_meeting_activation(monkeypatch):
++    run = Mock(return_value=Mock(returncode=0))
++    monkeypatch.setattr(
++        "jarvis.meetings.publication.notify.shutil.which", lambda _: "/test/notifier"
++    )
++    monkeypatch.setattr("jarvis.meetings.publication.notify.subprocess.run", run)
++    notifier = LocalNotifier(review_url="http://127.0.0.1:8872/", briefing_port=8872)
++    assert notifier.briefing_pending(1)
++    args = run.call_args.args[0]
++    command = shlex.split(args[args.index("-execute") + 1])
++    assert command[-6:] == ["community", "briefing", "review", "open", "--port", "8872"]
++    assert "meeting" not in command
+diff --git a/tests/unit/community_briefing/test_review_owner.py b/tests/unit/community_briefing/test_review_owner.py
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/community_briefing/test_review_owner.py
+@@ -0,0 +1,100 @@
++"""Real temporary state/HTTP; only the host launchd boundary is simulated."""
++
++import json
++import os
++import shutil
++import socket
++import subprocess
++import threading
++from pathlib import Path
++
++import pytest
++from click.testing import CliRunner
++
++from jarvis.community_briefing.cli import community_cli
++from jarvis.community_briefing.service import CommunityBriefingService
++from jarvis.config import save_config
++from jarvis.config.schema import CommunityBriefingConfig, JarvisConfig
++from jarvis.meetings.publication.launchd import briefing_review_plist_path, review_plist_path
++from jarvis.meetings.publication.review import create_briefing_review_server
++
++
++@pytest.fixture
++def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CommunityBriefingConfig:
++    """Drop ambient credentials and reject external sockets before network I/O."""
++
++    for key in tuple(os.environ):
++        monkeypatch.delenv(key)
++    monkeypatch.setenv("HOME", str(tmp_path))
++    monkeypatch.setenv("JARVIS_DISCORD_BOT_TOKEN", "synthetic-test-token")
++    connect = socket.socket.connect
++
++    def loopback_only(sock, address):
++        assert isinstance(address, tuple) and address[0] in ("127.0.0.1", "::1")
++        return connect(sock, address)
++
++    monkeypatch.setattr(socket.socket, "connect", loopback_only)
++    return CommunityBriefingConfig(
++        enabled=True,
++        source_path=str(tmp_path),
++        draft_path=str(tmp_path / "drafts"),
++        state_path=str(tmp_path / "state"),
++        discord_channel_id="123456789012345678",
++    )
++
++
++def test_status_requires_briefing_only_definition(isolated_config) -> None:
++    """An old meeting plist cannot satisfy the briefing installation check."""
++
++    save_config(JarvisConfig(community_briefing=isolated_config))
++    old = review_plist_path()
++    old.parent.mkdir(parents=True)
++    old.write_text("legacy meeting owner")
++    runner = CliRunner()
++    result = runner.invoke(community_cli, ["briefing", "status", "--json"])
++    assert result.exit_code == 0, result.exception
++    assert json.loads(result.output)["review_service_installed"] is False
++    separate = briefing_review_plist_path()
++    assert separate.name == "tech.flowresearch.jarvis.briefing-review.plist"
++    separate.write_text("separate briefing owner")
++    result = runner.invoke(community_cli, ["briefing", "status", "--json"])
++    assert result.exit_code == 0, result.exception
++    assert json.loads(result.output)["review_service_installed"] is True
++    assert old.read_text() == "legacy meeting owner"
++
++
++@pytest.mark.parametrize("loaded_owner", ["meeting-review", "briefing-review"])
++def test_preflight_requires_separate_loaded_owner(isolated_config, monkeypatch, loaded_owner):
++    """Even a healthy loopback endpoint cannot compensate for the wrong owner."""
++
++    observed = []
++    which = shutil.which
++    monkeypatch.setattr(
++        shutil, "which", lambda name: "/synthetic/launchctl" if name == "launchctl" else which(name)
++    )
++
++    def launchctl_only(command, **kwargs):
++        assert command[:2] == ["launchctl", "print"]
++        observed.append(command[2])
++        return subprocess.CompletedProcess(command, 0 if command[2].endswith(loaded_owner) else 1)
++
++    # Simulate OS ownership, not application services, DB operations or HTTP responses.
++    monkeypatch.setattr(subprocess, "run", launchctl_only)
++    service = CommunityBriefingService(isolated_config.model_copy(update={"review_port": 0}))
++    server = create_briefing_review_server(service)
++    service.config = service.config.model_copy(update={"review_port": server.server_port})
++    thread = threading.Thread(target=server.serve_forever, daemon=True)
++    thread.start()
++    try:
++        result = service.preflight(check_providers=False)
++        check = next(check for check in result.checks if check.name == "review_service")
++        assert check.passed is (loaded_owner == "briefing-review")
++        assert check.required
++        assert f"gui/{os.getuid()}/tech.flowresearch.jarvis.briefing-review" in observed
++        assert not any(value.endswith(".meeting-review") for value in observed)
++        assert service._google is None and service._discord is None
++    finally:
++        server.shutdown()
++        server.server_close()
++        thread.join(timeout=2)
++        service.close()
+diff --git a/src/jarvis/community_briefing/safety.py b/src/jarvis/community_briefing/safety.py
+--- a/src/jarvis/community_briefing/safety.py
++++ b/src/jarvis/community_briefing/safety.py
+@@ -59,8 +59,8 @@
+         raise ValueError("briefing is missing required sections: " + ", ".join(missing))
+     words = word_count(markdown)
+     minimum = 80 if quiet_week else 300
+-    if words < minimum or words > 500:
+-        raise ValueError(f"briefing must contain {minimum}-500 words; found {words}")
++    if words < minimum or words > 800:
++        raise ValueError(f"briefing must contain {minimum}-800 words; found {words}")
+     issues = public_safety_issues(markdown)
+     if issues:
+         raise ValueError("briefing failed public-safety checks: " + ", ".join(issues))
+diff --git a/src/jarvis/community_briefing/store.py b/src/jarvis/community_briefing/store.py
+--- a/src/jarvis/community_briefing/store.py
++++ b/src/jarvis/community_briefing/store.py
+@@ -2,6 +2,7 @@
+ 
+ from __future__ import annotations
+ 
++import json
+ import sqlite3
+ from collections.abc import Iterator
+ from contextlib import contextmanager
+@@ -245,19 +246,35 @@
+         with self.connect() as connection:
+             connection.execute("BEGIN IMMEDIATE")
+             row = connection.execute(
+-                """SELECT briefing_id FROM community_briefings WHERE
+-                (status = ? OR (status = ? AND lease_until <= ?))
++                """SELECT briefing_id, artifact_dir FROM community_briefings WHERE
++                status = ?
+                 AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                 ORDER BY week_start LIMIT 1""",
+                 (
+                     PublicationStatus.APPROVED.value,
+-                    PublicationStatus.PUBLISHING.value,
+                     now,
+-                    now,
+                 ),
+             ).fetchone()
+             if row is None:
+                 return None
++            marker = Path(row["artifact_dir"]) / "revision-status.json"
++            if marker.exists():
++                try:
++                    revision = json.loads(marker.read_text(encoding="utf-8"))
++                    if not isinstance(revision, dict) or (
++                        revision.get("state"),
++                        revision.get("phase"),
++                    ) not in {
++                        ("running", "generating"),
++                        ("failed", "finished"),
++                        ("completed", "finished"),
++                        ("superseded", "finished"),
++                    }:
++                        return None
++                    if not isinstance(revision.get("nonce"), str):
++                        return None
++                except (OSError, ValueError):
++                    return None
+             briefing_id = str(row["briefing_id"])
+             connection.execute(
+                 """UPDATE community_briefings SET status = ?, lease_until = ?,
+@@ -297,10 +314,13 @@
+         stage: str,
+         message: str,
+         retry_after_seconds: float | None,
++        uncertain: bool = False,
+     ) -> BriefingItem:
+         now = utc_now()
+         status = (
+-            PublicationStatus.APPROVED
++            PublicationStatus.PUBLISHING
++            if uncertain
++            else PublicationStatus.APPROVED
+             if retry_after_seconds is not None
+             else PublicationStatus.BLOCKED
+         )
+@@ -314,9 +334,10 @@
+             status=status.value,
+             error_stage=stage,
+             error_message=message[:500],
++            last_notified_at=None,
+             next_attempt_at=next_attempt,
+-            lease_until=None,
+             updated_at=now.isoformat(),
++            **({} if uncertain else {"lease_until": None}),
+         )
+         return self.get(briefing_id)  # type: ignore[return-value]
+ 
+@@ -324,12 +345,16 @@
+         cutoff = (utc_now() - timedelta(hours=reminder_hours)).isoformat()
+         with self.connect() as connection:
+             rows = connection.execute(
+-                """SELECT * FROM community_briefings WHERE status IN (?, ?)
++                """SELECT * FROM community_briefings WHERE
++                (status IN (?, ?) OR (status = ? AND
++                (error_stage LIKE 'uncertain-%' OR lease_until IS NULL OR lease_until <= ?)))
+                 AND (last_notified_at IS NULL OR last_notified_at <= ?)
+                 ORDER BY week_start""",
+                 (
+                     PublicationStatus.PENDING_REVIEW.value,
+                     PublicationStatus.BLOCKED.value,
++                    PublicationStatus.PUBLISHING.value,
++                    utc_now().isoformat(),
+                     cutoff,
+                 ),
+             ).fetchall()
+diff --git a/tests/unit/community_briefing/test_service_review.py b/tests/unit/community_briefing/test_service_review.py
+--- a/tests/unit/community_briefing/test_service_review.py
++++ b/tests/unit/community_briefing/test_service_review.py
+@@ -382,3 +382,209 @@
+         now=datetime.fromisoformat("2026-08-30T23:05:00+01:00"),
+         timezone="Africa/Lagos",
+     ) == date(2026, 8, 24)
++
++
++class RevisingAI(FakeAI):
++    """Answer revision prompts with a deterministic instruction-aware rewrite."""
++
++    def generate_json(self, prompt: str) -> AIResponse:
++        if not prompt.startswith("Revise Flow Research's"):
++            return super().generate_json(prompt)
++        self.calls.append(prompt)
++        paragraph = (
++            "As requested by the reviewer, we reordered this update so platform progress leads "
++            "the story. The community team tested clearer meeting summaries, agreed on the next "
++            "community update, and recorded the outcome in a reusable form. This gives members a "
++            "simpler way to follow progress and understand where participation helps. It also "
++            "keeps the public record useful without repeating private meeting details."
++        )
++        return AIResponse(
++            {
++                "title": "Platform progress led a clearer week of community updates",
++                "discord_summary": (
++                    "Platform progress leads this week's update, as requested. The full briefing "
++                    "explains what changed and how to join in."
++                ),
++                "sections": {
++                    "This week in brief": paragraph,
++                    "What moved": paragraph,
++                    "What we learned": paragraph,
++                    "What comes next": paragraph,
++                    "How to take part": paragraph,
++                },
++            },
++            "claude",
++        )
++
++
++def test_revise_rewrites_pending_draft_and_requires_fresh_approval(tmp_path: Path) -> None:
++    """A reviewer instruction produces a grounded rewrite that still needs explicit approval."""
++
++    source = tmp_path / "private"
++    _write_source(source)
++    ai = RevisingAI()
++    service = CommunityBriefingService(
++        _config(tmp_path, source),
++        ai=ai,
++        google=FakeGoogle(),
++        discord=FakeDiscord(),
++        notifier=FakeNotifier(),  # type: ignore[arg-type]
++    )
++    generated = service.generate(week_start=date(2026, 8, 24))
++    assert generated.item is not None
++    briefing_id = generated.item.briefing_id
++    markdown, summary = service.read_artifacts(generated.item)
++
++    revised, provider = service.revise(
++        briefing_id,
++        instruction="Lead with platform progress.",
++        markdown=markdown,
++        discord_summary=summary,
++        provider="claude",
++    )
++
++    assert provider == "claude"
++    assert revised.status == PublicationStatus.PENDING_REVIEW
++    new_markdown, new_summary = service.read_artifacts(revised)
++    assert new_markdown != markdown
++    assert "as requested" in new_markdown.lower()
++    assert revised.draft_hash == briefing_hash(new_markdown, new_summary)
++    assert revised.approved_hash is None
++
++    revise_prompt = ai.calls[-1]
++    assert "Lead with platform progress." in revise_prompt
++    assert "current_briefing_markdown" in revise_prompt
++    assert "accepted_source_excerpts" in revise_prompt
++
++    log = service.revision_log(revised)
++    assert len(log) == 1
++    assert log[0]["instruction"] == "Lead with platform progress."
++    assert log[0]["provider"] == "claude"
++
++
++def test_revise_rejects_blank_instruction_and_non_pending_items(tmp_path: Path) -> None:
++    """Revision is fail-closed: it needs an instruction and a pending draft."""
++
++    source = tmp_path / "private"
++    _write_source(source)
++    service = CommunityBriefingService(
++        _config(tmp_path, source),
++        ai=RevisingAI(),
++        google=FakeGoogle(),
++        discord=FakeDiscord(),
++        notifier=FakeNotifier(),  # type: ignore[arg-type]
++    )
++    generated = service.generate(week_start=date(2026, 8, 24))
++    assert generated.item is not None
++    briefing_id = generated.item.briefing_id
++    markdown, summary = service.read_artifacts(generated.item)
++
++    try:
++        service.revise(
++            briefing_id,
++            instruction="   ",
++            markdown=markdown,
++            discord_summary=summary,
++        )
++        raise AssertionError("blank instruction should be rejected")
++    except ValueError as exc:
++        assert "instruction" in str(exc)
++
++    service.approve(briefing_id, markdown=markdown, discord_summary=summary)
++    try:
++        service.revise(
++            briefing_id,
++            instruction="Tighten the summary.",
++            markdown=markdown,
++            discord_summary=summary,
++        )
++        raise AssertionError("approved briefings should not be revisable")
++    except ValueError as exc:
++        assert "pending" in str(exc)
++
++
++def test_start_revision_runs_in_background_and_clears_status(tmp_path: Path) -> None:
++    """The async revision reports progress via the status file and never blocks the caller."""
++
++    import time
++
++    source = tmp_path / "private"
++    _write_source(source)
++    service = CommunityBriefingService(
++        _config(tmp_path, source),
++        ai=RevisingAI(),
++        google=FakeGoogle(),
++        discord=FakeDiscord(),
++        notifier=FakeNotifier(),  # type: ignore[arg-type]
++    )
++    generated = service.generate(week_start=date(2026, 8, 24))
++    assert generated.item is not None
++    briefing_id = generated.item.briefing_id
++    markdown, summary = service.read_artifacts(generated.item)
++
++    service.start_revision(
++        briefing_id,
++        instruction="Lead with platform progress.",
++        markdown=markdown,
++        discord_summary=summary,
++        provider="claude",
++    )
++
++    deadline = time.monotonic() + 10
++    status = service.revision_status(generated.item)
++    while status is not None and time.monotonic() < deadline:
++        assert status["state"] in ("running", "")
++        time.sleep(0.05)
++        status = service.revision_status(generated.item)
++    assert status is None, f"revision did not finish: {status}"
++    item = service.store.get(briefing_id)
++    assert item is not None
++    new_markdown, _ = service.read_artifacts(item)
++    assert new_markdown != markdown
++    assert len(service.revision_log(item)) == 1
++
++    # A running marker blocks a second concurrent revision.
++    service._reserve_revision(item.briefing_id, "hold", "claude")
++    try:
++        service.start_revision(
++            briefing_id,
++            instruction="Another change.",
++            markdown=new_markdown,
++            discord_summary=summary,
++        )
++        raise AssertionError("concurrent revisions should be rejected")
++    except ValueError as exc:
++        assert "in progress" in str(exc)
++
++
++def test_start_regeneration_rebuilds_draft_in_background(tmp_path: Path) -> None:
++    """The UI regenerate action rebuilds from sources without blocking the request."""
++
++    import time
++
++    source = tmp_path / "private"
++    _write_source(source)
++    service = CommunityBriefingService(
++        _config(tmp_path, source),
++        ai=RevisingAI(),
++        google=FakeGoogle(),
++        discord=FakeDiscord(),
++        notifier=FakeNotifier(),  # type: ignore[arg-type]
++    )
++    generated = service.generate(week_start=date(2026, 8, 24))
++    assert generated.item is not None
++    briefing_id = generated.item.briefing_id
++
++    service.start_regeneration(briefing_id)
++
++    deadline = time.monotonic() + 10
++    status = service.revision_status(generated.item)
++    while status is not None and time.monotonic() < deadline:
++        time.sleep(0.05)
++        status = service.revision_status(generated.item)
++    assert status is None, f"regeneration did not finish: {status}"
++    item = service.store.get(briefing_id)
++    assert item is not None
++    assert item.status == PublicationStatus.PENDING_REVIEW
++    markdown, summary = service.read_artifacts(item)
++    assert markdown and summary
+diff --git a/tests/unit/community_briefing/test_revision_fencing.py b/tests/unit/community_briefing/test_revision_fencing.py
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/community_briefing/test_revision_fencing.py
+@@ -0,0 +1,466 @@
++"""Real SQLite/process/file race tests; providers are deterministic local doubles."""
++
++import json
++import os
++import subprocess
++import sys
++import threading
++from datetime import date
++from pathlib import Path
++
++import pytest
++
++from jarvis.community_briefing.service import REVISION_STATUS_NAME, CommunityBriefingService
++from jarvis.config import clear_config_cache
++from jarvis.meetings.publication.models import PublicationStatus
++
++from .test_service_review import (
++    FakeAI,
++    FakeDiscord,
++    FakeGoogle,
++    FakeNotifier,
++    RevisingAI,
++    _config,
++    _write_source,
++)
++
++
++@pytest.fixture
++def prepared(tmp_path, monkeypatch):
++    for key in tuple(os.environ):
++        if key != "PYTHONPATH":
++            monkeypatch.delenv(key)
++    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
++    clear_config_cache()
++    source = tmp_path / "private"
++    _write_source(source)
++    service = CommunityBriefingService(
++        _config(tmp_path, source),
++        ai=FakeAI(),
++        google=FakeGoogle(),
++        discord=FakeDiscord(),
++        notifier=FakeNotifier(),
++    )
++    item = service.generate(week_start=date(2026, 8, 24)).item
++    yield service, item
++    service.close()
++    clear_config_cache()
++
++
++class DelayedAI(RevisingAI):
++    def __init__(self):
++        super().__init__()
++        self.entered, self.release = threading.Event(), threading.Event()
++
++    def generate_json(self, prompt):
++        self.entered.set()
++        assert self.release.wait(5), "test provider release missing"
++        return super().generate_json(prompt)
++
++
++@pytest.mark.parametrize("mutation", ["save", "approve", "reject", "source"])
++def test_human_work_and_source_changes_fence_late_provider(prepared, mutation):
++    service, item = prepared
++    markdown, summary = service.read_artifacts(item)
++    provider = DelayedAI()
++    service._ai = provider
++    failures = []
++
++    def revise():
++        try:
++            service.revise(
++                item.briefing_id,
++                instruction="Reorder clearly",
++                markdown=markdown,
++                discord_summary=summary,
++            )
++        except ValueError as exc:
++            failures.append(str(exc))
++
++    thread = threading.Thread(target=revise)
++    thread.start()
++    assert provider.entered.wait(5)
++    try:
++        if mutation == "save":
++            service.save_draft(
++                item.briefing_id, markdown=markdown, discord_summary="We preserved the human edit."
++            )
++        elif mutation == "approve":
++            service.approve(item.briefing_id, markdown=markdown, discord_summary=summary)
++        elif mutation == "reject":
++            service.reject(item.briefing_id)
++        else:
++            source = next(Path(service.config.source_path).rglob("*.md"))
++            source.write_text(source.read_text() + "\nNew source evidence.\n")
++        expected = service.store.get(item.briefing_id)
++        artifacts = service.read_artifacts(expected)
++    finally:
++        provider.release.set()
++        thread.join(5)
++    assert not thread.is_alive()
++    assert failures and "superseded" in failures[0]
++    assert service.store.get(item.briefing_id) == expected
++    assert service.read_artifacts(expected) == artifacts
++    assert service.revision_log(expected) == []
++    assert service._google.calls == [] and service._discord.calls == []
++
++
++def test_old_worker_cannot_overwrite_new_reservation(prepared):
++    service, item = prepared
++    old = service._reserve_revision(item.briefing_id, "old", "auto")
++    markdown, _ = service.read_artifacts(item)
++    service.save_draft(
++        item.briefing_id, markdown=markdown, discord_summary="We saved a newer edit."
++    )
++    service._reserve_revision(item.briefing_id, "new", "auto")
++    path = item.artifact_dir / REVISION_STATUS_NAME
++    before = path.read_bytes()
++    service._fail_revision(item.briefing_id, old, RuntimeError("old failure"))
++    assert path.read_bytes() == before
++
++
++def test_definite_provider_failure_is_visible_and_retryable(prepared):
++    service, item = prepared
++
++    class FailingAI:
++        def generate_json(self, prompt):
++            raise RuntimeError("synthetic provider unavailable")
++
++    service._ai = FailingAI()
++    markdown, summary = service.read_artifacts(item)
++    with pytest.raises(RuntimeError, match="unavailable"):
++        service.revise(
++            item.briefing_id, instruction="Revise", markdown=markdown, discord_summary=summary
++        )
++    assert service.revision_status(item)["state"] == "failed"
++    assert service.read_artifacts(item) == (markdown, summary)
++    service._ai = RevisingAI()
++    revised, _ = service.revise(
++        item.briefing_id, instruction="Revise again", markdown=markdown, discord_summary=summary
++    )
++    assert revised.status == PublicationStatus.PENDING_REVIEW
++    assert service.revision_status(revised) is None
++
++
++_RESERVE_CHILD = """
++import json,sys
++from jarvis.config.schema import CommunityBriefingConfig
++from jarvis.community_briefing.service import CommunityBriefingService
++service=CommunityBriefingService(CommunityBriefingConfig(**json.loads(sys.argv[1])))
++print('ready',flush=True)
++sys.stdin.readline()
++try:
++    service._reserve_revision(sys.argv[2], 'competing process', 'auto')
++    print('reserved',flush=True)
++except ValueError:
++    print('blocked',flush=True)
++"""
++
++
++def test_competing_processes_reserve_only_one_job(prepared):
++    service, item = prepared
++    command = [
++        sys.executable,
++        "-B",
++        "-c",
++        _RESERVE_CHILD,
++        service.config.model_dump_json(),
++        item.briefing_id,
++    ]
++    children = [
++        subprocess.Popen(
++            command,
++            stdin=subprocess.PIPE,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.PIPE,
++            text=True,
++        )
++        for _ in range(2)
++    ]
++    try:
++        for child in children:
++            assert child.stdout.readline().strip() == "ready"
++        for child in children:
++            child.stdin.write("go\n")
++            child.stdin.flush()
++        results = [child.communicate(timeout=5) for child in children]
++        assert all(child.returncode == 0 for child in children), results
++        assert sorted(stdout.strip() for stdout, _ in results) == ["blocked", "reserved"]
++    finally:
++        for child in children:
++            if child.poll() is None:
++                child.kill()
++                child.communicate(timeout=5)
++
++
++_CRASH_CHILD = """
++import json,os,sys,sqlite3
++from pathlib import Path
++import jarvis.community_briefing.service as module
++from jarvis.config.schema import CommunityBriefingConfig
++from tests.unit.community_briefing.test_service_review import (
++    RevisingAI, FakeGoogle, FakeDiscord, FakeNotifier)
++config=CommunityBriefingConfig(**json.loads(sys.argv[1]))
++service=module.CommunityBriefingService(config,ai=RevisingAI(),google=FakeGoogle(),discord=FakeDiscord(),notifier=FakeNotifier())
++item=service.store.get(sys.argv[2]); stage=sys.argv[3]
++write=module._write_private
++def interrupt(path, content):
++    write(path,content)
++    if path.name == stage:
++        os._exit(71)
++module._write_private=interrupt
++connect=sqlite3.connect
++class Connection(sqlite3.Connection):
++    def commit(self):
++        marker=item.artifact_dir/module.REVISION_STATUS_NAME
++        committing=marker.exists() and json.loads(marker.read_text()).get('phase')=='committing'
++        if committing and stage=='before-commit': os._exit(71)
++        super().commit()
++        if committing and stage=='after-commit': os._exit(71)
++sqlite3.connect=lambda *a,**kw:connect(*a,**kw,factory=Connection)
++service.generate(week_start=item.week_start,regenerate=True)
++raise AssertionError('crash hook was not reached')
++"""
++
++
++@pytest.mark.parametrize(
++    "stage", ["briefing.md", "discord.txt", "provenance.json", "before-commit", "after-commit"]
++)
++def test_interrupted_artifact_commit_blocks_retry_and_publication(prepared, stage):
++    service, item = prepared
++    environment = dict(os.environ)
++    environment["PYTHONPATH"] = os.pathsep.join(
++        [str(Path(__file__).resolve().parents[3]), os.environ["PYTHONPATH"]]
++    )
++    result = subprocess.run(
++        [
++            sys.executable,
++            "-B",
++            "-c",
++            _CRASH_CHILD,
++            service.config.model_dump_json(),
++            item.briefing_id,
++            stage,
++        ],
++        env=environment,
++        capture_output=True,
++        text=True,
++        timeout=10,
++    )
++    assert result.returncode == 71, result.stderr
++    status = service.revision_status(item)
++    assert status["reconciliation_required"] == "true"
++    with pytest.raises(ValueError, match="reconciliation"):
++        service.start_regeneration(item.briefing_id)
++    markdown, summary = service.read_artifacts(item)
++    with pytest.raises(ValueError, match="reconciliation"):
++        service.approve(item.briefing_id, markdown=markdown, discord_summary=summary)
++    assert service.store.claim_next() is None
++    assert service.store.get(item.briefing_id).google_doc_id is None
++    assert service.store.get(item.briefing_id).discord_message_id is None
++
++
++def test_malformed_or_legacy_marker_requires_reconciliation(prepared):
++    from jarvis.meetings.publication.review import _briefing_page
++
++    service, item = prepared
++    path = item.artifact_dir / REVISION_STATUS_NAME
++    for content in ("not-json", '{"state":"running"}'):
++        path.write_text(content)
++        assert service.revision_status(item)["reconciliation_required"] == "true"
++        with pytest.raises(ValueError, match="reconciliation"):
++            service.start_regeneration(item.briefing_id)
++        page = _briefing_page(service, item.briefing_id, "synthetic")
++        assert "Operator reconciliation required" in page
++        assert "Revise draft</button>" not in page
++        assert "Approve &amp; publish</button>" not in page
++
++
++def test_failed_explicit_regeneration_preserves_original_approval(prepared):
++    service, item = prepared
++    markdown, summary = service.read_artifacts(item)
++    approved = service.approve(item.briefing_id, markdown=markdown, discord_summary=summary)
++
++    class FailedAI:
++        def generate_json(self, prompt):
++            raise RuntimeError("synthetic generation failure")
++
++    service._ai = FailedAI()
++    with pytest.raises(RuntimeError, match="generation failure"):
++        service.generate(week_start=item.week_start, regenerate=True)
++    assert service.store.get(item.briefing_id) == approved
++    assert service.read_artifacts(item) == (markdown, summary)
++
++
++def test_worker_claim_fences_late_explicit_regeneration(prepared):
++    service, item = prepared
++    markdown, summary = service.read_artifacts(item)
++    service.approve(item.briefing_id, markdown=markdown, discord_summary=summary)
++    provider = DelayedAI()
++    service._ai = provider
++    errors = []
++
++    def regenerate():
++        try:
++            service.generate(week_start=item.week_start, regenerate=True)
++        except ValueError as exc:
++            errors.append(str(exc))
++
++    thread = threading.Thread(target=regenerate)
++    thread.start()
++    assert provider.entered.wait(5)
++    claimed = service.store.claim_next()
++    assert claimed.status == PublicationStatus.PUBLISHING
++    provider.release.set()
++    thread.join(5)
++    assert not thread.is_alive()
++    assert errors and "superseded" in errors[0]
++    assert service.store.get(item.briefing_id) == claimed
++    assert service.read_artifacts(item) == (markdown, summary)
++
++
++def test_classifier_bounds_each_provider_request_without_dropping_sources(prepared):
++    from dataclasses import replace
++
++    from jarvis.community_briefing.collector import CollectionResult, collect_sources
++
++    service, item = prepared
++    original = collect_sources(
++        service.config, week_start=item.week_start, week_end=item.week_end
++    ).sources[0]
++    sources = [
++        replace(original, source_id=f"source-{index}", excerpt="bounded evidence " * 300)
++        for index in range(25)
++    ]
++    service._ai = FakeAI()
++    decisions, _ = service._classify(CollectionResult(sources=sources))
++    assert {decision.source_id for decision in decisions} == {
++        source.source_id for source in sources
++    }
++    assert len(service._ai.calls) == 3
++    for call in service._ai.calls:
++        payload = json.loads(call.split("\n\n")[-1])
++        assert len(payload) <= 12
++        assert all(len(source["excerpt"]) <= 2500 for source in payload)
++
++
++def test_reservation_rejects_row_changed_since_input_validation(prepared):
++    service, item = prepared
++    markdown, summary = service.read_artifacts(item)
++    service.save_draft(item.briefing_id, markdown=markdown, discord_summary="We made a newer edit.")
++    with pytest.raises(ValueError, match="changed"):
++        service._reserve_revision(item.briefing_id, "stale", "auto", expected_item=item)
++
++
++def test_identical_manual_save_preserves_approved_metadata(prepared):
++    service, item = prepared
++    markdown, summary = service.read_artifacts(item)
++    approved = service.approve(item.briefing_id, markdown=markdown, discord_summary=summary)
++    saved = service.save_draft(item.briefing_id, markdown=markdown, discord_summary=summary)
++    assert saved == approved
++
++
++@pytest.mark.parametrize("kind", ["failed-batch", "missing", "duplicate"])
++def test_classifier_incomplete_batch_fails_entire_generation(prepared, kind):
++    from dataclasses import replace
++
++    from jarvis.community_briefing.ai import AIResponse
++    from jarvis.community_briefing.collector import CollectionResult, collect_sources
++
++    service, item = prepared
++    original = collect_sources(
++        service.config, week_start=item.week_start, week_end=item.week_end
++    ).sources[0]
++
++    class IncompleteAI(FakeAI):
++        def generate_json(self, prompt):
++            response = super().generate_json(prompt)
++            if kind == "failed-batch" and len(self.calls) == 2:
++                raise RuntimeError("second batch failed")
++            decisions = response.data["decisions"]
++            if kind == "missing":
++                decisions = decisions[:-1]
++            elif kind == "duplicate":
++                decisions = decisions + decisions[:1]
++            return AIResponse({"decisions": decisions}, response.provider)
++
++    service._ai = IncompleteAI()
++    sources = [replace(original, source_id=f"source-{i}") for i in range(13)]
++    with pytest.raises((ValueError, RuntimeError)):
++        service._classify(CollectionResult(sources=sources))
++
++
++@pytest.mark.parametrize(
++    "state,phase", [("completed", "generating"), ("failed", "generating"), ("running", "finished")]
++)
++def test_inconsistent_marker_pairs_fail_closed(prepared, state, phase):
++    service, item = prepared
++    markdown, summary = service.read_artifacts(item)
++    service.approve(item.briefing_id, markdown=markdown, discord_summary=summary)
++    marker = item.artifact_dir / REVISION_STATUS_NAME
++    marker.write_text(json.dumps({"nonce": "synthetic", "state": state, "phase": phase}))
++    assert service.revision_status(item)["reconciliation_required"] == "true"
++    assert service.store.claim_next() is None
++
++
++def test_late_first_generation_cannot_overwrite_appeared_approved_row(prepared, tmp_path):
++    service, item = prepared
++    config = service.config.model_copy(
++        update={
++            "state_path": str(tmp_path / "fresh-state"),
++            "draft_path": str(tmp_path / "fresh-drafts"),
++        }
++    )
++    delayed = DelayedAI()
++    late = CommunityBriefingService(
++        config, ai=delayed, google=FakeGoogle(), discord=FakeDiscord(), notifier=FakeNotifier()
++    )
++    first = CommunityBriefingService(
++        config, ai=FakeAI(), google=FakeGoogle(), discord=FakeDiscord(), notifier=FakeNotifier()
++    )
++    errors = []
++
++    def generate():
++        try:
++            late.generate(week_start=item.week_start)
++        except ValueError as exc:
++            errors.append(str(exc))
++
++    thread = threading.Thread(target=generate)
++    thread.start()
++    assert delayed.entered.wait(5)
++    try:
++        generated = first.generate(week_start=item.week_start).item
++        markdown, summary = first.read_artifacts(generated)
++        approved = first.approve(generated.briefing_id, markdown=markdown, discord_summary=summary)
++    finally:
++        delayed.release.set()
++        thread.join(5)
++    assert not thread.is_alive()
++    assert first.store.get(generated.briefing_id) == approved
++    assert first.read_artifacts(generated) == (markdown, summary)
++
++
++def test_initial_generation_refuses_orphan_artifacts(prepared, tmp_path):
++    service, item = prepared
++    config = service.config.model_copy(
++        update={
++            "state_path": str(tmp_path / "orphan-state"),
++            "draft_path": str(tmp_path / "orphan-drafts"),
++        }
++    )
++    fresh = CommunityBriefingService(
++        config, ai=FakeAI(), google=FakeGoogle(), discord=FakeDiscord(), notifier=FakeNotifier()
++    )
++    artifact = (
++        Path(config.draft_path)
++        / str(item.week_start.year)
++        / f"week-{item.week_start.isoformat()}"
++        / "briefing.md"
++    )
++    artifact.parent.mkdir(parents=True)
++    artifact.write_text("Interrupted original content")
++    with pytest.raises(ValueError, match="reconciliation"):
++        fresh.generate(week_start=item.week_start)
++    assert artifact.read_text() == "Interrupted original content"
++    assert fresh.store.for_week(item.week_start) is None
+diff --git a/src/jarvis/meetings/publication/errors.py b/src/jarvis/meetings/publication/errors.py
+--- a/src/jarvis/meetings/publication/errors.py
++++ b/src/jarvis/meetings/publication/errors.py
+@@ -16,7 +16,10 @@
+ 
+ 
+ class PublicationTransientError(PublicationError):
+-    """Provider/network failure safe to retry later."""
++    """Transient failure; callers must decide whether repeating an effect is safe."""
+ 
+-    def __init__(self, message: str, *, retry_after_seconds: float = 60.0):
++    def __init__(
++        self, message: str, *, retry_after_seconds: float = 60.0, safe_to_retry: bool = False
++    ):
+         super().__init__(message, retry_after_seconds=retry_after_seconds)
++        self.safe_to_retry = safe_to_retry
+diff --git a/src/jarvis/meetings/publication/discord.py b/src/jarvis/meetings/publication/discord.py
+--- a/src/jarvis/meetings/publication/discord.py
++++ b/src/jarvis/meetings/publication/discord.py
+@@ -157,7 +157,7 @@
+         if response.status_code == 429:
+             retry_after = _discord_retry_after(response)
+             raise PublicationTransientError(
+-                "Discord rate limit reached", retry_after_seconds=retry_after
++                "Discord rate limit reached", retry_after_seconds=retry_after, safe_to_retry=True
+             )
+         if response.status_code in {401, 403, 404}:
+             raise PublicationConfigError(
+diff --git a/tests/unit/community_briefing/test_publication_safety.py b/tests/unit/community_briefing/test_publication_safety.py
+new file mode 100644
+--- /dev/null
++++ b/tests/unit/community_briefing/test_publication_safety.py
+@@ -0,0 +1,329 @@
++import importlib
++import json
++import os
++import subprocess
++import sys
++from datetime import UTC, date, datetime, timedelta
++from pathlib import Path
++
++import httpx
++import pytest
++from click.testing import CliRunner
++
++from jarvis.community_briefing.service import (
++    CommunityBriefingService,
++    _briefing_from_response,
++    briefing_hash,
++)
++from jarvis.community_briefing.store import BriefingStore
++from jarvis.config.schema import CommunityBriefingConfig
++from jarvis.meetings.publication.discord import DiscordPublisher
++from jarvis.meetings.publication.google import GoogleDocument
++
++from .test_service_review import FakeAI
++
++
++class Crash(BaseException):
++    pass
++
++
++@pytest.fixture
++def setup(tmp_path, monkeypatch):
++    import jarvis.community_briefing.store as module
++
++    installed = os.environ.get("HARNESSY_TEST_INSTALLED_VENV")
++    expected = (
++        Path(installed).resolve() if installed else Path(__file__).resolve().parents[3] / "src"
++    )
++    if installed:
++        assert Path(sys.prefix).resolve() == expected
++    assert Path(module.__file__).resolve().is_relative_to(expected)
++    clock = [datetime(2026, 9, 15, 12, tzinfo=UTC)]
++    monkeypatch.setattr(module, "utc_now", lambda: clock[0])
++    markdown, summary = _briefing_from_response(FakeAI().generate_json("{}").data)
++    artifacts = tmp_path / "artifacts"
++    artifacts.mkdir()
++    (artifacts / "briefing.md").write_text(markdown)
++    (artifacts / "discord.md").write_text(summary)
++    (artifacts / "provenance.json").write_text("{}")
++    store = BriefingStore(tmp_path / "state")
++    store.upsert_generated(
++        briefing_id="fixture",
++        week_start=date(2026, 9, 7),
++        week_end=date(2026, 9, 13),
++        artifact_dir=artifacts,
++        briefing_path=artifacts / "briefing.md",
++        discord_path=artifacts / "discord.md",
++        provenance_path=artifacts / "provenance.json",
++        draft_hash=briefing_hash(markdown, summary),
++        provider="synthetic",
++    )
++    store.approve("fixture", briefing_hash(markdown, summary))
++
++    class Google:
++        def publish_markdown(self, **kwargs):
++            return GoogleDocument("synthetic-doc", "https://example.invalid/doc")
++
++    class Notifier:
++        calls = 0
++
++        def briefing_error(self):
++            self.calls += 1
++            return False
++
++        def briefing_pending(self, count):
++            return False
++
++    notifier = Notifier()
++    config = CommunityBriefingConfig(
++        enabled=True, state_path=str(tmp_path / "state"), discord_channel_id="123456789012345678"
++    )
++
++    def make(transport):
++        discord = DiscordPublisher(
++            bot_token="synthetic",
++            channel_id="123456789012345678",
++            api_base="http://localhost:9999",
++            client=httpx.Client(transport=httpx.MockTransport(transport)),
++        )
++        return CommunityBriefingService(
++            config, store=store, google=Google(), discord=discord, notifier=notifier
++        )
++
++    return clock, store, make, notifier
++
++
++def test_expired_ambiguous_send_is_not_automatically_replayed(setup):
++    clock, store, make, _ = setup
++    posts = []
++
++    def transport(request):
++        assert request.method == "POST"
++        posts.append(json.loads(request.content))
++        if len(posts) == 1:
++            raise Crash("Process interrupted after synthetic provider accepted POST")
++        return httpx.Response(200, json={"id": "second-receipt"})
++
++    service = make(transport)
++    with pytest.raises(Crash):
++        service.worker(max_items=1)
++    assert store.get("fixture").status.value == "publishing"
++    assert store.get("fixture").discord_message_id is None
++    clock[0] += timedelta(minutes=11)
++    service.worker(max_items=1)
++    assert len(posts) == 1, f"Ambiguous POST automatically replayed: {len(posts)}"
++
++
++def test_slow_owner_is_not_overlapped_after_expiry(setup):
++    clock, store, make, _ = setup
++    posts = []
++
++    def transport(request):
++        posts.append(json.loads(request.content))
++        if len(posts) == 1:
++            clock[0] += timedelta(minutes=11)
++            service.worker(max_items=1)
++            return httpx.Response(200, json={"id": "first-owner-receipt"})
++        return httpx.Response(200, json={"id": "second-owner-receipt"})
++
++    service = make(transport)
++    service.worker(max_items=1)
++    assert len(posts) == 1, (
++        f"Live owner overlapped: {len(posts)} POSTs; "
++        f"retained {store.get('fixture').discord_message_id}"
++    )
++
++
++def test_failed_delivery_and_notification_do_not_exit_zero(setup, monkeypatch):
++    _, store, make, notifier = setup
++
++    def transport(request):
++        return httpx.Response(403, json={"message": "Synthetic rejection"})
++
++    service = make(transport)
++    cli = importlib.import_module("jarvis.community_briefing.cli")
++    monkeypatch.setattr(cli, "_service", lambda: service)
++    result = CliRunner().invoke(cli.community_cli, ["briefing", "worker", "--json"])
++    assert store.get("fixture").status.value == "blocked"
++    assert notifier.calls == 1
++    assert store.get("fixture").last_notified_at is None
++    assert json.loads(result.output)["failed"] == 1
++    assert result.exit_code != 0, (
++        f"Blocked delivery + failed notification exits success: {result.output}"
++    )
++
++
++def test_uncertain_transport_timeout_does_not_schedule_automatic_retry(setup):
++    clock, store, make, _ = setup
++    posts = []
++
++    def transport(request):
++        posts.append(json.loads(request.content))
++        if len(posts) == 1:
++            raise httpx.ReadTimeout("Synthetic accepted POST lost response", request=request)
++        return httpx.Response(200, json={"id": "retried-receipt"})
++
++    service = make(transport)
++    first = service.worker(max_items=1)
++    assert first.failed == 1
++    clock[0] += timedelta(seconds=61)
++    service.worker(max_items=1)
++    assert len(posts) == 1, f"Uncertain timeout automatically retried: {len(posts)} POSTs"
++
++
++def test_explicit_429_retains_bounded_retry_and_approval(setup):
++    clock, store, make, _ = setup
++    requests = []
++
++    def transport(request):
++        requests.append(request)
++        return (
++            httpx.Response(429, json={"retry_after": 2.5})
++            if len(requests) == 1
++            else httpx.Response(200, json={"id": "approved-receipt"})
++        )
++
++    service = make(transport)
++    original = store.get("fixture").approved_hash
++    assert service.worker(max_items=1).failed == 1
++    retained = store.get("fixture")
++    assert retained.status.value == "approved"
++    assert retained.approved_hash == original
++    assert retained.google_doc_id == "synthetic-doc"
++    assert service.worker(max_items=1).published == 0
++    assert len(requests) == 1
++    clock[0] += timedelta(seconds=3)
++    assert service.worker(max_items=1).published == 1
++    assert len(requests) == 2
++    assert store.get("fixture").discord_message_id == "approved-receipt"
++
++
++def test_fresh_failure_notifies_despite_prior_pending_acknowledgement(setup):
++    _, store, make, notifier = setup
++    store.mark_notified(["fixture"])
++    assert store.get("fixture").last_notified_at
++    service = make(lambda request: httpx.Response(403, json={"message": "rejected"}))
++    service.worker(max_items=1)
++    assert notifier.calls == 1
++    assert store.get("fixture").last_notified_at is None
++
++
++def test_uncertainty_cannot_be_reapproved_or_rewritten(setup):
++    _, store, make, _ = setup
++
++    def transport(request):
++        raise httpx.ReadTimeout("uncertain", request=request)
++
++    service = make(transport)
++    service.worker(max_items=1)
++    item = store.get("fixture")
++    assert item.status.value == "publishing"
++    assert item.error_stage == "uncertain-discord"
++    markdown, summary = service.read_artifacts(item)
++    actions = [
++        lambda: service.approve("fixture", markdown=markdown, discord_summary=summary),
++        lambda: service.save_draft(
++            "fixture", markdown=markdown + "\nChanged.", discord_summary=summary
++        ),
++        lambda: service.reject("fixture"),
++        lambda: service.start_regeneration("fixture"),
++        lambda: service.start_revision(
++            "fixture", instruction="Clarify", markdown=markdown, discord_summary=summary
++        ),
++        lambda: service.generate(week_start=item.week_start, regenerate=True),
++    ]
++    for action in actions:
++        with pytest.raises(ValueError, match="publishing or published|only a pending briefing"):
++            action()
++        assert store.get("fixture") == item
++    assert item.google_doc_id == "synthetic-doc"
++    assert item.approved_hash
++
++
++def test_outstanding_interrupted_row_is_visible_and_exits_two(setup, monkeypatch):
++    clock, store, make, notifier = setup
++    service = make(lambda request: pytest.fail("unexpected provider"))
++    store.claim_next()
++    before = store.get("fixture")
++    clock[0] += timedelta(minutes=11)
++    cli = importlib.import_module("jarvis.community_briefing.cli")
++    monkeypatch.setattr(cli, "_service", lambda: service)
++    result = CliRunner().invoke(cli.community_cli, ["briefing", "worker", "--json"])
++    assert result.exit_code == 2
++    assert json.loads(result.output)["unresolved"] == 1
++    assert store.get("fixture") == before
++    assert notifier.calls == 1
++    from jarvis.meetings.publication.review import _inbox_page
++
++    html = _inbox_page(None, token="fixture", briefing_service=service)
++    assert "publication in progress or interrupted" in html
++
++
++def test_idle_pending_worker_remains_successful(setup, monkeypatch):
++    _, store, make, _ = setup
++    store._update("fixture", status="pending_review", approved_hash=None)
++    service = make(lambda request: pytest.fail("unexpected provider"))
++    cli = importlib.import_module("jarvis.community_briefing.cli")
++    monkeypatch.setattr(cli, "_service", lambda: service)
++    result = CliRunner().invoke(cli.community_cli, ["briefing", "worker", "--json"])
++    assert result.exit_code == 0
++    assert json.loads(result.output)["pending_review"] == 1
++
++
++@pytest.mark.parametrize("stage", ["claim", "google"])
++def test_real_child_crash_does_not_reclaim_or_discard_receipts(setup, stage):
++    clock, store, make, _ = setup
++    script = """
++import os,sys
++from pathlib import Path
++from jarvis.community_briefing.store import BriefingStore
++store=BriefingStore(Path(sys.argv[1]))
++assert store.claim_next() is not None
++if sys.argv[2]=='google':
++    store.record_google('fixture',doc_id='child-doc',doc_url='https://example.invalid/child')
++os._exit(71)
++"""
++    child = subprocess.run(
++        [sys.executable, "-B", "-c", script, str(store.state_root), stage], capture_output=True
++    )
++    assert child.returncode == 71, child.stderr
++    with store.connect() as connection:
++        before = dict(
++            connection.execute(
++                "SELECT * FROM community_briefings WHERE briefing_id='fixture'"
++            ).fetchone()
++        )
++    clock[0] = datetime(2099, 1, 1, tzinfo=UTC)
++    result = make(lambda request: pytest.fail("replayed effect")).worker(max_items=1)
++    assert result.unresolved == 1
++    with store.connect() as connection:
++        after = dict(
++            connection.execute(
++                "SELECT * FROM community_briefings WHERE briefing_id='fixture'"
++            ).fetchone()
++        )
++    assert after == before
++    assert before["lease_until"]
++    assert before["google_doc_id"] == ("child-doc" if stage == "google" else None)
++
++
++def test_uncertain_failure_preserves_original_lease_metadata(setup):
++    clock, store, make, _ = setup
++
++    def transport(request):
++        raise httpx.ReadTimeout("uncertain", request=request)
++
++    make(transport).worker(max_items=1)
++    with store.connect() as connection:
++        row = connection.execute(
++            "SELECT lease_until FROM community_briefings WHERE briefing_id='fixture'"
++        ).fetchone()
++    assert row["lease_until"] == (clock[0] + timedelta(minutes=10)).isoformat()
++
++
++def test_shared_transient_default_keeps_legacy_retry_hint():
++    from jarvis.meetings.publication.errors import PublicationTransientError
++
++    error = PublicationTransientError("network")
++    assert error.retry_after_seconds == 60
++    assert error.safe_to_retry is False

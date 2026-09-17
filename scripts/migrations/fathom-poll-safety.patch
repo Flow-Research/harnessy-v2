@@ -1,0 +1,1322 @@
+--- a/src/jarvis/meetings/service.py	
++++ b/src/jarvis/meetings/service.py	
+@@ -11,6 +11,7 @@
+ import yaml
+ from rich.console import Console
+ 
++from jarvis.config import load_config
+ from jarvis.reading_list.source_loader import load_source_document
+ from jarvis.services.journal_service import JournalService
+ from jarvis.wiki.config import get_domain_root
+@@ -19,6 +20,7 @@
+ from .fathom import FathomClient, parse_fathom_json_text, parse_fathom_payload
+ from .models import MeetingIngestResult, MeetingRecord
+ from .parser import meeting_filename, parse_meeting_document, render_meeting_markdown
++from .poll_state import PollRecording, poll_account_key
+ from .webhook import list_inbox_files, load_archived_payload, move_inbox_file
+ 
+ console = Console()
+@@ -113,11 +115,17 @@
+     backend: str | None = None,
+     journal_space_id: str | None = None,
+     skip_existing: bool = True,
++    poll_state: dict | None = None,
++    poll_state_path: Path | None = None,
+ ) -> list[MeetingIngestResult]:
+     """Ingest Fathom recordings, optionally filtering by created-after timestamp."""
+ 
++    if limit < 1 or max_pages < 1:
++        raise ValueError("Fathom page size and page budget must be positive")
+     client = FathomClient(account=account)
+     results: list[MeetingIngestResult] = []
++    if poll_state is not None and "journal" in (destinations or []):
++        backend = backend or load_config().active_backend
+     cursor: str | None = None
+     pages = 0
+ 
+@@ -130,18 +138,27 @@
+             include_action_items=True,
+             cursor=cursor,
+         )
+-        items = payload.get("items", [])
++        if not isinstance(payload, dict):
++            raise ValueError("Incomplete Fathom listing: invalid page")
++        items = payload.get("items")
+         if not isinstance(items, list):
+-            break
++            raise ValueError("Incomplete Fathom listing: invalid items")
++        next_cursor = payload.get("next_cursor")
++        if next_cursor is not None and not isinstance(next_cursor, str):
++            raise ValueError("Incomplete Fathom listing: invalid cursor")
+ 
+         for item in items:
+             if not isinstance(item, dict):
+-                continue
+-            recording_id = str(item.get("recording_id") or "").strip()
++                raise ValueError("Incomplete Fathom listing: invalid recording")
++            raw_recording_id = item.get("recording_id")
++            if isinstance(raw_recording_id, bool) or not isinstance(raw_recording_id, (int, str)):
++                raise ValueError("Incomplete Fathom listing: invalid recording ID")
++            recording_id = str(raw_recording_id).strip()
+             if not recording_id:
++                raise ValueError("Incomplete Fathom listing: missing recording ID")
++            prior_note = find_private_context_fathom_recording(recording_id)
++            if skip_existing and prior_note and poll_state is None:
+                 continue
+-            if skip_existing and find_private_context_fathom_recording(recording_id):
+-                continue
+             meeting = parse_fathom_payload(
+                 item,
+                 project=project,
+@@ -149,6 +166,34 @@
+                 source_ref=f"fathom:{recording_id}",
+             )
+             meeting = apply_meeting_auto_route(meeting, auto_route=auto_route)
++            checkpoint = None
++            if poll_state is not None:
++                requested = destinations or ["private-context"]
++                if "journal" in requested:
++                    if not journal_space_id:
++                        raise ValueError("Meeting journal writes require --journal-space")
++                    if journal_destination_skip_reason(meeting, journal_space_id) is not None:
++                        requested = [d for d in requested if d != "journal"]
++                key = json.dumps([poll_account_key(account), recording_id])
++                checkpoint = PollRecording(
++                    poll_state,
++                    poll_state_path,
++                    key,
++                    {
++                        "fingerprint": meeting.fingerprint,
++                        "content_hash": hashlib.sha256(
++                            render_meeting_markdown(meeting).encode("utf-8")
++                        ).hexdigest(),
++                        "destinations": requested,
++                        "backend": backend,
++                        "journal_space": journal_space_id,
++                        "wiki_domain": wiki_domain,
++                        "private_root": str(_resolve_private_context_root()),
++                    },
++                    legacy_note=bool(prior_note),
++                )
++                if skip_existing and set(checkpoint.record["destinations"]) == set(requested):
++                    continue
+             results.append(
+                 write_meeting_record(
+                     meeting,
+@@ -156,14 +201,20 @@
+                     wiki_domain=wiki_domain,
+                     backend=backend,
+                     journal_space_id=journal_space_id,
++                    checkpoint=checkpoint,
+                 )
+             )
+ 
+-        cursor = payload.get("next_cursor")
++        cursor = next_cursor
+         if not cursor:
+             break
+         pages += 1
+ 
++    if cursor:
++        raise ValueError(
++            f"Incomplete Fathom listing: page budget {max_pages} reached; "
++            "checkpoint retained. Review a larger bounded catch-up before retrying."
++        )
+     return results
+ 
+ 
+@@ -346,9 +397,7 @@
+             continue
+         score = _score_route_keywords(text, [project_slug, *keywords])
+         if score > 0:
+-            canonical_project, matched_aliases = _canonical_meeting_project(
+-                project_slug, aliases
+-            )
++            canonical_project, matched_aliases = _canonical_meeting_project(project_slug, aliases)
+             scores[canonical_project] = scores.get(canonical_project, 0) + score
+             alias_tags[canonical_project] = _merge_meeting_tags(
+                 alias_tags.get(canonical_project, []), matched_aliases
+@@ -370,6 +419,7 @@
+     wiki_domain: str | None = None,
+     backend: str | None = None,
+     journal_space_id: str | None = None,
++    checkpoint: PollRecording | None = None,
+ ) -> MeetingIngestResult:
+     """Write a normalized meeting record to one or more destinations."""
+ 
+@@ -393,14 +443,24 @@
+             result.journal_skipped_reason = skip_reason
+ 
+     for destination in resolved_destinations:
++        prior = checkpoint.before(destination) if checkpoint else None
++        if prior is not None:
++            if destination == "journal":
++                result.journal_entry_id = prior[0]
++            else:
++                result.written_paths.extend(prior)
++            continue
++        receipt = []
+         if destination == "private-context":
+             path = write_private_context_meeting(meeting, rendered)
+             result.written_paths.append(str(path))
++            receipt = [str(path)]
+         elif destination == "wiki":
+             if not wiki_domain:
+                 raise ValueError("--wiki-domain is required when using the wiki destination")
+             path = write_wiki_meeting(wiki_domain, meeting, rendered)
+             result.written_paths.append(str(path))
++            receipt = [str(path)]
+         elif destination == "journal":
+             entry = write_journal_entry(
+                 meeting,
+@@ -409,11 +469,15 @@
+                 space_id=journal_space_id,
+             )
+             result.journal_entry_id = entry
++            receipt = [entry]
+         elif destination == "memory":
+             paths = write_meeting_memory(meeting)
+             result.written_paths.extend(str(path) for path in paths)
++            receipt = [str(path) for path in paths]
+         else:
+             raise ValueError(f"Unsupported destination: {destination}")
++        if checkpoint:
++            checkpoint.complete(destination, receipt)
+ 
+     return result
+ 
+@@ -579,21 +643,26 @@
+     root = _resolve_private_context_root()
+     if not root.exists():
+         return None
+-    needles = (
+-        f"Source Ref: fathom:{recording_id}",
+-        f"Source Ref: fathom-webhook:{recording_id}",
+-        f"Fingerprint: fathom:{recording_id}:",
+-    )
+     for path in sorted(root.glob("**/meetings/**/*.md")):
+         try:
+             text = path.read_text(encoding="utf-8", errors="ignore")
+         except OSError:
+             continue
+-        if any(needle in text for needle in needles):
++        if _fathom_note_matches(text, recording_id):
+             return path
+     return None
+ 
+ 
++def _fathom_note_matches(text: str, recording_id: str) -> bool:
++    token = re.escape(recording_id)
++    return bool(
++        re.search(
++            rf"(?:Source Ref: fathom(?:-webhook)?:{token}(?=\s|$)|Fingerprint: fathom:{token}:)",
++            text,
++        )
++    )
++
++
+ def write_wiki_meeting(domain: str, meeting: MeetingRecord, rendered: str) -> Path:
+     """Write a meeting artifact into a wiki domain's raw notes folder."""
+ 
+@@ -848,12 +917,17 @@
+         text = path.read_text(encoding="utf-8", errors="ignore")
+     except OSError:
+         return False
++    fathom_ref = re.fullmatch(r"fathom(?:-webhook)?:(.+)", meeting.source_ref)
++    if fathom_ref:
++        return _fathom_note_matches(text, fathom_ref[1])
+     needles = []
+     if meeting.fingerprint:
+         needles.append(f"Fingerprint: {meeting.fingerprint}")
+     if meeting.source_ref:
+         needles.append(f"Source Ref: {meeting.source_ref}")
+-    return bool(needles) and any(needle in text for needle in needles)
++    return bool(needles) and any(
++        re.search(re.escape(needle) + r"(?=\s|$)", text) for needle in needles
++    )
+ 
+ 
+ def safe_project_slug(project: str) -> str:
+--- a/src/jarvis/meetings/poll_state.py	
++++ b/src/jarvis/meetings/poll_state.py	
+@@ -3,6 +3,10 @@
+ from __future__ import annotations
+ 
+ import json
++import os
++import stat
++import tempfile
++from contextlib import contextmanager
+ from pathlib import Path
+ from typing import Any
+ 
+@@ -17,32 +21,154 @@
+     """Load Fathom poll state, returning an empty state when absent."""
+ 
+     state_path = path or default_poll_state_path()
++    _regular_state_path(state_path)
+     if not state_path.exists():
+         return {"version": 1, "accounts": {}}
+     try:
+         loaded = json.loads(state_path.read_text(encoding="utf-8"))
+-    except (OSError, json.JSONDecodeError):
+-        return {"version": 1, "accounts": {}}
+-    if not isinstance(loaded, dict):
+-        return {"version": 1, "accounts": {}}
++    except (OSError, json.JSONDecodeError) as exc:
++        raise ValueError("Fathom poll state unreadable; reconciliation required") from exc
++    if not isinstance(loaded, dict) or loaded.get("version") != 1:
++        raise ValueError("Fathom poll state invalid; reconciliation required")
+     accounts = loaded.get("accounts")
+     if not isinstance(accounts, dict):
+-        loaded["accounts"] = {}
++        raise ValueError("Fathom account state invalid; reconciliation required")
++    if not isinstance(loaded.get("recordings", {}), dict):
++        raise ValueError("Fathom recording state invalid; reconciliation required")
+     loaded.setdefault("version", 1)
+     return loaded
+ 
+ 
+ def save_poll_state(state: dict[str, Any], path: Path | None = None) -> Path:
+-    """Persist Fathom poll state atomically enough for local cron usage."""
++    """Durably replace owner-only checkpoint state before external effects."""
+ 
+     state_path = path or default_poll_state_path()
++    _regular_state_path(state_path)
+     state_path.parent.mkdir(parents=True, exist_ok=True)
+-    tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
+-    tmp_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+-    tmp_path.replace(state_path)
++    descriptor, name = tempfile.mkstemp(prefix=".poll-", dir=state_path.parent)
++    tmp_path = Path(name)
++    try:
++        with os.fdopen(descriptor, "w") as handle:
++            handle.write(json.dumps(state, indent=2, sort_keys=True) + "\n")
++            handle.flush()
++            os.fsync(handle.fileno())
++        tmp_path.replace(state_path)
++        directory = os.open(state_path.parent, os.O_RDONLY)
++        try:
++            os.fsync(directory)
++        finally:
++            os.close(directory)
++    finally:
++        tmp_path.unlink(missing_ok=True)
+     return state_path
+ 
+ 
++@contextmanager
++def poll_lock(path: Path | None = None):
++    """Serialize local POSIX pollers; never wait or delete another owner's lock."""
++    import fcntl
++
++    state_path = path or default_poll_state_path()
++    state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
++    fd = os.open(str(state_path) + ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
++    try:
++        if not stat.S_ISREG(os.fstat(fd).st_mode):
++            raise ValueError("Fathom lock is not a regular file")
++        try:
++            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        except BlockingIOError as exc:
++            raise ValueError("Another Fathom poll owns this state") from exc
++        yield
++    finally:
++        os.close(fd)
++
++
++class PollRecording:
++    """One recording's destination receipts inside the existing poll checkpoint."""
++
++    def __init__(self, state, path, key, binding, *, legacy_note=False):
++        self.state, self.path = state, path
++        records = state.setdefault("recordings", {})
++        existing = records.get(key)
++        if existing is None:
++            if legacy_note and "journal" in binding["destinations"]:
++                raise ValueError("Existing note has no journal receipt; reconciliation required")
++            existing = {"binding": binding, "destinations": {}}
++            records[key] = existing
++        if (
++            not isinstance(existing, dict)
++            or existing.get("binding") != binding
++            or not isinstance(existing.get("destinations"), dict)
++        ):
++            raise ValueError("Recording destination binding changed; reconciliation required")
++        self.record = existing
++        assert_poll_ready(state)
++
++    def before(self, destination):
++        previous = self.record["destinations"].get(destination)
++        if previous:
++            return previous["receipt"]
++        self.record["destinations"][destination] = {"state": "intent"}
++        save_poll_state(self.state, self.path)
++        return None
++
++    def complete(self, destination, receipt):
++        _validate_receipt(destination, receipt)
++        # Do not let a failed receipt save be overwritten by the CLI's error save.
++        outcome = {"state": "complete", "receipt": receipt}
++        self.record["destinations"][destination] = outcome
++        try:
++            save_poll_state(self.state, self.path)
++        except BaseException:
++            self.record["destinations"][destination] = {"state": "intent"}
++            raise
++
++
++def assert_poll_ready(state):
++    """Unresolved older recordings must not disappear beyond the overlap window."""
++    records = state.get("recordings", {})
++    if not isinstance(records, dict):
++        raise ValueError("Recording state invalid; reconciliation required")
++    for record in records.values():
++        if (
++            not isinstance(record, dict)
++            or not isinstance(record.get("binding"), dict)
++            or not isinstance(record["binding"].get("destinations"), list)
++            or not isinstance(record.get("destinations"), dict)
++        ):
++            raise ValueError("Recording state invalid; reconciliation required")
++        for destination, outcome in record["destinations"].items():
++            if (
++                destination not in record["binding"]["destinations"]
++                or not isinstance(outcome, dict)
++                or outcome.get("state") not in {"intent", "complete"}
++            ):
++                raise ValueError("Recording receipt invalid; reconciliation required")
++            if outcome["state"] == "intent":
++                raise ValueError("Recording delivery interrupted; reconciliation required")
++            _validate_receipt(destination, outcome.get("receipt"))
++
++
++def _validate_receipt(destination, receipt):
++    if (
++        not isinstance(receipt, list)
++        or any(not isinstance(value, str) or not value.strip() for value in receipt)
++        or (destination in {"journal", "private-context", "wiki"} and len(receipt) != 1)
++    ):
++        raise ValueError("Recording receipt invalid; reconciliation required")
++    if destination != "journal" and any(not Path(value).is_file() for value in receipt):
++        raise ValueError("Local recording receipt missing; reconciliation required")
++
++
++def _regular_state_path(path):
++    try:
++        mode = path.lstat().st_mode
++    except FileNotFoundError:
++        return
++    if not stat.S_ISREG(mode):
++        raise ValueError("Fathom state must be a regular file; reconciliation required")
++
++
+ def poll_account_key(account: str | None) -> str:
+     """Return the stable state key for an account label."""
+ 
+--- a/src/jarvis/meetings/cli.py	
++++ b/src/jarvis/meetings/cli.py	
+@@ -28,7 +28,13 @@
+     tmux_launch_commands,
+ )
+ from .fathom import FathomClient
+-from .poll_state import load_poll_state, poll_account_key, save_poll_state
++from .poll_state import (
++    assert_poll_ready,
++    load_poll_state,
++    poll_account_key,
++    poll_lock,
++    save_poll_state,
++)
+ from .publication.cli import publication_cli
+ from .service import (
+     ingest_archived_fathom_payload,
+@@ -83,13 +89,24 @@
+     """Compute the next poll created_after value from persisted account state."""
+ 
+     previous_success = account_state.get("last_successful_poll_at")
+-    if isinstance(previous_success, str) and previous_success.strip():
++    if previous_success is not None:
+         try:
+             previous_dt = datetime.fromisoformat(previous_success)
+-        except ValueError:
+-            previous_dt = now - timedelta(hours=initial_lookback_hours)
++            if previous_dt.tzinfo is None:
++                raise ValueError("Missing timezone")
++        except (TypeError, ValueError) as exc:
++            raise ValueError("Invalid Fathom success watermark; reconciliation required") from exc
+         else:
+             return (previous_dt - timedelta(hours=overlap_hours)).isoformat()
++    initial_bound = account_state.get("last_created_after")
++    if initial_bound is not None:
++        try:
++            parsed = datetime.fromisoformat(initial_bound)
++            if parsed.tzinfo is None:
++                raise ValueError("Missing timezone")
++        except (TypeError, ValueError) as exc:
++            raise ValueError("Invalid Fathom query bound; reconciliation required") from exc
++        return initial_bound
+     return (now - timedelta(hours=initial_lookback_hours)).isoformat()
+ 
+ 
+@@ -490,100 +507,107 @@
+ ) -> None:
+     """Poll configured Fathom accounts incrementally for unpulled recordings."""
+ 
+-    target_accounts = list(accounts) or _configured_fathom_accounts()
+-    now = datetime.now().astimezone()
+-    state = load_poll_state(state_file)
+-    account_state = state.setdefault("accounts", {})
+-    if not isinstance(account_state, dict):
+-        account_state = {}
+-        state["accounts"] = account_state
++    with poll_lock(state_file):
++        target_accounts = list(accounts) or _configured_fathom_accounts()
++        now = datetime.now().astimezone()
++        state = load_poll_state(state_file)
++        assert_poll_ready(state)
++        account_state = state.setdefault("accounts", {})
++        if not isinstance(account_state, dict):
++            account_state = {}
++            state["accounts"] = account_state
+ 
+-    responses: list[dict[str, object]] = []
+-    had_error = False
+-    for account in target_accounts:
+-        key = poll_account_key(account)
+-        existing = account_state.get(key)
+-        if not isinstance(existing, dict):
+-            existing = {}
+-        created_after = _poll_created_after(
+-            now=now,
+-            account_state=existing,
+-            initial_lookback_hours=initial_lookback_hours,
+-            overlap_hours=overlap_hours,
+-        )
+-
+-        try:
+-            results = ingest_fathom_meetings_since(
+-                account=account,
+-                created_after=created_after,
+-                limit=limit,
+-                max_pages=max_pages,
+-                project=project,
+-                auto_route=auto_route,
+-                tags=list(tags) or None,
+-                destinations=list(destinations),
+-                wiki_domain=wiki_domain,
+-                backend=backend,
+-                journal_space_id=journal_space_id,
+-                skip_existing=skip_existing,
++        responses: list[dict[str, object]] = []
++        had_error = False
++        for account in target_accounts:
++            key = poll_account_key(account)
++            existing = account_state.get(key)
++            if not isinstance(existing, dict):
++                existing = {}
++            created_after = _poll_created_after(
++                now=now,
++                account_state=existing,
++                initial_lookback_hours=initial_lookback_hours,
++                overlap_hours=overlap_hours,
+             )
+-        except Exception as exc:
+-            had_error = True
+-            existing["last_error"] = str(exc)
+-            existing["last_failed_poll_at"] = now.isoformat()
+             existing["last_created_after"] = created_after
+             account_state[key] = existing
++            save_poll_state(state, state_file)
++
++            try:
++                results = ingest_fathom_meetings_since(
++                    account=account,
++                    created_after=created_after,
++                    limit=limit,
++                    max_pages=max_pages,
++                    project=project,
++                    auto_route=auto_route,
++                    tags=list(tags) or None,
++                    destinations=list(destinations),
++                    wiki_domain=wiki_domain,
++                    backend=backend,
++                    journal_space_id=journal_space_id,
++                    skip_existing=skip_existing,
++                    poll_state=state,
++                    poll_state_path=state_file,
++                )
++            except Exception as exc:
++                had_error = True
++                existing["last_error"] = str(exc)
++                existing["last_failed_poll_at"] = now.isoformat()
++                existing["last_created_after"] = created_after
++                account_state[key] = existing
++                responses.append(
++                    {
++                        "account": account,
++                        "created_after": created_after,
++                        "ingested": [],
++                        "error": str(exc),
++                    }
++                )
++                continue
++
++            existing.update(
++                {
++                    "last_successful_poll_at": now.isoformat(),
++                    "last_created_after": created_after,
++                    "last_ingested_count": len(results),
++                    "last_error": None,
++                }
++            )
++            account_state[key] = existing
+             responses.append(
+                 {
+                     "account": account,
+                     "created_after": created_after,
+-                    "ingested": [],
+-                    "error": str(exc),
++                    "ingested": [result.model_dump(mode="json") for result in results],
+                 }
+             )
+-            continue
+ 
+-        existing.update(
+-            {
+-                "last_successful_poll_at": now.isoformat(),
+-                "last_created_after": created_after,
+-                "last_ingested_count": len(results),
+-                "last_error": None,
+-            }
+-        )
+-        account_state[key] = existing
+-        responses.append(
+-            {
+-                "account": account,
+-                "created_after": created_after,
+-                "ingested": [result.model_dump(mode="json") for result in results],
+-            }
+-        )
++        saved_path = save_poll_state(state, state_file)
++        output = {
++            "poll_started_at": now.isoformat(),
++            "state_file": str(saved_path),
++            "accounts": responses,
++        }
+ 
+-    saved_path = save_poll_state(state, state_file)
+-    output = {
+-        "poll_started_at": now.isoformat(),
+-        "state_file": str(saved_path),
+-        "accounts": responses,
+-    }
++        if as_json:
++            click.echo(json.dumps(output, indent=2))
++        else:
++            for response in responses:
++                account_label = response.get("account") or "default"
++                ingested = response.get("ingested")
++                count = len(ingested) if isinstance(ingested, list) else 0
++                if response.get("error"):
++                    console.print(f"[red]{account_label} failed:[/red] {response['error']}")
++                else:
++                    console.print(f"[green]{account_label} ingested:[/green] {count}")
++            console.print(f"[dim]State:[/dim] {saved_path}")
+ 
+-    if as_json:
+-        click.echo(json.dumps(output, indent=2))
+-    else:
+-        for response in responses:
+-            account_label = response.get("account") or "default"
+-            ingested = response.get("ingested")
+-            count = len(ingested) if isinstance(ingested, list) else 0
+-            if response.get("error"):
+-                console.print(f"[red]{account_label} failed:[/red] {response['error']}")
+-            else:
+-                console.print(f"[green]{account_label} ingested:[/green] {count}")
+-        console.print(f"[dim]State:[/dim] {saved_path}")
++        if had_error:
++            raise SystemExit(1)
+ 
+-    if had_error:
+-        raise SystemExit(1)
+ 
+-
+ @fathom_group.command(name="start")
+ @click.option("--account", default=None, help="Named Fathom account from config")
+ @click.option("--port", default=8765, help="Local port to bind")
+@@ -963,10 +987,8 @@
+     console.print(f"[cyan]Fathom account:[/cyan] {resolved_account}")
+     console.print(f"[dim]Webhook ID:[/dim] {acct.webhook_id or '[none]'}")
+     console.print(f"[dim]Destination URL:[/dim] {acct.webhook_destination_url or '[none]'}")
++    console.print(f"[dim]Secret configured:[/dim] {'yes' if secret_configured else 'no'}")
+     console.print(
+-        f"[dim]Secret configured:[/dim] {'yes' if secret_configured else 'no'}"
+-    )
+-    console.print(
+         "[dim]Inbox:[/dim] "
+         f"{status['pending_count']} pending, "
+         f"{status['invalid_count']} invalid, "
+--- /dev/null	
++++ b/tests/unit/meetings/test_poll_acceptance.py	
+@@ -0,0 +1,359 @@
++"""Source Fathom filesystem/checkpoint acceptance; synthetic external boundaries."""
++
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++import pytest
++from click.testing import CliRunner
++
++import jarvis
++import jarvis.meetings.service as service
++from jarvis.meetings.cli import meeting_cli
++from jarvis.meetings.poll_state import PollRecording, assert_poll_ready, load_poll_state, poll_lock
++
++
++@pytest.fixture
++def isolated(monkeypatch, tmp_path):
++    installed = os.environ.get("HARNESSY_TEST_INSTALLED_VENV")
++    if installed:
++        expected = Path(installed).resolve()
++        assert Path(sys.prefix).resolve() == expected
++    else:
++        expected = Path(__file__).resolve().parents[3] / "src"
++    assert Path(jarvis.__file__).resolve().is_relative_to(expected)
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setattr(service, "_USERNAME", "fixture")
++    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
++    payload = {
++        "recording_id": 123,
++        "title": "Synthetic meeting",
++        "created_at": "2026-09-01T12:00:00Z",
++        "default_summary": {"markdown_formatted": "## Summary\n\nSynthetic decision."},
++    }
++
++    class Provider:
++        def __init__(self, **kwargs):
++            pass
++
++        def list_meetings(self, **kwargs):
++            return {"items": [payload]}
++
++    monkeypatch.setattr(service, "FathomClient", Provider)
++    return tmp_path
++
++
++def invoke(root, *destinations):
++    args = ["fathom", "poll", "--account", "fixture", "--state-file", str(root / "poll.json")]
++    for destination in destinations:
++        args.extend(["--dest", destination])
++    if "journal" in destinations:
++        args.extend(["--journal-space", "synthetic-space", "--project", "fixture"])
++    return CliRunner().invoke(meeting_cli, args)
++
++
++def test_successful_repeat_preserves_single_note_and_memory(isolated):
++    for _ in range(2):
++        result = invoke(isolated, "private-context", "memory")
++        assert result.exit_code == 0, result.output
++    notes = list(isolated.glob(".jarvis/context/private/fixture/meetings/**/*.md"))
++    assert len(notes) == 1
++    state = load_poll_state(isolated / "poll.json")["accounts"]["fixture"]
++    assert state["last_successful_poll_at"]
++    assert state["last_ingested_count"] == 0
++    assert (isolated / ".jarvis/context/private/fixture/events.md").read_text().count(
++        "memory_id:"
++    ) == 1
++
++
++def test_failed_journal_is_not_silently_skipped_after_private_note(isolated, monkeypatch):
++    calls = []
++
++    def fail_journal(*args, **kwargs):
++        calls.append(kwargs)
++        raise TimeoutError("Synthetic uncertain journal response")
++
++    monkeypatch.setattr(service, "write_journal_entry", fail_journal)
++    first = invoke(isolated, "private-context", "journal", "memory")
++    assert first.exit_code != 0, first.output
++    state = load_poll_state(isolated / "poll.json")["accounts"]["fixture"]
++    assert "last_successful_poll_at" not in state
++    assert len(list(isolated.glob(".jarvis/context/private/fixture/fixture/meetings/**/*.md"))) == 1
++    second = invoke(isolated, "private-context", "journal", "memory")
++    # Ambiguous delivery must stay blocked, not silently become successful.
++    assert second.exit_code != 0, second.output
++    assert len(calls) == 1, "Uncertain journal writes must not automatically repeat"
++    assert (
++        "last_successful_poll_at"
++        not in load_poll_state(isolated / "poll.json")["accounts"]["fixture"]
++    )
++
++
++def test_recording_dedup_requires_exact_id(isolated):
++    notes = isolated / ".jarvis/context/private/fixture/meetings/2026"
++    notes.mkdir(parents=True)
++    (notes / "other.md").write_text("Source Ref: fathom:1234\nFingerprint: fathom:1234:date\n")
++    assert service.find_private_context_fathom_recording("123") is None
++
++
++@pytest.mark.parametrize(
++    "source",
++    ["Source Ref: fathom:123", "Source Ref: fathom-webhook:123", "Fingerprint: fathom:123:date"],
++)
++def test_all_exact_recording_forms_remain_supported(isolated, source):
++    note = isolated / ".jarvis/context/private/fixture/meetings/item.md"
++    note.parent.mkdir(parents=True)
++    note.write_text(source + "\n")
++    assert service.find_private_context_fathom_recording("123") == note
++
++
++def test_successful_journal_receipt_is_not_replayed(isolated, monkeypatch):
++    calls = []
++    monkeypatch.setattr(
++        service, "write_journal_entry", lambda *a, **kw: calls.append(kw) or "receipt-1"
++    )
++    first = invoke(isolated, "private-context", "journal", "memory")
++    second = invoke(isolated, "private-context", "journal", "memory")
++    assert first.exit_code == second.exit_code == 0, (first.output, second.output)
++    assert len(calls) == 1
++    record = next(iter(load_poll_state(isolated / "poll.json")["recordings"].values()))
++    assert record["destinations"]["journal"]["receipt"] == ["receipt-1"]
++    assert "memory" in record["destinations"]
++
++
++@pytest.mark.parametrize(
++    "raw", ["{", "[]", '{"version":1,"accounts":[]}', '{"version":1,"accounts":{},"recordings":[]}']
++)
++def test_corrupt_checkpoint_stops_before_provider(isolated, raw, monkeypatch):
++    (isolated / "poll.json").write_text(raw)
++    monkeypatch.setattr(service, "FathomClient", lambda **kwargs: pytest.fail("provider called"))
++    result = invoke(isolated, "private-context")
++    assert result.exit_code != 0
++    assert (isolated / "poll.json").read_text() == raw
++
++
++def test_unresolved_old_record_blocks_even_when_provider_would_return_empty(isolated, monkeypatch):
++    state = {"version": 1, "accounts": {}}
++    record = PollRecording(state, isolated / "poll.json", "old", {"destinations": ["journal"]})
++    record.before("journal")
++    monkeypatch.setattr(service, "FathomClient", lambda **kwargs: pytest.fail("provider called"))
++    assert invoke(isolated, "private-context").exit_code != 0
++
++
++def test_receipt_persistence_failure_retains_ambiguous_intent(isolated, monkeypatch):
++    import jarvis.meetings.poll_state as state_module
++
++    state = {"version": 1, "accounts": {}}
++    record = PollRecording(state, isolated / "poll.json", "record", {"destinations": ["journal"]})
++    record.before("journal")
++    monkeypatch.setattr(
++        state_module, "save_poll_state", lambda *args: (_ for _ in ()).throw(OSError("disk"))
++    )
++    with pytest.raises(OSError):
++        record.complete("journal", ["known-receipt"])
++    assert record.record["destinations"]["journal"] == {"state": "intent"}
++    with pytest.raises(ValueError, match="interrupted"):
++        assert_poll_ready(load_poll_state(isolated / "poll.json"))
++
++
++@pytest.mark.parametrize("stage", ["intent", "external-success", "receipt"])
++def test_real_child_crash_and_restart_never_replays_unknown(isolated, stage):
++    script = """
++import os,sys
++from pathlib import Path
++from jarvis.meetings.poll_state import PollRecording,poll_lock
++root=Path(sys.argv[1]); stage=sys.argv[2]
++with poll_lock(root/'poll.json'):
++    record=PollRecording({'version':1,'accounts':{}},root/'poll.json','record',{'destinations':['journal']})
++    record.before('journal')
++    if stage != 'intent':
++        (root/'external-receipt').write_text('returned-receipt')
++    if stage == 'receipt':
++        record.complete('journal',['returned-receipt'])
++    os._exit(71)
++"""
++    result = subprocess.run(
++        [sys.executable, "-B", "-c", script, str(isolated), stage],
++        env=os.environ.copy(),
++        capture_output=True,
++    )
++    assert result.returncode == 71, result.stderr
++    with poll_lock(isolated / "poll.json"):
++        state = load_poll_state(isolated / "poll.json")
++        if stage == "receipt":
++            assert_poll_ready(state)
++            assert state["recordings"]["record"]["destinations"]["journal"]["receipt"] == [
++                "returned-receipt"
++            ]
++        else:
++            with pytest.raises(ValueError, match="interrupted"):
++                assert_poll_ready(state)
++    assert (isolated / "poll.json").stat().st_mode & 0o777 == 0o600
++
++
++def test_real_process_lock_refuses_competing_poller(isolated):
++    script = """
++import sys
++from pathlib import Path
++from jarvis.meetings.poll_state import poll_lock
++with poll_lock(Path(sys.argv[1])):
++    print('owned',flush=True)
++    sys.stdin.readline()
++"""
++    child = subprocess.Popen(
++        [sys.executable, "-B", "-c", script, str(isolated / "poll.json")],
++        stdin=subprocess.PIPE,
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        text=True,
++    )
++    try:
++        assert child.stdout.readline().strip() == "owned"
++        with pytest.raises(ValueError, match="Another"):
++            with poll_lock(isolated / "poll.json"):
++                pytest.fail("two poll owners")
++    finally:
++        child.communicate("release\n", timeout=5)
++    assert child.returncode == 0
++
++
++def test_existing_local_note_does_not_claim_unproven_journal_receipt(isolated, monkeypatch):
++    assert invoke(isolated, "private-context").exit_code == 0
++    (isolated / "poll.json").unlink()
++    monkeypatch.setattr(
++        service, "write_journal_entry", lambda *a, **kw: pytest.fail("legacy replay")
++    )
++    result = invoke(isolated, "private-context", "journal")
++    assert result.exit_code != 0
++    assert "reconciliation" in result.output
++
++
++def test_destination_binding_change_does_not_replay(isolated, monkeypatch):
++    monkeypatch.setattr(service, "write_journal_entry", lambda *a, **kw: "known-receipt")
++    assert invoke(isolated, "private-context", "journal").exit_code == 0
++    monkeypatch.setattr(service, "write_journal_entry", lambda *a, **kw: pytest.fail("replay"))
++    result = CliRunner().invoke(
++        meeting_cli,
++        [
++            "fathom",
++            "poll",
++            "--account",
++            "fixture",
++            "--state-file",
++            str(isolated / "poll.json"),
++            "--dest",
++            "private-context",
++            "--dest",
++            "journal",
++            "--project",
++            "fixture",
++            "--journal-space",
++            "different-space",
++        ],
++    )
++    assert result.exit_code != 0
++    assert "binding changed" in result.output
++
++
++@pytest.mark.parametrize(
++    "outcome",
++    [
++        {"state": "complete", "receipt": []},
++        {"state": "complete", "receipt": [4]},
++        {"state": "other"},
++    ],
++)
++def test_malformed_receipt_is_not_success(isolated, outcome):
++    state = {
++        "recordings": {
++            "old": {"binding": {"destinations": ["journal"]}, "destinations": {"journal": outcome}}
++        }
++    }
++    with pytest.raises(ValueError, match="invalid"):
++        assert_poll_ready(state)
++
++
++def test_empty_journal_receipt_cannot_advance_watermark(isolated, monkeypatch):
++    monkeypatch.setattr(service, "write_journal_entry", lambda *a, **kw: "")
++    result = invoke(isolated, "private-context", "journal")
++    assert result.exit_code != 0
++    state = load_poll_state(isolated / "poll.json")
++    assert "last_successful_poll_at" not in state["accounts"]["fixture"]
++    record = next(iter(state["recordings"].values()))
++    assert record["destinations"]["journal"] == {"state": "intent"}
++
++
++def test_changed_rendered_content_is_not_silently_skipped(isolated, monkeypatch):
++    assert invoke(isolated, "private-context").exit_code == 0
++    original = service.parse_fathom_payload
++    monkeypatch.setattr(
++        service,
++        "parse_fathom_payload",
++        lambda *a, **kw: original(*a, **kw).model_copy(
++            update={"summary": "Changed exact source", "project": "changed-route"}
++        ),
++    )
++    result = invoke(isolated, "private-context")
++    assert result.exit_code != 0
++    assert "binding changed" in result.output
++
++
++def test_missing_local_receipt_is_not_silent_success_or_remote_replay(isolated, monkeypatch):
++    calls = []
++    monkeypatch.setattr(service, "write_journal_entry", lambda *a, **kw: calls.append(1) or "known")
++    assert invoke(isolated, "private-context", "journal").exit_code == 0
++    note = next(isolated.glob(".jarvis/context/private/fixture/fixture/meetings/**/*.md"))
++    note.unlink()
++    result = invoke(isolated, "private-context", "journal")
++    assert result.exit_code != 0
++    assert len(calls) == 1
++
++
++def test_same_filename_different_recording_is_preserved(isolated):
++    from datetime import date
++
++    from jarvis.meetings.models import MeetingRecord
++
++    meeting = MeetingRecord(
++        title="Identical title",
++        meeting_date=date(2026, 9, 1),
++        source_ref="fathom:1234",
++        source_type="fathom",
++        fingerprint="fathom:1234:date",
++        raw_markdown="First content",
++        summary="First content",
++    )
++    first = service.write_meeting_record(meeting).written_paths[0]
++    other = meeting.model_copy(
++        update={
++            "source_ref": "fathom:123",
++            "fingerprint": "fathom:123:date",
++            "raw_markdown": "Second content",
++            "summary": "Second content",
++        }
++    )
++    second = service.write_meeting_record(other).written_paths[0]
++    assert first != second
++    assert "First content" in Path(first).read_text()
++    assert "Second content" in Path(second).read_text()
++
++
++@pytest.mark.parametrize(
++    "kind", ["dangling-state", "state-directory", "lock-link", "lock-directory"]
++)
++def test_state_and_lock_paths_fail_closed(isolated, monkeypatch, kind):
++    state = isolated / "poll.json"
++    lock = isolated / "poll.json.lock"
++    if kind == "dangling-state":
++        state.symlink_to(isolated / "absent")
++    elif kind == "state-directory":
++        state.mkdir()
++    elif kind == "lock-link":
++        lock.symlink_to(isolated / "absent-lock")
++    else:
++        lock.mkdir()
++    monkeypatch.setattr(service, "FathomClient", lambda **kw: pytest.fail("provider called"))
++    assert invoke(isolated, "private-context").exit_code != 0
++    if kind == "dangling-state":
++        assert state.is_symlink()
+--- /dev/null	
++++ b/tests/unit/meetings/test_poll_pagination.py	
+@@ -0,0 +1,297 @@
++"""CLI pagination completeness regression with synthetic discovery."""
++
++import os
++import subprocess
++import sys
++from datetime import UTC, datetime
++from pathlib import Path
++
++import pytest
++from click.testing import CliRunner
++
++import jarvis
++import jarvis.meetings.service as service
++from jarvis.meetings.cli import meeting_cli
++from jarvis.meetings.poll_state import load_poll_state, save_poll_state
++
++
++@pytest.fixture(autouse=True)
++def expected_runtime():
++    installed = os.environ.get("HARNESSY_TEST_INSTALLED_VENV")
++    expected = (
++        Path(installed).resolve() if installed else Path(__file__).resolve().parents[3] / "src"
++    )
++    if installed:
++        assert Path(sys.prefix).resolve() == expected
++    assert Path(jarvis.__file__).resolve().is_relative_to(expected)
++
++
++@pytest.mark.parametrize(
++    "unfinished", [True, False], ids=["budget-truncated", "terminal-at-budget"]
++)
++def test_bounded_poll_only_advances_after_terminal_page(tmp_path, monkeypatch, unfinished):
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
++    monkeypatch.setattr(service, "_USERNAME", "fixture")
++    state_path = tmp_path / "poll.json"
++    prior = "2026-09-12T12:25:06+01:00"
++    save_poll_state(
++        {"version": 1, "accounts": {"fixture": {"last_successful_poll_at": prior}}}, state_path
++    )
++    calls = []
++
++    class Discovery:
++        def __init__(self, **kwargs):
++            pass
++
++        def list_meetings(self, **kwargs):
++            calls.append(kwargs)
++            page = len(calls)
++            return {
++                "items": [
++                    {
++                        "recording_id": page,
++                        "title": f"Synthetic page {page}",
++                        "created_at": "2026-09-13T10:00:00Z",
++                        "default_summary": {"markdown_formatted": "## Summary\n\nSynthetic."},
++                    }
++                ],
++                "next_cursor": f"page-{page + 1}" if page == 1 or unfinished else None,
++            }
++
++    monkeypatch.setattr(service, "FathomClient", Discovery)
++    result = CliRunner().invoke(
++        meeting_cli,
++        [
++            "fathom",
++            "poll",
++            "--account",
++            "fixture",
++            "--state-file",
++            str(state_path),
++            "--limit",
++            "1",
++            "--max-pages",
++            "2",
++            "--dest",
++            "private-context",
++        ],
++    )
++    assert len(calls) == 2
++    assert calls[1]["cursor"] == "page-2"
++    state = load_poll_state(state_path)
++    assert len(state["recordings"]) == 2, "Completed destination receipts must be preserved"
++    if unfinished:
++        assert result.exit_code != 0, "Incomplete listing was reported as successful"
++        assert state["accounts"]["fixture"]["last_successful_poll_at"] == prior
++    else:
++        assert result.exit_code == 0, result.output
++        assert state["accounts"]["fixture"]["last_successful_poll_at"] != prior
++
++
++def test_first_failure_retry_keeps_original_lower_bound(tmp_path, monkeypatch):
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
++    monkeypatch.setattr(service, "_USERNAME", "fixture")
++    times = [
++        datetime(2026, 9, 15, 12, tzinfo=UTC),
++        datetime(2026, 9, 16, 12, tzinfo=UTC),
++    ]
++
++    class Clock(datetime):
++        @classmethod
++        def now(cls, tz=None):
++            return times.pop(0)
++
++    monkeypatch.setattr("jarvis.meetings.cli.datetime", Clock)
++    calls = []
++
++    class Discovery:
++        def __init__(self, **kwargs):
++            pass
++
++        def list_meetings(self, **kwargs):
++            calls.append(kwargs["created_after"])
++            if len(calls) == 1:
++                raise TimeoutError("Synthetic discovery timeout")
++            return {"items": [], "next_cursor": None}
++
++    monkeypatch.setattr(service, "FathomClient", Discovery)
++    path = tmp_path / "poll.json"
++    args = [
++        "fathom",
++        "poll",
++        "--account",
++        "fixture",
++        "--state-file",
++        str(path),
++        "--dest",
++        "private-context",
++    ]
++    assert CliRunner().invoke(meeting_cli, args).exit_code != 0
++    assert load_poll_state(path)["accounts"]["fixture"]["last_created_after"] == calls[0]
++    assert CliRunner().invoke(meeting_cli, args).exit_code == 0
++    assert calls[1] == calls[0], "Failed initial window moved forward and lost one day"
++
++
++@pytest.mark.parametrize(
++    "payload",
++    [
++        None,
++        {},
++        {"items": None},
++        {"items": [None]},
++        {"items": [{}]},
++        {"items": [{"recording_id": {"bad": 1}}]},
++        {"items": [{"recording_id": [1]}]},
++        {"items": [{"recording_id": True}]},
++        {"items": [{"recording_id": 1.5}]},
++        {"items": [], "next_cursor": 42},
++    ],
++)
++def test_malformed_listing_never_advances(tmp_path, monkeypatch, payload):
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
++
++    class Discovery:
++        def __init__(self, **kwargs):
++            pass
++
++        def list_meetings(self, **kwargs):
++            return payload
++
++    monkeypatch.setattr(service, "FathomClient", Discovery)
++    path = tmp_path / "poll.json"
++    result = CliRunner().invoke(
++        meeting_cli, ["fathom", "poll", "--account", "fixture", "--state-file", str(path)]
++    )
++    assert result.exit_code != 0
++    assert "last_successful_poll_at" not in load_poll_state(path)["accounts"]["fixture"]
++
++
++@pytest.mark.parametrize("field", ["last_created_after", "last_successful_poll_at"])
++@pytest.mark.parametrize("invalid", ["invalid", "2026-09-15T12:00:00", 42])
++def test_invalid_bound_does_not_reset_window(tmp_path, monkeypatch, field, invalid):
++    from jarvis.meetings.cli import _poll_created_after
++
++    with pytest.raises(ValueError, match="reconciliation"):
++        _poll_created_after(
++            now=datetime.now(UTC),
++            account_state={field: invalid},
++            initial_lookback_hours=48,
++            overlap_hours=6,
++        )
++
++
++@pytest.mark.parametrize("limit,budget", [(0, 5), (100, 0), (100, -1)])
++def test_budget_must_be_positive_before_discovery(monkeypatch, limit, budget):
++    monkeypatch.setattr(service, "FathomClient", lambda **kw: pytest.fail("provider called"))
++    with pytest.raises(ValueError, match="positive"):
++        service.ingest_fathom_meetings_since(limit=limit, max_pages=budget)
++
++
++def test_first_query_bound_survives_actual_process_exit(tmp_path, monkeypatch):
++    script = """
++import os,sys
++from pathlib import Path
++from datetime import datetime,timezone
++from click.testing import CliRunner
++import jarvis.meetings.cli as cli
++import jarvis.meetings.service as service
++root=Path(sys.argv[1]); os.chdir(root)
++Path.home=classmethod(lambda cls:root)
++class Clock(datetime):
++    @classmethod
++    def now(cls,tz=None): return datetime(2026,9,15,12,tzinfo=timezone.utc)
++cli.datetime=Clock
++class Discovery:
++    def __init__(self,**kw): pass
++    def list_meetings(self,**kw): os._exit(71)
++service.FathomClient=Discovery
++CliRunner().invoke(cli.meeting_cli,['fathom','poll','--account','fixture','--state-file',str(root/'poll.json')])
++"""
++    result = subprocess.run(
++        [sys.executable, "-B", "-c", script, str(tmp_path)], capture_output=True
++    )
++    assert result.returncode == 71, result.stderr
++    state = load_poll_state(tmp_path / "poll.json")["accounts"]["fixture"]
++    assert "last_successful_poll_at" not in state
++    from jarvis.meetings.cli import _poll_created_after
++
++    after_restart = _poll_created_after(
++        now=datetime(2026, 9, 16, 12, tzinfo=UTC),
++        account_state=state,
++        initial_lookback_hours=48,
++        overlap_hours=6,
++    )
++    assert after_restart == state["last_created_after"]
++    assert datetime.fromisoformat(after_restart) == datetime(2026, 9, 13, 12, tzinfo=UTC)
++
++
++def test_larger_bounded_retry_finishes_without_replaying_receipts(tmp_path, monkeypatch):
++    monkeypatch.chdir(tmp_path)
++    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
++    monkeypatch.setattr(service, "_USERNAME", "fixture")
++
++    class Discovery:
++        def __init__(self, **kwargs):
++            pass
++
++        def list_meetings(self, **kwargs):
++            page = int(kwargs["cursor"] or "1")
++            return {
++                "items": [
++                    {
++                        "recording_id": page,
++                        "title": f"Synthetic {page}",
++                        "created_at": "2026-09-13T10:00:00Z",
++                        "default_summary": {"markdown_formatted": "## Summary\n\nSynthetic."},
++                    }
++                ],
++                "next_cursor": str(page + 1) if page < 3 else None,
++            }
++
++    monkeypatch.setattr(service, "FathomClient", Discovery)
++    journal_calls = []
++    monkeypatch.setattr(
++        service,
++        "write_journal_entry",
++        lambda meeting, *a, **kw: (
++            journal_calls.append(meeting.source_ref) or f"receipt-{meeting.source_ref}"
++        ),
++    )
++    path = tmp_path / "poll.json"
++    args = [
++        "fathom",
++        "poll",
++        "--account",
++        "fixture",
++        "--state-file",
++        str(path),
++        "--limit",
++        "1",
++        "--project",
++        "fixture",
++        "--backend",
++        "anytype",
++        "--journal-space",
++        "fixture-space",
++        "--dest",
++        "private-context",
++        "--dest",
++        "journal",
++        "--dest",
++        "memory",
++    ]
++    assert CliRunner().invoke(meeting_cli, args + ["--max-pages", "2"]).exit_code != 0
++    before = load_poll_state(path)
++    assert len(before["recordings"]) == 2
++    assert "last_successful_poll_at" not in before["accounts"]["fixture"]
++    result = CliRunner().invoke(meeting_cli, args + ["--max-pages", "3"])
++    assert result.exit_code == 0, result.output
++    after = load_poll_state(path)
++    assert len(after["recordings"]) == 3
++    assert all(after["recordings"][key] == value for key, value in before["recordings"].items())
++    assert journal_calls == ["fathom:1", "fathom:2", "fathom:3"]
++    assert len(list(tmp_path.glob(".jarvis/context/private/fixture/fixture/meetings/**/*.md"))) == 3
++    assert after["accounts"]["fixture"]["last_successful_poll_at"]
