@@ -31,6 +31,81 @@ const nativeMeetingFoundationCommands = new Set([
 	"jarvis meeting publish worker",
 ]);
 
+const nativeInspectionCommands = new Map([
+	[
+		"jarvis community",
+		{
+			status: "partial",
+			replacement: "V2 community inspection commands",
+			rationale:
+				"The native namespace exists for read-only status and offline preflight; generation, review and publication remain on the preserved implementation.",
+		},
+	],
+	[
+		"jarvis community briefing",
+		{
+			status: "partial",
+			replacement: "V2 community briefing inspection boundary",
+			rationale:
+				"Status and offline preflight are native; mutation and review are intentionally still delegated to the preserved workflow.",
+		},
+	],
+	[
+		"jarvis community briefing preflight",
+		{
+			status: "compatible",
+			replacement: "jarvis community briefing preflight",
+			rationale:
+				"Native offline validation checks configuration, source/draft paths, queue schema and delivery configuration without providers or mutation.",
+		},
+	],
+	[
+		"jarvis community briefing review",
+		{
+			status: "partial",
+			replacement: "jarvis community briefing review serve",
+			rationale:
+				"V2 provides an explicit, dry-runnable compatibility launcher; activation remains owner-controlled and the preserved review writer remains authoritative.",
+		},
+	],
+	[
+		"jarvis community briefing status",
+		{
+			status: "compatible",
+			replacement: "jarvis community briefing status",
+			rationale:
+				"Native read-only queue and configuration inspection reports the existing V2 bindings without creating state or contacting providers.",
+		},
+	],
+	[
+		"jarvis meeting",
+		{
+			status: "partial",
+			replacement: "V2 meeting capability inspections",
+			rationale:
+				"Native meeting publication and Fathom status boundaries exist; remaining ingest and publication workflow commands are tracked separately.",
+		},
+	],
+	[
+		"jarvis meeting fathom",
+		{
+			status: "partial",
+			replacement: "jarvis meeting fathom status",
+			rationale:
+				"Native read-only account, poll-state and inbox discovery exists; provider polling and ingestion remain on the preserved implementation.",
+		},
+	],
+	[
+		"jarvis meeting fathom list",
+		{
+			status: "partial",
+			replacement: "jarvis meeting fathom list",
+			rationale:
+				"Native bounded local inbox metadata listing exists; remote Fathom listing and import remain on the preserved implementation.",
+		},
+	],
+]);
+
 const retiredCommand = (command) => {
 	const reference = command.path.join(" ");
 	const shorthand = command.path[1];
@@ -78,18 +153,19 @@ const retiredCommand = (command) => {
 const commandEntries = commandManifest.commands.map((command) => {
 	const reference = command.path.join(" ");
 	const retirement = retiredCommand(command);
+	const nativeInspection = nativeInspectionCommands.get(reference);
 	return {
 		id: `command:${command.path.join(":")}`,
 		surface: "command",
 		legacyReference: reference,
 		status:
 			retirement === undefined
-				? reference === "jarvis" || nativeMeetingFoundationCommands.has(reference)
-					? "partial"
-					: "missing"
+				? (nativeInspection?.status ??
+					(reference === "jarvis" || nativeMeetingFoundationCommands.has(reference) ? "partial" : "missing"))
 				: "intentionally-retired",
 		...(retirement ??
-			(reference === "jarvis"
+			(nativeInspection ??
+				(reference === "jarvis"
 				? { replacement: "hsy jarvis", rationale: "The native compatibility command group is available." }
 				: nativeMeetingFoundationCommands.has(reference)
 					? {
@@ -97,7 +173,7 @@ const commandEntries = commandManifest.commands.map((command) => {
 						rationale:
 							"Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending.",
 					}
-				: {})),
+					: {}))),
 	};
 });
 
