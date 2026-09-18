@@ -176,7 +176,7 @@ export const planFathomImport = (
 		const recordingId = payload?.recording_id === undefined ? null : String(payload.recording_id);
 		const title = stringValue(payload?.meeting_title) ?? stringValue(payload?.title);
 		const scheduledStart = stringValue(payload?.scheduled_start_time);
-		const eligible = verified && recordingId !== null && title !== null;
+		const eligible = entry.bucket === "pending" && verified && recordingId !== null && title !== null;
 		return {
 			...entry,
 			verified,
@@ -184,6 +184,10 @@ export const planFathomImport = (
 			title,
 			scheduledStart,
 			eligible,
-			reason: eligible ? null : "unverified or missing recording ID/title",
+			reason: eligible
+				? null
+				: entry.bucket !== "pending"
+					? "envelope is not pending"
+					: "unverified or missing recording ID/title",
 		};
 	});

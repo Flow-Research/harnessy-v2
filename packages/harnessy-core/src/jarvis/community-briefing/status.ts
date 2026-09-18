@@ -74,6 +74,23 @@ const emptyCounts = (): Record<string, number> => ({
 	archived: 0,
 });
 
+const REQUIRED_QUEUE_COLUMNS = [
+	"briefing_id",
+	"week_start",
+	"week_end",
+	"briefing_path",
+	"discord_path",
+	"provenance_path",
+	"draft_hash",
+	"approved_hash",
+	"status",
+	"provider",
+	"error_stage",
+	"error_message",
+	"attempts",
+	"updated_at",
+] as const;
+
 /** Inspect the preserved briefing queue without creating state or contacting providers. */
 export const inspectCommunityBriefingStatus = (
 	options: CommunityBriefingStatusOptions = {},
@@ -130,11 +147,21 @@ export const inspectCommunityBriefingStatus = (
 					if (table?.name !== "community_briefings") {
 						issues.push("briefing database schema is missing community_briefings");
 					} else {
-						for (const row of database
-							.prepare("SELECT status, COUNT(*) AS count FROM community_briefings GROUP BY status")
-							.all() as Array<{ status?: unknown; count?: unknown }>) {
-							if (typeof row.status === "string" && typeof row.count === "number" && row.count >= 0)
-								counts[row.status] = row.count;
+						const columns = new Set(
+							(database.prepare("PRAGMA table_info(community_briefings)").all() as Array<{ name?: unknown }>)
+								.filter((column) => typeof column.name === "string")
+								.map((column) => column.name as string),
+						);
+						const missingColumns = REQUIRED_QUEUE_COLUMNS.filter((column) => !columns.has(column));
+						if (missingColumns.length > 0) {
+							issues.push(`briefing database schema is missing columns: ${missingColumns.join(", ")}`);
+						} else {
+							for (const row of database
+								.prepare("SELECT status, COUNT(*) AS count FROM community_briefings GROUP BY status")
+								.all() as Array<{ status?: unknown; count?: unknown }>) {
+								if (typeof row.status === "string" && typeof row.count === "number" && row.count >= 0)
+									counts[row.status] = row.count;
+							}
 						}
 					}
 					database.close();

@@ -75,6 +75,19 @@ describe("community briefing status", () => {
 		expect(result.issues).toContain("briefing database schema is missing community_briefings");
 	});
 
+	it("fails closed when required queue columns are missing", () => {
+		const { config, state } = setup();
+		rmSync(join(state, "weekly-briefings.sqlite3"));
+		const database = new DatabaseSync(join(state, "weekly-briefings.sqlite3"));
+		database.exec("CREATE TABLE community_briefings (status TEXT NOT NULL)");
+		database.close();
+		const result = inspectCommunityBriefingStatus({ configPath: config });
+		expect(result.ready).toBe(false);
+		expect(result.issues.some((issue) => issue.startsWith("briefing database schema is missing columns:"))).toBe(
+			true,
+		);
+	});
+
 	it("runs an offline preflight without providers or writes", () => {
 		const { config } = setup();
 		const result = preflightCommunityBriefingOffline({ configPath: config });
