@@ -76,6 +76,10 @@ import {
 } from "./store-file-safety.ts";
 import { MEETING_PUBLICATION_STORE_SCHEMA_VERSION, validateMeetingPublicationStoreSchema } from "./store-schema.ts";
 
+// Approval is persisted immediately; this bounded background cadence only
+// controls how soon approved work is picked up for provider dispatch.
+const SUPERVISED_BACKGROUND_WORKER_INTERVAL_SECONDS = 120;
+
 export interface MeetingPublicationSmokeProviderFactory {
 	/** Static loaded entry anchors, verified before acquiring Engine or provider resources. */
 	readonly artifactAnchors: MeetingPublicationSmokeProviderArtifactAnchors;
@@ -1295,7 +1299,12 @@ export const runAuthorizedMeetingPublicationFullReview = (
 						? Effect.gen(function* () {
 								while (!isDraining()) {
 									yield* Effect.raceFirst(
-										Effect.sleep(Math.min(verified.config.reviewSessionSeconds, 300) * 1_000),
+										Effect.sleep(
+											Math.min(
+												verified.config.reviewSessionSeconds,
+												SUPERVISED_BACKGROUND_WORKER_INTERVAL_SECONDS,
+											) * 1_000,
+										),
 										Deferred.await(drainRequested),
 									);
 									if (isDraining()) return;

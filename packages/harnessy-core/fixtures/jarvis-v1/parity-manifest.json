@@ -96,13 +96,17 @@
       "id": "command:jarvis:community",
       "surface": "command",
       "legacyReference": "jarvis community",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "V2 community inspection commands",
+      "rationale": "The native namespace exists for read-only status and offline preflight; generation, review and publication remain on the preserved implementation."
     },
     {
       "id": "command:jarvis:community:briefing",
       "surface": "command",
       "legacyReference": "jarvis community briefing",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "V2 community briefing inspection boundary",
+      "rationale": "Status and offline preflight are native; mutation and review are intentionally still delegated to the preserved workflow."
     },
     {
       "id": "command:jarvis:community:briefing:generate",
@@ -114,13 +118,17 @@
       "id": "command:jarvis:community:briefing:preflight",
       "surface": "command",
       "legacyReference": "jarvis community briefing preflight",
-      "status": "missing"
+      "status": "compatible",
+      "replacement": "jarvis community briefing preflight",
+      "rationale": "Native offline validation checks configuration, source/draft paths, queue schema and delivery configuration without providers or mutation."
     },
     {
       "id": "command:jarvis:community:briefing:review",
       "surface": "command",
       "legacyReference": "jarvis community briefing review",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "Preserved compatibility workflow: jarvis community briefing review open",
+      "rationale": "Core intentionally does not launch the preserved writer; review remains in the compatibility/local-host boundary until a V2-owned review consumer exists."
     },
     {
       "id": "command:jarvis:community:briefing:review:open",
@@ -138,7 +146,9 @@
       "id": "command:jarvis:community:briefing:status",
       "surface": "command",
       "legacyReference": "jarvis community briefing status",
-      "status": "missing"
+      "status": "compatible",
+      "replacement": "jarvis community briefing status",
+      "rationale": "Native read-only queue and configuration inspection reports the existing V2 bindings without creating state or contacting providers."
     },
     {
       "id": "command:jarvis:community:briefing:worker",
@@ -340,13 +350,17 @@
       "id": "command:jarvis:meeting",
       "surface": "command",
       "legacyReference": "jarvis meeting",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "V2 meeting capability inspections",
+      "rationale": "Native meeting publication and Fathom status boundaries exist; remaining ingest and publication workflow commands are tracked separately."
     },
     {
       "id": "command:jarvis:meeting:fathom",
       "surface": "command",
       "legacyReference": "jarvis meeting fathom",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "jarvis meeting fathom status",
+      "rationale": "Native read-only account, poll-state and inbox discovery exists; provider polling and ingestion remain on the preserved implementation."
     },
     {
       "id": "command:jarvis:meeting:fathom:ingest",
@@ -364,7 +378,9 @@
       "id": "command:jarvis:meeting:fathom:list",
       "surface": "command",
       "legacyReference": "jarvis meeting fathom list",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "jarvis meeting fathom list",
+      "rationale": "Native bounded local inbox metadata listing exists; remote Fathom listing and import remain on the preserved implementation."
     },
     {
       "id": "command:jarvis:meeting:fathom:poll",

@@ -4,8 +4,13 @@ import { Console } from "effect";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Command, Flag as Options } from "effect/unstable/cli";
-
+import {
+	inspectCommunityBriefingStatus,
+	listCommunityBriefings,
+	preflightCommunityBriefingOffline,
+} from "../jarvis/community-briefing/status.ts";
 import { JarvisDiagnostic } from "../jarvis/diagnostic.ts";
+import { inspectFathomStatus, listFathomInbox, planFathomImport } from "../jarvis/fathom/status.ts";
 import { resolveLifeOrchestratorSettings } from "../jarvis/life-orchestrator/config.ts";
 import { installLifeSchedule, planLifeSchedule } from "../jarvis/life-orchestrator/schedule.ts";
 import {
@@ -58,6 +63,24 @@ const applyScheduleOption = Options.boolean("apply").pipe(
 	Options.withDescription("Backup and atomically replace only the three Life LaunchAgent plists."),
 );
 
+const communityConfigOption = Options.string("config").pipe(
+	Options.optional,
+	Options.withDescription("Jarvis configuration file to inspect without mutation."),
+);
+const communityStateRootOption = Options.string("state-root").pipe(
+	Options.optional,
+	Options.withDescription("Briefing state directory override for read-only inspection."),
+);
+const fathomSourceRootOption = Options.string("source-root").pipe(
+	Options.optional,
+	Options.withDescription(
+		"Project-private root containing meeting-inbox/fathom when community_briefing.source_path is unset.",
+	),
+);
+const communityLimitOption = Options.integer("limit").pipe(
+	Options.withDefault(20),
+	Options.withDescription("Maximum queue entries to list (1-100)."),
+);
 const lifeSettings = (target: string, homeRoot: Option.Option<string>, compatibilityRoot: Option.Option<string>) =>
 	resolveLifeOrchestratorSettings({
 		projectRoot: resolve(target),
@@ -220,6 +243,187 @@ export const jarvisLifeCommand = Command.make("life").pipe(
 	Command.withDescription("Run the V2 Life Orchestrator and permanent reading ledger"),
 );
 
+export const jarvisCommunityBriefingStatusCommand = Command.make(
+	"status",
+	{ config: communityConfigOption, stateRoot: communityStateRootOption, json: jsonOption },
+	({ config, stateRoot, json }) =>
+		Effect.gen(function* () {
+			const result = inspectCommunityBriefingStatus({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+			});
+			if (json) {
+				yield* Console.log(
+					JSON.stringify({ command: "jarvis community briefing status", ok: result.ready, ...result }, null, 2),
+				);
+				return;
+			}
+			yield* Console.log(`Community briefing V2 boundary: ${result.ready ? "ready" : "not ready"}`);
+			yield* Console.log(
+				`Queue: ${Object.entries(result.counts)
+					.map(([key, value]) => `${key}=${value}`)
+					.join(" | ")}`,
+			);
+			yield* Console.log(`State: ${result.databasePath}`);
+			for (const issue of result.issues) yield* Console.log(`Issue: ${issue}`);
+		}),
+).pipe(Command.withDescription("Inspect the packaged community briefing queue without mutation or provider calls"));
+
+export const jarvisCommunityBriefingPreflightCommand = Command.make(
+	"preflight",
+	{ config: communityConfigOption, stateRoot: communityStateRootOption, json: jsonOption },
+	({ config, stateRoot, json }) =>
+		Effect.gen(function* () {
+			const result = preflightCommunityBriefingOffline({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+			});
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis community briefing preflight", ...result }, null, 2));
+			} else {
+				yield* Console.log(`Community briefing offline preflight: ${result.ready ? "ready" : "not ready"}`);
+				for (const check of result.checks) {
+					yield* Console.log(`${check.ok ? "OK" : "FAIL"} ${check.name}: ${check.detail}`);
+				}
+			}
+			if (!result.ready) yield* Effect.fail(new Error("community briefing preflight is not ready"));
+		}),
+).pipe(Command.withDescription("Validate the community briefing boundary without providers or mutation"));
+
+export const jarvisCommunityBriefingListCommand = Command.make(
+	"list",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		limit: communityLimitOption,
+		json: jsonOption,
+	},
+	({ config, stateRoot, limit, json }) =>
+		Effect.gen(function* () {
+			const entries = listCommunityBriefings({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+				limit,
+			});
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis community briefing list", entries }, null, 2));
+				return;
+			}
+			for (const entry of entries)
+				yield* Console.log(`${entry.weekStart}..${entry.weekEnd} ${entry.status} ${entry.briefingId}`);
+		}),
+).pipe(Command.withDescription("List the local community briefing queue without reading content or mutating state"));
+
+export const jarvisCommunityBriefingCommand = Command.make("briefing").pipe(
+	Command.withSubcommands([
+		jarvisCommunityBriefingStatusCommand,
+		jarvisCommunityBriefingPreflightCommand,
+		jarvisCommunityBriefingListCommand,
+	] as const),
+	Command.withDescription("Inspect the V2 community briefing boundary; review remains a compatibility workflow"),
+);
+
+export const jarvisCommunityCommand = Command.make("community").pipe(
+	Command.withSubcommands([jarvisCommunityBriefingCommand] as const),
+	Command.withDescription("Run V2-owned community workflow inspections"),
+);
+
+export const jarvisMeetingFathomStatusCommand = Command.make(
+	"status",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		sourceRoot: fathomSourceRootOption,
+		json: jsonOption,
+	},
+	({ config, stateRoot, sourceRoot, json }) =>
+		Effect.gen(function* () {
+			const result = inspectFathomStatus({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+				sourceRoot: Option.getOrUndefined(sourceRoot),
+			});
+			if (json) {
+				yield* Console.log(
+					JSON.stringify({ command: "jarvis meeting fathom status", ok: result.ready, ...result }, null, 2),
+				);
+				return;
+			}
+			yield* Console.log(`Fathom V2 boundary: ${result.ready ? "ready" : "not ready"}`);
+			yield* Console.log(`Accounts: ${result.accounts.join(", ") || "none"}`);
+			yield* Console.log(`Inbox: ${result.inboxPath}`);
+			for (const issue of result.issues) yield* Console.log(`Issue: ${issue}`);
+		}),
+).pipe(Command.withDescription("Inspect Fathom accounts and local inbox state without provider calls"));
+
+export const jarvisMeetingFathomListCommand = Command.make(
+	"list",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		sourceRoot: fathomSourceRootOption,
+		limit: communityLimitOption,
+		json: jsonOption,
+	},
+	({ config, stateRoot, sourceRoot, limit, json }) =>
+		Effect.gen(function* () {
+			const entries = listFathomInbox({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+				sourceRoot: Option.getOrUndefined(sourceRoot),
+				limit,
+			});
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis meeting fathom list", entries }, null, 2));
+				return;
+			}
+			for (const entry of entries)
+				yield* Console.log(`${entry.account}/${entry.bucket} ${entry.filename} ${entry.sha256}`);
+		}),
+).pipe(Command.withDescription("List bounded local Fathom inbox metadata without provider calls or mutation"));
+
+export const jarvisMeetingFathomImportPlanCommand = Command.make(
+	"import-plan",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		sourceRoot: fathomSourceRootOption,
+		limit: communityLimitOption,
+		json: jsonOption,
+	},
+	({ config, stateRoot, sourceRoot, limit, json }) =>
+		Effect.gen(function* () {
+			const entries = planFathomImport({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+				sourceRoot: Option.getOrUndefined(sourceRoot),
+				limit,
+			});
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis meeting fathom import-plan", entries }, null, 2));
+				return;
+			}
+			for (const entry of entries)
+				yield* Console.log(
+					`${entry.account}/${entry.bucket} ${entry.eligible ? "eligible" : "skip"} ${entry.recordingId ?? entry.filename}`,
+				);
+		}),
+).pipe(Command.withDescription("Plan local Fathom imports without writing state or contacting providers"));
+
+export const jarvisMeetingFathomCommand = Command.make("fathom").pipe(
+	Command.withSubcommands([
+		jarvisMeetingFathomStatusCommand,
+		jarvisMeetingFathomListCommand,
+		jarvisMeetingFathomImportPlanCommand,
+	] as const),
+	Command.withDescription("Inspect the V2 Fathom boundary"),
+);
+
+export const jarvisMeetingCommand = Command.make("meeting").pipe(
+	Command.withSubcommands([jarvisMeetingFathomCommand] as const),
+	Command.withDescription("Inspect migrated meeting capabilities"),
+);
+
 export const jarvisDiagnoseCommand = Command.make(
 	"diagnose",
 	{ target: targetOption, json: jsonOption },
@@ -266,6 +470,12 @@ export const jarvisParityCommand = Command.make("parity", { json: jsonOption }, 
 ).pipe(Command.withDescription("Validate and report the frozen Jarvis protocol parity ledger"));
 
 export const jarvisCommand = Command.make("jarvis").pipe(
-	Command.withSubcommands([jarvisDiagnoseCommand, jarvisParityCommand, jarvisLifeCommand] as const),
+	Command.withSubcommands([
+		jarvisDiagnoseCommand,
+		jarvisParityCommand,
+		jarvisLifeCommand,
+		jarvisCommunityCommand,
+		jarvisMeetingCommand,
+	] as const),
 	Command.withDescription("Inspect Jarvis compatibility and run migrated V2 domains"),
 );
