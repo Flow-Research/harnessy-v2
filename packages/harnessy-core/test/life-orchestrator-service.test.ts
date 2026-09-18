@@ -136,6 +136,58 @@ describe("Life Orchestrator daily service", () => {
 		}
 	});
 
+	it("publishes the configured Gitcoin curriculum two readings at a time without repeats", async () => {
+		const root = makeRoot();
+		const project = join(root, "project");
+		const scripts = join(root, "compatibility");
+		const lifeDirectory = join(root, ".agents", "life");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(scripts, { recursive: true });
+		mkdirSync(lifeDirectory, { recursive: true });
+		writeFileSync(join(scripts, "daily-brief"), dailyFixture);
+		writeFileSync(
+			join(lifeDirectory, "config.json"),
+			JSON.stringify({
+				reading: {
+					curricula: [{ id: "gitcoin-funding-mechanisms", enabled: true, max_per_brief: 2 }],
+				},
+			}),
+		);
+		const settings = resolveLifeOrchestratorSettings({
+			projectRoot: project,
+			homeRoot: root,
+			compatibilityRoot: scripts,
+			user: "test",
+		});
+
+		const first = await Effect.runPromise(
+			runLifeDaily(settings, { now: new Date("2026-09-13T04:30:00.000Z") }).pipe(
+				Effect.provide(CommandRunner.layer),
+				Effect.provide(NodeServices.layer),
+			),
+		);
+		const firstMarkdown = readFileSync(first.briefPath, "utf8");
+		expect(first).toMatchObject({ published: true, selected: 2, shortage: false });
+		expect(firstMarkdown).toContain("[Direct Grants](<https://gitcoin.co/mechanisms/direct-grants>)");
+		expect(firstMarkdown).toContain("[Bounties](<https://gitcoin.co/mechanisms/bounties>)");
+
+		const second = await Effect.runPromise(
+			runLifeDaily(settings, { now: new Date("2026-09-14T04:30:00.000Z") }).pipe(
+				Effect.provide(CommandRunner.layer),
+				Effect.provide(NodeServices.layer),
+			),
+		);
+		const secondMarkdown = readFileSync(second.briefPath, "utf8");
+		expect(secondMarkdown).toContain(
+			"[Milestone&#45;Based Funding](<https://gitcoin.co/mechanisms/milestone-based-funding>)",
+		);
+		expect(secondMarkdown).toContain(
+			"[Requests for Proposals &#40;RFPs&#41;](<https://gitcoin.co/mechanisms/requests-for-proposals>)",
+		);
+		expect(secondMarkdown).not.toContain("https://gitcoin.co/mechanisms/direct-grants");
+		expect(secondMarkdown).not.toContain("https://gitcoin.co/mechanisms/bounties");
+	});
+
 	it("regenerates a journaled brief only when V2 force is explicit", async () => {
 		const root = makeRoot();
 		const project = join(root, "project");

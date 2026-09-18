@@ -1,6 +1,7 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -217,6 +218,102 @@ describe("LifeReadingLedger", () => {
 			);
 			expect(reserved.map((candidate) => candidate.title)).toEqual(["Herdr one", "PAIR one"]);
 			expect(await Effect.runPromise(ledger.counts())).toMatchObject({ available: 1, reserved: 2 });
+		} finally {
+			ledger.close();
+		}
+	});
+
+	it("reserves a capped curriculum before the general research queue", async () => {
+		const ledger = await Effect.runPromise(LifeReadingLedger.open(makeDatabasePath()));
+		try {
+			await Effect.runPromise(
+				ledger.upsertCandidates(
+					[
+						...(["direct-grants", "bounties", "milestones"] as const).map((slug, index) => ({
+							url: `https://gitcoin.co/mechanisms/${slug}`,
+							title: slug,
+							topic: "Funding",
+							publishedAt: null,
+							sourceName: "Gitcoin funding mechanisms",
+							sourceKind: "curated" as const,
+							sourceId: `curriculum:gitcoin-funding-mechanisms:00${index + 1}`,
+						})),
+						{
+							url: "https://example.com/current",
+							title: "Current research",
+							topic: "Current research",
+							publishedAt: "2026-09-13T00:00:00.000Z",
+							sourceName: "Research Press",
+							sourceKind: "rss",
+						},
+					],
+					"2026-09-13T04:15:00.000Z",
+				),
+			);
+			const reserved = await Effect.runPromise(
+				ledger.reserve(
+					"daily:2026-09-13",
+					"2026-09-13T05:30:00.000Z",
+					3,
+					"2026-09-13T04:00:00.000Z",
+					new Map([["Gitcoin funding mechanisms", 2]]),
+					new Set(["Gitcoin funding mechanisms"]),
+				),
+			);
+			expect(reserved.map((candidate) => candidate.sourceName)).toEqual([
+				"Gitcoin funding mechanisms",
+				"Gitcoin funding mechanisms",
+				"Research Press",
+			]);
+			expect(reserved.map((candidate) => candidate.title)).toEqual([
+				"direct-grants",
+				"bounties",
+				"Current research",
+			]);
+		} finally {
+			ledger.close();
+		}
+	});
+
+	it("migrates the version-one ledger before accepting curated readings", async () => {
+		const path = makeDatabasePath();
+		mkdirSync(dirname(path), { recursive: true });
+		const database = new DatabaseSync(path);
+		database.exec(`CREATE TABLE reading_candidates (
+  identity TEXT PRIMARY KEY, canonical_url TEXT NOT NULL, title TEXT NOT NULL, topic TEXT NOT NULL,
+  published_at TEXT, discovered_at TEXT NOT NULL, source_name TEXT NOT NULL,
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('rss','crossref','agent','backfill')),
+  source_id TEXT, status TEXT NOT NULL CHECK(status IN ('available','reserved','delivered')),
+  reserved_for TEXT, reserved_at TEXT, delivered_at TEXT, delivered_brief TEXT
+);
+CREATE INDEX reading_candidates_status_order ON reading_candidates(status, published_at DESC, discovered_at DESC);
+CREATE TABLE life_runs (
+  run_id TEXT PRIMARY KEY, job TEXT NOT NULL, effective_date TEXT NOT NULL, status TEXT NOT NULL,
+  started_at TEXT NOT NULL, completed_at TEXT, detail_json TEXT NOT NULL
+);
+PRAGMA user_version = 1;`);
+		database.close();
+
+		const ledger = await Effect.runPromise(LifeReadingLedger.open(path));
+		try {
+			expect(
+				await Effect.runPromise(
+					ledger.upsertCandidates(
+						[
+							{
+								url: "https://gitcoin.co/mechanisms/direct-grants",
+								title: "Direct Grants",
+								topic: "Funding",
+								publishedAt: null,
+								sourceName: "Gitcoin funding mechanisms",
+								sourceKind: "curated",
+							},
+						],
+						"2026-09-13T04:15:00.000Z",
+					),
+				),
+			).toBe(1);
+			expect((await Effect.runPromise(ledger.list()))[0]?.sourceKind).toBe("curated");
 		} finally {
 			ledger.close();
 		}

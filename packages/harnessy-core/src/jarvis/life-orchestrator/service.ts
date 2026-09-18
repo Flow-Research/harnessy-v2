@@ -9,6 +9,7 @@ import type { HarnessError } from "../../errors.ts";
 import { CommandRunner, type CommandRunResult, type ExternalCommand } from "../../runtime/command-runner.ts";
 import { replaceWorthReadingSection, validateWorthReadingSection } from "./artifact.ts";
 import type { LifeOrchestratorSettings } from "./config.ts";
+import { nextLifeCurriculumReadings } from "./curriculum.ts";
 import {
 	canonicalLifeBriefPath,
 	compatibilityScriptPath,
@@ -343,17 +344,29 @@ export const runLifeDaily = (
 				return yield* withLedger(settings, (ledger) =>
 					Effect.gen(function* () {
 						yield* backfillLedger(settings, ledger);
+						const existing = yield* ledger.list();
+						const curriculumReadings = settings.curricula.flatMap((selection) =>
+							nextLifeCurriculumReadings(selection, existing),
+						);
+						if (curriculumReadings.length > 0) {
+							yield* ledger.upsertCandidates(curriculumReadings, now.toISOString());
+						}
 						const runId = `daily:${date}:${randomUUID()}`;
 						const staleBefore = new Date(now.getTime() - 2 * 60 * 60 * 1_000).toISOString();
 						const sourceMaximums = new Map(
 							settings.sources.map((source) => [source.name, source.maxPerBrief ?? settings.maximumReadings]),
 						);
+						for (const selection of settings.curricula) {
+							sourceMaximums.set(selection.curriculum.name, selection.maxPerBrief);
+						}
+						const preferredSources = new Set(settings.curricula.map((selection) => selection.curriculum.name));
 						const selected = yield* ledger.reserve(
 							runId,
 							now.toISOString(),
 							settings.maximumReadings,
 							staleBefore,
 							sourceMaximums,
+							preferredSources,
 						);
 						const execute = Effect.gen(function* () {
 							mkdirSync(settings.paths.reviewDirectory, { recursive: true, mode: 0o700 });

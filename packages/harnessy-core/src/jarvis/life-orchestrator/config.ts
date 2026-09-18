@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 
 import * as Result from "effect/Result";
 
+import { findLifeReadingCurriculum, type LifeCurriculumSelection } from "./curriculum.ts";
 import type { LifeFeedSource } from "./research.ts";
 
 export interface LifeOrchestratorPaths {
@@ -25,6 +26,7 @@ export interface LifeOrchestratorSettings {
 	readonly targetReadings: number;
 	readonly maximumReadings: number;
 	readonly sources: ReadonlyArray<LifeFeedSource>;
+	readonly curricula: ReadonlyArray<LifeCurriculumSelection>;
 }
 
 export interface ResolveLifeSettingsOptions {
@@ -86,6 +88,26 @@ const feedSources = (reading: Record<string, unknown>): ReadonlyArray<LifeFeedSo
 	return sources;
 };
 
+const readingCurricula = (reading: Record<string, unknown>): ReadonlyArray<LifeCurriculumSelection> => {
+	const values = reading.curricula;
+	if (!Array.isArray(values)) return [];
+	const selections: Array<LifeCurriculumSelection> = [];
+	const seen = new Set<string>();
+	for (const rawValue of values) {
+		const value = record(rawValue);
+		if (value === null || !boolValue(value.enabled, true)) continue;
+		const id = stringValue(value.id, "");
+		const curriculum = findLifeReadingCurriculum(id);
+		if (curriculum === null || seen.has(curriculum.id)) continue;
+		seen.add(curriculum.id);
+		selections.push({
+			curriculum,
+			maxPerBrief: intValue(value.max_per_brief, 1, 1, 3),
+		});
+	}
+	return selections;
+};
+
 /** Resolve V2-owned state alongside explicit, pinned V1 compatibility adapters. */
 export const resolveLifeOrchestratorSettings = (options: ResolveLifeSettingsOptions = {}): LifeOrchestratorSettings => {
 	const projectRoot = resolve(options.projectRoot ?? process.cwd());
@@ -126,5 +148,6 @@ export const resolveLifeOrchestratorSettings = (options: ResolveLifeSettingsOpti
 		targetReadings: intValue(reading.minimum, 2, 0, 3),
 		maximumReadings: 3,
 		sources: feedSources(reading),
+		curricula: readingCurricula(reading),
 	};
 };
