@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  --color-rig-black: #12151A;
+  --color-panel-dark: #1B1F26;
+  --color-hairline: #2A2F38;
+  --color-paper: #EDEFEC;
+  --color-ink: #12151A;
+  --color-fog: #E7E9E4;
+  --color-fog-dim: #9BA3AC;
+  --color-trace-teal: #2FC7B0;
+  --color-signal-amber: #E8963C;
+  --color-danger-red: #E2543D;
+}
