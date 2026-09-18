@@ -63,9 +63,9 @@ const nativeInspectionCommands = new Map([
 		"jarvis community briefing review",
 		{
 			status: "partial",
-			replacement: "jarvis community briefing review serve",
+			replacement: "Preserved compatibility workflow: jarvis community briefing review open",
 			rationale:
-				"V2 provides an explicit, dry-runnable compatibility launcher; activation remains owner-controlled and the preserved review writer remains authoritative.",
+			"Core intentionally does not launch the preserved writer; review remains in the compatibility/local-host boundary until a V2-owned review consumer exists.",
 		},
 	],
 	[

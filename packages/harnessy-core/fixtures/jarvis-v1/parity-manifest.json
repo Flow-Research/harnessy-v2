@@ -127,8 +127,8 @@
       "surface": "command",
       "legacyReference": "jarvis community briefing review",
       "status": "partial",
-      "replacement": "jarvis community briefing review serve",
-      "rationale": "V2 provides an explicit, dry-runnable compatibility launcher; activation remains owner-controlled and the preserved review writer remains authoritative."
+      "replacement": "Preserved compatibility workflow: jarvis community briefing review open",
+      "rationale": "Core intentionally does not launch the preserved writer; review remains in the compatibility/local-host boundary until a V2-owned review consumer exists."
     },
     {
       "id": "command:jarvis:community:briefing:review:open",

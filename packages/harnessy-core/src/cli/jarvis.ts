@@ -5,10 +5,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Command, Flag as Options } from "effect/unstable/cli";
 import {
-	communityReviewArguments,
-	launchCommunityReviewCompatibility,
-} from "../jarvis/community-briefing/review-launcher.ts";
-import {
 	inspectCommunityBriefingStatus,
 	listCommunityBriefings,
 	preflightCommunityBriefingOffline,
@@ -79,18 +75,6 @@ const communityLimitOption = Options.integer("limit").pipe(
 	Options.withDefault(20),
 	Options.withDescription("Maximum queue entries to list (1-100)."),
 );
-const communityReviewExecutableOption = Options.string("compatibility-bin").pipe(
-	Options.withDescription("Explicit executable for the preserved community review writer."),
-);
-const communityReviewPortOption = Options.integer("port").pipe(
-	Options.withDefault(8872),
-	Options.withDescription("Loopback port for the preserved community review writer."),
-);
-const communityReviewDryRunOption = Options.boolean("dry-run").pipe(
-	Options.withDefault(false),
-	Options.withDescription("Print the delegated command without starting the review writer."),
-);
-
 const lifeSettings = (target: string, homeRoot: Option.Option<string>, compatibilityRoot: Option.Option<string>) =>
 	resolveLifeOrchestratorSettings({
 		projectRoot: resolve(target),
@@ -323,34 +307,13 @@ export const jarvisCommunityBriefingListCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("List the local community briefing queue without reading content or mutating state"));
 
-export const jarvisCommunityBriefingReviewServeCommand = Command.make(
-	"serve",
-	{
-		compatibilityBin: communityReviewExecutableOption,
-		port: communityReviewPortOption,
-		dryRun: communityReviewDryRunOption,
-	},
-	({ compatibilityBin, port, dryRun }) =>
-		dryRun
-			? Effect.sync(() =>
-					console.log(JSON.stringify({ executable: compatibilityBin, argv: communityReviewArguments(port) })),
-				)
-			: launchCommunityReviewCompatibility({ executable: compatibilityBin, port }),
-).pipe(Command.withDescription("Run the preserved community review writer through an explicit V2 launcher"));
-
-export const jarvisCommunityBriefingReviewCommand = Command.make("review").pipe(
-	Command.withSubcommands([jarvisCommunityBriefingReviewServeCommand] as const),
-	Command.withDescription("Run the supervised community review boundary"),
-);
-
 export const jarvisCommunityBriefingCommand = Command.make("briefing").pipe(
 	Command.withSubcommands([
 		jarvisCommunityBriefingStatusCommand,
 		jarvisCommunityBriefingPreflightCommand,
 		jarvisCommunityBriefingListCommand,
-		jarvisCommunityBriefingReviewCommand,
 	] as const),
-	Command.withDescription("Inspect the V2 community briefing boundary"),
+	Command.withDescription("Inspect the V2 community briefing boundary; review remains a compatibility workflow"),
 );
 
 export const jarvisCommunityCommand = Command.make("community").pipe(
