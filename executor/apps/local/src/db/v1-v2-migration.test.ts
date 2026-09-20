@@ -816,7 +816,11 @@ const killMigrationAtPause = async (input: {
       child.kill("SIGKILL");
       await waitForChildExit(child);
     }
-    expect(paused).toMatchObject({ markerFound: true, exitCode: null, signalCode: null });
+    expect(paused, JSON.stringify(paused)).toMatchObject({
+      markerFound: true,
+      exitCode: null,
+      signalCode: null,
+    });
     child.kill("SIGKILL");
     await waitForChildExit(child);
     expect(child.signalCode).toBe("SIGKILL");

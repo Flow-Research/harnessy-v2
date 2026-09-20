@@ -100,6 +100,31 @@ Operational cutover remains separately authorized and follows this order:
 If writer identity is uncertain, both versions remain stopped. Rollback never
 starts V1 before V2 is proven stopped.
 
+### Accepted amendment — supervised V2 recovery acceptance, 20 September 2026
+
+The owner explicitly replaced the mandatory live V1 restart in steps 6–8 with
+a fresh isolated backup, restore, receipt reconciliation and V2 recovery rehearsal,
+plus verification of reversible V2 installation bindings. V1 remains disabled;
+restarting it merely to produce migration evidence is not required for this
+supervised milestone. This does not claim that a live V1 rollback occurred.
+
+The replacement gate must preserve the complete current native state, including
+newer decisions, partial and complete receipts, native-only Google checkpoints,
+consumed authorizations and ownership evidence. A lossy V1 projection or stale
+backup is not a recovery input. Reopen through the installed V2 readers and prove
+exact state preservation and no newly claimable delivery. Verify that retained
+installation targets and recorded bindings permit a reversible local switch.
+Keep original source, state and rollback artifacts recoverable.
+
+Read-only consistent capture with unchanged before/after state may support this
+isolated rehearsal; it is not proof of a frozen production handover. Any actual
+future recovery still requires verified writer exclusion, a fresh consistent
+snapshot, adjudication of intervening changes and uncertain external receipts,
+and fresh finite authority before a writer resumes. No stale lease or consumed
+authorization may be cleared or replayed. External delivery evidence remains
+limited to genuinely approved content; no dummy or repeated publication is
+required. Whole-capability ownership and the other acceptance gates still apply.
+
 ## Implementation sequence
 
 The sequence is deliberately split so early slices cannot activate anything:
