@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -245,19 +246,35 @@ class BriefingStore:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                """SELECT briefing_id FROM community_briefings WHERE
-                (status = ? OR (status = ? AND lease_until <= ?))
+                """SELECT * FROM community_briefings WHERE
+                status = ?
                 AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                 ORDER BY week_start LIMIT 1""",
                 (
                     PublicationStatus.APPROVED.value,
-                    PublicationStatus.PUBLISHING.value,
-                    now,
                     now,
                 ),
             ).fetchone()
             if row is None:
                 return None
+            marker = Path(row["artifact_dir"]) / "revision-status.json"
+            if marker.exists() or marker.is_symlink():
+                try:
+                    revision = json.loads(marker.read_text(encoding="utf-8"))
+                    if not isinstance(revision, dict) or (
+                        revision.get("state"),
+                        revision.get("phase"),
+                    ) not in {
+                        ("running", "generating"),
+                        ("failed", "finished"),
+                        ("completed", "finished"),
+                        ("superseded", "finished"),
+                    }:
+                        return None
+                    if not isinstance(revision.get("nonce"), str):
+                        return None
+                except (OSError, ValueError):
+                    return None
             briefing_id = str(row["briefing_id"])
             connection.execute(
                 """UPDATE community_briefings SET status = ?, lease_until = ?,

@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Sequence
 
 
 def review_token(state_root: Path) -> str:
@@ -36,8 +37,14 @@ def build_review_url(host: str, port: int, token: str) -> str:
 class LocalNotifier:
     """Use terminal-notifier for click-through, with a safe macOS fallback."""
 
-    def __init__(self, *, review_url: str):
+    def __init__(
+        self,
+        *,
+        review_url: str,
+        briefing_open_command: Sequence[str] | None = None,
+    ):
         self.review_url = review_url
+        self.briefing_open_command = tuple(briefing_open_command or ())
 
     @property
     def clickable(self) -> bool:
@@ -57,7 +64,7 @@ class LocalNotifier:
         """Notify without exposing draft content on the desktop."""
 
         message = f"{count} weekly briefing draft{'s' if count != 1 else ''} waiting for review."
-        return self._send("Community briefing review required", message)
+        return self._send("Community briefing review required", message, open_command=self.briefing_open_command)
 
     def briefing_error(self) -> bool:
         """Point publication failures back to the private inbox."""
@@ -65,13 +72,15 @@ class LocalNotifier:
         return self._send(
             "Community briefing needs attention",
             "Open the local review inbox for a safe error summary.",
+            open_command=self.briefing_open_command,
         )
 
-    def _send(self, title: str, message: str) -> bool:
+    def _send(self, title: str, message: str, *, open_command: Sequence[str] = ()) -> bool:
         notifier = shutil.which("terminal-notifier")
         if notifier:
-            open_command = shlex.join(
-                [sys.executable, "-m", "jarvis", "meeting", "publish", "review", "open"]
+            command = shlex.join(
+                list(open_command)
+                or [sys.executable, "-m", "jarvis", "meeting", "publish", "review", "open"]
             )
             result = subprocess.run(
                 [
@@ -83,7 +92,7 @@ class LocalNotifier:
                     "-group",
                     "jarvis-meeting-publication",
                     "-execute",
-                    open_command,
+                    command,
                 ],
                 capture_output=True,
                 check=False,

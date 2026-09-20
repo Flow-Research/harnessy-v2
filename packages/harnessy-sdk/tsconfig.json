@@ -11,6 +11,8 @@
 		"noEmit": true,
 		"types": ["node"],
 		"paths": {
+			"@harnessy/core": ["../harnessy-core/src/index.ts"],
+			"@harnessy/core/community-briefing": ["../harnessy-core/src/community-briefing.ts"],
 			"@executor-js/plugin-graphql": ["../../executor/packages/plugins/graphql/src/sdk/index.ts"],
 			"@executor-js/plugin-provider-service-split": ["../../executor/packages/plugins/provider-service-split/src/index.ts"],
 			"@executor-js/plugin-openapi/providers/google": ["../../executor/packages/plugins/openapi/src/providers/google/index.ts"],

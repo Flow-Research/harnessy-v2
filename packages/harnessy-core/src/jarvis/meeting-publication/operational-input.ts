@@ -243,7 +243,7 @@ const LoopbackTransport = Schema.Struct({
 	discordBaseUrl: Schema.String,
 });
 const Transport = Schema.Union([ProductionTransport, LoopbackTransport]);
-const ArtifactManifest = Schema.Struct({
+export const ArtifactManifest = Schema.Struct({
 	kind: Schema.Literal("harnessy.runtime-artifact-manifest"),
 	schemaVersion: Schema.Literal(1),
 	root: Schema.String,
@@ -420,7 +420,7 @@ const ReviewAuthorizationEnvelope = Schema.Struct({ payload: ReviewAuthorization
 
 type SmokeAuthorizationPayload = typeof AuthorizationPayload.Type;
 type SmokeTrustDocument = typeof TrustDocument.Type;
-type ArtifactManifest = typeof ArtifactManifest.Type;
+export type ArtifactManifest = typeof ArtifactManifest.Type;
 type WorkerAuthorizationPayload = typeof WorkerAuthorizationPayload.Type;
 type FullReviewAuthorizationPayload = typeof FullReviewAuthorizationPayload.Type;
 
@@ -820,10 +820,11 @@ const within = (root: string, path: string) => {
 	const value = relative(root, path);
 	return value === "" || (!isAbsolute(value) && value !== ".." && !value.startsWith(`..${sep}`));
 };
-function* artifactInventorySteps(
+export function* artifactInventorySteps(
 	manifest: ArtifactManifest,
 	uid: bigint,
 	kind: "smoke" | "review" | "worker" | "full_review" = "smoke",
+	expectedCoreAnchor = realpathSync(fileURLToPath(import.meta.url)),
 ): Generator<void> {
 	if (
 		!absolutePath(manifest.root) ||
@@ -836,12 +837,16 @@ function* artifactInventorySteps(
 	// This snapshot belongs to one complete validation only. Every file is still
 	// opened, checked and hashed; ancestors are checked once and rechecked below.
 	const directories = new Map<string, BigIntStats>();
-	const actual = (yield* enumerateRoot(manifest.root, uid, directories)).sort();
+	const actual = yield* enumerateRoot(manifest.root, uid, directories);
 	const declared = manifest.files.map((file) => file.path);
+	const declaredSet = new Set(declared);
+	const actualSet = new Set(actual);
 	if (
-		new Set(declared).size !== declared.length ||
+		declaredSet.size !== declared.length ||
 		!exactValues(declared, [...declared].sort()) ||
-		!exactValues(declared, actual)
+		actualSet.size !== actual.length ||
+		actualSet.size !== declaredSet.size ||
+		actual.some((path) => !declaredSet.has(path))
 	)
 		fail("artifact_drift");
 	const anchors = manifest.anchors.map((anchor) => anchor.path);
@@ -872,8 +877,7 @@ function* artifactInventorySteps(
 		)
 			fail("artifact_drift");
 	}
-	const coreAnchor = realpathSync(fileURLToPath(import.meta.url));
-	if (manifest.anchors[0]?.role !== "core" || manifest.anchors[0].path !== coreAnchor) fail("artifact_drift");
+	if (manifest.anchors[0]?.role !== "core" || manifest.anchors[0].path !== expectedCoreAnchor) fail("artifact_drift");
 }
 
 const validateArtifactInventory = (

@@ -15,6 +15,7 @@ type LocalNotificationProcess = (
 export const notifyMeetingFullReviewStopped = (
 	platform: string = process.platform,
 	run: LocalNotificationProcess = execFile,
+	workflow: "meeting" | "community" = "meeting",
 ): Promise<boolean> => {
 	if (platform !== "darwin") return Promise.resolve(false);
 	return new Promise<boolean>((resolve) => {
@@ -22,7 +23,9 @@ export const notifyMeetingFullReviewStopped = (
 			"/usr/bin/osascript",
 			[
 				"-e",
-				'display notification "Meeting review and dispatch stopped. Do not retry uncertain deliveries. Check the session log and reconcile before restarting." with title "Harnessy meeting runtime stopped"',
+				workflow === "meeting"
+					? 'display notification "Meeting review and dispatch stopped. Do not retry uncertain deliveries. Check the session log and reconcile before restarting." with title "Harnessy meeting runtime stopped"'
+					: 'display notification "Community publication stopped. Do not retry uncertain deliveries. Check the session log and reconcile before restarting." with title "Harnessy community publication stopped"',
 			],
 			{
 				shell: false,

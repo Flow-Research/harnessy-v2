@@ -30,6 +30,7 @@ export const DISCORD_MEETING_INTEGRATION = "discord-meeting-publication";
 export const DISCORD_MEETING_AUTH_TEMPLATE = "discord-bot";
 export const DISCORD_MEETING_PREFLIGHT_TOOL = "preflight";
 export const DISCORD_MEETING_UPSERT_TOOL = "upsert";
+export const DISCORD_COMMUNITY_UPSERT_TOOL = "community_upsert";
 
 const integration = IntegrationSlug.make(DISCORD_MEETING_INTEGRATION);
 const DiscordPreflightInput = Schema.Struct({ expectedChannelId: Schema.String });
@@ -45,6 +46,16 @@ const DiscordUpsertInput = Schema.Struct({
 	existingMessageId: Schema.NullOr(Schema.String),
 });
 const DiscordBot = Schema.Struct({ id: Schema.String });
+const DiscordCommunityUpsertInput = Schema.Struct({
+	briefingId: Schema.String,
+	sourceHash: Schema.String,
+	weekStart: Schema.String,
+	summary: Schema.String,
+	googleDocUrl: Schema.String,
+	expectedChannelId: Schema.String,
+	existingChannelId: Schema.NullOr(Schema.String),
+	existingMessageId: Schema.NullOr(Schema.String),
+});
 const DiscordChannel = Schema.Struct({ id: Schema.String, type: Schema.optional(Schema.Number) });
 const DiscordMessage = Schema.Struct({ id: Schema.String, channel_id: Schema.String });
 
@@ -62,6 +73,15 @@ const tools: ReadonlyArray<ToolDef> = [
 		annotations: {
 			requiresApproval: true,
 			approvalDescription: "Approve publishing this already-reviewed meeting summary to Discord?",
+		},
+	},
+	{
+		name: ToolName.make(DISCORD_COMMUNITY_UPSERT_TOOL),
+		description: "Create or update the approved weekly community briefing message.",
+		inputSchema: toJsonSchema(DiscordCommunityUpsertInput),
+		annotations: {
+			requiresApproval: true,
+			approvalDescription: "Approve publishing this already-reviewed community briefing to Discord?",
 		},
 	},
 ];
@@ -174,6 +194,72 @@ export const formatDiscordMeetingMessage = (purpose: string, googleDocUrl: strin
 	return format(`${prefix.trimEnd()}…`);
 };
 
+const validCommunityUpsert = (input: typeof DiscordCommunityUpsertInput.Type) =>
+	safeItemId(input.briefingId) &&
+	/^[0-9a-f]{64}$/u.test(input.sourceHash) &&
+	/^\d{4}-\d{2}-\d{2}$/u.test(input.weekStart) &&
+	input.summary.trim().length > 0 &&
+	!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(input.summary) &&
+	stableGoogleDocumentUrl(input.googleDocUrl) &&
+	fitsDiscord(`${input.summary}\n\n[Read the weekly briefing](${input.googleDocUrl})`) &&
+	validPreflight(input) &&
+	((input.existingChannelId === null && input.existingMessageId === null) ||
+		(input.existingChannelId === input.expectedChannelId &&
+			input.existingMessageId !== null &&
+			numericId(input.existingMessageId)));
+
+const publishCommunity = Effect.fn("DiscordCommunityBriefing.publish")(function* (
+	input: typeof DiscordCommunityUpsertInput.Type,
+	credential: ToolInvocationCredential,
+	transport: ResolvedMeetingProviderTransport,
+	httpClientLayer: Layer<HttpClient.HttpClient>,
+) {
+	if (!validCommunityUpsert(input)) return yield* inputFailure();
+	const token = yield* tokenFrom(credential);
+	yield* verifyAccess(input.expectedChannelId, token, transport, httpClientLayer);
+	// Preserve the approved summary and the established community-specific footer.
+	const payload = {
+		content: `${input.summary}\n\n[Read the weekly briefing](${input.googleDocUrl})`,
+		allowed_mentions: { parse: [] as ReadonlyArray<string> },
+	};
+	const message =
+		input.existingMessageId === null
+			? yield* discordRequest(
+					transport,
+					httpClientLayer,
+					token,
+					"POST",
+					`/channels/${encodeURIComponent(input.expectedChannelId)}/messages`,
+					DiscordMessage,
+					{
+						...payload,
+						nonce: createHash("sha256")
+							.update(
+								`harnessy.discord-community-briefing.create.v1\0${input.expectedChannelId}\0${input.briefingId}\0${input.sourceHash}`,
+							)
+							.digest("base64url")
+							.slice(0, 25),
+						enforce_nonce: true,
+					},
+				)
+			: yield* discordRequest(
+					transport,
+					httpClientLayer,
+					token,
+					"PATCH",
+					`/channels/${encodeURIComponent(input.expectedChannelId)}/messages/${encodeURIComponent(input.existingMessageId)}`,
+					DiscordMessage,
+					payload,
+				);
+	if (
+		!numericId(message.id) ||
+		message.channel_id !== input.expectedChannelId ||
+		(input.existingMessageId !== null && message.id !== input.existingMessageId)
+	)
+		return yield* checkpointFailure();
+	return { channelId: input.expectedChannelId, messageId: message.id };
+});
+
 const publish = Effect.fn("DiscordMeetingPublication.publish")(function* (
 	input: typeof DiscordUpsertInput.Type,
 	credential: ToolInvocationCredential,
@@ -237,6 +323,11 @@ export const discordMeetingPublicationPlugin = (
 		validateToolArgs: ({ args, toolRow }) =>
 			Effect.gen(function* () {
 				if (transport === null) return yield* configFailure();
+				if (String(toolRow.name) === DISCORD_COMMUNITY_UPSERT_TOOL) {
+					const input = yield* decodeInput(DiscordCommunityUpsertInput, args);
+					if (!validCommunityUpsert(input)) return yield* inputFailure();
+					return;
+				}
 				if (String(toolRow.name) === DISCORD_MEETING_UPSERT_TOOL) {
 					const input = yield* decodeInput(DiscordUpsertInput, args);
 					if (!validUpsert(input)) return yield* inputFailure();
@@ -255,6 +346,10 @@ export const discordMeetingPublicationPlugin = (
 					if (transport === null) return yield* configFailure();
 					if (String(credential.template) !== DISCORD_MEETING_AUTH_TEMPLATE) {
 						return yield* credentialFailure();
+					}
+					if (String(toolRow.name) === DISCORD_COMMUNITY_UPSERT_TOOL) {
+						const input = yield* decodeInput(DiscordCommunityUpsertInput, args);
+						return yield* publishCommunity(input, credential, transport, ctx.httpClientLayer);
 					}
 					if (String(toolRow.name) === DISCORD_MEETING_PREFLIGHT_TOOL) {
 						const input = yield* decodeInput(DiscordPreflightInput, args);

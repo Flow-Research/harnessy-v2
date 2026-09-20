@@ -9,7 +9,13 @@ const CurrentMeetingPublicationMutationGuard = Context.Reference<MutationGuard>(
 	{ defaultValue: () => Effect.void },
 );
 
-const mutationGuardStorage = new AsyncLocalStorage<MutationGuard>();
+const mutationGuardStorage = new AsyncLocalStorage<
+	| {
+			readonly guard: MutationGuard;
+			readonly isActive: () => boolean;
+	  }
+	| undefined
+>();
 
 const mutatesRemoteState = (method: string | undefined) => {
 	const normalized = (method ?? "GET").toUpperCase();
@@ -34,10 +40,25 @@ export const withMeetingPublicationMutationGuard = <A, E, G>(
 	guard: Effect.Effect<void, G>,
 ): Effect.Effect<A, E> =>
 	Effect.callback((resume, signal) => {
-		mutationGuardStorage.run(guard, () => {
-			Effect.runCallback(effect.pipe(Effect.provideService(CurrentMeetingPublicationMutationGuard, guard)), {
+		// A provider's signed-grant guard must not replace its owning worker's
+		// queue/lease guard. Revalidate both at the actual mutation boundary.
+		const parent = mutationGuardStorage.getStore();
+		let active = true;
+		const isActive = () => active && !signal.aborted && (parent?.isActive() ?? true);
+		const checkActive = Effect.suspend(() =>
+			isActive() ? Effect.void : Effect.fail(new Error("Publication invocation ended.")),
+		);
+		// Host verification may yield; check the owning claim again afterwards.
+		const authorization =
+			parent === undefined ? guard : Effect.andThen(parent.guard, Effect.andThen(guard, parent.guard));
+		const combined = Effect.andThen(checkActive, Effect.andThen(authorization, checkActive));
+		mutationGuardStorage.run({ guard: combined, isActive }, () => {
+			Effect.runCallback(effect.pipe(Effect.provideService(CurrentMeetingPublicationMutationGuard, combined)), {
 				signal,
-				onExit: resume,
+				onExit: (exit) => {
+					active = false;
+					mutationGuardStorage.run(parent, () => resume(exit));
+				},
 			});
 		});
 	});
@@ -45,10 +66,11 @@ export const withMeetingPublicationMutationGuard = <A, E, G>(
 /** @internal Native-Fetch adapter used only for Executor-owned OAuth writes. */
 export const guardedMeetingPublicationFetch: typeof globalThis.fetch = async (input, init) => {
 	const method = init?.method ?? (input instanceof Request ? input.method : undefined);
-	const guard = mutationGuardStorage.getStore();
-	if (guard !== undefined && mutatesRemoteState(method)) {
+	const invocation = mutationGuardStorage.getStore();
+	if (invocation !== undefined && mutatesRemoteState(method)) {
 		try {
-			await Effect.runPromise(guard);
+			await Effect.runPromise(invocation.guard);
+			if (!invocation.isActive()) throw new Error("Publication invocation ended.");
 		} catch {
 			throw new Error("Meeting publication authorization was rejected.");
 		}

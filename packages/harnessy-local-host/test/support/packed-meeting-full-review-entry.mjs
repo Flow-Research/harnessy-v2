@@ -525,7 +525,10 @@ try {
 						assert(maximumHeartbeatStallMs <= 1_000,
 							`Ready installed review stalled its event loop for ${Math.round(maximumHeartbeatStallMs)} ms (budget 1000 ms).`);
 						completedReviewJourney = true;
-						controller.abort();
+						// Let the adapter finish the readiness callback before delivering the
+						// external stop; aborting inside the callback can race its final
+						// continuation and falsely look like a normal exit.
+						setImmediate(() => controller.abort());
 					}),
 			),
 		),

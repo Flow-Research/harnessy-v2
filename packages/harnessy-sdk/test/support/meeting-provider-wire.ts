@@ -132,9 +132,15 @@ const serveWireRequest = async (state: WireState, request: IncomingMessage, resp
 		const q = requestUrl.searchParams.get("q") ?? "";
 		state.fileQueries.push(q);
 		const property =
-			["harnessyMeetingFolderKey", "jarvisMeetingFolder", "jarvisMeetingId", "harnessyMeetingItemId"].find((key) =>
-				q.includes(`key='${key}'`),
-			) ?? "";
+			[
+				"harnessyCommunityFolderKey",
+				"harnessyCommunityBriefingId",
+				"jarvisBriefingId",
+				"harnessyMeetingFolderKey",
+				"jarvisMeetingFolder",
+				"jarvisMeetingId",
+				"harnessyMeetingItemId",
+			].find((key) => q.includes(`key='${key}'`)) ?? "";
 		const value = /value='([^']+)'/u.exec(q)?.[1] ?? "";
 		const parent = /'([^']+)' in parents/u.exec(q)?.[1];
 		const resolvedParent = parent === "root" ? "drive-root-id" : parent;

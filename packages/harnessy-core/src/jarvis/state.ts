@@ -562,7 +562,8 @@ export class JarvisStateReader extends Context.Service<
 				const stable: StableRead = yield* stableNoFollowRead(candidateReal, remainingBytes);
 				if (stable.issue !== null || stable.data === null)
 					return { issue: stable.issue, bytes: stable.bytes, raw: null };
-				const raw = yield* Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(stable.data)).pipe(
+				const data = stable.data;
+				const raw = yield* Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(data)).pipe(
 					Effect.catch(() => Effect.succeed(null)),
 				);
 				return raw === null

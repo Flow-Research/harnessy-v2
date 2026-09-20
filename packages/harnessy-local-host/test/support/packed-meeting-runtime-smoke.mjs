@@ -26,6 +26,7 @@ const smokeOutputPath = join(installationRoot, "packed-meeting-runtime-smoke.mjs
 const workerOutputPath = join(installationRoot, "packed-meeting-worker.mjs");
 const fullReviewOutputPath = join(installationRoot, "packed-meeting-full-review.mjs");
 const reconnectOutputPath = join(installationRoot, "packed-meeting-reconnect.mjs");
+const communityOutputPath = join(installationRoot, "packed-community-publication.mjs");
 const reconnectOnly = process.argv[4] === "--reconnect-only";
 if (process.argv.length > 5 || (process.argv[4] !== undefined && !reconnectOnly)) {
 	throw new Error("Unknown packed runtime fixture mode.");
@@ -83,6 +84,9 @@ const executorAliases = {
 };
 
 const fixtureAliases = {
+	"@packed/local-host-community-command": pathToFileURL(join(installationRoot, "node_modules/@harnessy/local-host/dist/community-publication-command.js")).href,
+	"@packed/core-community": pathToFileURL(join(installationRoot, "node_modules/@harnessy/core/dist/community-briefing.js")).href,
+	"@packed/core-community-operational-runtime": pathToFileURL(join(installationRoot, "node_modules/@harnessy/core/dist/jarvis/community-briefing/operational-runtime.js")).href,
 	"@packed/sdk-node": pathToFileURL(join(installationRoot, "node_modules/@harnessy/sdk/dist/node.js")).href,
 	"@packed/core-operational-runtime": pathToFileURL(installedCoreRuntime).href,
 	"@packed/local-host-smoke-command": pathToFileURL(installedHostSmokeCommand).href,
@@ -120,6 +124,7 @@ const buildFixture = (entryPoint, outputPath) =>
 
 await buildFixture(join(supportRoot, "packed-meeting-reconnect-entry.mjs"), reconnectOutputPath);
 if (!reconnectOnly) await Promise.all([
+	buildFixture(join(supportRoot, "packed-community-publication-entry.mjs"), communityOutputPath),
 	buildFixture(
 		join(repoRoot, "packages", "harnessy-sdk", "test", "support", "packed-meeting-runtime-entry.ts"),
 		smokeOutputPath,
@@ -156,5 +161,6 @@ else {
 	const smoke = runFixture(smokeOutputPath, "runtime smoke");
 	const worker = runFixture(workerOutputPath, "worker");
 	const fullReview = runFixture(fullReviewOutputPath, "full review");
-	process.stdout.write(`${JSON.stringify({ ...smoke, worker, fullReview, reconnect })}\n`);
+	const community = runFixture(communityOutputPath, "community publication");
+	process.stdout.write(`${JSON.stringify({ ...smoke, worker, fullReview, reconnect, community })}\n`);
 }

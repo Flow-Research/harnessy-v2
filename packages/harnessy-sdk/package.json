@@ -24,7 +24,7 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsup && node scripts/audit-bundles.mjs",
+		"build": "tsup && node scripts/normalize-builtin-imports.mjs && node scripts/audit-bundles.mjs",
 		"typecheck": "tsgo --noEmit -p tsconfig.json",
 		"test": "vitest --run",
 		"test:fixture": "node scripts/fixture-smoke.mjs"

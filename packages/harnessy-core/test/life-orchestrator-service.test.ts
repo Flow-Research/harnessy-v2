@@ -40,6 +40,10 @@ canonical = life / today.strftime("%Y") / today.strftime("%b") / today.strftime(
 if "--preview-output" in args:
     path = pathlib.Path(args[args.index("--preview-output") + 1])
     path.parent.mkdir(parents=True, exist_ok=True)
+    (path.parent / ".provider-env.json").write_text(json.dumps({
+        "provider": os.environ.get("HARNESSY_AI_PROVIDER"),
+        "model": os.environ.get("HARNESSY_AI_CODEX_DEFAULT_MODEL"),
+    }))
     path.write_text("# Daily Brief\\n\\n## Worth Reading\\n\\n- [Old](https://example.test/repeated)\\n\\n## Reflection\\n\\nKeep going.\\n")
     raise SystemExit(0)
 if "--publish-preview" in args:
@@ -123,6 +127,10 @@ describe("Life Orchestrator daily service", () => {
 		);
 		const canonical = canonicalLifeBriefPath(settings.paths.lifeDirectory, now);
 		const markdown = readFileSync(canonical, "utf8");
+		expect(JSON.parse(readFileSync(join(settings.paths.reviewDirectory, ".provider-env.json"), "utf8"))).toEqual({
+			provider: "codex",
+			model: "gpt-6-astra",
+		});
 		expect(result).toMatchObject({ published: true, selected: 1, shortage: true, briefPath: canonical });
 		expect(markdown).toContain("[Brand new paper](<https://doi.org/10.1000/unlocking-ai>)");
 		expect(readFileSync(join(settings.paths.lifeDirectory, "delivered.md"), "utf8")).toBe(markdown);

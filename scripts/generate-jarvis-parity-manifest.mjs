@@ -104,6 +104,15 @@ const nativeInspectionCommands = new Map([
 				"Native bounded local inbox metadata listing exists; remote Fathom listing and import remain on the preserved implementation.",
 		},
 	],
+	[
+		"jarvis meeting fathom poll",
+		{
+			status: "partial",
+			replacement: "jarvis meeting fathom poll",
+			rationale:
+				"Native bounded polling and ingestion use the V2 inbox/checkpoint store for the configured account; live scheduler activation remains separately gated.",
+		},
+	],
 ]);
 
 const retiredCommand = (command) => {
@@ -231,7 +240,7 @@ const plannedEntries = [
 	["workflow:reading-content-sync", "workflow", "reading_list/content/sync", "missing"],
 	["workflow:wiki", "workflow", "wiki", "missing"],
 	["channel:meetings", "channel", "meetings", "partial", "MeetingPublicationService/MeetingPublicationReviewServer", "Native lifecycle, secure loopback review, checkpointing, and production-shaped provider adapters exist locally; CLI/host integration, live credentials, and activation remain pending."],
-	["channel:fathom", "channel", "meetings/fathom", "missing"],
+	["channel:fathom", "channel", "meetings/fathom", "partial", "V2 Fathom poll and inbox/checkpoint boundary", "Native bounded polling and ingestion are implemented with isolated V2 state; live scheduler activation and production handover remain separately gated."],
 	["channel:whatsapp", "channel", "whatsapp", "missing"],
 	["host-capability:android", "host-capability", "android/apk", "intentionally-retired", "Optional Android host capability", "Android SDK requirements do not belong in the portable core."],
 	["host-capability:tmux", "host-capability", "tmux process management", "intentionally-retired", "Optional process-supervision capability", "Interactive hsy does not own persistent process supervision."],

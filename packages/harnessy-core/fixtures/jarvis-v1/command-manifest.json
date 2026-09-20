@@ -4,7 +4,7 @@
     "kind": "jarvis-click",
     "version": "0.1.0",
     "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli",
-    "pythonSourceSha256": "4d4b3d8846e4c42541ac8e6924bd6c0605fc521809f16df4c9ba072261e5c377"
+    "pythonSourceSha256": "441c66606cd87b61f07e48ebc7e7eb46b67d81cf370ec6d000f81157186f8138"
   },
   "generatedBy": "scripts/export-jarvis-command-manifest.py",
   "normalization": {
@@ -546,7 +546,7 @@
       "kind": "group",
       "semanticName": "review",
       "alias": false,
-      "help": "Open the shared authenticated publication inbox.",
+      "help": "Review weekly briefings locally.",
       "arguments": [],
       "options": []
     },
@@ -563,7 +563,46 @@
       "alias": false,
       "help": "Open the authenticated local review inbox.",
       "arguments": [],
-      "options": []
+      "options": [
+        {
+          "names": [
+            "--port"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "review",
+        "serve"
+      ],
+      "kind": "command",
+      "semanticName": "serve",
+      "alias": false,
+      "help": "Serve only briefing review; no meeting queue or publication worker is opened.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--port"
+          ],
+          "type": "integer range",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ]
     },
     {
       "path": [

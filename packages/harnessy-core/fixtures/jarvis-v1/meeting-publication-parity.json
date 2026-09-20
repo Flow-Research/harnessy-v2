@@ -21,7 +21,7 @@
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/review.py",
-        "sha256": "2f9370d40c3c2a49993e06622e2df2cab0330ee02dd59c018cf3659d4be188a1"
+        "sha256": "16b5acf7fd32982bc27d3d0036d1eb45fbf8a57f8b7cfabbbcddee9c1bea4196"
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/discord.py",
@@ -33,7 +33,7 @@
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notify.py",
-        "sha256": "38701ebf21c578b5d7ce10b5399c846e92e39ff081f2e3a3f9254e86f2423431"
+        "sha256": "4abab4714f368f90bd3068c02162024977a2021562c6366a2016643b180bc1ae"
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/markdown.py",

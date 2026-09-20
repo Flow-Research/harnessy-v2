@@ -70,6 +70,7 @@ export {
 	parseCapabilitySource,
 	planCapabilityResolution,
 } from "./capabilities/source.ts";
+export * from "./community-briefing.ts";
 export {
 	ANYTYPE_DEFAULT_BASE_URL,
 	ANYTYPE_DEFAULT_TIMEOUT_MS,
@@ -173,6 +174,33 @@ export {
 } from "./jarvis/credentials.ts";
 export { JarvisDiagnostic, JarvisDiagnosticResult, JarvisMigrationStatus } from "./jarvis/diagnostic.ts";
 export { decodeJarvisEnvironment, JarvisEnvironment } from "./jarvis/environment.ts";
+export { FathomFileStore, fathomFileStoreStateFile } from "./jarvis/fathom/file-store.ts";
+export { runConfiguredFathomPoll } from "./jarvis/fathom/host.ts";
+export {
+	createFathomHttpProvider,
+	FATHOM_API_BASE_URL,
+	FATHOM_INGEST_MAX_LIMIT,
+	FATHOM_INGEST_MAX_RESPONSE_BYTES,
+	FathomProviderError,
+	ingestFathomPage,
+} from "./jarvis/fathom/ingest.ts";
+export { FATHOM_POLL_INTERVAL_SECONDS, FATHOM_V2_POLL_ACCOUNTS, runFathomPoll } from "./jarvis/fathom/poll.ts";
+export {
+	FATHOM_LAUNCH_AGENT_LABEL,
+	FATHOM_POLL_INTERVAL_SECONDS as FATHOM_SCHEDULE_INTERVAL_SECONDS,
+	installFathomSchedule,
+	planFathomSchedule,
+} from "./jarvis/fathom/schedule.ts";
+export type { CodexLifeDraftProviderOptions } from "./jarvis/life-orchestrator/codex-provider.ts";
+export { createCodexLifeDraftProvider } from "./jarvis/life-orchestrator/codex-provider.ts";
+export {
+	generateLifeDraft,
+	LifeDraftAuthority,
+	type LifeDraftBoundary,
+	type LifeDraftProvider,
+	LifeDraftReceipt,
+	LifeDraftRequest,
+} from "./jarvis/life-orchestrator/draft-provider.ts";
 export type { MeetingPublicationWriteGrant } from "./jarvis/meeting-publication/authority.ts";
 export {
 	MeetingPublicationWriteAuthority,
@@ -286,16 +314,22 @@ export {
 export {
 	backfillLifeReadingLedger,
 	canonicalizeReadingUrl,
+	generateNativeLifePreview,
 	inspectLifeStatus,
 	LifeOrchestratorError,
 	LifeReadingCandidate,
 	LifeReadingLedger,
+	type NativeLifePreviewOptions,
+	prepareLifeDailyPrompt,
 	readingIdentity,
+	readNativeLifeRequest,
+	readPrivateLifeInput,
 	replaceWorthReadingSection,
 	resolveLifeOrchestratorSettings,
 	runLifeDaily,
 	runLifeResearch,
 	runLifeWeekly,
+	saveNativeLifeReview,
 } from "./life-orchestrator.ts";
 export type {
 	DoctorResult,

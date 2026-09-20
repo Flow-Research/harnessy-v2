@@ -2539,18 +2539,18 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "e669c0ad37256827bfc06902833a18ef217a5e0c07094dcc329498e903ffee3f",
-    "fileCount": 706,
-    "byteCount": 4862422
+    "digest": "1695e7b76c5c0e4bb85b504e309e252b99eaedef6b74222813a286d01ce7daec",
+    "fileCount": 708,
+    "byteCount": 4931290
   },
   "projections": [
     {
       "id": "flow-install",
       "source": "tools/flow-install",
       "projection": "flow-install",
-      "digest": "b79c2dab68675fa8c643c3ae75ed8a73fefc9ce75878947c0ce233ce723c4d1f",
+      "digest": "43b36bb7ed5d14acfad6af57557d9d73286c5c892fa326e2dc58fe7d0ceed256",
       "fileCount": 338,
-      "byteCount": 1864778
+      "byteCount": 1865653
     },
     {
       "id": "context-vault",
@@ -2564,9 +2564,9 @@
       "id": "jarvis-cli",
       "source": "jarvis-cli",
       "projection": "jarvis-cli",
-      "digest": "39241ac4ccaa6057391fee37a3c6004be8771331e2387c9c439ee1d8c284eafe",
-      "fileCount": 280,
-      "byteCount": 2634899
+      "digest": "2212d7a2974ee2142c848e3d4729fd1d8eb4e32bb9092db2558fdc50366926ac",
+      "fileCount": 282,
+      "byteCount": 2702892
     },
     {
       "id": "root-installer",

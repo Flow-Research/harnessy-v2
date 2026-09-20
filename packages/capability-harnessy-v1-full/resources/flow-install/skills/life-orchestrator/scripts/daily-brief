@@ -862,6 +862,10 @@ def main():
     )
     output_mode = parser.add_mutually_exclusive_group()
     output_mode.add_argument(
+        "--prompt-output",
+        help="Write only a bounded prompt to a new private file; no AI or delivery.",
+    )
+    output_mode.add_argument(
         "--preview-output",
         help=(
             "Generate an unpublished preview at this path. Does not update "
@@ -886,6 +890,20 @@ def main():
         today = datetime.date.fromisoformat(args.date) if args.date else datetime.date.today()
     except ValueError:
         parser.error("--date must be a valid calendar date in YYYY-MM-DD format")
+    if args.prompt_output:
+        # Reuse the same context and editorial instructions without invoking the
+        # synthesizer, hygiene, journal, notifications, or crawl-state writer.
+        prompt = build_prompt(run_collect_state(no_save=True), today)
+        data = prompt.encode("utf-8")
+        if not data or len(data) > 262144:
+            parser.error("prepared prompt exceeds the 256 KiB bound")
+        output = os.path.abspath(os.path.expanduser(args.prompt_output))
+        descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        return
     path = os.path.abspath(os.path.expanduser(args.preview_output)) if preview else brief_path(today)
 
     if publish_preview:

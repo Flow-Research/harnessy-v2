@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fixtureEnvironment } from "../test/support/fixture-environment.mjs";
@@ -33,6 +33,12 @@ const snapshot = () => ({
 	status: run("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
 		capture: true,
 	}),
+	untracked: digest(JSON.stringify(run("git", ["ls-files", "--others", "--exclude-standard", "-z"], { capture: true })
+		.split("\0").filter(Boolean).sort().map((path) => {
+			const absolute = join(repoRoot, path);
+			const stat = lstatSync(absolute);
+			return [path, stat.mode, digest(stat.isSymbolicLink() ? readlinkSync(absolute) : readFileSync(absolute))];
+		}))),
 });
 
 const emittedCoreSourceArtifacts = () => {
@@ -69,7 +75,7 @@ try {
 }
 const after = snapshot();
 assertNoCoreSourceEmit();
-if (before.tracked !== after.tracked || before.staged !== after.staged || before.status !== after.status) {
+if (before.tracked !== after.tracked || before.staged !== after.staged || before.status !== after.status || before.untracked !== after.untracked) {
 	throw new Error("The local-host fixture changed tracked or untracked worktree state");
 }
 if (executionError !== undefined) throw executionError;

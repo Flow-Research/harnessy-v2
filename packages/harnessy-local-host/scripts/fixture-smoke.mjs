@@ -151,6 +151,10 @@ const exactHostInventory = [
 	"dist/application.js",
 	"dist/cli.d.ts",
 	"dist/cli.js",
+	"dist/community-publication-cli.d.ts",
+	"dist/community-publication-cli.js",
+	"dist/community-publication-command.d.ts",
+	"dist/community-publication-command.js",
 	"dist/index.d.ts",
 	"dist/index.js",
 	"dist/input.d.ts",
@@ -265,6 +269,7 @@ try {
 	const manifest = JSON.parse(readFileSync(join(installedHostRoot, "package.json"), "utf8"));
 	assert(manifest.private === true, "Packed local host must remain private");
 	assert(manifest.bin?.["harnessy-local-host"] === "dist/cli.js", "Packed local-host bin target drifted");
+	assert(manifest.bin?.["harnessy-community-publication"] === "dist/community-publication-cli.js", "Packed community bin target drifted");
 	assert(
 		manifest.bin?.["harnessy-meeting-full-review"] === "dist/meeting-full-review-cli.js",
 		"Packed full-review bin target drifted",
@@ -574,6 +579,12 @@ try {
 	extract(sdkPack.tarball, join(consumerRoot, "node_modules", "@harnessy", "sdk"));
 	copyRuntimePackage("@libsql/client");
 	copyRuntimePackage("drizzle-orm");
+	const communityCliPath = join(installedHostRoot, manifest.bin["harnessy-community-publication"]);
+	assert((statSync(communityCliPath).mode & 0o777) === 0o755, "Packed community CLI is not executable");
+	for (const args of [[], ["--token", "must-not-leak"], ["--authorization", "relative.json"], ["--approve", "true"]]) {
+		const rejected = run(process.execPath, [communityCliPath, ...args], consumerRoot, 1);
+		assert(rejected.stdout === "" && rejected.stderr === '{"error":"community_publication_failed","code":"invalid_arguments"}\n', `Community argv rejection was not content-free: ${JSON.stringify({ args, stdout: rejected.stdout, stderr: rejected.stderr })}`);
+	}
 	for (const args of [[], ["--token", "must-not-leak"], ["--input", "relative.json"], ["--resume-google"], ["--resume-google", "--input", "relative.json"], ["--resume-google", "--token", "must-not-leak"]]) {
 		const result = run(process.execPath, [join(installedHostRoot, "dist/meeting-setup-cli.js"), ...args], consumerRoot, 1);
 		assert(result.stdout === "", "Rejected setup input wrote stdout");
@@ -631,6 +642,12 @@ console.log(JSON.stringify({ denied: true }));
 		"runtime-authorized-loopback",
 	);
 	assert(positive.published === true && positive.providerRequests > 0, "Packed runtime did not publish through loopback providers");
+	assert(
+		positive.community?.published === true && positive.community.installedCommand === true &&
+			positive.community.replayRejected === true && positive.community.receiptsPreserved === true &&
+			positive.community.providerRequests > 0,
+		"Packed community command did not preserve exact authority, receipts and single-use publication",
+	);
 	assert(
 		positive.reconnect?.installedSdk === true && positive.reconnect.freshSetup === true && positive.reconnect.googleSetupContinuation === true && positive.reconnect.googleSetupCliContinuation === true && positive.reconnect.nativeConsent === true &&
 			positive.reconnect.revokedBeforeCommit === true && positive.reconnect.exactConnection === true &&
