@@ -214,7 +214,7 @@ describe("signed weekly Life draft consumer", () => {
 					run: (command) =>
 						Effect.sync(() => {
 							commands.push(command);
-							expect(command.env).not.toHaveProperty("HOME");
+							expect(command.env?.HOME).toBe(path);
 							const args = [...command.args];
 							if (basename(args[0]!) === "prepare-weekly-prompt") args[0] = builder;
 							const child = spawnSync(command.executable, args, {

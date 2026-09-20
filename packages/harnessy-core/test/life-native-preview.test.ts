@@ -114,7 +114,7 @@ describe("native Life preview consumer", () => {
 					run: (command) =>
 						Effect.sync(() => {
 							commands.push([...command.args]);
-							expect(command.env).not.toHaveProperty("HOME");
+							expect(command.env?.HOME).toBe(root);
 							writeFileSync(command.args[command.args.indexOf("--prompt-output") + 1]!, "exact prompt\n", {
 								mode: 0o600,
 							});

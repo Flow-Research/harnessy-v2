@@ -179,7 +179,7 @@ describe("Life Orchestrator CLI", () => {
 								commands++;
 								expect(command.args).toContain("--prompt-output");
 								expect(command.args).not.toContain("--preview-output");
-								expect(command.env).not.toHaveProperty("HOME");
+								expect(command.env?.HOME).toBe(root);
 								writeFileSync(
 									command.args[command.args.indexOf("--prompt-output") + 1]!,
 									"Synthetic prompt only",

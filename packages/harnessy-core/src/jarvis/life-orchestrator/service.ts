@@ -380,7 +380,11 @@ export const prepareLifeDailyPrompt = (
 				paths.prompt,
 			],
 			cwd: settings.paths.projectRoot,
-			env: { FLOW_PROJECT_ROOT: settings.paths.projectRoot, AGENTS_LIFE_DIR: settings.paths.lifeDirectory },
+			env: {
+				HOME: settings.paths.homeRoot,
+				FLOW_PROJECT_ROOT: settings.paths.projectRoot,
+				AGENTS_LIFE_DIR: settings.paths.lifeDirectory,
+			},
 		});
 		if (result.status === "failed")
 			return yield* Effect.fail(commandFailure("Daily prompt", result.stderr || result.error || ""));
@@ -689,7 +693,11 @@ export const prepareLifeWeeklyPrompt = (
 					cause,
 				}),
 		});
-		const env = { FLOW_PROJECT_ROOT: settings.paths.projectRoot, AGENTS_LIFE_DIR: settings.paths.lifeDirectory };
+		const env = {
+			HOME: settings.paths.homeRoot,
+			FLOW_PROJECT_ROOT: settings.paths.projectRoot,
+			AGENTS_LIFE_DIR: settings.paths.lifeDirectory,
+		};
 		// CommandRunner captures only a stdout tail. Keep the complete state file-backed.
 		const collected = yield* runCompatibilityCommand(runner, {
 			id: `${runId}:state`,

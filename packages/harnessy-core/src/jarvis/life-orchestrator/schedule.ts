@@ -68,6 +68,9 @@ const renderPlist = (
 		settings.paths.homeRoot,
 		"--compatibility-root",
 		settings.paths.compatibilityScriptsDirectory,
+		// Weekly generation requires a fresh owner-signed grant. A timer may only
+		// prepare the local request; it cannot generate or publish a plan.
+		...(schedule.command === "weekly" ? ["--prepare-native-prompt"] : []),
 	];
 	const weekday =
 		schedule.weekday === null ? "" : `\n\t\t<key>Weekday</key>\n\t\t<integer>${schedule.weekday}</integer>`;

@@ -329,6 +329,7 @@ assert.deepEqual(Object.keys(HarnessyNodeSdk).sort(), [
 	"openMeetingPublicationGoogleSetup",
 	"openMeetingPublicationSetup",
 	"publishClaimedCommunityBriefing",
+	"runNativeCommunityBriefing",
 ]);
 
 const requests = [];
