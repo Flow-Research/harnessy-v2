@@ -314,17 +314,22 @@ assert.deepEqual(Object.keys(HarnessySdk).sort(), [
   "EngineTool",
   "engineKnowledgeLayer",
   "engineToolAddress",
-  "mapEngineExecuteErrorWire",
-  "mapUnknownEngineError",
+	"mapEngineExecuteErrorWire",
+	"mapUnknownEngineError",
+	"publishCommunityBriefing",
 ]);
 assert.deepEqual(Object.keys(HarnessyNodeSdk).sort(), [
-  "MeetingPublicationSetupError",
+	"CommunityBriefingQueue",
+	"MeetingPublicationSetupError",
+  "checkCommunityBriefingProviders",
   "engineMeetingPublicationDiscordLayer",
   "engineMeetingPublicationGoogleLayer",
   "localMeetingPublicationNotifierLayer",
   "makeHarnessyEngine",
-  "openMeetingPublicationGoogleSetup",
-  "openMeetingPublicationSetup",
+	"openMeetingPublicationGoogleSetup",
+	"openMeetingPublicationSetup",
+	"publishClaimedCommunityBriefing",
+	"runNativeCommunityBriefing",
 ]);
 
 const requests = [];

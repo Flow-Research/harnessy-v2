@@ -1,6 +1,7 @@
+import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 
-import { Console } from "effect";
+import { Console, Redacted } from "effect";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Command, Flag as Options } from "effect/unstable/cli";
@@ -9,18 +10,25 @@ import {
 	listCommunityBriefings,
 	preflightCommunityBriefingOffline,
 } from "../jarvis/community-briefing/status.ts";
+import { JarvisConfigReader } from "../jarvis/config.ts";
+import { JarvisCredentialResolver } from "../jarvis/credentials.ts";
 import { JarvisDiagnostic } from "../jarvis/diagnostic.ts";
+import { runConfiguredFathomPoll } from "../jarvis/fathom/host.ts";
+import { installFathomSchedule, planFathomSchedule } from "../jarvis/fathom/schedule.ts";
 import { inspectFathomStatus, listFathomInbox, planFathomImport } from "../jarvis/fathom/status.ts";
 import { resolveLifeOrchestratorSettings } from "../jarvis/life-orchestrator/config.ts";
 import { installLifeSchedule, planLifeSchedule } from "../jarvis/life-orchestrator/schedule.ts";
 import {
 	backfillLifeReadingLedger,
 	inspectLifeStatus,
+	prepareLifeDailyPrompt,
+	prepareLifeWeeklyPrompt,
 	runLifeDaily,
 	runLifeResearch,
 	runLifeWeekly,
 } from "../jarvis/life-orchestrator/service.ts";
 import { JarvisParityReporter } from "../jarvis/parity-report.ts";
+import { JarvisPathResolver } from "../jarvis/paths.ts";
 import { jsonOption, targetOption } from "./shared.ts";
 
 const homeRootOption = Options.string("home-root").pipe(
@@ -37,7 +45,27 @@ const dateOption = Options.string("date").pipe(
 );
 const previewOption = Options.boolean("preview").pipe(
 	Options.withDefault(false),
-	Options.withDescription("Generate and validate a local daily preview without publishing it."),
+	Options.withDescription("Generate and validate a local Life preview without publishing it."),
+);
+const prepareNativePromptOption = Options.boolean("prepare-native-prompt").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Prepare an exact private Life prompt for owner signing; does not call an AI provider."),
+);
+const draftModelOption = Options.string("draft-model").pipe(
+	Options.withDefault("gpt-5.5"),
+	Options.withDescription("Explicit Codex model for a prepared native Life draft."),
+);
+const nativeRequestOption = Options.string("native-request").pipe(
+	Options.optional,
+	Options.withDescription("Owner-only Life request JSON produced by --prepare-native-prompt and bound by the grant."),
+);
+const nativeGrantOption = Options.string("native-grant").pipe(
+	Options.optional,
+	Options.withDescription("Owner-only signed Life grant JSON matching the native request."),
+);
+const nativeTrustOption = Options.string("native-trust").pipe(
+	Options.optional,
+	Options.withDescription("Owner-only trusted Ed25519 public-key PEM for the native Life issuer."),
 );
 const forceDailyOption = Options.boolean("force").pipe(
 	Options.withDefault(false),
@@ -80,6 +108,17 @@ const fathomSourceRootOption = Options.string("source-root").pipe(
 const communityLimitOption = Options.integer("limit").pipe(
 	Options.withDefault(20),
 	Options.withDescription("Maximum queue entries to list (1-100)."),
+);
+const communityCompatibilityBinOption = Options.string("compatibility-bin").pipe(
+	Options.withDescription("Absolute path to the preserved briefing compatibility executable."),
+);
+const communityReviewPortOption = Options.integer("port").pipe(
+	Options.withDefault(8872),
+	Options.withDescription("Loopback port for the supervised briefing review server."),
+);
+const fathomAccountOption = Options.string("account").pipe(
+	Options.atLeast(0),
+	Options.withDescription("Fathom account label to poll (repeatable; defaults to the approved V2 scope)."),
 );
 const lifeSettings = (target: string, homeRoot: Option.Option<string>, compatibilityRoot: Option.Option<string>) =>
 	resolveLifeOrchestratorSettings({
@@ -169,12 +208,63 @@ export const jarvisLifeResearchCommand = Command.make(
 
 export const jarvisLifeDailyCommand = Command.make(
 	"daily",
-	{ ...lifeOptions, preview: previewOption, force: forceDailyOption },
-	({ target, homeRoot, compatibilityRoot, preview, force, json }) =>
+	{
+		...lifeOptions,
+		preview: previewOption,
+		force: forceDailyOption,
+		prepareNativePrompt: prepareNativePromptOption,
+		draftModel: draftModelOption,
+		nativeRequest: nativeRequestOption,
+		nativeGrant: nativeGrantOption,
+		nativeTrust: nativeTrustOption,
+	},
+	({
+		target,
+		homeRoot,
+		compatibilityRoot,
+		preview,
+		force,
+		prepareNativePrompt,
+		draftModel,
+		nativeRequest,
+		nativeGrant,
+		nativeTrust,
+		json,
+	}) =>
 		Effect.gen(function* () {
-			const result = yield* runLifeDaily(lifeSettings(target, homeRoot, compatibilityRoot), {
+			const settings = lifeSettings(target, homeRoot, compatibilityRoot);
+			const requestPath = Option.getOrUndefined(nativeRequest);
+			const grantPath = Option.getOrUndefined(nativeGrant);
+			const trustedPublicKeyPath = Option.getOrUndefined(nativeTrust);
+			const nativePaths = [requestPath, grantPath, trustedPublicKeyPath].filter(
+				(value): value is string => value !== undefined,
+			);
+			if (prepareNativePrompt) {
+				if (nativePaths.length > 0)
+					return yield* Effect.fail(new Error("Prompt preparation cannot be combined with native grant inputs."));
+				const prepared = yield* prepareLifeDailyPrompt(settings, draftModel);
+				if (json)
+					return yield* Console.log(
+						JSON.stringify({ command: "jarvis life daily", ok: true, nativePrompt: prepared }, null, 2),
+					);
+				yield* Console.log(`Prepared native Life request: ${prepared.requestPath}`);
+				yield* Console.log(`Prompt hash: ${prepared.promptHash}`);
+				yield* Console.log(`Run ID: ${prepared.runId}`);
+				return;
+			}
+			if (nativePaths.length !== 0 && nativePaths.length !== 3)
+				return yield* Effect.fail(
+					new Error("Native Life preview requires --native-request, --native-grant, and --native-trust."),
+				);
+			if (nativePaths.length === 3 && !preview)
+				return yield* Effect.fail(new Error("Native Life preview requires --preview and never publishes."));
+			const result = yield* runLifeDaily(settings, {
 				publish: !preview,
 				force,
+				nativePreview:
+					nativePaths.length === 3
+						? { requestPath: requestPath!, grantPath: grantPath!, trustedPublicKeyPath: trustedPublicKeyPath! }
+						: undefined,
 			});
 			if (json)
 				return yield* Console.log(JSON.stringify({ command: "jarvis life daily", ok: true, ...result }, null, 2));
@@ -187,14 +277,62 @@ export const jarvisLifeDailyCommand = Command.make(
 
 export const jarvisLifeWeeklyCommand = Command.make(
 	"weekly",
-	lifeOptions,
-	({ target, homeRoot, compatibilityRoot, json }) =>
+	{
+		...lifeOptions,
+		preview: previewOption,
+		prepareNativePrompt: prepareNativePromptOption,
+		draftModel: draftModelOption,
+		nativeRequest: nativeRequestOption,
+		nativeGrant: nativeGrantOption,
+		nativeTrust: nativeTrustOption,
+	},
+	({
+		target,
+		homeRoot,
+		compatibilityRoot,
+		preview,
+		prepareNativePrompt,
+		draftModel,
+		nativeRequest,
+		nativeGrant,
+		nativeTrust,
+		json,
+	}) =>
 		Effect.gen(function* () {
-			yield* runLifeWeekly(lifeSettings(target, homeRoot, compatibilityRoot));
-			if (json) return yield* Console.log(JSON.stringify({ command: "jarvis life weekly", ok: true }, null, 2));
-			yield* Console.log("Weekly Life plan completed.");
+			const settings = lifeSettings(target, homeRoot, compatibilityRoot);
+			const requestPath = Option.getOrUndefined(nativeRequest);
+			const grantPath = Option.getOrUndefined(nativeGrant);
+			const trustedPublicKeyPath = Option.getOrUndefined(nativeTrust);
+			if (prepareNativePrompt) {
+				if (requestPath !== undefined || grantPath !== undefined || trustedPublicKeyPath !== undefined)
+					return yield* Effect.fail(new Error("Prompt preparation cannot be combined with native grant inputs."));
+				const prepared = yield* prepareLifeWeeklyPrompt(settings, draftModel);
+				if (json)
+					return yield* Console.log(
+						JSON.stringify({ command: "jarvis life weekly", ok: true, nativePrompt: prepared }, null, 2),
+					);
+				yield* Console.log(`Prepared native weekly Life request: ${prepared.requestPath}`);
+				yield* Console.log(`Prompt hash: ${prepared.promptHash}`);
+				yield* Console.log(`Run ID: ${prepared.runId}`);
+				return;
+			}
+			if (!preview || requestPath === undefined || grantPath === undefined || trustedPublicKeyPath === undefined)
+				return yield* Effect.fail(
+					new Error(
+						"Weekly Life requires --prepare-native-prompt or --preview with --native-request, --native-grant, and --native-trust; it never publishes.",
+					),
+				);
+			const result = yield* runLifeWeekly(settings, {
+				publish: false,
+				nativePreview: { requestPath, grantPath, trustedPublicKeyPath },
+			});
+			if (result === undefined)
+				return yield* Effect.fail(new Error("Native weekly Life did not return a draft receipt."));
+			if (json)
+				return yield* Console.log(JSON.stringify({ command: "jarvis life weekly", ok: true, ...result }, null, 2));
+			yield* Console.log(`Prepared weekly plan: ${result.briefPath}`);
 		}),
-).pipe(Command.withDescription("Run the weekly Life plan through the pinned compatibility adapter"));
+).pipe(Command.withDescription("Prepare a supervised native weekly draft without journaling or publication"));
 
 export const jarvisLifeScheduleCommand = Command.make(
 	"schedule",
@@ -314,11 +452,40 @@ export const jarvisCommunityBriefingListCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("List the local community briefing queue without reading content or mutating state"));
 
+export const jarvisCommunityBriefingReviewServeCommand = Command.make(
+	"serve",
+	{ compatibilityBin: communityCompatibilityBinOption, port: communityReviewPortOption },
+	({ compatibilityBin, port }) =>
+		Effect.tryPromise({
+			try: () =>
+				new Promise<void>((resolve, reject) => {
+					if (!compatibilityBin.startsWith("/") || !Number.isInteger(port) || port < 1024 || port > 65535) {
+						reject(new Error("community review requires an absolute compatibility path and valid port"));
+						return;
+					}
+					const child = spawn(
+						compatibilityBin,
+						["community", "briefing", "review", "serve", "--port", String(port)],
+						{ stdio: "inherit", shell: false },
+					);
+					const finish = (code: number | null, signal: NodeJS.Signals | null) => {
+						if (code === 0) resolve();
+						else
+							reject(new Error(`community review compatibility server exited (${code ?? signal ?? "unknown"})`));
+					};
+					child.once("error", reject);
+					child.once("exit", finish);
+				}),
+			catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+		}),
+).pipe(Command.withDescription("Serve the existing briefing review through the V2-owned supervised boundary"));
+
 export const jarvisCommunityBriefingCommand = Command.make("briefing").pipe(
 	Command.withSubcommands([
 		jarvisCommunityBriefingStatusCommand,
 		jarvisCommunityBriefingPreflightCommand,
 		jarvisCommunityBriefingListCommand,
+		Command.make("review").pipe(Command.withSubcommands([jarvisCommunityBriefingReviewServeCommand] as const)),
 	] as const),
 	Command.withDescription("Inspect the V2 community briefing boundary; review remains a compatibility workflow"),
 );
@@ -410,11 +577,103 @@ export const jarvisMeetingFathomImportPlanCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("Plan local Fathom imports without writing state or contacting providers"));
 
+export const jarvisMeetingFathomPollCommand = Command.make(
+	"poll",
+	{
+		target: targetOption,
+		sourceRoot: fathomSourceRootOption,
+		limit: communityLimitOption,
+		accounts: fathomAccountOption,
+		json: jsonOption,
+	},
+	({ target, sourceRoot, limit, accounts, json }) =>
+		Effect.gen(function* () {
+			// Start a recent window with idempotent overlap. Ingest resumes any
+			// unfinished window with its saved filter before starting this new one.
+			const createdAfter = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+			const paths = yield* (yield* JarvisPathResolver).resolve(target);
+			const config = yield* (yield* JarvisConfigReader).loadResolved(paths);
+			const status = inspectFathomStatus({
+				configPath: paths.legacyGlobalConfigFile,
+				sourceRoot: Option.getOrUndefined(sourceRoot),
+			});
+			const credentials = yield* JarvisCredentialResolver;
+			const result = yield* Effect.tryPromise({
+				try: () =>
+					runConfiguredFathomPoll({
+						config,
+						paths,
+						inboxRoot: status.inboxPath,
+						stateRoot: `${paths.canonicalGlobalRoot}/state/fathom`,
+						accounts: accounts.length === 0 ? undefined : accounts,
+						limit,
+						createdAfter,
+						sourceRoot: config.meetingPublication.sourcePath,
+						readApiKey: (resolvedConfig, resolvedPaths, account) =>
+							Effect.runPromise(
+								credentials
+									.fathomApiKey(resolvedConfig, resolvedPaths, account)
+									.pipe(Effect.map((credential) => Redacted.value(credential.value))),
+							),
+					}),
+				catch: () => new Error("Fathom poll host operation failed"),
+			});
+			const ok = result.results.every((receipt) => receipt.failure === null);
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis meeting fathom poll", ok, ...result }, null, 2));
+			} else {
+				yield* Console.log(`Fathom V2 poll: ${result.accounts.join(", ")}`);
+				for (const receipt of result.results) {
+					yield* Console.log(
+						`${receipt.account}: fetched ${receipt.fetched}, imported ${receipt.imported}, duplicates ${receipt.duplicates}${receipt.failure === null ? "" : `, failed (${receipt.failure.code})`}`,
+					);
+				}
+			}
+			if (!ok) yield* Effect.fail(new Error("Fathom poll failed for one or more accounts"));
+		}),
+).pipe(Command.withDescription("Run one bounded V2 Fathom poll pass for the approved account scope"));
+
+export const jarvisMeetingFathomScheduleCommand = Command.make(
+	"schedule",
+	{
+		target: targetOption,
+		cliEntry: cliEntryOption,
+		nodePath: nodePathOption,
+		launchAgentsDirectory: launchAgentsDirectoryOption,
+		apply: applyScheduleOption,
+		json: jsonOption,
+	},
+	({ target, cliEntry, nodePath, launchAgentsDirectory, apply, json }) =>
+		Effect.gen(function* () {
+			const paths = yield* (yield* JarvisPathResolver).resolve(target);
+			const options = {
+				nodePath: resolve(nodePath),
+				cliPath: resolve(cliEntry),
+				launchAgentsDirectory:
+					Option.getOrUndefined(launchAgentsDirectory) ?? join(paths.canonicalGlobalRoot, "LaunchAgents"),
+			};
+			const file = yield* planFathomSchedule(paths, options);
+			const result = apply
+				? yield* installFathomSchedule(paths, options)
+				: { applied: false, backupDirectory: null, file };
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis meeting fathom schedule", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(`${result.applied ? "Installed" : "Planned"} V2 Fathom LaunchAgent: ${result.file.path}`);
+			if (result.backupDirectory !== null) yield* Console.log(`Rollback backup: ${result.backupDirectory}`);
+			if (result.applied)
+				yield* Console.log("Plist is installed but not loaded; load only after the one-writer gate.");
+		}),
+).pipe(Command.withDescription("Plan or install the pinned five-minute V2 Fathom LaunchAgent with rollback backup"));
+
 export const jarvisMeetingFathomCommand = Command.make("fathom").pipe(
 	Command.withSubcommands([
 		jarvisMeetingFathomStatusCommand,
 		jarvisMeetingFathomListCommand,
 		jarvisMeetingFathomImportPlanCommand,
+		jarvisMeetingFathomPollCommand,
+		jarvisMeetingFathomScheduleCommand,
 	] as const),
 	Command.withDescription("Inspect the V2 Fathom boundary"),
 );

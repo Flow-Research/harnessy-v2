@@ -1,4 +1,10 @@
 import {
+	CommunityBriefingDiscord,
+	CommunityBriefingGoogle,
+	type CommunityBriefingWriteGrant,
+	validateCommunityBriefingWriteGrant,
+} from "@harnessy/core/community-briefing";
+import {
 	MeetingPublicationDiscord,
 	MeetingPublicationDiscordCheckpoint,
 	MeetingPublicationGoogle,
@@ -16,11 +22,13 @@ import {
 	type HarnessyEngineHandle,
 } from "../engine/compose.ts";
 import {
+	DISCORD_COMMUNITY_UPSERT_TOOL,
 	DISCORD_MEETING_INTEGRATION,
 	DISCORD_MEETING_PREFLIGHT_TOOL,
 	DISCORD_MEETING_UPSERT_TOOL,
 } from "../plugins/discord-meeting-publication.ts";
 import {
+	GOOGLE_COMMUNITY_UPSERT_TOOL,
 	GOOGLE_MEETING_INTEGRATION,
 	GOOGLE_MEETING_PREFLIGHT_TOOL,
 	GOOGLE_MEETING_UPSERT_TOOL,
@@ -148,8 +156,15 @@ const executeApproved = <S extends Schema.Top & { readonly DecodingServices: nev
 	args: unknown,
 	approval: { readonly itemId: string; readonly sourceHash: string },
 	schema: S,
+	audience: "meeting" | "community" = "meeting",
 ) =>
-	handle.executeApprovedMeetingMutation(address, args, approval).pipe(
+	(audience === "meeting"
+		? handle.executeApprovedMeetingMutation(address, args, approval)
+		: handle.executeApprovedCommunityMutation(address, args, {
+				briefingId: approval.itemId,
+				sourceHash: approval.sourceHash,
+			})
+	).pipe(
 		Effect.mapError((error) => providerErrorFromEngine(stage, error)),
 		Effect.flatMap((result) => decodeToolResult(stage, result, schema)),
 		// At this boundary an unknown Engine/result failure cannot prove no write occurred.
@@ -351,6 +366,228 @@ export const engineMeetingPublicationDiscordLayer = (
 								args,
 								{ itemId: request.itemId, sourceHash: request.sourceHash },
 								DiscordCheckpoint,
+							),
+							guard,
+						),
+					),
+					Effect.map((checkpoint) => new MeetingPublicationDiscordCheckpoint(checkpoint)),
+				);
+			},
+			close: Effect.void,
+		}),
+	);
+};
+
+const requireCommunityGrant = (
+	grant: CommunityBriefingWriteGrant,
+	stage: "google" | "discord",
+	item: { readonly itemId: string; readonly sourceHash: string },
+) =>
+	validateCommunityBriefingWriteGrant(grant, "publish", {
+		briefingId: item.itemId,
+		sourceHash: item.sourceHash,
+	}).pipe(
+		Effect.asVoid,
+		Effect.mapError(
+			() =>
+				new MeetingPublicationProviderError({
+					stage,
+					code: "invalid_grant",
+					retryable: false,
+					retryAfterSeconds: null,
+				}),
+		),
+	);
+
+export interface EngineCommunityGoogleBinding extends EngineMeetingGoogleBinding {
+	/** Installed only by the owning runtime; health-only callers have no write authority. */
+	readonly authorize?: (grant: CommunityBriefingWriteGrant) => Effect.Effect<void, unknown>;
+}
+export interface EngineCommunityDiscordBinding extends EngineMeetingDiscordBinding {
+	readonly authorize?: (grant: CommunityBriefingWriteGrant) => Effect.Effect<void, unknown>;
+}
+
+const requireCommunityHost = (
+	grant: CommunityBriefingWriteGrant,
+	stage: "google" | "discord",
+	binding: EngineCommunityGoogleBinding | EngineCommunityDiscordBinding,
+) =>
+	Effect.suspend(() =>
+		binding.authorize === undefined
+			? Effect.fail(new Error("community host authority missing"))
+			: binding.authorize(grant),
+	).pipe(
+		Effect.mapError(
+			() =>
+				new MeetingPublicationProviderError({
+					stage,
+					code: "invalid_grant",
+					retryable: false,
+					retryAfterSeconds: null,
+				}),
+		),
+	);
+
+/** Community-scoped equivalents reuse the same Executor transport but a distinct authority brand. */
+export const engineCommunityBriefingGoogleLayer = (
+	input: EngineCommunityGoogleBinding,
+): Layer.Layer<CommunityBriefingGoogle> => {
+	const binding = Object.freeze({ ...input });
+	const address = (tool: string) =>
+		engineToolAddress({
+			integration: GOOGLE_MEETING_INTEGRATION,
+			owner: binding.owner,
+			connection: binding.connection,
+			tool,
+		});
+	return Layer.succeed(
+		CommunityBriefingGoogle,
+		CommunityBriefingGoogle.of({
+			preflight: configuredConnection(
+				binding.handle,
+				"google",
+				binding.owner,
+				GOOGLE_MEETING_INTEGRATION,
+				binding.connection,
+			).pipe(
+				Effect.andThen(
+					execute(
+						binding.handle,
+						"google",
+						address(GOOGLE_MEETING_PREFLIGHT_TOOL),
+						{ expectedOwnerEmail: binding.expectedOwnerEmail },
+						BooleanResult,
+					),
+				),
+			),
+			upsert: (request, grant) => {
+				const guard = requireCommunityGrant(grant, "google", request).pipe(
+					Effect.andThen(requireCommunityHost(grant, "google", binding)),
+					Effect.andThen(
+						Effect.suspend(() => {
+							const scope = grant.binding.providerScope.google;
+							return scope.owner === binding.owner &&
+								scope.connection === binding.connection &&
+								scope.ownerEmail === binding.expectedOwnerEmail &&
+								scope.folderPath === binding.folderPath
+								? Effect.void
+								: Effect.fail(
+										new MeetingPublicationProviderError({
+											stage: "google",
+											code: "destination_mismatch",
+											retryable: false,
+											retryAfterSeconds: null,
+										}),
+									);
+						}),
+					),
+				);
+				const args = {
+					briefingId: request.itemId,
+					weekStart: request.meetingDate,
+					title: request.title,
+					sourceHash: request.sourceHash,
+					markdown: request.markdown,
+					existingDocId: request.existingDocId,
+					expectedOwnerEmail: binding.expectedOwnerEmail,
+					folderPath: binding.folderPath,
+				};
+				return guard.pipe(
+					Effect.flatMap(() =>
+						withMeetingPublicationMutationGuard(
+							executeApproved(
+								binding.handle,
+								"google",
+								address(GOOGLE_COMMUNITY_UPSERT_TOOL),
+								args,
+								{ itemId: request.itemId, sourceHash: request.sourceHash },
+								GoogleCheckpoint,
+								"community",
+							),
+							guard,
+						),
+					),
+					Effect.map((checkpoint) => new MeetingPublicationGoogleCheckpoint(checkpoint)),
+				);
+			},
+			close: Effect.void,
+		}),
+	);
+};
+
+export const engineCommunityBriefingDiscordLayer = (
+	input: EngineCommunityDiscordBinding,
+): Layer.Layer<CommunityBriefingDiscord> => {
+	const binding = Object.freeze({ ...input });
+	const address = (tool: string) =>
+		engineToolAddress({
+			integration: DISCORD_MEETING_INTEGRATION,
+			owner: binding.owner,
+			connection: binding.connection,
+			tool,
+		});
+	return Layer.succeed(
+		CommunityBriefingDiscord,
+		CommunityBriefingDiscord.of({
+			preflight: configuredConnection(
+				binding.handle,
+				"discord",
+				binding.owner,
+				DISCORD_MEETING_INTEGRATION,
+				binding.connection,
+			).pipe(
+				Effect.andThen(
+					execute(
+						binding.handle,
+						"discord",
+						address(DISCORD_MEETING_PREFLIGHT_TOOL),
+						{ expectedChannelId: binding.expectedChannelId },
+						BooleanResult,
+					),
+				),
+			),
+			upsert: (request, grant) => {
+				const guard = requireCommunityGrant(grant, "discord", request).pipe(
+					Effect.andThen(requireCommunityHost(grant, "discord", binding)),
+					Effect.andThen(
+						Effect.suspend(() => {
+							const scope = grant.binding.providerScope.discord;
+							return scope.owner === binding.owner &&
+								scope.connection === binding.connection &&
+								scope.channelId === binding.expectedChannelId
+								? Effect.void
+								: Effect.fail(
+										new MeetingPublicationProviderError({
+											stage: "discord",
+											code: "destination_mismatch",
+											retryable: false,
+											retryAfterSeconds: null,
+										}),
+									);
+						}),
+					),
+				);
+				const args = {
+					briefingId: request.itemId,
+					sourceHash: request.sourceHash,
+					weekStart: request.meetingDate,
+					summary: request.purpose,
+					googleDocUrl: request.googleDocUrl,
+					existingChannelId: request.existingChannelId,
+					existingMessageId: request.existingMessageId,
+					expectedChannelId: binding.expectedChannelId,
+				};
+				return guard.pipe(
+					Effect.flatMap(() =>
+						withMeetingPublicationMutationGuard(
+							executeApproved(
+								binding.handle,
+								"discord",
+								address(DISCORD_COMMUNITY_UPSERT_TOOL),
+								args,
+								{ itemId: request.itemId, sourceHash: request.sourceHash },
+								DiscordCheckpoint,
+								"community",
 							),
 							guard,
 						),

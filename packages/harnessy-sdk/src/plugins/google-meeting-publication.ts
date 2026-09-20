@@ -35,6 +35,7 @@ export const GOOGLE_MEETING_TEST_AUTH_TEMPLATE = "google-drive-file-test-token";
 export const GOOGLE_MEETING_PREFLIGHT_TOOL = "preflight";
 export const GOOGLE_MEETING_INSPECT_TOOL = "inspect";
 export const GOOGLE_MEETING_UPSERT_TOOL = "upsert";
+export const GOOGLE_COMMUNITY_UPSERT_TOOL = "community_upsert";
 export const GOOGLE_DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 
 const integration = IntegrationSlug.make(GOOGLE_MEETING_INTEGRATION);
@@ -50,6 +51,21 @@ const GoogleUpsertInput = Schema.Struct({
 	existingDocId: Schema.NullOr(Schema.String),
 	expectedOwnerEmail: Schema.String,
 	folderPath: Schema.String,
+});
+const GoogleCommunityInput = Schema.Struct({
+	briefingId: Schema.String,
+	sourceHash: Schema.String,
+	title: Schema.String,
+	weekStart: Schema.String,
+	markdown: Schema.String,
+	existingDocId: Schema.NullOr(Schema.String),
+	expectedOwnerEmail: Schema.String,
+	folderPath: Schema.String,
+});
+const communityDocumentInput = (input: typeof GoogleCommunityInput.Type): typeof GoogleUpsertInput.Type => ({
+	...input,
+	itemId: input.briefingId,
+	meetingDate: input.weekStart,
 });
 
 const AboutResponse = Schema.Struct({ user: Schema.Struct({ emailAddress: Schema.String }) });
@@ -92,6 +108,15 @@ const PermissionsResponse = Schema.Struct({ permissions: Schema.Array(Permission
 const toJsonSchema = <S extends Schema.Top>(schema: S): unknown => Schema.toJsonSchemaDocument(schema).schema;
 
 const tools: ReadonlyArray<ToolDef> = [
+	{
+		name: ToolName.make(GOOGLE_COMMUNITY_UPSERT_TOOL),
+		description: "Publish one approved community briefing in its own document namespace.",
+		inputSchema: toJsonSchema(GoogleCommunityInput),
+		annotations: {
+			requiresApproval: true,
+			approvalDescription: "Publish this reviewed community briefing to Google Docs?",
+		},
+	},
 	{
 		name: ToolName.make(GOOGLE_MEETING_INSPECT_TOOL),
 		description:
@@ -171,7 +196,19 @@ interface GoogleRequestContext {
 	readonly token: string;
 	readonly transport: ResolvedMeetingProviderTransport;
 	readonly httpClientLayer: Layer<HttpClient.HttpClient>;
+	readonly community?: boolean;
 }
+
+const documentProperty = (context: GoogleRequestContext, legacy: boolean) =>
+	context.community
+		? legacy
+			? "jarvisBriefingId"
+			: "harnessyCommunityBriefingId"
+		: legacy
+			? "jarvisMeetingId"
+			: "harnessyMeetingItemId";
+const folderProperty = (context: GoogleRequestContext, legacy: boolean) =>
+	legacy ? "jarvisMeetingFolder" : context.community ? "harnessyCommunityFolderKey" : "harnessyMeetingFolderKey";
 
 const googleRequest = <S extends Schema.Top & { readonly DecodingServices: never }>(
 	context: GoogleRequestContext,
@@ -271,14 +308,14 @@ const inspect = Effect.fn("GoogleMeetingPublication.inspect")(function* (
 	};
 });
 
-const validateFolder = (file: typeof DriveFile.Type, parent: string, key: string, legacy: boolean) =>
+const validateFolder = (file: typeof DriveFile.Type, parent: string, key: string, property: string) =>
 	file.mimeType === "application/vnd.google-apps.folder" &&
 	file.trashed === false &&
 	file.parents.length === 1 &&
 	// Drive resolves the root alias inside the parent-filtered files.list query,
 	// but returns an opaque real parent ID. Descendants use exact IDs directly.
 	(parent === "root" ? safeId(file.parents[0] ?? "") && file.parents[0] !== file.id : file.parents[0] === parent) &&
-	file.appProperties[legacy ? "jarvisMeetingFolder" : "harnessyMeetingFolderKey"] === key;
+	file.appProperties[property] === key;
 
 const findFolder = Effect.fn("GoogleMeetingPublication.findFolder")(function* (
 	context: GoogleRequestContext,
@@ -288,7 +325,7 @@ const findFolder = Effect.fn("GoogleMeetingPublication.findFolder")(function* (
 	legacy = false,
 ) {
 	const q = [
-		`appProperties has { key='${legacy ? "jarvisMeetingFolder" : "harnessyMeetingFolderKey"}' and value='${escapeDriveQuery(key)}' }`,
+		`appProperties has { key='${folderProperty(context, legacy)}' and value='${escapeDriveQuery(key)}' }`,
 		`'${escapeDriveQuery(parent)}' in parents`,
 		"mimeType='application/vnd.google-apps.folder'",
 		"trashed=false",
@@ -299,7 +336,12 @@ const findFolder = Effect.fn("GoogleMeetingPublication.findFolder")(function* (
 	if (response.files.length > 1 || response.nextPageToken !== undefined) return yield* duplicateFailure();
 	const found = response.files[0];
 	if (found === undefined) return null;
-	if (!safeId(found.id) || found.id === parent || found.name !== name || !validateFolder(found, parent, key, legacy))
+	if (
+		!safeId(found.id) ||
+		found.id === parent ||
+		found.name !== name ||
+		!validateFolder(found, parent, key, folderProperty(context, legacy))
+	)
 		return yield* checkpointFailure();
 	return found.id;
 });
@@ -328,7 +370,7 @@ const ensureFolderPath = Effect.fn("GoogleMeetingPublication.ensureFolderPath")(
 					name,
 					mimeType: "application/vnd.google-apps.folder",
 					parents: [parent],
-					appProperties: { harnessyMeetingFolderKey: key },
+					appProperties: { [folderProperty(context, false)]: key },
 				},
 			});
 			if (!safeId(created.id)) return yield* checkpointFailure();
@@ -339,12 +381,14 @@ const ensureFolderPath = Effect.fn("GoogleMeetingPublication.ensureFolderPath")(
 	return parent;
 });
 
-const validateDocument = (file: typeof DriveFile.Type, folderId: string, itemId: string, legacy = false) =>
+const validateDocument = (file: typeof DriveFile.Type, folderId: string, itemId: string, property: string) =>
+	(!["jarvisBriefingId", "harnessyCommunityBriefingId"].includes(property) ||
+		(file.appProperties.jarvisMeetingId === undefined && file.appProperties.harnessyMeetingItemId === undefined)) &&
 	file.mimeType === "application/vnd.google-apps.document" &&
 	file.trashed === false &&
 	file.parents.length === 1 &&
 	file.parents[0] === folderId &&
-	file.appProperties[legacy ? "jarvisMeetingId" : "harnessyMeetingItemId"] === itemId;
+	file.appProperties[property] === itemId;
 
 const getDocumentCheckpoint = Effect.fn("GoogleMeetingPublication.getDocumentCheckpoint")(function* (
 	context: GoogleRequestContext,
@@ -355,17 +399,20 @@ const getDocumentCheckpoint = Effect.fn("GoogleMeetingPublication.getDocumentChe
 	const file = yield* googleRequest(context, "GET", "drive", `/files/${encodeURIComponent(docId)}`, DriveFile, {
 		params: { fields: "id,name,mimeType,parents,appProperties,trashed" },
 	});
-	const legacy = file.appProperties.jarvisMeetingId !== undefined;
+	const legacy = file.appProperties[documentProperty(context, true)] !== undefined;
 	if (
 		file.id !== docId ||
-		file.appProperties[legacy ? "jarvisMeetingId" : "harnessyMeetingItemId"] !== itemId ||
+		(context.community &&
+			(file.appProperties.jarvisMeetingId !== undefined ||
+				file.appProperties.harnessyMeetingItemId !== undefined)) ||
+		file.appProperties[documentProperty(context, legacy)] !== itemId ||
 		(legacy &&
-			file.appProperties.harnessyMeetingItemId !== undefined &&
-			file.appProperties.harnessyMeetingItemId !== itemId)
+			file.appProperties[documentProperty(context, false)] !== undefined &&
+			file.appProperties[documentProperty(context, false)] !== itemId)
 	)
 		return yield* checkpointFailure();
 	const folderId = yield* ensureFolderPath(context, parts, legacy ? "legacy-checkpoint" : "native-checkpoint");
-	if (!validateDocument(file, folderId, itemId, legacy)) return yield* checkpointFailure();
+	if (!validateDocument(file, folderId, itemId, documentProperty(context, legacy))) return yield* checkpointFailure();
 	if ((yield* findDocument(context, folderId, itemId, legacy)) !== docId) return yield* checkpointFailure();
 	return { docId: file.id, legacy };
 });
@@ -377,7 +424,7 @@ const findDocument = Effect.fn("GoogleMeetingPublication.findDocument")(function
 	legacy = false,
 ) {
 	const q = [
-		`appProperties has { key='${legacy ? "jarvisMeetingId" : "harnessyMeetingItemId"}' and value='${escapeDriveQuery(itemId)}' }`,
+		`appProperties has { key='${documentProperty(context, legacy)}' and value='${escapeDriveQuery(itemId)}' }`,
 		`'${escapeDriveQuery(folderId)}' in parents`,
 		"mimeType='application/vnd.google-apps.document'",
 		"trashed=false",
@@ -388,7 +435,7 @@ const findDocument = Effect.fn("GoogleMeetingPublication.findDocument")(function
 	if (response.files.length > 1 || response.nextPageToken !== undefined) return yield* duplicateFailure();
 	const found = response.files[0];
 	if (found === undefined) return null;
-	if (!validateDocument(found, folderId, itemId, legacy)) return yield* checkpointFailure();
+	if (!validateDocument(found, folderId, itemId, documentProperty(context, legacy))) return yield* checkpointFailure();
 	return found.id;
 });
 
@@ -402,16 +449,17 @@ const publish = Effect.fn("GoogleMeetingPublication.publish")(function* (
 	credential: ToolInvocationCredential,
 	transport: ResolvedMeetingProviderTransport,
 	httpClientLayer: Layer<HttpClient.HttpClient>,
+	community = false,
 ) {
 	if (!validUpsertInput(input, transport.maxMarkdownBytes)) return yield* inputFailure();
 	yield* ensureScope(credential);
 	const token = yield* tokenFrom(credential);
-	const context = { token, transport, httpClientLayer } satisfies GoogleRequestContext;
+	const context = { token, transport, httpClientLayer, community } satisfies GoogleRequestContext;
 	// Identity is deliberately rechecked inside every mutation, before the first write.
 	yield* verifyOwner(context, input.expectedOwnerEmail);
 	const [year, month] = input.meetingDate.split("-");
 	if (year === undefined || month === undefined) return yield* inputFailure();
-	const parts = [...input.folderPath.split("/"), year, month];
+	const parts = [...input.folderPath.split("/"), year, ...(community ? [] : [month])];
 	const checkpoint =
 		input.existingDocId === null
 			? null
@@ -419,15 +467,20 @@ const publish = Effect.fn("GoogleMeetingPublication.publish")(function* (
 	const folderId = checkpoint === null ? yield* ensureFolderPath(context, parts) : null;
 	let docId = checkpoint?.docId ?? (folderId === null ? null : yield* findDocument(context, folderId, input.itemId));
 	// Keep a proven legacy document in its original folder and marker namespace.
-	const appProperties = checkpoint?.legacy
+	const appProperties = community
 		? {
-				jarvisMeetingId: input.itemId,
-				jarvisSourceHash: input.sourceHash,
+				[documentProperty(context, checkpoint?.legacy === true)]: input.itemId,
+				[checkpoint?.legacy ? "jarvisSourceHash" : "harnessyCommunitySourceHash"]: input.sourceHash,
 			}
-		: {
-				harnessyMeetingItemId: input.itemId,
-				harnessyMeetingSourceHash: input.sourceHash,
-			};
+		: checkpoint?.legacy
+			? {
+					jarvisMeetingId: input.itemId,
+					jarvisSourceHash: input.sourceHash,
+				}
+			: {
+					harnessyMeetingItemId: input.itemId,
+					harnessyMeetingSourceHash: input.sourceHash,
+				};
 	if (docId === null) {
 		const created = yield* googleRequest(context, "POST", "drive", "/files", IdResponse, {
 			params: { fields: "id" },
@@ -515,6 +568,12 @@ export const googleMeetingPublicationPlugin = (
 		validateToolArgs: ({ args, toolRow }) =>
 			Effect.gen(function* () {
 				if (transport === null) return yield* configFailure();
+				if (String(toolRow.name) === GOOGLE_COMMUNITY_UPSERT_TOOL) {
+					const input = yield* decodeInput(GoogleCommunityInput, args);
+					if (!validUpsertInput(communityDocumentInput(input), transport.maxMarkdownBytes))
+						return yield* inputFailure();
+					return;
+				}
 				if (String(toolRow.name) === GOOGLE_MEETING_INSPECT_TOOL) {
 					const input = yield* decodeInput(GoogleInspectInput, args);
 					if (!safeId(input.itemId) || !validPreflightInput(input)) return yield* inputFailure();
@@ -546,6 +605,16 @@ export const googleMeetingPublicationPlugin = (
 						)
 					)
 						return yield* credentialFailure();
+					if (String(toolRow.name) === GOOGLE_COMMUNITY_UPSERT_TOOL) {
+						const input = yield* decodeInput(GoogleCommunityInput, args);
+						return yield* publish(
+							communityDocumentInput(input),
+							credential,
+							transport,
+							ctx.httpClientLayer,
+							true,
+						);
+					}
 					if (String(toolRow.name) === GOOGLE_MEETING_INSPECT_TOOL) {
 						const input = yield* decodeInput(GoogleInspectInput, args);
 						return yield* inspect(input, credential, transport, ctx.httpClientLayer);

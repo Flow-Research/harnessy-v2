@@ -6,6 +6,7 @@
 	"type": "module",
 	"license": "AGPL-3.0-only",
 	"bin": {
+		"harnessy-community-publication": "dist/community-publication-cli.js",
 		"harnessy-local-host": "dist/cli.js",
 		"harnessy-meeting-full-review": "dist/meeting-full-review-cli.js",
 		"harnessy-meeting-review-open": "dist/meeting-review-open-cli.js",
@@ -41,7 +42,7 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/community-publication-cli.js dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js",
 		"typecheck": "tsgo --noEmit -p tsconfig.json",
 		"test": "vitest --run",
 		"test:fixture": "node scripts/test-fixture.mjs"

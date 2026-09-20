@@ -330,6 +330,7 @@ it("keeps the private planning surface separate from the guarded runtime export"
 		effect: "4.0.0-beta.85",
 	});
 	expect(manifest.bin).toEqual({
+		"harnessy-community-publication": "dist/community-publication-cli.js",
 		"harnessy-local-host": "dist/cli.js",
 		"harnessy-meeting-full-review": "dist/meeting-full-review-cli.js",
 		"harnessy-meeting-import": "dist/meeting-import-cli.js",
@@ -353,6 +354,8 @@ it("keeps the private planning surface separate from the guarded runtime export"
 			(name) =>
 				name.endsWith(".ts") &&
 				![
+					"community-publication-command.ts",
+					"community-publication-cli.ts",
 					"meeting-command-input.ts",
 					"meeting-full-review-command.ts",
 					"meeting-full-review-cli.ts",

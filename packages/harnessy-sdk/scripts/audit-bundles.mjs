@@ -85,7 +85,9 @@ for (const file of files) {
 			if (specifier.startsWith("@executor-js/")) {
 				throw new Error(`Harnessy SDK ${file} exposes a vendored Executor package import`);
 			}
-			if (nodeBuiltins.has(specifier.replace(/^node:/, ""))) {
+			// Prefix-only builtins may be absent from builtinModules. Bare sqlite
+			// is a package import, not a valid spelling of the Node builtin.
+			if (specifier === "node:sqlite" || (specifier !== "sqlite" && nodeBuiltins.has(specifier.replace(/^node:/, "")))) {
 				builtinImportsByFile.set(file, [...(builtinImportsByFile.get(file) ?? []), specifier]);
 				continue;
 			}

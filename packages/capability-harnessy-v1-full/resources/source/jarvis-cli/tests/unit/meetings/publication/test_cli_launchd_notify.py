@@ -270,3 +270,34 @@ class TestLaunchdAndNotifications:
         )
         assert notifier.error() is True
         assert commands[-1][0] == "/usr/bin/osascript"
+
+    def test_briefing_notification_opens_briefing_review(self, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """Briefing alerts must not send the user to the retired meeting port."""
+
+        commands: list[list[str]] = []
+
+        def fake_run(command: list[str], **_kwargs):  # type: ignore[no-untyped-def]
+            commands.append(command)
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(
+            "jarvis.meetings.publication.notify.shutil.which",
+            lambda name: f"/usr/bin/{name}" if name == "terminal-notifier" else None,
+        )
+        monkeypatch.setattr("jarvis.meetings.publication.notify.subprocess.run", fake_run)
+        notifier = LocalNotifier(
+            review_url=build_review_url("127.0.0.1", 8872, "token"),
+            briefing_open_command=(
+                "/path/to/python",
+                "-m",
+                "jarvis",
+                "community",
+                "briefing",
+                "review",
+                "open",
+                "--port",
+                "8872",
+            ),
+        )
+        assert notifier.briefing_pending(1) is True
+        assert "community briefing review open --port 8872" in commands[-1][-1]

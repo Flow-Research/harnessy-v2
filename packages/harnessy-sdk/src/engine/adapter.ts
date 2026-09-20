@@ -60,11 +60,44 @@ const meetingProofMatches = (
 	args.itemId === approval.itemId &&
 	args.sourceHash === approval.sourceHash;
 
+const communityProofMatches = (
+	address: string,
+	args: unknown,
+	approval: { readonly briefingId: string; readonly sourceHash: string },
+) => {
+	const parts = address.split(".");
+	return (
+		parts.length === 5 &&
+		parts[0] === "tools" &&
+		(parts[1] === "google-meeting-publication" || parts[1] === "discord-meeting-publication") &&
+		(parts[2] === "org" || parts[2] === "user") &&
+		parts[3] !== "" &&
+		parts[4] === "community_upsert" &&
+		isRecord(args) &&
+		args.briefingId === approval.briefingId &&
+		args.sourceHash === approval.sourceHash
+	);
+};
+
 /** Confine the vendored Executor type graph to the Node composition boundary. */
 export const harnessyEngineHandle = <TPlugins extends readonly AnyPlugin[]>(
 	executor: Executor<TPlugins>,
 ): HarnessyEngineHandle => ({
 	execute: (address, args) => executor.execute(ToolAddress.make(address), args),
+	executeApprovedCommunityMutation: (address, args, approval) =>
+		communityProofMatches(address, args, approval)
+			? executor.execute(ToolAddress.make(address), args, {
+					onElicitation: (context) =>
+						Effect.succeed({
+							action:
+								context.request._tag === "FormElicitation" &&
+								String(context.address) === address &&
+								communityProofMatches(address, context.args, approval)
+									? "accept"
+									: "decline",
+						}),
+				})
+			: Effect.fail(new EngineMeetingApprovalRejected()),
 	executeApprovedMeetingMutation: (address, args, approval) =>
 		meetingProofMatches(address, args, approval)
 			? executor.execute(ToolAddress.make(address), args, {
@@ -244,6 +277,7 @@ export const harnessyEngineHandle = <TPlugins extends readonly AnyPlugin[]>(
 								owner: connection.owner,
 								integration: String(connection.integration),
 								name: String(connection.name),
+								...(connection.template == null ? {} : { template: String(connection.template) }),
 							}),
 					),
 				),
@@ -261,6 +295,7 @@ export const harnessyEngineHandle = <TPlugins extends readonly AnyPlugin[]>(
 									owner: connection.owner,
 									integration: String(connection.integration),
 									name: String(connection.name),
+									...(connection.template == null ? {} : { template: String(connection.template) }),
 								}),
 						),
 					),
@@ -273,6 +308,28 @@ export const harnessyEngineHandle = <TPlugins extends readonly AnyPlugin[]>(
 					name: ConnectionName.make(ref.name),
 				})
 				.pipe(Effect.map((health) => new EngineHealth(health))),
+		refresh: (ref) =>
+			executor.connections
+				.refresh({
+					owner: ref.owner,
+					integration: IntegrationSlug.make(ref.integration),
+					name: ConnectionName.make(ref.name),
+				})
+				.pipe(
+					Effect.map((tools) =>
+						tools.map(
+							(tool) =>
+								new EngineTool({
+									address: String(tool.address),
+									owner: tool.owner,
+									integration: String(tool.integration),
+									connection: String(tool.connection),
+									name: String(tool.name),
+									description: tool.description,
+								}),
+						),
+					),
+				),
 	},
 	tools: {
 		list: (filter) =>

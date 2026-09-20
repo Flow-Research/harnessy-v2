@@ -27,6 +27,10 @@
 			"types": "./dist/connectors/loopback.d.ts",
 			"import": "./dist/connectors/loopback.js"
 		},
+		"./community-briefing": {
+			"types": "./dist/community-briefing.d.ts",
+			"import": "./dist/community-briefing.js"
+		},
 		"./meeting-publication": {
 			"types": "./dist/meeting-publication.d.ts",
 			"import": "./dist/meeting-publication.js"

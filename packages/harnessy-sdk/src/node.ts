@@ -1,3 +1,18 @@
+export type {
+	CommunityBriefingProviderBinding,
+	CommunityBriefingProviderCheck,
+	CommunityBriefingProviderHealth,
+} from "./community-briefing/providers.ts";
+export { checkCommunityBriefingProviders } from "./community-briefing/providers.ts";
+export {
+	CommunityBriefingQueue,
+	type CommunityBriefingQueueItem,
+} from "./community-briefing/queue.ts";
+export { runNativeCommunityBriefing } from "./community-briefing/runtime.ts";
+export {
+	type CommunityBriefingWorkerResult,
+	publishClaimedCommunityBriefing,
+} from "./community-briefing/worker.ts";
 export {
 	type HarnessyElicitationContext,
 	type HarnessyElicitationRequest,

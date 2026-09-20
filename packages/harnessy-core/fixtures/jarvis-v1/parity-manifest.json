@@ -6,7 +6,9 @@
       "id": "channel:fathom",
       "surface": "channel",
       "legacyReference": "meetings/fathom",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "V2 Fathom poll and inbox/checkpoint boundary",
+      "rationale": "Native bounded polling and ingestion are implemented with isolated V2 state; live scheduler activation and production handover remain separately gated."
     },
     {
       "id": "channel:meetings",
@@ -134,6 +136,12 @@
       "id": "command:jarvis:community:briefing:review:open",
       "surface": "command",
       "legacyReference": "jarvis community briefing review open",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community:briefing:review:serve",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing review serve",
       "status": "missing"
     },
     {
@@ -386,7 +394,9 @@
       "id": "command:jarvis:meeting:fathom:poll",
       "surface": "command",
       "legacyReference": "jarvis meeting fathom poll",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "jarvis meeting fathom poll",
+      "rationale": "Native bounded polling and ingestion use the V2 inbox/checkpoint store for the configured account; live scheduler activation remains separately gated."
     },
     {
       "id": "command:jarvis:meeting:fathom:start",

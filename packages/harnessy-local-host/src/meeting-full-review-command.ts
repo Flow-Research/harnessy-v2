@@ -1,4 +1,7 @@
-import type { MeetingPublicationSmokeRuntimeErrorCode } from "@harnessy/core/meeting-publication";
+import type {
+	MeetingPublicationSmokeRuntimeError,
+	MeetingPublicationSmokeRuntimeErrorCode,
+} from "@harnessy/core/meeting-publication";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 
@@ -41,11 +44,20 @@ export const runMeetingFullReviewCommand: (
 ) => Effect.Effect<MeetingFullReviewCommandResult> = (args, onReady, drain) =>
 	parseMeetingRuntimeCommandInput(args).pipe(
 		Effect.flatMap((input) => runLocalHostMeetingFullReview(input, onReady, drain)),
-		Effect.match({
-			onFailure: (cause): MeetingFullReviewCommandResult => ({
-				exitCode: 1,
-				value: { error: "meeting_full_review_failed", code: cause === "invalid_arguments" ? cause : cause.code },
-			}),
-			onSuccess: (): MeetingFullReviewCommandResult => ({ exitCode: 0 }),
-		}),
+		Effect.map(() => ({ exitCode: 0 }) satisfies MeetingFullReviewCommandResult),
+		Effect.catchIf(
+			(_cause): _cause is MeetingPublicationSmokeRuntimeError | "invalid_arguments" => true,
+			(cause) => {
+				const code =
+					cause === "invalid_arguments"
+						? cause
+						: typeof cause === "object" && cause !== null && "code" in cause && typeof cause.code === "string"
+							? (cause.code as MeetingPublicationSmokeRuntimeErrorCode)
+							: "review_failed";
+				return Effect.succeed({
+					exitCode: 1,
+					value: { error: "meeting_full_review_failed", code },
+				} satisfies MeetingFullReviewCommandResult);
+			},
+		),
 	);
