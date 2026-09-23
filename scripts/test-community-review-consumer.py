@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 SANDBOX = tempfile.TemporaryDirectory(prefix="community-review-consumer-")
 ROOT = Path(SANDBOX.name).resolve()
 ORIGINAL_HOME = Path.home().resolve()
+ALLOWED_IMPORT_ROOTS = tuple(Path(entry).resolve() for entry in sys.path if entry)
 os.environ.clear()
 os.environ.update(HOME=str(ROOT), PATH=os.defpath, LANG="en_US.UTF-8")
 os.chdir(ROOT)
@@ -30,7 +31,12 @@ def guard(event, args):
         raise RuntimeError("provider subprocess denied")
     if event == "open" and isinstance(args[0], (str, bytes)):
         path = Path(os.fsdecode(args[0])).resolve()
-        if path.is_relative_to(ORIGINAL_HOME) and not path.is_relative_to(ROOT):
+        allowed_import = any(path.is_relative_to(root) for root in ALLOWED_IMPORT_ROOTS)
+        if (
+            path.is_relative_to(ORIGINAL_HOME)
+            and not path.is_relative_to(ROOT)
+            and not allowed_import
+        ):
             raise RuntimeError("real owner files denied")
         mode, flags = args[1], args[2]
         writing = (isinstance(mode, str) and any(char in mode for char in "wax+")) or (

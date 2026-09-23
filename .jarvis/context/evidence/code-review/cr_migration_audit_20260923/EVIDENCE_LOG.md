@@ -62,6 +62,7 @@ archived. No live content or credentials are included.
 | `npm run test:release-artifacts` | Pass | 12 packed packages plus isolated Jarvis, launchers, skills, QA/review/deploy, Life daily/weekly draft acceptance and cockpit; Life publication remained false |
 | Hosted candidate run `35864873718` | Partial | Supply chain, security, PR gate and packaged Executor matrix passed; source Executor, main QA and macOS installed acceptance exposed the three failures now fixed locally |
 | Hosted candidate run `35874161669` | Partial | Executor source and all three packaged matrices passed; main QA exposed the missing Community bounded traversal in the consolidated source, now covered by a fresh isolated 30-test consumer run |
+| Hosted candidate run `35875944173` | Partial | Canonical Community source reached installed gates; installer correction idempotence and owner-home import allowlisting failed, then passed locally in the exact 27 + 16 + 30 focused reproductions |
 
 The optional `supply-chain:strict` policy mode reports upstream packages without
 declared license or unsupported-platform metadata. It is not the repository CI

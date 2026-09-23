@@ -130,6 +130,14 @@ mutation after the retained rollback window, not a substitute for local cutover.
   implementation existed only in the previously accepted installed Community
   candidate. It is now present in both canonical compatibility projections. A
   fresh isolated wheel passes all 24 draft-adapter and six review-consumer cases.
+- The next rerun against `44a2c995` reached that consolidated source and exposed
+  two surrounding acceptance assumptions: the installer correction rejected its
+  already-corrected canonical input, and the review-consumer file guard treated
+  GitHub's owner-home-hosted virtual environment as an owner secret. The correction
+  now accepts only the exact preserved or exact canonical digest, idempotently, and
+  the guard allows read-only import roots while continuing to reject owner files
+  and all non-fixture writes. The exact 27 installer contracts, 16 correction and
+  bootstrap tests, and a fresh owner-home-path 30-test Community consumer pass.
 - Optional `supply-chain:strict` remains red on upstream packages with absent
   registry license declarations or unsupported-platform metadata. The required CI
   contract is `test:supply-chain`, generate, verify and reproducibility; all four

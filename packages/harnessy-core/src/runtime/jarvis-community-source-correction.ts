@@ -2,10 +2,9 @@ import { createHash } from "node:crypto";
 
 /** Share bounded traversal with the native adapter without modifying the frozen oracle. */
 export const correctJarvisCommunitySource = (source: string): string => {
-	if (
-		createHash("sha256").update(source).digest("hex") !==
-		"2f69c284c3ac5bd47ccc657e76c2f344c1186c1b11fb33fa56e09e37a2ed3935"
-	)
+	const digest = createHash("sha256").update(source).digest("hex");
+	if (digest === "d8c93d4290f4a449aaff22f1aec95149ec3ae99688b7d7f72f98ab747631801d") return source;
+	if (digest !== "2f69c284c3ac5bd47ccc657e76c2f344c1186c1b11fb33fa56e09e37a2ed3935")
 		throw new Error("Unknown Jarvis community collector; refusing installation correction");
 	return `${source
 		.replace("import re\n", "import re\nimport stat\n")
@@ -16,7 +15,16 @@ export const correctJarvisCommunitySource = (source: string): string => {
 
 def iter_content_files(root: Path, *, source: bool = True):
     """Bound source traversal before descent; never inspect generated environments."""
-    generated = {".git", ".goal-agent", "node_modules", ".venv", "venv", "__pycache__", ".turbo", "coverage"}
+    generated = {
+        ".git",
+        ".goal-agent",
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".turbo",
+        "coverage",
+    }
     pending = [root] if root.exists() else []
     seen = total = 0
     while pending:
