@@ -126,7 +126,11 @@ export const preparePackedCombinedMeeting = async (f, installationRoot, revoked 
 			return;
 		}
 		yield* Effect.tryPromise(async () => {
-			const deadline = Date.now() + 20_000;
+			// A combined installed-product run starts two cold Executor-backed
+			// consumers while the hosted macOS runner is still under package-audit
+			// load. Keep the liveness check finite, but use the same measured cold
+			// startup budget as the readiness gate above.
+			const deadline = Date.now() + 60_000;
 			for (;;) {
 				const database = new DatabaseSync(f.queuePath, { readOnly: true });
 				let row;
