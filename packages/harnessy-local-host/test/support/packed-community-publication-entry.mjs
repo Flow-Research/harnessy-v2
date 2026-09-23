@@ -174,7 +174,18 @@ for (const scenario of ["success", "partial-revocation", "interruption", "servic
 			assert.equal(leases, 1);
 			assert.equal(row.discord_message_id, null);
 			if (scenario === "interruption") assert.equal(result._tag, "Failure");
-			else { assert.equal(result._tag, "Success"); assert.equal(result.value.exitCode, scenario === "combined-revocation" ? 0 : 1); assert.ok(row.google_doc_id); }
+			else {
+				assert.equal(result._tag, "Success");
+				assert.equal(result.value.exitCode, scenario === "combined-revocation" ? 0 : 1);
+				if (row.google_doc_id === null) {
+					// A one-shot authority monitor can win after the remote permission
+					// mutation but before its response becomes a durable checkpoint. That
+					// is an uncertain delivery: retain the singleton lease and never replay.
+					assert.equal(scenario, "partial-revocation");
+					assert.ok(f.wire.permissions.size > 0);
+					assert.ok(["publishing", "blocked"].includes(row.status));
+				} else assert.equal(typeof row.google_doc_id, "string");
+			}
 		}
 		const count = f.wire.requests.length;
 		const replay = await Effect.runPromise(run());

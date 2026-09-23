@@ -160,6 +160,17 @@ mutation after the retained rollback window, not a substitute for local cutover.
   of its real background workers remains alive; the product's cross-process
   fail-closed behavior is unchanged. Ten consecutive runs of the six-test
   isolated installed consumer pass with the generalized correction.
+- Hosted run `35892064004` passed security, supply chain, Executor source, all
+  three packaged Executor platforms, installed Jarvis/QA and the packed
+  local-host consumer. Its macOS installed-product run then exercised the other
+  permitted side of a revocation race: Google mutated remotely, but authority
+  revocation won before the response became a durable local receipt. The packed
+  assertion previously required a receipt for every scheduling outcome. It now
+  accepts a missing receipt only for that exact one-shot partial-revocation case
+  and only with proof of the remote permission mutation, no Discord receipt, a
+  retained singleton lease and a publishing/blocked queue state. This records an
+  uncertain delivery and forbids replay; it does not call the operation complete.
+  The complete packed local-host fixture passes with the corrected contract.
 
 ## Gate checklist
 
