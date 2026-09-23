@@ -5,8 +5,9 @@ import {
 	type MeetingPublicationFullReviewRuntimeInput,
 	type MeetingPublicationServiceRevocation,
 	type MeetingPublicationServiceStatus,
-	type MeetingPublicationSmokeRuntimeError,
+	MeetingPublicationSmokeRuntimeError,
 	type MeetingPublicationSmokeRuntimeErrorCode,
+	readStableMeetingPublicationSmokeFile,
 	revokeStoppedMeetingPublicationService,
 } from "@harnessy/core/meeting-publication";
 import * as Deferred from "effect/Deferred";
@@ -26,6 +27,7 @@ import {
 	setupMeetingService,
 	waitMeetingServiceStopped,
 } from "./meeting-service-enrollment.ts";
+import { reconcileMeetingServiceLease } from "./meeting-service-recovery.ts";
 
 export type MeetingFullReviewCommandResult =
 	| {
@@ -47,7 +49,8 @@ export type MeetingFullReviewCommandResult =
 				| ReturnType<typeof controlMeetingServiceFiles>
 				| ReturnType<typeof installMeetingServiceFiles>
 				| ReturnType<typeof setupMeetingService>
-				| ReturnType<typeof prepareMeetingService>;
+				| ReturnType<typeof prepareMeetingService>
+				| ReturnType<typeof reconcileMeetingServiceLease>;
 	  }
 	| {
 			readonly exitCode: 1;
@@ -149,7 +152,13 @@ export const runMeetingFullReviewCommand: (
 	args: ReadonlyArray<string>,
 	onReady: Parameters<typeof runLocalHostMeetingFullReview>[1],
 	drain?: Parameters<typeof runLocalHostMeetingFullReview>[2],
-) => Effect.Effect<MeetingFullReviewCommandResult> = (args, onReady, drain) => {
+	recoverLease?: typeof reconcileMeetingServiceLease,
+) => Effect.Effect<MeetingFullReviewCommandResult> = (
+	args,
+	onReady,
+	drain,
+	recoverLease = reconcileMeetingServiceLease,
+) => {
 	if (
 		["--service-launch-agent", "--service-install", "--service-enable", "--service-disable"].includes(args[0] ?? "")
 	) {
@@ -252,6 +261,21 @@ export const runMeetingFullReviewCommand: (
 				};
 			} catch {
 				return { exitCode: 1, value: { error: "meeting_full_review_failed", code: "invalid_input" } };
+			}
+		});
+	if (args[0] === "--service-recover-lease")
+		return Effect.sync((): MeetingFullReviewCommandResult => {
+			try {
+				if (args.length !== 5 || args[1] !== "--input" || args[3] !== "--receipt" || !args[2] || !args[4])
+					throw new Error("invalid_arguments");
+				const uid = process.geteuid?.();
+				if (uid === undefined) throw new Error("unsupported_platform");
+				const file = readStableMeetingPublicationSmokeFile(args[2], BigInt(uid), "private", 16_384);
+				const input: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes));
+				return { exitCode: 0, value: recoverLease(input, args[4]) };
+			} catch (cause) {
+				const code = cause instanceof MeetingPublicationSmokeRuntimeError ? cause.code : "invalid_input";
+				return { exitCode: 1, value: { error: "meeting_full_review_failed", code } };
 			}
 		});
 	return parseMeetingFullReviewCommandInput(args).pipe(

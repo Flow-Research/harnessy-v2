@@ -192,6 +192,8 @@ const exactHostInventory = [
 	"dist/meeting-runtime.js",
 	"dist/meeting-service-enrollment.d.ts",
 	"dist/meeting-service-enrollment.js",
+	"dist/meeting-service-recovery.d.ts",
+	"dist/meeting-service-recovery.js",
 	"dist/meeting-setup-cli.d.ts",
 	"dist/meeting-setup-cli.js",
 	"dist/meeting-setup-consent.d.ts",

@@ -22,8 +22,9 @@ local build, test, coverage, packed-release, security, dependency and supply-cha
 gates pass. Calendar recovery, managed installer convergence/rollback, installed
 Life routing, SDK test ownership and local-host coverage now have focused tests.
 The remaining blockers are an exact hosted run of the immutable candidate,
-installed convergence, operational reconciliation/backup/smoke/recovery, explicit
-disposition of the 35 recorded retirements, and final V1 binding removal. Historical
+installed convergence, operational reconciliation/backup/smoke/recovery,
+acceptance of the retained packaged routes, and final V1 binding removal. The 35
+older native-retirement labels have installed V2-owned compatibility routes. Historical
 observations below remain as the evidence that motivated those changes.
 
 ## 1. What “complete” means now

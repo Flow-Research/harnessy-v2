@@ -38,12 +38,12 @@ configuration, failure recovery, and successful installed journey.
 | Disposition | Entries | Meaning for cutover |
 | --- | ---: | --- |
 | Native V2 surface or component | 56 | V2 source exists for the ledger surface. Acceptance still varies by row below. |
-| V2-owned packaged reuse | 112 | The supported release shape can route to the preserved Python implementation without the V1 checkout. Only selected journeys have consumer evidence. |
-| Recorded retirement requiring disposition | 35 | The generated ledger records a rationale. Full cutover still needs an owner-approved retirement/replacement decision; several are not safe to accept as a group. |
+| V2-owned packaged reuse | 147 | The supported release shape routes to the preserved Python implementation without the V1 checkout. This includes all 35 entries labelled `intentionally-retired` by the older native-only ledger; only selected journeys have consumer evidence. |
+| Recorded retirement requiring disposition | 0 | None of the static retirement labels describes a removed installation route in the current release shape. Future removal still requires an explicit product decision. |
 | No implementation route found among the 203 | 0 | This is not a closure result: most reuse routes remain unassessed and important capabilities outside this ledger remain open. |
 | **Total** | **203** | Exhaustive against the current fixture. |
 
-The 112 reuse entries must not be called “complete.” The installed consumer suite
+The 147 reuse entries must not be called “complete.” The installed consumer suite
 has 14 bounded cases, covering only selected Context, Calendar planning, AnyType
 task, Wiki, meeting file ingest, Journal state, Sync, and Reading List journeys
 ([consumer tests](../../../../../scripts/test-jarvis-consumer.py#L207)). It does
@@ -92,24 +92,29 @@ The evidence column is deliberately narrower than the implementation claim.
 
 Count check: 1 + 7 + 1 + 3 + 8 + 11 + 3 + 7 + 7 + 8 + 4 + 3 + 6 + 9 + 3 + 12 + 14 + 1 + 4 = **112**.
 
-## Recorded retirement disposition — 35 entries
+## Static retirement labels reconciled as packaged reuse — 35 entries
 
-The fixture records these as `intentionally-retired`, but the expanded cutover
-contract forbids silent retirement. The ledger rationale is useful evidence of
-intent; it is not by itself an owner-approved product disposition. Each group
-below therefore remains a decision gate.
+The fixture records these as `intentionally-retired` because it measures native
+V2 coverage. Direct inspection of the release launcher and installed isolated
+Python runtime found that every command remains registered and every host
+capability has a preserved product route. All 30 command entries returned
+successful installed help output from an empty temporary home. The relevant
+installed modules exactly matched the packaged candidate sources. These entries
+are therefore packaged reuse, not product retirements. Acceptance remains
+separate: route presence does not prove provider health or every operational
+journey.
 
-| Entries | Count | Recorded replacement/rationale | Cutover decision |
+| Entries | Count | Packaged route | Acceptance disposition |
 | --- | ---: | --- | --- |
-| `command:jarvis:j`, `:n`, `:o`, `:p`, `:rl`, `:t`; `command:jarvis:w`, `:w:ask`, `:w:compile`, `:w:dedupe`, `:w:enhance`, `:w:export`, `:w:ingest`, `:w:init`, `:w:lint`, `:w:open`, `:w:program`, `:w:research`, `:w:search`, `:w:seed`, `:w:status` | 21 | Canonical long-form commands replace convenience aliases. | Low-risk retirement, but record explicit acceptance and migration messaging before removing V1. Confirm no skills, scripts, or shell history-driven automation still invokes them. |
-| `command:jarvis:android`, `:android:avds`, `:android:run`, `:apk`; `host-capability:android` | 5 | Android SDK work belongs to an optional host capability. | **Replacement is described but no implemented optional host was found.** Choose implementation, external ownership, or explicit feature removal. Do not count this as closed merely because portable core excludes the SDK. |
-| `command:jarvis:docs` | 1 | Generated CLI/tool/skill documentation replaces the command registry. | Accept only after verifying the generated documentation covers the user-facing purpose and upgrade path of `jarvis docs`. |
-| `command:jarvis:meeting:fathom:start`, `command:jarvis:meeting:fathom:webhook:serve` | 2 | Separate daemon/supervision rather than a persistent process inside the interactive CLI. | Native Fathom scheduling/polling exists, but webhook receiver equivalence and the exact lifecycle transition are not established. Decide whether polling is the supported replacement or implement the receiver. |
-| `command:jarvis:whatsapp:webhook:serve` | 1 | Separate Effect channel daemon plus host supervision. | **Unsafe retirement claim today:** no accepted native WhatsApp daemon/service was found. This must move to implemented replacement or explicit removal of WhatsApp support. |
-| `command:jarvis:wiki:open`, `host-capability:obsidian-open` | 2 | Core preserves URL generation without depending on Obsidian desktop. | Decide whether URL generation is sufficient user parity and identify its supported entrypoint. No such acceptance journey was established here. |
-| `host-capability:cloudflared` | 1 | Tunnel lifecycle is separated from channel services. | Identify the supported tunnel owner/setup path or explicitly remove bundled tunnel management. Meeting/community browser access acceptance must not assume this capability silently. |
-| `host-capability:shell-profile` | 1 | V2 core refuses to mutate shell startup files. | Sensible safety decision; approve the replacement installation/path instructions and prove commands remain discoverable after fresh install. |
-| `host-capability:tmux` | 1 | Interactive V2 CLI does not own process supervision. | Persistent services now use local-host/launchd direction on macOS. Approve supported-platform scope and equivalent start/status/stop/restart behavior before retirement. |
+| `command:jarvis:j`, `:n`, `:o`, `:p`, `:rl`, `:t`; `command:jarvis:w`, `:w:ask`, `:w:compile`, `:w:dedupe`, `:w:enhance`, `:w:export`, `:w:ingest`, `:w:init`, `:w:lint`, `:w:open`, `:w:program`, `:w:research`, `:w:search`, `:w:seed`, `:w:status` | 21 | The installed Click tree registers the six short commands and registers the full Wiki group under both `wiki` and `w`. Installed skills still prescribe `j` and `rl`. | All 21 installed entrypoints return help successfully. Their underlying feature journeys inherit the partial acceptance recorded for Journal, Tasks, Reading, Objects and Wiki above. **Installed entrypoint assessed; behavior varies by family.** |
+| `command:jarvis:android`, `:android:avds`, `:android:run`, `:apk`; `host-capability:android` | 5 | Packaged Android CLI and service discover `adb` and the Android emulator from the host. The installed Jarvis skill documents the same routes. | Installed help passes for all four commands and `android avds` executes successfully on the audited host. APK install/boot/restart was not exercised. **Partially assessed.** |
+| `command:jarvis:docs` | 1 | The packaged command generates documentation from the installed Click tree; the installed Jarvis skill calls `jarvis docs --json` as its source of truth. | Installed `docs --json` exits zero and emits the command-tree payload. **Installed assessed.** |
+| `command:jarvis:meeting:fathom:start`, `command:jarvis:meeting:fathom:webhook:serve` | 2 | Packaged Fathom start and direct receiver commands remain present. Start composes the receiver with tmux and cloudflared. | Direct installed help passes. Audit found and fixed a checkout-dependent child command: plans now bind the absolute isolated `sys.executable` with `-I -B`. Focused tests and a freshly built wheel both prove two receiver starts from an unrelated directory. Tunnel/provider health remains unassessed. **Installed-tested, operationally partial.** |
+| `command:jarvis:whatsapp:webhook:serve` | 1 | The packaged WhatsApp receiver remains a direct installed command; the packaged `whatsapp start` command composes it with tmux/cloudflared. | Installed help passes. Focused tests and a freshly built wheel prove two isolated receiver starts from an unrelated directory. Provider credentials, receipt/recovery and live receiver health remain unassessed. **Installed-tested, operationally partial.** |
+| `command:jarvis:wiki:open`, `host-capability:obsidian-open` | 2 | `jarvis wiki open --app obsidian` resolves the packaged domain and invokes the host opener with a generated `obsidian://` URL. The installed wiki skill exposes this route. | Installed help passes and the audited host has the opener and Obsidian application. No application-launch acceptance was performed. **Partially assessed.** |
+| `host-capability:cloudflared` | 1 | Packaged Fathom and WhatsApp start planners generate named or quick `cloudflared` tunnel commands. | The audited host dependency exists and both dry-run plans pass. Full receiver+tunnel start/restart remains pending. **Partially assessed.** |
+| `host-capability:shell-profile` | 1 | Packaged `config fathom-setup` and `config whatsapp-setup` expose explicit shell-profile controls and the preserved idempotent source-line helper. | Both installed help paths pass. No real user profile was mutated during audit. **Entrypoint assessed; mutation intentionally untested.** |
+| `host-capability:tmux` | 1 | Packaged Fathom and WhatsApp start planners generate tmux sessions around their installed receivers and tunnel commands. | The audited host dependency exists, deterministic restart plans pass, and packed unrelated-directory receiver commands execute twice. A real tmux session and tunnel recovery journey remains unassessed. **Partially assessed.** |
 
 Count check: 21 + 5 + 1 + 2 + 1 + 2 + 1 + 1 + 1 = **35**.
 
@@ -126,12 +131,13 @@ evidence**. The minimum closure record for each retained family is:
 4. meaningful failure, retry/reconciliation, restart, and upgrade journey;
 5. live operational check only where operation is required and separately
    authorized; and
-6. explicit owner decision for exclusions and retirements.
+6. explicit owner decision only for a future removal or exclusion; retained
+   packaged reuse is not silently reclassified as feature loss.
 
 This makes the priority order clear: WhatsApp, Notion, Content, the broader
 Fathom webhook/import family, and the untested portions of Journal/Tasks/Sync/Wiki
-need acceptance or explicit scope decisions. The already tested local paths do
-not need gratuitous rewrites.
+need acceptance or an explicit future scope decision. The already tested local
+paths do not need gratuitous rewrites.
 
 ## Important capabilities outside the 203-entry ledger
 
@@ -158,12 +164,14 @@ decommissioning by itself.
 
 ## Disposition required before V1 decommissioning
 
-The current evidence supports preserving the 112 packaged routes while acceptance
+The current evidence supports preserving the 147 packaged routes while acceptance
 is completed. Deleting the compatibility pack or original oracle earlier would
 turn untested behavior into an irreversible feature loss. V1 can be decommissioned
-when the retained groups above have accepted distributed journeys, every one of
-the 35 retirements has an explicit product disposition, the WhatsApp/Notion/Content
-decisions are resolved, and Life plus organization knowledge are handled outside
-this ledger. At that point the original checkout can cease to be an executable
-dependency; the reviewed V2 release and its rollback artifact become the sole
-owner.
+when the retained groups above have the required distributed journeys, the
+installed child-command correction passes packed acceptance, the
+WhatsApp/Notion/Content scope is recorded accurately, and Life plus organization
+knowledge are handled outside this ledger. The static 35-row retirement label is
+not a separate decommission gate because V2 currently owns and installs those
+implementations. At that point the original checkout can cease to be an
+executable dependency; the reviewed V2 release and its rollback artifact become
+the sole owner.

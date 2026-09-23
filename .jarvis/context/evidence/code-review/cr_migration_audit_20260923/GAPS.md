@@ -164,9 +164,10 @@ journeys, Fathom ingestion and sync recovery before broader completion claims.
 Live acceptance should be bounded and authorized separately from fixture tests.
 
 The exhaustive disposition is now in `CAPABILITY_DISPOSITION.md`: 56 entries are
-native V2, 112 use V2-owned packaged reuse, and 35 recorded retirements still need
-explicit product disposition. No ledger entry lacks a source/install route. Most
-of the 112 still lack command-level installed evidence; WhatsApp, Notion, Content,
+native V2 and 147 use V2-owned packaged reuse. All 35 entries labelled retired by
+the older native-only ledger remain installed through that reuse route; no ledger
+entry lacks a source/install route. Most reused entries still lack complete
+command-level installed evidence; WhatsApp, Notion, Content,
 Fathom webhook lifecycle, Android and host utilities are the highest-risk groups.
 
 ## G08 — Replace contradictory summaries with one current acceptance index

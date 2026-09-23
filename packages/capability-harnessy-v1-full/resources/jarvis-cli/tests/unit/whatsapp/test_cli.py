@@ -1,6 +1,8 @@
 """CLI tests for WhatsApp commands."""
 
 import json
+import shlex
+import sys
 from types import SimpleNamespace
 
 from click.testing import CliRunner
@@ -39,6 +41,32 @@ class TestWhatsAppCli:
         assert parsed["session_name"] == "whatsapp-personal"
         assert "whatsapp webhook serve --account personal" in parsed["webhook_command"]
         assert "cloudflared tunnel --url http://127.0.0.1:8787" in parsed["tunnel_command"]
+
+    def test_start_plan_uses_current_isolated_interpreter_for_restarts(
+        self, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        runtime = "/opt/Harnessy Runtime/jarvis-runtime/bin/python"
+        monkeypatch.setattr(sys, "executable", runtime)
+        cfg = SimpleNamespace(
+            whatsapp=SimpleNamespace(
+                accounts={"personal": object()},
+                default_account="personal",
+            )
+        )
+        monkeypatch.setattr("jarvis.whatsapp.cli.load_config", lambda: cfg)
+        runner = CliRunner()
+
+        commands = []
+        for _ in range(2):
+            result = runner.invoke(
+                whatsapp_cli,
+                ["start", "--account", "personal", "--dry-run", "--json"],
+            )
+            assert result.exit_code == 0
+            commands.append(json.loads(result.output)["webhook_command"])
+
+        assert commands[0] == commands[1]
+        assert shlex.split(commands[0])[:5] == [runtime, "-I", "-B", "-m", "jarvis"]
 
     def test_webhook_status_command(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         runner = CliRunner()

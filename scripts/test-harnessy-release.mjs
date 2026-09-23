@@ -135,6 +135,57 @@ try {
 			if (!jarvisHelp.includes(name)) throw new Error(`Installed Jarvis launcher omitted ${name}`);
 	}
 	const jarvisSitePackages = run(jarvisPython, ["-I", "-B", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], { capture: true }).trim();
+	const receiverPlanAcceptance = String.raw`
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+from jarvis.meetings.automation import build_fathom_automation_plan
+from jarvis.whatsapp.automation import build_whatsapp_automation_plan
+
+unrelated = Path(sys.argv[1]).resolve()
+plans = [
+    build_fathom_automation_plan(
+        session_name="packed-fathom",
+        cwd=unrelated,
+        layout="windows",
+        account="synthetic",
+        port=8765,
+        auto_ingest=False,
+        destinations=["private-context"],
+        wiki_domain=None,
+        backend=None,
+        journal_space_id=None,
+        project="",
+        tags=[],
+        auto_route=False,
+        verify_signatures=True,
+        tolerance_seconds=300,
+    ),
+    build_whatsapp_automation_plan(
+        session_name="packed-whatsapp",
+        cwd=unrelated,
+        layout="windows",
+        account="synthetic",
+        port=8787,
+        auto_ingest=False,
+        destinations=["team-inbox"],
+        backend=None,
+        verify_signatures=True,
+    ),
+]
+for plan in plans:
+    command = shlex.split(plan.webhook_command)
+    assert command[:5] == [sys.executable, "-I", "-B", "-m", "jarvis"], command
+    for _ in range(2):
+        subprocess.run([*command, "--help"], cwd=unrelated, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+`;
+	run(jarvisPython, ["-I", "-B", "-c", receiverPlanAcceptance, projectRoot], {
+		cwd: projectRoot,
+		env: { ...process.env, HOME: projectRoot, PYTHONDONTWRITEBYTECODE: "1" },
+	});
 	run(jarvisPython, ["-I", "-B", join(repoRoot, "scripts/test-jarvis-consumer.py"), jarvisSitePackages]);
 	run(jarvisPython, ["-I", "-B", join(repoRoot, "scripts/test-community-draft-adapter.py")], {
 		env: {

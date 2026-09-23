@@ -22,18 +22,22 @@ const toLibsqlFileUrl = (path: string): string =>
  */
 export const openLocalLibsql = async (path: string): Promise<Client> => {
   const client = createClient({ url: toLibsqlFileUrl(path) });
-  // foreign_keys is strictly per-connection; WAL is a file-level mode set on
-  // first enabling. Re-apply both since libSQL gives no shared handle.
-  await client.execute("PRAGMA foreign_keys = ON");
-  await client.execute("PRAGMA journal_mode = WAL");
-  // busy_timeout is per-connection (default 0 = fail immediately on a lock).
-  // Under the supervised-daemon model a single process owns this file, but a
-  // second OS process can still transiently hold the write lock (e.g. a CLI
-  // tool, the v1→v2 migration reader, or a launchd restart racing the old
-  // pid). Give writers a 5s retry window instead of an instant SQLITE_BUSY.
-  // Matches the self-host open path (self-host-db.ts).
-  await client.execute("PRAGMA busy_timeout = 5000");
-  return client;
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- SQLite adapter boundary: a failed initialization must release its native connection
+  try {
+    // Install the existing 5s busy handler before WAL initialization, which
+    // itself needs a lock. Setting it afterward leaves opens vulnerable to
+    // instant SQLITE_BUSY during a transient cross-process lock.
+    await client.execute("PRAGMA busy_timeout = 5000");
+    // foreign_keys is strictly per-connection; WAL is a file-level mode set on
+    // first enabling. Re-apply both since libSQL gives no shared handle.
+    await client.execute("PRAGMA foreign_keys = ON");
+    await client.execute("PRAGMA journal_mode = WAL");
+    return client;
+  } catch (error) {
+    client.close();
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- preserve the original SQLite failure after releasing the client
+    throw error;
+  }
 };
 
 const asRows = <T>(result: ResultSet): readonly T[] =>

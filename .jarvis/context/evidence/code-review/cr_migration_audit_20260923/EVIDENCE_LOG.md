@@ -39,7 +39,7 @@ archived. No live content or credentials are included.
 
 | Check | Result | Interpretation |
 | --- | --- | --- |
-| `npm run verify:v1-compatibility` before/after Life tests | Pass | 708 files; 4,931,290 bytes; stable SHA-256 `1695e7b7…7daec` |
+| `npm run verify:v1-compatibility` after copied-source updates | Pass | 708 files; 4,933,630 bytes; SHA-256 `bf7e822a…a3d` |
 | Focused Life source/routing batches | 38/38 and 27/27 pass | Native draft routing and bytecode suppression are covered |
 | OAuth/auth-storage batches | 9/9 and 4/4 pass | Credential persistence/atomicity source contracts pass |
 | Fathom batch | 26/26 pass | Account-neutral poll/import/status source contracts pass |
@@ -52,14 +52,20 @@ archived. No live content or credentials are included.
 | QA scenarios | 8/8 pass | All canonical cutover scenarios pass |
 | CI contract after macOS job | 11/11 pass | Job structure is valid; no hosted result exists yet |
 | `npm run check` after integrated fixes | Pass | Full format/type/import/build-contract/lint/CI/QA-catalog gate passes |
-| Complete `./test.sh` | Pass | Agent 170; AI 452 pass/731 skip; coding-agent 1,517 pass/47 skip; core 979; engine 6; local-host 271; SDK 7 Node + 346 Vitest; TUI passed |
-| `npm run test:coverage` | Pass | All package thresholds pass; local-host function coverage is 80.64% after lifecycle/security coverage was added |
+| Complete `./test.sh` plus focused closure reruns | Pass | All workspaces pass; final focused reruns close the regenerated compatibility digest and local-host boundary after the broad run |
+| `npm run test:coverage` | Pass | All package thresholds pass; local-host: 287 pass/1 skip and 80.10% function coverage; Core, engine and SDK thresholds pass |
 | Executor and package gates | Pass | Darwin executor 1.5.33, package contracts and package integration all pass after the documented native-dependency preparation step |
-| Security and dependency gates | Pass | 14 security tests; 4,339 files scanned with no findings; root audit has zero moderate-or-higher vulnerabilities; Executor audit has zero high-or-higher advisories |
+| Security and dependency gates | Pass | 14 security tests; 4,254 files scanned with no findings; root audit has zero moderate-or-higher vulnerabilities; Executor audit has zero high-or-higher advisories |
 | Supply-chain generation and verification | Pass | Pinned npm 11.6.0/Bun 1.4.0; 4 SBOMs, 16 artifacts, 688 evidence files; three 690-file trees reproduced byte-for-byte |
 | `npm run build` | Pass | Complete repository build succeeds under the pinned Node toolchain |
 | Packed engine, SDK and local-host fixtures | Pass | Clean packed consumers exercise the supported release surfaces |
 | `npm run test:release-artifacts` | Pass | 12 packed packages plus isolated Jarvis, launchers, skills, QA/review/deploy, Life daily/weekly draft acceptance and cockpit; Life publication remained false |
+| Hosted candidate run `35864873718` | Partial | Supply chain, security, PR gate and packaged Executor matrix passed; source Executor, main QA and macOS installed acceptance exposed the three failures now fixed locally |
+
+The optional `supply-chain:strict` policy mode reports upstream packages without
+declared license or unsupported-platform metadata. It is not the repository CI
+contract. The required test, generation, verification and three-tree byte
+reproducibility gates pass with pinned Node 22.22.2, npm 11.6.0 and Bun 1.4.0.
 
 Tests used the explicit installed Node 22.22.2 executable to avoid the shell's
 different default Node version. Vitest batches ran with explicit filenames from
@@ -145,8 +151,9 @@ scripts/ci-contract-lib.test.mjs
 ## Unperformed checks and resulting limits
 
 The full local build, test, coverage, packed-release, security, dependency and
-supply-chain gates were completed after the initial audit snapshot. An exact hosted
-run of the new candidate, public release, external provider generation/delivery,
+supply-chain gates were completed after the initial audit snapshot. A first hosted
+candidate run produced three actionable failures; their fixes pass locally, but a
+green exact-commit rerun is still required. Public release, external provider generation/delivery,
 network-backed backend journey, backup restore and scheduler restart have not yet
 occurred. Historical live receipts were read, not re-created. Listener checks are
 observations at one time; they cannot diagnose why a service stopped or establish

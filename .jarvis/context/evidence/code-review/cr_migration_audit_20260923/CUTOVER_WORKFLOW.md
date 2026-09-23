@@ -34,11 +34,11 @@ mutation after the retained rollback window, not a substitute for local cutover.
 | Phase | Workstream | State | Exit evidence |
 | --- | --- | --- | --- |
 | 0 | Preserve/classify current work | complete | Dirty-path disposition and reviewable slice map; start/end hashes |
-| 1 | Compatibility integrity | locally complete; clean-candidate repeat required | Exact generated cache removed; prevention added; compatibility check passes before and after focused Life tests |
-| 2 | Entry-point and capability gaps | in progress | Installed Life/Calendar routing, recovery and required user journeys |
-| 3 | Immutable release candidate | in progress | Isolated candidate branch/worktree assembled; commit and exact hashes pending |
-| 4 | Complete local gates | source tree complete; exact candidate repeat pending | Every required command in CI/deploy profiles passes; clean-tree proof |
-| 5 | Review and hosted gates | pending phase 4 | Reviewed commit and exact required hosted checks, including executing installed Life/skill acceptance |
+| 1 | Compatibility integrity | complete on candidate source | Compatibility check passes with the regenerated 708-file oracle before and after relevant Python execution |
+| 2 | Entry-point and capability gaps | source complete; live convergence pending | Life/Calendar routing, installed Fathom/WhatsApp invocation and stale meeting-lease recovery pass local acceptance |
+| 3 | Immutable release candidate | final fix commit pending | Isolated candidate branch/worktree assembled; prior candidate commits exist and the hosted-failure fixes are ready to commit |
+| 4 | Complete local gates | complete on current candidate source | Every required CI/deploy profile gate and packed release acceptance passes; diff validation is clean |
+| 5 | Review and hosted gates | exact rerun pending | First hosted run exposed three failures; fixes pass locally and require a new exact-commit run plus required review |
 | 6 | Fresh backup and inert staging | pending phase 5 | Consistent owner-only snapshot, isolated restore and staged exact artifact |
 | 7 | One-writer handover | pending phase 6 | Fresh zero-V1-writer proof; one V2 owner for each capability |
 | 8 | Full operational smoke | pending phase 7 | Receipts/health for every required capability and duplicate-write controls |
@@ -63,8 +63,9 @@ mutation after the retained rollback window, not a substitute for local cutover.
 - Removed only the untracked generated
   `resources/flow-install/skills/_shared/__pycache__/ai_runner.cpython-311.pyc`
   and its now-empty directory. No preserved source byte changed.
-- `npm run verify:v1-compatibility` passes: 708 files, 4,931,290 bytes,
-  SHA-256 `1695e7b76c5c0e4bb85b504e309e252b99eaedef6b74222813a286d01ce7daec`.
+- `npm run verify:v1-compatibility` passes after the final copied-source changes:
+  708 files, 4,933,630 bytes, SHA-256
+  `bf7e822a0c0285b072307c8623afa7075e908304fd7755cb7c8ce669bd334a3d`.
 - V2 Life subprocess environments now set `PYTHONDONTWRITEBYTECODE=1` for native
   prompt preparation, research fallback, compatibility preview/publication and
   weekly preparation. Focused tests assert the boundary.
@@ -88,9 +89,9 @@ mutation after the retained rollback window, not a substitute for local cutover.
   the intended provider boundary; against the separate `community-final` candidate
   all 42 tests passed. This is direct evidence that candidate consolidation is a
   functional requirement rather than directory-name cleanup.
-- `CAPABILITY_DISPOSITION.md` now reconciles all 203 legacy entries: 56 native,
-  112 V2-owned packaged reuse and 35 retirements requiring explicit product
-  disposition. Every entry has a source/install route, while command-level
+- `CAPABILITY_DISPOSITION.md` now reconciles all 203 legacy entries: 56 native
+  and 147 V2-owned packaged reuse. The 35 static native-retirement labels all
+  retain V2-packaged routes; none is a removed product feature. Command-level
   acceptance remains incomplete for much of the packaged surface.
 - Calendar now has explicit native and legacy recovery inspection/retirement,
   SHA-bound resolution and never-attempted-only residual plans. Its focused
@@ -115,6 +116,18 @@ mutation after the retained rollback window, not a substitute for local cutover.
 - Supply-chain evidence reproduces byte-for-byte under exact npm 11.6.0 and Bun
   1.4.0. The full 12-package `test:release-artifacts` acceptance passes, including
   isolated Jarvis, installed skills and draft-only Life daily/weekly generation.
+- Hosted run `35864873718` passed supply chain, security, the PR gate and all three
+  packaged Executor matrix jobs. It exposed three exact gaps: SQLite busy timeout
+  was applied after WAL initialization, QA prepared its Jarvis runtime too late,
+  and the cold macOS combined fixture allowed only 20 seconds for readiness. The
+  candidate now applies timeout before WAL, prepares Jarvis before QA, and gives
+  that cold fixture a phase-specific 60-second readiness bound. The full local
+  Executor, QA and packed-release gates pass with those fixes; a new hosted run is
+  still required.
+- Optional `supply-chain:strict` remains red on upstream packages with absent
+  registry license declarations or unsupported-platform metadata. The required CI
+  contract is `test:supply-chain`, generate, verify and reproducibility; all four
+  pass with zero toolchain pin mismatches.
 
 ## Gate checklist
 
@@ -155,10 +168,13 @@ mutation after the retained rollback window, not a substitute for local cutover.
 
 ## Next executable steps
 
-1. Finish the dirty-path slice map and runtime/decommission inventory.
-2. Close remaining source-level routing and recovery gaps with focused tests.
-3. Run the full local gate set on current source; separate code failures from
-   dirtiness/release-evidence failures.
-4. Produce a clean review candidate from preserved changes before installation.
-5. Only after review/hosted gates, execute fresh backup, handover, smoke, recovery
-   and final V1 decommission in the order above.
+1. Commit and push the locally accepted hosted-failure fixes on the isolated
+   candidate branch.
+2. Obtain every required hosted check against that exact commit and the configured
+   human review.
+3. Create and restore-test a fresh owner-only backup, then stage the accepted
+   artifact inertly.
+4. Reconcile the exact stale meeting lease through the new guarded command and
+   converge one capability owner at a time.
+5. Generate and verify today's native V2 daily draft, complete operational smoke
+   and recovery, remove all active V1 bindings, and preserve the rollback assets.

@@ -370,6 +370,7 @@ it("keeps the private planning surface separate from the guarded runtime export"
 					"meeting-review-open-cli.ts",
 					"meeting-runtime.ts",
 					"meeting-service-enrollment.ts",
+					"meeting-service-recovery.ts",
 					"meeting-setup-cli.ts",
 					"meeting-setup-consent.ts",
 					"meeting-setup-input.ts",

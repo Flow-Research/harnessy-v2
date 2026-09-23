@@ -72,8 +72,9 @@ Python runtime as well as JavaScript command/service bindings.
 ## Capability ledger disposition
 
 `CAPABILITY_DISPOSITION.md` reconciles all 203 legacy ledger entries: 56 native
-V2, 112 V2-owned packaged reuse, 35 recorded retirements requiring explicit owner
-disposition, and zero with no source/install route. These counts describe topology,
-not acceptance. The retained packaged families still need the command-level evidence
+V2, 147 V2-owned packaged reuse, zero actual product retirements, and zero with
+no source/install route. The older ledger's 35 native-retirement labels all have
+installed compatibility routes. These counts describe topology, not acceptance.
+The retained packaged families still need the command-level evidence
 listed there, especially WhatsApp, Notion, Content, Fathom webhooks, Android and
 platform host utilities. Life and organization knowledge remain separate scope.

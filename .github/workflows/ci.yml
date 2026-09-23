@@ -87,18 +87,6 @@ jobs:
           echo "HARNESSY_NODE_RUNTIME=$node_runtime" >> "$GITHUB_ENV"
           echo "$private_node_root/bin" >> "$GITHUB_PATH"
 
-      - name: Execute canonical-cutover QA scenarios
-        run: npm run test:qa-scenarios
-
-      - name: Test packed private SDK consumer explicitly
-        run: npm run test:sdk-fixture
-
-      - name: Test packed private local-host consumer explicitly
-        run: npm run test:local-host-fixture
-
-      - name: QA and packed gates must not rewrite tracked files
-        run: git diff --exit-code
-
       - name: Setup Python for V2 reused runtime consumers
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
@@ -113,6 +101,18 @@ jobs:
           echo "HARNESSY_TEST_JARVIS_PYTHON=$fixture_root/venv/bin/python" >> "$GITHUB_ENV"
           "$fixture_root/venv/bin/python" scripts/test-community-draft-adapter.py
           "$fixture_root/venv/bin/python" scripts/test-community-review-consumer.py
+
+      - name: Execute canonical-cutover QA scenarios
+        run: npm run test:qa-scenarios
+
+      - name: Test packed private SDK consumer explicitly
+        run: npm run test:sdk-fixture
+
+      - name: Test packed private local-host consumer explicitly
+        run: npm run test:local-host-fixture
+
+      - name: QA and packed gates must not rewrite tracked files
+        run: git diff --exit-code
 
       - name: Test workspace without user credentials
         run: ./test.sh

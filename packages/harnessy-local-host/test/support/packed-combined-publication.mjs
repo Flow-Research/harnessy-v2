@@ -80,7 +80,14 @@ export const preparePackedCombinedMeeting = async (f, installationRoot, revoked 
 			Effect.raceFirst(Fiber.join(worker).pipe(Effect.flatMap(result =>
 				Effect.fail(`Combined meeting runtime exited before readiness: ${JSON.stringify(result)}`),
 			))),
-			Effect.timeout("20 seconds"),
+			// The packed macOS acceptance starts a cold Executor binary while the
+			// runner is also unpacking and verifying the installed product. Keep a
+			// finite readiness bound, but allow that measured hosted startup path
+			// more than the fast source-fixture budget.
+			Effect.timeoutOrElse({
+				duration: "60 seconds",
+				orElse: () => Effect.fail("Combined meeting runtime did not become ready within 60 seconds"),
+			}),
 		);
 		if (drainInFlight) {
 			yield* Effect.promise(() => requestStarted).pipe(Effect.timeout("20 seconds"));

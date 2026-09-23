@@ -376,6 +376,24 @@ or uncertain deliveries rather than guessing that an owner has stopped. A revoke
 enrollment cannot be re-enabled by restarting it. Use disablement below for a
 reversible stop; revocation permanently retires the enrollment.
 
+If inspection reports a stale service lease after a crash, use the bounded
+recovery operation with an owner-private (`0600`) recovery request and a new
+receipt path whose parent is owner-only (`0700`):
+
+```text
+harnessy-meeting-full-review --service-recover-lease --input RECOVERY_JSON_PATH --receipt NEW_RECEIPT_PATH
+```
+
+The request binds the replay and publication databases by absolute path, device
+and inode; binds every lease through its SHA-256 fingerprint plus its lease,
+authorization, owner, process, boot and clock identities; and binds the expected
+loopback review port. Recovery refuses a live or changed owner, a listening
+review service, an ambiguous publication state, a changed database binding, or
+an existing receipt. On success it changes only the matching consumed outcome to
+`reconciled_no_delivery`, deletes only the exact matching lease row, and writes a
+new owner-private audit receipt. Never replace this operation with a broad or
+manual database deletion.
+
 On macOS, inspect an inert launch-agent proposal for that saved configuration:
 
 ```text

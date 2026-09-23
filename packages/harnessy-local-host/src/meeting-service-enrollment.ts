@@ -15,7 +15,7 @@ import { isSafeAbsoluteMeetingCommandPath } from "./meeting-command-input.ts";
 import { artifactAnchors } from "./meeting-runtime.ts";
 import { signOwnerServiceRequest } from "./owner-service-signing.ts";
 
-const writeNewPrivateFile = (path: string, text: string) => {
+export const writeNewPrivateMeetingServiceFile = (path: string, text: string) => {
 	const file = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
 	try {
 		writeFileSync(file, text);
@@ -39,9 +39,9 @@ export const installMeetingServiceFiles = (directory: string, plist: string) => 
 	const stat = lstatSync(directory);
 	if (!stat.isDirectory() || stat.uid !== uid || (stat.mode & 0o7777) !== 0o700 || readdirSync(directory).length !== 0)
 		throw new Error("unsafe_output");
-	writeNewPrivateFile(join(directory, "stdout.log"), "");
-	writeNewPrivateFile(join(directory, "stderr.log"), "");
-	writeNewPrivateFile(join(directory, "org.harnessy.meeting-publication.plist"), plist);
+	writeNewPrivateMeetingServiceFile(join(directory, "stdout.log"), "");
+	writeNewPrivateMeetingServiceFile(join(directory, "stderr.log"), "");
+	writeNewPrivateMeetingServiceFile(join(directory, "org.harnessy.meeting-publication.plist"), plist);
 	return { kind: "harnessy.meeting-publication.service-files-installed", activated: false } as const;
 };
 
@@ -161,9 +161,9 @@ export const prepareMeetingService = (args: ReadonlyArray<string>) => {
 	const input = readStableMeetingPublicationSmokeFile(args[1], BigInt(uid), "private");
 	const configuration: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(input.bytes));
 	const prepared = prepareMeetingPublicationServiceRequest(configuration, args[3], artifactAnchors);
-	writeNewPrivateFile(join(args[3], "artifact-manifest.json"), prepared.manifest);
-	writeNewPrivateFile(join(args[3], "request.json"), prepared.request);
-	writeNewPrivateFile(
+	writeNewPrivateMeetingServiceFile(join(args[3], "artifact-manifest.json"), prepared.manifest);
+	writeNewPrivateMeetingServiceFile(join(args[3], "request.json"), prepared.request);
+	writeNewPrivateMeetingServiceFile(
 		join(args[3], "service.json"),
 		`${JSON.stringify({
 			kind: "harnessy.meeting-publication.service-config.v1",
@@ -248,6 +248,9 @@ export const enrollMeetingService = (args: ReadonlyArray<string>) => {
 	).toString("base64url");
 	// Exclusive creation preserves existing enrollments and inputs. A failed write
 	// is deliberately not retried or deleted; the owner must inspect that output.
-	writeNewPrivateFile(outputPath, `{"payload":${encoded.canonical},"signature":${JSON.stringify(signature)}}\n`);
+	writeNewPrivateMeetingServiceFile(
+		outputPath,
+		`{"payload":${encoded.canonical},"signature":${JSON.stringify(signature)}}\n`,
+	);
 	return { kind: "harnessy.meeting-publication.service-enrollment-created", activated: false } as const;
 };
