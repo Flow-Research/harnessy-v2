@@ -36,7 +36,7 @@ mutation after the retained rollback window, not a substitute for local cutover.
 | 0 | Preserve/classify current work | complete | Dirty-path disposition and reviewable slice map; start/end hashes |
 | 1 | Compatibility integrity | complete on candidate source | Compatibility check passes with the regenerated 708-file oracle before and after relevant Python execution |
 | 2 | Entry-point and capability gaps | source complete; live convergence pending | Life/Calendar routing, installed Fathom/WhatsApp invocation and stale meeting-lease recovery pass local acceptance |
-| 3 | Immutable release candidate | final fix commit pending | Isolated candidate branch/worktree assembled; prior candidate commits exist and the hosted-failure fixes are ready to commit |
+| 3 | Immutable release candidate | final hosted-timeout fix pending | Isolated candidate branch/worktree assembled; the current candidate contains the complete migration plus bounded hosted fixes |
 | 4 | Complete local gates | complete on current candidate source | Every required CI/deploy profile gate and packed release acceptance passes; diff validation is clean |
 | 5 | Review and hosted gates | exact rerun pending | First hosted run exposed three failures; fixes pass locally and require a new exact-commit run plus required review |
 | 6 | Fresh backup and inert staging | pending phase 5 | Consistent owner-only snapshot, isolated restore and staged exact artifact |
@@ -142,6 +142,15 @@ mutation after the retained rollback window, not a substitute for local cutover.
   registry license declarations or unsupported-platform metadata. The required CI
   contract is `test:supply-chain`, generate, verify and reproducibility; all four
   pass with zero toolchain pin mismatches.
+- Hosted run `35887007420` passed security, supply chain, Executor source, all
+  three packaged Executor platforms, the macOS installed-product acceptance,
+  canonical QA and the packed local-host consumer. The Linux workspace test then
+  exposed one remaining bound: the live CLI compatibility-pack journey performs
+  the same full-tree materialization as its neighboring test but retained
+  Vitest's 30-second default. It reached that bound while 970 other Core tests
+  passed. Both full-tree tests now declare the existing 60-second hosted bound;
+  the focused four-test file passes locally. A fresh exact-commit hosted run is
+  required before acceptance.
 
 ## Gate checklist
 
