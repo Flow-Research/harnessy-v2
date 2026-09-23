@@ -27,16 +27,22 @@ it.runIf(process.platform === "darwin")(
 );
 
 it("launch-agent planning rejects absent protected config without starting a runtime", async () => {
+	const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+	Object.defineProperty(process, "platform", { ...platform, value: "darwin" });
 	let started = false;
-	const result = await Effect.runPromise(
-		runMeetingFullReviewCommand(["--service-launch-agent", "--input", "/missing/service.json"], () =>
-			Effect.sync(() => {
-				started = true;
-			}),
-		),
-	);
-	expect(result.exitCode).toBe(1);
-	expect(started).toBe(false);
+	try {
+		const result = await Effect.runPromise(
+			runMeetingFullReviewCommand(["--service-launch-agent", "--input", "/missing/service.json"], () =>
+				Effect.sync(() => {
+					started = true;
+				}),
+			),
+		);
+		expect(result.exitCode).toBe(1);
+		expect(started).toBe(false);
+	} finally {
+		Object.defineProperty(process, "platform", platform);
+	}
 });
 
 it.runIf(process.platform === "darwin")(
