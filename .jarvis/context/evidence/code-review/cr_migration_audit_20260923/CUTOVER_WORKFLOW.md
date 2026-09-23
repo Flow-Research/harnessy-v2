@@ -151,6 +151,13 @@ mutation after the retained rollback window, not a substitute for local cutover.
   passed. Both full-tree tests now declare the existing 60-second hosted bound;
   the focused four-test file passes locally. A fresh exact-commit hosted run is
   required before acceptance.
+- The immediate rerun `35890696701` exposed an independent consumer-test race
+  before canonical QA: after the synthetic AI response was released, the test
+  polled the durable revision marker during its deliberately fail-closed
+  `committing` phase and mistook the transient reconciliation response for a
+  product failure. The consumer now joins the real revision worker before
+  asserting its terminal durable state, matching the existing superseded-edit
+  case. Five consecutive runs of the six-test isolated installed consumer pass.
 
 ## Gate checklist
 

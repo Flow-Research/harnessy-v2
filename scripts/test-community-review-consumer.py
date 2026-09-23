@@ -183,6 +183,14 @@ class CommunityReviewConsumerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("Revision in progress", page)
         self.ai.release.set()
+        # Wait for the real worker to finish its fail-closed committing phase.
+        # Polling the durable marker during that narrow phase correctly reports
+        # reconciliation required because another process cannot prove the writer
+        # is still alive.
+        for thread in threading.enumerate():
+            if thread.name == f"briefing-revision-{self.item.briefing_id[:8]}":
+                thread.join(5)
+                self.assertFalse(thread.is_alive())
         self.assertIsNone(self.wait_revision())
         revised = self.service.store.get(self.item.briefing_id)
         self.assertNotEqual(revised.draft_hash, self.item.draft_hash)
