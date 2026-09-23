@@ -343,6 +343,7 @@ it("admits only one concurrent recovery resolution and never overwrites an outpu
 	).rejects.toThrow("uncertain");
 	const reader = { ...provider, verifyEvent: async () => false };
 	const recovery = await inspectCalendarRecovery(path, hash, reader);
+	const ledgerBefore = readRecoveryLedger();
 	const protectedOutput = join(root, "protected.json");
 	writeFileSync(protectedOutput, "owner content", { mode: 0o600 });
 	await expect(
@@ -350,8 +351,10 @@ it("admits only one concurrent recovery resolution and never overwrites an outpu
 			action: "residual",
 			residualPlanPath: protectedOutput,
 		}),
-	).rejects.toThrow("new file");
+	).rejects.toThrow("does not match the approved bytes");
 	expect(readFileSync(protectedOutput, "utf8")).toBe("owner content");
+	expect(readRecoveryLedger()).toEqual(ledgerBefore);
+	expect((await inspectCalendarRecovery(path, hash, reader)).recoverySha256).toBe(recovery.recoverySha256);
 	const outputs = [join(root, "residual-a.json"), join(root, "residual-b.json")];
 	const results = await Promise.allSettled(
 		outputs.map((residualPlanPath) =>
@@ -363,6 +366,72 @@ it("admits only one concurrent recovery resolution and never overwrites an outpu
 	);
 	expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
 	expect(outputs.filter((output) => existsSync(output))).toHaveLength(1);
+});
+
+const readRecoveryLedger = () => {
+	const db = new DatabaseSync(join(root, ".calendar-v2", "receipts.sqlite3"), { readOnly: true });
+	try {
+		return {
+			plan: db.prepare("SELECT * FROM plans WHERE id='plan-1'").get(),
+			resolutions: db.prepare("SELECT * FROM resolutions ORDER BY recovery_sha256").all(),
+		};
+	} finally {
+		db.close();
+	}
+};
+
+const prepareResidualRecovery = async () => {
+	useThreeBlockPlan();
+	await expect(
+		applyCalendarPlan(path, hash, {
+			...provider,
+			createEvent: async (block, id) => {
+				if (block.block_id === "second") throw new Error("provider result unknown");
+				return id;
+			},
+		}),
+	).rejects.toThrow("uncertain");
+	const reader = { ...provider, verifyEvent: async () => false };
+	const recovery = await inspectCalendarRecovery(path, hash, reader);
+	const residualPath = join(root, "plan-1-residual.json");
+	const plan = inspectCalendarPlan(path).plan;
+	const bytes = Buffer.from(
+		`${JSON.stringify({ ...plan, plan_id: "plan-1-residual", blocks: [plan.blocks[2]] }, null, 2)}\n`,
+	);
+	return {
+		reader,
+		recovery,
+		residualPath,
+		pendingPath: `${residualPath}.pending-${recovery.recoverySha256}`,
+		bytes,
+	};
+};
+
+it("recovers a durable pending residual before retiring its source plan", async () => {
+	const prepared = await prepareResidualRecovery();
+	writeFileSync(prepared.pendingPath, prepared.bytes, { mode: 0o600 });
+	const result = await resolveCalendarRecovery(path, hash, prepared.recovery.recoverySha256, prepared.reader, {
+		action: "residual",
+		residualPlanPath: prepared.residualPath,
+	});
+	expect(result.residualPlan?.blocks).toBe(1);
+	expect(readFileSync(prepared.residualPath)).toEqual(prepared.bytes);
+	expect(existsSync(prepared.pendingPath)).toBe(false);
+	expect(readRecoveryLedger().plan).toMatchObject({ status: "retired" });
+});
+
+it("recovers an already-published residual before retiring its source plan", async () => {
+	const prepared = await prepareResidualRecovery();
+	writeFileSync(prepared.pendingPath, prepared.bytes, { mode: 0o600 });
+	writeFileSync(prepared.residualPath, prepared.bytes, { mode: 0o600 });
+	const result = await resolveCalendarRecovery(path, hash, prepared.recovery.recoverySha256, prepared.reader, {
+		action: "residual",
+		residualPlanPath: prepared.residualPath,
+	});
+	expect(result.residualPlan?.blocks).toBe(1);
+	expect(readFileSync(prepared.residualPath)).toEqual(prepared.bytes);
+	expect(existsSync(prepared.pendingPath)).toBe(false);
+	expect(readRecoveryLedger().plan).toMatchObject({ status: "retired" });
 });
 
 it("requires a fresh recovery approval when remote uncertainty changes", async () => {

@@ -38,6 +38,42 @@ const requestIdentity = (planId: string, hash: string, blockId: string, binding:
 
 const recoveryIdentity = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
+const requireExactPrivateFile = (path: string, expected: Buffer, label: string) => {
+	const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+	try {
+		const before = fstatSync(fd, { bigint: true });
+		if (
+			!before.isFile() ||
+			before.size !== BigInt(expected.length) ||
+			(before.mode & 0o077n) !== 0n ||
+			(process.geteuid !== undefined && before.uid !== BigInt(process.geteuid()))
+		)
+			throw new Error(`${label} is unsafe or does not match the approved bytes`);
+		const actual = readFileSync(fd);
+		const after = fstatSync(fd, { bigint: true });
+		if (
+			!actual.equals(expected) ||
+			before.dev !== after.dev ||
+			before.ino !== after.ino ||
+			before.size !== after.size ||
+			before.mtimeNs !== after.mtimeNs ||
+			before.ctimeNs !== after.ctimeNs
+		)
+			throw new Error(`${label} is unsafe or does not match the approved bytes`);
+	} finally {
+		closeSync(fd);
+	}
+};
+
+const fsyncDirectory = (path: string) => {
+	const fd = openSync(path, constants.O_RDONLY);
+	try {
+		fsyncSync(fd);
+	} finally {
+		closeSync(fd);
+	}
+};
+
 const record = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -393,8 +429,8 @@ export const resolveCalendarRecovery = async (
 	if (resolution.action === "residual") {
 		if (!resolution.residualPlanPath) throw new Error("Residual calendar recovery requires an output path");
 		const output = resolve(resolution.residualPlanPath);
-		if (existsSync(output) || realpathSync(dirname(output)) !== dirname(output))
-			throw new Error("Residual calendar plan output must be a new file in a canonical directory");
+		if (realpathSync(dirname(output)) !== dirname(output))
+			throw new Error("Residual calendar plan output must be in a canonical directory");
 		const planId = basename(output, ".json");
 		if (basename(output) !== `${planId}.json` || !/^[A-Za-z0-9_-]{1,128}$/.test(planId))
 			throw new Error("Residual calendar plan requires a safe .json plan ID");
@@ -411,6 +447,8 @@ export const resolveCalendarRecovery = async (
 
 	const db = openReceipts(planPath, false);
 	let committed = false;
+	let residualTemporaryCreated = false;
+	let residualOutputCreated = false;
 	try {
 		initializeReceipts(db);
 		db.exec("BEGIN IMMEDIATE");
@@ -433,17 +471,45 @@ export const resolveCalendarRecovery = async (
 			)
 				throw new Error("Calendar recovery state changed; inspect again");
 			if (residual) {
-				const fd = openSync(
-					residual.temporaryPath,
-					constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
-					0o600,
-				);
-				try {
-					writeFileSync(fd, residual.bytes);
-					fsyncSync(fd);
-				} finally {
-					closeSync(fd);
+				if (existsSync(residual.path)) {
+					requireExactPrivateFile(residual.path, residual.bytes, "Residual calendar plan output");
+					if (existsSync(residual.temporaryPath))
+						requireExactPrivateFile(residual.temporaryPath, residual.bytes, "Pending residual calendar plan");
+				} else {
+					if (existsSync(residual.temporaryPath)) {
+						requireExactPrivateFile(residual.temporaryPath, residual.bytes, "Pending residual calendar plan");
+					} else {
+						const fd = openSync(
+							residual.temporaryPath,
+							constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+							0o600,
+						);
+						residualTemporaryCreated = true;
+						try {
+							writeFileSync(fd, residual.bytes);
+							fsyncSync(fd);
+						} finally {
+							closeSync(fd);
+						}
+					}
+					const linkResult = Effect.runSync(
+						Effect.try({
+							try: () => linkSync(residual.temporaryPath, residual.path),
+							catch: (cause) => cause,
+						}).pipe(
+							Effect.match({
+								onFailure: (cause) => ({ linked: false as const, cause }),
+								onSuccess: () => ({ linked: true as const }),
+							}),
+						),
+					);
+					if (linkResult.linked) residualOutputCreated = true;
+					else {
+						if (!existsSync(residual.path)) throw linkResult.cause;
+						requireExactPrivateFile(residual.path, residual.bytes, "Residual calendar plan output");
+					}
 				}
+				fsyncDirectory(dirname(residual.path));
 			}
 			db.prepare("INSERT INTO resolutions VALUES(?,?,?,?,?,?)").run(
 				inspected.plan.plan_id,
@@ -459,12 +525,16 @@ export const resolveCalendarRecovery = async (
 		} finally {
 			if (!committed) {
 				db.exec("ROLLBACK");
-				if (residual && existsSync(residual.temporaryPath)) unlinkSync(residual.temporaryPath);
+				if (residual && residualOutputCreated && existsSync(residual.path)) unlinkSync(residual.path);
+				if (residual && residualTemporaryCreated && existsSync(residual.temporaryPath))
+					unlinkSync(residual.temporaryPath);
+				if (residual && (residualOutputCreated || residualTemporaryCreated)) fsyncDirectory(dirname(residual.path));
 			}
 		}
-		if (residual) {
-			linkSync(residual.temporaryPath, residual.path);
+		if (residual && existsSync(residual.temporaryPath)) {
+			requireExactPrivateFile(residual.temporaryPath, residual.bytes, "Pending residual calendar plan");
 			unlinkSync(residual.temporaryPath);
+			fsyncDirectory(dirname(residual.path));
 		}
 		return {
 			resolved: true as const,
