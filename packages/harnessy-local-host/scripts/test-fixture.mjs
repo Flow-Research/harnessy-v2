@@ -9,6 +9,8 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "../..");
 const coreSourceRoot = join(repoRoot, "packages", "harnessy-core", "src");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const installedModules = process.argv[2];
+if (process.argv.length > 3) throw new Error("Expected at most one installed node_modules directory");
 
 const run = (command, args, options = {}) => {
 	const result = spawnSync(command, args, {
@@ -66,10 +68,12 @@ assertNoCoreSourceEmit();
 let executionError;
 try {
 	run(process.execPath, ["--test", join(packageRoot, "test", "fixture-isolation-check.mjs")]);
-	run(npmCommand, ["exec", "--", "tsgo", "-p", "packages/harnessy-core/tsconfig.build.json"]);
-	run(npmCommand, ["run", "build", "--workspace", "@harnessy/sdk"]);
-	run(npmCommand, ["run", "build"], { cwd: packageRoot });
-	run(process.execPath, [join(packageRoot, "scripts", "fixture-smoke.mjs")], { cwd: packageRoot });
+	if (installedModules === undefined) {
+		run(npmCommand, ["exec", "--", "tsgo", "-p", "packages/harnessy-core/tsconfig.build.json"]);
+		run(npmCommand, ["run", "build", "--workspace", "@harnessy/sdk"]);
+		run(npmCommand, ["run", "build"], { cwd: packageRoot });
+	}
+	run(process.execPath, [join(packageRoot, "scripts", "fixture-smoke.mjs"), ...(installedModules === undefined ? [] : [resolve(installedModules)])], { cwd: packageRoot });
 } catch (cause) {
 	executionError = cause;
 }

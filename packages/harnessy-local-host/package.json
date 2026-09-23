@@ -12,6 +12,7 @@
 		"harnessy-meeting-review-open": "dist/meeting-review-open-cli.js",
 		"harnessy-meeting-import": "dist/meeting-import-cli.js",
 		"harnessy-meeting-review": "dist/meeting-review-cli.js",
+		"harnessy-meeting-setup": "dist/meeting-setup-cli.js",
 		"harnessy-meeting-smoke": "dist/meeting-smoke-cli.js",
 		"harnessy-meeting-worker": "dist/meeting-worker-cli.js"
 	},
@@ -42,7 +43,7 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/community-publication-cli.js dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js",
+		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/community-publication-cli.js dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-setup-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js",
 		"typecheck": "tsgo --noEmit -p tsconfig.json",
 		"test": "vitest --run",
 		"test:fixture": "node scripts/test-fixture.mjs"

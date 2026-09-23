@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FathomIngestOptions } from "../src/jarvis/fathom/ingest.ts";
-import { FATHOM_V2_POLL_ACCOUNTS, runFathomPoll } from "../src/jarvis/fathom/poll.ts";
+import { runFathomPoll } from "../src/jarvis/fathom/poll.ts";
 
 const options = (account: string): Omit<FathomIngestOptions, "account"> => ({
 	provider: {
@@ -14,8 +14,20 @@ const options = (account: string): Omit<FathomIngestOptions, "account"> => ({
 });
 
 describe("runFathomPoll", () => {
-	it("defaults to the owner-approved V2 account scope", () => {
-		expect(FATHOM_V2_POLL_ACCOUNTS).toEqual(["personal", "flowresearch"]);
+	it("rejects empty or unsafe selections before acquiring a provider", async () => {
+		for (const accounts of [[], [""], ["../private"], ["valid", " "]]) {
+			let acquired = false;
+			await expect(
+				runFathomPoll({
+					accounts,
+					createIngestOptions: (account) => {
+						acquired = true;
+						return options(account);
+					},
+				}),
+			).rejects.toThrow("Select valid Fathom accounts");
+			expect(acquired).toBe(false);
+		}
 	});
 
 	it("runs one bounded pass for each explicitly selected account", async () => {

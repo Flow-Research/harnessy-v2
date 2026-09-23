@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,9 +42,9 @@ def build_fathom_automation_plan(
     """Build the commands needed to run the webhook and tunnel stack."""
 
     webhook_args = [
-        "uv",
-        "run",
-        "python",
+        sys.executable,
+        "-I",
+        "-B",
         "-m",
         "jarvis",
         "meeting",

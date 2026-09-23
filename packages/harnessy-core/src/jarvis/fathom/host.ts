@@ -3,7 +3,7 @@ import type { JarvisPaths } from "../paths.ts";
 import { FathomFileStore } from "./file-store.ts";
 import { type FathomNoteImportReceipt, importRecentFathomNotes } from "./import-notes.ts";
 import { createFathomHttpProvider, type FathomIngestReceipt } from "./ingest.ts";
-import { FATHOM_V2_POLL_ACCOUNTS, runFathomPoll } from "./poll.ts";
+import { runFathomPoll } from "./poll.ts";
 
 export interface ConfiguredFathomPollOptions {
 	readonly config: JarvisResolvedConfig;
@@ -28,7 +28,11 @@ export interface ConfiguredFathomPollReceipt {
 export const runConfiguredFathomPoll = async (
 	options: ConfiguredFathomPollOptions,
 ): Promise<ConfiguredFathomPollReceipt> => {
-	const accounts = options.accounts ?? FATHOM_V2_POLL_ACCOUNTS;
+	const accounts = options.accounts ?? options.config.fathom.pollAccounts;
+	if (accounts === undefined || accounts.length === 0)
+		throw new Error("Set fathom.poll_accounts or pass --account before polling.");
+	if (accounts.some((account) => !Object.hasOwn(options.config.fathom.accounts, account.trim())))
+		throw new Error("Selected Fathom account is not configured.");
 	const result = await runFathomPoll({
 		accounts,
 		createIngestOptions: (account) => ({
@@ -45,7 +49,12 @@ export const runConfiguredFathomPoll = async (
 		}),
 	});
 	const importedNotes: FathomNoteImportReceipt | null = options.sourceRoot
-		? importRecentFathomNotes({ inboxRoot: options.inboxRoot, sourceRoot: options.sourceRoot })
+		? importRecentFathomNotes({
+				inboxRoot: options.inboxRoot,
+				sourceRoot: options.sourceRoot,
+				accounts: result.accounts,
+				project: options.config.meetingPublication.project,
+			})
 		: null;
 	return { accounts: result.accounts, results: result.results, importedNotes };
 };

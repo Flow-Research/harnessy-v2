@@ -336,6 +336,7 @@ it("keeps the private planning surface separate from the guarded runtime export"
 		"harnessy-meeting-import": "dist/meeting-import-cli.js",
 		"harnessy-meeting-review": "dist/meeting-review-cli.js",
 		"harnessy-meeting-review-open": "dist/meeting-review-open-cli.js",
+		"harnessy-meeting-setup": "dist/meeting-setup-cli.js",
 		"harnessy-meeting-smoke": "dist/meeting-smoke-cli.js",
 		"harnessy-meeting-worker": "dist/meeting-worker-cli.js",
 	});
@@ -368,6 +369,8 @@ it("keeps the private planning surface separate from the guarded runtime export"
 					"meeting-review-cli.ts",
 					"meeting-review-open-cli.ts",
 					"meeting-runtime.ts",
+					"meeting-service-enrollment.ts",
+					"meeting-service-recovery.ts",
 					"meeting-setup-cli.ts",
 					"meeting-setup-consent.ts",
 					"meeting-setup-input.ts",

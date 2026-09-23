@@ -32,6 +32,7 @@ const root = () => {
 	return path;
 };
 afterEach(() => {
+	vi.unstubAllEnvs();
 	for (const path of roots.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 const result = (command: ExternalCommand, status: "succeeded" | "failed" = "succeeded") =>
@@ -112,6 +113,7 @@ function fixture() {
 
 describe("signed weekly Life draft consumer", () => {
 	it("prepares with the real file-backed collector without reading owner state or starting commands", async () => {
+		vi.stubEnv("HARNESSY_LIFE_V1_SCRIPTS", undefined);
 		const path = root();
 		const scripts = fileURLToPath(
 			new URL(
@@ -122,8 +124,9 @@ describe("signed weekly Life draft consumer", () => {
 		const settings = resolveLifeOrchestratorSettings({
 			projectRoot: path,
 			homeRoot: path,
-			compatibilityRoot: scripts,
+			user: "fixture",
 		});
+		expect(settings.paths.compatibilityScriptsDirectory).toBe(scripts.replace(/\/$/u, ""));
 		const privateContext = join(path, ".jarvis", "context", "private", "fixture");
 		mkdirSync(privateContext, { recursive: true });
 		writeFileSync(join(privateContext, "priorities.md"), "# Priorities\nSynthetic collector canary\n");

@@ -184,7 +184,7 @@ export {
 	FathomProviderError,
 	ingestFathomPage,
 } from "./jarvis/fathom/ingest.ts";
-export { FATHOM_POLL_INTERVAL_SECONDS, FATHOM_V2_POLL_ACCOUNTS, runFathomPoll } from "./jarvis/fathom/poll.ts";
+export { FATHOM_POLL_INTERVAL_SECONDS, runFathomPoll } from "./jarvis/fathom/poll.ts";
 export {
 	FATHOM_LAUNCH_AGENT_LABEL,
 	FATHOM_POLL_INTERVAL_SECONDS as FATHOM_SCHEDULE_INTERVAL_SECONDS,

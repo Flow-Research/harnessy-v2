@@ -21,8 +21,9 @@
 		"requireExplicitOperationalAuthorization": true
 	},
 	"operationalBoundary": {
-		"currentWriter": "original Harnessy V1 checkout",
-		"v2WritersAllowed": false,
+		"ownershipEvidence": "Verify per-capability live ownership against docs/migrations/meeting-dispatch-execution-plan.md; this profile does not attest running processes.",
+		"runtimeAuthority": "Explicit verified service enrollment or finite authorization; deployment configuration is not authority.",
+		"v1ReactivationAllowed": false,
 		"requiredOrder": [
 			"create an owner-only SQLite-consistent initial backup and verify checksums and modes",
 			"restore the initial backup into an isolated destination and verify it",
@@ -34,17 +35,16 @@
 			"start and bind V2 writers",
 			"prove exactly one V2 writer",
 			"run workflow smoke tests and duplicate-write negative controls",
-			"revoke and stop V2 and prove zero V2 writers",
-			"restore and restart only V1 and prove one V1 writer with rollback smoke",
-			"stop V1 again and prove zero writers",
-			"take a new quiesced post-rollback backup and reconcile advanced state and checkpoints",
-			"verify and consume the distinct production authorization",
-			"roll forward to V2 and repeat one-writer and smoke evidence",
-			"make V1 read-only only after the roll-forward passes"
+			"rehearse recovery using a fresh isolated consistent native backup, restore, exact receipts and replay-state reconciliation, and installed V2 readers",
+			"verify reversible installation bindings and preserve V1 source and recovery artifacts without reactivating V1",
+			"before an actual recovery or replacement, stop affected writers and verify writer exclusion",
+			"take a fresh consistent snapshot and reconcile intervening decisions, native checkpoints and uncertain external receipts; never restore a stale or lossy V1 projection",
+			"resume only under verified finite authorization or explicit service enrollment without clearing stale leases or replaying consumed authorizations",
+			"prove exactly one V2 writer and verify the affected workflows without dummy or repeated publication"
 		]
 	},
 	"evidence": {
 		"persist": false,
-		"reason": "No deployment or operational cutover is configured or authorized."
+		"reason": "This shared profile configures no automatic deployment and grants no operational authority. Per-capability authorizations and operational evidence are recorded separately."
 	}
 }

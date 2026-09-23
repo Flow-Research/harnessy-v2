@@ -157,39 +157,52 @@ describe("Harnessy v1 full compatibility pack", () => {
 		}
 	});
 
-	it.live("loads the full v1 pack through the live CLI command tree", () =>
-		Effect.scoped(
-			Effect.gen(function* () {
-				const fs = yield* FileSystem.FileSystem;
-				const targetDir = yield* fs.makeTempDirectoryScoped();
-				const run = Command.runWith(rootCommand, { version: HARNESSY_VERSION });
+	it.live(
+		"loads the full v1 pack through the live CLI command tree",
+		() =>
+			Effect.scoped(
+				Effect.gen(function* () {
+					const fs = yield* FileSystem.FileSystem;
+					const targetDir = yield* fs.makeTempDirectoryScoped();
+					const run = Command.runWith(rootCommand, { version: HARNESSY_VERSION });
 
-				yield* run(["init", "--target", targetDir]);
-				yield* run(["capability", "add", v1FullPackRoot, "--target", targetDir]);
-				yield* run(["capability", "activate", "npm:@harnessy/capability-harnessy-v1-full", "--target", targetDir]);
-				yield* run(["verify", "--json", "--target", targetDir]);
+					yield* run(["init", "--target", targetDir]);
+					yield* run(["capability", "add", v1FullPackRoot, "--target", targetDir]);
+					yield* run([
+						"capability",
+						"activate",
+						"npm:@harnessy/capability-harnessy-v1-full",
+						"--target",
+						targetDir,
+					]);
+					yield* run(["verify", "--json", "--target", targetDir]);
 
-				const artifactRoot = `${targetDir}/${v1ArtifactResources}`;
-				expect(yield* fs.exists(`${artifactRoot}/source/package.json`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/source/scripts/flow/verify-harness.mjs`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/flow-install/index.mjs`)).toBe(true);
-				expect(yield* fs.exists(`${artifactRoot}/jarvis-cli/pyproject.toml`)).toBe(true);
+					const artifactRoot = `${targetDir}/${v1ArtifactResources}`;
+					expect(yield* fs.exists(`${artifactRoot}/source/package.json`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/scripts/flow/verify-harness.mjs`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/flow-install/index.mjs`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/jarvis-cli/pyproject.toml`)).toBe(true);
 
-				const logs = yield* TestConsole.logLines;
-				const verifyLog = logs.find(
-					(logged): logged is string => typeof logged === "string" && logged.includes('"command": "verify"'),
-				);
-				if (verifyLog === undefined) throw new Error("verify --json did not emit structured output");
-				const verify = JSON.parse(verifyLog) as StructuredVerifyOutput;
-				expect(verify.ok).toBe(true);
-				expect(verify.lockfile.capabilities[0]?.resolvedSource?.local?.root).toBe(v1FullPackRoot);
-				expect(verify.lockfile.capabilities[0]?.fingerprint?.fileCount).toBeGreaterThan(1000);
-				expect(verify.checks?.results.map((result) => [result.checkId, result.status])).toEqual(expectedV1Checks);
-			}),
-		).pipe(
-			Effect.provide(HarnessProject.layer),
-			Effect.provide(NodeServices.layer),
-			Effect.provide(TestConsole.layer),
-		),
+					const logs = yield* TestConsole.logLines;
+					const verifyLog = logs.find(
+						(logged): logged is string => typeof logged === "string" && logged.includes('"command": "verify"'),
+					);
+					if (verifyLog === undefined) throw new Error("verify --json did not emit structured output");
+					const verify = JSON.parse(verifyLog) as StructuredVerifyOutput;
+					expect(verify.ok).toBe(true);
+					expect(verify.lockfile.capabilities[0]?.resolvedSource?.local?.root).toBe(v1FullPackRoot);
+					expect(verify.lockfile.capabilities[0]?.fingerprint?.fileCount).toBeGreaterThan(1000);
+					expect(verify.checks?.results.map((result) => [result.checkId, result.status])).toEqual(
+						expectedV1Checks,
+					);
+				}),
+			).pipe(
+				Effect.provide(HarnessProject.layer),
+				Effect.provide(NodeServices.layer),
+				Effect.provide(TestConsole.layer),
+			),
+		// This path performs the same full-tree materialization as the first test and
+		// reached the default 30s bound on the hosted Linux runner.
+		{ timeout: 60_000 },
 	);
 });

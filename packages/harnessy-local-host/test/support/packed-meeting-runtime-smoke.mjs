@@ -28,7 +28,8 @@ const fullReviewOutputPath = join(installationRoot, "packed-meeting-full-review.
 const reconnectOutputPath = join(installationRoot, "packed-meeting-reconnect.mjs");
 const communityOutputPath = join(installationRoot, "packed-community-publication.mjs");
 const reconnectOnly = process.argv[4] === "--reconnect-only";
-if (process.argv.length > 5 || (process.argv[4] !== undefined && !reconnectOnly)) {
+const communityOnly = process.argv[4] === "--community-only";
+if (process.argv.length > 5 || (process.argv[4] !== undefined && !reconnectOnly && !communityOnly)) {
 	throw new Error("Unknown packed runtime fixture mode.");
 }
 const installedCoreRuntime = join(
@@ -84,6 +85,7 @@ const executorAliases = {
 };
 
 const fixtureAliases = {
+	"@packed/core-community-input": pathToFileURL(join(installationRoot, "node_modules/@harnessy/core/dist/jarvis/community-briefing/operational-input.js")).href,
 	"@packed/local-host-community-command": pathToFileURL(join(installationRoot, "node_modules/@harnessy/local-host/dist/community-publication-command.js")).href,
 	"@packed/core-community": pathToFileURL(join(installationRoot, "node_modules/@harnessy/core/dist/community-briefing.js")).href,
 	"@packed/core-community-operational-runtime": pathToFileURL(join(installationRoot, "node_modules/@harnessy/core/dist/jarvis/community-briefing/operational-runtime.js")).href,
@@ -122,8 +124,9 @@ const buildFixture = (entryPoint, outputPath) =>
 		],
 	});
 
-await buildFixture(join(supportRoot, "packed-meeting-reconnect-entry.mjs"), reconnectOutputPath);
-if (!reconnectOnly) await Promise.all([
+if (!communityOnly) await buildFixture(join(supportRoot, "packed-meeting-reconnect-entry.mjs"), reconnectOutputPath);
+if (communityOnly) await buildFixture(join(supportRoot, "packed-community-publication-entry.mjs"), communityOutputPath);
+if (!reconnectOnly && !communityOnly) await Promise.all([
 	buildFixture(join(supportRoot, "packed-community-publication-entry.mjs"), communityOutputPath),
 	buildFixture(
 		join(repoRoot, "packages", "harnessy-sdk", "test", "support", "packed-meeting-runtime-entry.ts"),
@@ -149,14 +152,22 @@ const runFixture = (path, label) => {
 	if (result.status !== 0) {
 		throw new Error([`Packed meeting ${label} failed.`, result.stdout, result.stderr].filter(Boolean).join("\n"));
 	}
-	if (result.stderr !== "") throw new Error(`Packed meeting ${label} emitted stderr.`);
+	// The community negative case must emit exactly one stop event; unexpected
+	// diagnostics and duplicate notifications remain failures.
+	if (label === "community publication") {
+		const expected = '{"error":"community_publication_stopped","retry":false}\n';
+		const unavailable = '{"warning":"community_stop_notification_unavailable"}\n';
+		if (result.stderr !== expected && result.stderr !== expected + unavailable)
+			throw new Error(`Packed community revocation did not emit the exact stop diagnostic: ${result.stderr}`);
+	} else if (result.stderr !== "") throw new Error(`Packed meeting ${label} emitted stderr.`);
 	const lines = result.stdout.trim().split("\n");
 	if (lines.length !== 1) throw new Error(`Packed meeting ${label} did not emit exactly one result line.`);
 	return JSON.parse(lines[0]);
 };
 
-const reconnect = runFixture(reconnectOutputPath, "native reconnect");
-if (reconnectOnly) process.stdout.write(`${JSON.stringify({ reconnect })}\n`);
+const reconnect = communityOnly ? undefined : runFixture(reconnectOutputPath, "native reconnect");
+if (communityOnly) process.stdout.write(`${JSON.stringify({ community: runFixture(communityOutputPath, "community publication") })}\n`);
+else if (reconnectOnly) process.stdout.write(`${JSON.stringify({ reconnect })}\n`);
 else {
 	const smoke = runFixture(smokeOutputPath, "runtime smoke");
 	const worker = runFixture(workerOutputPath, "worker");

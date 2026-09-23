@@ -42,6 +42,18 @@ const SOURCE_PACKAGES = Object.freeze([
 		provenance: "inherited-pi",
 	},
 	{
+		directory: "packages/capability-harnessy-v1-full",
+		name: "@harnessy/capability-harnessy-v1-full",
+		requiredFiles: [
+			"harnessy.capability.json",
+			"resources/SOURCE.json",
+			"resources/jarvis-cli/uv.lock",
+			"resources/source/jarvis-cli/uv.lock",
+		],
+		requiresHarnessyLicense: true,
+		provenance: "harnessy-authored",
+	},
+	{
 		directory: "packages/harnessy-core",
 		name: "@harnessy/core",
 		requiredFiles: [
@@ -59,18 +71,6 @@ const SOURCE_PACKAGES = Object.freeze([
 		directory: "packages/harnessy-engine",
 		name: "@harnessy/engine",
 		requiredFiles: ["dist/index.js", "dist/cloudflare.js", "dist/index.d.ts"],
-		requiresHarnessyLicense: true,
-		provenance: "harnessy-authored",
-	},
-	{
-		directory: "packages/capability-harnessy-v1-full",
-		name: "@harnessy/capability-harnessy-v1-full",
-		requiredFiles: [
-			"harnessy.capability.json",
-			"resources/SOURCE.json",
-			"resources/jarvis-cli/uv.lock",
-			"resources/source/jarvis-cli/uv.lock",
-		],
 		requiresHarnessyLicense: true,
 		provenance: "harnessy-authored",
 	},
@@ -140,6 +140,25 @@ export const packedReleasePackages = (tags) => [
 	...SOURCE_PACKAGES.slice(4).map((pkg) => ({ ...pkg })),
 ];
 
+/** Local operational candidates include private consumers without authorizing registry publication. */
+export const localReleasePackages = (tags) => [
+	...packedReleasePackages(tags),
+	{
+		directory: "packages/harnessy-sdk",
+		name: "@harnessy/sdk",
+		requiredFiles: ["dist/index.js", "dist/node.js", "dist/index.d.ts", "dist/node.d.ts", "dist/THIRD_PARTY_NOTICES.txt", "LICENSE"],
+		expectedLicense: "AGPL-3.0-only",
+		provenance: "harnessy-authored",
+	},
+	{
+		directory: "packages/harnessy-local-host",
+		name: "@harnessy/local-host",
+		requiredFiles: ["dist/cli.js", "dist/meeting-setup-cli.js", "dist/meeting-full-review-cli.js", "dist/meeting-review-open-cli.js", "dist/community-publication-cli.js", "LICENSE"],
+		expectedLicense: "AGPL-3.0-only",
+		provenance: "harnessy-authored",
+	},
+];
+
 export const intentionallyUnpublishedPackages = Object.freeze([
 	{
 		directory: "packages/orchestrator",
@@ -156,7 +175,7 @@ export const intentionallyUnpublishedPackages = Object.freeze([
 		directory: "packages/harnessy-local-host",
 		name: "@harnessy/local-host",
 		reason:
-			"Private local-only migration scaffold; it is intentionally inactive and must never enter the publication set.",
+			"Private operational host included in verified local release candidates; registry publication remains excluded and installation does not authorize service activation.",
 	},
 ]);
 

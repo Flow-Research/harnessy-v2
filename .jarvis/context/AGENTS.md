@@ -4,7 +4,9 @@
 - Harnessy V2 is canonical for all new runtime, capability, package, workflow,
   connector-contract, product, QA, and release work.
 - Treat the original Harnessy repository as a frozen compatibility oracle and
-  the current live scheduler owner. Changes there are limited to urgent
+  recovery source. Determine live ownership per capability from current process
+  evidence and the migration execution plan, not historical ownership text.
+  Do not reactivate replaced V1 writers. Changes there are limited to urgent
   operations, state export, migration, rollback, deprecation, and reviewed
   compatibility correction.
 - Do not stop, redirect, or duplicate V1 schedulers until the backup,

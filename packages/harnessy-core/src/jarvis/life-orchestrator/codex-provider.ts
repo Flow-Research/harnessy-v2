@@ -3,7 +3,7 @@ import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-code
 import * as Effect from "effect/Effect";
 
 import { readStableMeetingPublicationSmokeFile } from "../meeting-publication/operational-input.ts";
-import type { LifeDraftProvider } from "./draft-provider.ts";
+import type { LifeDraftRequest } from "./draft-provider.ts";
 
 export interface CodexLifeDraftProviderOptions {
 	readonly authPath: string;
@@ -12,13 +12,10 @@ export interface CodexLifeDraftProviderOptions {
 }
 
 /** One text-only request. The optional provider is an isolated-test seam, never CLI configuration. */
-export const createCodexLifeDraftProvider = (
-	input: CodexLifeDraftProviderOptions,
-	provider = openaiCodexProvider(),
-): LifeDraftProvider => {
+export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, provider = openaiCodexProvider()) => {
 	const options = Object.freeze({ ...input });
 	return {
-		generate: async (request, signal) => {
+		generate: async (request: Pick<LifeDraftRequest, "provider" | "model" | "prompt">, signal: AbortSignal) => {
 			if (signal.aborted) throw new Error("Codex draft cancelled before execution.");
 			if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 600_000)
 				throw new Error("Codex timeout must be a positive bounded integer.");
@@ -182,3 +179,6 @@ export const createCodexLifeDraftProvider = (
 		},
 	};
 };
+
+// Existing Life callers keep the same text-only transport and validation.
+export const createCodexLifeDraftProvider = createCodexDraftProvider;

@@ -17,9 +17,17 @@ import {
 	localMeetingPublicationNotifierLayer,
 	makeHarnessyEngine,
 } from "@harnessy/sdk/node";
-import { Effect, Layer } from "effect";
+import { Deferred, Effect, Layer } from "effect";
+import type * as Scope from "effect/Scope";
+import { startCommunityBackground } from "./community-background.ts";
+import { enrollCommunityBeforeEngine, runCommunityPublicationCommand } from "./community-publication-command.ts";
+import { notifyMeetingFullReviewStopped } from "./meeting-full-review-stop-notification.ts";
 
-const artifactAnchors = Object.freeze({
+type OnEngine = (
+	handle: Effect.Success<ReturnType<typeof makeHarnessyEngine>>,
+) => Effect.Effect<void, unknown, Scope.Scope>;
+
+export const artifactAnchors = Object.freeze({
 	host: fileURLToPath(import.meta.url),
 	sdk: fileURLToPath(import.meta.resolve("@harnessy/sdk/node")),
 	dependencies: fileURLToPath(import.meta.resolve("effect")),
@@ -27,10 +35,13 @@ const artifactAnchors = Object.freeze({
 
 const makeProviders = (
 	binding: Omit<MeetingPublicationSmokeProviderBinding, "item">,
+	onEngine?: OnEngine,
+	beforeEngine?: Effect.Effect<void, unknown>,
 ): ReturnType<MeetingPublicationSmokeProviderFactory["make"]> =>
 	Effect.gen(function* () {
 		// Core calls this only after authentic authorization and exclusive lease
 		// acquisition. Neither credentials nor Engine resources are acquired at import.
+		if (beforeEngine !== undefined) yield* beforeEngine;
 		const handle = yield* makeHarnessyEngine({
 			tenant: binding.tenantId,
 			subject: binding.subjectId,
@@ -47,6 +58,7 @@ const makeProviders = (
 							discordBaseUrl: binding.transport.discordBaseUrl,
 						},
 		});
+		if (onEngine !== undefined) yield* onEngine(handle);
 		// Provider preflight reports missing connections through the health service,
 		// so the reviewer and notifier remain available during credential recovery.
 		// The scoped Engine and exact connection bindings still gate every write.
@@ -69,10 +81,13 @@ const makeProviders = (
 
 const providers: MeetingPublicationSmokeProviderFactory = { artifactAnchors, make: makeProviders };
 
-const workerProviders: MeetingPublicationWorkerProviderFactory = {
+const workerProviders = (
+	onEngine?: OnEngine,
+	beforeEngine?: Effect.Effect<void, unknown>,
+): MeetingPublicationWorkerProviderFactory => ({
 	artifactAnchors,
 	make: (binding) =>
-		makeProviders(binding).pipe(
+		makeProviders(binding, onEngine, beforeEngine).pipe(
 			Effect.map((layer) =>
 				Layer.merge(
 					layer,
@@ -95,7 +110,7 @@ const workerProviders: MeetingPublicationWorkerProviderFactory = {
 				),
 			),
 		),
-};
+});
 
 /** Explicit programmatic smoke boundary; not registered in the planning CLI. */
 export const runLocalHostMeetingSmoke: (
@@ -107,16 +122,63 @@ export const runLocalHostMeetingSmoke: (
 export const runLocalHostMeetingWorker: (
 	input: MeetingPublicationWorkerRuntimeInput,
 ) => ReturnType<typeof runAuthorizedMeetingPublicationWorker> = (input) =>
-	runAuthorizedMeetingPublicationWorker(input, workerProviders);
+	runAuthorizedMeetingPublicationWorker(input, workerProviders());
 
 /** Full review and manual dispatch share one authorized runtime and provider owner. */
 export const runLocalHostMeetingFullReview: (
 	input: MeetingPublicationFullReviewRuntimeInput,
 	onReady: Parameters<typeof runAuthorizedMeetingPublicationFullReview>[2]["onReady"],
 	drain?: Parameters<typeof runAuthorizedMeetingPublicationFullReview>[2]["drain"],
-) => ReturnType<typeof runAuthorizedMeetingPublicationFullReview> = (input, onReady, drain) =>
-	runAuthorizedMeetingPublicationFullReview(input, workerProviders, {
-		artifactAnchors,
-		onReady,
-		...(drain === undefined ? {} : { drain }),
-	});
+	communityConfig?: string,
+) => ReturnType<typeof runAuthorizedMeetingPublicationFullReview> = (input, onReady, drain, communityConfig) =>
+	Effect.scoped(
+		Effect.gen(function* () {
+			const ready = yield* Deferred.make<void>();
+			let stopCommunity: Effect.Effect<void> = Effect.void;
+			const onEngine: OnEngine | undefined =
+				communityConfig === undefined
+					? undefined
+					: (handle) =>
+							Effect.gen(function* () {
+								stopCommunity = yield* startCommunityBackground(
+									Deferred.await(ready).pipe(
+										Effect.andThen(
+											runCommunityPublicationCommand(["--service-config", communityConfig], handle).pipe(
+												Effect.flatMap((result) =>
+													result.exitCode === 0
+														? Effect.void
+														: Effect.fail(new Error("community_publication_stopped")),
+												),
+											),
+										),
+									),
+									Effect.promise(async () => {
+										process.stderr.write('{"error":"community_publication_stopped","retry":false}\n');
+										if (!(await notifyMeetingFullReviewStopped(undefined, undefined, "community")))
+											process.stderr.write('{"warning":"community_stop_notification_unavailable"}\n');
+									}),
+								);
+							});
+			yield* runAuthorizedMeetingPublicationFullReview(
+				input,
+				workerProviders(
+					onEngine,
+					communityConfig === undefined ? undefined : enrollCommunityBeforeEngine(communityConfig),
+				),
+				{
+					artifactAnchors,
+					onReady: (address) => onReady(address).pipe(Effect.andThen(Deferred.succeed(ready, undefined))),
+					...(drain === undefined
+						? {}
+						: {
+								drain: {
+									...drain,
+									additionalDrain: Effect.suspend(() => stopCommunity).pipe(
+										Effect.andThen(drain.additionalDrain ?? Effect.void),
+									),
+								},
+							}),
+				},
+			);
+		}),
+	);

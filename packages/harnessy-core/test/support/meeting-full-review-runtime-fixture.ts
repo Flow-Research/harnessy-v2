@@ -11,6 +11,7 @@ import {
 	canonicalMeetingPublicationSmokeJson,
 	MEETING_PUBLICATION_FULL_REVIEW_AUDIENCE,
 	MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS,
+	MEETING_PUBLICATION_SERVICE_AUDIENCE,
 	MEETING_PUBLICATION_WORKER_AUDIENCE,
 	MEETING_PUBLICATION_WORKER_OPERATIONS,
 	type MeetingPublicationFullReviewRuntimeInput,
@@ -259,12 +260,14 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 	let writersPresent = false;
 	let observationStep = 0n;
 	let observationOffsetMillis = 0;
+	let bootId = observation.bootId;
 	const system: MeetingPublicationSmokeRuntimeSystem = {
 		observe: () => {
 			const step = observationStep;
 			observationStep += 1_000_000n;
 			return {
 				...observation,
+				bootId,
 				now: observation.now + observationOffsetMillis + Number(step / 1_000_000n),
 				monotonic: observation.monotonic + BigInt(observationOffsetMillis) * 1_000_000n + step,
 			};
@@ -288,6 +291,8 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 		providerArtifactAnchors,
 		replayPath,
 		authorizationPath,
+		/** Synthetic fixture key only; supports exercising the installed owner command. */
+		writeOwnerKey: (path: string) => writePrivate(path, privateKey.export({ type: "pkcs8", format: "pem" })),
 		resign: (mutate?: (draft: typeof payload) => void) => {
 			mutate?.(payload);
 			writeAuthorization();
@@ -297,6 +302,47 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 		},
 		advanceTimeBy: (milliseconds: number) => {
 			observationOffsetMillis += milliseconds;
+		},
+		simulateReboot: () => {
+			bootId = `fixture-${randomBytes(16).toString("hex")}`;
+		},
+		createServiceInput: (serviceOptions?: { readonly fresh: boolean }): MeetingPublicationFullReviewRuntimeInput => {
+			const serviceTrust = join(options.privateRoot, "service-trust.json");
+			writePrivate(
+				serviceTrust,
+				canonicalBytes({
+					kind: "harnessy.meeting-publication.service-trust",
+					schemaVersion: 1,
+					audience: MEETING_PUBLICATION_SERVICE_AUDIENCE,
+					keys: [trustKey],
+					replay: replayIdentity,
+				}),
+			);
+			const servicePath = join(options.privateRoot, "service-enrollment.json");
+			const enrollment = {
+				...payload,
+				kind: "harnessy.meeting-publication.service-enrollment",
+				audience: MEETING_PUBLICATION_SERVICE_AUDIENCE,
+				runtimeMode: "service",
+				expiresAt: null,
+				cutoverEvidence: serviceOptions?.fresh ? null : payload.cutoverEvidence,
+				rollbackPlan: serviceOptions?.fresh ? null : payload.rollbackPlan,
+				runtime: { ...runtime, bootId: null },
+			};
+			writePrivate(
+				servicePath,
+				canonicalBytes({
+					payload: enrollment,
+					signature: sign(
+						null,
+						Buffer.from(
+							`${MEETING_PUBLICATION_SERVICE_AUDIENCE}\0${canonicalMeetingPublicationSmokeJson(enrollment)}`,
+						),
+						privateKey,
+					).toString("base64url"),
+				}),
+			);
+			return { mode: "service", authorizationPath: servicePath, trustedKeyring: boundFile(serviceTrust) };
 		},
 		revoke: () => {
 			const database = new DatabaseSync(replayPath, { allowExtension: false });

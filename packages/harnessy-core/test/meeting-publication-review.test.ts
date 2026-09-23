@@ -662,10 +662,10 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(state.calls).toEqual({ google: 0, discord: 0, notifier: 0 });
 	});
 
-	it("creates a protected bootstrap token and bounds session, logout, restart, and socket lifecycle", async () => {
+	it.each([60, 7_200])("enforces the %s-second session lifecycle", async (seconds) => {
 		const root = makeRoot();
 		writeFileSync(join(root, "notes", "meeting.md"), markdown());
-		const config = makeConfig(root);
+		const config = makeConfig(root, { reviewSessionSeconds: seconds });
 		const state = makeState();
 		const first = await Effect.runPromise(
 			Effect.scoped(
@@ -690,7 +690,11 @@ describe("MeetingPublicationReviewServer", () => {
 					const itemPage = yield* Effect.promise(() =>
 						call(review.address.origin, `/item/${item.itemId}`, { cookie: session.cookie }),
 					);
-					state.now += 61_000;
+					state.now += seconds * 1_000 - 1;
+					const beforeExpiry = yield* Effect.promise(() =>
+						call(review.address.origin, "/", { cookie: session.cookie }),
+					);
+					state.now += 1;
 					const expired = yield* Effect.promise(() =>
 						call(review.address.origin, "/", { cookie: session.cookie }),
 					);
@@ -735,6 +739,7 @@ describe("MeetingPublicationReviewServer", () => {
 						exchanged,
 						session,
 						itemPage,
+						beforeExpiry,
 						expired,
 						logout,
 						loggedOut,
@@ -762,7 +767,8 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(first.session.attributes).toContain("HttpOnly");
 		expect(first.session.attributes).toContain("SameSite=Strict");
 		expect(first.session.attributes).toContain("Path=/");
-		expect(first.session.attributes).toContain("Max-Age=60");
+		expect(first.session.attributes).toContain(`Max-Age=${seconds}`);
+		expect(first.beforeExpiry.status).toBe(200);
 		expect(first.itemPage.status).toBe(200);
 		expect(first.itemPage.headers["referrer-policy"]).toBe("same-origin");
 		expect(first.newest.body).toContain('<header class="page-intro">');
@@ -813,6 +819,7 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(restarted.itemPage.body).not.toContain(first.token);
 		expect(restarted.itemPage.headers["referrer-policy"]).toBe("same-origin");
 		expect(state.closed).toEqual({ google: 2, discord: 2, notifier: 2 });
+		expect(state.calls).toEqual({ google: 0, discord: 0, notifier: 0 });
 	});
 
 	it("rejects unsafe bind and token-file configurations before serving", async () => {

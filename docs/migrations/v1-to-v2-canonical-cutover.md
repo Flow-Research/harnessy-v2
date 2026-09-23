@@ -1,7 +1,22 @@
 # V1 to V2 canonical cutover
 
-Status: uncommitted local implementation checkpoint; review, remote evidence, native promotion, and operational cutover remain  
+Status: historical baseline and reusable migration safety contract; current operational evidence is maintained in the [execution plan](meeting-dispatch-execution-plan.md).
 Canonical decision: [ADR 0004](../adr/0004-harnessy-v2-is-canonical.md)
+
+Read the execution plan's current closure checkpoint before acting. Later
+owner-authorized V2 ownership, private-context placement and installed bindings
+supersede the historical statements below that V1 is the live writer. Do not
+repeat completed transfers, reactivate V1, or treat an old rollback candidate as
+current state. Preserve the backup, one-writer, exact-approval and receipt
+reconciliation safeguards; historical fixture success is not live acceptance.
+
+The owner-approved 20 September amendment in ADR 0006 replaces the mandatory
+production V1 restart with fresh isolated backup/restore, receipt reconciliation
+and installed V2 recovery, plus reversible V2 installation bindings. Keep V1
+disabled and its source/state recoverable. Do not label that rehearsal a live
+rollback; future actual recovery still requires writer exclusion, reconciliation
+of current state and fresh finite authority. The execution plan records the
+verified scope and remaining whole-migration gates.
 
 This is the execution contract for making Harnessy V2 canonical locally and remotely. A checkbox is complete only when its evidence is reproducible from a clean checkout.
 
@@ -187,22 +202,34 @@ testing.
   evidence contract. Its receipts hardcode `fixtureOnly:true` and
   `operationalEvidence:false`; it has no CLI/runtime export and does not satisfy
   the live backup gate below.
-- [ ] Create an owner-only, SQLite-consistent initial backup of local `.jarvis`
+- [x] Create an owner-only, SQLite-consistent initial backup of local `.jarvis`
   and scheduler state; verify checksums/modes and rehearse an isolated restore.
-- [ ] Stage V2-owned commands and skills from the exact reviewed package
+- [x] Stage V2-owned commands and skills from the exact reviewed package
   artifact without activation.
-- [ ] Stop V1 schedulers, prove zero known writers, and take a final quiesced
+- [x] Stop V1 schedulers, prove zero known writers, and take a final quiesced
   backup before starting V2 schedulers.
-- [ ] Regenerate schedules with V2 paths; do not copy old launch-agent definitions blindly.
-- [ ] Prove exactly one active writer per capability.
+- [x] Regenerate schedules with V2 paths; do not copy old launch-agent definitions blindly.
+- [x] Prove exactly one active writer per capability for the supervised meeting
+  ownership slice: V1 meeting worker/review labels are disabled, V2 Fathom is
+  the only loaded meeting scheduler, and the V2 full-review owner holds the
+  bounded signed session lease. V1 files and rollback state remain preserved.
 - [ ] Smoke-test queued-meeting reminder, review, Google publication, Discord notification, Fathom polling, and daily/weekly orchestration.
-- [ ] Exercise rollback from the backup.
-- [ ] Before rolling forward, stop V1 again, prove zero writers, take and bind a
-  new quiesced post-rollback backup, and reconcile any source, per-capability
-  state, or external checkpoint changes made during the V1 rollback smoke.
-- [ ] Verify and consume the distinct production authorization, roll forward,
-  re-prove exactly one V2 writer, and repeat the required V2 smoke.
+- [x] Complete the approved isolated fresh-state recovery gate for meeting and
+  community queues and meeting replay state, retaining complete/partial receipts,
+  native-only checkpoints and consumed grants; verify reversible CLI bindings.
+  The 20 September execution-plan evidence is scoped and not a live V1 rollback.
+- [ ] Complete the final per-capability ownership audit. Before any actual future
+  recovery or writer resumption, exclude writers, capture fresh consistent state,
+  reconcile intervening source/decision/receipt changes, and use fresh finite
+  authority. Never restore stale state or replay a consumed authorization.
 - [ ] Make the original local repository read-only only after all prior checks pass.
+
+The supervised meeting ownership milestone is now enabled: V2 is canonical for
+meeting source ingestion, queue state, review, and dispatch logic; V1 is
+retained read-only for rollback. The external Google/Discord dispatch smoke
+receipt is explicitly deferred until the next genuinely eligible meeting. No
+dummy or historical delivery is permitted, and this deferred receipt does not
+keep the V1 meeting writers active.
 
 State to migrate operationally, never through Git, includes meeting and weekly-briefing SQLite databases, review tokens/logs, private briefing drafts/provenance, global Jarvis config/environment, life/cron state, and installed launch-agent files. Review tokens should be regenerated rather than copied.
 

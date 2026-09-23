@@ -12,9 +12,15 @@ export {
 	communityBriefingGrantPayload,
 	type SignedCommunityBriefingGrant,
 } from "./jarvis/community-briefing/grant-host.ts";
-export { runAuthorizedCommunityBriefing } from "./jarvis/community-briefing/operational-runtime.ts";
+export { encodeCommunityServiceEnrollmentRequest } from "./jarvis/community-briefing/operational-input.ts";
+export {
+	controlCommunityPublicationService,
+	prepareCommunityPublicationService,
+	runAuthorizedCommunityBriefing,
+} from "./jarvis/community-briefing/operational-runtime.ts";
 export type {
 	CommunityBriefingDiscordRequest,
 	CommunityBriefingGoogleRequest,
 } from "./jarvis/community-briefing/service.ts";
 export { CommunityBriefingDiscord, CommunityBriefingGoogle } from "./jarvis/community-briefing/service.ts";
+export { provisionCommunityPublicationService } from "./jarvis/community-briefing/service-setup.ts";

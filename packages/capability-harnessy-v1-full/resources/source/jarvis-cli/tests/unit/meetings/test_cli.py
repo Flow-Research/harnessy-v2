@@ -1,6 +1,8 @@
 """CLI tests for meeting ingestion commands."""
 
 import json
+import shlex
+import sys
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -727,6 +729,40 @@ class TestMeetingCli:
         assert "--dest private-context --dest memory" in parsed["webhook_command"]
         assert "cloudflared tunnel" in parsed["tunnel_command"]
         assert parsed["layout"] == "windows"
+
+    def test_fathom_start_uses_current_isolated_interpreter_for_restarts(
+        self, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        runtime = "/opt/Harnessy Runtime/jarvis-runtime/bin/python"
+        monkeypatch.setattr(sys, "executable", runtime)
+        monkeypatch.setattr(
+            "jarvis.meetings.cli.load_config",
+            lambda: type(
+                "Cfg",
+                (),
+                {
+                    "fathom": type(
+                        "F",
+                        (),
+                        {"accounts": {"work": object()}, "default_account": "work"},
+                    )()
+                },
+            )(),
+        )
+        monkeypatch.setattr("jarvis.meetings.cli.require_command", lambda name: None)
+        runner = CliRunner()
+
+        commands = []
+        for _ in range(2):
+            result = runner.invoke(
+                meeting_cli,
+                ["fathom", "start", "--account", "work", "--dry-run", "--json"],
+            )
+            assert result.exit_code == 0
+            commands.append(json.loads(result.output)["webhook_command"])
+
+        assert commands[0] == commands[1]
+        assert shlex.split(commands[0])[:5] == [runtime, "-I", "-B", "-m", "jarvis"]
 
     def test_fathom_start_command_named_tunnel_dry_run_json(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         runner = CliRunner()

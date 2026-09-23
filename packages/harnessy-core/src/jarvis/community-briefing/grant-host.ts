@@ -20,9 +20,9 @@ export interface SignedCommunityBriefingGrant {
 	readonly grantId: string;
 	readonly queuePath: string;
 	readonly statePath: string;
-	readonly briefingId: string;
-	readonly sourceHash: string;
-	readonly expiresAt: string;
+	readonly briefingId: string | null;
+	readonly sourceHash: string | null;
+	readonly expiresAt: string | null;
 	readonly providerScope: CommunityBriefingProviderScope;
 	readonly signature: string;
 	readonly operational?: CommunityOperationalBinding;
@@ -30,7 +30,9 @@ export interface SignedCommunityBriefingGrant {
 
 export const communityBriefingGrantPayload = (grant: Omit<SignedCommunityBriefingGrant, "signature">): string =>
 	JSON.stringify([
-		"harnessy.community.briefing.publish.v1",
+		grant.operational?.kind === "harnessy.community.briefing.service.v1"
+			? "harnessy.community.briefing.service.v1"
+			: "harnessy.community.briefing.publish.v1",
 		grant.issuer,
 		grant.grantId,
 		resolve(grant.queuePath),
@@ -54,7 +56,12 @@ const ownerOnly = (path: string, label: string): string => {
 	return canonical;
 };
 
-/** Verifies and atomically consumes one owner-signed community publication grant. */
+export const COMMUNITY_BRIEFING_GRANT_SCHEMA_SQL = `PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
+CREATE TABLE IF NOT EXISTS community_briefing_grants (
+ grant_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, consumed_at TEXT, revoked INTEGER NOT NULL DEFAULT 0 CHECK (revoked IN (0,1))
+);`;
+
+/** Verifies one-shot grants or explicitly enrolled service authority in the same ledger. */
 export class CommunityBriefingGrantHost {
 	readonly #database: DatabaseSync;
 	readonly #keys: ReadonlyMap<string, KeyObject>;
@@ -110,10 +117,7 @@ export class CommunityBriefingGrantHost {
 		)
 			throw new Error("Community grant database must be an owner-only regular file.");
 		const database = new DatabaseSync(databasePath, { timeout: 10_000 });
-		database.exec(`PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
-CREATE TABLE IF NOT EXISTS community_briefing_grants (
- grant_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL, consumed_at TEXT, revoked INTEGER NOT NULL DEFAULT 0 CHECK (revoked IN (0,1))
-);`);
+		database.exec(COMMUNITY_BRIEFING_GRANT_SCHEMA_SQL);
 		this.#database = database;
 		this.#keys = keys;
 		this.#now = now;
@@ -131,11 +135,90 @@ ON CONFLICT(grant_id) DO UPDATE SET revoked=1`)
 			.run(grantId);
 	}
 
+	#validateSignature(signed: SignedCommunityBriefingGrant): string {
+		if (resolve(signed.queuePath) !== this.#queuePath || resolve(signed.statePath) !== this.#statePath)
+			throw new Error("Community grant path binding changed.");
+		if (communityBriefingProviderScopePayload(signed.providerScope) !== this.#providerScopePayload)
+			throw new Error("Community grant provider scope differs from the owning host.");
+		const key = this.#keys.get(signed.issuer);
+		const signature = Buffer.from(signed.signature, "base64");
+		const payload = communityBriefingGrantPayload(signed);
+		if (
+			!key ||
+			signature.length !== 64 ||
+			signature.toString("base64") !== signed.signature ||
+			!verify(null, Buffer.from(payload), key, signature)
+		)
+			throw new Error("Community grant signature is not trusted.");
+		return createHash("sha256").update(payload).digest("hex");
+	}
+
+	#recordGrant(signed: SignedCommunityBriefingGrant, digest: string, reusable: boolean): void {
+		const result = this.#database
+			.prepare(`INSERT INTO community_briefing_grants(grant_id,payload_hash,consumed_at)
+VALUES (?,?,?) ON CONFLICT(grant_id) DO NOTHING`)
+			.run(signed.grantId, digest, new Date(this.#now()).toISOString());
+		if (result.changes === 1) return;
+		const enrolled = this.#database
+			.prepare("SELECT payload_hash,consumed_at,revoked FROM community_briefing_grants WHERE grant_id=?")
+			.get(signed.grantId);
+		if (
+			!reusable ||
+			enrolled?.payload_hash !== digest ||
+			enrolled.revoked !== 0 ||
+			typeof enrolled.consumed_at !== "string"
+		)
+			throw new Error("Community grant was consumed or revoked; reconcile before retrying.");
+	}
+
+	/** Record a verified service adoption even when there is no approved item yet.
+	 * The operational caller verifies artifact and database identities before this call.
+	 * This issues no publication grant and never clears retained ownership.
+	 */
+	enrollService(signed: SignedCommunityBriefingGrant): void {
+		const digest = this.#validateSignature(signed);
+		const operation = signed.operational;
+		const now = this.#now();
+		if (
+			operation?.kind !== "harnessy.community.briefing.service.v1" ||
+			operation.runtime.bootId !== null ||
+			signed.briefingId !== null ||
+			signed.sourceHash !== null ||
+			signed.expiresAt !== null ||
+			!signed.grantId.trim() ||
+			!Number.isFinite(now) ||
+			!Number.isFinite(Date.parse(operation.notBefore)) ||
+			Date.parse(operation.notBefore) > now
+		)
+			throw new Error("Invalid community service enrollment.");
+		this.#database.exec("BEGIN IMMEDIATE");
+		let committed = false;
+		try {
+			if (this.#database.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger'").get())
+				throw new Error("Community ledger trigger rejected.");
+			if (
+				this.#database
+					.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='community_briefing_lease'")
+					.get() &&
+				this.#database.prepare("SELECT 1 FROM community_briefing_lease").get()
+			)
+				throw new Error("Community lease requires reconciliation.");
+			this.#recordGrant(signed, digest, true);
+			this.#database.exec("COMMIT");
+			committed = true;
+		} finally {
+			if (!committed) this.#database.exec("ROLLBACK");
+		}
+	}
+
 	bind(
 		envelope: SignedCommunityBriefingGrant,
 		operation?: {
 			readonly check: () => Effect.Effect<void, Error>;
 			readonly assertLedger: () => void;
+			readonly serviceItem?: { readonly briefingId: string; readonly sourceHash: string };
+			readonly bootId?: string;
+			readonly deadline?: string;
 		},
 	): {
 		readonly authorize: () => Effect.Effect<CommunityBriefingWriteGrant, Error>;
@@ -154,6 +237,13 @@ ON CONFLICT(grant_id) DO UPDATE SET revoked=1`)
 						) as CommunityOperationalBinding,
 					}),
 		});
+		const service = signed.operational?.kind === "harnessy.community.briefing.service.v1";
+		const item = service ? operation?.serviceItem : { briefingId: signed.briefingId, sourceHash: signed.sourceHash };
+		if (!item || typeof item.briefingId !== "string" || typeof item.sourceHash !== "string")
+			throw new Error("Community publication requires an exact item binding.");
+		const selected = Object.freeze({ briefingId: item.briefingId, sourceHash: item.sourceHash });
+		const bootId = service ? operation?.bootId : signed.operational?.runtime.bootId;
+		const deadline = service ? operation?.deadline : signed.expiresAt;
 		let issued: CommunityBriefingWriteGrant | undefined;
 		const assertLease = () => {
 			if (operation === undefined) return;
@@ -167,8 +257,8 @@ ON CONFLICT(grant_id) DO UPDATE SET revoked=1`)
 				row?.lease_id !== leaseId ||
 				row.grant_id !== signed.grantId ||
 				row.pid !== process.pid ||
-				row.boot_id !== signed.operational?.runtime.bootId ||
-				row.expires_at !== signed.expiresAt
+				row.boot_id !== bootId ||
+				row.expires_at !== deadline
 			)
 				throw new Error("Community lease lost.");
 		};
@@ -176,35 +266,31 @@ ON CONFLICT(grant_id) DO UPDATE SET revoked=1`)
 			queuePath: this.#queuePath,
 			statePath: this.#statePath,
 			providerScope: this.#providerScope,
-			item: { briefingId: signed.briefingId, sourceHash: signed.sourceHash },
+			item: selected,
 		};
 		const validate = (): string => {
-			if (resolve(signed.queuePath) !== this.#queuePath || resolve(signed.statePath) !== this.#statePath)
-				throw new Error("Community grant path binding changed.");
-			if (communityBriefingProviderScopePayload(signed.providerScope) !== this.#providerScopePayload)
-				throw new Error("Community grant provider scope differs from the owning host.");
-			const key = this.#keys.get(signed.issuer);
-			const unsigned = { ...signed } as Omit<SignedCommunityBriefingGrant, "signature">;
-			const signature = Buffer.from(signed.signature, "base64");
+			const digest = this.#validateSignature(signed);
 			if (
-				!key ||
-				signature.length !== 64 ||
-				signature.toString("base64") !== signed.signature ||
-				!verify(null, Buffer.from(communityBriefingGrantPayload(unsigned)), key, signature)
+				service &&
+				(signed.briefingId !== null ||
+					signed.sourceHash !== null ||
+					signed.expiresAt !== null ||
+					!bootId ||
+					!operation)
 			)
-				throw new Error("Community grant signature is not trusted.");
-			const expires = Date.parse(signed.expiresAt);
+				throw new Error("Invalid community service enrollment.");
+			const expires = typeof deadline === "string" ? Date.parse(deadline) : Number.NaN;
 			const now = this.#now();
 			if (
 				!Number.isFinite(now) ||
 				!Number.isFinite(expires) ||
 				expires <= now ||
 				!signed.grantId.trim() ||
-				!/^[a-f0-9]{64}$/.test(signed.sourceHash) ||
-				!signed.briefingId.trim()
+				!/^[a-f0-9]{64}$/.test(selected.sourceHash) ||
+				!selected.briefingId.trim()
 			)
 				throw new Error("Community grant is invalid or expired.");
-			return createHash("sha256").update(communityBriefingGrantPayload(unsigned)).digest("hex");
+			return digest;
 		};
 		return {
 			authorize: () =>
@@ -229,22 +315,11 @@ ON CONFLICT(grant_id) DO UPDATE SET revoked=1`)
 									this.#database.prepare("SELECT 1 FROM community_briefing_lease").get()
 								)
 									throw new Error("Community lease requires reconciliation.");
-								const result = this.#database
-									.prepare(`INSERT INTO community_briefing_grants(grant_id,payload_hash,consumed_at)
-VALUES (?,?,?) ON CONFLICT(grant_id) DO NOTHING`)
-									.run(signed.grantId, digest, new Date(this.#now()).toISOString());
-								if (result.changes !== 1)
-									throw new Error("Community grant was consumed or revoked; reconcile before retrying.");
+								this.#recordGrant(signed, digest, service);
 								if (operation !== undefined) {
 									this.#database
 										.prepare("INSERT INTO community_briefing_lease VALUES (1,?,?,?,?,?)")
-										.run(
-											leaseId,
-											signed.grantId,
-											process.pid,
-											signed.operational!.runtime.bootId,
-											signed.expiresAt,
-										);
+										.run(leaseId, signed.grantId, process.pid, bootId!, deadline!);
 									this.#database.exec("COMMIT;");
 									committed = true;
 								}
@@ -267,8 +342,8 @@ VALUES (?,?,?) ON CONFLICT(grant_id) DO NOTHING`)
 													| undefined;
 												if (
 													requested !== "publish" ||
-													current.item.briefingId !== signed.briefingId ||
-													current.item.sourceHash !== signed.sourceHash ||
+													current.item.briefingId !== selected.briefingId ||
+													current.item.sourceHash !== selected.sourceHash ||
 													!row ||
 													row.revoked !== 0 ||
 													typeof row.consumed_at !== "string" ||

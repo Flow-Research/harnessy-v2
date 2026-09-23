@@ -9,14 +9,18 @@ import { createCodexLifeDraftProvider } from "./codex-provider.ts";
 import type { LifeOrchestratorSettings } from "./config.ts";
 import { LifeDraftGrantHost } from "./draft-grant-host.ts";
 import { generateLifeDraft, LifeDraftAuthority, type LifeDraftProvider, LifeDraftRequest } from "./draft-provider.ts";
+import { refreshLocalLifeCredential } from "./local-credential.ts";
 
 const SignedGrant = Schema.Struct({ issuer: Schema.String, authority: LifeDraftAuthority, signature: Schema.String });
 
-export interface NativeLifePreviewOptions {
-	readonly requestPath: string;
-	readonly grantPath: string;
-	readonly trustedPublicKeyPath: string;
-}
+export type NativeLifePreviewOptions = { readonly requestPath: string } & (
+	| {
+			readonly local: { readonly timeoutMs: number; readonly maximumOutputBytes: number };
+			readonly grantPath?: never;
+			readonly trustedPublicKeyPath?: never;
+	  }
+	| { readonly local?: undefined; readonly grantPath: string; readonly trustedPublicKeyPath: string }
+);
 
 /** Read bounded private inputs without following a final-component symlink. */
 export const readPrivateLifeInput = (path: string, maximumBytes: number): string => {
@@ -69,6 +73,57 @@ export const generateNativeLifePreview = async (
 	signal: AbortSignal,
 	provider?: LifeDraftProvider,
 ) => {
+	if (options.local) {
+		const { timeoutMs, maximumOutputBytes } = options.local;
+		if (
+			!Number.isSafeInteger(timeoutMs) ||
+			timeoutMs < 1 ||
+			timeoutMs > 600000 ||
+			!Number.isSafeInteger(maximumOutputBytes) ||
+			maximumOutputBytes < 1 ||
+			maximumOutputBytes > 1048576
+		)
+			throw new Error("Local draft requires a timeout up to ten minutes and output limit up to 1 MiB.");
+		const authority: LifeDraftAuthority = {
+			grantId: `local:${createHash("sha256").update(request.runId).digest("hex")}`,
+			operation: "life.draft",
+			runId: request.runId,
+			kind: request.kind,
+			provider: request.provider,
+			model: request.model,
+			promptHash: createHash("sha256").update(request.prompt).digest("hex"),
+			expiresAt: new Date(Date.now() + timeoutMs).toISOString(),
+			maximumOutputBytes,
+		};
+		const host = new LifeDraftGrantHost(settings.paths.stateDirectory, "local-owner");
+		try {
+			return await generateLifeDraft(request, authority, {
+				...host.bindLocal(authority),
+				signal,
+				provider: provider ?? {
+					generate: async (input, activeSignal) => {
+						const authPath = join(
+							process.env.HSY_CODING_AGENT_DIR ?? join(homedir(), ".hsy", "agent"),
+							"auth.json",
+						);
+						const remaining = () => Date.parse(authority.expiresAt) - Date.now();
+						if (remaining() <= 0) throw new Error("Local draft deadline exceeded.");
+						const boundedSignal = AbortSignal.any([activeSignal, AbortSignal.timeout(remaining())]);
+						await refreshLocalLifeCredential(authPath, boundedSignal);
+						boundedSignal.throwIfAborted();
+						if (remaining() <= 0) throw new Error("Local draft deadline exceeded.");
+						return createCodexLifeDraftProvider({
+							authPath,
+							timeoutMs: remaining(),
+							maximumOutputBytes,
+						}).generate(input, boundedSignal);
+					},
+				},
+			});
+		} finally {
+			host.close();
+		}
+	}
 	const signed = Schema.decodeUnknownSync(SignedGrant)(JSON.parse(readPrivateLifeInput(options.grantPath, 16384)));
 	const publicKey = readPrivateLifeInput(options.trustedPublicKeyPath, 16384);
 	const host = new LifeDraftGrantHost(settings.paths.stateDirectory, new Map([[signed.issuer, publicKey]]));

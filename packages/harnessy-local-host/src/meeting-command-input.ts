@@ -1,6 +1,10 @@
 import { isAbsolute, parse, resolve } from "node:path";
 
-import type { MeetingPublicationSmokeRuntimeInput } from "@harnessy/core/meeting-publication";
+import {
+	type MeetingPublicationSmokeRuntimeInput,
+	readStableMeetingPublicationSmokeFile,
+} from "@harnessy/core/meeting-publication";
+import { Schema } from "effect";
 import * as Effect from "effect/Effect";
 
 const required = [
@@ -22,6 +26,57 @@ export const isSafeAbsoluteMeetingCommandPath = (value: string) =>
 	});
 
 export const isMeetingCommandSha256 = (value: string) => /^[a-f0-9]{64}$/u.test(value);
+
+const savedServiceInput = (
+	kind: "harnessy.meeting-publication.service-config.v1" | "harnessy.community.briefing.service-config.v1",
+) =>
+	Schema.Struct({
+		kind: Schema.Literal(kind),
+		authorizationPath: Schema.String,
+		trustedKeyring: Schema.Struct({
+			path: Schema.String,
+			device: Schema.String,
+			inode: Schema.String,
+			sha256: Schema.String,
+		}),
+	});
+
+/** Owner-private saved bindings, never discovered or inferred from an adjacent keyring. */
+const parseSavedServiceInput = (
+	path: string,
+	kind: "harnessy.meeting-publication.service-config.v1" | "harnessy.community.briefing.service-config.v1",
+): Effect.Effect<MeetingPublicationSmokeRuntimeInput, "invalid_arguments"> =>
+	Effect.try({
+		try: () => {
+			const uid = process.geteuid?.();
+			if (uid === undefined || !isSafeAbsoluteMeetingCommandPath(path)) throw new Error("invalid_input");
+			const file = readStableMeetingPublicationSmokeFile(path, BigInt(uid), "private", 16_384);
+			return Schema.decodeUnknownSync(savedServiceInput(kind), { onExcessProperty: "error" })(
+				JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes)),
+			);
+		},
+		catch: () => "invalid_arguments" as const,
+	}).pipe(
+		Effect.flatMap((input) =>
+			parseMeetingRuntimeCommandInput([
+				"--authorization",
+				input.authorizationPath,
+				"--trusted-keyring",
+				input.trustedKeyring.path,
+				"--trusted-keyring-device",
+				input.trustedKeyring.device,
+				"--trusted-keyring-inode",
+				input.trustedKeyring.inode,
+				"--trusted-keyring-sha256",
+				input.trustedKeyring.sha256,
+			]),
+		),
+	);
+
+export const parseSavedMeetingServiceInput = (path: string) =>
+	parseSavedServiceInput(path, "harnessy.meeting-publication.service-config.v1");
+export const parseSavedCommunityServiceInput = (path: string) =>
+	parseSavedServiceInput(path, "harnessy.community.briefing.service-config.v1");
 
 /** Source-private parser shared by the separately packaged guarded commands. */
 export const parseMeetingRuntimeCommandInput = (

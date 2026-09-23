@@ -12,6 +12,28 @@ afterEach(() => {
 });
 
 describe("fathom status", () => {
+	it.each([
+		["", false, []],
+		["  poll_accounts: []\n", false, []],
+		["  poll_accounts: research\n", false, []],
+		["  poll_accounts: [research, ' research ']\n", true, ["research"]],
+		["  poll_accounts: [unknown]\n", false, ["unknown"]],
+		["  poll_accounts: ['../research', 12, '']\n", false, []],
+	] as const)("reports polling configuration separately: %s", (selection, configured, accounts) => {
+		const root = mkdtempSync(join(tmpdir(), "harnessy-fathom-poll-status-"));
+		roots.push(root);
+		const configPath = join(root, "config.yaml");
+		writeFileSync(
+			configPath,
+			`fathom:\n${selection}  accounts:\n    research:\n      api_key_env_var: RESEARCH_KEY\n`,
+		);
+		const status = inspectFathomStatus({ configPath, stateRoot: join(root, "state") });
+		expect(status.ready).toBe(true);
+		expect(status.polling.configured).toBe(configured);
+		expect(status.polling.accounts).toEqual(accounts);
+		expect(status.polling.issues.length === 0).toBe(configured);
+	});
+
 	it("uses an explicit project-private source root when community source is unset", () => {
 		const root = mkdtempSync(join(tmpdir(), "harnessy-fathom-source-root-"));
 		roots.push(root);
@@ -56,6 +78,7 @@ describe("fathom status", () => {
 		expect(result.inboxCounts.personal?.processed).toBe(1);
 		const entries = listFathomInbox({ configPath: config, stateRoot: state, limit: 2 });
 		expect(entries).toHaveLength(2);
+		expect(result.polling.configured).toBe(false);
 		expect(entries.find((entry) => entry.bucket === "processed")).toMatchObject({
 			account: "personal",
 			bucket: "processed",

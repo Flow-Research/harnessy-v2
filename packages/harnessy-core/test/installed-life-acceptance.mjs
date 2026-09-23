@@ -38,12 +38,16 @@ const inventory = (root) => {
 	return files;
 };
 const packs = [];
-for (const name of ["harnessy-core", "ai"]) {
+for (const name of ["harnessy-core", "ai", "capability-harnessy-v1-full"]) {
 	const source = join(repo, "packages", name);
 	const [packed] = JSON.parse(run([npmCli, "pack", "--ignore-scripts", "--offline", "--json", "--userconfig", npmConfig, "--globalconfig", npmGlobalConfig, "--pack-destination", tarballs, "--cache", join(scratch, "npm-cache")], source));
 	const tarball = join(tarballs, packed.filename);
 	assert.equal(packed.integrity, `sha512-${digest(readFileSync(tarball), "sha512", "base64")}`);
-	const target = join(consumer, "node_modules", ...packed.name.split("/"));
+	// Deliberately use a valid nested dependency layout, not a sibling-directory
+	// coincidence that can hide incorrect package resolution.
+	const target = join(consumer, "node_modules",
+		...(name === "capability-harnessy-v1-full" ? ["@harnessy", "core", "node_modules"] : []),
+		...packed.name.split("/"));
 	mkdirSync(target, { recursive: true, mode: 0o700 });
 	const extracted = spawnSync("tar", ["-xzf", tarball, "--strip-components=1", "-C", target], { env: fixtureEnvironment(), encoding: "utf8", timeout: 30_000 });
 	assert.equal(extracted.status, 0, extracted.stderr);
@@ -69,8 +73,13 @@ const copyDependency = (name) => {
 for (const name of ["effect", "marked", "typebox", "partial-json", "@effect/platform-node"]) copyDependency(name);
 const installedBefore = inventory(join(consumer, "node_modules"));
 cpSync(new URL("./support/packed-life-codex-entry.mjs", import.meta.url), join(consumer, "entry.mjs"));
-assert(process.argv[2] && process.argv[3], "Supply extracted compatibility package and staged Python interpreter paths");
-const result = JSON.parse(run([join(consumer, "entry.mjs"), consumer, realpathSync(process.argv[2]), resolve(process.argv[3])], consumer));
+assert(process.argv[2], "Supply a staged Python interpreter path");
+const compatibilityPackage = join(consumer, "node_modules/@harnessy/core/node_modules/@harnessy/capability-harnessy-v1-full");
+const coreManifest = JSON.parse(readFileSync(join(consumer, "node_modules/@harnessy/core/package.json"), "utf8"));
+const compatibilityManifest = JSON.parse(readFileSync(join(compatibilityPackage, "package.json"), "utf8"));
+assert.equal(coreManifest.dependencies[compatibilityManifest.name], compatibilityManifest.version,
+	"Core must declare the exact compatibility dependency used by ordinary Life commands");
+const result = JSON.parse(run([join(consumer, "entry.mjs"), consumer, compatibilityPackage, resolve(process.argv[2])], consumer));
 assert.deepEqual(inventory(join(consumer, "node_modules")), installedBefore, "Acceptance changed installed package bytes");
 const evidence = { kind: "harnessy.life.installed-acceptance.v1", node: process.version, scratch, packs, dependencies: [...copied].sort(), result };
 writeFileSync(join(scratch, "evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });

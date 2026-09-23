@@ -91,6 +91,7 @@ try {
 	const sdkPack = pack(packageRoot);
 	const corePack = pack(coreRoot);
 	const executorPack = pack(executorRoot);
+	const compatibilityPack = pack(join(repoRoot, "packages", "capability-harnessy-v1-full"));
 
 	const sdkPaths = sdkPack.files.map((file) => file.path).sort();
 	const corePaths = corePack.files.map((file) => file.path).sort();
@@ -131,6 +132,7 @@ try {
 			sdkPack.tarball,
 			corePack.tarball,
 			executorPack.tarball,
+			compatibilityPack.tarball,
 			"@typescript/native-preview@7.0.0-dev.20260120.1",
 	]);
 	const installOutput = run(npmInstall.command, npmInstall.args, installRoot);
@@ -138,7 +140,8 @@ try {
 	const installedSdkRoot = join(installRoot, "node_modules", "@harnessy", "sdk");
 	const installedCoreRoot = join(installRoot, "node_modules", "@harnessy", "core");
 	const installedExecutorRoot = join(installRoot, "node_modules", "@harnessy", "executor");
-	for (const root of [installedSdkRoot, installedCoreRoot, installedExecutorRoot]) {
+	const installedCompatibilityRoot = join(installRoot, "node_modules", "@harnessy", "capability-harnessy-v1-full");
+	for (const root of [installedSdkRoot, installedCoreRoot, installedExecutorRoot, installedCompatibilityRoot]) {
 		assert(lstatSync(root).isDirectory(), `Packed dependency was not installed: ${root}`);
 		assert(!lstatSync(root).isSymbolicLink(), `Packed dependency was linked instead of installed: ${root}`);
 		assert(realpathSync(root).startsWith(`${realpathSync(installRoot)}/`), `Packed dependency escaped the consumer: ${root}`);
@@ -174,7 +177,7 @@ try {
 	}
 
 	const lockfile = JSON.parse(readFileSync(join(installRoot, "package-lock.json"), "utf8"));
-	for (const name of ["@harnessy/sdk", "@harnessy/core", "@harnessy/executor"]) {
+	for (const name of ["@harnessy/sdk", "@harnessy/core", "@harnessy/executor", "@harnessy/capability-harnessy-v1-full"]) {
 		const resolved = lockfile.packages[`node_modules/${name}`]?.resolved;
 		assert(
 			typeof resolved === "string" && resolved.includes("/tarballs/") && resolved.endsWith(".tgz"),
@@ -183,6 +186,10 @@ try {
 	}
 
 	const installedManifest = JSON.parse(readFileSync(join(installedSdkRoot, "package.json"), "utf8"));
+	assert(
+		sha256(join(installedSdkRoot, "dist", "THIRD_PARTY_NOTICES.txt")) === distBeforeAudit["THIRD_PARTY_NOTICES.txt"],
+		"Installed SDK third-party notices differ from the audited bundle",
+	);
 	assert(installedManifest.private === true, "Packed SDK must remain private");
 	assert(installedManifest.exports["."].import === "./dist/index.js", "Stable SDK export is not built JavaScript");
 	assert(installedManifest.exports["./node"].import === "./dist/node.js", "Node SDK export is not built JavaScript");
@@ -461,6 +468,7 @@ console.log(JSON.stringify({
 					sdk: { files: sdkPack.files.length, bytes: sdkPack.size, integrity: sdkPack.integrity },
 					core: { files: corePack.files.length, bytes: corePack.size, integrity: corePack.integrity },
 					executor: { files: executorPack.files.length, bytes: executorPack.size, integrity: executorPack.integrity },
+					compatibility: { files: compatibilityPack.files.length, bytes: compatibilityPack.size, integrity: compatibilityPack.integrity },
 				},
 				install: installOutput.trim(),
 				compiler: {

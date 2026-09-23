@@ -1,8 +1,11 @@
 import { builtinModules } from "node:module";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { Plugin } from "esbuild";
 import { defineConfig } from "tsup";
+import { bundleNotices } from "./scripts/bundle-notices.mjs";
 
 const fromPackage = (relativePath: string): string => fileURLToPath(new URL(relativePath, import.meta.url));
 const executorSource = (relativePath: string): string => fromPackage(`../../executor/${relativePath}`);
@@ -30,6 +33,13 @@ const nodeBuiltins = new Set(builtinModules.map((name) => name.replace(/^node:/,
 const sourceAliasPlugin: Plugin = {
 	name: "harnessy-sdk-source-aliases",
 	setup(build) {
+		build.onEnd((result) => {
+			if (result.errors.length) return;
+			if (!result.metafile || !build.initialOptions.outdir) throw new Error("SDK build lacks attribution inputs");
+			mkdirSync(build.initialOptions.outdir, { recursive: true });
+			writeFileSync(join(build.initialOptions.outdir, "THIRD_PARTY_NOTICES.txt"),
+				bundleNotices(result.metafile, fromPackage(".")));
+		});
 		build.onResolve({ filter: /^@executor-js\// }, (args) => {
 			const replacement = executorSourceAliases[args.path as keyof typeof executorSourceAliases];
 			return replacement === undefined ? undefined : { path: replacement };

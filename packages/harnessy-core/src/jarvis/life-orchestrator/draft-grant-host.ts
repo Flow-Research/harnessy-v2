@@ -40,18 +40,24 @@ export class LifeDraftGrantHost {
 	readonly #database: DatabaseSync;
 	readonly #keys: ReadonlyMap<string, KeyObject>;
 	readonly #now: () => number;
+	readonly #localOwner: boolean;
 
-	constructor(stateDirectory: string, trustedPublicKeys: ReadonlyMap<string, string>, now: () => number = Date.now) {
+	constructor(
+		stateDirectory: string,
+		trustedPublicKeys: ReadonlyMap<string, string> | "local-owner",
+		now: () => number = Date.now,
+	) {
 		if (process.platform === "win32" || !process.getuid)
 			throw new Error("Life grant host requires POSIX ownership checks.");
 		const keys = new Map<string, KeyObject>();
-		for (const [issuer, pem] of trustedPublicKeys) {
+		for (const [issuer, pem] of trustedPublicKeys === "local-owner" ? [] : trustedPublicKeys) {
 			const key = createPublicKey(pem);
 			if (!issuer.trim() || key.asymmetricKeyType !== "ed25519")
 				throw new Error("Life grants require named Ed25519 issuers.");
 			keys.set(issuer, key);
 		}
-		if (keys.size === 0) throw new Error("Life grant host requires an owner-selected trusted issuer.");
+		if (keys.size === 0 && trustedPublicKeys !== "local-owner")
+			throw new Error("Life grant host requires an owner-selected trusted issuer.");
 		const root = resolve(stateDirectory);
 		mkdirSync(root, { recursive: true, mode: 0o700 });
 		const rootStat = lstatSync(root);
@@ -108,6 +114,7 @@ CREATE TABLE IF NOT EXISTS life_draft_grants (
 		this.#database = database;
 		this.#keys = keys;
 		this.#now = now;
+		this.#localOwner = trustedPublicKeys === "local-owner";
 	}
 
 	close(): void {
@@ -162,8 +169,32 @@ ON CONFLICT(grant_id) DO UPDATE SET revoked=1`)
 				throw new Error("Life grant is invalid or expired.");
 			return createHash("sha256").update(payload).digest("hex");
 		};
+		return this.#consumption(validate);
+	}
+
+	/** Explicit local command authority, not a signature bypass for remote/signed callers.
+	 * One stable run ID is consumed even when the prompt or execution deadline changes.
+	 */
+	bindLocal(input: LifeDraftAuthority) {
+		if (!this.#localOwner) throw new Error("Local draft authority requires an explicit local-owner host.");
+		const expected = lifeDraftGrantPayload("local-owner", input);
+		const grantId = `local:${createHash("sha256").update(input.runId).digest("hex")}`;
+		return this.#consumption((authority) => {
+			if (
+				authority.grantId !== grantId ||
+				lifeDraftGrantPayload("local-owner", authority) !== expected ||
+				!Number.isFinite(this.#now()) ||
+				!Number.isFinite(Date.parse(authority.expiresAt)) ||
+				Date.parse(authority.expiresAt) <= this.#now()
+			)
+				throw new Error("Local draft authority changed or expired.");
+			return createHash("sha256").update(expected).digest("hex");
+		});
+	}
+
+	#consumption(validate: (authority: LifeDraftAuthority) => string) {
 		return {
-			authorize: async (authority) => {
+			authorize: async (authority: LifeDraftAuthority) => {
 				const digest = validate(authority);
 				// One atomic, fully synchronous commit precedes every provider invocation.
 				const result = this.#database
@@ -172,7 +203,7 @@ VALUES (?,?,?) ON CONFLICT(grant_id) DO NOTHING`)
 					.run(authority.grantId, digest, new Date(this.#now()).toISOString());
 				if (result.changes !== 1) throw new Error("Life grant was consumed or revoked; reconcile before retrying.");
 			},
-			revalidate: async (authority) => {
+			revalidate: async (authority: LifeDraftAuthority) => {
 				const digest = validate(authority);
 				const row = this.#database
 					.prepare("SELECT payload_hash,consumed_at,revoked FROM life_draft_grants WHERE grant_id=?")

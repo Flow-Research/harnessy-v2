@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 
 import { Console, Redacted } from "effect";
@@ -29,6 +28,8 @@ import {
 } from "../jarvis/life-orchestrator/service.ts";
 import { JarvisParityReporter } from "../jarvis/parity-report.ts";
 import { JarvisPathResolver } from "../jarvis/paths.ts";
+import { jarvisCalendarCommand } from "./calendar.ts";
+import { communityDraftCommand, communityReviewServeCommand } from "./community-draft.ts";
 import { jsonOption, targetOption } from "./shared.ts";
 
 const homeRootOption = Options.string("home-root").pipe(
@@ -108,13 +109,6 @@ const fathomSourceRootOption = Options.string("source-root").pipe(
 const communityLimitOption = Options.integer("limit").pipe(
 	Options.withDefault(20),
 	Options.withDescription("Maximum queue entries to list (1-100)."),
-);
-const communityCompatibilityBinOption = Options.string("compatibility-bin").pipe(
-	Options.withDescription("Absolute path to the preserved briefing compatibility executable."),
-);
-const communityReviewPortOption = Options.integer("port").pipe(
-	Options.withDefault(8872),
-	Options.withDescription("Loopback port for the supervised briefing review server."),
 );
 const fathomAccountOption = Options.string("account").pipe(
 	Options.atLeast(0),
@@ -334,6 +328,62 @@ export const jarvisLifeWeeklyCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("Prepare a supervised native weekly draft without journaling or publication"));
 
+export const jarvisLifeDraftCommand = Command.make(
+	"draft",
+	{
+		...lifeOptions,
+		kind: Options.string("kind").pipe(
+			Options.withDefault("daily"),
+			Options.withDescription("daily or weekly; defaults to daily."),
+		),
+		model: draftModelOption,
+		request: Options.string("native-request").pipe(
+			Options.optional,
+			Options.withDescription("Reuse an owner-only prepared request; consumed runs cannot be retried."),
+		),
+		timeoutSeconds: Options.integer("timeout-seconds").pipe(
+			Options.withDefault(600),
+			Options.withDescription("Execution timeout, 1–600 seconds; not a session requiring renewal."),
+		),
+		maximumOutputBytes: Options.integer("max-output-bytes").pipe(
+			Options.withDefault(65536),
+			Options.withDescription("Maximum accepted output, 1–1048576 bytes; not a provider spending cap."),
+		),
+	},
+	({ target, homeRoot, compatibilityRoot, kind, model, request, timeoutSeconds, maximumOutputBytes, json }) =>
+		Effect.gen(function* () {
+			if (
+				(kind !== "daily" && kind !== "weekly") ||
+				timeoutSeconds < 1 ||
+				timeoutSeconds > 600 ||
+				maximumOutputBytes < 1 ||
+				maximumOutputBytes > 1048576
+			)
+				return yield* Effect.fail(
+					new Error("Draft requires daily/weekly, 1–600 seconds and 1–1048576 output bytes."),
+				);
+			const settings = lifeSettings(target, homeRoot, compatibilityRoot);
+			const requestPath =
+				Option.getOrUndefined(request) ??
+				(yield* kind === "daily"
+					? prepareLifeDailyPrompt(settings, model)
+					: prepareLifeWeeklyPrompt(settings, model)).requestPath;
+			const options = {
+				publish: false,
+				nativePreview: { requestPath, local: { timeoutMs: timeoutSeconds * 1000, maximumOutputBytes } },
+			};
+			const result = yield* kind === "daily" ? runLifeDaily(settings, options) : runLifeWeekly(settings, options);
+			if (!result) return yield* Effect.fail(new Error("Life draft returned no review artifact."));
+			if (json)
+				return yield* Console.log(JSON.stringify({ command: "jarvis life draft", ok: true, ...result }, null, 2));
+			yield* Console.log(`Draft ready for review: ${result.briefPath}`);
+		}),
+).pipe(
+	Command.withDescription(
+		"Authorize one local Codex draft call; never publish or retry automatically. Time/output bounds are not a monetary cap.",
+	),
+);
+
 export const jarvisLifeScheduleCommand = Command.make(
 	"schedule",
 	{
@@ -376,6 +426,7 @@ export const jarvisLifeCommand = Command.make("life").pipe(
 		jarvisLifeResearchCommand,
 		jarvisLifeDailyCommand,
 		jarvisLifeWeeklyCommand,
+		jarvisLifeDraftCommand,
 		jarvisLifeScheduleCommand,
 	] as const),
 	Command.withDescription("Run the V2 Life Orchestrator and permanent reading ledger"),
@@ -452,42 +503,17 @@ export const jarvisCommunityBriefingListCommand = Command.make(
 		}),
 ).pipe(Command.withDescription("List the local community briefing queue without reading content or mutating state"));
 
-export const jarvisCommunityBriefingReviewServeCommand = Command.make(
-	"serve",
-	{ compatibilityBin: communityCompatibilityBinOption, port: communityReviewPortOption },
-	({ compatibilityBin, port }) =>
-		Effect.tryPromise({
-			try: () =>
-				new Promise<void>((resolve, reject) => {
-					if (!compatibilityBin.startsWith("/") || !Number.isInteger(port) || port < 1024 || port > 65535) {
-						reject(new Error("community review requires an absolute compatibility path and valid port"));
-						return;
-					}
-					const child = spawn(
-						compatibilityBin,
-						["community", "briefing", "review", "serve", "--port", String(port)],
-						{ stdio: "inherit", shell: false },
-					);
-					const finish = (code: number | null, signal: NodeJS.Signals | null) => {
-						if (code === 0) resolve();
-						else
-							reject(new Error(`community review compatibility server exited (${code ?? signal ?? "unknown"})`));
-					};
-					child.once("error", reject);
-					child.once("exit", finish);
-				}),
-			catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-		}),
-).pipe(Command.withDescription("Serve the existing briefing review through the V2-owned supervised boundary"));
+export const jarvisCommunityBriefingReviewServeCommand = communityReviewServeCommand;
 
 export const jarvisCommunityBriefingCommand = Command.make("briefing").pipe(
 	Command.withSubcommands([
 		jarvisCommunityBriefingStatusCommand,
 		jarvisCommunityBriefingPreflightCommand,
 		jarvisCommunityBriefingListCommand,
+		communityDraftCommand,
 		Command.make("review").pipe(Command.withSubcommands([jarvisCommunityBriefingReviewServeCommand] as const)),
 	] as const),
-	Command.withDescription("Inspect the V2 community briefing boundary; review remains a compatibility workflow"),
+	Command.withDescription("Prepare, inspect and review local community briefings through V2"),
 );
 
 export const jarvisCommunityCommand = Command.make("community").pipe(
@@ -711,12 +737,25 @@ export const jarvisParityCommand = Command.make("parity", { json: jsonOption }, 
 	Effect.gen(function* () {
 		const report = yield* (yield* JarvisParityReporter).inspect();
 		if (json) {
-			yield* Console.log(JSON.stringify({ command: "jarvis parity", ok: true, ...report }, null, 2));
+			yield* Console.log(
+				JSON.stringify(
+					{
+						command: "jarvis parity",
+						ok: true,
+						evidenceKind: "static_compatibility_ledger",
+						operationalReadiness: "not_assessed",
+						...report,
+					},
+					null,
+					2,
+				),
+			);
 			return;
 		}
 
 		const { counts } = report.summary;
 		yield* Console.log(`Jarvis parity (${report.sourceVersion}): ${counts.total} entries`);
+		yield* Console.log("Static compatibility ledger only; operational readiness is not assessed.");
 		yield* Console.log(
 			`Missing ${counts.missing} | Partial ${counts.partial} | Compatible ${counts.compatible} | Retired ${counts.intentionallyRetired}`,
 		);
@@ -735,6 +774,7 @@ export const jarvisCommand = Command.make("jarvis").pipe(
 		jarvisLifeCommand,
 		jarvisCommunityCommand,
 		jarvisMeetingCommand,
+		jarvisCalendarCommand,
 	] as const),
 	Command.withDescription("Inspect Jarvis compatibility and run migrated V2 domains"),
 );

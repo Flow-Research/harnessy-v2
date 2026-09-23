@@ -6,6 +6,8 @@
  * try to refresh tokens simultaneously.
  */
 
+import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import {
 	findEnvKeys,
 	getEnvApiKey,
@@ -14,7 +16,19 @@ import {
 	type OAuthProviderId,
 } from "@earendil-works/pi-ai/compat";
 import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import {
+	chmodSync,
+	closeSync,
+	existsSync,
+	fsyncSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	realpathSync,
+	renameSync,
+	unlinkSync,
+	writeFileSync,
+} from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
@@ -105,6 +119,34 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		throw (lastError as Error) ?? new Error("Failed to acquire auth storage lock");
 	}
 
+	private writeAtomically(next: string): void {
+		// Keep the previous login intact until the complete replacement is flushed.
+		const target = realpathSync(this.authPath);
+		const temporary = `${target}.${randomUUID()}.tmp`;
+		const fd = openSync(temporary, "wx", 0o600);
+		let renamed = false;
+		try {
+			try {
+				writeFileSync(fd, next, "utf-8");
+				fsyncSync(fd);
+			} finally {
+				closeSync(fd);
+			}
+			renameSync(temporary, target);
+			renamed = true;
+			if (process.platform !== "win32") {
+				const directory = openSync(dirname(target), "r");
+				try {
+					fsyncSync(directory);
+				} finally {
+					closeSync(directory);
+				}
+			}
+		} finally {
+			if (!renamed) unlinkSync(temporary);
+		}
+	}
+
 	withLock<T>(fn: (current: string | undefined) => LockResult<T>): T {
 		this.ensureParentDir();
 		this.ensureFileExists();
@@ -115,8 +157,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
 			const { result, next } = fn(current);
 			if (next !== undefined) {
-				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
+				this.writeAtomically(next);
 			}
 			return result;
 		} finally {
@@ -126,7 +167,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		}
 	}
 
-	async withLockAsync<T>(fn: (current: string | undefined) => Promise<LockResult<T>>): Promise<T> {
+	async withLockAsync<T>(
+		fn: (current: string | undefined) => Promise<LockResult<T>>,
+		signal?: AbortSignal,
+	): Promise<T> {
+		signal?.throwIfAborted();
 		this.ensureParentDir();
 		this.ensureFileExists();
 
@@ -140,28 +185,48 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		};
 
 		try {
-			release = await lockfile.lock(this.authPath, {
-				retries: {
-					retries: 10,
-					factor: 2,
-					minTimeout: 100,
-					maxTimeout: 10000,
-					randomize: true,
-				},
+			const options = {
+				retries: signal
+					? 0
+					: {
+							retries: 10,
+							factor: 2,
+							minTimeout: 100,
+							maxTimeout: 10000,
+							randomize: true,
+						},
 				stale: 30000,
-				onCompromised: (err) => {
+				onCompromised: (err: Error) => {
 					lockCompromised = true;
 					lockCompromisedError = err;
 				},
-			});
+			};
+			for (let attempt = 0; ; attempt++) {
+				signal?.throwIfAborted();
+				try {
+					release = await lockfile.lock(this.authPath, options);
+					break;
+				} catch (error) {
+					if (
+						!signal ||
+						attempt >= 10 ||
+						!(error instanceof Error) ||
+						!("code" in error) ||
+						error.code !== "ELOCKED"
+					)
+						throw error;
+					// Await each attempt; a raced acquisition could leave an orphan lock.
+					await delay(Math.min(100 * 2 ** attempt, 10000), undefined, { signal });
+				}
+			}
+			signal?.throwIfAborted();
 
 			throwIfCompromised();
 			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
 			const { result, next } = await fn(current);
 			throwIfCompromised();
 			if (next !== undefined) {
-				writeFileSync(this.authPath, next, AUTH_FILE_WRITE_OPTIONS);
-				chmodSync(this.authPath, 0o600);
+				this.writeAtomically(next);
 			}
 			throwIfCompromised();
 			return result;

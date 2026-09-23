@@ -6,9 +6,53 @@ import { join } from "node:path";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { MeetingPublicationSmokeRuntimeSystemReference } from "../../harnessy-core/src/jarvis/meeting-publication/operational-runtime.ts";
-import { runCommunityPublicationCommand } from "../src/community-publication-command.ts";
+import {
+	parseCommunityPublicationCommandInput,
+	runCommunityPublicationCommand,
+} from "../src/community-publication-command.ts";
 
 describe("community publication command", () => {
+	it.each(["valid", "wrong-kind", "public-mode", "extra", "relative-binding"])(
+		"validates saved community configuration: %s",
+		async (scenario) => {
+			const root = mkdtempSync(join(realpathSync(tmpdir()), "community-saved-config-"));
+			chmodSync(root, 0o700);
+			try {
+				const path = join(root, "service.json");
+				const input = {
+					authorizationPath: scenario === "relative-binding" ? "relative.json" : join(root, "enrollment.json"),
+					trustedKeyring: { path: join(root, "trust.json"), device: "0", inode: "1", sha256: "a".repeat(64) },
+				};
+				writeFileSync(
+					path,
+					JSON.stringify({
+						kind:
+							scenario === "wrong-kind"
+								? "harnessy.meeting-publication.service-config.v1"
+								: "harnessy.community.briefing.service-config.v1",
+						...input,
+						...(scenario === "extra" ? { approve: true } : {}),
+					}),
+					{ mode: scenario === "public-mode" ? 0o644 : 0o600 },
+				);
+				for (const [prefix, action] of [
+					[[], "publish"],
+					[["--service-status"], "status"],
+					[["--revoke-service"], "revoke"],
+				] as const) {
+					const result = await Effect.runPromiseExit(
+						parseCommunityPublicationCommandInput([...prefix, "--service-config", path]),
+					);
+					if (scenario === "valid") {
+						expect(result._tag).toBe("Success");
+						if (result._tag === "Success") expect(result.value).toEqual({ input, action });
+					} else expect(result._tag).toBe("Failure");
+				}
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
+		},
+	);
 	it.skipIf(process.platform !== "darwin")(
 		"contains an opted-in notification failure without changing CLI failure status",
 		() => {

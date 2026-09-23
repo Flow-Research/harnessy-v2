@@ -110,6 +110,7 @@ describe("Life Orchestrator CLI", () => {
 							Effect.sync(() => {
 								labels.push(command.label);
 								expect(command.executable).toBe("python3");
+								expect(command.env?.PYTHONDONTWRITEBYTECODE).toBe("1");
 								expect(command.args.some((arg) => arg.endsWith("/weekly-plan"))).toBe(false);
 								if (command.label === "Weekly read-only state collection") {
 									expect(command.args[2]).toContain("--no-save");
@@ -180,6 +181,7 @@ describe("Life Orchestrator CLI", () => {
 								expect(command.args).toContain("--prompt-output");
 								expect(command.args).not.toContain("--preview-output");
 								expect(command.env?.HOME).toBe(root);
+								expect(command.env?.PYTHONDONTWRITEBYTECODE).toBe("1");
 								writeFileSync(
 									command.args[command.args.indexOf("--prompt-output") + 1]!,
 									"Synthetic prompt only",

@@ -113,6 +113,7 @@ const lifeProviderEnvironment = (settings: LifeOrchestratorSettings) => ({
 	FLOW_PROJECT_ROOT: settings.paths.projectRoot,
 	HOME: settings.paths.homeRoot,
 	AGENTS_LIFE_DIR: settings.paths.lifeDirectory,
+	PYTHONDONTWRITEBYTECODE: "1",
 	FLOW_AI_PROVIDER: "codex",
 	HARNESSY_AI_PROVIDER: "codex",
 	FLOW_CRON_PROMPT_RUNNER: "codex",
@@ -384,6 +385,7 @@ export const prepareLifeDailyPrompt = (
 				HOME: settings.paths.homeRoot,
 				FLOW_PROJECT_ROOT: settings.paths.projectRoot,
 				AGENTS_LIFE_DIR: settings.paths.lifeDirectory,
+				PYTHONDONTWRITEBYTECODE: "1",
 			},
 		});
 		if (result.status === "failed")
@@ -697,6 +699,7 @@ export const prepareLifeWeeklyPrompt = (
 			HOME: settings.paths.homeRoot,
 			FLOW_PROJECT_ROOT: settings.paths.projectRoot,
 			AGENTS_LIFE_DIR: settings.paths.lifeDirectory,
+			PYTHONDONTWRITEBYTECODE: "1",
 		};
 		// CommandRunner captures only a stdout tail. Keep the complete state file-backed.
 		const collected = yield* runCompatibilityCommand(runner, {

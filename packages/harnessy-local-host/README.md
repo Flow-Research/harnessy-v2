@@ -9,8 +9,9 @@ A separate `harnessy-meeting-worker` binary uses the same runtime ownership and
 provider construction for one explicitly authorized batch; it does not install
 or enable a scheduler.
 A separate `harnessy-meeting-full-review` binary composes full review and manual
-dispatch in one session. Live use requires independently signed finite authority
-and separately approved operational handover; installing this package grants neither.
+dispatch in one owner. It supports finite sessions and explicitly enrolled service
+operation. Live use requires the matching signed authority and separately approved
+operational handover; installing this package grants neither.
 A separate `harnessy-meeting-review` command prepares and reviews only V2-owned
 queue state, in a disjoint or exactly shared state directory. It does not load
 the SDK or activate publication.
@@ -241,8 +242,219 @@ uses the same owning Executor and configured Google account; completing consent
 requires the authenticated review session and CSRF check. It preserves approvals
 and existing receipts, and does not authorize retry of uncertain delivery.
 
+For a first installation only, provision an empty queue and service trust using
+an existing owner-controlled public key:
+
+```text
+harnessy-meeting-full-review --setup-service --input OWNER_PRIVATE_SETUP_FILE
+```
+
+The document contains `kind: "harnessy.meeting-publication.service-setup.v1"`,
+`stateDirectory`, `controlDirectory`, `publicKeyPath`, `publicKeySha256`, `issuer`
+and `keyId`. Both directories must already exist, be empty, disjoint and
+owner-only (`0700`). The public-key file must be owner-only; its fingerprint is
+the independently checked SHA-256 of the Ed25519 SPKI DER bytes. Private keys
+are rejected. The command creates only the current empty publication queue,
+the existing replay schema, and a pinned service-trust document. It reports
+`activated:false` and the new trust pin. Keep that pin for preparation and
+activation. It neither connects providers nor signs an enrollment.
+
+Do not use first-install setup to adopt or repair existing state. Nonempty
+directories are rejected, including a repeated run; failures may preserve
+partial files for inspection and must not trigger an automatic reset. Run this
+before one-time connection setup, which adds its credential/Executor directories
+to the state root. Existing migrations retain their adoption and receipt checks.
+
+For an existing finite full-review installation, use the same `--setup-service`
+command with a separate adoption input:
+
+```json
+{
+  "kind": "harnessy.meeting-publication.service-adoption.v1",
+  "trustedKeyring": {
+    "path": "ABSOLUTE_EXISTING_TRUST_PATH",
+    "device": "PINNED_DEVICE",
+    "inode": "PINNED_INODE",
+    "sha256": "PINNED_SHA256"
+  },
+  "controlDirectory": "ABSOLUTE_EMPTY_PRIVATE_DIRECTORY"
+}
+```
+
+The pin must come from the owner's independently verified finite full-review
+trust. Adoption writes only `service-trust.json` in the empty `0700` directory,
+reusing the existing public keys and exact replay database. It preserves the old
+trust and replay history and rejects any recorded lease, even an expired-looking
+one. It does not sign, activate, reset queue state or make a consumed finite
+authorization reusable. Use the returned new trust pin for request preparation
+below; existing queues still require their cutover and rollback evidence.
+
+Prepare an unsigned service request from configuration and already provisioned
+trust without manually assembling artifact hashes or machine bindings:
+
+```text
+harnessy-meeting-full-review --prepare-service --input OWNER_PRIVATE_PREPARATION_FILE --output-directory EMPTY_PRIVATE_DIRECTORY
+```
+
+The input is a `harnessy.meeting-publication.service-preparation.v1` document
+containing `issuer`, `keyId`, resolved publication `config`, Executor `subject`,
+`google` and `discord` connection bindings, `notifier`, `maxItems`,
+`credentialDirectory`, `engineStatePath`, `installationRoot`, independently
+pinned `trustedKeyring`, `cutoverEvidencePath` and `rollbackPlanPath`. Production
+transport is the default; loopback transport is only for isolated tests. Both
+evidence paths may be null only for a fresh empty current-schema queue.
+
+The command requires existing protected state and trust; it does not create or
+reset either. It rejects recorded leases and unclean queue/replay databases,
+preserves revocation history, and exclusively writes `artifact-manifest.json`,
+canonical `request.json`, and protected `service.json` into the existing empty
+owner-only directory. `service.json` saves the independently supplied trust pin
+and expects the signed output at `enrollment.json` in that same directory.
+Success reports the request digest and `activated:false`. Review the generated
+request before signing it. No provider or signing key is acquired. Filesystem
+failure may leave partial output; inspect it and use a fresh directory rather
+than overwriting. First-install trust/state provisioning is described above;
+ordinary macOS service enablement uses the separate controls below.
+
+The owner-side enrollment action can sign an already reviewed canonical service
+request without a temporary signing script:
+
+```text
+harnessy-meeting-full-review --enroll-service --request REQUEST_PATH --request-sha256 REVIEWED_REQUEST_SHA256 --owner-key PRIVATE_KEY_PATH --public-key-sha256 TRUSTED_PUBLIC_KEY_SHA256 --output NEW_ENROLLMENT_PATH
+```
+
+The request is the exact `harnessy.meeting-publication.service-enrollment`
+payload, serialized as canonical JSON with one trailing newline. Its digest must
+come from the owner's review, and the public-key pin is the SHA-256 of the trusted
+Ed25519 SPKI DER public key. The private key and request must be owner-only files;
+the key must remain outside the installation, source, state and credential roots.
+The output parent must already be owner-only (`0700`). Existing outputs are never
+overwritten. No key is generated, copied into the runtime or printed.
+
+Success writes a new `0600` signed envelope and reports `activated:false`. It does
+not provision trust or replay state, validate activation readiness, consume
+authority, acquire providers, enable schedules or approve content. An error may
+leave an incomplete output after filesystem failure: inspect it rather than
+overwriting or automatically retrying. This is an operator-side signing action,
+not yet the complete first-run provisioning and enablement experience.
+
+For a separately provisioned service enrollment, inspect its control state
+without starting review or providers:
+
+```text
+harnessy-meeting-full-review --service-status --authorization ENROLLMENT_PATH --trusted-keyring KEYRING_PATH --trusted-keyring-device PINNED_DEVICE --trusted-keyring-inode PINNED_INODE --trusted-keyring-sha256 PINNED_SHA256
+```
+
+For ordinary use, sign to the prepared directory's `enrollment.json`, then reuse
+its protected configuration instead of repeating the trust flags:
+
+```text
+harnessy-meeting-full-review --service --input SERVICE_JSON_PATH
+harnessy-meeting-full-review --service-status --input SERVICE_JSON_PATH
+harnessy-meeting-full-review --service-revoke --input SERVICE_JSON_PATH
+```
+
+The configuration is read as a bounded owner-private file with strict fields;
+paths and pins retain their existing checks. It contains no provider credentials
+or signing key, does not renew or mint authority, and cannot override a signed
+configuration. Finite commands do not accept this shorthand. The service still
+verifies its enrollment, artifact, revocation and exclusive lease before running.
+
+This read-only command reports `revoked` and an `activation` state:
+`not_started`, `cleanly_stopped`, `reconciliation_required`, or `lease_recorded`.
+A recorded lease is not proof of a healthy live process; `runtimeHealth` remains
+`not_assessed`. Exit zero means the inspection succeeded, not that activation or
+publication is safe. It does not contact providers, consume enrollment, clear a
+lease, repair state or verify the current artifact/configuration for activation.
+
+After a clean stop, replace `--service-status` with `--service-revoke` to
+permanently revoke that enrollment. This is idempotent, uses the existing replay
+transaction and preserves all approvals, receipts and consumed-authority history.
+Any recorded lease causes `lease_unavailable`: this command does not stop a
+process or clear a stale lease. Complete graceful drain first; reconcile crashes
+or uncertain deliveries rather than guessing that an owner has stopped. A revoked
+enrollment cannot be re-enabled by restarting it. Use disablement below for a
+reversible stop; revocation permanently retires the enrollment.
+
+If inspection reports a stale service lease after a crash, use the bounded
+recovery operation with an owner-private (`0600`) recovery request and a new
+receipt path whose parent is owner-only (`0700`):
+
+```text
+harnessy-meeting-full-review --service-recover-lease --input RECOVERY_JSON_PATH --receipt NEW_RECEIPT_PATH
+```
+
+The request binds the replay and publication databases by absolute path, device
+and inode; binds every lease through its SHA-256 fingerprint plus its lease,
+authorization, owner, process, boot and clock identities; and binds the expected
+loopback review port. Recovery refuses a live or changed owner, a listening
+review service, an ambiguous publication state, a changed database binding, or
+an existing receipt. On success it changes only the matching consumed outcome to
+`reconciled_no_delivery`, deletes only the exact matching lease row, and writes a
+new owner-private audit receipt. Never replace this operation with a broad or
+manual database deletion.
+
+On macOS, inspect an inert launch-agent proposal for that saved configuration:
+
+```text
+harnessy-meeting-full-review --service-launch-agent --input SERVICE_JSON_PATH
+```
+
+The JSON result contains `label` and `plist`. Planning requires unrevoked enrollment
+in `not_started` or `cleanly_stopped` state and uses the existing read-only status
+validation. It does not attest activation readiness, write a plist, load launchd,
+contact providers or consume authority. Activation still performs all runtime
+checks. The proposal starts once when loaded, disables automatic crash restart,
+and allows 45 seconds for the runtime's bounded 30-second graceful drain.
+It uses direct executable/argument paths, not a shell. This proposal alone does
+not install or enable a service.
+
+### Ordinary macOS service operation
+
+After preparation and owner enrollment, install the service files into an
+existing empty owner-only (`0700`) directory, then explicitly enable them:
+
+```text
+harnessy-meeting-full-review --service-install --input SERVICE_JSON_PATH --directory SERVICE_FILES_DIRECTORY
+harnessy-meeting-full-review --service-enable --input SERVICE_JSON_PATH --directory SERVICE_FILES_DIRECTORY
+harnessy-meeting-review-open --state-path STATE_PATH
+```
+
+Installation writes a private plist and private stdout/stderr logs; it does not
+start anything. Enablement submits that exact plist to the current macOS GUI
+session. Its `service-start-submitted` result has `runtimeHealth:not_assessed`:
+confirm the ready event in the private stdout log and successful review access.
+Inspect the private stderr log if startup fails. Do not run foreground `--service`
+alongside the launch agent. Browser access and provider consent remain separate
+from service lifetime; an enrolled service has no finite-session expiry.
+
+For a reversible stop:
+
+```text
+harnessy-meeting-full-review --service-disable --input SERVICE_JSON_PATH --directory SERVICE_FILES_DIRECTORY
+harnessy-meeting-full-review --service-status --input SERVICE_JSON_PATH
+```
+
+Disablement checks that the loaded job belongs to these exact service files,
+requests shutdown, waits for job removal and reports queue activation state.
+Exit zero alone is insufficient: `reconciliationRequired:true` requires operator
+reconciliation before restart. After `cleanly_stopped` (or `not_started`), the
+same unrevoked, unchanged enrollment can be enabled again without signing another
+time-boxed session. Never clear a lease to force restart.
+
+The launch agent deliberately does not automatically restart a crashed writer.
+These commands do not install login/reboot persistence or support Windows/Linux
+service managers. Changed artifacts or signed configuration require reviewed
+replacement bindings, not an in-place overwrite of the existing enrollment or
+plist. Keep state, approvals and receipts intact during upgrade or recovery.
+
 `SIGUSR2` requests graceful drain: reject new work and wait for admitted work and
-cleanup, within the bounded deadline. `SIGTERM` remains interruption, not drain.
+cleanup, within the bounded deadline. Explicit `--service` operation also treats
+`SIGINT` (Ctrl-C) and `SIGTERM` as graceful drain requests. Repeated signals do not
+skip cleanup or extend the 30-second drain deadline. A successful drain exits zero
+and permits restart of the same unrevoked enrollment; a drain failure does not.
+Finite sessions retain interruption on `SIGINT`/`SIGTERM`. `SIGHUP` remains an
+interruption in either mode. These controls do not install an OS service manager.
 Expiry, revocation, crash and uncertain delivery require operator reconciliation;
 never clear a stale lease, replay consumed authority or restore a stale backup
 over newer external receipts. Automatic restart and renewal are not provided.
@@ -253,11 +465,79 @@ notification without credentials or dispatch authority. Notification failure
 does not change the original exit status. SIGKILL/power loss cannot trigger an
 in-process alert; OS acceptance does not prove the user saw a banner.
 
-The packed `dist/meeting-setup-cli.js` is a separate one-time native connection
+The installed `harnessy-meeting-setup` command is a separate one-time native connection
 setup adapter, not a scheduler or publication command. It accepts protected local
 input, uses loopback Google consent and preserves partial setup on failure.
 Google-only continuation uses `--resume-google`; inspect preserved state before
 retrying. Do not put credentials in shell arguments, URLs, logs or chat.
+
+```text
+harnessy-meeting-setup --input OWNER_PRIVATE_SETUP_FILE
+harnessy-meeting-setup --resume-google --input OWNER_PRIVATE_SETUP_FILE
+```
+
+The input must be an existing canonical owner-only file (`0600` or `0400`)
+containing the `harnessy.meeting-publication.connection-setup.v1` document. Its
+existing `statePath` must be owner-only (`0700`). Setup derives separate
+`native-executor` and `native-credentials` subdirectories there. It does not
+discover credentials, enable a service, approve items or publish meetings.
+This package remains private; the named command removes reliance on its internal
+`dist` path for local package consumers, not the remaining public distribution gate.
+
+## Community review and background publication
+
+Community review saves an exact-revision approval locally; it does not wait for
+Google or Discord. The separately enrolled publication command selects at most
+one eligible approved briefing per invocation:
+
+```text
+harnessy-community-publication --notify-on-stop --service-config SERVICE_JSON_PATH
+harnessy-community-publication --service-status --service-config SERVICE_JSON_PATH
+```
+
+An empty eligible queue returns `status:"idle"` without acquiring publication
+providers. A service enrollment is reusable and revocable: ordinary invocations
+do not need a new signature or login. Provider consent is separate. Publication
+still requires the exact approved revision, unchanged installation bindings and
+an exclusive publication lease. Meetings and community reuse the existing
+Executor connections while retaining separate approvals and destinations.
+
+First authority setup uses an existing owner public key, not another private key:
+
+```text
+harnessy-community-publication --setup-service --input OWNER_PRIVATE_SETUP_FILE
+harnessy-community-publication --prepare-service --input OWNER_PRIVATE_PREPARATION_FILE --output-directory EMPTY_PRIVATE_DIRECTORY
+harnessy-community-publication --enroll-service --request REQUEST_PATH --request-sha256 REVIEWED_REQUEST_SHA256 --owner-key PRIVATE_KEY_PATH --public-key-sha256 TRUSTED_PUBLIC_KEY_SHA256 --output NEW_ENROLLMENT_PATH
+```
+
+Setup input has kind `harnessy.community.briefing.service-setup.v1` and fields
+`stateDirectory`, `controlDirectory`, `publicKeyPath`, `publicKeySha256`, `issuer`
+and `keyId`. It creates only community authority state and public trust; existing
+authority is never reset. Draft/review owns queue creation. Preparation uses
+`issuer`, `keyId`, `queuePath`, `statePath`, `configPath`, `installationRoot`,
+`cutoverEvidencePath`, `rollbackPlanPath` and the independently pinned
+`trustedKeyring`. The protected canonical configuration contains `providerScope`,
+`sourcePath` and `draftPath`; reuse existing connection identifiers and explicitly
+select community destinations. Preparation requires quiesced databases. If an
+Executor is shared with meetings, cleanly stop its owner for initial enrollment,
+preserve a consistent backup and restart only after reconciliation. Subsequent
+enrolled invocations allow the existing safe SQLite sidecars.
+
+An explicitly configured OS scheduler can invoke the first command every five
+minutes, matching the prior community workflow. Use the pinned installed Node
+and command entrypoint, a distinct native job label, private logs, no shell, and
+no competing legacy worker. This command does not install a scheduler itself.
+`--notify-on-stop` must be first; on macOS it attempts a generic failure alert
+after cleanup and preserves the original nonzero exit if notification fails.
+No content or credential is included in that alert.
+
+An uncertain delivery retains its lease and cannot be retried by later scheduled
+invocations. Disable the scheduler, preserve current receipts and reconcile the
+external result; never clear a lease or restore a stale queue. To retire an
+enrollment while stopped and lease-free, use `--revoke-service` before
+`--service-config`. Status reports control state, not process health or delivery
+success. Login/reboot installation and unattended crash recovery require separate
+OS integration evidence; a loaded local job alone does not prove them.
 
 ## State-only preparation and review
 

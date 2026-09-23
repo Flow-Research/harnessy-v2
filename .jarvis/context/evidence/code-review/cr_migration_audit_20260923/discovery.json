@@ -1,0 +1,5829 @@
+{
+  "schema_version": 1,
+  "source_type": "local_diff",
+  "base_ref": "7782ac86",
+  "head_ref": "3ebf8569",
+  "range": "7782ac86...3ebf8569",
+  "generated_at": "2026-09-23T09:45:15Z",
+  "summary": {
+    "files_changed": 725,
+    "additions": 134249,
+    "deletions": 6481
+  },
+  "files": [
+    {
+      "path": ".github/workflows/approve-contributor.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 25,
+      "deletions": 10,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".github/workflows/build-binaries.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 113,
+      "deletions": 10,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 197,
+      "deletions": 5,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".github/workflows/issue-analysis.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 13,
+      "deletions": 12,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".github/workflows/issue-gate.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".github/workflows/issue-triage-labels.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".github/workflows/npm-audit.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 32,
+      "deletions": 8,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".github/workflows/pr-gate.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".github/workflows/qa-security-sweep.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 70,
+      "deletions": 93,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".github/workflows/remove-inprogress-on-close.yml",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".gitignore",
+      "old_path": null,
+      "status": "M",
+      "additions": 9,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": ".jarvis/context/AGENTS.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/README.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 44,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/decisions.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 57,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/docs/standards/ci-process.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 22,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/docs/standards/qa-process.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 17,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/docs/standards/skill-feedback-protocol.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 10,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/docs/standards/testing-strategy.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 14,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/evidence/code-review/cr_20260902T030734Z/REVIEW_REPORT.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 41,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/evidence/code-review/cr_20260902T030734Z/discovery.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 2973,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/evidence/code-review/cr_20260902T030734Z/evidence.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 41,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/evidence/code-review/cr_20260902T030734Z/feedback.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 25,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/evidence/code-review/cr_20260902T030734Z/review.sarif",
+      "old_path": null,
+      "status": "A",
+      "additions": 17,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/profiles/ci.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 123,
+      "deletions": 0,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": ".jarvis/context/profiles/deploy.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 50,
+      "deletions": 0,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": ".jarvis/context/profiles/qa.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 104,
+      "deletions": 0,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": ".jarvis/context/projects.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 12,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/roadmap.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 237,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/status.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 1110,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/team.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 13,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".jarvis/context/technical-debt.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 307,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": ".npmrc",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": ".nvmrc",
+      "old_path": null,
+      "status": "A",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "AGENTS.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 23,
+      "deletions": 37,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "PORT_MAP.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 11,
+      "deletions": 3,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "README.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 17,
+      "deletions": 5,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "VISION.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 13,
+      "deletions": 3,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/adr/0004-harnessy-v2-is-canonical.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 64,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/adr/0005-promote-harnessy-sdk-as-a-narrow-programmatic-boundary.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 100,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/adr/0006-separate-operational-authorization-from-inert-planning.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 418,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/adr/0007-harnessy-authored-package-license-model.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 144,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/capability-portability.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 89,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/community-briefing-provider-contract.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 139,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/community-weekly-briefing-v2-contract.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 78,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/executor-philosophy.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 22,
+      "deletions": 7,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/local-cutover-backup-evidence-contract.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 156,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/meeting-publication-state-contract.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 552,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/migrations/v1-to-v2-canonical-cutover.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 258,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/migrations/v2-canonical-readiness-2026-09-02.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 151,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/product-surfaces.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 19,
+      "deletions": 10,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "docs/sdk-consumer-contract.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 94,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "executor/.oxfmtrc.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 18,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/.oxlintrc.jsonc",
+      "old_path": null,
+      "status": "A",
+      "additions": 167,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/VENDOR.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 78,
+      "deletions": 30,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "executor/apps/cli/src/build.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 36,
+      "deletions": 19,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/apps/local/src/db/data-migrations.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/apps/local/src/db/local-migration-name.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 2,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/apps/local/src/db/sqlite-fuma-store.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 118,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/apps/local/src/db/sqlite-fumadb.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 7,
+      "deletions": 118,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/apps/local/src/db/v1-v2-migration.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 5,
+      "deletions": 1,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "executor/apps/local/src/db/v1-v2-migration.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/bun.lock",
+      "old_path": null,
+      "status": "M",
+      "additions": 351,
+      "deletions": 347,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 28,
+      "deletions": 4,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "executor/packages/core/fumadb/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "executor/packages/core/sdk/src/executor.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 4,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/packages/core/sdk/src/oauth-client.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/packages/core/sdk/src/oauth-service.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 4,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/packages/core/test-servers/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "executor/packages/hosts/mcp/src/stdio-integration.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 58,
+      "deletions": 15,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "executor/packages/kernel/runtime-dynamic-worker/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 2,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "executor/packages/plugins/apps/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "executor/packages/plugins/openapi/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "executor/packages/react/src/api/local-auth.tsx",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 2,
+      "cluster": "source-code"
+    },
+    {
+      "path": "executor/scripts/build-native-test-deps.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 50,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "executor/scripts/check-changelog-stubs.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 71,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/check-patched-deps.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 158,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 78,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-conditional-tests.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 43,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-cross-package-relative-imports.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 75,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-direct-cloud-executor-schema-import.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 82,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-double-cast.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 41,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-effect-escape-hatch.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 33,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-effect-internal-tags.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 95,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-error-constructor.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 40,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-inline-object-type-assertion.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 40,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-inline-schema-compile.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 104,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-instanceof-error.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 22,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-instanceof-tagged-error.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 27,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-json-parse.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 27,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-manual-tag-check.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 37,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-match-orelse.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 27,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-promise-catch.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 30,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-promise-client-surface.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 42,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-promise-reject.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 74,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-raw-durable-object-id.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 39,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-raw-error-throw.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 24,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-raw-fetch.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 64,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-redundant-error-factory.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 90,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-redundant-primitive-cast.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 40,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-schema-class.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 50,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-switch-statement.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 18,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-try-catch-or-throw.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-ts-nocheck.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 26,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-unknown-error-message.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 98,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-unknown-shape-probing.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 32,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-unsupported-effect-api.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 37,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/no-vitest-import.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/prefer-effect-predicate.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 89,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/prefer-schema-inferred-types.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 66,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/prefer-value-inferred-extension-types.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 81,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/prefer-yield-tagged-error.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 40,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/rules/require-reactivity-keys.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 90,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "executor/scripts/oxlint-plugin-executor/utils.js",
+      "old_path": null,
+      "status": "A",
+      "additions": 130,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "package-lock.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 534,
+      "deletions": 1074,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 72,
+      "deletions": 11,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/agent/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 21,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/agent/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 3,
+      "deletions": 2,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/ai/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 21,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/ai/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 1,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/ai/src/api/openai-codex-responses.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 3,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/ai/test/openai-codex-redirect.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 53,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 661,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/README.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 25,
+      "deletions": 3,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/harnessy.capability.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 14,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 1,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/SOURCE.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 2596,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/context-vault/README.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 4,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/context-vault/docs/operations/community-weekly-briefing.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 118,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/context-vault/docs/operations/fathom-local-automation.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 23,
+      "deletions": 1,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/context-vault/docs/operations/meeting-publication.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 165,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/context-vault/docs/operations/whatsapp-local-automation.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 145,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/context-vault/docs/reusable-script-standard.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 11,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/context-vault/docs/standards/worktree-protocol.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 21,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/index.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 19,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/lib/dependencies.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 7,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/lib/skills.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/scripts/flow-cron",
+      "old_path": null,
+      "status": "M",
+      "additions": 62,
+      "deletions": 15,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/scripts/flow-cron-exec",
+      "old_path": null,
+      "status": "M",
+      "additions": 45,
+      "deletions": 3,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/_shared/ai_runner.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 32,
+      "deletions": 9,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/_shared/text-hygiene.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 1,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/SKILL.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 75,
+      "deletions": 10,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/capability.yaml",
+      "old_path": null,
+      "status": "A",
+      "additions": 58,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/commands/code-review.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 199,
+      "deletions": 420,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/contracts/evidence.schema.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 121,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/contracts/input.schema.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 50,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/contracts/output.schema.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 117,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 5,
+      "deletions": 2,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/materials/report-template.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 30,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/materials/review-rubric.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 32,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/materials/severity-taxonomy.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 46,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/materials/verifier-rubric.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 22,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/projections/README.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 50,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/scripts/build-evidence.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 92,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/scripts/discover-diff.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 169,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/scripts/harness-code-review",
+      "old_path": null,
+      "status": "A",
+      "additions": 636,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/scripts/validate-evidence.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 276,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/code-review/scripts/validate-output.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 138,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/dependency-manager/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/dependency-manager/scripts/dependency-manager-lib.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 7,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/jarvis/commands/jarvis.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 53,
+      "deletions": 1,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/jarvis/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 20,
+      "deletions": 2,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/SKILL.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 37,
+      "deletions": 6,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/commands/life.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 76,
+      "deletions": 23,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 9,
+      "deletions": 2,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/collect-state",
+      "old_path": null,
+      "status": "M",
+      "additions": 584,
+      "deletions": 7,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/daily-brief",
+      "old_path": null,
+      "status": "M",
+      "additions": 479,
+      "deletions": 46,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/learning-research",
+      "old_path": null,
+      "status": "A",
+      "additions": 526,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/prepare-weekly-prompt",
+      "old_path": null,
+      "status": "A",
+      "additions": 321,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/weekly-plan",
+      "old_path": null,
+      "status": "M",
+      "additions": 132,
+      "deletions": 81,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/templates/daily-focus.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 11,
+      "deletions": 5,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/templates/weekly-plan.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 32,
+      "deletions": 17,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/service-deploy/scripts/harness-deploy",
+      "old_path": null,
+      "status": "M",
+      "additions": 129,
+      "deletions": 1,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/tmux-agent-launcher/SKILL.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 10,
+      "deletions": 9,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/tmux-agent-launcher/commands/tmux-agent-launcher.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 34,
+      "deletions": 11,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/tmux-agent-launcher/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 2,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/skills/tmux-agent-launcher/scripts/tmux-agent-launcher",
+      "old_path": null,
+      "status": "M",
+      "additions": 138,
+      "deletions": 30,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/templates/harness-code-review.yml",
+      "old_path": null,
+      "status": "A",
+      "additions": 36,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_ai_runner.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 36,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_code_review_capability.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 483,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_flow_cron.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 92,
+      "deletions": 3,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_flow_cron_exec.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 73,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_flow_install_cli.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 95,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_life_orchestrator_collect_state.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 521,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_life_orchestrator_daily_brief.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 345,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_life_orchestrator_learning_research.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 294,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_life_orchestrator_weekly_plan.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 301,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_service_deploy.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 2,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/flow-install/tests/test_tmux_agent_launcher.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 454,
+      "deletions": 5,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/AGENTS.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 89,
+      "deletions": 3,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/pyproject.toml",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 457,
+      "deletions": 56,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/community_briefing/__init__.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 6,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/community_briefing/ai.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 123,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/community_briefing/cli.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 313,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/community_briefing/collector.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 205,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/community_briefing/models.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 53,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/community_briefing/safety.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 93,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/community_briefing/service.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 1437,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/community_briefing/store.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 410,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/config/__init__.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/config/defaults.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 31,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/config/loader.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 44,
+      "deletions": 2,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/config/schema.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 135,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/config/whatsapp_setup.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 135,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 6,
+      "deletions": 11,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/models.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/__init__.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 6,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/cli.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 436,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/discord.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 256,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/errors.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 22,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/google.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 364,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/launchd.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 170,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/markdown.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 263,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/models.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 63,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notes.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 282,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notify.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 112,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/review.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 902,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/service.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 437,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/store.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 515,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/service.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 217,
+      "deletions": 56,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/text_hygiene.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 31,
+      "deletions": 3,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/whatsapp/automation.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 185,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/whatsapp/cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 145,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/plan/test_alignment.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 2,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/community_briefing/__init__.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/community_briefing/test_collector_safety.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 87,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/community_briefing/test_revision_compatibility.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 321,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/community_briefing/test_revision_fencing.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 405,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/community_briefing/test_service_review.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 384,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/config/test_cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 85,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/config/test_loader.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 56,
+      "deletions": 3,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/config/test_schema.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 55,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/config/test_whatsapp_setup.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 56,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/fixtures/docs-curated.golden.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 211,
+      "deletions": 6,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/fixtures/docs-markdown.golden.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 229,
+      "deletions": 6,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/meetings/publication/__init__.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/meetings/publication/test_cli_launchd_notify.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 303,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/meetings/publication/test_google.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 142,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/meetings/publication/test_markdown_discord.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 248,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/meetings/publication/test_notes_store.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 307,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/meetings/publication/test_service_review.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 538,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/meetings/test_cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 41,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/meetings/test_service.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 280,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/test_docs_command_tree.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 4,
+      "deletions": 2,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/test_text_hygiene.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 78,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/tests/unit/whatsapp/test_cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/uv.lock",
+      "old_path": null,
+      "status": "M",
+      "additions": 819,
+      "deletions": 817,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/npm-transport.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 4,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/.github/workflows/jarvis-cli.yml",
+      "old_path": null,
+      "status": "A",
+      "additions": 43,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/.gitignore",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/.jarvis/context/README.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 4,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/.jarvis/context/docs/operations/community-weekly-briefing.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 118,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/.jarvis/context/docs/operations/fathom-local-automation.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 23,
+      "deletions": 1,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/.jarvis/context/docs/operations/meeting-publication.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 165,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/.jarvis/context/docs/operations/whatsapp-local-automation.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 145,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/.jarvis/context/docs/reusable-script-standard.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 11,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/.jarvis/context/docs/standards/worktree-protocol.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 21,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/AGENTS.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 89,
+      "deletions": 3,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/pyproject.toml",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 457,
+      "deletions": 56,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/__init__.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 6,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/ai.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 123,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/cli.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 313,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/collector.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 205,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/models.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 53,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/safety.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 93,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/service.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 1437,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/store.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 410,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/config/__init__.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/config/defaults.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 31,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/config/loader.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 44,
+      "deletions": 2,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/config/schema.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 135,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/config/whatsapp_setup.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 135,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 6,
+      "deletions": 11,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/models.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/__init__.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 6,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/cli.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 436,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/discord.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 256,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/errors.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 22,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/google.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 364,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/launchd.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 170,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/markdown.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 263,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/models.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 63,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/notes.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 282,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/notify.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 112,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/review.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 902,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/service.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 437,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/store.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 515,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/service.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 217,
+      "deletions": 56,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/text_hygiene.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 31,
+      "deletions": 3,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/whatsapp/automation.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 185,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/whatsapp/cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 145,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/plan/test_alignment.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 2,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/community_briefing/__init__.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/community_briefing/test_collector_safety.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 87,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/community_briefing/test_revision_compatibility.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 321,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/community_briefing/test_revision_fencing.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 405,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/community_briefing/test_service_review.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 384,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/config/test_cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 85,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/config/test_loader.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 56,
+      "deletions": 3,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/config/test_schema.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 55,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/config/test_whatsapp_setup.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 56,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/fixtures/docs-curated.golden.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 211,
+      "deletions": 6,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/fixtures/docs-markdown.golden.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 229,
+      "deletions": 6,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/meetings/publication/__init__.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/meetings/publication/test_cli_launchd_notify.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 303,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/meetings/publication/test_google.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 142,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/meetings/publication/test_markdown_discord.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 248,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/meetings/publication/test_notes_store.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 307,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/meetings/publication/test_service_review.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 538,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/meetings/test_cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 41,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/meetings/test_service.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 280,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/test_docs_command_tree.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 4,
+      "deletions": 2,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/test_text_hygiene.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 78,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/tests/unit/whatsapp/test_cli.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/uv.lock",
+      "old_path": null,
+      "status": "M",
+      "additions": 819,
+      "deletions": 817,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/index.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 19,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/lib/dependencies.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 7,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/lib/skills.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/scripts/flow-cron",
+      "old_path": null,
+      "status": "M",
+      "additions": 62,
+      "deletions": 15,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/scripts/flow-cron-exec",
+      "old_path": null,
+      "status": "M",
+      "additions": 45,
+      "deletions": 3,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/_shared/ai_runner.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 32,
+      "deletions": 9,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/_shared/text-hygiene.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 1,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/SKILL.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 75,
+      "deletions": 10,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/capability.yaml",
+      "old_path": null,
+      "status": "A",
+      "additions": 58,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/commands/code-review.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 199,
+      "deletions": 420,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/contracts/evidence.schema.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 121,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/contracts/input.schema.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 50,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/contracts/output.schema.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 117,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 5,
+      "deletions": 2,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/materials/report-template.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 30,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/materials/review-rubric.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 32,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/materials/severity-taxonomy.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 46,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/materials/verifier-rubric.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 22,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/projections/README.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 50,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/scripts/build-evidence.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 92,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/scripts/discover-diff.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 169,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/scripts/harness-code-review",
+      "old_path": null,
+      "status": "A",
+      "additions": 636,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/scripts/validate-evidence.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 276,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/code-review/scripts/validate-output.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 138,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/dependency-manager/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/dependency-manager/scripts/dependency-manager-lib.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 7,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/jarvis/commands/jarvis.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 53,
+      "deletions": 1,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/jarvis/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 20,
+      "deletions": 2,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/SKILL.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 37,
+      "deletions": 6,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/commands/life.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 76,
+      "deletions": 23,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 9,
+      "deletions": 2,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts/collect-state",
+      "old_path": null,
+      "status": "M",
+      "additions": 584,
+      "deletions": 7,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts/daily-brief",
+      "old_path": null,
+      "status": "M",
+      "additions": 479,
+      "deletions": 46,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts/learning-research",
+      "old_path": null,
+      "status": "A",
+      "additions": 526,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts/prepare-weekly-prompt",
+      "old_path": null,
+      "status": "A",
+      "additions": 321,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts/weekly-plan",
+      "old_path": null,
+      "status": "M",
+      "additions": 132,
+      "deletions": 81,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/templates/daily-focus.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 11,
+      "deletions": 5,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/templates/weekly-plan.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 32,
+      "deletions": 17,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/service-deploy/scripts/harness-deploy",
+      "old_path": null,
+      "status": "M",
+      "additions": 129,
+      "deletions": 1,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/tmux-agent-launcher/SKILL.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 10,
+      "deletions": 9,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/tmux-agent-launcher/commands/tmux-agent-launcher.md",
+      "old_path": null,
+      "status": "M",
+      "additions": 34,
+      "deletions": 11,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/tmux-agent-launcher/manifest.yaml",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 2,
+      "cluster": "skills"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/tmux-agent-launcher/scripts/tmux-agent-launcher",
+      "old_path": null,
+      "status": "M",
+      "additions": 138,
+      "deletions": 30,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/templates/harness-code-review.yml",
+      "old_path": null,
+      "status": "A",
+      "additions": 36,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_ai_runner.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 36,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_code_review_capability.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 483,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_flow_cron.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 92,
+      "deletions": 3,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_flow_cron_exec.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 73,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_flow_install_cli.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 95,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_life_orchestrator_collect_state.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 521,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_life_orchestrator_daily_brief.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 345,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_life_orchestrator_learning_research.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 294,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_life_orchestrator_weekly_plan.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 301,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_service_deploy.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 2,
+      "cluster": "runtime-deploy"
+    },
+    {
+      "path": "packages/capability-harnessy-v1-full/resources/source/tools/flow-install/tests/test_tmux_agent_launcher.py",
+      "old_path": null,
+      "status": "M",
+      "additions": 454,
+      "deletions": 5,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/capability-org-knowledge/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 661,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/capability-org-knowledge/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 1,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/coding-agent/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 21,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/coding-agent/install-lock/package-lock.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 26,
+      "deletions": 41,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/coding-agent/npm-shrinkwrap.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 26,
+      "deletions": 41,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/coding-agent/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 3,
+      "deletions": 2,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/coding-agent/src/core/tools/find.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 12,
+      "deletions": 3,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/coding-agent/src/modes/interactive/interactive-mode.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/coding-agent/test/fixtures/fake-fd.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 55,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/coding-agent/test/footer-data-provider.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 24,
+      "deletions": 11,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/coding-agent/test/package-manager.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 10,
+      "deletions": 3,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/coding-agent/test/suite/regressions/3302-find-path-glob.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 25,
+      "deletions": 4,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/coding-agent/test/tool-execution-component.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 1,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 661,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/fixtures/jarvis-v1/command-manifest.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 1018,
+      "deletions": 116,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/fixtures/jarvis-v1/community-briefing-source-parity.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 129,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/fixtures/jarvis-v1/meeting-publication-parity.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 418,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/fixtures/jarvis-v1/parity-manifest.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 198,
+      "deletions": 6,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/fixtures/jarvis-v1/state-fixture-oracle.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 25,
+      "deletions": 5,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/harnessy-core/src/capabilities/checker.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 9,
+      "deletions": 11,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/capabilities/fingerprint.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 19,
+      "deletions": 5,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/capabilities/manifest.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 3,
+      "deletions": 5,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/capabilities/materializer.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 244,
+      "deletions": 198,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/capabilities/path-safety.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 98,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/capabilities/registry.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 651,
+      "deletions": 204,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/capabilities/source.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 14,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/cli/capability.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 120,
+      "deletions": 3,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/cli/jarvis.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 688,
+      "deletions": 5,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/community-briefing.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 20,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/executor-builtin.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 2,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/index.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 125,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/community-briefing/authority.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 157,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/community-briefing/grant-host.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 320,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/community-briefing/operational-input.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 276,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/community-briefing/operational-runtime.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 204,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/community-briefing/service.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 37,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/community-briefing/status.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 274,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/config-model.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 99,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/environment.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 8,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/fathom/file-store.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 151,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/fathom/host.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 51,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/fathom/import-notes.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 169,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/fathom/ingest.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 328,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/fathom/poll.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 34,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/fathom/schedule.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 143,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/fathom/status.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 193,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/artifact.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 125,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/codex-provider.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 184,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/config.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 130,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/draft-grant-host.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 185,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/draft-provider.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 136,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/history.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 162,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/identity.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 83,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/models.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 88,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/native-draft.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 114,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/research.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 409,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/schedule.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 218,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/service.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 928,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/life-orchestrator/store.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 368,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/authority-check.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 37,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/authority-grant-registry.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 64,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/authority-test-fixture.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 88,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/authority.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 167,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/inspector.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 358,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/models.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 238,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/notes.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 596,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/operational-input.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 1607,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/operational-runtime.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 1511,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/provider-health.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 41,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/review-markdown.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 66,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/review.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 1373,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/service.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 869,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/store-file-safety.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 92,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/store-schema.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 300,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/store.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 936,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/v1-import-projection.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 519,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/meeting-publication/v1-import.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 398,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/jarvis/state.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 28,
+      "deletions": 9,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/life-orchestrator.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 82,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/main.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 8,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/meeting-publication-inspector.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 14,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/meeting-publication.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 71,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/operations.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 89,
+      "deletions": 3,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/output/capability.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 112,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/runtime/lockfile-store.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 37,
+      "deletions": 4,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/src/runtime/profile-store.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 58,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/test/capability-checker.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 27,
+      "deletions": 16,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/capability-fingerprint.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 22,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/capability-manifest.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 18,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/capability-materializer.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 21,
+      "deletions": 17,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/capability-portability.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 525,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/codex-life-draft-provider.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 345,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/community-briefing-authority.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 57,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/community-briefing-grant-host.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 316,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/community-briefing-status.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 109,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/executor-builtin.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 6,
+      "deletions": 3,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/fathom-cli.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 135,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/fathom-file-store.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 132,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/fathom-host.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 38,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/fathom-import-notes.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 79,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/fathom-ingest.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 394,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/fathom-poll.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 51,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/fathom-schedule.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 85,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/fathom-status.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 76,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/harness-project.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 45,
+      "deletions": 9,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/installed-life-acceptance.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 77,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/test/jarvis-compatibility.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 5,
+      "deletions": 5,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-draft-grant-host.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 162,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-draft-provider.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 172,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-native-preview.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 269,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-native-weekly-preview.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 434,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-orchestrator-artifact.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 88,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-orchestrator-cli.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 249,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-orchestrator-config.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 36,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-orchestrator-identity.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 29,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-orchestrator-research.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 285,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-orchestrator-schedule.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 140,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-orchestrator-service.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 239,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-orchestrator-store.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 249,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/life-prompt-home.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 70,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-artifact-inventory.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 260,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-authority-inspector.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 1111,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-claims.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 386,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-grant-scope.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 94,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-operational-full-review.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 1384,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-operational-runtime.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 734,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-operational-worker.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 584,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-parity.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 422,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-review-attention.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 421,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-review-dispatch.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 720,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-review-markdown.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 181,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-review-reconnect.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 418,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-review-runtime.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 582,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-review.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 1306,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-scan-noop.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 219,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-service-claims.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 415,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-service.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 1060,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-source-authority.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 179,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-source-store.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 967,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-store-authority.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 226,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-store-relocation.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 271,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-uncertain-restart.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 233,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-v1-conversion.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 434,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-v1-import.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 558,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-worker-reminders.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 606,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/meeting-publication-writer-proof.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 50,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/org-knowledge-pack.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/structured-output.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 52,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/test/support/meeting-full-review-runtime-fixture.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 353,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/test/support/meeting-review-runtime-fixture.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 297,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/test/support/meeting-smoke-runtime-fixture.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 327,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/test/support/meeting-worker-runtime-fixture.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 321,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/test/support/packed-life-codex-entry.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 232,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-core/test/v1-full-pack.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 119,
+      "deletions": 48,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-core/vitest.config.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 8,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-engine/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 661,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-engine/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 7,
+      "deletions": 5,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/harnessy-engine/scripts/fixture-smoke.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 4,
+      "deletions": 3,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/harnessy-engine/test/fixtures/cloudflare-worker/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 4,
+      "deletions": 1,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/harnessy-engine/vitest.config.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 8,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-executor/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 21,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-executor/README.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 9,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/harnessy-executor/bin/harnessy-executor",
+      "old_path": null,
+      "status": "A",
+      "additions": 84,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-executor/bin/platform.cjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 17,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-executor/package.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 21,
+      "deletions": 0,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/harnessy-local-host/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 661,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/README.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 375,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/harnessy-local-host/package.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 64,
+      "deletions": 0,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/harnessy-local-host/scripts/fixture-smoke.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 687,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/harnessy-local-host/scripts/test-fixture.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 81,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/application.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 185,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/cli.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 118,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/community-publication-cli.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 52,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/community-publication-command.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 28,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/index.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 47,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/input.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 263,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-command-input.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 61,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-full-review-cli.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 76,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-full-review-command.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 63,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-full-review-stop-notification.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 41,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-import-cli.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 39,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-import-command.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 93,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-import-runtime.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 13,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-review-cli.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 46,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-review-command.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 31,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-review-open-cli.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 52,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-review-runtime.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 28,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-runtime.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 122,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-setup-cli.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 88,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-setup-consent.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 201,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-setup-input.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 78,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-smoke-cli.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 38,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-smoke-command.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 41,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-worker-cli.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 38,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/meeting-worker-command.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 50,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/src/schema.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 396,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/backup-restore-evidence.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 580,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/community-publication-command.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 139,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/fixture-isolation-check.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 20,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/input.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 403,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/local-host.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 431,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/meeting-full-review-stop-notification.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 139,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/meeting-import-command.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 167,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/meeting-review-command.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 159,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/meeting-runtime.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 53,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/meeting-setup-consent.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 278,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/meeting-setup-input.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 113,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/meeting-smoke-command.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 142,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/backup-contract.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 845,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/backup-runtime.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 1005,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/fixture-community-stop-notification-hook.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 17,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/fixture-environment.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 14,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/fixture-network-guard.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 30,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/fixture-network-probe.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 39,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/fixture-stop-notification-hook.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 22,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/meeting-manual-rollback-oracle.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 86,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/meeting-manual-rollback-rehearsal.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 219,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/packed-community-publication-entry.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 126,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/packed-meeting-full-review-entry.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 775,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/packed-meeting-reconnect-entry.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 302,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/packed-meeting-review-entry.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 202,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/packed-meeting-review.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 36,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/packed-meeting-runtime-smoke.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 166,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/test/support/packed-meeting-worker-entry.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 514,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/tsconfig.build.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 20,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/tsconfig.json",
+      "old_path": null,
+      "status": "A",
+      "additions": 15,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-local-host/vitest.config.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 33,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/CHANGELOG.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 31,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/harnessy-sdk/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 661,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/README.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 52,
+      "deletions": 0,
+      "cluster": "docs-context"
+    },
+    {
+      "path": "packages/harnessy-sdk/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 33,
+      "deletions": 7,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "packages/harnessy-sdk/scripts/audit-bundles.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 165,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/harnessy-sdk/scripts/fixture-smoke.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 484,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/harnessy-sdk/scripts/normalize-builtin-imports.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 6,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/community-briefing/providers.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 71,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/community-briefing/publication.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 120,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/community-briefing/queue.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 220,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/community-briefing/runtime.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 210,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/community-briefing/worker.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 218,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/engine.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 87,
+      "deletions": 18,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/engine/adapter.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 380,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/engine/compose.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 65,
+      "deletions": 83,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/engine/errors.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 0,
+      "deletions": 6,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/index.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 2,
+      "deletions": 10,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/meeting-publication/existing-engine-store-test-fixture.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 40,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/meeting-publication/existing-engine-store.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 447,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/meeting-publication/markdown.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 191,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/meeting-publication/mutation-guard.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 79,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/meeting-publication/notifier.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 222,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/meeting-publication/providers.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 601,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/meeting-publication/setup.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 547,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/meeting-publication/transport.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 327,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/node.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 46,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/plugins/discord-meeting-publication.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 377,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/src/plugins/google-meeting-publication.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 667,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/bundle-audit.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 88,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-briefing-discord-tool.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 192,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-briefing-providers.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 143,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-briefing-publication.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 191,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-briefing-queue.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 511,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-briefing-runtime.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 492,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-briefing-worker.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 207,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-existing-catalog.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 181,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-google-tool.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 362,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-operational-runtime.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 537,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/community-rollback-reconciliation.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 232,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/existing-meeting-engine-store.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 298,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/knowledge-engine-parity.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 8,
+      "deletions": 9,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/meeting-publication-auth-classification.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 22,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/meeting-publication-inspect-google.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 192,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/meeting-publication-legacy-google.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 271,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/meeting-publication-mutation-guard.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 157,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/meeting-publication-notifier.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 100,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/meeting-publication-providers.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 1749,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/meeting-publication-reconnect.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 448,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/meeting-publication-setup.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 624,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/meeting-transport.test.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 168,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/presets.test.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 57,
+      "deletions": 2,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/support/community-operational-child.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 64,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/support/community-queue-child.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 31,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/support/community-rollback-reader.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 70,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/support/community-runtime-fixture.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 192,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/support/community-scope.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 23,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/support/meeting-oauth-wire.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 116,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/support/meeting-provider-wire.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 278,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/test/support/packed-meeting-runtime-entry.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 420,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/tsconfig.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 9,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/tsup.config.ts",
+      "old_path": null,
+      "status": "A",
+      "additions": 59,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/harnessy-sdk/vitest.config.ts",
+      "old_path": null,
+      "status": "M",
+      "additions": 25,
+      "deletions": 1,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/tui/LICENSE",
+      "old_path": null,
+      "status": "A",
+      "additions": 21,
+      "deletions": 0,
+      "cluster": "source-code"
+    },
+    {
+      "path": "packages/tui/package.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 0,
+      "cluster": "config-profiles"
+    },
+    {
+      "path": "qa/api/scripts/canonical-cutover.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 57,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "qa/api/scripts/meeting-publication.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 11,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "qa/features.generated.yaml",
+      "old_path": null,
+      "status": "A",
+      "additions": 96,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "qa/security/findings/2026-09-02-v2-canonical-cutover.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 237,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "qa/security/scripts/security-invariants.md",
+      "old_path": null,
+      "status": "A",
+      "additions": 14,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "qa/tests/canonical-cutover.api.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 59,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "qa/tests/meeting-publication.api.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 27,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "qa/tests/security-invariants.api.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 21,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/audit-executor-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 41,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/audit-executor-lib.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 37,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/audit-executor.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 38,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/build-harnessy-executor.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 83,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/check-ci-contract.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 19,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/check-clean-worktree.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 14,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/check-harnessy-cockpit.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 42,
+      "deletions": 17,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/check-security-invariants.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 70,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/check-supply-chain-reproducibility.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 83,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/ci-contract-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 188,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/ci-contract-lib.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 236,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/clean-v1-compatibility-artifacts.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 36,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/clean-worktree-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 31,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/clean-worktree-lib.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 54,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/cockpit-smoke-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 20,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/cockpit-smoke-lib.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 46,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/generate-coding-agent-install-lock.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/generate-coding-agent-shrinkwrap.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 1,
+      "deletions": 1,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/generate-jarvis-parity-manifest.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 317,
+      "deletions": 6,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/generate-qa-feature-catalog.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 39,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/generate-supply-chain-evidence.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 618,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/harnessy-executor-package-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 72,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/harnessy-executor-package-lib.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 171,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/harnessy-release-contract.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 237,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/harnessy-release-contract.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 173,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/harnessy-version-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 69,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/harnessy-version-lib.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 66,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/inspect-python-distributions.py",
+      "old_path": null,
+      "status": "A",
+      "additions": 221,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/local-release.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 39,
+      "deletions": 14,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/publish.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 101,
+      "deletions": 90,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/qa-contract.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 75,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/qa-feature-catalog-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 58,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/qa-runtime-bridge.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 30,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/qa.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 5,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/reconcile-v1-compatibility.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 37,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/refresh-v1-provenance.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 35,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/release-preflight.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 44,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/release.mjs",
+      "old_path": null,
+      "status": "M",
+      "additions": 54,
+      "deletions": 192,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/security-invariants-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 308,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/security-invariants-lib.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 197,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/supply-chain-evidence-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 1075,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/supply-chain-evidence-lib.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 969,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/test-harnessy-executor-package.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 106,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/test-harnessy-release.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 160,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/test-v1-compatibility.sh",
+      "old_path": null,
+      "status": "A",
+      "additions": 42,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/v1-compatibility-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 335,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/v1-npm-transport.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 73,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/v1-reconciliation-lib.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 931,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/v1-reconciliation-lib.test.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 951,
+      "deletions": 0,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "scripts/verify-v1-compatibility.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 39,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/version-harnessy.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 45,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "scripts/version-pi.mjs",
+      "old_path": null,
+      "status": "A",
+      "additions": 37,
+      "deletions": 0,
+      "cluster": "cli-scripts"
+    },
+    {
+      "path": "test.sh",
+      "old_path": null,
+      "status": "M",
+      "additions": 30,
+      "deletions": 17,
+      "cluster": "qa-tests"
+    },
+    {
+      "path": "tsconfig.json",
+      "old_path": null,
+      "status": "M",
+      "additions": 4,
+      "deletions": 1,
+      "cluster": "source-code"
+    }
+  ],
+  "risk_surfaces": [
+    "ci",
+    "dependency",
+    "deployment",
+    "qa",
+    "security-policy",
+    "shell-execution",
+    "skill-packaging"
+  ],
+  "commands": [
+    "git diff --name-status -M 7782ac86...3ebf8569",
+    "git diff --numstat -M 7782ac86...3ebf8569",
+    "git diff --shortstat 7782ac86...3ebf8569"
+  ]
+}

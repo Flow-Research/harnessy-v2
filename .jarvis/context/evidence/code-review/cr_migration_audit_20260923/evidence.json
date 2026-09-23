@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "run_id": "cr_migration_audit_20260923",
+  "capability_id": "harnessy.code_review",
+  "capability_version": "0.3.0",
+  "provider": "codex",
+  "adapter": null,
+  "mode": "ai_review",
+  "review_status": "completed",
+  "skipped_reason": null,
+  "ci_provider": "local",
+  "ci_run_id": "",
+  "base_ref": "7782ac86",
+  "head_ref": "3ebf8569",
+  "changed_file_count": 725,
+  "risk_surfaces": [
+    "ci",
+    "dependency",
+    "deployment",
+    "qa",
+    "security-policy",
+    "shell-execution",
+    "skill-packaging"
+  ],
+  "commands_run": [
+    "git diff --name-status -M 7782ac86...3ebf8569",
+    "git diff --numstat -M 7782ac86...3ebf8569",
+    "git diff --shortstat 7782ac86...3ebf8569"
+  ],
+  "output_schema_result": "pass",
+  "verifier_result": "pass",
+  "gate_result": "fail",
+  "verdict": "comment",
+  "artifacts": {
+    "discovery": ".jarvis/context/evidence/code-review/cr_migration_audit_20260923/discovery.json",
+    "review_json": ".jarvis/context/evidence/code-review/cr_migration_audit_20260923/feedback.json",
+    "markdown_report": ".jarvis/context/evidence/code-review/cr_migration_audit_20260923/REVIEW_REPORT.md",
+    "sarif_report": ".jarvis/context/evidence/code-review/cr_migration_audit_20260923/review.sarif"
+  },
+  "generated_at": "2026-09-23T10:01:32Z"
+}

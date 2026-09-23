@@ -13,10 +13,13 @@
 - Root npm and Executor full-graph audits are executable gates. The repository
   scanner has negative controls. Dedicated deterministic SBOM, comprehensive
   license-report, artifact-ledger, and reproducibility commands are wired, but
-  canonical evidence remains blocked until the required Windows ARM64 libSQL
-  runtime is viable and passes packed smoke testing.
+  evidence must cover the declared release targets. Windows ARM64 is explicitly
+  deferred; do not infer support from another platform's passing smoke test.
 - Publication requires a clean reviewed commit, authoritative license/artifact
   evidence, complete hosted checks, a protected-branch tag, and explicit
   approval.
 - Deployment and operational cutover are not configured or authorized by CI.
-  V1 remains the only live writer until the separate runbook passes.
+  Verify current ownership per capability against live evidence and the migration
+  execution plan. Keep replaced V1 writers disabled; ADR 0006's accepted recovery
+  amendment uses isolated native-state restore/reconciliation and V2 recovery,
+  not mandatory V1 reactivation.
