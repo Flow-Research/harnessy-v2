@@ -152,7 +152,12 @@ class CommunityReviewConsumerTests(unittest.TestCase):
         while time.monotonic() < deadline:
             state = self.service.revision_status(self.service.store.get(self.item.briefing_id))
             if state is None or state["state"] != "running":
-                return state
+                worker_names = {
+                    f"briefing-revision-{self.item.briefing_id[:8]}",
+                    f"briefing-regeneration-{self.item.briefing_id[:8]}",
+                }
+                if not any(thread.name in worker_names for thread in threading.enumerate()):
+                    return state
             time.sleep(0.01)
         self.fail("revision did not reach a terminal state")
 
@@ -183,14 +188,6 @@ class CommunityReviewConsumerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("Revision in progress", page)
         self.ai.release.set()
-        # Wait for the real worker to finish its fail-closed committing phase.
-        # Polling the durable marker during that narrow phase correctly reports
-        # reconciliation required because another process cannot prove the writer
-        # is still alive.
-        for thread in threading.enumerate():
-            if thread.name == f"briefing-revision-{self.item.briefing_id[:8]}":
-                thread.join(5)
-                self.assertFalse(thread.is_alive())
         self.assertIsNone(self.wait_revision())
         revised = self.service.store.get(self.item.briefing_id)
         self.assertNotEqual(revised.draft_hash, self.item.draft_hash)

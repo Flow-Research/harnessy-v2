@@ -155,9 +155,11 @@ mutation after the retained rollback window, not a substitute for local cutover.
   before canonical QA: after the synthetic AI response was released, the test
   polled the durable revision marker during its deliberately fail-closed
   `committing` phase and mistook the transient reconciliation response for a
-  product failure. The consumer now joins the real revision worker before
-  asserting its terminal durable state, matching the existing superseded-edit
-  case. Five consecutive runs of the six-test isolated installed consumer pass.
+  product failure. A second rerun exposed the same race for regeneration. The
+  consumer's bounded waiter now treats the state as terminal only after neither
+  of its real background workers remains alive; the product's cross-process
+  fail-closed behavior is unchanged. Ten consecutive runs of the six-test
+  isolated installed consumer pass with the generalized correction.
 
 ## Gate checklist
 
