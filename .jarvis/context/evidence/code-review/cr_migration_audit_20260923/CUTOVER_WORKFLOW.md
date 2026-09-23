@@ -64,8 +64,8 @@ mutation after the retained rollback window, not a substitute for local cutover.
   `resources/flow-install/skills/_shared/__pycache__/ai_runner.cpython-311.pyc`
   and its now-empty directory. No preserved source byte changed.
 - `npm run verify:v1-compatibility` passes after the final copied-source changes:
-  708 files, 4,933,630 bytes, SHA-256
-  `bf7e822a0c0285b072307c8623afa7075e908304fd7755cb7c8ce669bd334a3d`.
+  708 files, 4,935,186 bytes, SHA-256
+  `cb53869328ee89fb74d2dda60184330e6085ee025e058d0b3b0be18ace0ac075`.
 - V2 Life subprocess environments now set `PYTHONDONTWRITEBYTECODE=1` for native
   prompt preparation, research fallback, compatibility preview/publication and
   weekly preparation. Focused tests assert the boundary.
@@ -124,6 +124,12 @@ mutation after the retained rollback window, not a substitute for local cutover.
   that cold fixture a phase-specific 60-second readiness bound. The full local
   Executor, QA and packed-release gates pass with those fixes; a new hosted run is
   still required.
+- The first rerun against `259b6173` proved the Executor timeout fix and all three
+  packaged matrices, then failed while installing the consolidated Jarvis runtime:
+  the Community adapter imported `iter_content_files`, but that bounded traversal
+  implementation existed only in the previously accepted installed Community
+  candidate. It is now present in both canonical compatibility projections. A
+  fresh isolated wheel passes all 24 draft-adapter and six review-consumer cases.
 - Optional `supply-chain:strict` remains red on upstream packages with absent
   registry license declarations or unsupported-platform metadata. The required CI
   contract is `test:supply-chain`, generate, verify and reproducibility; all four

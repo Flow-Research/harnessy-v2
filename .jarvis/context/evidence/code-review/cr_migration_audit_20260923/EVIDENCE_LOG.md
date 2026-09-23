@@ -39,7 +39,7 @@ archived. No live content or credentials are included.
 
 | Check | Result | Interpretation |
 | --- | --- | --- |
-| `npm run verify:v1-compatibility` after copied-source updates | Pass | 708 files; 4,933,630 bytes; SHA-256 `bf7e822a…a3d` |
+| `npm run verify:v1-compatibility` after copied-source updates | Pass | 708 files; 4,935,186 bytes; SHA-256 `cb538693…c075` |
 | Focused Life source/routing batches | 38/38 and 27/27 pass | Native draft routing and bytecode suppression are covered |
 | OAuth/auth-storage batches | 9/9 and 4/4 pass | Credential persistence/atomicity source contracts pass |
 | Fathom batch | 26/26 pass | Account-neutral poll/import/status source contracts pass |
@@ -61,6 +61,7 @@ archived. No live content or credentials are included.
 | Packed engine, SDK and local-host fixtures | Pass | Clean packed consumers exercise the supported release surfaces |
 | `npm run test:release-artifacts` | Pass | 12 packed packages plus isolated Jarvis, launchers, skills, QA/review/deploy, Life daily/weekly draft acceptance and cockpit; Life publication remained false |
 | Hosted candidate run `35864873718` | Partial | Supply chain, security, PR gate and packaged Executor matrix passed; source Executor, main QA and macOS installed acceptance exposed the three failures now fixed locally |
+| Hosted candidate run `35874161669` | Partial | Executor source and all three packaged matrices passed; main QA exposed the missing Community bounded traversal in the consolidated source, now covered by a fresh isolated 30-test consumer run |
 
 The optional `supply-chain:strict` policy mode reports upstream packages without
 declared license or unsupported-platform metadata. It is not the repository CI
