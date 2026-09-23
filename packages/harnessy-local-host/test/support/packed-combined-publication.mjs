@@ -90,7 +90,10 @@ export const preparePackedCombinedMeeting = async (f, installationRoot, revoked 
 			}),
 		);
 		if (drainInFlight) {
-			yield* Effect.promise(() => requestStarted).pipe(Effect.timeout("20 seconds"));
+			// The drain assertion begins only after the installed community worker
+			// reaches its first provider mutation. Use the hosted cold-start budget;
+			// the response itself remains held by the 15-second watchdog below.
+			yield* Effect.promise(() => requestStarted).pipe(Effect.timeout("60 seconds"));
 			yield* Effect.tryPromise(async () => {
 				const token = readFileSync(join(statePath, "meeting-publication-v2-review.token"), "utf8").trim();
 				const exchange = await fetch(`${address.origin}/exchange?token=${encodeURIComponent(token)}`, { redirect: "manual", signal: AbortSignal.timeout(5000) });
