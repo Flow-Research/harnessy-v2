@@ -111,6 +111,7 @@ describe("Life Orchestrator schedule cutover", () => {
 						Effect.sync(() => {
 							labels.push(command.label);
 							expect(command.executable).toBe("python3");
+							expect(command.env?.PYTHONDONTWRITEBYTECODE).toBe("1");
 							if (command.label === "Weekly read-only state collection") {
 								expect(command.args[2]).toContain("--no-save");
 								writeFileSync(command.args.at(-1)!, "{}");

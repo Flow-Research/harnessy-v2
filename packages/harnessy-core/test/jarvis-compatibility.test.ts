@@ -605,7 +605,7 @@ describe("Jarvis compatibility kernel", () => {
 		).pipe(Effect.provide(NodeServices.layer), Effect.provide(TestConsole.layer)),
 	);
 
-	it.live("reports the validated parity dashboard through the read-only CLI", () =>
+	it.live("distinguishes the static parity ledger from operational readiness in JSON and text", () =>
 		Effect.gen(function* () {
 			const run = Command.runWith(rootCommand, { version: HARNESSY_VERSION });
 			yield* run(["jarvis", "parity", "--json"]).pipe(
@@ -620,11 +620,27 @@ describe("Jarvis compatibility kernel", () => {
 			if (jsonLog === undefined) throw new Error("jarvis parity --json did not emit structured output");
 			const output = JSON.parse(jsonLog) as {
 				readonly ok: boolean;
-				readonly summary: { readonly counts: { readonly total: number; readonly compatible: number } };
+				readonly evidenceKind: string;
+				readonly operationalReadiness: string;
+				readonly summary: {
+					readonly counts: { readonly total: number; readonly compatible: number; readonly missing: number };
+				};
 			};
 			expect(output.ok).toBe(true);
+			expect(output.evidenceKind).toBe("static_compatibility_ledger");
+			expect(output.operationalReadiness).toBe("not_assessed");
 			expect(output.summary.counts.total).toBe(203);
 			expect(output.summary.counts.compatible).toBeGreaterThan(0);
+			expect(output.summary.counts.missing).toBeGreaterThan(0);
+			yield* run(["jarvis", "parity"]).pipe(
+				Effect.provide(HarnessProject.layer),
+				Effect.provide(JarvisDiagnostic.liveLayer),
+				Effect.provide(JarvisParityReporter.layer),
+				Effect.provide(JarvisRuntimeRoots.testLayer("/unused-home")),
+			);
+			expect(yield* TestConsole.logLines).toContain(
+				"Static compatibility ledger only; operational readiness is not assessed.",
+			);
 		}).pipe(Effect.provide(NodeServices.layer), Effect.provide(TestConsole.layer)),
 	);
 

@@ -4,7 +4,7 @@ import path from "node:path";
 import ts from "typescript";
 
 const dist = new URL("../dist/", import.meta.url);
-const requiredFiles = ["index.js", "index.d.ts", "node.js", "node.d.ts"];
+const requiredFiles = ["index.js", "index.d.ts", "node.js", "node.d.ts", "THIRD_PARTY_NOTICES.txt"];
 
 const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const runtimeDependencies = new Set(Object.keys(manifest.dependencies ?? {}));
@@ -18,8 +18,11 @@ const files = (await readdir(dist)).sort();
 for (const required of requiredFiles) {
 	if (!files.includes(required)) throw new Error(`Harnessy SDK bundle is missing ${required}`);
 }
+if ((await readFile(new URL("THIRD_PARTY_NOTICES.txt", dist), "utf8")).trim().length === 0) {
+	throw new Error("Harnessy SDK bundled notices are empty");
+}
 for (const file of files) {
-	if (!/\.(?:js|d\.ts)$/.test(file)) {
+	if (file !== "THIRD_PARTY_NOTICES.txt" && !/\.(?:js|d\.ts)$/.test(file)) {
 		throw new Error(`Harnessy SDK dist contains unexpected file ${file}`);
 	}
 }

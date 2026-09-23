@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { currentExecutorPlatformTag, packedReleasePackages } from "./harnessy-release-contract.mjs";
-import { stageV1Compatibility } from "./v1-compatibility-lib.mjs";
+import { currentExecutorPlatformTag, localReleasePackages } from "./harnessy-release-contract.mjs";
+import { prepareReleaseInstaller } from "./prepare-release-installer.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = mkdtempSync(join(tmpdir(), "harnessy-release-"));
@@ -15,8 +15,7 @@ const artifactRoot = join(temporaryRoot, "artifacts");
 const consumerRoot = join(temporaryRoot, "consumer");
 const projectRoot = join(temporaryRoot, "project");
 const platformTag = currentExecutorPlatformTag();
-const executorVariantAlias = `@harnessy/executor-${platformTag}`;
-const packages = packedReleasePackages([platformTag]);
+const packages = localReleasePackages([platformTag]);
 
 const commandForPlatform = (command) => (process.platform === "win32" ? `${command}.cmd` : command);
 
@@ -34,20 +33,14 @@ const run = (command, args, options = {}) => {
 	return result.stdout ?? "";
 };
 
-const fileSpecifier = (fromDirectory, path) => {
-	const relativePath = relative(fromDirectory, path).replaceAll("\\", "/");
-	return `file:${relativePath.startsWith(".") ? relativePath : `./${relativePath}`}`;
-};
-
 const assertJsonOk = (label, output) => {
 	const payload = JSON.parse(output);
 	if (payload.ok !== true) throw new Error(`${label} did not return ok=true: ${output}`);
 };
 
 try {
-	run(process.execPath, ["--test", join(repoRoot, "scripts/v1-npm-transport.test.mjs")]);
+	run(process.execPath, ["--test", join(repoRoot, "scripts/v1-npm-transport.test.mjs"), join(repoRoot, "scripts/install-local-jarvis-runtime.test.mjs"), join(repoRoot, "scripts/stage-local-service-runtime.test.mjs"), join(repoRoot, "scripts/install-release.test.mjs")]);
 	mkdirSync(artifactRoot, { recursive: true });
-	mkdirSync(consumerRoot, { recursive: true });
 	mkdirSync(projectRoot, { recursive: true });
 	run(process.execPath, [join(repoRoot, "scripts/build-harnessy-executor.mjs")]);
 
@@ -78,16 +71,10 @@ try {
 		tarballs.set(pkg.key ?? pkg.name, join(artifactRoot, packed.filename));
 	}
 
-	const dependencies = Object.fromEntries(
-		packages.map((pkg) => [pkg.installName ?? pkg.name, fileSpecifier(consumerRoot, tarballs.get(pkg.key ?? pkg.name))]),
-	);
-	writeFileSync(
-		join(consumerRoot, "package.json"),
-		`${JSON.stringify({ name: "harnessy-release-consumer", private: true, dependencies, overrides: dependencies }, undefined, "\t")}\n`,
-	);
-
-	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: consumerRoot });
-	run("npm", ["audit", "--omit=dev", "--audit-level=moderate"], { cwd: consumerRoot });
+	prepareReleaseInstaller(temporaryRoot, packages, tarballs);
+	run(process.execPath, [join(temporaryRoot, "install.mjs"), "--check"], { cwd: projectRoot });
+	run(process.execPath, [join(temporaryRoot, "install.mjs"), "--target", consumerRoot], { cwd: projectRoot });
+	run(process.execPath, [join(repoRoot, "packages/harnessy-local-host/scripts/test-fixture.mjs"), join(consumerRoot, "node_modules")]);
 
 	const installedRoots = new Map();
 	for (const pkg of packages.filter((candidate) => candidate.name.startsWith("@harnessy/"))) {
@@ -100,15 +87,21 @@ try {
 	}
 
 	const binRoot = join(consumerRoot, "node_modules", ".bin");
-	await stageV1Compatibility(installedRoots.get("@harnessy/capability-harnessy-v1-full"), join(temporaryRoot, "reused-source"));
-	const harnessyBin = join(binRoot, process.platform === "win32" ? "harnessy.cmd" : "harnessy");
-	const hsyBin = join(binRoot, process.platform === "win32" ? "hsy.cmd" : "hsy");
+	const commandRoot = process.platform === "win32" ? binRoot : join(consumerRoot, "bin");
+	for (const name of ["harnessy-meeting-setup", "harnessy-meeting-full-review", "harnessy-meeting-review-open", "harnessy-community-publication"]) {
+		if (!existsSync(join(commandRoot, process.platform === "win32" ? `${name}.cmd` : name))) {
+			throw new Error(`Local operational candidate did not install ${name}`);
+		}
+	}
+	const harnessyBin = join(commandRoot, process.platform === "win32" ? "harnessy.cmd" : "harnessy");
+	const hsyBin = join(commandRoot, process.platform === "win32" ? "hsy.cmd" : "hsy");
 	if (!existsSync(harnessyBin) || !existsSync(hsyBin)) {
 		throw new Error("Packed @harnessy/core did not install the harnessy and hsy binaries");
 	}
-	const harnessyHelp = run(harnessyBin, ["--help"], { capture: true, cwd: projectRoot });
+	const commandEnv = process.platform === "win32" ? process.env : { ...process.env, PATH: "/nonexistent" };
+	const harnessyHelp = run(harnessyBin, ["--help"], { capture: true, cwd: projectRoot, env: commandEnv });
 	if (!harnessyHelp.includes("Harnessy")) throw new Error("Packed harnessy --help did not identify Harnessy");
-	const hsyHelp = run(hsyBin, ["--help"], { capture: true, cwd: projectRoot });
+	const hsyHelp = run(hsyBin, ["--help"], { capture: true, cwd: projectRoot, env: commandEnv });
 	if (!hsyHelp.includes("Harnessy agent-first context engine")) {
 		throw new Error("Packed hsy --help did not identify the Harnessy agent runtime");
 	}
@@ -135,7 +128,54 @@ try {
 
 	const installedCoreRoot = installedRoots.get("@harnessy/core");
 	if (installedCoreRoot === undefined) throw new Error("Packed @harnessy/core was not installed");
+	const jarvisPython = join(consumerRoot, "jarvis-runtime", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+	if (process.platform !== "win32") {
+		const jarvisHelp = run(join(commandRoot, "jarvis"), ["--help"], { capture: true, cwd: projectRoot, env: commandEnv });
+		for (const name of ["task", "journal", "reading-list", "wiki", "meeting", "community"])
+			if (!jarvisHelp.includes(name)) throw new Error(`Installed Jarvis launcher omitted ${name}`);
+	}
+	const jarvisSitePackages = run(jarvisPython, ["-I", "-B", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], { capture: true }).trim();
+	run(jarvisPython, ["-I", "-B", join(repoRoot, "scripts/test-jarvis-consumer.py"), jarvisSitePackages]);
+	run(jarvisPython, ["-I", "-B", join(repoRoot, "scripts/test-community-draft-adapter.py")], {
+		env: {
+			...process.env,
+			HARNESSY_COMMUNITY_TEST_ADAPTER: join(installedCoreRoot, "resources/community-draft-adapter.py"),
+		},
+	});
+	if (process.platform === "darwin") {
+		run(process.execPath, [join(repoRoot, "scripts/test-installed-skills.mjs"), join(installedCoreRoot, "dist", "cli.js"),
+			join(consumerRoot, "reused-source/resources/flow-install/skills/qa-runtime/scripts/qa"), jarvisPython]);
+		run(process.execPath, [
+			join(repoRoot, "packages/harnessy-core/test/local-life-cli-acceptance.mjs"),
+			join(installedCoreRoot, "dist", "cli.js"),
+			jarvisPython,
+		]);
+	} else {
+		console.log("Life draft and installed skill CLI acceptance not assessed: their isolation requires macOS sandbox-exec.");
+	}
+	run(process.execPath, [join(repoRoot, "node_modules/vitest/dist/cli.js"), "--run", "test/community-draft-cli.test.ts"], {
+		cwd: join(repoRoot, "packages/harnessy-core"),
+		env: {
+			...process.env,
+			HARNESSY_TEST_JARVIS_PYTHON: jarvisPython,
+			HARNESSY_COMMUNITY_TEST_CLI: join(installedCoreRoot, "dist", "cli.js"),
+		},
+	});
+	run(process.execPath, [join(repoRoot, "node_modules/vitest/dist/cli.js"), "--run", "test/fathom-cli.test.ts"], {
+		cwd: join(repoRoot, "packages/harnessy-core"),
+		env: {
+			...process.env,
+			HARNESSY_FATHOM_TEST_CLI: join(installedCoreRoot, "dist", "cli.js"),
+		},
+	});
 	const installedExecutorRoot = installedRoots.get("@harnessy/executor");
+	run(process.execPath, [join(repoRoot, "node_modules/vitest/dist/cli.js"), "--run", "test/calendar-plan.test.ts", "test/calendar-apply.test.ts", "--testNamePattern", "real .*CLI"], {
+		cwd: join(repoRoot, "packages/harnessy-core"),
+		env: {
+			...process.env,
+			HARNESSY_CALENDAR_TEST_CLI: join(installedCoreRoot, "dist", "cli.js"),
+		},
+	});
 	if (installedExecutorRoot === undefined) throw new Error("Packed @harnessy/executor was not installed");
 	run(process.execPath, [join(repoRoot, "scripts/check-harnessy-cockpit.mjs")], {
 		cwd: projectRoot,

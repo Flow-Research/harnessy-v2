@@ -14,14 +14,20 @@ const cliEntry = suppliedCli === undefined ? join(packageRoot, "src", "cli.ts") 
 
 // Execute the actual command, real Effect services, file store and native fetch.
 // The only transport seam rewrites the fixed production origin to our local server.
-const run = async (failed: boolean, json: boolean, hostFailure = false) => {
+const run = async (
+	failed: boolean,
+	json: boolean,
+	hostFailure = false,
+	selection = "[personal, flowresearch]",
+	accounts: readonly string[] = [],
+) => {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "harnessy-fathom-cli-")));
 	const source = join(root, "source");
 	mkdirSync(join(root, ".jarvis"), { recursive: true });
 	mkdirSync(source);
 	writeFileSync(
 		join(root, ".jarvis", "config.yaml"),
-		`fathom:\n  accounts:\n    personal:\n      api_key_env_var: SYNTHETIC_PERSONAL\n    flowresearch:\n      api_key_env_var: SYNTHETIC_FLOW\nmeeting_publication:\n  source_path: ${source}\n`,
+		`fathom:\n${selection ? `  poll_accounts: ${selection}\n` : ""}  accounts:\n    personal:\n      api_key_env_var: SYNTHETIC_PERSONAL\n    flowresearch:\n      api_key_env_var: SYNTHETIC_FLOW\n    excluded:\n      api_key_env_var: MUST_NOT_READ\nmeeting_publication:\n  source_path: ${source}\n`,
 	);
 	if (hostFailure) {
 		mkdirSync(join(source, "meeting-inbox", "fathom", "personal", "pending"), { recursive: true });
@@ -71,6 +77,7 @@ globalThis.fetch = (input, init) => {
 					root,
 					"--source-root",
 					source,
+					...accounts.flatMap((account) => ["--account", account]),
 					...(json ? ["--json"] : []),
 				],
 				{
@@ -107,6 +114,21 @@ globalThis.fetch = (input, init) => {
 };
 
 describe("actual Fathom CLI aggregate exit status", () => {
+	it("uses explicit scheduler accounts when legacy configuration has no poll selection", async () => {
+		const result = await run(false, true, false, "", ["personal", "flowresearch"]);
+		expect(result.code, result.stderr).toBe(0);
+		expect(JSON.parse(result.stdout)).toMatchObject({ ok: true, accounts: ["personal", "flowresearch"] });
+		expect(result.requests).toBe(2);
+	});
+	it.each(["", "[]", "[unknown]", "['../personal']"])(
+		"rejects invalid account selection before provider traffic: %s",
+		async (selection) => {
+			const result = await run(false, true, false, selection);
+			expect(result.code).toBe(1);
+			expect(result.requests).toBe(0);
+			expect(result.stdout + result.stderr).not.toContain("synthetic-personal");
+		},
+	);
 	it("keeps all-success JSON and exit zero", async () => {
 		const result = await run(false, true);
 		expect(result.code, result.stderr).toBe(0);

@@ -26,26 +26,29 @@ describe("explicit local full-review stop notification", () => {
 					"--trusted-keyring-sha256",
 					"0".repeat(64),
 				];
-				for (const optedIn of [false, true]) {
-					const result = spawnSync(
-						process.execPath,
-						[
-							"--import",
-							"tsx",
-							"--import",
-							join(root, "test/support/fixture-stop-notification-hook.mjs"),
-							join(root, "src/meeting-full-review-cli.ts"),
-							...(optedIn ? ["--notify-on-stop"] : []),
-							...args,
-						],
-						{ cwd: root, encoding: "utf8", timeout: 10_000, env: { ...process.env, NODE_NO_WARNINGS: "1" } },
-					);
-					expect(result.status).toBe(1);
-					expect(result.stdout).toBe("");
-					const lines = result.stderr.trim().split("\n");
-					expect(JSON.parse(lines[0] as string)).toMatchObject({ error: "meeting_full_review_failed" });
-					expect(lines.slice(1)).toEqual(optedIn ? ["FIXTURE_STOP_NOTIFICATION"] : []);
-					expect(result.stderr).not.toContain(privateRoot);
+				for (const action of [undefined, "--service-launch-agent", "--service-status", "--service-revoke"]) {
+					for (const optedIn of [false, true]) {
+						const result = spawnSync(
+							process.execPath,
+							[
+								"--import",
+								"tsx",
+								"--import",
+								join(root, "test/support/fixture-stop-notification-hook.mjs"),
+								join(root, "src/meeting-full-review-cli.ts"),
+								...(optedIn ? ["--notify-on-stop"] : []),
+								...(action === undefined ? [] : [action]),
+								...args,
+							],
+							{ cwd: root, encoding: "utf8", timeout: 10_000, env: { ...process.env, NODE_NO_WARNINGS: "1" } },
+						);
+						expect(result.status).toBe(1);
+						expect(result.stdout).toBe("");
+						const lines = result.stderr.trim().split("\n");
+						expect(JSON.parse(lines[0] as string)).toMatchObject({ error: "meeting_full_review_failed" });
+						expect(lines.slice(1)).toEqual(optedIn && action === undefined ? ["FIXTURE_STOP_NOTIFICATION"] : []);
+						expect(result.stderr).not.toContain(privateRoot);
+					}
 				}
 			} finally {
 				rmSync(privateRoot, { recursive: true, force: true });

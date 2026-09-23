@@ -22,7 +22,11 @@ const guard = fileURLToPath(
 	new URL("../../harnessy-local-host/test/support/fixture-network-guard.mjs", import.meta.url),
 );
 
-function audit(nodeSource: string, portableFile?: "index.js" | "compose-fixture.d.ts") {
+function audit(
+	nodeSource: string,
+	portableFile?: "index.js" | "compose-fixture.d.ts",
+	notice: string | null = "Synthetic fixture notice\n",
+) {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "harnessy-bundle-audit-")));
 	try {
 		for (const directory of ["dist", "scripts", "node_modules"]) mkdirSync(join(root, directory));
@@ -42,6 +46,7 @@ function audit(nodeSource: string, portableFile?: "index.js" | "compose-fixture.
 			"node.js": nodeSource,
 			"node.d.ts": "export {};\n",
 		};
+		if (notice !== null) files["THIRD_PARTY_NOTICES.txt"] = notice;
 		if (portableFile) files[portableFile] += 'import { DatabaseSync } from "node:sqlite";\n';
 		for (const [name, source] of Object.entries(files)) writeFileSync(join(root, "dist", name), source);
 		const result = spawnSync(process.execPath, ["--import", guard, join(root, "scripts", "audit-bundles.mjs")], {
@@ -62,6 +67,11 @@ function audit(nodeSource: string, portableFile?: "index.js" | "compose-fixture.
 }
 
 describe("real SDK bundle auditor prefix-only SQLite imports", () => {
+	it.each([null, "", "\n"])("rejects missing or empty notice evidence: %s", (notice) => {
+		const result = audit("export {};", undefined, notice);
+		expect(result.status).toBe(1);
+		expect(result.stderr).toMatch(/missing THIRD_PARTY_NOTICES|notices are empty/);
+	});
 	it("accepts node:sqlite in the Node entry and preserves the portable root", () => {
 		const result = audit('import { DatabaseSync } from "node:sqlite";\n');
 		expect(result.status, result.stderr).toBe(0);

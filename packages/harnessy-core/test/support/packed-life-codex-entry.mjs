@@ -10,6 +10,12 @@ import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-code
 import * as Effect from "effect/Effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CommandRunner } from "./node_modules/@harnessy/core/dist/runtime/command-runner.js";
+import { HarnessBootstrap } from "./node_modules/@harnessy/core/dist/runtime/bootstrap.js";
+import { HarnessRuntimeAssets } from "./node_modules/@harnessy/core/dist/runtime/assets.js";
+import { CommandLookup } from "./node_modules/@harnessy/core/dist/runtime/command-lookup.js";
+import { RuntimeEnvironment } from "./node_modules/@harnessy/core/dist/runtime/environment.js";
+import { pathsForTarget } from "./node_modules/@harnessy/core/dist/paths.js";
+import { defaultInstallPaths } from "./node_modules/@harnessy/core/dist/runtime/install-paths.js";
 
 const consumer = realpathSync(process.argv[2]);
 const modulePaths = ["@harnessy/core/life-orchestrator", "@earendil-works/pi-ai/providers/openai-codex", "@earendil-works/pi-ai/api/openai-codex-responses"].map((name) => {
@@ -31,6 +37,40 @@ globalThis.fetch = (url, init) => {
 };
 const root = join(consumer, "synthetic-inputs");
 mkdirSync(root, { mode: 0o700 });
+// Installer resource consumption uses the same packed dependency as Life.
+// Run real filesystem writes in a temporary target, never owner-global setup
+// or external commands. Package byte inventory is checked by the parent.
+const bootstrapHome = join(root, "bootstrap-home");
+const bootstrapTarget = join(root, "bootstrap-target");
+mkdirSync(bootstrapHome, { mode: 0o700 });
+mkdirSync(bootstrapTarget, { mode: 0o700 });
+const bootstrap = await Effect.runPromise(Effect.gen(function* () {
+	const service = yield* HarnessBootstrap;
+	return yield* service.prepare({ mode: "in-place", targetRoot: bootstrapTarget,
+		globalRoot: bootstrapHome, applyBootstrap: true, runExternal: false });
+}).pipe(Effect.provide(HarnessBootstrap.layer), Effect.provide(CommandLookup.layer),
+	Effect.provide(CommandRunner.layer), Effect.provide(RuntimeEnvironment.liveLayer), Effect.provide(NodeServices.layer)));
+assert.equal(bootstrap.dryRun, false);
+assert.equal(bootstrap.actions.find((action) => action.kind === "jarvis-tool-install")?.status, "planned");
+assert.equal(bootstrap.actions.find((action) => action.kind === "source-cache")?.sourcePath,
+	join(realpathSync(process.argv[3]), "resources/source"));
+for (const file of ["jarvis-cli/pyproject.toml", "jarvis-cli/uv.lock", "tools/flow-install/index.mjs"])
+	assert.deepEqual(readFileSync(join(bootstrap.flowRoot, file)), readFileSync(join(realpathSync(process.argv[3]), "resources/source", file)));
+const assets = await Effect.runPromise(Effect.gen(function* () {
+	const service = yield* HarnessRuntimeAssets;
+	const paths = yield* pathsForTarget(bootstrapTarget);
+	return yield* service.syncProjectAssets(paths, yield* defaultInstallPaths(paths),
+		{ dryRun: false, force: false, applyGlobal: false, globalRoot: bootstrapHome });
+}).pipe(Effect.provide(HarnessRuntimeAssets.layer), Effect.provide(NodeServices.layer)));
+assert.deepEqual(assets.issues, []);
+assert.equal(assets.globalApplied, false);
+const installedScripts = assets.actions.filter((action) => action.kind === "project-script");
+assert.equal(installedScripts.length, 9);
+for (const action of installedScripts) {
+	assert.equal(action.status, "written");
+	assert.deepEqual(readFileSync(action.targetPath), readFileSync(action.sourcePath));
+}
+assert(!existsSync(join(bootstrapHome, ".local")), "Project-only install wrote owner-global commands");
 const state = join(root, "state");
 const expires = Date.now() + 600_000;
 const token = `${Buffer.from("{}").toString("base64url")}.${Buffer.from(JSON.stringify({ exp: Math.floor(expires / 1_000), "https://api.openai.com/auth": { chatgpt_account_id: "fixture-account" } })).toString("base64url")}.synthetic`;
@@ -113,7 +153,7 @@ try {
 	await assert.rejects(createCodexLifeDraftProvider({ authPath: expiredPath, timeoutMs: 2_000, maximumOutputBytes: 4096 }).generate(request, new AbortController().signal), /no refresh or fallback/);
 	assert.deepEqual(readFileSync(expiredPath), expiredBefore);
 	assert.equal(fetchCalls, 3);
-	assert.deepEqual(readdirSync(root).sort(), ["auth.json", "expired.json", "state"]);
+	assert.deepEqual(readdirSync(root).sort(), ["auth.json", "bootstrap-home", "bootstrap-target", "expired.json", "state"]);
 	// Real installed daily service + live process runner. Only the AI endpoint
 	// is injected; Python runs the extracted package CLI under OS isolation.
 	const dailyRoot = join(root, "daily");
@@ -134,7 +174,14 @@ try {
 	process.env.HOME = dailyRoot;
 	const now = new Date();
 	const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Lagos", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
-	const settings = resolveLifeOrchestratorSettings({ projectRoot: dailyRoot, homeRoot: dailyRoot, user: "fixture", compatibilityRoot: join(dailyRoot, "unused") });
+	delete process.env.HARNESSY_LIFE_V1_SCRIPTS;
+	const settings = resolveLifeOrchestratorSettings({ projectRoot: dailyRoot, homeRoot: dailyRoot, user: "fixture" });
+	const installedScripts = join(realpathSync(process.argv[3]), "resources/flow-install/skills/life-orchestrator/scripts");
+	assert.equal(settings.paths.compatibilityScriptsDirectory, installedScripts);
+	assert.equal(realpathSync(installedScripts), installedScripts);
+	for (const name of ["daily-brief", "weekly-plan", "collect-state", "prepare-weekly-prompt", "learning-research"])
+		assert(statSync(join(installedScripts, name)).isFile(), `Missing shipped Life adapter: ${name}`);
+	assert(statSync(join(installedScripts, "../templates/weekly-plan.md")).isFile());
 	const dailyRequest = { ...request, runId: `daily:${date}:installed` };
 	const authority = { grantId: "fixture-daily", operation: "life.draft", runId: dailyRequest.runId, kind: dailyRequest.kind, provider: dailyRequest.provider, model: dailyRequest.model, promptHash: createHash("sha256").update(dailyRequest.prompt).digest("hex"), expiresAt: new Date(expires).toISOString(), maximumOutputBytes: 4096 };
 	const signed = { issuer: "fixture", authority, signature: sign(null, Buffer.from(lifeDraftGrantPayload("fixture", authority)), keys.privateKey).toString("base64") };

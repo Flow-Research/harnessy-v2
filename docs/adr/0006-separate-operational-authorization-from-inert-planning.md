@@ -400,6 +400,66 @@ incomplete. Synthetic Chromium acceptance does not substitute for those gates.
 
 ## Consequences
 
+### Accepted direction — ordinary owner-local operation, 21 September 2026
+
+The owner requested ordinary persistent V2 operation without repeatedly issuing
+time-boxed authorizations. For that consumer, the finite supervised-session
+requirement above is superseded by explicit, revocable service enrollment. This
+is an approved implementation direction, not evidence that the service exists
+or permission to replace a running installation before verification.
+
+Use the existing single Core review/dispatch runtime and Executor connections.
+Do not add a periodic signer, renewal daemon, second runtime, or an arbitrarily
+distant expiry date. Bounded smoke and supervised authorizations retain their
+existing semantics and must never be interpreted as service enrollment.
+
+The service consumer must establish these boundaries together:
+
+- One explicit local enablement records the owner's standing permission for a
+  particular installed service, configuration, state identity, destinations and
+  operation set. Reuse the existing owner-controlled key where present; do not
+  create separate keys per workflow. A distinct signed enrollment schema and
+  audience prevent a finite authorization from becoming reusable authority.
+  Setup must expose this through supported product commands, not signing scripts.
+- Enrollment is revocable and independently trusted. The runtime cannot renew,
+  widen or re-enable it. Disablement prevents new grants and drains in-flight
+  work. Changes to destinations, permissions or loaded artifacts require explicit
+  validation and owner-visible reconfiguration, not silent policy expansion.
+- Enrollment identifies the durable state instance; it must not bind a mutable
+  queue's initial byte digest forever. Initial adoption still verifies the exact
+  state being adopted. Reopening is conditional on intact identity, schema,
+  receipts and ownership, not an automatic import, reset or stale-backup restore.
+- First installation does not require V1 cutover or rollback documents. Both
+  evidence bindings must be explicitly null together, and initial consumption
+  requires an empty current-schema queue with the exact signed identity and
+  digest. Existing queue adoption retains both evidence bindings. Clean restart
+  retains the enrolled state; it neither requires an empty queue again nor
+  converts existing state into a fresh installation.
+- Each process acquires the existing singleton ownership boundary and issues
+  short-lived internal operation grants. Standing permission is not a grant,
+  does not approve content, and does not bypass exact-revision decisions,
+  destination checks, revocation or receipt checkpoints.
+- Clean stop/restart must work without another signing ceremony. A crash,
+  conflicting owner, stale lease or uncertain external write must remain visible
+  and fail closed until the recovery procedure establishes safe ownership and
+  reconciled receipts. Installing a service must not introduce blind retries or
+  automatic stale-lease deletion. A process-manager restart is not recovery proof.
+- Browser authentication and provider OAuth remain separate from service
+  lifetime. Opening the review page uses the existing protected local launcher;
+  provider consent is requested only when the provider actually requires it.
+- Apply the same separation to community and Life where they have a concrete
+  consumer, retaining draft-only Life behavior and explicit model/spending limits.
+  Persistent operation never implicitly authorizes publication or unlimited AI.
+
+Implement enrollment with its real host, enable/disable/status/open commands and
+package-consumer tests rather than landing a generic authority framework first.
+Acceptance must cover fresh installation, clean restart, disabled/revoked state,
+configuration/artifact drift, duplicate owners, crash/uncertain receipts and
+credential recovery using isolated state and providers. Only then update the
+live installation through a separately verified one-writer transition.
+
+### Continuing consequences
+
 - A valid planning receipt remains non-authorizing evidence. It still contains
   private absolute paths and aggregate counts, so handling and disclosure need
   owner approval.

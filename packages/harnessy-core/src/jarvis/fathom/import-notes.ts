@@ -19,6 +19,8 @@ import * as Exit from "effect/Exit";
 import type { FathomImportEnvelope } from "./ingest.ts";
 
 export interface FathomNoteImportOptions {
+	readonly accounts?: ReadonlyArray<string>;
+	readonly project?: string | null;
 	readonly inboxRoot: string;
 	readonly sourceRoot: string;
 	readonly now?: Date;
@@ -51,7 +53,7 @@ const isoDate = (payload: Record<string, unknown>): string | null => {
 	return null;
 };
 
-const markdownFor = (envelope: FathomImportEnvelope, date: string, source: string): string => {
+const markdownFor = (envelope: FathomImportEnvelope, date: string, source: string, project?: string | null): string => {
 	const payload = envelope.payload as Record<string, unknown>;
 	const title = String(payload.meeting_title ?? payload.title ?? `Fathom Meeting ${payload.recording_id}`).trim();
 	const summary =
@@ -69,14 +71,15 @@ const markdownFor = (envelope: FathomImportEnvelope, date: string, source: strin
 	const fingerprint = `fathom:${payload.recording_id}:${String(payload.created_at ?? "")}`;
 	const executiveSummary =
 		summary.length > 0 ? summary.replace(/^## /gmu, "### ") : `Imported Fathom meeting: ${title}.`;
-	return `# ${title}\n\n## Metadata\n\n- Date: ${date}\n- Source Type: fathom\n- Source Ref: fathom:${payload.recording_id}\n- Project: flow\n- Participants: ${participants || "Unknown"}\n- Tags: fathom\n- Fingerprint: ${fingerprint}\n\n## Executive Summary\n\n${executiveSummary}\n\n<!-- Imported by Harnessy V2 from ${source}. -->\n`;
+	const projectLine = project?.trim() ? `- Project: ${project.trim().replace(/[\r\n]+/gu, " ")}\n` : "";
+	return `# ${title}\n\n## Metadata\n\n- Date: ${date}\n- Source Type: fathom\n- Source Ref: fathom:${payload.recording_id}\n${projectLine}- Participants: ${participants || "Unknown"}\n- Tags: fathom\n- Fingerprint: ${fingerprint}\n\n## Executive Summary\n\n${executiveSummary}\n\n<!-- Imported by Harnessy V2 from ${source}. -->\n`;
 };
 
-const pendingFiles = (root: string): string[] => {
+const pendingFiles = (root: string, accounts?: ReadonlyArray<string>): string[] => {
 	if (!existsSync(root)) return [];
 	const result: string[] = [];
 	for (const account of readdirSync(root, { withFileTypes: true })) {
-		if (!account.isDirectory()) continue;
+		if (!account.isDirectory() || (accounts !== undefined && !accounts.includes(account.name))) continue;
 		const pending = join(root, account.name, "pending");
 		if (!existsSync(pending)) continue;
 		for (const entry of readdirSync(pending, { withFileTypes: true })) {
@@ -110,7 +113,7 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 	// Inspect every pending envelope before applying the import cap. Hash-based
 	// filenames are not chronological; slicing first can starve new calls behind
 	// an old backlog.
-	for (const file of pendingFiles(inboxRoot)) {
+	for (const file of pendingFiles(inboxRoot, options.accounts)) {
 		const envelope = parseEnvelope(readFileSync(file, "utf8"));
 		if (envelope === null) {
 			skipped += 1;
@@ -142,7 +145,7 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 			continue;
 		}
 		mkdirSync(directory, { recursive: true, mode: 0o700 });
-		const content = markdownFor(envelope, date, relative(inboxRoot, file));
+		const content = markdownFor(envelope, date, relative(inboxRoot, file), options.project);
 		const temporary = `${destination}.${randomUUID()}.tmp`;
 		const fd = openSync(temporary, "wx", 0o600);
 		try {

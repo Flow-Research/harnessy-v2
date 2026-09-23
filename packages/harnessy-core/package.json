@@ -61,6 +61,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
+		"@harnessy/capability-harnessy-v1-full": "0.0.3",
 		"@harnessy/executor": "0.0.3",
 		"@anthropic-ai/claude-agent-sdk": "0.2.141",
 		"@anthropic-ai/sdk": "0.73.0",

@@ -72,6 +72,26 @@ type HarnessyEngineFactory = (
 	config: HarnessyEngineConfig,
 ) => Effect.Effect<HarnessyEngineHandle, unknown, Scope.Scope>;
 
+const activeEngineBindings = new WeakMap<HarnessyEngineHandle, string>();
+const engineBinding = (config: HarnessyEngineConfig): string => {
+	const transport = config.meetingProviderTransport;
+	return JSON.stringify([
+		config.tenant,
+		config.subject ?? null,
+		config.credentialDirectory,
+		config.existingStatePath ?? null,
+		transport?.kind ?? "production",
+		...(transport?.kind === "test-loopback"
+			? [transport.googleDriveBaseUrl, transport.googleDocsBaseUrl, transport.discordBaseUrl]
+			: []),
+	]);
+};
+
+/** @internal Borrow only a live SDK-owned engine with the exact signed binding. */
+export const assertHarnessyEngineBinding = (handle: HarnessyEngineHandle, config: HarnessyEngineConfig): void => {
+	if (activeEngineBindings.get(handle) !== engineBinding(config)) throw new Error("engine_binding_mismatch");
+};
+
 interface ClosableHarnessyEngineResource {
 	readonly close: () => Effect.Effect<void, unknown>;
 }
@@ -92,6 +112,7 @@ export const acquireHarnessyEngineResource = <A extends ClosableHarnessyEngineRe
 export const makeHarnessyEngine: HarnessyEngineFactory = Effect.fn("HarnessySdk.makeHarnessyEngine")(function* (
 	config: HarnessyEngineConfig,
 ) {
+	const binding = engineBinding(config);
 	const existingStatePath = config.existingStatePath;
 	const executor = yield* acquireHarnessyEngineResource(
 		createExecutor({
@@ -115,5 +136,15 @@ export const makeHarnessyEngine: HarnessyEngineFactory = Effect.fn("HarnessySdk.
 		yield* executor["harnessy-google-meeting-publication"].register();
 		yield* executor["harnessy-discord-meeting-publication"].register();
 	}
-	return harnessyEngineHandle(executor) satisfies HarnessyEngineHandle;
+	return yield* Effect.acquireRelease(
+		Effect.sync(() => {
+			const handle = harnessyEngineHandle(executor);
+			activeEngineBindings.set(handle, binding);
+			return handle;
+		}),
+		(handle) =>
+			Effect.sync(() => {
+				activeEngineBindings.delete(handle);
+			}),
+	);
 });

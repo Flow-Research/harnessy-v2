@@ -19,6 +19,11 @@ export interface FathomStatus {
 	readonly inboxPath: string;
 	readonly defaultAccount: string | null;
 	readonly accounts: ReadonlyArray<string>;
+	readonly polling: {
+		readonly configured: boolean;
+		readonly accounts: ReadonlyArray<string>;
+		readonly issues: ReadonlyArray<string>;
+	};
 	readonly pollStatePresent: boolean;
 	readonly pollStateValid: boolean;
 	readonly inboxCounts: Readonly<Record<string, Readonly<Record<string, number>>>>;
@@ -92,6 +97,22 @@ export const inspectFathomStatus = (options: FathomStatusOptions = {}): FathomSt
 	const fathom = recordValue(config.fathom) ?? {};
 	const accountsRecord = recordValue(fathom.accounts) ?? {};
 	const accounts = Object.keys(accountsRecord).sort();
+	const pollIssues: string[] = [];
+	const selection = fathom.poll_accounts;
+	const pollAccounts: string[] = [];
+	if (!Array.isArray(selection) || selection.length === 0) {
+		pollIssues.push("Set fathom.poll_accounts or pass --account before polling.");
+	} else {
+		for (const value of selection) {
+			if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/.test(value.trim())) {
+				pollIssues.push("Polling account labels must contain only letters, numbers, underscores or hyphens.");
+				continue;
+			}
+			const account = value.trim();
+			if (!Object.hasOwn(accountsRecord, account)) pollIssues.push("Selected Fathom account is not configured.");
+			if (!pollAccounts.includes(account)) pollAccounts.push(account);
+		}
+	}
 	const defaultAccount = stringValue(fathom.default_account);
 	const configuredSource = options.sourceRoot ?? stringValue(recordValue(config.community_briefing)?.source_path);
 	const inboxPath =
@@ -121,6 +142,7 @@ export const inspectFathomStatus = (options: FathomStatusOptions = {}): FathomSt
 		inboxPath,
 		defaultAccount,
 		accounts,
+		polling: { configured: pollIssues.length === 0, accounts: pollAccounts, issues: pollIssues },
 		pollStatePresent,
 		pollStateValid,
 		inboxCounts: countInbox(inboxPath),

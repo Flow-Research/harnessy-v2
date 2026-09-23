@@ -49,6 +49,7 @@ import {
 	type MeetingPublicationWorkerProviderBinding,
 	type MeetingPublicationWorkerRuntimeInput,
 	meetingPublicationSmokeArtifactAnchors,
+	readMeetingPublicationServiceEnrollment,
 	readStableMeetingPublicationSmokeFile,
 	sha256MeetingPublicationSmokeBytes,
 	type VerifiedMeetingPublicationFullReviewInput,
@@ -330,6 +331,134 @@ const validateReplaySchema = (database: DatabaseSync, expectedInstanceId: string
 		fail("replay_unavailable");
 };
 
+export interface MeetingPublicationServiceStatus {
+	readonly kind: "harnessy.meeting-publication.service-status";
+	readonly revoked: boolean;
+	readonly activation: "not_started" | "cleanly_stopped" | "reconciliation_required" | "lease_recorded";
+	readonly runtimeHealth: "not_assessed";
+}
+
+/** No activation, provider construction, lease takeover or state repair. */
+export const inspectMeetingPublicationService = (
+	input: MeetingPublicationSmokeRuntimeInput,
+): Effect.Effect<MeetingPublicationServiceStatus, MeetingPublicationSmokeRuntimeError> =>
+	Effect.gen(function* () {
+		const system = yield* MeetingPublicationSmokeRuntimeSystemReference;
+		return yield* Effect.try({
+			try: (): MeetingPublicationServiceStatus => {
+				const { payload, replay, digest } = readMeetingPublicationServiceEnrollment(input, system.observe());
+				assertMeetingPublicationRollbackDatabaseFile(replay.path);
+				const database = new DatabaseSync(replay.path, { readOnly: true, allowExtension: false, timeout: 1_000 });
+				try {
+					database.exec("PRAGMA trusted_schema=OFF; BEGIN;");
+					validateReplaySchema(database, replay.instanceId);
+					const sequence = Number(
+						database.prepare("SELECT revocation_sequence FROM runtime_metadata WHERE singleton=1").get()
+							?.revocation_sequence,
+					);
+					if (sequence < payload.revocationSequence) fail("replay_unavailable");
+					const consumed = database
+						.prepare("SELECT * FROM consumed_authorizations WHERE authorization_id=? OR nonce=?")
+						.get(payload.authorizationId, payload.nonce);
+					if (
+						consumed !== undefined &&
+						(consumed.authorization_id !== payload.authorizationId ||
+							consumed.nonce !== payload.nonce ||
+							consumed.payload_sha256 !== digest ||
+							consumed.key_id !== payload.keyId)
+					)
+						fail("replayed");
+					const lease = database.prepare("SELECT 1 FROM active_lease WHERE singleton=1").get();
+					const revoked =
+						database
+							.prepare(
+								"SELECT 1 FROM revocations WHERE (subject_type='authorization' AND subject_id=?) OR (subject_type='nonce' AND subject_id=?) OR (subject_type='key' AND subject_id=?) LIMIT 1",
+							)
+							.get(payload.authorizationId, payload.nonce, payload.keyId) !== undefined;
+					return {
+						kind: "harnessy.meeting-publication.service-status",
+						revoked,
+						activation:
+							lease !== undefined
+								? "lease_recorded"
+								: consumed === undefined
+									? "not_started"
+									: consumed.outcome === "drained"
+										? "cleanly_stopped"
+										: "reconciliation_required",
+						runtimeHealth: "not_assessed",
+					};
+				} finally {
+					database.close();
+				}
+			},
+			catch: (cause) => runtimeFailure(cause, "replay_unavailable"),
+		});
+	});
+
+export interface MeetingPublicationServiceRevocation {
+	readonly kind: "harnessy.meeting-publication.service-revoked";
+	readonly revoked: true;
+}
+
+/** Owner control for a stopped service. Never kills an owner or adjudicates a stale lease. */
+export const revokeStoppedMeetingPublicationService = (
+	input: MeetingPublicationSmokeRuntimeInput,
+): Effect.Effect<MeetingPublicationServiceRevocation, MeetingPublicationSmokeRuntimeError> =>
+	Effect.gen(function* () {
+		const system = yield* MeetingPublicationSmokeRuntimeSystemReference;
+		return yield* Effect.try({
+			try: (): MeetingPublicationServiceRevocation => {
+				const observation = system.observe();
+				const { payload, replay, digest } = readMeetingPublicationServiceEnrollment(input, observation);
+				const createdAt = new Date(observation.now).toISOString();
+				assertMeetingPublicationRollbackDatabaseFile(replay.path);
+				const database = new DatabaseSync(replay.path, { allowExtension: false, timeout: 1_000 });
+				try {
+					database.exec("PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL; BEGIN IMMEDIATE;");
+					validateReplaySchema(database, replay.instanceId);
+					if (database.prepare("SELECT 1 FROM active_lease").get() !== undefined) fail("lease_unavailable");
+					const consumed = database
+						.prepare("SELECT * FROM consumed_authorizations WHERE authorization_id=? OR nonce=?")
+						.get(payload.authorizationId, payload.nonce);
+					if (
+						consumed !== undefined &&
+						(consumed.authorization_id !== payload.authorizationId ||
+							consumed.nonce !== payload.nonce ||
+							consumed.payload_sha256 !== digest ||
+							consumed.key_id !== payload.keyId)
+					)
+						fail("replayed");
+					const sequence = Number(
+						database.prepare("SELECT revocation_sequence FROM runtime_metadata WHERE singleton=1").get()
+							?.revocation_sequence,
+					);
+					if (sequence < payload.revocationSequence) fail("replay_unavailable");
+					const existing = database
+						.prepare("SELECT 1 FROM revocations WHERE subject_type='authorization' AND subject_id=?")
+						.get(payload.authorizationId);
+					if (existing === undefined) {
+						if (!Number.isSafeInteger(sequence + 1)) fail("replay_unavailable");
+						database
+							.prepare(
+								"INSERT INTO revocations(sequence,subject_type,subject_id,created_at) VALUES (?,'authorization',?,?)",
+							)
+							.run(sequence + 1, payload.authorizationId, createdAt);
+						database
+							.prepare("UPDATE runtime_metadata SET revocation_sequence=? WHERE singleton=1")
+							.run(sequence + 1);
+					}
+					database.exec("COMMIT;");
+					return { kind: "harnessy.meeting-publication.service-revoked", revoked: true };
+				} finally {
+					// Closing an uncommitted transaction rolls it back; never clear leases or history.
+					database.close();
+				}
+			},
+			catch: (cause) => runtimeFailure(cause, "replay_unavailable"),
+		});
+	});
+
 const assertReplayFileIdentity = (verified: VerifiedMeetingPublicationRuntimeInput) => {
 	const current = readStableMeetingPublicationSmokeFile(
 		verified.replayPath,
@@ -498,10 +627,12 @@ class MeetingRuntimeSession {
 	private outcome = "started";
 	private reviewDatabaseIdentity: { readonly device: string; readonly inode: string } | undefined;
 	private reviewing = false;
+	private readonly bootId: string;
 
 	constructor(verified: VerifiedMeetingPublicationRuntimeInput, system: MeetingPublicationSmokeRuntimeSystem) {
 		this.verified = verified;
 		this.system = system;
+		this.bootId = verified.authorization.runtime.bootId ?? system.observe().bootId;
 		if (verified.kind === "review" && verified.authorization.stateDatabase.kind === "existing") {
 			this.reviewDatabaseIdentity = verified.authorization.stateDatabase;
 		}
@@ -525,29 +656,72 @@ class MeetingRuntimeSession {
 					fail("replay_unavailable");
 				this.revocationSequence = sequence;
 				if (this.isRevoked()) fail("revoked");
+				const consumed = this.database
+					.prepare("SELECT * FROM consumed_authorizations WHERE authorization_id=? OR nonce=? LIMIT 1")
+					.get(verified.authorization.authorizationId, verified.authorization.nonce);
 				if (
-					this.database
-						.prepare(
-							"SELECT 1 AS present FROM consumed_authorizations WHERE authorization_id=? OR nonce=? LIMIT 1",
-						)
-						.get(verified.authorization.authorizationId, verified.authorization.nonce) !== undefined
+					consumed !== undefined &&
+					(verified.authorization.kind !== "harnessy.meeting-publication.service-enrollment" ||
+						consumed.authorization_id !== verified.authorization.authorizationId ||
+						consumed.nonce !== verified.authorization.nonce ||
+						consumed.payload_sha256 !== verified.authorizationDigest ||
+						consumed.key_id !== verified.authorization.keyId ||
+						consumed.outcome !== "drained")
 				)
 					fail("replayed");
 				if (this.database.prepare("SELECT 1 AS present FROM active_lease WHERE singleton=1").get() !== undefined) {
 					fail("lease_unavailable");
 				}
-				const now = new Date(verified.startedAt).toISOString();
-				this.database
-					.prepare(
-						"INSERT INTO consumed_authorizations (authorization_id,nonce,payload_sha256,key_id,consumed_at,outcome) VALUES (?,?,?,?,?,'started')",
-					)
-					.run(
-						verified.authorization.authorizationId,
-						verified.authorization.nonce,
-						verified.authorizationDigest,
-						verified.authorization.keyId,
-						now,
+				if (
+					consumed === undefined &&
+					verified.kind === "full_review" &&
+					verified.authorization.kind === "harnessy.meeting-publication.service-enrollment" &&
+					verified.authorization.cutoverEvidence === null
+				) {
+					const expected = verified.authorization.stateDatabase;
+					const state = readStableMeetingPublicationSmokeFile(
+						expected.path,
+						BigInt(verified.authorization.runtime.uid),
+						"private",
+						100 * 1024 * 1024,
 					);
+					if (
+						state.identity.device !== expected.device ||
+						state.identity.inode !== expected.inode ||
+						sha256MeetingPublicationSmokeBytes(state.bytes) !== expected.sha256
+					)
+						fail("state_drift");
+					assertMeetingPublicationRollbackDatabaseFile(expected.path, state.stat);
+					const queue = new DatabaseSync(expected.path, { readOnly: true, allowExtension: false, timeout: 1_000 });
+					try {
+						if (
+							validateMeetingPublicationStoreSchema(queue).version !==
+								MEETING_PUBLICATION_STORE_SCHEMA_VERSION ||
+							queue.prepare("SELECT 1 FROM publication_items LIMIT 1").get() !== undefined
+						)
+							fail("state_drift");
+					} finally {
+						queue.close();
+					}
+					assertMeetingPublicationRollbackDatabaseFile(expected.path, state.stat);
+				}
+				const now = new Date(verified.startedAt).toISOString();
+				if (consumed === undefined)
+					this.database
+						.prepare(
+							"INSERT INTO consumed_authorizations (authorization_id,nonce,payload_sha256,key_id,consumed_at,outcome) VALUES (?,?,?,?,?,'started')",
+						)
+						.run(
+							verified.authorization.authorizationId,
+							verified.authorization.nonce,
+							verified.authorizationDigest,
+							verified.authorization.keyId,
+							now,
+						);
+				else
+					this.database
+						.prepare("UPDATE consumed_authorizations SET outcome='started' WHERE authorization_id=?")
+						.run(verified.authorization.authorizationId);
 				this.database
 					.prepare(
 						"INSERT INTO active_lease (singleton,lease_id,authorization_id,nonce,payload_sha256,key_id,owner_uid,pid,boot_id,expires_at,last_wall_time,last_monotonic_ns,revocation_sequence) VALUES (1,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -560,8 +734,8 @@ class MeetingRuntimeSession {
 						verified.authorization.keyId,
 						verified.authorization.runtime.uid,
 						process.pid,
-						verified.authorization.runtime.bootId,
-						verified.authorization.expiresAt,
+						this.bootId,
+						verified.authorization.expiresAt ?? "service",
 						verified.startedAt,
 						verified.startedMonotonic.toString(),
 						sequence,
@@ -675,7 +849,7 @@ class MeetingRuntimeSession {
 			observation.architecture !== this.verified.authorization.runtime.architecture ||
 			observation.hostname !== this.verified.authorization.runtime.hostname ||
 			observation.uid.toString() !== this.verified.authorization.runtime.uid ||
-			observation.bootId !== this.verified.authorization.runtime.bootId ||
+			observation.bootId !== this.bootId ||
 			observation.executablePath !== this.verified.authorization.runtime.executablePath
 		)
 			return false;
@@ -761,7 +935,7 @@ class MeetingRuntimeSession {
 					lease.owner_uid !== observation.uid.toString() ||
 					Number(lease.pid) !== process.pid ||
 					lease.boot_id !== observation.bootId ||
-					lease.expires_at !== this.verified.authorization.expiresAt ||
+					lease.expires_at !== (this.verified.authorization.expiresAt ?? "service") ||
 					Number(lease.revocation_sequence) !== this.revocationSequence ||
 					!Number.isSafeInteger(lastWallTime) ||
 					observation.now + 1_000 < lastWallTime ||
@@ -812,7 +986,11 @@ class MeetingRuntimeSession {
 				try: async (signal) => {
 					if (!this.active || !this.bindingAllowed(operation, binding)) return false;
 					const started = this.system.observe();
-					if (started.now >= Date.parse(this.verified.authorization.expiresAt)) return false;
+					if (
+						this.verified.authorization.expiresAt !== null &&
+						started.now >= Date.parse(this.verified.authorization.expiresAt)
+					)
+						return false;
 					await assertMeetingPublicationArtifactInventoryCurrentAsync(this.verified, started, signal);
 					// No grant or replay transaction spans the cooperative scan. A close,
 					// cancellation, or competing validation may have run while it yielded.
@@ -825,7 +1003,8 @@ class MeetingRuntimeSession {
 								const expectedWall = this.verified.startedAt + Number(elapsed / 1_000_000n);
 								return (
 									observation.now + 1_000 >= expectedWall &&
-									observation.now < Date.parse(this.verified.authorization.expiresAt)
+									(this.verified.authorization.expiresAt === null ||
+										observation.now < Date.parse(this.verified.authorization.expiresAt))
 								);
 							};
 							const initial = this.system.observe();
@@ -979,7 +1158,8 @@ class MeetingRuntimeSession {
 		const observation = this.system.observe();
 		if (
 			!this.active ||
-			observation.now >= Date.parse(this.verified.authorization.expiresAt) ||
+			(this.verified.authorization.expiresAt !== null &&
+				observation.now >= Date.parse(this.verified.authorization.expiresAt)) ||
 			!this.replayCurrent(observation)
 		)
 			fail("revoked");
@@ -1198,14 +1378,16 @@ export interface MeetingPublicationFullReviewRuntimeHost extends Omit<MeetingPub
 	readonly onReady: (
 		address: MeetingPublicationReviewAddress & {
 			readonly authorizationId: string;
-			readonly expiresAt: string;
-			readonly runtimeMode: "bounded" | "long_running";
+			readonly expiresAt: string | null;
+			readonly runtimeMode: "bounded" | "long_running" | "service";
 		},
 	) => Effect.Effect<void, unknown>;
 	/** Explicit graceful stop only; interruption and signed expiry still interrupt immediately. */
 	readonly drain?: {
 		readonly requested: Effect.Effect<void, unknown>;
 		readonly timeoutMs: number;
+		/** Finish other work sharing this owner, under the same shutdown deadline. */
+		readonly additionalDrain?: Effect.Effect<void, unknown>;
 	};
 }
 
@@ -1267,104 +1449,118 @@ export const runAuthorizedMeetingPublicationFullReview = (
 								catch: (cause) => runtimeFailure(cause, "revoked"),
 							});
 							if (Result.isFailure(current)) cleanupFailure = current.failure;
+							else resource.setOutcome("drained");
 						}
 						resource.close();
 					}).pipe(Effect.orDie),
 			);
-			yield* requireCurrentProviderSession(session, verified);
-			const providerLayer = yield* providers
-				.make(verified.providerBinding)
-				.pipe(Effect.mapError((cause) => runtimeFailure(cause, "provider_setup_failed")));
-			const authority = session.authorityLayer();
-			const dependencies = Layer.mergeAll(
-				authority,
-				MeetingPublicationSource.layer(verified.config).pipe(Layer.provide(authority)),
-				MeetingPublicationStore.layer(verified.config).pipe(Layer.provide(authority)),
-				MeetingPublicationClock.liveLayer,
-				MeetingPublicationReviewRandom.liveLayer,
-				providerLayer,
-			);
-			const serviceLayer = MeetingPublicationService.layer(verified.config).pipe(Layer.provideMerge(dependencies));
-			yield* Effect.gen(function* () {
-				const service = yield* MeetingPublicationService;
-				// Check connections and reminders before exposing review, without claiming publication work.
-				yield* service.worker(0);
-				if (isDraining()) return;
-				// Manual dispatch runs in the HTTP request runtime, so its fatal failure
-				// must also reach this owner rather than becoming only an HTTP 500.
-				const uncertainDelivery = yield* service.deliveryUncertain.pipe(Effect.forkScoped);
-				session.beginReview();
-				const scheduledWorker =
-					verified.authorization.runtimeMode === "long_running"
-						? Effect.gen(function* () {
-								while (!isDraining()) {
-									yield* Effect.raceFirst(
-										Effect.sleep(
-											Math.min(
-												verified.config.reviewSessionSeconds,
-												SUPERVISED_BACKGROUND_WORKER_INTERVAL_SECONDS,
-											) * 1_000,
-										),
-										Deferred.await(drainRequested),
-									);
-									if (isDraining()) return;
-									yield* Effect.try({
-										try: () => session.assertReviewAlive(),
-										catch: (cause) => runtimeFailure(cause, "revoked"),
-									});
-									yield* service.worker(verified.authorization.maxItems);
-								}
-							})
-						: Deferred.await(drainRequested);
-				yield* Effect.gen(function* () {
-					const review = yield* MeetingPublicationReviewServer;
-					const scheduler = yield* scheduledWorker.pipe(Effect.forkScoped);
-					const drained = Effect.gen(function* () {
-						yield* Deferred.await(drainRequested);
-						yield* review.drain;
-						yield* Fiber.join(scheduler);
-					});
-					yield* Effect.raceFirst(
-						isDraining()
-							? Effect.never
-							: host
-									.onReady({
-										...review.address,
-										authorizationId: verified.authorization.authorizationId,
-										expiresAt: verified.authorization.expiresAt,
-										runtimeMode: verified.authorization.runtimeMode ?? "bounded",
-									})
-									.pipe(Effect.andThen(Effect.never)),
-						drained,
-					).pipe(
-						Effect.raceFirst(Fiber.join(uncertainDelivery)),
-						// A dead scheduler closes the owner; a drained scheduler must not cancel admitted HTTP work.
-						Effect.raceFirst(Fiber.join(scheduler).pipe(Effect.andThen(Effect.never))),
+			// Provider teardown must finish successfully before the outer operation
+			// records a clean drain. A cleanup failure is not restart evidence.
+			yield* Effect.scoped(
+				Effect.gen(function* () {
+					yield* requireCurrentProviderSession(session, verified);
+					const providerLayer = yield* providers
+						.make(verified.providerBinding)
+						.pipe(Effect.mapError((cause) => runtimeFailure(cause, "provider_setup_failed")));
+					const authority = session.authorityLayer();
+					const dependencies = Layer.mergeAll(
+						authority,
+						MeetingPublicationSource.layer(verified.config).pipe(Layer.provide(authority)),
+						MeetingPublicationStore.layer(verified.config).pipe(Layer.provide(authority)),
+						MeetingPublicationClock.liveLayer,
+						MeetingPublicationReviewRandom.liveLayer,
+						providerLayer,
 					);
-				}).pipe(
-					Effect.provide(
-						MeetingPublicationReviewServer.layer(
-							verified.config,
-							"full",
-							{ maxItems: verified.authorization.maxItems },
-							isDraining,
-						),
-					),
-				);
-			}).pipe(
-				Effect.provide(serviceLayer),
-				Effect.raceFirst(
-					Effect.forever(
-						Effect.sleep(1_000).pipe(
-							Effect.andThen(
-								Effect.try({
-									try: () => session.assertReviewAlive(),
-									catch: (cause) => runtimeFailure(cause, "revoked"),
-								}),
+					const serviceLayer = MeetingPublicationService.layer(verified.config).pipe(
+						Layer.provideMerge(dependencies),
+					);
+					yield* Effect.gen(function* () {
+						const service = yield* MeetingPublicationService;
+						// Check connections and reminders before exposing review, without claiming publication work.
+						yield* service.worker(0);
+						if (isDraining()) return;
+						// Manual dispatch runs in the HTTP request runtime, so its fatal failure
+						// must also reach this owner rather than becoming only an HTTP 500.
+						const uncertainDelivery = yield* service.deliveryUncertain.pipe(Effect.forkScoped);
+						session.beginReview();
+						const scheduledWorker =
+							verified.authorization.runtimeMode === "long_running" ||
+							verified.authorization.runtimeMode === "service"
+								? Effect.gen(function* () {
+										while (!isDraining()) {
+											yield* Effect.raceFirst(
+												Effect.sleep(
+													Math.min(
+														verified.config.reviewSessionSeconds,
+														SUPERVISED_BACKGROUND_WORKER_INTERVAL_SECONDS,
+													) * 1_000,
+												),
+												Deferred.await(drainRequested),
+											);
+											if (isDraining()) return;
+											yield* Effect.try({
+												try: () => session.assertReviewAlive(),
+												catch: (cause) => runtimeFailure(cause, "revoked"),
+											});
+											yield* service.worker(verified.authorization.maxItems);
+										}
+									})
+								: Deferred.await(drainRequested);
+						yield* Effect.gen(function* () {
+							const review = yield* MeetingPublicationReviewServer;
+							const scheduler = yield* scheduledWorker.pipe(Effect.forkScoped);
+							const drained = Effect.gen(function* () {
+								yield* Deferred.await(drainRequested);
+								yield* Effect.all(
+									[review.drain, Fiber.join(scheduler), host.drain?.additionalDrain ?? Effect.void],
+									{
+										concurrency: "unbounded",
+									},
+								);
+							});
+							yield* Effect.raceFirst(
+								isDraining()
+									? Effect.never
+									: host
+											.onReady({
+												...review.address,
+												authorizationId: verified.authorization.authorizationId,
+												expiresAt: verified.authorization.expiresAt,
+												runtimeMode: verified.authorization.runtimeMode ?? "bounded",
+											})
+											.pipe(Effect.andThen(Effect.never)),
+								drained,
+							).pipe(
+								Effect.raceFirst(Fiber.join(uncertainDelivery)),
+								// A dead scheduler closes the owner; a drained scheduler must not cancel admitted HTTP work.
+								Effect.raceFirst(Fiber.join(scheduler).pipe(Effect.andThen(Effect.never))),
+							);
+						}).pipe(
+							Effect.provide(
+								MeetingPublicationReviewServer.layer(
+									verified.config,
+									"full",
+									{ maxItems: verified.authorization.maxItems },
+									isDraining,
+								),
+							),
+						);
+					}).pipe(
+						Effect.provide(serviceLayer),
+						Effect.raceFirst(
+							Effect.forever(
+								Effect.sleep(1_000).pipe(
+									Effect.andThen(
+										Effect.try({
+											try: () => session.assertReviewAlive(),
+											catch: (cause) => runtimeFailure(cause, "revoked"),
+										}),
+									),
+								),
 							),
 						),
-					),
-				),
+					);
+				}),
 			);
 		});
 		const current = yield* Effect.try({
@@ -1390,10 +1586,18 @@ export const runAuthorizedMeetingPublicationFullReview = (
 					),
 					Effect.scoped,
 					Effect.raceFirst(Fiber.join(deadline)),
-					Effect.timeoutOrElse({
-						duration: Math.max(1, Date.parse(verified.authorization.expiresAt) - current.now),
-						orElse: () => Effect.fail(new MeetingPublicationSmokeRuntimeError({ code: "expired_authorization" })),
-					}),
+					(effect) =>
+						verified.authorization.expiresAt === null
+							? effect
+							: effect.pipe(
+									Effect.timeoutOrElse({
+										duration: Math.max(1, Date.parse(verified.authorization.expiresAt) - current.now),
+										orElse: () =>
+											Effect.fail(
+												new MeetingPublicationSmokeRuntimeError({ code: "expired_authorization" }),
+											),
+									}),
+								),
 					Effect.mapError((cause) => runtimeFailure(cause, "review_failed")),
 				);
 			}),

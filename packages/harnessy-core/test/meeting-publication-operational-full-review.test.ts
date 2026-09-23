@@ -38,8 +38,10 @@ import {
 	verifyMeetingPublicationFullReviewInput,
 } from "../src/jarvis/meeting-publication/operational-input.ts";
 import {
+	inspectMeetingPublicationService,
 	type MeetingPublicationFullReviewRuntimeHost,
 	type MeetingPublicationWorkerProviderFactory,
+	revokeStoppedMeetingPublicationService,
 	runAuthorizedMeetingPublicationFullReview,
 	runAuthorizedMeetingPublicationWorker,
 } from "../src/jarvis/meeting-publication/operational-runtime.ts";
@@ -209,6 +211,15 @@ const makeGate = () => {
 		release = resolve;
 	});
 	return { started, signalStarted, released, release };
+};
+
+const recordedOutcome = (path: string) => {
+	const database = new DatabaseSync(path, { readOnly: true, allowExtension: false });
+	try {
+		return database.prepare("SELECT outcome FROM consumed_authorizations").get()?.outcome;
+	} finally {
+		database.close();
+	}
 };
 
 const providerFactory = (
@@ -528,6 +539,162 @@ const settleWithin = async <A>(promise: Promise<A>, milliseconds = 4_000) =>
 	]);
 
 describe("meeting publication authorized full-review runtime", () => {
+	it("rejects WAL replay state before a status read can create sidecars", async () => {
+		const fixture = await setup({ reviewPort: 18_780 });
+		const input = fixture.authorization.createServiceInput();
+		const wal = new DatabaseSync(fixture.authorization.replayPath);
+		wal.exec("PRAGMA journal_mode=WAL;");
+		wal.close();
+		const before = readFileSync(fixture.authorization.replayPath);
+		expect(
+			await Effect.runPromise(
+				fixture.authorization.withSystem(inspectMeetingPublicationService(input)).pipe(Effect.result),
+			),
+		).toMatchObject({ _tag: "Failure" });
+		expect(readFileSync(fixture.authorization.replayPath)).toEqual(before);
+		for (const suffix of ["-wal", "-shm", "-journal"])
+			expect(existsSync(`${fixture.authorization.replayPath}${suffix}`)).toBe(false);
+	});
+
+	it("reopens enrolled service after clean drain and reboot without new signing", async () => {
+		const fixture = await setup({ reviewPort: 18_780 });
+		fixture.authorization.input = fixture.authorization.createServiceInput({ fresh: true });
+		rmSync(fixture.authorization.payload.cutoverEvidence.path);
+		rmSync(fixture.authorization.payload.rollbackPlan.path);
+		const initialState = readFileSync(stateDatabasePath(fixture));
+		const status = () =>
+			Effect.runPromise(
+				fixture.authorization.withSystem(inspectMeetingPublicationService(fixture.authorization.input)),
+			);
+		const replayBeforeInspection = readFileSync(fixture.authorization.replayPath);
+		expect(await status()).toEqual({
+			kind: "harnessy.meeting-publication.service-status",
+			revoked: false,
+			activation: "not_started",
+			runtimeHealth: "not_assessed",
+		});
+		expect(readFileSync(fixture.authorization.replayPath)).toEqual(replayBeforeInspection);
+		for (const pass of [0, 1]) {
+			if (pass === 1) {
+				fixture.authorization.advanceTimeBy(90 * 24 * 60 * 60_000);
+				fixture.authorization.simulateReboot();
+			}
+			const provider = providerFactory(fixture);
+			const stop = makeGate();
+			const running = await startFullReview(fixture, provider, {
+				requested: Effect.promise(() => stop.released),
+				timeoutMs: 5_000,
+			});
+			const cookie = await authenticate(fixture, running.address.origin);
+			expect(await status()).toMatchObject({ activation: "lease_recorded", runtimeHealth: "not_assessed" });
+			expect(
+				await Effect.runPromise(
+					fixture.authorization
+						.withSystem(revokeStoppedMeetingPublicationService(fixture.authorization.input))
+						.pipe(Effect.result),
+				),
+			).toMatchObject({ _tag: "Failure", failure: { code: "lease_unavailable" } });
+			expect(await status()).toMatchObject({ revoked: false, activation: "lease_recorded" });
+			expect((await call(running.address.origin, "/", { cookie })).status).toBe(200);
+			stop.release();
+			expect(Exit.isSuccess(await settleWithin(Effect.runPromise(Fiber.await(running.fiber))))).toBe(true);
+			expect(recordedOutcome(fixture.authorization.replayPath)).toBe("drained");
+			expect(await status()).toMatchObject({ activation: "cleanly_stopped", revoked: false });
+			expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
+			expect(provider.calls.google).toEqual([]);
+			expect(provider.calls.discord).toEqual([]);
+		}
+		expect(readFileSync(stateDatabasePath(fixture)).equals(initialState)).toBe(false);
+		const stoppedState = readFileSync(stateDatabasePath(fixture));
+		const revoke = () =>
+			Effect.runPromise(
+				fixture.authorization.withSystem(revokeStoppedMeetingPublicationService(fixture.authorization.input)),
+			);
+		expect(await revoke()).toEqual({ kind: "harnessy.meeting-publication.service-revoked", revoked: true });
+		const revokedReplay = readFileSync(fixture.authorization.replayPath);
+		expect(await revoke()).toEqual({ kind: "harnessy.meeting-publication.service-revoked", revoked: true });
+		expect(readFileSync(fixture.authorization.replayPath)).toEqual(revokedReplay);
+		expect(readFileSync(stateDatabasePath(fixture))).toEqual(stoppedState);
+		expect(await status()).toMatchObject({ revoked: true, activation: "cleanly_stopped" });
+		const provider = providerFactory(fixture);
+		await expect(startFullReview(fixture, provider)).rejects.toThrow("full review exited before ready");
+		expect(provider.calls.make).toBe(0);
+	});
+
+	it("does not adopt existing approvals as a fresh installation", async () => {
+		const fixture = await setup({ reviewPort: 18_780, approved: true });
+		fixture.authorization.input = fixture.authorization.createServiceInput({ fresh: true });
+		const before = readFileSync(stateDatabasePath(fixture));
+		const provider = providerFactory(fixture);
+		await expect(startFullReview(fixture, provider)).rejects.toThrow("full review exited before ready");
+		expect(provider.calls.make).toBe(0);
+		expect(readFileSync(stateDatabasePath(fixture))).toEqual(before);
+		expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 0, leases: 0 });
+	});
+
+	for (const invalidation of ["interrupt", "revoked", "replaced-state", "changed-enrollment"] as const) {
+		it(`rejects service restart after ${invalidation} without acquiring providers`, async () => {
+			const fixture = await setup({ reviewPort: 18_780 });
+			fixture.authorization.input = fixture.authorization.createServiceInput();
+			const stop = makeGate();
+			const running = await startFullReview(fixture, providerFactory(fixture), {
+				requested: Effect.promise(() => stop.released),
+				timeoutMs: 5_000,
+			});
+			if (invalidation === "interrupt") await Effect.runPromise(Fiber.interrupt(running.fiber));
+			else {
+				stop.release();
+				expect(Exit.isSuccess(await settleWithin(Effect.runPromise(Fiber.await(running.fiber))))).toBe(true);
+			}
+			if (invalidation === "revoked") fixture.authorization.revoke();
+			if (invalidation === "revoked" || invalidation === "interrupt") {
+				const replayBeforeInspection = readFileSync(fixture.authorization.replayPath);
+				expect(
+					await Effect.runPromise(
+						fixture.authorization.withSystem(inspectMeetingPublicationService(fixture.authorization.input)),
+					),
+				).toMatchObject({
+					revoked: invalidation === "revoked",
+					activation: invalidation === "revoked" ? "cleanly_stopped" : "reconciliation_required",
+				});
+				expect(readFileSync(fixture.authorization.replayPath)).toEqual(replayBeforeInspection);
+			}
+			if (invalidation === "replaced-state") {
+				const replacement = join(fixture.root, "replacement.sqlite3");
+				writeFileSync(replacement, readFileSync(stateDatabasePath(fixture)), { mode: 0o600 });
+				renameSync(replacement, stateDatabasePath(fixture));
+			}
+			if (invalidation === "changed-enrollment") {
+				fixture.authorization.resign((payload) => {
+					payload.maxItems = 2;
+				});
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+			}
+			const provider = providerFactory(fixture);
+			await expect(startFullReview(fixture, provider)).rejects.toThrow("full review exited before ready");
+			expect(provider.calls.make).toBe(0);
+			expect(provider.calls.google).toEqual([]);
+			expect(provider.calls.discord).toEqual([]);
+			expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
+		});
+	}
+
+	it("does not promote finite authorization to service enrollment", async () => {
+		const fixture = await setup({ reviewPort: 18_780 });
+		fixture.authorization.input = { ...fixture.authorization.input, mode: "service" };
+		expect(
+			await Effect.runPromise(
+				fixture.authorization
+					.withSystem(inspectMeetingPublicationService(fixture.authorization.input))
+					.pipe(Effect.result),
+			),
+		).toMatchObject({ _tag: "Failure" });
+		const provider = providerFactory(fixture);
+		await expect(startFullReview(fixture, provider)).rejects.toThrow("full review exited before ready");
+		expect(provider.calls.make).toBe(0);
+		expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 0, leases: 0 });
+	});
+
 	for (const drift of ["content", "replacement", "non-executable"] as const) {
 		it(`rejects post-start ${drift} drift of a signed launcher outside the artifact root`, async () => {
 			const fixture = await setup();
@@ -768,7 +935,7 @@ describe("meeting publication authorized full-review runtime", () => {
 		});
 	}
 
-	for (const cleanup of ["complete", "revoked", "expired"] as const) {
+	for (const cleanup of ["complete", "revoked", "expired", "failed"] as const) {
 		it(`waits for provider-owner cleanup (${cleanup}) and never reports stale authority as drained`, async () => {
 			const fixture = await setup({ approved: true });
 			const stop = makeGate();
@@ -783,6 +950,7 @@ describe("meeting publication authorized full-review runtime", () => {
 							Effect.promise(async () => {
 								close.signalStarted();
 								await close.released;
+								if (cleanup === "failed") throw new Error("fixture provider teardown failed");
 							}),
 						);
 						return yield* underlying(binding);
@@ -815,8 +983,12 @@ describe("meeting publication authorized full-review runtime", () => {
 			}
 			const exit = await settleWithin(completion);
 			expect(Exit.isSuccess(exit)).toBe(cleanup === "complete");
-			if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toMatchObject({ code: "revoked" });
+			if (Exit.isFailure(exit) && cleanup !== "failed")
+				expect(Cause.squash(exit.cause)).toMatchObject({ code: "revoked" });
 			expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
+			expect(recordedOutcome(fixture.authorization.replayPath)).toBe(
+				cleanup === "complete" ? "drained" : "reviewing",
+			);
 		});
 	}
 
@@ -926,10 +1098,58 @@ describe("meeting publication authorized full-review runtime", () => {
 			expect(provider.calls.discord).toHaveLength(outcome === "complete" ? 1 : 0);
 			expect(provider.calls.closed).toBe(3);
 			expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
+			expect(recordedOutcome(fixture.authorization.replayPath)).toBe(
+				outcome === "complete" ? "drained" : "reviewing",
+			);
 			expect(
 				existsSync(join(fixture.config.statePath as string, "meeting-publication-v2-review.rendezvous.json")),
 			).toBe(false);
 			await expect(call(running.address.origin, "/")).rejects.toThrow();
+		});
+	}
+
+	for (const outcome of ["complete", "deadline", "failed"] as const) {
+		it(`closes meeting admission while shared-owner work drains (${outcome})`, async () => {
+			const fixture = await setup({ approved: true });
+			const before = stateRow(fixture);
+			const stop = makeGate();
+			const shared = makeGate();
+			const provider = providerFactory(fixture);
+			const running = await startFullReview(fixture, provider, {
+				requested: Effect.promise(() => stop.released),
+				timeoutMs: outcome === "deadline" ? 1_500 : 5_000,
+				additionalDrain: Effect.promise(async () => {
+					shared.signalStarted();
+					await shared.released;
+				}).pipe(Effect.andThen(outcome === "failed" ? Effect.fail(new Error("shared drain failed")) : Effect.void)),
+			});
+			const cookie = await authenticate(fixture, running.address.origin);
+			const csrf = csrfFrom((await call(running.address.origin, "/", { cookie })).body);
+			stop.release();
+			await settleWithin(shared.started);
+			expect((await post(running.address.origin, cookie, "/dispatch", { csrf })).status).toBe(503);
+			expect(
+				(
+					await post(running.address.origin, cookie, `/approve/${fixture.note.itemId}`, {
+						csrf,
+						item_id: fixture.note.itemId,
+						source_hash: fixture.note.sourceHash,
+					})
+				).status,
+			).toBe(503);
+			expect(provider.calls.closed).toBe(0);
+			expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 1 });
+			if (outcome !== "deadline") shared.release();
+			const exit = await settleWithin(Effect.runPromise(Fiber.await(running.fiber)));
+			expect(Exit.isSuccess(exit)).toBe(outcome === "complete");
+			if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toMatchObject({ code: "review_failed" });
+			expect(recordedOutcome(fixture.authorization.replayPath)).toBe(
+				outcome === "complete" ? "drained" : "reviewing",
+			);
+			expect(stateRow(fixture)).toEqual(before);
+			expect(provider.calls.google).toEqual([]);
+			expect(provider.calls.discord).toEqual([]);
+			expect(provider.calls.closed).toBe(3);
 		});
 	}
 

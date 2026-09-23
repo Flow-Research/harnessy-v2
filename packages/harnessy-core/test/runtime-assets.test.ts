@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
@@ -13,6 +14,43 @@ const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
 
 describe("Harnessy runtime assets", () => {
+	for (const kind of ["file", "symlink", "dangling-symlink"] as const) {
+		it.effect(`preserves an existing Jarvis ${kind} even during forced asset refresh`, () =>
+			provideLive(
+				Effect.gen(function* () {
+					const fs = yield* FileSystem.FileSystem;
+					const project = yield* HarnessProject;
+					const targetDir = yield* fs.makeTempDirectoryScoped();
+					const globalRoot = yield* fs.makeTempDirectoryScoped();
+					const command = `${globalRoot}/bin/jarvis`;
+					const executable = `${globalRoot}/installed-jarvis`;
+					const original = "#!/usr/bin/env python3\n# installed tool must survive\n";
+					yield* fs.makeDirectory(`${globalRoot}/bin`);
+					if (kind === "file") yield* fs.writeFileString(command, original);
+					else {
+						if (kind === "symlink") yield* fs.writeFileString(executable, original);
+						yield* fs.symlink(executable, command);
+					}
+					const result = yield* project.runInstaller(targetDir, {
+						force: true,
+						step: "runtime-assets",
+						applyGlobal: true,
+						globalRoot,
+						globalCommandsDir: `${globalRoot}/bin`,
+						globalSkillsDir: `${globalRoot}/skills`,
+					});
+					const action = result.runtimeAssets?.actions.find((entry) => entry.targetPath === command);
+					expect(action?.status).toBe("skipped");
+					expect(action?.reason).toContain("already exists");
+					expect(result.runtimeAssets?.written).not.toContain(command);
+					if (kind !== "file") expect(yield* fs.readLink(command)).toBe(executable);
+					if (kind === "dangling-symlink") expect(yield* fs.exists(executable)).toBe(false);
+					else expect(yield* fs.readFileString(command)).toBe(original);
+				}),
+			),
+		);
+	}
+
 	it.effect("dry-runs project-local v1 runtime assets and only plans global actions", () =>
 		provideLive(
 			Effect.gen(function* () {
@@ -128,6 +166,15 @@ describe("Harnessy runtime assets", () => {
 				});
 
 				expect(result.runtimeAssets?.globalApplied).toBe(true);
+				const monthlyInstructions = yield* fs.readFileString(
+					`${globalRoot}/skills/life-orchestrator/commands/life.md`,
+				);
+				expect(monthlyInstructions).toContain("current supervised native Codex session");
+				expect(monthlyInstructions).not.toContain("goal-agent");
+				expect(monthlyInstructions).toContain("$OUTPUT_DIR/monthly-review.md");
+				expect(
+					yield* fs.readFileString(`${globalRoot}/skills/life-orchestrator/templates/monthly-review.md`),
+				).toContain("## Proof Of Progress");
 				expect(yield* fs.exists(`${globalRoot}/.scripts/skills-root.mjs`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/.scripts/parse-frontmatter.mjs`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/.agents/claude-marketplace/harnessy/hooks/hooks.json`)).toBe(true);
@@ -161,6 +208,37 @@ describe("Harnessy runtime assets", () => {
 				expect(jarvisShim).toContain('JARVIS_CLI_ROOT="${HARNESSY_JARVIS_CLI_ROOT:-');
 				expect(jarvisShim).toContain("uv run --project");
 				expect(jarvisShim).toContain("jarvis-cli");
+				// Execute the generated launcher with an argv-recording uv boundary.
+				// No Python environment, dependency download or provider is started.
+				const uv = `${globalRoot}/bin/uv`;
+				yield* fs.writeFileString(
+					uv,
+					`#!${process.execPath}\nprocess.stdout.write(JSON.stringify(process.argv.slice(2)));\nprocess.exit(Number(process.env.FIXTURE_EXIT || 0));\n`,
+				);
+				yield* fs.chmod(uv, 0o755);
+				const command = `${globalRoot}/bin/jarvis`;
+				const args = ["wiki", "ingest", "a note with spaces.md", "", "$(false)", "a'b", "--title=one;two"];
+				const env = { PATH: `${globalRoot}/bin:/usr/bin:/bin` };
+				const initial = spawnSync(command, args, { env, encoding: "utf8", timeout: 5_000 });
+				expect(initial.error).toBeUndefined();
+				expect(initial.status).toBe(0);
+				const initialArgs: unknown = JSON.parse(initial.stdout);
+				expect(initialArgs).toEqual([
+					"run",
+					"--project",
+					result.runtimeAssets?.actions.find((action) => action.targetPath === command)?.sourcePath,
+					"jarvis",
+					...args,
+				]);
+				const configuredRoot = `${globalRoot}/custom 'root' $(false);literal`;
+				const failed = spawnSync(command, args, {
+					env: { ...env, HARNESSY_JARVIS_CLI_ROOT: configuredRoot, FIXTURE_EXIT: "37" },
+					encoding: "utf8",
+					timeout: 5_000,
+				});
+				expect(failed.error).toBeUndefined();
+				expect(failed.status).toBe(37);
+				expect(JSON.parse(failed.stdout)).toEqual(["run", "--project", configuredRoot, "jarvis", ...args]);
 				expect((yield* fs.stat(traceSource)).mode).toBe(traceSourceMode);
 				expect(yield* fs.exists(`${globalRoot}/skills/_shared`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/.config/harnessy/tmux-agent-launcher.json`)).toBe(true);

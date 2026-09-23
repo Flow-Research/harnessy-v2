@@ -1,9 +1,11 @@
 import assertStrict from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { url as inspectorUrl } from "node:inspector";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -52,6 +54,7 @@ import {
 	googleMeetingPublicationPlugin,
 } from "../../../harnessy-sdk/src/plugins/google-meeting-publication.ts";
 import { makeWireState, startWireServer } from "../../../harnessy-sdk/test/support/meeting-provider-wire.ts";
+import { checkPackedServiceLaunchd } from "./packed-service-launchd.mjs";
 
 const installationRoot = realpathSync(process.argv[2] ?? "");
 const privateParent = realpathSync(process.argv[3] ?? tmpdir());
@@ -62,6 +65,7 @@ let failedAssertion;
 let requestPhase = "startup";
 const requestTimings = [];
 let heartbeat;
+let preserveFixture = false;
 let maximumHeartbeatStallMs = 0;
 const assert = (condition, message) => {
 	if (!condition) {
@@ -765,11 +769,365 @@ try {
 			"Startup drain did not consume its own nonce and release its own lease.");
 	} finally { drainReplay.close(); }
 	assert(!existsSync(join(config.statePath, "meeting-publication-v2-review.rendezvous.json")), "Startup drain left a rendezvous.");
+	// Adopt the real finite fixture's consumed ledger, with published receipt rows
+	// already present. This must use the shipped command, not a test trust rewrite.
+	const adoptionDirectory = join(root, "adopted-control");
+	mkdirSync(adoptionDirectory, { mode: 0o700 });
+	const adoptionPath = join(root, "adoption.json");
+	writeFileSync(adoptionPath, JSON.stringify({
+		kind: "harnessy.meeting-publication.service-adoption.v1",
+		trustedKeyring: input.trustedKeyring,
+		controlDirectory: adoptionDirectory,
+	}), { mode: 0o600 });
+	const adoptionProtectedPaths = [input.trustedKeyring.path, fixture.replayPath,
+		join(config.statePath, "meeting-publication.sqlite3"), engine.engineStatePath];
+	const adoptionBefore = adoptionProtectedPaths.map((path) => readFileSync(path));
+	const adoptionRequests = wire.requests.length;
+	const adoptionArgs = [join(installedHost, "dist/meeting-full-review-cli.js"), "--setup-service", "--input", adoptionPath];
+	const adopted = spawnSync(process.execPath, adoptionArgs, {
+		cwd: root, encoding: "utf8", timeout: 10_000, env: process.env,
+	});
+	assert(adopted.status === 0 && adopted.stderr === "", `Installed trust adoption failed: ${adopted.stderr}`);
+	const adoptionResult = JSON.parse(adopted.stdout);
+	assert(adoptionResult.activated === false, "Adoption must not activate a runtime.");
+	const adoptedBytes = readFileSync(adoptionResult.trustedKeyring.path);
+	assert(sha256(adoptedBytes) === adoptionResult.trustedKeyring.sha256, "Adoption returned an incorrect trust pin.");
+	assertStrict.deepEqual(JSON.parse(adoptedBytes.toString()), {
+		...JSON.parse(adoptionBefore[0].toString()),
+		kind: "harnessy.meeting-publication.service-trust",
+		audience: "harnessy.meeting-publication.service.v1",
+	});
+	const repeatedAdoption = spawnSync(process.execPath, adoptionArgs, {
+		cwd: root, encoding: "utf8", timeout: 10_000, env: process.env,
+	});
+	assert(repeatedAdoption.status === 1 && repeatedAdoption.stdout === "", "Adoption overwrote existing service trust.");
+	assertStrict.deepEqual(readFileSync(adoptionResult.trustedKeyring.path), adoptedBytes);
+	assertStrict.deepEqual(adoptionProtectedPaths.map((path) => readFileSync(path)), adoptionBefore,
+		"Adoption changed finite trust, replay history, queue receipts or Executor state.");
+	assert(wire.requests.length === adoptionRequests, "Adoption contacted providers.");
+	// Reopen the actual installed Executor-backed service with one enrollment.
+	// These already-published rows are receipt sentinels, never smoke-test deliveries.
+	const servicePrivateRoot = join(root, "service-enrollment");
+	mkdirSync(servicePrivateRoot, { mode: 0o700 });
+	const serviceFixture = createMeetingPublicationFullReviewAuthorizationFixture({ ...fixtureOptions, privateRoot: servicePrivateRoot });
+	serviceFixture.resign((payload) => {
+		payload.google.connection = engine.googleConnection;
+		payload.discord.connection = engine.discordConnection;
+		payload.transport = { mode: "loopback", ...transport };
+	});
+	const serviceInput = serviceFixture.createServiceInput();
+	const serviceArgs = [
+		"--service",
+		"--authorization", serviceInput.authorizationPath,
+		"--trusted-keyring", serviceInput.trustedKeyring.path,
+		"--trusted-keyring-device", serviceInput.trustedKeyring.device,
+		"--trusted-keyring-inode", serviceInput.trustedKeyring.inode,
+		"--trusted-keyring-sha256", serviceInput.trustedKeyring.sha256,
+	];
+	const serviceRequestOffset = wire.requests.length;
+	const inspectInstalledService = () => {
+		const result = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"), "--service-status", ...serviceArgs.slice(1)], {
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+		});
+		assert(result.status === 0 && result.stderr === "", "Installed service status command failed.");
+		return JSON.parse(result.stdout);
+	};
+	const replayBeforeStatus = readFileSync(serviceFixture.replayPath);
+	assertStrict.deepEqual(inspectInstalledService(), { kind: "harnessy.meeting-publication.service-status", revoked: false, activation: "not_started", runtimeHealth: "not_assessed" });
+	assertStrict.deepEqual(readFileSync(serviceFixture.replayPath), replayBeforeStatus, "Status consumed or changed enrollment.");
+	for (const pass of [0, 1]) {
+		if (pass === 1) {
+			serviceFixture.advanceTimeBy(90 * 24 * 60 * 60_000);
+			serviceFixture.simulateReboot();
+		}
+		let serviceReady = false;
+		const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+			const drain = yield* makeMeetingFullReviewSignalDrain("service");
+			return yield* serviceFixture.withSystem(runMeetingFullReviewCommand(serviceArgs, (address) => Effect.promise(async () => {
+				assert(address.runtimeMode === "service" && address.expiresAt === null, "Installed service exposed finite-session metadata.");
+				const token = readFileSync(join(config.statePath, "meeting-publication-v2-review.token"), "utf8").trim();
+				const exchange = await call(address.origin, `/exchange?token=${encodeURIComponent(token)}`);
+				const cookie = exchange.headers.get("set-cookie")?.split(";", 1)[0];
+				assert(exchange.status === 303 && cookie !== undefined, "Installed service did not establish review access.");
+				assert((await call(address.origin, "/", { headers: { Cookie: cookie } })).status === 200, "Reopened installed service did not serve review.");
+				serviceReady = true;
+				setImmediate(() => process.kill(process.pid, pass === 0 ? "SIGINT" : "SIGTERM"));
+			}), drain));
+		})));
+		assert(result.exitCode === 0 && serviceReady, "Installed service failed to start and drain cleanly.");
+		assertStrict.deepEqual(inspectInstalledService(), { kind: "harnessy.meeting-publication.service-status", revoked: false, activation: "cleanly_stopped", runtimeHealth: "not_assessed" });
+		const serviceReplay = new DatabaseSync(serviceFixture.replayPath, { readOnly: true });
+		try {
+			assert(serviceReplay.prepare("SELECT COUNT(*) AS count FROM consumed_authorizations").get()?.count === 1 &&
+				serviceReplay.prepare("SELECT outcome FROM consumed_authorizations").get()?.outcome === "drained" &&
+				serviceReplay.prepare("SELECT COUNT(*) AS count FROM active_lease").get()?.count === 0,
+				"Installed service did not preserve its one enrollment and clean-drain outcome.");
+		} finally { serviceReplay.close(); }
+		assertStrict.deepEqual(queueSnapshot(), beforeDrain, "Service restart changed existing approvals or external receipts.");
+	}
+	for (const attempt of [0, 1]) {
+		const revokedCommand = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"), "--service-revoke", ...serviceArgs.slice(1)], {
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+		});
+		assert(revokedCommand.status === 0 && revokedCommand.stderr === "", `Installed service revocation failed on attempt ${attempt}.`);
+		assertStrict.deepEqual(JSON.parse(revokedCommand.stdout), { kind: "harnessy.meeting-publication.service-revoked", revoked: true });
+	}
+	assertStrict.deepEqual(queueSnapshot(), beforeDrain, "Revocation changed approvals or external receipts.");
+	assertStrict.equal(inspectInstalledService().revoked, true, "Installed status hid revocation.");
+	const beforeRevokedAttempt = wire.requests.length;
+	const revoked = await Effect.runPromise(serviceFixture.withSystem(runMeetingFullReviewCommand(serviceArgs,
+		() => Effect.die("Revoked installed service must not expose review."))));
+	assert(revoked.exitCode === 1 && revoked.value.code === "revoked", "Installed service accepted revoked enrollment.");
+	assert(wire.requests.length === beforeRevokedAttempt, "Revoked service contacted a provider.");
+	assert(wire.requests.slice(serviceRequestOffset).every(({ method }) => method === "GET"), "Service restart republished an old delivery.");
+	assert(process.listenerCount("SIGUSR2") === listenersBefore, "Service restart leaked a drain listener.");
+	// A first installation has no migration documents or inherited queue rows.
+	// Reuse the installed provider owner, but give this consumer its own empty state.
+	const freshConfig = new JarvisMeetingPublicationConfig({ ...config, statePath: join(root, "fresh-state") });
+	mkdirSync(freshConfig.statePath, { mode: 0o700 });
+	const freshPrivateRoot = join(root, "fresh-enrollment");
+	mkdirSync(freshPrivateRoot, { mode: 0o700 });
+	const freshFixture = createMeetingPublicationFullReviewAuthorizationFixture({
+		...fixtureOptions, privateRoot: freshPrivateRoot,
+	});
+	freshFixture.resign((payload) => {
+		payload.google.connection = engine.googleConnection;
+		payload.discord.connection = engine.discordConnection;
+		payload.transport = { mode: "loopback", ...transport };
+	});
+	const ownerKeyPath = join(freshPrivateRoot, "owner.pem");
+	freshFixture.writeOwnerKey(ownerKeyPath);
+	const trustKey = JSON.parse(readFileSync(freshFixture.input.trustedKeyring.path, "utf8")).keys[0];
+	const publicKeyPath = join(freshPrivateRoot, "owner.pub");
+	writeFileSync(publicKeyPath, trustKey.publicKeyPem, { mode: 0o600 });
+	const controlDirectory = join(freshPrivateRoot, "control");
+	mkdirSync(controlDirectory, { mode: 0o700 });
+	const setupPath = join(freshPrivateRoot, "setup.json");
+	writeFileSync(setupPath, JSON.stringify({
+		kind: "harnessy.meeting-publication.service-setup.v1",
+		stateDirectory: freshConfig.statePath, controlDirectory, publicKeyPath,
+		publicKeySha256: trustKey.publicKeySha256, issuer: trustKey.issuer, keyId: trustKey.keyId,
+	}), { mode: 0o600 });
+	const setupArgs = [join(installedHost, "dist/meeting-full-review-cli.js"), "--setup-service", "--input", setupPath];
+	const beforeSetupRequests = wire.requests.length;
+	const setup = spawnSync(process.execPath, setupArgs, {
+		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+	});
+	assert(setup.status === 0 && setup.stderr === "", "Installed first-run service setup failed.");
+	const fixtureFreshInput = JSON.parse(setup.stdout);
+	assert(fixtureFreshInput.kind === "harnessy.meeting-publication.service-provisioned" && fixtureFreshInput.activated === false,
+		"Installed setup reported unexpected activation.");
+	const provisionedTrust = readFileSync(fixtureFreshInput.trustedKeyring.path);
+	const provisionedReplayPath = JSON.parse(provisionedTrust.toString()).replay.path;
+	assert(sha256(provisionedTrust) === fixtureFreshInput.trustedKeyring.sha256, "Setup returned an incorrect trust pin.");
+	const repeatedSetup = spawnSync(process.execPath, setupArgs, {
+		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+	});
+	assert(repeatedSetup.status === 1 && repeatedSetup.stdout === "", "Installed setup accepted an existing installation.");
+	assertStrict.deepEqual(readFileSync(fixtureFreshInput.trustedKeyring.path), provisionedTrust, "Repeated setup replaced trust.");
+	assert(wire.requests.length === beforeSetupRequests, "Setup contacted providers.");
+	assertStrict.deepEqual(queueSnapshot(), beforeDrain, "Setup altered existing approvals or receipts.");
+	const preparedDirectory = join(freshPrivateRoot, "prepared");
+	mkdirSync(preparedDirectory, { mode: 0o700 });
+	const preparationPath = join(freshPrivateRoot, "preparation.json");
+	writeFileSync(preparationPath, JSON.stringify({
+		kind: "harnessy.meeting-publication.service-preparation.v1",
+		issuer: freshFixture.payload.issuer, keyId: freshFixture.payload.keyId,
+		config: freshConfig, subject: freshFixture.payload.subject,
+		google: freshFixture.payload.google, discord: freshFixture.payload.discord,
+		notifier: freshFixture.payload.notifier, maxItems: 1,
+		credentialDirectory: engine.credentialDirectory, engineStatePath: engine.engineStatePath,
+		installationRoot, trustedKeyring: fixtureFreshInput.trustedKeyring,
+		cutoverEvidencePath: null, rollbackPlanPath: null,
+		transport: { mode: "loopback", ...transport },
+	}), { mode: 0o600 });
+	const replayBeforePreparation = readFileSync(provisionedReplayPath);
+	const engineBeforePreparation = readFileSync(engine.engineStatePath);
+	const stateBeforePreparation = readFileSync(join(freshConfig.statePath, "meeting-publication.sqlite3"));
+	const requestsBeforePreparation = wire.requests.length;
+	// Both unsigned bindings and the consumed signature must come from shipped commands.
+	const prepared = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"),
+		"--prepare-service", "--input", preparationPath, "--output-directory", preparedDirectory], {
+		cwd: installationRoot, encoding: "utf8", timeout: 30_000, env: process.env,
+	});
+	assert(prepared.status === 0 && prepared.stderr === "", "Installed service preparation command failed.");
+	const requestPath = join(preparedDirectory, "request.json");
+	const requestBytes = readFileSync(requestPath);
+	assertStrict.deepEqual(JSON.parse(prepared.stdout), {
+		kind: "harnessy.meeting-publication.service-request-prepared", activated: false, requestSha256: sha256(requestBytes),
+	});
+	assertStrict.deepEqual(readFileSync(provisionedReplayPath), replayBeforePreparation, "Preparation changed replay history.");
+	assertStrict.deepEqual(readFileSync(engine.engineStatePath), engineBeforePreparation, "Preparation changed credentials.");
+	assertStrict.deepEqual(readFileSync(join(freshConfig.statePath, "meeting-publication.sqlite3")), stateBeforePreparation, "Preparation changed queue state.");
+	assert(wire.requests.length === requestsBeforePreparation, "Preparation contacted providers.");
+	// The fixture clock predates the real command; advance it past preparation without changing authority semantics.
+	freshFixture.advanceTimeBy(Date.now() - Date.parse(freshFixture.payload.issuedAt) + 1_000);
+	const freshInput = { ...fixtureFreshInput, authorizationPath: join(preparedDirectory, "enrollment.json") };
+	const savedServicePath = join(preparedDirectory, "service.json");
+	assertStrict.deepEqual(JSON.parse(readFileSync(savedServicePath, "utf8")), {
+		kind: "harnessy.meeting-publication.service-config.v1",
+		authorizationPath: freshInput.authorizationPath,
+		trustedKeyring: fixtureFreshInput.trustedKeyring,
+	}, "Preparation did not preserve the independently provisioned trust pin.");
+	const publicKeySha256 = JSON.parse(readFileSync(fixtureFreshInput.trustedKeyring.path, "utf8")).keys[0].publicKeySha256;
+	const enrollmentArgs = [
+		join(installedHost, "dist/meeting-full-review-cli.js"), "--enroll-service",
+		"--request", requestPath, "--request-sha256", sha256(requestBytes),
+		"--owner-key", ownerKeyPath, "--public-key-sha256", publicKeySha256,
+		"--output", freshInput.authorizationPath,
+	];
+	const requestsBeforeEnrollment = wire.requests.length;
+	const ownerKeyBefore = readFileSync(ownerKeyPath);
+	const enrolled = spawnSync(process.execPath, enrollmentArgs, {
+		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+	});
+	assert(enrolled.status === 0 && enrolled.stderr === "", "Installed owner enrollment command failed.");
+	assertStrict.deepEqual(JSON.parse(enrolled.stdout), { kind: "harnessy.meeting-publication.service-enrollment-created", activated: false });
+	assertStrict.deepEqual(readFileSync(ownerKeyPath), ownerKeyBefore, "Enrollment replaced the owner key.");
+	assert(wire.requests.length === requestsBeforeEnrollment, "Enrollment contacted providers.");
+	assert(!existsSync(join(freshConfig.statePath, "meeting-publication-v2-review.rendezvous.json")), "Enrollment activated review.");
+	const signedBytes = readFileSync(freshInput.authorizationPath);
+	const repeatedEnrollment = spawnSync(process.execPath, enrollmentArgs, {
+		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+	});
+	assert(repeatedEnrollment.status === 1 && repeatedEnrollment.stdout === "", "Installed enrollment overwrote an existing output.");
+	assertStrict.deepEqual(readFileSync(freshInput.authorizationPath), signedBytes, "Rejected enrollment changed the existing envelope.");
+	const checkLaunchAgentPlan = (expectedSuccess) => {
+		if (process.platform !== "darwin") return;
+		const before = [provisionedReplayPath, freshInput.authorizationPath, savedServicePath,
+			join(freshConfig.statePath, "meeting-publication.sqlite3")].map((path) => readFileSync(path));
+		const requestCount = wire.requests.length;
+		const planned = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"),
+			"--service-launch-agent", "--input", savedServicePath], {
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+		});
+		assert(planned.status === (expectedSuccess ? 0 : 1), "Installed launch-agent planning status drifted.");
+		if (expectedSuccess) {
+			assert(planned.stderr === "", "Launch-agent planning emitted an error.");
+			const plan = JSON.parse(planned.stdout);
+			assert(plan.kind === "harnessy.meeting-publication.launch-agent" && plan.label === "org.harnessy.meeting-publication",
+				"Installed launch-agent plan identity drifted.");
+			const parsed = spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", "--", "-"], {
+				input: plan.plist, encoding: "utf8", timeout: 10_000, env: process.env,
+			});
+			assert(parsed.status === 0, "Installed launch-agent plan is not a valid plist.");
+			assertStrict.deepEqual(JSON.parse(parsed.stdout), {
+				Label: plan.label,
+				ProgramArguments: [process.execPath, join(installedHost, "dist/meeting-full-review-cli.js"), "--service", "--input", savedServicePath],
+				RunAtLoad: true, KeepAlive: false, ExitTimeOut: 45,
+			});
+		} else assert(planned.stdout === "", "Rejected launch-agent planning produced installable output.");
+		const serviceDirectory = mkdtempSync(join(freshPrivateRoot, "service-files-"));
+		chmodSync(serviceDirectory, 0o700);
+		const installArgs = [join(installedHost, "dist/meeting-full-review-cli.js"),
+			"--service-install", "--input", savedServicePath, "--directory", serviceDirectory];
+		const installed = spawnSync(process.execPath, installArgs, {
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+		});
+		assert(installed.status === (expectedSuccess ? 0 : 1), "Installed service-file command status drifted.");
+		const plistPath = join(serviceDirectory, "org.harnessy.meeting-publication.plist");
+		if (expectedSuccess) {
+			assert(installed.stderr === "", "Service-file installation emitted an error.");
+			assertStrict.deepEqual(JSON.parse(installed.stdout), {
+				kind: "harnessy.meeting-publication.service-files-installed", activated: false,
+			});
+			const parsed = spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", "--", plistPath], {
+				encoding: "utf8", timeout: 10_000, env: process.env,
+			});
+			assert(parsed.status === 0, "Installed service file is not a valid plist.");
+			assertStrict.deepEqual(JSON.parse(parsed.stdout), {
+				Label: "org.harnessy.meeting-publication",
+				ProgramArguments: [process.execPath, join(installedHost, "dist/meeting-full-review-cli.js"), "--service", "--input", savedServicePath],
+				RunAtLoad: true, KeepAlive: false, ExitTimeOut: 45,
+				StandardOutPath: join(serviceDirectory, "stdout.log"), StandardErrorPath: join(serviceDirectory, "stderr.log"),
+			});
+			const files = [plistPath, join(serviceDirectory, "stdout.log"), join(serviceDirectory, "stderr.log")];
+			for (const path of files) {
+				assert((lstatSync(path).mode & 0o7777) === 0o600, "Installed service file is not private.");
+			}
+			assert(readFileSync(files[1], "utf8") === "" && readFileSync(files[2], "utf8") === "", "Service logs were not initialized empty.");
+			writeFileSync(files[1], "preserved log evidence");
+			const bytes = files.map((path) => readFileSync(path));
+			const repeated = spawnSync(process.execPath, installArgs, {
+				cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+			});
+			assert(repeated.status === 1 && repeated.stdout === "", "Service installation overwrote existing files.");
+			assertStrict.deepEqual(files.map((path) => readFileSync(path)), bytes, "Rejected service installation changed logs or configuration.");
+		} else {
+			assert(installed.stdout === "" && !existsSync(plistPath), "Revoked service installed a launch agent.");
+			assert(!existsSync(join(serviceDirectory, "stdout.log")) && !existsSync(join(serviceDirectory, "stderr.log")), "Revoked installation wrote logs.");
+			const enabled = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"),
+				"--service-enable", "--input", savedServicePath, "--directory", serviceDirectory], {
+				cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+			});
+			assert(enabled.status === 1 && enabled.stdout === "", "Revoked enrollment accepted service enablement.");
+			assertStrict.deepEqual(JSON.parse(enabled.stderr), { error: "meeting_full_review_failed", code: "invalid_input" });
+		}
+		assertStrict.deepEqual([provisionedReplayPath, freshInput.authorizationPath, savedServicePath,
+			join(freshConfig.statePath, "meeting-publication.sqlite3")].map((path) => readFileSync(path)), before,
+			"Launch-agent planning changed authority or queue state.");
+		assert(wire.requests.length === requestCount, "Launch-agent planning contacted providers.");
+		return serviceDirectory;
+	};
+	checkLaunchAgentPlan(true);
+	rmSync(join(freshPrivateRoot, "cutover-evidence.json"));
+	rmSync(join(freshPrivateRoot, "rollback-plan.json"));
+	const freshRequestOffset = wire.requests.length;
+	let freshReady = false;
+	const freshResult = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+		const drain = yield* makeMeetingFullReviewSignalDrain();
+		return yield* freshFixture.withSystem(runMeetingFullReviewCommand([
+			"--service", "--input", savedServicePath,
+		], (address) => Effect.promise(async () => {
+			const token = readFileSync(join(freshConfig.statePath, "meeting-publication-v2-review.token"), "utf8").trim();
+			const exchange = await call(address.origin, `/exchange?token=${encodeURIComponent(token)}`);
+			const cookie = exchange.headers.get("set-cookie")?.split(";", 1)[0];
+			assert(exchange.status === 303 && cookie !== undefined, "Fresh installed service could not authenticate review.");
+			assert((await call(address.origin, "/", { headers: { Cookie: cookie } })).status === 200,
+				"Fresh installed service could not open review without migration documents.");
+			freshReady = true;
+			setImmediate(() => process.kill(process.pid, "SIGUSR2"));
+		}), drain));
+	})));
+	assert(freshResult.exitCode === 0 && freshReady, "Fresh installed service failed to start and drain.");
+	const serviceDirectory = checkLaunchAgentPlan(true);
+	if (process.platform === "darwin" && process.env.HARNESSY_TEST_LAUNCHD === "1") {
+		await checkPackedServiceLaunchd({ directory: serviceDirectory,
+			servicePath: savedServicePath, statePath: freshConfig.statePath, call,
+			preserveFixture: () => { preserveFixture = true; } });
+	}
+	const requestsBeforeControl = wire.requests.length;
+	for (const command of ["--service-status", "--service-revoke", "--service-status"]) {
+		const controlled = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"),
+			command, "--input", savedServicePath], {
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: process.env,
+		});
+		assert(controlled.status === 0 && controlled.stderr === "", "Saved service configuration control failed.");
+		const result = JSON.parse(controlled.stdout);
+		if (command === "--service-revoke") assertStrict.deepEqual(result, {
+			kind: "harnessy.meeting-publication.service-revoked", revoked: true,
+		});
+		else assert(result.kind === "harnessy.meeting-publication.service-status" &&
+			result.activation === "cleanly_stopped", "Saved configuration lost the clean stop outcome.");
+	}
+	const rejectedFresh = await Effect.runPromise(freshFixture.withSystem(runMeetingFullReviewCommand(
+		["--service", "--input", savedServicePath], () => Effect.die("Revoked saved service exposed review."))));
+	assert(rejectedFresh.exitCode === 1 && rejectedFresh.value.code === "revoked", "Saved configuration bypassed revocation.");
+	checkLaunchAgentPlan(false);
+	assert(wire.requests.length === requestsBeforeControl, "Saved control or revoked start contacted providers.");
+	const freshDatabase = new DatabaseSync(join(freshConfig.statePath, "meeting-publication.sqlite3"), { readOnly: true });
+	try {
+		const rows = freshDatabase.prepare("SELECT status,approved_hash,google_doc_id,discord_message_id FROM publication_items").all();
+		assert(rows.length === 2 && rows.every((row) => row.status === "pending_review" && row.approved_hash === null &&
+			row.google_doc_id === null && row.discord_message_id === null), "Fresh installation approved or published source notes.");
+	} finally { freshDatabase.close(); }
+	assert(wire.requests.slice(freshRequestOffset).every(({ method }) => method === "GET"), "Fresh installation wrote to providers.");
+	assertStrict.deepEqual(queueSnapshot(), beforeDrain, "Fresh installation altered the existing queue.");
 	process.stdout.write(
-		`${JSON.stringify({ edited: true, approved: 2, published: 2, purposeBound: true, boundedDispatches: 2, providerRequests: wire.requests.length, leaseReleased: true, startupDrain: "SIGUSR2", drainSignals: 2, inspectorEnabled: false, previousHealthCached, concurrentUnauthenticatedDuringDispatch: true, maximumHeartbeatStallMs: Math.round(maximumHeartbeatStallMs), requestTimings })}\n`,
+		`${JSON.stringify({ edited: true, approved: 2, published: 2, purposeBound: true, boundedDispatches: 2, providerRequests: wire.requests.length, leaseReleased: true, serviceCleanRestarts: 2, serviceRevocationRejected: true, serviceReceiptsPreserved: true, installedOwnerEnrollment: true, startupDrain: "SIGUSR2", drainSignals: 2, inspectorEnabled: false, previousHealthCached, concurrentUnauthenticatedDuringDispatch: true, maximumHeartbeatStallMs: Math.round(maximumHeartbeatStallMs), requestTimings })}\n`,
 	);
 } finally {
 	clearInterval(heartbeat);
 	await Promise.all([googleServer.close(), discordServer.close()]);
-	rmSync(root, { recursive: true, force: true });
+	if (!preserveFixture) rmSync(root, { recursive: true, force: true });
 }

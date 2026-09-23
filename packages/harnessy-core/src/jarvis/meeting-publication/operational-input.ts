@@ -1,4 +1,4 @@
-import { createHash, createPublicKey, verify } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
 import {
 	type BigIntStats,
 	closeSync,
@@ -11,7 +11,9 @@ import {
 	readSync,
 	realpathSync,
 } from "node:fs";
+import { arch, hostname } from "node:os";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { TextDecoder } from "node:util";
@@ -20,11 +22,14 @@ import { Schema } from "effect";
 import * as Result from "effect/Result";
 
 import { JarvisMeetingPublicationConfig } from "../config-model.ts";
+import { assertMeetingPublicationRollbackDatabaseFile } from "./store-file-safety.ts";
+import { MEETING_PUBLICATION_STORE_SCHEMA_VERSION, validateMeetingPublicationStoreSchema } from "./store-schema.ts";
 
 export const MEETING_PUBLICATION_SMOKE_AUDIENCE = "harnessy.meeting-publication.smoke.v1" as const;
 export const MEETING_PUBLICATION_REVIEW_AUDIENCE = "harnessy.meeting-publication.review.v1" as const;
 export const MEETING_PUBLICATION_WORKER_AUDIENCE = "harnessy.meeting-publication.worker.v1" as const;
 export const MEETING_PUBLICATION_FULL_REVIEW_AUDIENCE = "harnessy.meeting-publication.full-review.v1" as const;
+export const MEETING_PUBLICATION_SERVICE_AUDIENCE = "harnessy.meeting-publication.service.v1" as const;
 export const MEETING_PUBLICATION_REVIEW_OPERATIONS = [
 	"store_open",
 	"store_migrate",
@@ -371,6 +376,44 @@ const FullReviewAuthorizationEnvelope = Schema.Struct({
 	signature: Schema.String,
 });
 
+const ServiceTrustDocument = Schema.Struct({
+	...TrustDocument.fields,
+	kind: Schema.Literal("harnessy.meeting-publication.service-trust"),
+	audience: Schema.Literal(MEETING_PUBLICATION_SERVICE_AUDIENCE),
+});
+const ServiceEnrollmentPayload = Schema.Struct({
+	...FullReviewAuthorizationPayload.fields,
+	kind: Schema.Literal("harnessy.meeting-publication.service-enrollment"),
+	audience: Schema.Literal(MEETING_PUBLICATION_SERVICE_AUDIENCE),
+	runtimeMode: Schema.Literal("service"),
+	expiresAt: Schema.Null,
+	runtime: Schema.Struct({ ...AuthorizationPayload.fields.runtime.fields, bootId: Schema.Null }),
+	/** Both null selects first installation, accepted only against an empty queue. */
+	cutoverEvidence: Schema.Union([AuthorizationPayload.fields.cutoverEvidence, Schema.Null]),
+	rollbackPlan: Schema.Union([AuthorizationPayload.fields.rollbackPlan, Schema.Null]),
+});
+const ServiceEnrollmentEnvelope = Schema.Struct({ payload: ServiceEnrollmentPayload, signature: Schema.String });
+type ServiceEnrollmentPayload = typeof ServiceEnrollmentPayload.Type;
+
+const ServicePreparation = Schema.Struct({
+	kind: Schema.Literal("harnessy.meeting-publication.service-preparation.v1"),
+	issuer: Schema.String,
+	keyId: Schema.String,
+	config: JarvisMeetingPublicationConfig,
+	subject: AuthorizationPayload.fields.subject,
+	google: GoogleBinding,
+	discord: DiscordBinding,
+	notifier: WorkerNotifier,
+	maxItems: Schema.Int,
+	credentialDirectory: Schema.String,
+	engineStatePath: Schema.String,
+	installationRoot: Schema.String,
+	trustedKeyring: BoundFile,
+	cutoverEvidencePath: Schema.NullOr(Schema.String),
+	rollbackPlanPath: Schema.NullOr(Schema.String),
+	transport: Schema.optional(Transport),
+});
+
 const ReviewTrustDocument = Schema.Struct({
 	...TrustDocument.fields,
 	kind: Schema.Literal("harnessy.meeting-publication.review-trust"),
@@ -458,7 +501,7 @@ export interface VerifiedMeetingPublicationWorkerInput
 export interface VerifiedMeetingPublicationFullReviewInput
 	extends Omit<VerifiedMeetingPublicationWorkerInput, "kind" | "authorization"> {
 	readonly kind: "full_review";
-	readonly authorization: FullReviewAuthorizationPayload;
+	readonly authorization: FullReviewAuthorizationPayload | ServiceEnrollmentPayload;
 }
 export type VerifiedMeetingPublicationRuntimeInput =
 	| VerifiedMeetingPublicationSmokeInput
@@ -467,7 +510,10 @@ export type VerifiedMeetingPublicationRuntimeInput =
 	| VerifiedMeetingPublicationFullReviewInput;
 export type MeetingPublicationReviewRuntimeInput = MeetingPublicationSmokeRuntimeInput;
 export type MeetingPublicationWorkerRuntimeInput = MeetingPublicationSmokeRuntimeInput;
-export type MeetingPublicationFullReviewRuntimeInput = MeetingPublicationSmokeRuntimeInput;
+export interface MeetingPublicationFullReviewRuntimeInput extends MeetingPublicationSmokeRuntimeInput {
+	/** Selects a separately signed service audience; never promotes finite authority. */
+	readonly mode?: "service";
+}
 export interface MeetingPublicationReviewArtifactAnchors {
 	readonly host: string;
 	readonly dependencies: string;
@@ -726,7 +772,11 @@ const validateTrust = (trust: Pick<SmokeTrustDocument, "keys" | "replay">) => {
 };
 
 const validateProviderPayload = (
-	payload: SmokeAuthorizationPayload | WorkerAuthorizationPayload | FullReviewAuthorizationPayload,
+	payload:
+		| SmokeAuthorizationPayload
+		| WorkerAuthorizationPayload
+		| FullReviewAuthorizationPayload
+		| ServiceEnrollmentPayload,
 	operations: ReadonlyArray<string>,
 ) => {
 	if (
@@ -746,11 +796,12 @@ const validateProviderPayload = (
 		!validateIdentity(payload.replay) ||
 		!validateIdentity(payload.stateDatabase) ||
 		!absolutePath(payload.artifactManifest.path) ||
-		!absolutePath(payload.cutoverEvidence.path) ||
-		!absolutePath(payload.rollbackPlan.path) ||
+		(payload.cutoverEvidence !== null && !absolutePath(payload.cutoverEvidence.path)) ||
+		(payload.rollbackPlan !== null && !absolutePath(payload.rollbackPlan.path)) ||
+		(payload.cutoverEvidence === null) !== (payload.rollbackPlan === null) ||
 		!absolutePath(payload.runtime.executablePath) ||
 		!/^\d+$/u.test(payload.runtime.uid) ||
-		!safeText(payload.runtime.bootId, 512) ||
+		(payload.runtime.bootId !== null && !safeText(payload.runtime.bootId, 512)) ||
 		!exactValues(payload.oneWriter.darwinSchedulerLabels, V1_DARWIN_SCHEDULER_LABELS) ||
 		!exactValues(payload.oneWriter.linuxCrontabMarkers, V1_LINUX_CRONTAB_MARKERS) ||
 		!exactValues(payload.oneWriter.processMarkers, MEETING_PUBLICATION_V1_PROCESS_MARKERS)
@@ -767,14 +818,14 @@ const validateProviderPayload = (
 	} else if (payload.google.authTemplate !== "google-drive-file") fail("invalid_input");
 	parseInstant(payload.issuedAt);
 	parseInstant(payload.notBefore);
-	parseInstant(payload.expiresAt);
+	if (payload.expiresAt !== null) parseInstant(payload.expiresAt);
 };
 
 const validatePayload = (payload: SmokeAuthorizationPayload) =>
 	validateProviderPayload(payload, MEETING_PUBLICATION_SMOKE_OPERATIONS);
 
 const validateWorkerPayload = (
-	payload: WorkerAuthorizationPayload | FullReviewAuthorizationPayload,
+	payload: WorkerAuthorizationPayload | FullReviewAuthorizationPayload | ServiceEnrollmentPayload,
 	operations: ReadonlyArray<string>,
 ) => {
 	validateProviderPayload(payload, operations);
@@ -879,6 +930,37 @@ export function* artifactInventorySteps(
 	}
 	if (manifest.anchors[0]?.role !== "core" || manifest.anchors[0].path !== expectedCoreAnchor) fail("artifact_drift");
 }
+
+/** Shared by meeting and community setup; inventories the complete installed root. */
+export const createRuntimeArtifactManifest = (
+	root: string,
+	uid: bigint,
+	anchors: Readonly<Record<"core" | "host" | "sdk" | "dependencies", string>>,
+): ArtifactManifest => {
+	const walk = enumerateRoot(root, uid, new Map());
+	let step = walk.next();
+	while (!step.done) step = walk.next();
+	let totalBytes = 0;
+	const manifest: ArtifactManifest = {
+		kind: "harnessy.runtime-artifact-manifest",
+		schemaVersion: 1,
+		root,
+		anchors: (["core", "host", "sdk", "dependencies"] as const).map((role) => ({
+			role,
+			path: realpathSync(anchors[role]),
+		})),
+		files: step.value.sort().map((path) => {
+			const file = readStableMeetingPublicationSmokeFile(path, uid, "artifact", MAX_ARTIFACT_BYTES);
+			totalBytes += file.bytes.length;
+			if (totalBytes > MAX_ARTIFACT_BYTES) fail("artifact_drift");
+			return { ...file.identity, sha256: sha256MeetingPublicationSmokeBytes(file.bytes) };
+		}),
+	};
+	for (const _step of artifactInventorySteps(manifest, uid, "smoke", realpathSync(anchors.core))) {
+		// Use the runtime's complete verifier, including directory and file stability.
+	}
+	return manifest;
+};
 
 const validateArtifactInventory = (
 	manifest: ArtifactManifest,
@@ -1103,7 +1185,10 @@ export const verifyMeetingPublicationSmokeInput = (
 	});
 };
 
-type WorkerLikeAuthorizationPayload = WorkerAuthorizationPayload | FullReviewAuthorizationPayload;
+type WorkerLikeAuthorizationPayload =
+	| WorkerAuthorizationPayload
+	| FullReviewAuthorizationPayload
+	| ServiceEnrollmentPayload;
 type VerifiedWorkerLikeInput<K extends "worker" | "full_review", P extends WorkerLikeAuthorizationPayload> = Omit<
 	VerifiedMeetingPublicationWorkerInput,
 	"kind" | "authorization"
@@ -1124,19 +1209,22 @@ const verifyMeetingPublicationWorkerLikeInput = <
 	kind: K,
 	audience: string,
 ): VerifiedWorkerLikeInput<K, P> => {
+	const evidenceFiles = [payload.cutoverEvidence, payload.rollbackPlan].filter((file) => file !== null);
 	const issuedAt = parseInstant(payload.issuedAt);
 	const notBefore = parseInstant(payload.notBefore);
-	const expiresAt = parseInstant(payload.expiresAt);
+	const expiresAt = payload.expiresAt === null ? null : parseInstant(payload.expiresAt);
 	if (
 		issuedAt > notBefore ||
-		notBefore > expiresAt ||
-		expiresAt - issuedAt >
-			(payload.kind === "harnessy.meeting-publication.full-review-authorization" &&
-			payload.runtimeMode === "long_running"
-				? 24 * 60 * 60_000
-				: 15 * 60_000) ||
+		(expiresAt !== null &&
+			(notBefore > expiresAt ||
+				expiresAt - issuedAt >
+					(payload.kind === "harnessy.meeting-publication.full-review-authorization" &&
+					payload.runtimeMode === "long_running"
+						? 24 * 60 * 60_000
+						: 15 * 60_000) ||
+				observation.now >= expiresAt)) ||
 		observation.now < notBefore ||
-		observation.now >= expiresAt
+		!Number.isFinite(observation.now)
 	)
 		fail("expired_authorization");
 	const replay = readStableMeetingPublicationSmokeFile(
@@ -1150,7 +1238,7 @@ const verifyMeetingPublicationWorkerLikeInput = <
 		payload.runtime.architecture !== observation.architecture ||
 		payload.runtime.hostname !== observation.hostname ||
 		payload.runtime.uid !== observation.uid.toString() ||
-		payload.runtime.bootId !== observation.bootId ||
+		(payload.runtime.bootId !== null && payload.runtime.bootId !== observation.bootId) ||
 		payload.runtime.executablePath !== observation.executablePath ||
 		!identityMatches(replay.identity, trust.replay) ||
 		!identityMatches(payload.replay, trust.replay) ||
@@ -1172,8 +1260,9 @@ const verifyMeetingPublicationWorkerLikeInput = <
 		fail("binding_mismatch");
 	assertSourceDirectory(sourcePath, observation.uid);
 	if (
-		payload.kind === "harnessy.meeting-publication.full-review-authorization" &&
-		payload.runtimeMode === "long_running" &&
+		((payload.kind === "harnessy.meeting-publication.full-review-authorization" &&
+			payload.runtimeMode === "long_running") ||
+			payload.kind === "harnessy.meeting-publication.service-enrollment") &&
 		config.reviewPort === 0
 	)
 		fail("binding_mismatch");
@@ -1187,9 +1276,39 @@ const verifyMeetingPublicationWorkerLikeInput = <
 	)
 		fail("artifact_drift");
 	const state = checkedFile(payload.stateDatabase, observation.uid, "private", MAX_ARTIFACT_BYTES);
-	if (!state.matches || !identityMatches(state.file.identity, payload.stateDatabase)) fail("state_drift");
+	// Only a previously cleanly drained, identical enrollment can reopen mutable
+	// stores without their original snapshot digests. The activation transaction
+	// repeats the record and singleton checks before it grants anything.
+	let resumingService = false;
+	if (payload.kind === "harnessy.meeting-publication.service-enrollment") {
+		const database = new DatabaseSync(trust.replay.path, { readOnly: true, allowExtension: false, timeout: 1_000 });
+		try {
+			const record = database
+				.prepare("SELECT * FROM consumed_authorizations WHERE authorization_id=? OR nonce=?")
+				.get(payload.authorizationId, payload.nonce);
+			if (record !== undefined) {
+				if (
+					record.authorization_id !== payload.authorizationId ||
+					record.nonce !== payload.nonce ||
+					record.key_id !== payload.keyId ||
+					record.outcome !== "drained" ||
+					record.payload_sha256 !==
+						sha256MeetingPublicationSmokeBytes(`${audience}\0${canonicalMeetingPublicationSmokeJson(payload)}`)
+				)
+					fail("replayed");
+				resumingService = true;
+			}
+		} finally {
+			database.close();
+		}
+	}
+	if ((!resumingService && !state.matches) || !identityMatches(state.file.identity, payload.stateDatabase))
+		fail("state_drift");
 	const engineState = checkedFile(payload.credentials.engineState, observation.uid, "private", MAX_ARTIFACT_BYTES);
-	if (!engineState.matches || !identityMatches(engineState.file.identity, payload.credentials.engineState))
+	if (
+		(!resumingService && !engineState.matches) ||
+		!identityMatches(engineState.file.identity, payload.credentials.engineState)
+	)
 		fail("binding_mismatch");
 	assertPrivateDirectory(payload.credentials.directory, observation.uid);
 	if (payload.notifier.kind !== "unavailable") {
@@ -1234,8 +1353,7 @@ const verifyMeetingPublicationWorkerLikeInput = <
 		payload.credentials.directory,
 		payload.credentials.engineState.path,
 		payload.artifactManifest.path,
-		payload.cutoverEvidence.path,
-		payload.rollbackPlan.path,
+		...evidenceFiles.map((file) => file.path),
 		sourcePath,
 		statePath,
 	]) {
@@ -1247,7 +1365,7 @@ const verifyMeetingPublicationWorkerLikeInput = <
 		if ([sourcePath, statePath, payload.credentials.directory].some((path) => within(path, executablePath)))
 			fail("binding_mismatch");
 	}
-	for (const evidence of [payload.cutoverEvidence, payload.rollbackPlan]) {
+	for (const evidence of evidenceFiles) {
 		if (!checkedFile(evidence, observation.uid, "private").matches) fail("evidence_drift");
 	}
 	const providerBinding: MeetingPublicationWorkerProviderBinding = Object.freeze({
@@ -1313,18 +1431,7 @@ const verifyMeetingPublicationWorkerLikeInput = <
 				role: "artifact" as const,
 				maximumBytes: MAX_MANIFEST_BYTES,
 			},
-			{
-				path: payload.cutoverEvidence.path,
-				sha256: payload.cutoverEvidence.sha256,
-				role: "private" as const,
-				maximumBytes: MAX_INPUT_BYTES,
-			},
-			{
-				path: payload.rollbackPlan.path,
-				sha256: payload.rollbackPlan.sha256,
-				role: "private" as const,
-				maximumBytes: MAX_INPUT_BYTES,
-			},
+			...evidenceFiles.map((file) => ({ ...file, role: "private" as const, maximumBytes: MAX_INPUT_BYTES })),
 		]),
 		startedAt: observation.now,
 		startedMonotonic: observation.monotonic,
@@ -1354,10 +1461,291 @@ export const verifyMeetingPublicationWorkerInput = (
 	);
 };
 
+/** Owner-side encoding only: no key access, signing, activation, or operation grants. */
+export const encodeMeetingPublicationServiceEnrollmentRequest = (value: unknown) => {
+	const payload = decode(ServiceEnrollmentPayload, value);
+	validateWorkerPayload(payload, MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS);
+	if (parseInstant(payload.issuedAt) > parseInstant(payload.notBefore)) fail("invalid_input");
+	const canonical = canonicalMeetingPublicationSmokeJson(payload);
+	return { payload, canonical, signingBytes: Buffer.from(`${MEETING_PUBLICATION_SERVICE_AUDIENCE}\0${canonical}`) };
+};
+
+/** Inert adoption of existing trust. Does not promote or sign an old authorization. */
+export const prepareMeetingPublicationServiceTrustAdoption = (value: unknown) => {
+	const input = decode(
+		Schema.Struct({
+			kind: Schema.Literal("harnessy.meeting-publication.service-adoption.v1"),
+			trustedKeyring: BoundFile,
+			controlDirectory: Schema.String,
+		}),
+		value,
+	);
+	const uid = process.geteuid?.();
+	if (uid === undefined || !["darwin", "linux"].includes(process.platform)) return fail("unsupported_platform");
+	const owner = BigInt(uid);
+	assertPrivateDirectory(input.controlDirectory, owner);
+	if (readdirSync(input.controlDirectory).length !== 0) fail("unsafe_input");
+	const file = readCanonical(input.trustedKeyring.path, owner, "private", FullReviewTrustDocument);
+	if (
+		!identityMatches(file.identity, input.trustedKeyring) ||
+		sha256MeetingPublicationSmokeBytes(file.bytes) !== input.trustedKeyring.sha256
+	)
+		fail("invalid_signature");
+	validateTrust(file.value);
+	const replay = readStableMeetingPublicationSmokeFile(file.value.replay.path, owner, "private", MAX_ARTIFACT_BYTES);
+	if (!identityMatches(replay.identity, file.value.replay)) fail("replay_unavailable");
+	const before = assertMeetingPublicationRollbackDatabaseFile(replay.identity.path);
+	const database = new DatabaseSync(replay.identity.path, { readOnly: true, allowExtension: false, timeout: 1000 });
+	try {
+		const metadata = database
+			.prepare("SELECT instance_id,revocation_sequence FROM runtime_metadata WHERE singleton=1")
+			.get();
+		if (
+			metadata?.instance_id !== file.value.replay.instanceId ||
+			typeof metadata.revocation_sequence !== "number" ||
+			!Number.isSafeInteger(metadata.revocation_sequence) ||
+			metadata.revocation_sequence < 0
+		)
+			fail("replay_unavailable");
+		if (database.prepare("SELECT 1 FROM active_lease LIMIT 1").get() !== undefined) fail("lease_unavailable");
+		// Preserve every key and its revocation history; never reset or filter the ledger.
+		if (
+			file.value.keys.every((key) =>
+				database
+					.prepare("SELECT 1 FROM revocations WHERE subject_type='key' AND subject_id=? LIMIT 1")
+					.get(key.keyId),
+			)
+		)
+			fail("revoked");
+	} finally {
+		database.close();
+	}
+	assertMeetingPublicationRollbackDatabaseFile(replay.identity.path, before);
+	if (!sameFile(file.stat, lstatSync(file.identity.path, { bigint: true }))) fail("unsafe_input");
+	return {
+		controlDirectory: input.controlDirectory,
+		trust: {
+			...file.value,
+			kind: "harnessy.meeting-publication.service-trust" as const,
+			audience: MEETING_PUBLICATION_SERVICE_AUDIENCE,
+		},
+	};
+};
+
+/** Inert owner preparation: reuse independently pinned service trust, never initialize or reset it. */
+export const prepareMeetingPublicationServiceRequest = (
+	value: unknown,
+	outputDirectory: string,
+	anchors: MeetingPublicationSmokeProviderArtifactAnchors,
+) => {
+	const input = decode(ServicePreparation, value);
+	const uid = process.geteuid?.();
+	if (uid === undefined || (process.platform !== "darwin" && process.platform !== "linux"))
+		return fail("unsupported_platform");
+	const owner = BigInt(uid);
+	assertPrivateDirectory(outputDirectory, owner);
+	if (readdirSync(outputDirectory).length !== 0) fail("unsafe_input");
+	const trustFile = readCanonical(input.trustedKeyring.path, owner, "private", ServiceTrustDocument);
+	if (
+		!identityMatches(trustFile.identity, input.trustedKeyring) ||
+		sha256MeetingPublicationSmokeBytes(trustFile.bytes) !== input.trustedKeyring.sha256
+	)
+		fail("invalid_signature");
+	validateTrust(trustFile.value);
+	if (!trustFile.value.keys.some((key) => key.issuer === input.issuer && key.keyId === input.keyId))
+		fail("invalid_signature");
+	const bound = (path: string, role: "private" | "artifact", limit = MAX_ARTIFACT_BYTES) => {
+		const file = readStableMeetingPublicationSmokeFile(path, owner, role, limit);
+		return { ...file.identity, sha256: sha256MeetingPublicationSmokeBytes(file.bytes) };
+	};
+	const replay = bound(trustFile.value.replay.path, "private");
+	if (!identityMatches(replay, trustFile.value.replay)) fail("replay_unavailable");
+	const replayStat = assertMeetingPublicationRollbackDatabaseFile(replay.path);
+	const replayDatabase = new DatabaseSync(replay.path, { readOnly: true, allowExtension: false, timeout: 1000 });
+	let revocationSequence: number;
+	try {
+		const metadata = replayDatabase
+			.prepare("SELECT instance_id,revocation_sequence FROM runtime_metadata WHERE singleton=1")
+			.get();
+		if (
+			metadata?.instance_id !== trustFile.value.replay.instanceId ||
+			typeof metadata.revocation_sequence !== "number" ||
+			!Number.isSafeInteger(metadata.revocation_sequence) ||
+			metadata.revocation_sequence < 0
+		)
+			return fail("replay_unavailable");
+		revocationSequence = metadata.revocation_sequence;
+		if (replayDatabase.prepare("SELECT 1 FROM active_lease LIMIT 1").get() !== undefined) fail("lease_unavailable");
+	} finally {
+		replayDatabase.close();
+	}
+	assertMeetingPublicationRollbackDatabaseFile(replay.path, replayStat);
+	const config = input.config;
+	const statePath = config.statePath ?? fail("invalid_input");
+	const sourcePath = config.sourcePath ?? fail("invalid_input");
+	if (
+		!config.enabled ||
+		config.reviewPort === 0 ||
+		config.googleOwnerEmail !== input.google.ownerEmail ||
+		config.googleDriveFolder !== input.google.folderPath ||
+		config.discordChannelId !== input.discord.channelId
+	)
+		fail("binding_mismatch");
+	assertPrivateDirectory(statePath, owner);
+	assertPrivateDirectory(input.credentialDirectory, owner);
+	assertSourceDirectory(sourcePath, owner);
+	const stateDatabasePath = join(statePath, "meeting-publication.sqlite3");
+	const stateStat = assertMeetingPublicationRollbackDatabaseFile(stateDatabasePath);
+	const stateDatabase = new DatabaseSync(stateDatabasePath, { readOnly: true, allowExtension: false, timeout: 1000 });
+	try {
+		if (validateMeetingPublicationStoreSchema(stateDatabase).version !== MEETING_PUBLICATION_STORE_SCHEMA_VERSION)
+			fail("state_drift");
+		if (
+			input.cutoverEvidencePath === null &&
+			stateDatabase.prepare("SELECT 1 FROM publication_items LIMIT 1").get() !== undefined
+		)
+			fail("evidence_drift");
+		if (
+			stateDatabase
+				.prepare("SELECT 1 FROM publication_items WHERE status='publishing' OR lease_until IS NOT NULL LIMIT 1")
+				.get() !== undefined
+		)
+			fail("lease_unavailable");
+	} finally {
+		stateDatabase.close();
+	}
+	assertMeetingPublicationRollbackDatabaseFile(stateDatabasePath, stateStat);
+	for (const path of [
+		outputDirectory,
+		statePath,
+		sourcePath,
+		input.credentialDirectory,
+		input.trustedKeyring.path,
+		replay.path,
+	]) {
+		if (within(input.installationRoot, path) || within(path, input.installationRoot)) fail("binding_mismatch");
+	}
+	if (
+		[statePath, sourcePath, input.credentialDirectory].some(
+			(path) => within(path, outputDirectory) || within(outputDirectory, path),
+		)
+	)
+		fail("binding_mismatch");
+	const manifest = createRuntimeArtifactManifest(input.installationRoot, owner, {
+		...anchors,
+		core: fileURLToPath(import.meta.url),
+	});
+	const manifestText = `${canonicalMeetingPublicationSmokeJson(manifest)}\n`;
+	const instant = new Date().toISOString();
+	const evidence = (path: string | null) =>
+		path === null ? null : { path, sha256: bound(path, "private", MAX_INPUT_BYTES).sha256 };
+	const request = encodeMeetingPublicationServiceEnrollmentRequest({
+		kind: "harnessy.meeting-publication.service-enrollment",
+		schemaVersion: 1,
+		audience: MEETING_PUBLICATION_SERVICE_AUDIENCE,
+		authorizationId: `service-${randomBytes(16).toString("hex")}`,
+		nonce: randomBytes(32).toString("hex"),
+		issuer: input.issuer,
+		keyId: input.keyId,
+		issuedAt: instant,
+		notBefore: instant,
+		expiresAt: null,
+		runtimeMode: "service",
+		operations: [...MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS],
+		config,
+		subject: input.subject,
+		google: input.google,
+		discord: input.discord,
+		notifier: input.notifier,
+		maxItems: input.maxItems,
+		transport: input.transport ?? { mode: "production" },
+		credentials: { directory: input.credentialDirectory, engineState: bound(input.engineStatePath, "private") },
+		runtime: {
+			platform: process.platform,
+			architecture: arch(),
+			hostname: hostname(),
+			uid: String(uid),
+			bootId: null,
+			executablePath: realpathSync(process.execPath),
+			executableSha256: bound(realpathSync(process.execPath), "artifact", MAX_EXECUTABLE_BYTES).sha256,
+		},
+		replay: trustFile.value.replay,
+		revocationSequence,
+		stateDatabase: bound(join(statePath, "meeting-publication.sqlite3"), "private"),
+		artifactManifest: {
+			path: join(outputDirectory, "artifact-manifest.json"),
+			sha256: sha256MeetingPublicationSmokeBytes(manifestText),
+		},
+		cutoverEvidence: evidence(input.cutoverEvidencePath),
+		rollbackPlan: evidence(input.rollbackPlanPath),
+		oneWriter: {
+			kind: "known-v1-writers-v1",
+			darwinSchedulerLabels: V1_DARWIN_SCHEDULER_LABELS,
+			linuxCrontabMarkers: V1_LINUX_CRONTAB_MARKERS,
+			processMarkers: MEETING_PUBLICATION_V1_PROCESS_MARKERS,
+		},
+	});
+	return { manifest: manifestText, request: `${request.canonical}\n` };
+};
+
+/** Control-plane reads validate enrollment and replay identity, not activation readiness. */
+export const readMeetingPublicationServiceEnrollment = (
+	input: MeetingPublicationSmokeRuntimeInput,
+	observation: MeetingPublicationSmokeRuntimeObservation,
+) => {
+	const { payload, trust } = readSignedAuthorization(
+		input,
+		observation,
+		ServiceTrustDocument,
+		ServiceEnrollmentEnvelope,
+		MEETING_PUBLICATION_SERVICE_AUDIENCE,
+	);
+	validateWorkerPayload(payload, MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS);
+	if (
+		payload.runtime.uid !== observation.uid.toString() ||
+		!identityMatches(payload.replay, trust.replay) ||
+		payload.replay.instanceId !== trust.replay.instanceId
+	)
+		fail("binding_mismatch");
+	const replay = readStableMeetingPublicationSmokeFile(
+		trust.replay.path,
+		observation.uid,
+		"private",
+		100 * 1024 * 1024,
+	);
+	if (!identityMatches(replay.identity, trust.replay)) fail("replay_unavailable");
+	return {
+		payload,
+		replay: trust.replay,
+		digest: sha256MeetingPublicationSmokeBytes(
+			`${MEETING_PUBLICATION_SERVICE_AUDIENCE}\0${canonicalMeetingPublicationSmokeJson(payload)}`,
+		),
+	};
+};
+
 export const verifyMeetingPublicationFullReviewInput = (
 	input: MeetingPublicationFullReviewRuntimeInput,
 	observation: MeetingPublicationSmokeRuntimeObservation,
 ): VerifiedMeetingPublicationFullReviewInput => {
+	if (input.mode === "service") {
+		const { payload, trust, envelopeFile } = readSignedAuthorization(
+			input,
+			observation,
+			ServiceTrustDocument,
+			ServiceEnrollmentEnvelope,
+			MEETING_PUBLICATION_SERVICE_AUDIENCE,
+		);
+		validateWorkerPayload(payload, MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS);
+		return verifyMeetingPublicationWorkerLikeInput(
+			input,
+			observation,
+			payload,
+			trust,
+			envelopeFile.bytes,
+			"full_review",
+			MEETING_PUBLICATION_SERVICE_AUDIENCE,
+		);
+	}
 	const { payload, trust, envelopeFile } = readSignedAuthorization(
 		input,
 		observation,

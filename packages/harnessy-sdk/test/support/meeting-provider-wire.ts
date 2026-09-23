@@ -45,7 +45,7 @@ export interface WireState {
 	lostDiscordMessageCreateResponses: number;
 	fileSequence: number;
 	messageSequence: number;
-	onRequest?: (request: { readonly method: string; readonly path: string }) => void;
+	onRequest?: (request: { readonly method: string; readonly path: string }) => void | Promise<void>;
 }
 
 export const makeWireState = (): WireState => ({
@@ -104,7 +104,8 @@ const serveWireRequest = async (state: WireState, request: IncomingMessage, resp
 		authorization: String(request.headers.authorization ?? ""),
 		body,
 	});
-	state.onRequest?.({ method, path });
+	const held = state.onRequest?.({ method, path });
+	if (held !== undefined) await held;
 	const failureIndex = state.failures.findIndex((failure) => failure.method === method && failure.path === path);
 	if (failureIndex >= 0) {
 		const [failure] = state.failures.splice(failureIndex, 1);

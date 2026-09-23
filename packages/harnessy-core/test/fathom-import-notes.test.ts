@@ -1,10 +1,42 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { importRecentFathomNotes } from "../src/jarvis/fathom/import-notes.ts";
 
 describe("importRecentFathomNotes", () => {
+	it("does not import existing envelopes from accounts outside the selected scope", () => {
+		const root = mkdtempSync(join(tmpdir(), "harnessy-fathom-scope-"));
+		try {
+			for (const account of ["research", "excluded"]) {
+				const pending = join(root, "inbox", account, "pending");
+				mkdirSync(pending, { recursive: true });
+				writeFileSync(
+					join(pending, "one.json"),
+					JSON.stringify({
+						verified: true,
+						source: "fathom-api",
+						account,
+						payload: { recording_id: account, title: account, created_at: "2026-09-19T09:00:00Z" },
+					}),
+				);
+			}
+			const result = importRecentFathomNotes({
+				inboxRoot: join(root, "inbox"),
+				sourceRoot: join(root, "source"),
+				accounts: ["research"],
+				project: "example-research",
+				now: new Date("2026-09-19T12:00:00Z"),
+			});
+			expect(result.imported).toBe(1);
+			expect(result.paths[0]).toContain("research");
+			expect(readFileSync(result.paths[0], "utf8")).toContain("- Project: example-research\n");
+			expect(readFileSync(result.paths[0], "utf8")).not.toContain("- Project: flow");
+			expect(readFileSync(join(root, "inbox", "excluded", "pending", "one.json"), "utf8")).toContain("excluded");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 	it("contains path-bearing provider IDs and never overwrites a reviewed note", () => {
 		const root = mkdtempSync(join(tmpdir(), "harnessy-fathom-containment-"));
 		const inbox = join(root, "inbox", "personal", "pending");
@@ -68,6 +100,7 @@ describe("importRecentFathomNotes", () => {
 			now: new Date("2026-09-19T12:00:00Z"),
 		});
 		expect(first.imported).toBe(1);
+		expect(readFileSync(first.paths[0], "utf8")).not.toContain("- Project:");
 		expect(first.paths[0]).toBe(join(sourceRoot, "2026", "Sep", "19-weekly-team-meeting-42.md"));
 		const second = importRecentFathomNotes({
 			inboxRoot: join(root, "inbox"),

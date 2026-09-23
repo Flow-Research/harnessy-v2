@@ -84,7 +84,9 @@ const childMessage = (child: ChildProcess, type: string) =>
 describe("native community queue", () => {
 	it("serializes competing child processes globally until the owner finishes", async () => {
 		const fixture = setup();
-		const database = new DatabaseSync(fixture.path);
+		// Match the queue's bounded busy wait: competing BEGIN IMMEDIATE calls
+		// can briefly hold shared locks while this rollback-journal barrier commits.
+		const database = new DatabaseSync(fixture.path, { timeout: 1_000 });
 		const children: { child: ChildProcess; exited: Promise<number | null> }[] = [];
 		let lockHeld = false;
 		try {
@@ -116,12 +118,16 @@ describe("native community queue", () => {
 			database.exec("BEGIN IMMEDIATE");
 			lockHeld = true;
 			const attempting = children.map(({ child }) => childMessage(child, "attempting"));
-			const claimed = Promise.all(children.map(({ child }) => childMessage(child, "claimed")));
+			// Observe each child immediately, including if the barrier itself fails.
+			const claimed = Promise.allSettled(children.map(({ child }) => childMessage(child, "claimed")));
 			for (const { child } of children) child.send({ type: "claim" });
 			await Promise.all(attempting);
 			database.exec("COMMIT");
 			lockHeld = false;
-			const results = await claimed;
+			const results = (await claimed).map((result) => {
+				if (result.status === "rejected") throw result.reason;
+				return result.value;
+			});
 			expect(results.filter((result) => result.briefingId !== null)).toHaveLength(1);
 			const winner = results.findIndex((result) => result.briefingId !== null);
 			const loser = 1 - winner;

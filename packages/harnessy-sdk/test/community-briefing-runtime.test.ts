@@ -11,10 +11,23 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import { CommunityBriefingQueue } from "../src/community-briefing/queue.ts";
 import { runNativeCommunityBriefing } from "../src/community-briefing/runtime.ts";
+import { type HarnessyEngineConfig, makeHarnessyEngine } from "../src/engine.ts";
 import { makeCommunityRuntimeFixture } from "./support/community-runtime-fixture.ts";
 
 const now = Date.parse("2026-09-19T01:00:00.000Z");
 type Fixture = Awaited<ReturnType<typeof makeCommunityRuntimeFixture>>;
+const engineConfig = (fixture: Fixture): HarnessyEngineConfig => {
+	const scope = fixture.providerScope;
+	if (scope.transport.mode !== "loopback") throw new Error("Expected isolated providers");
+	return {
+		tenant: scope.tenantId,
+		subject: scope.subjectId,
+		credentialDirectory: scope.credentialDirectory,
+		existingStatePath: scope.engineStatePath,
+		onElicitation: () => Effect.succeed({ action: "decline" }),
+		meetingProviderTransport: { ...scope.transport, kind: "test-loopback" },
+	};
+};
 const signedRuntime = async (
 	fixture: Fixture,
 	scope: CommunityBriefingProviderScope = fixture.providerScope,
@@ -63,6 +76,134 @@ const row = (fixture: Fixture) => {
 };
 
 describe("signed native community runtime", () => {
+	it("publishes through the existing owner without closing or reacquiring its Executor", async () => {
+		const fixture = await makeCommunityRuntimeFixture();
+		const { host, grant } = await signedRuntime(fixture);
+		try {
+			await Effect.runPromise(
+				Effect.scoped(
+					Effect.gen(function* () {
+						const owner = yield* makeHarnessyEngine(engineConfig(fixture));
+						const result = yield* runNativeCommunityBriefing(grant, () => now, owner);
+						expect(row(fixture)).toMatchObject({
+							status: "published",
+							attempts: 1,
+							google_doc_id: result.googleDocId,
+							discord_message_id: result.discordMessageId,
+						});
+						expect(fixture.wire.messagesByNonce.size).toBe(1);
+						expect(yield* owner.connections.list({ owner: "user" })).toHaveLength(2);
+						const competing = yield* makeHarnessyEngine(engineConfig(fixture)).pipe(Effect.flip);
+						expect(competing).toMatchObject({ cause: { code: "ownership_held" } });
+					}),
+				),
+			);
+		} finally {
+			host.close();
+			await fixture.cleanup();
+		}
+	});
+	it.each(["tenant", "subject", "credentials", "database", "transport", "closed", "copied"] as const)(
+		"rejects a %s owner mismatch before claiming or contacting providers",
+		async (kind) => {
+			const fixture = await makeCommunityRuntimeFixture();
+			const other = kind === "credentials" || kind === "database" ? await makeCommunityRuntimeFixture() : undefined;
+			const scope = fixture.providerScope;
+			const { host, grant } = await signedRuntime(fixture, {
+				...scope,
+				...(kind === "tenant" ? { tenantId: "another-tenant" } : {}),
+				...(kind === "subject" ? { subjectId: "another-subject" } : {}),
+				...(kind === "credentials" ? { credentialDirectory: other!.credentialDirectory } : {}),
+				...(kind === "database" ? { engineStatePath: other!.engineStatePath } : {}),
+				...(kind === "transport" ? { transport: { mode: "production" as const } } : {}),
+			});
+			const before = row(fixture);
+			try {
+				const check = (owner: Effect.Success<ReturnType<typeof makeHarnessyEngine>>) =>
+					runNativeCommunityBriefing(grant, () => now, owner).pipe(Effect.flip);
+				const failure =
+					kind === "closed"
+						? await Effect.runPromise(
+								check(await Effect.runPromise(Effect.scoped(makeHarnessyEngine(engineConfig(fixture))))),
+							)
+						: await Effect.runPromise(
+								Effect.scoped(
+									Effect.gen(function* () {
+										const owner = yield* makeHarnessyEngine(engineConfig(fixture));
+										return yield* check(kind === "copied" ? { ...owner } : owner);
+									}),
+								),
+							);
+				expect(failure).toMatchObject({ cause: { message: "engine_binding_mismatch" } });
+				expect(row(fixture)).toEqual(before);
+				expect(fixture.wire.requests).toEqual([]);
+			} finally {
+				host.close();
+				await fixture.cleanup();
+				await other?.cleanup();
+			}
+		},
+	);
+	it("revalidates community revocation on the borrowed owner before remote writes", async () => {
+		const fixture = await makeCommunityRuntimeFixture();
+		const { host, grant } = await signedRuntime(fixture);
+		try {
+			fixture.wire.onRequest = () => host.revoke("one-publication");
+			await Effect.runPromise(
+				Effect.scoped(
+					Effect.gen(function* () {
+						const owner = yield* makeHarnessyEngine(engineConfig(fixture));
+						const failure = yield* runNativeCommunityBriefing(grant, () => now, owner).pipe(Effect.flip);
+						expect(failure).toMatchObject({ code: "invalid_grant" });
+						expect(fixture.wire.requests.length).toBeGreaterThan(0);
+						expect(fixture.wire.requests.every((request) => request.method === "GET")).toBe(true);
+						expect(row(fixture)).toMatchObject({
+							status: "blocked",
+							google_doc_id: null,
+							discord_message_id: null,
+						});
+						expect(yield* owner.connections.list({ owner: "user" })).toHaveLength(2);
+					}),
+				),
+			);
+		} finally {
+			host.close();
+			await fixture.cleanup();
+		}
+	});
+	it("does not steal an existing provider owner or consume the approved queue item", async () => {
+		const fixture = await makeCommunityRuntimeFixture();
+		const { host, grant } = await signedRuntime(fixture);
+		const before = row(fixture);
+		try {
+			await Effect.runPromise(
+				Effect.scoped(
+					Effect.gen(function* () {
+						const scope = fixture.providerScope;
+						if (scope.transport.mode !== "loopback") throw new Error("Expected isolated providers");
+						const owner = yield* makeHarnessyEngine({
+							tenant: scope.tenantId,
+							subject: scope.subjectId,
+							credentialDirectory: scope.credentialDirectory,
+							existingStatePath: scope.engineStatePath,
+							onElicitation: () => Effect.succeed({ action: "decline" }),
+							meetingProviderTransport: { ...scope.transport, kind: "test-loopback" },
+						});
+						const connections = yield* owner.connections.list({ owner: "user" });
+						const failure = yield* runNativeCommunityBriefing(grant, () => now).pipe(Effect.flip);
+						expect(failure).toMatchObject({ cause: { code: "ownership_held" } });
+						expect(row(fixture)).toEqual(before);
+						expect(fixture.wire.requests).toEqual([]);
+						// The rejected second owner must not close or replace the first.
+						expect(yield* owner.connections.list({ owner: "user" })).toEqual(connections);
+					}),
+				),
+			);
+		} finally {
+			host.close();
+			await fixture.cleanup();
+		}
+	});
 	it.each(["symlink", "dangling-symlink", "invalid-utf8", "oversized"])(
 		"rejects an unsafe %s revision marker",
 		async (kind) => {

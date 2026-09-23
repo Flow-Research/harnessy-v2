@@ -6,8 +6,8 @@ import {
 } from "@harnessy/core/community-briefing";
 import { meetingPublicationDirectoryChain } from "@harnessy/core/meeting-publication";
 import { Effect, Layer } from "effect";
-import { engineToolAddress } from "../engine/compose.ts";
-import { makeHarnessyEngine } from "../engine.ts";
+import { engineToolAddress, type HarnessyEngineHandle } from "../engine/compose.ts";
+import { assertHarnessyEngineBinding, type HarnessyEngineConfig, makeHarnessyEngine } from "../engine.ts";
 import {
 	engineCommunityBriefingDiscordLayer,
 	engineCommunityBriefingGoogleLayer,
@@ -101,7 +101,11 @@ const bindRuntimePaths = (grant: CommunityBriefingWriteGrant): (() => void) => {
  * The operational caller must exclude compatibility writers before invoking this
  * boundary. It does not install schedules, provision connections or reclaim leases.
  */
-export const runNativeCommunityBriefing = (grant: CommunityBriefingWriteGrant, clock: () => number = Date.now) =>
+export const runNativeCommunityBriefing = (
+	grant: CommunityBriefingWriteGrant,
+	clock: () => number = Date.now,
+	owner?: HarnessyEngineHandle,
+) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const verified = yield* validateCommunityBriefingWriteGrant(grant, "publish", grant.binding.item);
@@ -112,7 +116,7 @@ export const runNativeCommunityBriefing = (grant: CommunityBriefingWriteGrant, c
 				startedGrants.add(verified);
 			});
 			const scope = verified.binding.providerScope;
-			const handle = yield* makeHarnessyEngine({
+			const config: HarnessyEngineConfig = {
 				tenant: scope.tenantId,
 				subject: scope.subjectId,
 				credentialDirectory: scope.credentialDirectory,
@@ -127,8 +131,10 @@ export const runNativeCommunityBriefing = (grant: CommunityBriefingWriteGrant, c
 								googleDocsBaseUrl: scope.transport.googleDocsBaseUrl,
 								discordBaseUrl: scope.transport.discordBaseUrl,
 							},
-			});
+			};
+			const handle = owner ?? (yield* makeHarnessyEngine(config));
 			const assertConnections = Effect.gen(function* () {
+				yield* Effect.try(() => assertHarnessyEngineBinding(handle, config));
 				for (const [integration, connection, tool] of [
 					[GOOGLE_MEETING_INTEGRATION, scope.google, GOOGLE_COMMUNITY_UPSERT_TOOL],
 					[DISCORD_MEETING_INTEGRATION, scope.discord, DISCORD_COMMUNITY_UPSERT_TOOL],

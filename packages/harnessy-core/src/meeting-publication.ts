@@ -31,17 +31,23 @@ export type {
 	MeetingPublicationWorkerRuntimeInput,
 } from "./jarvis/meeting-publication/operational-input.ts";
 export {
+	encodeMeetingPublicationServiceEnrollmentRequest,
 	MeetingPublicationSmokeRuntimeError,
 	MeetingPublicationSmokeRuntimeErrorCode,
 	meetingPublicationDirectoryChain,
+	prepareMeetingPublicationServiceRequest,
 	readStableMeetingPublicationSmokeFile,
 } from "./jarvis/meeting-publication/operational-input.ts";
 export type {
 	MeetingPublicationReviewRuntimeHost,
+	MeetingPublicationServiceRevocation,
+	MeetingPublicationServiceStatus,
 	MeetingPublicationSmokeProviderFactory,
 	MeetingPublicationWorkerProviderFactory,
 } from "./jarvis/meeting-publication/operational-runtime.ts";
 export {
+	inspectMeetingPublicationService,
+	revokeStoppedMeetingPublicationService,
 	runAuthorizedMeetingPublicationFullReview,
 	runAuthorizedMeetingPublicationReview,
 	runAuthorizedMeetingPublicationSmoke,
@@ -61,6 +67,7 @@ export {
 	MeetingPublicationGoogleCheckpoint,
 	MeetingPublicationNotifier,
 } from "./jarvis/meeting-publication/service.ts";
+export { provisionMeetingPublicationService } from "./jarvis/meeting-publication/service-setup.ts";
 export type {
 	MeetingPublicationImportInput,
 	MeetingPublicationImportResult,

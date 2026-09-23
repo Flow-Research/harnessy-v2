@@ -516,6 +516,7 @@ export class HarnessProject extends Context.Service<
 			const runInstaller = Effect.fn("HarnessProject.runInstaller")(function* (
 				target: string,
 				options: NativeInstallOptions,
+				jarvisCliRoot?: string,
 			) {
 				const resolved = yield* paths.resolve(target);
 				const step = options.step ?? "all";
@@ -536,6 +537,7 @@ export class HarnessProject extends Context.Service<
 					const runtimeAssetResult =
 						step === "all" || step === "runtime-assets"
 							? yield* runtimeAssets.syncProjectAssets(resolved, installPaths, {
+									jarvisCliRoot,
 									dryRun: true,
 									force: options.force,
 									applyGlobal: options.applyGlobal,
@@ -643,6 +645,7 @@ export class HarnessProject extends Context.Service<
 
 				if (step === "runtime-assets") {
 					const runtimeAssetResult = yield* runtimeAssets.syncProjectAssets(resolved, installPaths, {
+						jarvisCliRoot,
 						dryRun: false,
 						force: options.force,
 						applyGlobal: options.applyGlobal,
@@ -672,6 +675,7 @@ export class HarnessProject extends Context.Service<
 				const initResult = { paths: resolved, initialized, written: generated.written } satisfies InitResult;
 				const scripts = yield* packageScripts.patch(resolved, { installPaths, dryRun: false });
 				const runtimeAssetResult = yield* runtimeAssets.syncProjectAssets(resolved, installPaths, {
+					jarvisCliRoot,
 					dryRun: false,
 					force: options.force,
 					applyGlobal: options.applyGlobal,
@@ -719,16 +723,20 @@ export class HarnessProject extends Context.Service<
 					repoUrl: options.repoUrl,
 				});
 				const installTarget = options.mode === "in-place" ? prepare.targetRoot : prepare.flowRoot;
-				const install = yield* runInstaller(installTarget, {
-					force: options.force ?? false,
-					dryRun: prepare.dryRun,
-					reconfigure: options.reconfigure,
-					installPathOverrides: options.installPathOverrides,
-					applyGlobal: options.applyGlobal,
-					globalRoot: options.globalRoot,
-					globalSkillsDir: options.globalSkillsDir,
-					globalCommandsDir: options.globalCommandsDir,
-				});
+				const install = yield* runInstaller(
+					installTarget,
+					{
+						force: options.force ?? false,
+						dryRun: prepare.dryRun,
+						reconfigure: options.reconfigure,
+						installPathOverrides: options.installPathOverrides,
+						applyGlobal: options.applyGlobal,
+						globalRoot: options.globalRoot,
+						globalSkillsDir: options.globalSkillsDir,
+						globalCommandsDir: options.globalCommandsDir,
+					},
+					pathService.join(prepare.flowRoot, "jarvis-cli"),
+				);
 				return {
 					dryRun: prepare.dryRun,
 					mode: options.mode,

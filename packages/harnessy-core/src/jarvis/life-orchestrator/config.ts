@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import * as Result from "effect/Result";
 
@@ -99,14 +100,8 @@ export const resolveLifeOrchestratorSettings = (options: ResolveLifeSettingsOpti
 		options.compatibilityRoot ??
 			process.env.HARNESSY_LIFE_V1_SCRIPTS ??
 			join(
-				projectRoot,
-				"packages",
-				"capability-harnessy-v1-full",
-				"resources",
-				"flow-install",
-				"skills",
-				"life-orchestrator",
-				"scripts",
+				dirname(createRequire(import.meta.url).resolve("@harnessy/capability-harnessy-v1-full/package.json")),
+				"resources/flow-install/skills/life-orchestrator/scripts",
 			),
 	);
 	return {

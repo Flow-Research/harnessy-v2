@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 import { Effect, Exit } from "effect";
-import { runCommunityPublicationCommand } from "./community-publication-command.ts";
-import { parseMeetingRuntimeCommandInput } from "./meeting-command-input.ts";
+import {
+	parseCommunityPublicationCommandInput,
+	runCommunityPublicationCommand,
+} from "./community-publication-command.ts";
 import { notifyMeetingFullReviewStopped } from "./meeting-full-review-stop-notification.ts";
 
 const args = process.argv.slice(2);
 const notifyOnStop = args[0] === "--notify-on-stop";
 const runtimeArgs = notifyOnStop ? args.slice(1) : args;
-const validArguments = Exit.isSuccess(Effect.runSyncExit(parseMeetingRuntimeCommandInput(runtimeArgs)));
+const parsed = Effect.runSyncExit(parseCommunityPublicationCommandInput(runtimeArgs));
+const validArguments = Exit.isSuccess(parsed) && parsed.value.action === "publish";
 
 const controller = new AbortController();
 let signalExitCode: number | undefined;
