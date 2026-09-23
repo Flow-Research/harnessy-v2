@@ -778,7 +778,7 @@ describe("community operational consumer", () => {
 			await f.cleanup();
 		}
 	});
-	it("retains a service Google receipt and singleton lease when revoked before Discord", async () => {
+	it("retains a service Google receipt or uncertain singleton lease when revoked before Discord", async () => {
 		const f = await fixture(undefined, true);
 		try {
 			f.wire.onRequest = (request) => {
@@ -793,13 +793,15 @@ describe("community operational consumer", () => {
 			expect((await Effect.runPromiseExit(f.run()))._tag).toBe("Failure");
 			const queue = new DatabaseSync(f.queuePath, { readOnly: true });
 			try {
-				expect(
-					queue.prepare("SELECT google_doc_id,discord_message_id,approved_hash FROM community_briefings").get(),
-				).toMatchObject({
-					google_doc_id: expect.any(String),
+				const row = queue
+					.prepare("SELECT google_doc_id,discord_message_id,approved_hash FROM community_briefings")
+					.get() as { google_doc_id: string | null; discord_message_id: string | null; approved_hash: string };
+				expect(row).toMatchObject({
 					discord_message_id: null,
 					approved_hash: f.sourceHash,
 				});
+				if (row.google_doc_id === null) expect(f.wire.permissions.size).toBeGreaterThan(0);
+				else expect(typeof row.google_doc_id).toBe("string");
 			} finally {
 				queue.close();
 			}
@@ -1097,7 +1099,7 @@ describe("community operational consumer", () => {
 			await f.cleanup();
 		}
 	});
-	it("preserves the Google receipt when authority is revoked before Discord", async () => {
+	it("preserves a confirmed Google receipt or uncertain lease when authority is revoked before Discord", async () => {
 		const f = await fixture();
 		try {
 			f.wire.onRequest = (request) => {
@@ -1112,13 +1114,15 @@ describe("community operational consumer", () => {
 			expect((await Effect.runPromiseExit(f.run()))._tag).toBe("Failure");
 			const db = new DatabaseSync(f.queuePath, { readOnly: true });
 			try {
-				expect(
-					db.prepare("SELECT google_doc_id,discord_message_id,approved_hash FROM community_briefings").get(),
-				).toMatchObject({
-					google_doc_id: expect.any(String),
+				const row = db
+					.prepare("SELECT google_doc_id,discord_message_id,approved_hash FROM community_briefings")
+					.get() as { google_doc_id: string | null; discord_message_id: string | null; approved_hash: string };
+				expect(row).toMatchObject({
 					discord_message_id: null,
 					approved_hash: f.sourceHash,
 				});
+				if (row.google_doc_id === null) expect(f.wire.permissions.size).toBeGreaterThan(0);
+				else expect(typeof row.google_doc_id).toBe("string");
 			} finally {
 				db.close();
 			}

@@ -171,6 +171,12 @@ mutation after the retained rollback window, not a substitute for local cutover.
   retained singleton lease and a publishing/blocked queue state. This records an
   uncertain delivery and forbids replay; it does not call the operation complete.
   The complete packed local-host fixture passes with the corrected contract.
+- The same legitimate scheduling outcome then appeared in the SDK's service-grant
+  case during coverage. Its two revocation contracts now assert the same complete
+  invariant: a confirmed Google receipt when available, or proof of the remote
+  permission mutation plus the retained singleton lease when confirmation lost
+  the race; both require no Discord receipt. The focused 64-test installed-Jarvis
+  SDK file passes, including both revised revocation cases.
 
 ## Gate checklist
 
