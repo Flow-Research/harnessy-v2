@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -201,6 +210,44 @@ describe("Life Orchestrator daily service", () => {
 		expect(readFileSync(canonical, "utf8")).toContain(
 			"[Forced refresh paper](<https://doi.org/10.1000/forced-refresh>)",
 		);
+	});
+
+	it("rejects oversized compatibility output before saving a review preview", async () => {
+		const root = makeRoot();
+		const project = join(root, "project");
+		const scripts = join(root, "compatibility");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(scripts, { recursive: true });
+		writeFileSync(join(scripts, "daily-brief"), dailyFixture);
+		const settings = resolveLifeOrchestratorSettings({
+			projectRoot: project,
+			homeRoot: root,
+			compatibilityRoot: scripts,
+			user: "test",
+		});
+		const now = new Date("2026-09-08T04:30:00.000Z");
+
+		await expect(
+			Effect.runPromise(
+				runLifeDaily(settings, { now, maximumOutputBytes: 32 }).pipe(
+					Effect.provide(CommandRunner.layer),
+					Effect.provide(NodeServices.layer),
+				),
+			),
+		).rejects.toThrow("32-byte limit");
+		expect(existsSync(canonicalLifeBriefPath(settings.paths.lifeDirectory, now))).toBe(false);
+		expect(
+			existsSync(settings.paths.reviewDirectory)
+				? readdirSync(settings.paths.reviewDirectory).filter((entry) => entry.endsWith(".md"))
+				: [],
+		).toEqual([]);
+
+		const ledger = await Effect.runPromise(LifeReadingLedger.open(settings.paths.databasePath));
+		try {
+			expect(await Effect.runPromise(ledger.counts())).toMatchObject({ reserved: 0 });
+		} finally {
+			ledger.close();
+		}
 	});
 
 	it.each(["active", "incomplete", "recovery"])(

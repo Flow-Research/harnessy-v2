@@ -44,6 +44,7 @@ export interface RunLifeDailyOptions {
 	readonly now?: Date;
 	readonly publish?: boolean;
 	readonly force?: boolean;
+	readonly maximumOutputBytes?: number;
 	readonly nativePreview?: NativeLifePreviewOptions;
 	/** Isolated host injection; the CLI never accepts a provider implementation. */
 	readonly draftProvider?: LifeDraftProvider;
@@ -419,6 +420,14 @@ export const runLifeDaily = (
 		const runner = yield* CommandRunner;
 		const now = options.now ?? new Date();
 		const date = dateInLagos(now);
+		const maximumOutputBytes = options.maximumOutputBytes ?? 1048576;
+		if (!Number.isSafeInteger(maximumOutputBytes) || maximumOutputBytes < 1 || maximumOutputBytes > 1048576)
+			return yield* Effect.fail(
+				new LifeOrchestratorError({
+					code: "artifact_invalid",
+					message: "Daily output limit must be between 1 and 1048576 bytes.",
+				}),
+			);
 		if (options.nativePreview && options.publish !== false)
 			return yield* Effect.fail(
 				new LifeOrchestratorError({
@@ -542,30 +551,51 @@ export const runLifeDaily = (
 										}),
 								});
 							} else {
+								const generatedPath = `${previewPath}.generated.md`;
+								yield* Effect.try({
+									try: () => writeFileSync(generatedPath, "", { flag: "wx", mode: 0o600 }),
+									catch: (cause) =>
+										new LifeOrchestratorError({
+											code: "artifact_invalid",
+											message: "Unable to reserve the bounded daily output file.",
+											cause,
+										}),
+								});
 								const preview = yield* runCompatibilityCommand(runner, {
 									id: `${runId}:preview`,
 									label: "Daily brief preview",
 									executable: "python3",
-									args: [script, "--date", date, "--preview-output", previewPath],
+									args: [script, "--date", date, "--preview-output", generatedPath],
 									cwd: settings.paths.projectRoot,
 									env: lifeProviderEnvironment(settings),
 								});
-								if (preview.status === "failed")
+								if (preview.status === "failed") {
+									if (existsSync(generatedPath)) unlinkSync(generatedPath);
 									return yield* Effect.fail(
 										commandFailure("Daily preview", preview.stderr || preview.error || ""),
 									);
+								}
 								draft = yield* Effect.try({
-									try: () => readFileSync(previewPath, "utf8"),
+									try: () => readPrivateLifeInput(generatedPath, maximumOutputBytes),
 									catch: (cause) =>
 										new LifeOrchestratorError({
 											code: "artifact_invalid",
-											message: "Daily preview was not created.",
+											message: `Daily preview was not created within the ${maximumOutputBytes}-byte limit.`,
 											cause,
 										}),
-								});
+								}).pipe(
+									Effect.ensuring(Effect.sync(() => existsSync(generatedPath) && unlinkSync(generatedPath))),
+								);
 							}
 							const delivered = yield* ledger.deliveredIdentities();
 							const reviewed = replaceWorthReadingSection(draft, selected, now);
+							if (Buffer.byteLength(reviewed, "utf8") > maximumOutputBytes)
+								return yield* Effect.fail(
+									new LifeOrchestratorError({
+										code: "artifact_invalid",
+										message: `Reviewed daily preview exceeds the ${maximumOutputBytes}-byte limit.`,
+									}),
+								);
 							yield* Effect.try({
 								try: () => validateWorthReadingSection(reviewed, selected, delivered),
 								catch: (cause) =>

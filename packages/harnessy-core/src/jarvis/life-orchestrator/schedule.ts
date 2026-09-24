@@ -58,7 +58,7 @@ const scheduleFor = (
 			hour: 5,
 			minute: 30,
 			weekday: null,
-			arguments: ["daily"],
+			arguments: ["daily", "--max-output-bytes", "1048576"],
 		};
 	}
 	return {
