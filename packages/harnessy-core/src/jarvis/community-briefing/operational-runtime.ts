@@ -141,6 +141,13 @@ export const isNativeCommunityReviewLaunchAgent = (
 /** @internal Grammar of one OS process record, before filtering by owner. */
 export const communityProcessLinePattern = /^\s*(-?\d+)\s+(\d+)\s+(.+)$/u;
 
+/** @internal Parse the exact single record returned by a PID-scoped ps probe. */
+export const parseCommunityProcessConfirmation = (output: string): RegExpExecArray | undefined => {
+	const record = output.endsWith("\n") ? output.slice(0, -1) : output;
+	if (record === "" || record.includes("\n") || record.includes("\r")) return undefined;
+	return communityProcessLinePattern.exec(record) ?? undefined;
+};
+
 /** Bounded known-process evidence, not protection from arbitrary same-UID code. */
 const proveCompatibilityAbsent = () => {
 	const uid = process.geteuid?.();
@@ -170,11 +177,11 @@ const proveCompatibilityAbsent = () => {
 								throw new Error("unsupported_platform");
 							})();
 			const confirmed = command("/bin/ps", ["-p", match[2], "-o", "uid=,pid=,command="]);
-			const confirmedMatch = communityProcessLinePattern.exec(confirmed.stdout);
+			const confirmedMatch = parseCommunityProcessConfirmation(confirmed.stdout);
 			if (
 				launchExecutable.status === 0 &&
 				confirmed.status === 0 &&
-				confirmedMatch !== null &&
+				confirmedMatch !== undefined &&
 				Number(confirmedMatch[1]) === uid &&
 				confirmedMatch[2] === match[2] &&
 				confirmedMatch[3] === match[3] &&

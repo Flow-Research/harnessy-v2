@@ -9,6 +9,7 @@ import {
 	darwinProcessExecutableFromLsof,
 	isNativeCommunityReviewLaunchAgent,
 	isNativeCommunityReviewProcess,
+	parseCommunityProcessConfirmation,
 } from "../src/jarvis/community-briefing/operational-runtime.ts";
 
 it("parses signed OS UIDs without accepting malformed identities or negative PIDs", () => {
@@ -30,6 +31,35 @@ it("parses the real OS process inventory used by the writer-exclusion guard", ()
 	const records = observed.stdout.split("\n").filter((line) => line.trim());
 	expect(records.length).toBeGreaterThan(0);
 	for (const record of records) expect(communityProcessLinePattern.test(record)).toBe(true);
+});
+
+it("parses the newline-terminated single PID confirmation without changing command whitespace", () => {
+	const observed = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "uid=,pid=,command="], {
+		encoding: "utf8",
+		timeout: 2000,
+		maxBuffer: 1_000_000,
+	});
+	expect(observed.status).toBe(0);
+	expect(observed.stdout.endsWith("\n")).toBe(true);
+	const match = parseCommunityProcessConfirmation(observed.stdout);
+	expect(Number(match?.[1])).toBe(process.geteuid?.());
+	expect(Number(match?.[2])).toBe(process.pid);
+	expect(match?.[3]).toBe(observed.stdout.slice(0, -1).match(communityProcessLinePattern)?.[3]);
+
+	const trailingSpaces = parseCommunityProcessConfirmation("501 123 /bin/example --value  \n");
+	expect(trailingSpaces?.[3]).toBe("/bin/example --value  ");
+});
+
+it("rejects ambiguous or malformed PID confirmation output", () => {
+	for (const output of [
+		"",
+		"\n",
+		"501 123 /bin/example\n\n",
+		"501 123 /bin/example\n501 124 /bin/other\n",
+		"501 123 /bin/example\r\n",
+		"501 123\n",
+	])
+		expect(parseCommunityProcessConfirmation(output), JSON.stringify(output)).toBeUndefined();
 });
 
 it("recognizes only the byte-identical installed review sibling of the service tree", () => {
