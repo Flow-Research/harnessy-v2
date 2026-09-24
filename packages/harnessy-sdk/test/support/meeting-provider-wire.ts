@@ -36,6 +36,7 @@ export interface WireState {
 	readonly requests: Array<{
 		readonly method: string;
 		readonly path: string;
+		readonly query: string;
 		readonly authorization: string;
 		readonly body: unknown;
 	}>;
@@ -101,6 +102,7 @@ const serveWireRequest = async (state: WireState, request: IncomingMessage, resp
 	state.requests.push({
 		method,
 		path,
+		query: requestUrl.search,
 		authorization: String(request.headers.authorization ?? ""),
 		body,
 	});
@@ -220,7 +222,19 @@ const serveWireRequest = async (state: WireState, request: IncomingMessage, resp
 	const documentMatch = /^\/documents\/([^/:]+)(:batchUpdate)?$/u.exec(path);
 	if (documentMatch !== null) {
 		const id = documentMatch[1] ?? "";
-		if (method === "GET") return json(response, 200, state.documents.get(id) ?? { body: { content: [] } });
+		if (method === "GET") {
+			const document = state.documents.get(id) ?? { body: { content: [] } };
+			if (requestUrl.searchParams.get("fields") === "body/content/endIndex" && isRecord(document)) {
+				const body = isRecord(document.body) ? document.body : {};
+				const content = Array.isArray(body.content)
+					? body.content.flatMap((entry) =>
+							isRecord(entry) && typeof entry.endIndex === "number" ? [{ endIndex: entry.endIndex }] : [],
+						)
+					: [];
+				return json(response, 200, { body: { content } });
+			}
+			return json(response, 200, document);
+		}
 		if (method === "POST") {
 			state.documents.set(id, { body: { content: [{ endIndex: 100 }] }, lastBatch: body });
 			return json(response, 200, {});
