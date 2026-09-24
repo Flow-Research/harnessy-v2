@@ -43,10 +43,29 @@ const xml = (value: string) =>
 
 const scheduleFor = (
 	label: LifeLaunchAgentLabel,
-): { readonly hour: number; readonly minute: number; readonly weekday: number | null; readonly command: string } => {
-	if (label.endsWith("learning-research")) return { hour: 4, minute: 15, weekday: null, command: "research" };
-	if (label.endsWith("daily-brief")) return { hour: 5, minute: 30, weekday: null, command: "daily" };
-	return { hour: 18, minute: 0, weekday: 0, command: "weekly" };
+): {
+	readonly hour: number;
+	readonly minute: number;
+	readonly weekday: number | null;
+	readonly arguments: ReadonlyArray<string>;
+} => {
+	if (label.endsWith("learning-research")) return { hour: 4, minute: 15, weekday: null, arguments: ["research"] };
+	// Scheduled synthesis must stop at a private review artifact. Publication is
+	// a separate, explicit owner action after review.
+	if (label.endsWith("daily-brief")) {
+		return {
+			hour: 5,
+			minute: 30,
+			weekday: null,
+			arguments: ["draft", "--kind", "daily", "--timeout-seconds", "600", "--max-output-bytes", "1048576"],
+		};
+	}
+	return {
+		hour: 18,
+		minute: 0,
+		weekday: 0,
+		arguments: ["draft", "--kind", "weekly", "--timeout-seconds", "600", "--max-output-bytes", "1048576"],
+	};
 };
 
 const renderPlist = (
@@ -61,16 +80,13 @@ const renderPlist = (
 		options.cliPath,
 		"jarvis",
 		"life",
-		schedule.command,
+		...schedule.arguments,
 		"--target",
 		settings.paths.projectRoot,
 		"--home-root",
 		settings.paths.homeRoot,
 		"--compatibility-root",
 		settings.paths.compatibilityScriptsDirectory,
-		// Weekly generation requires a fresh owner-signed grant. A timer may only
-		// prepare the local request; it cannot generate or publish a plan.
-		...(schedule.command === "weekly" ? ["--prepare-native-prompt"] : []),
 	];
 	const weekday =
 		schedule.weekday === null ? "" : `\n\t\t<key>Weekday</key>\n\t\t<integer>${schedule.weekday}</integer>`;

@@ -1,20 +1,15 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NodeServices } from "@effect/platform-node";
-
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import { Command } from "effect/unstable/cli";
 
-import { jarvisLifeWeeklyCommand } from "../src/cli/jarvis.ts";
 import { resolveLifeOrchestratorSettings } from "../src/jarvis/life-orchestrator/config.ts";
 import {
 	installLifeSchedule,
 	LIFE_LAUNCH_AGENT_LABELS,
 	planLifeSchedule,
 } from "../src/jarvis/life-orchestrator/schedule.ts";
-import { CommandRunner, CommandRunResult } from "../src/runtime/command-runner.ts";
 
 const roots: Array<string> = [];
 const makeRoot = () => {
@@ -97,45 +92,41 @@ describe("Life Orchestrator schedule cutover", () => {
 			expect(readFileSync(join(result.backupDirectory ?? "", `${label}.plist`), "utf8")).toBe(`old:${label}`);
 		}
 		expect(readFileSync(join(launchAgents, "com.example.unrelated.plist"), "utf8")).toBe("untouched");
+		const daily = result.files.find((file) => file.label.endsWith("daily-brief"));
 		const weekly = result.files.find((file) => file.label.endsWith("weekly-plan"));
+		expect(daily).toBeDefined();
 		expect(weekly).toBeDefined();
+		const dailyArgumentsXml = readFileSync(daily!.path, "utf8").split("<array>")[1]!.split("</array>")[0]!;
+		const dailyArgv = [...dailyArgumentsXml.matchAll(/<string>(.*?)<\/string>/g)].map((match) => match[1]!);
 		const argumentsXml = readFileSync(weekly!.path, "utf8").split("<array>")[1]!.split("</array>")[0]!;
 		const argv = [...argumentsXml.matchAll(/<string>(.*?)<\/string>/g)].map((match) => match[1]!);
-		expect(argv.slice(0, 5)).toEqual([node, cli, "jarvis", "life", "weekly"]);
-		expect(argv).toContain("--prepare-native-prompt");
-		const labels: string[] = [];
-		await Effect.runPromise(
-			Command.runWith(jarvisLifeWeeklyCommand, { version: "test" })(argv.slice(5)).pipe(
-				Effect.provideService(CommandRunner, {
-					run: (command) =>
-						Effect.sync(() => {
-							labels.push(command.label);
-							expect(command.executable).toBe("python3");
-							expect(command.env?.PYTHONDONTWRITEBYTECODE).toBe("1");
-							if (command.label === "Weekly read-only state collection") {
-								expect(command.args[2]).toContain("--no-save");
-								writeFileSync(command.args.at(-1)!, "{}");
-							} else {
-								expect(command.label).toBe("Weekly prompt preparation");
-								writeFileSync(
-									command.args[command.args.indexOf("--output") + 1]!,
-									"Scheduled prompt for owner signing",
-								);
-							}
-							return new CommandRunResult({
-								...command,
-								args: [...command.args],
-								command: "synthetic collector",
-								status: "succeeded",
-								stdout: "",
-								stderr: "",
-								exitCode: 0,
-							});
-						}),
-				}),
-				Effect.provide(NodeServices.layer),
-			),
-		);
-		expect(labels).toEqual(["Weekly read-only state collection", "Weekly prompt preparation"]);
+		expect(dailyArgv.slice(0, 12)).toEqual([
+			node,
+			cli,
+			"jarvis",
+			"life",
+			"draft",
+			"--kind",
+			"daily",
+			"--timeout-seconds",
+			"600",
+			"--max-output-bytes",
+			"1048576",
+			"--target",
+		]);
+		expect(argv.slice(0, 12)).toEqual([
+			node,
+			cli,
+			"jarvis",
+			"life",
+			"draft",
+			"--kind",
+			"weekly",
+			"--timeout-seconds",
+			"600",
+			"--max-output-bytes",
+			"1048576",
+			"--target",
+		]);
 	});
 });
