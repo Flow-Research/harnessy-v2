@@ -134,6 +134,7 @@ try {
 		for (const name of ["task", "journal", "reading-list", "wiki", "meeting", "community"])
 			if (!jarvisHelp.includes(name)) throw new Error(`Installed Jarvis launcher omitted ${name}`);
 	}
+	run(process.execPath, [join(repoRoot, "scripts/test-workspace-consumer.mjs"), join(installedCoreRoot, "dist", "cli.js"), jarvisPython]);
 	const jarvisSitePackages = run(jarvisPython, ["-I", "-B", "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"], { capture: true }).trim();
 	const receiverPlanAcceptance = String.raw`
 import shlex

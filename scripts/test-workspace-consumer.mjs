@@ -1,0 +1,39 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const [cliInput, pythonInput] = process.argv.slice(2);
+if (!cliInput || !pythonInput) throw new Error("Usage: test-workspace-consumer.mjs <installed-core-cli> <python>");
+const cli = realpathSync(cliInput);
+const python = realpathSync(pythonInput);
+const fixture = realpathSync(mkdtempSync(join(tmpdir(), "workspace-consumer-")));
+const env = { ...process.env, HOME: fixture, USER: "tester", FLOW_USER: "tester", HARNESSY_WORKSPACE_ROOT: undefined, PYTHONDONTWRITEBYTECODE: "1" };
+const run = (args, cwd = fixture) => JSON.parse(execFileSync(process.execPath, [cli, "workspace", ...args], { cwd, env, encoding: "utf8" }));
+try {
+	const before = join(fixture, "original");
+	run(["init", before, "--json"]);
+	const context = join(before, "group/project/dev/.jarvis/context");
+	mkdirSync(context, { recursive: true });
+	writeFileSync(join(context, "status.md"), "Packaged workspace project sentinel");
+	const privateContext = join(before, ".jarvis/context/private/tester");
+	mkdirSync(privateContext, { recursive: true });
+	writeFileSync(join(privateContext, "priorities.md"), "Packaged workspace shared priority sentinel");
+	run(["add", join(before, "group/project/dev"), "--workspace-root", before, "--id", "project", "--json"]);
+	const after = join(fixture, "relocated");
+	renameSync(before, after);
+	assert.equal(run(["list", "--json"], join(after, "group/project/dev")).manifest.projects[0].path, "group/project/dev");
+	assert.equal(run(["doctor", "--workspace-root", after, "--json"]).healthy, true);
+	const core = dirname(dirname(cli));
+	const { prepareWorkspaceLifeCommand } = await import(pathToFileURL(join(core, "dist/workspace-life.js")).href);
+	const scripts = resolve(core, "../capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts");
+	const prompt = join(fixture, "prompt.txt");
+	const prepared = prepareWorkspaceLifeCommand({ id: "packaged-workspace", label: "prompt only", executable: python, args: [join(scripts, "daily-brief"), "--date", "2026-09-24", "--prompt-output", prompt], cwd: after, env: { ...env, AGENTS_LIFE_DIR: join(fixture, ".agents/life") } });
+	execFileSync(python, prepared.command.args, { cwd: after, env: prepared.command.env, stdio: "pipe" });
+	const text = readFileSync(prompt, "utf8");
+	assert.ok(text.includes("Packaged workspace project sentinel"));
+	assert.ok(text.includes("Packaged workspace shared priority sentinel"));
+	console.log("Packaged workspace acceptance passed: relocated registry, grouped discovery and shared Life prompt; no provider calls.");
+} finally { rmSync(fixture, { recursive: true, force: true }); }

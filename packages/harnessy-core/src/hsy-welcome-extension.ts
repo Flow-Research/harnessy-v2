@@ -6,6 +6,7 @@ import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-codi
 import { Effect } from "effect";
 import { HarnessError } from "./errors.ts";
 import { HSY_APP_TITLE as APP_TITLE, HSY_CONFIG_DIR as CONFIG_DIR_NAME } from "./hsy-runtime-env.ts";
+import { resolveWorkspace, workspaceAgentContext } from "./workspace.ts";
 
 const RUNTIME_CONTEXT_TYPE = "harnessy-runtime-context";
 const WEB_COMMAND_TIMEOUT_MS = 150_000;
@@ -274,6 +275,7 @@ export function buildHarnessyRuntimeContext(cwd: string, env: NodeJS.ProcessEnv 
 	const agentDir = env.HSY_CODING_AGENT_DIR?.trim() || join(homedir(), CONFIG_DIR_NAME, "agent");
 	const projectConfigDir = join(cwd, CONFIG_DIR_NAME);
 	const agentName = resolveHarnessyAgentName(env);
+	const workspace = resolveWorkspace({ cwd, env });
 
 	return `<harnessy_runtime>
 You are running inside Harnessy (hsy), not the pi executable.
@@ -289,6 +291,7 @@ Host isolation invariant:
 
 Self-healing rule:
 When an extension, package, command, or configuration fails because it assumes Pi-specific paths or identity, inspect the failing Harnessy-local resource, repair it to use HSY_CODING_AGENT_DIR, PI_CODING_AGENT_DIR, PI_CONFIG_DIR, or the canonical .hsy project directory as appropriate, then verify the operation again. Keep the repair scoped to Harnessy; never patch or share Pi's configuration. If a safe local repair is impossible, report the exact incompatible path and package instead of silently falling back to ~/.pi.
+${workspace === null ? "" : workspaceAgentContext(workspace, cwd)}
 </harnessy_runtime>`;
 }
 
@@ -300,15 +303,18 @@ export function createHarnessyRuntimeContextMessage(cwd: string, env: NodeJS.Pro
 	};
 }
 
-function sessionHasHarnessyRuntimeContext(ctx: ExtensionContext): boolean {
-	return ctx.sessionManager
+function sessionHasHarnessyRuntimeContext(ctx: ExtensionContext, content: string): boolean {
+	const latest = ctx.sessionManager
 		.getBranch()
-		.some(
+		.slice()
+		.reverse()
+		.find(
 			(entry) =>
 				entry.type === "message" &&
 				entry.message.role === "custom" &&
 				entry.message.customType === RUNTIME_CONTEXT_TYPE,
 		);
+	return latest?.type === "message" && latest.message.role === "custom" && latest.message.content === content;
 }
 
 function setHarnessyHeader(ctx: ExtensionContext): void {
@@ -385,8 +391,9 @@ export const harnessyWelcomeExtension: ExtensionFactory = (pi) => {
 	});
 
 	pi.on("session_start", (event, ctx) => {
-		if (!sessionHasHarnessyRuntimeContext(ctx)) {
-			pi.sendMessage(createHarnessyRuntimeContextMessage(ctx.cwd), { triggerTurn: false });
+		const message = createHarnessyRuntimeContextMessage(ctx.cwd);
+		if (!sessionHasHarnessyRuntimeContext(ctx, message.content)) {
+			pi.sendMessage(message, { triggerTurn: false });
 		}
 
 		if (ctx.hasUI && (event.reason === "startup" || event.reason === "reload")) {

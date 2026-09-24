@@ -1,18 +1,33 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vitest";
-
 import {
 	buildHarnessyRuntimeContext,
 	createHarnessyRuntimeContextMessage,
 	harnessyWelcomeExtension,
 	resolveHarnessyAgentName,
 } from "../src/hsy-welcome-extension.ts";
+import { initializeWorkspace, registerWorkspaceProject } from "../src/workspace.ts";
 
 describe("Harnessy runtime context", () => {
+	it("includes registered sibling locations without loading private project contents", () => {
+		const root = mkdtempSync(join(tmpdir(), "hsy-workspace-"));
+		try {
+			initializeWorkspace(root);
+			mkdirSync(join(root, "group/app/dev"), { recursive: true });
+			registerWorkspaceProject(root, { id: "app", path: "group/app/dev", contextDir: ".jarvis/context" });
+			writeFileSync(join(root, "group/app/dev/private.txt"), "do not bulk load this sentinel");
+			const context = buildHarnessyRuntimeContext(join(root, "group/app/dev"), {});
+			expect(context).toContain("Current registered project: app");
+			expect(context).toContain("group/app/dev");
+			expect(context).not.toContain("do not bulk load this sentinel");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 	it("teaches the agent its isolated host paths and self-healing rule", () => {
 		const context = buildHarnessyRuntimeContext("/work/project", {
 			HSY_CODING_AGENT_DIR: "/home/tester/.hsy/agent",
