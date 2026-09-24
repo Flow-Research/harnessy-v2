@@ -38,6 +38,8 @@ export type LocalMeetingPublicationNotifierConfig =
 const safeExecutable = (value: string) =>
 	isAbsolute(value) && value.length <= 4_096 && !/[\u0000-\u001f\u007f]/u.test(value);
 
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+
 const boundedTimeout = (value: number | undefined) =>
 	value !== undefined && Number.isSafeInteger(value) && value >= 100 && value <= 30_000 ? value : 5_000;
 
@@ -116,7 +118,8 @@ export const localMeetingPublicationNotifierLayer = (
 						!safeExecutable(config.executablePath) ||
 						(config.kind === "terminal-notifier" &&
 							config.reviewOpen !== undefined &&
-							(!safeExecutable(config.reviewOpen.executablePath) || !isAbsolute(config.reviewOpen.statePath))) ||
+							(!safeExecutable(config.reviewOpen.executablePath) ||
+								!safeExecutable(config.reviewOpen.statePath))) ||
 						(config.kind === "test-process" && !safeExecutable(config.scriptPath))
 					) {
 						return Effect.succeed(false);
@@ -139,7 +142,9 @@ export const localMeetingPublicationNotifierLayer = (
 										...(config.kind === "terminal-notifier" && config.reviewOpen !== undefined
 											? [
 													"-execute",
-													`${JSON.stringify(config.reviewOpen.executablePath)} --state-path ${JSON.stringify(config.reviewOpen.statePath)}`,
+													// NSUserDefaults drops argv values starting with a quoted path.
+													// A shell keyword preserves the command; POSIX quoting keeps paths literal.
+													`exec ${shellQuote(config.reviewOpen.executablePath)} --state-path ${shellQuote(config.reviewOpen.statePath)}`,
 												]
 											: []),
 									]

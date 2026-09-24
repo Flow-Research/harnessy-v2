@@ -269,6 +269,14 @@ jobs:
       - name: Build package inputs
         run: npm run build
 
+      - name: Test native notification callback parsing
+        working-directory: packages/harnessy-sdk
+        run: node ../../node_modules/vitest/dist/cli.js --run test/meeting-publication-notifier.test.ts
+
+      - name: Test native reviewer process identity
+        working-directory: packages/harnessy-core
+        run: node ../../node_modules/vitest/dist/cli.js --run test/community-process-identity.test.ts
+
       - name: Pack, install, and exercise the macOS product
         run: npm run test:release-artifacts
 

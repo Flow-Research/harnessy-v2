@@ -82,7 +82,7 @@ function debug(...args: unknown[]) {
 	const ts = new Date().toISOString();
 	const fmt = (a: unknown): string => {
 		if (typeof a === "string") return a;
-		if (a instanceof Error) return `${a.name}: ${a.message}${a.stack ? "\n" + a.stack : ""}`;
+		if (a instanceof Error) return `${a.name}: ${a.message}${a.stack ? `\n${a.stack}` : ""}`;
 		return JSON.stringify(a);
 	};
 	const msg = args.map(fmt).join(" ");
@@ -127,7 +127,7 @@ function diagDump(label: string, data: Record<string, unknown>) {
 	const entry = { ts, moduleInstanceId, label, ...data };
 	const path = diagLogPath();
 	ensureLogDirectory(path);
-	appendFileSync(path, JSON.stringify(entry) + "\n");
+	appendFileSync(path, `${JSON.stringify(entry)}\n`);
 	debug(`DIAG: ${label} (see ${path})`);
 }
 
@@ -933,6 +933,7 @@ function mapStopReason(reason: string | undefined): "stop" | "length" | "toolUse
 		case "max_tokens":
 			return "length";
 		case "end_turn":
+			return "stop";
 		default:
 			return "stop";
 	}

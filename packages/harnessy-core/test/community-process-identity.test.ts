@@ -86,6 +86,33 @@ it("requires a loaded native review job to own an independently verified process
 	expect(isNativeCommunityReviewLaunchAgent(label, `${output}\npid = 1\n`, verified)).toBe(false);
 });
 
+it("accepts a verified release symlink but rejects other executables and Node options", () => {
+	const root = mkdtempSync(join(tmpdir(), "community-release-identity-"));
+	try {
+		const executable = join(root, "current node");
+		const entry = join(root, "cli.js");
+		const other = join(root, "other-node");
+		symlinkSync(process.execPath, executable);
+		writeFileSync(entry, "// Native review fixture.\n");
+		writeFileSync(other, "// Not the expected executable.\n");
+		const route = "jarvis community briefing review serve --port 8872";
+		expect(
+			isNativeCommunityReviewProcess(`${executable} ${entry} ${route}`, executable, process.execPath, entry),
+		).toBe(true);
+		expect(isNativeCommunityReviewProcess(`${other} ${entry} ${route}`, other, process.execPath, entry)).toBe(false);
+		expect(
+			isNativeCommunityReviewProcess(
+				`${executable} --require ${other} ${entry} ${route}`,
+				executable,
+				process.execPath,
+				entry,
+			),
+		).toBe(false);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 it("requires the exact native review entry and independently observed Node executable", () => {
 	const root = mkdtempSync(join(tmpdir(), "community-process-identity-"));
 	try {

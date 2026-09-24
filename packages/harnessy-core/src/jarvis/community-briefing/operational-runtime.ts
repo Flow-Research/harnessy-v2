@@ -53,7 +53,9 @@ export const isNativeCommunityReviewProcess = (
 	if (suffix !== "" && !suffix.startsWith(" ")) return false;
 	if (realpathSync(observedExecutable) !== realpathSync(expectedExecutable)) return false;
 	const prefix = commandLine.slice(0, routeIndex);
-	for (const executable of [expectedExecutable, "node"]) {
+	// macOS reports the launch path, including a stable release symlink. Its
+	// real executable identity was independently verified above.
+	for (const executable of [expectedExecutable, observedExecutable, "node"]) {
 		if (!prefix.startsWith(`${executable} `)) continue;
 		const entry = prefix.slice(executable.length + 1);
 		// Require an absolute script path and no preceding Node execution options.

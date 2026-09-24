@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Preserved macOS notification click commands through Foundation argument parsing
+  and quoted review-helper paths literally for the callback shell.
 - Scoped meeting-provider HTTP requests so rejected and oversized responses are
   cancelled on completion without waiting for garbage collection.
 

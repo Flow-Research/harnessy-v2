@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,14 @@ describe("delivery failure notifications", () => {
 		roots.push(root);
 		const recordPath = join(root, "args.json");
 		const executablePath = join(root, "notifier");
+		const reviewOpenPath = join(root, "review ' $USER `false` $(false)");
+		const statePath = join(root, "state ' $USER `false` $(false)");
+		const openedPath = join(root, "opened.json");
+		writeFileSync(
+			reviewOpenPath,
+			`#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(openedPath)}, JSON.stringify(process.argv.slice(2)));\n`,
+			{ mode: 0o700 },
+		);
 		// Actual subprocess captures argv; no OS notification or external provider is used.
 		writeFileSync(
 			executablePath,
@@ -79,6 +88,29 @@ describe("delivery failure notifications", () => {
 					const review: string[] = JSON.parse(readFileSync(recordPath, "utf8"));
 					expect(review[3]).toBe("1 meeting publication item awaits review.");
 					expect(review[5]).toBe("harnessy-meeting-publication");
+					const command = review[7]!;
+					expect(review[6]).toBe("-execute");
+					// Exercise the real POSIX callback with paths containing shell metacharacters.
+					const opened = spawnSync("/bin/sh", ["-c", command], { encoding: "utf8", timeout: 5_000 });
+					expect(opened.status, opened.stderr).toBe(0);
+					expect(JSON.parse(readFileSync(openedPath, "utf8"))).toEqual(["--state-path", statePath]);
+					if (process.platform === "darwin") {
+						// terminal-notifier reads argv through Foundation before storing click metadata.
+						const probeSource = join(root, "defaults.swift");
+						const probe = join(root, "defaults-probe");
+						writeFileSync(
+							probeSource,
+							'import Foundation\nprint(UserDefaults.standard.string(forKey: "execute") ?? "MISSING")\n',
+						);
+						const compiled = spawnSync("/usr/bin/swiftc", [probeSource, "-o", probe], {
+							encoding: "utf8",
+							timeout: 60_000,
+						});
+						expect(compiled.status, compiled.stderr).toBe(0);
+						const parsed = spawnSync(probe, ["-execute", command], { encoding: "utf8", timeout: 5_000 });
+						expect(parsed.status, parsed.stderr).toBe(0);
+						expect(parsed.stdout.trim()).toBe(command);
+					}
 					writeFileSync(recordPath, "NOT_SPAWNED");
 					for (const stages of [
 						["private meeting title\nsecret"],
@@ -91,10 +123,16 @@ describe("delivery failure notifications", () => {
 						expect(readFileSync(recordPath, "utf8")).toBe("NOT_SPAWNED");
 					}
 				}).pipe(
-					Effect.provide(localMeetingPublicationNotifierLayer({ kind: "terminal-notifier", executablePath })),
+					Effect.provide(
+						localMeetingPublicationNotifierLayer({
+							kind: "terminal-notifier",
+							executablePath,
+							reviewOpen: { executablePath: reviewOpenPath, statePath },
+						}),
+					),
 					Effect.provide(meetingPublicationTestWriteAuthorityLayer(config)),
 				),
 			),
 		);
-	});
+	}, 90_000);
 });
