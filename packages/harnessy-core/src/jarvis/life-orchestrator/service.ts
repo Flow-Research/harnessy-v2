@@ -565,7 +565,15 @@ export const runLifeDaily = (
 									id: `${runId}:preview`,
 									label: "Daily brief preview",
 									executable: "python3",
-									args: [script, "--date", date, "--preview-output", generatedPath],
+									args: [
+										script,
+										"--date",
+										date,
+										"--preview-output",
+										generatedPath,
+										"--max-output-bytes",
+										String(maximumOutputBytes),
+									],
 									cwd: settings.paths.projectRoot,
 									env: lifeProviderEnvironment(settings),
 								});

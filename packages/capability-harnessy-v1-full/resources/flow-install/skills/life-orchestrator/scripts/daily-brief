@@ -860,6 +860,12 @@ def main():
         "--date",
         help="Effective date supplied by the V2 scheduler (YYYY-MM-DD)",
     )
+    parser.add_argument(
+        "--max-output-bytes",
+        type=int,
+        default=1048576,
+        help="Maximum accepted generated brief size in UTF-8 bytes (1-1048576)",
+    )
     output_mode = parser.add_mutually_exclusive_group()
     output_mode.add_argument(
         "--prompt-output",
@@ -880,6 +886,8 @@ def main():
         ),
     )
     args = parser.parse_args()
+    if not 1 <= args.max_output_bytes <= 1048576:
+        parser.error("--max-output-bytes must be between 1 and 1048576")
     preview = bool(args.preview_output)
     publish_preview = bool(args.publish_preview)
 
@@ -999,6 +1007,12 @@ def main():
 
     if brief is None:
         print("Error: failed to generate brief", file=sys.stderr)
+        sys.exit(1)
+    if len(brief.encode("utf-8")) > args.max_output_bytes:
+        print(
+            f"Error: generated brief exceeds {args.max_output_bytes} UTF-8 bytes",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Step 4: Save to file and remove configured AI-speak patterns before delivery

@@ -298,6 +298,43 @@ def test_preview_writes_only_preview_artifact(tmp_path, monkeypatch) -> None:
     assert not Path(f"{preview_path}.journaled").exists()
 
 
+def test_preview_rejects_oversized_utf8_output_before_writing(tmp_path, monkeypatch) -> None:
+    daily_brief = load_daily_brief(tmp_path, monkeypatch)
+    preview_path = tmp_path / "preview" / "daily.md"
+
+    monkeypatch.setattr(
+        daily_brief,
+        "run_collect_state",
+        lambda no_save=False: {"changed": True, "priorities": {"raw": "Priority"}},
+    )
+    monkeypatch.setattr(daily_brief, "call_ai", lambda _prompt: "é" * 17)
+    monkeypatch.setattr(
+        daily_brief,
+        "clean_text_hygiene",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("oversized output saved")),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "daily-brief",
+            "--preview-output",
+            str(preview_path),
+            "--max-output-bytes",
+            "32",
+        ],
+    )
+
+    try:
+        daily_brief.main()
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("oversized output was accepted")
+
+    assert not preview_path.exists()
+
+
 def test_publish_preview_promotes_reviewed_artifact_without_regeneration(
     tmp_path,
     monkeypatch,
