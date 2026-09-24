@@ -18,6 +18,23 @@ import {
 import { initializeWorkspace, registerWorkspaceProject } from "../src/workspace.ts";
 
 describe("Harnessy runtime context", () => {
+	it("preserves host isolation when workspace configuration or the working directory is invalid", () => {
+		const root = mkdtempSync(join(tmpdir(), "hsy-invalid-workspace-"));
+		try {
+			initializeWorkspace(root);
+			const missingCwd = buildHarnessyRuntimeContext(join(root, "missing"), {});
+			writeFileSync(join(root, ".harnessy/workspace.json"), "malformed");
+			const invalidManifest = buildHarnessyRuntimeContext(root, {});
+			const invalidRoot = buildHarnessyRuntimeContext(root, { HARNESSY_WORKSPACE_ROOT: join(root, "missing") });
+			for (const context of [missingCwd, invalidManifest, invalidRoot]) {
+				expect(context).toContain("Host isolation invariant:");
+				expect(context).toContain("Workspace context unavailable");
+				expect(context).toContain("harnessy workspace doctor");
+			}
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 	it("includes registered sibling locations without loading private project contents", () => {
 		const root = mkdtempSync(join(tmpdir(), "hsy-workspace-"));
 		try {

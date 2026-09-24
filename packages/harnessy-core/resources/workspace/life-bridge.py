@@ -25,6 +25,18 @@ def main():
     collector_path = Path(script) if mode == "collect" else Path(script).parent / "collect-state"
     collector = runpy.run_path(str(collector_path), run_name="harnessy_workspace_collector")
     globals_ = collector["main"].__globals__
+    workspace_root = Path(snapshot["root"]).resolve()
+    original_read_file = globals_["read_file"]
+
+    def read_workspace_file(path):
+        # Preserve explicit home-level Life inputs, but a workspace reference
+        # must not pull external data into the prompt through a linked leaf.
+        candidate = Path(os.path.abspath(path))
+        if candidate.is_relative_to(workspace_root) and not candidate.resolve().is_relative_to(workspace_root):
+            raise ValueError("Workspace context file escapes workspace")
+        return original_read_file(path)
+
+    globals_["read_file"] = read_workspace_file
     context = Path(snapshot["contextRoot"])
     user = os.environ.get("FLOW_USER", os.environ.get("USER", "default"))
     private = context / "private" / user

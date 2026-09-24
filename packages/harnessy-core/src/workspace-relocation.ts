@@ -118,7 +118,7 @@ export const planWorkspaceRelocation = (
 	const paths = requests.flatMap(({ from, to }) => [workspaceRelativePath(from), workspaceRelativePath(to)]);
 	for (let i = 0; i < paths.length; i++) {
 		const path = paths[i]!;
-		if (overlaps(path, ".harnessy")) throw new Error("Migration control files cannot be relocated");
+		if (overlaps(path.toLowerCase(), ".harnessy")) throw new Error("Migration control files cannot be relocated");
 		for (let j = i + 1; j < paths.length; j++)
 			if (overlaps(path.toLowerCase(), paths[j]!.toLowerCase())) throw new Error("Overlapping relocation paths");
 	}
@@ -175,7 +175,7 @@ const validatePlan = (plan: RelocationPlan): void => {
 			workspaceRelativePath(path);
 			resolveWorkspacePath(plan.root, path);
 			if (
-				overlaps(path, ".harnessy") ||
+				overlaps(path.toLowerCase(), ".harnessy") ||
 				paths.some((existing) => overlaps(existing.toLowerCase(), path.toLowerCase()))
 			)
 				throw new Error("Invalid relocation paths");

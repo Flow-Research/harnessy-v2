@@ -35,6 +35,17 @@ afterEach(() => {
 });
 
 describe("portable workspace", () => {
+	it("reports regular files and links to files as invalid context directories", () => {
+		const directory = root();
+		initializeWorkspace(directory);
+		mkdirSync(join(directory, "app"));
+		writeFileSync(join(directory, "app/context"), "not a vault");
+		registerWorkspaceProject(directory, { id: "app", path: "app", contextDir: "context" });
+		expect(inspectWorkspace(readWorkspace(directory))[0]?.code).toBe("invalid_path");
+		renameSync(join(directory, "app/context"), join(directory, "file"));
+		symlinkSync(join(directory, "file"), join(directory, "app/context"));
+		expect(inspectWorkspace(readWorkspace(directory))[0]?.code).toBe("invalid_path");
+	});
 	it("initializes and registers without changing existing user instructions", () => {
 		const directory = root();
 		writeFileSync(join(directory, "AGENTS.md"), "User policy\n");

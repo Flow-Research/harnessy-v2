@@ -27,11 +27,12 @@ try {
 	assert.equal(run(["list", "--json"], join(after, "group/project/dev")).manifest.projects[0].path, "group/project/dev");
 	assert.equal(run(["doctor", "--workspace-root", after, "--json"]).healthy, true);
 	const core = dirname(dirname(cli));
-	const { prepareWorkspaceLifeCommand } = await import(pathToFileURL(join(core, "dist/workspace-life.js")).href);
 	const scripts = resolve(core, "../capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts");
 	const prompt = join(fixture, "prompt.txt");
-	const prepared = prepareWorkspaceLifeCommand({ id: "packaged-workspace", label: "prompt only", executable: python, args: [join(scripts, "daily-brief"), "--date", "2026-09-24", "--prompt-output", prompt], cwd: after, env: { ...env, AGENTS_LIFE_DIR: join(fixture, ".agents/life") } });
-	execFileSync(python, prepared.command.args, { cwd: after, env: prepared.command.env, stdio: "pipe" });
+	const entry = join(fixture, "installed-workspace-consumer.mjs");
+	const command = { id: "packaged-workspace", label: "prompt only", executable: python, args: [join(scripts, "daily-brief"), "--date", "2026-09-24", "--prompt-output", prompt], cwd: after, env: { HOME: fixture, USER: "tester", FLOW_USER: "tester", AGENTS_LIFE_DIR: join(fixture, ".agents/life"), PYTHONDONTWRITEBYTECODE: "1" } };
+	writeFileSync(entry, `import { execFileSync } from "node:child_process";\nimport { prepareWorkspaceLifeCommand } from ${JSON.stringify(pathToFileURL(join(core, "dist/workspace-life.js")).href)};\nconst prepared = prepareWorkspaceLifeCommand(${JSON.stringify(command)});\nexecFileSync(prepared.command.executable, prepared.command.args, { cwd: prepared.command.cwd, env: { PATH: process.env.PATH, ...prepared.command.env }, stdio: "pipe" });\n`, { mode: 0o600 });
+	execFileSync(process.execPath, [entry], { cwd: after, env, stdio: "pipe" });
 	const text = readFileSync(prompt, "utf8");
 	assert.ok(text.includes("Packaged workspace project sentinel"));
 	assert.ok(text.includes("Packaged workspace shared priority sentinel"));

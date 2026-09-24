@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,13 +54,55 @@ const execute = (command: ExternalCommand) =>
 		cwd: command.cwd,
 		env: { PATH: process.env.PATH, ...command.env },
 		encoding: "utf8",
+		stdio: "pipe",
 		timeout: 30_000,
 		maxBuffer: 2 * 1024 * 1024,
 	});
 
 describe("workspace Life adapter", () => {
+	it("rejects a registered context that has become a regular file", () => {
+		const { home, root, env } = fixture();
+		const context = join(root, "group/project/dev/.jarvis/context");
+		rmSync(context, { recursive: true });
+		writeFileSync(context, "not a vault");
+		expect(() =>
+			prepareWorkspaceLifeCommand({
+				id: "invalid-context",
+				label: "daily",
+				executable: "python3",
+				args: [join(scripts, "daily-brief"), "--prompt-output", join(home, "prompt")],
+				cwd: root,
+				env,
+			}),
+		).toThrow("repair");
+	});
+	it("rejects context files linked outside the workspace before prompt generation", () => {
+		const { home, root, env } = fixture();
+		const outside = join(home, "external.md");
+		writeFileSync(outside, "OUTSIDE_WORKSPACE_SENTINEL");
+		const status = join(root, "group/project/dev/.jarvis/context/status.md");
+		rmSync(status);
+		symlinkSync(outside, status);
+		const output = join(home, "prompt.txt");
+		const prepared = prepareWorkspaceLifeCommand({
+			id: "boundary",
+			label: "daily",
+			executable: "python3",
+			args: [join(scripts, "daily-brief"), "--prompt-output", output],
+			cwd: root,
+			env,
+		});
+		expect(() => execute(prepared.command)).toThrow("Workspace context file escapes workspace");
+		expect(existsSync(output)).toBe(false);
+	});
+
 	it("supplies grouped registered vaults to real preserved collection without crawl-state writes", () => {
 		const { home, root, env } = fixture();
+		const status = join(root, "group/project/dev/.jarvis/context/status.md");
+		renameSync(status, join(root, "status-source.md"));
+		symlinkSync(join(root, "status-source.md"), status);
+		mkdirSync(env.AGENTS_LIFE_DIR, { recursive: true });
+		writeFileSync(join(env.AGENTS_LIFE_DIR, "priorities.md"), "Explicit home-level input");
 		const output = join(home, "collected.json");
 		writeFileSync(output, "", { mode: 0o600 });
 		const prepared = prepareWorkspaceLifeCommand({
@@ -67,6 +118,7 @@ describe("workspace Life adapter", () => {
 		expect(state.project_context_vaults.project.status_md).toContain("relocation sentinel");
 		expect(state.project_context_vaults.project.path).toBe("group/project/dev/.jarvis/context");
 		expect(state.priorities).toBeTruthy();
+		expect(state.priorities.external_exists).toBe(true);
 		expect(existsSync(join(home, ".agents/life/.last-crawl.json"))).toBe(false);
 	});
 

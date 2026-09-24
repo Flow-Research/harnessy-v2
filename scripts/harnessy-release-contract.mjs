@@ -61,6 +61,7 @@ const SOURCE_PACKAGES = Object.freeze([
 			"dist/hsy.js",
 			"dist/index.js",
 			"dist/workspace.js",
+			"dist/workspace-life.js",
 			"dist/workspace-relocation.js",
 			"dist/workspace-state-migration.js",
 			"resources/workspace/life-bridge.py",

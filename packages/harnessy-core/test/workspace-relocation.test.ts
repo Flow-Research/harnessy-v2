@@ -71,6 +71,17 @@ it("rejects destination collisions, nested paths and directory-link escapes", ()
 	symlinkSync(join(root, "old"), join(root, "alias"));
 	expect(() => planWorkspaceRelocation(root, [{ from: "alias/app", to: "new" }])).toThrow();
 });
+it("rejects case variants of migration control paths in generated and loaded plans", () => {
+	const root = fixture();
+	expect(() => planWorkspaceRelocation(root, [{ from: "old/app", to: ".HARNESSY/moved" }])).toThrow("control files");
+	expect(() => planWorkspaceRelocation(root, [{ from: ".HARNESSY", to: "moved" }])).toThrow("control files");
+	const plan = planWorkspaceRelocation(root, [{ from: "old/app", to: "app/dev" }]);
+	const move = plan.moves[0]!;
+	expect(() => executeWorkspaceRelocation({ ...plan, moves: [{ ...move, to: ".HARNESSY/moved" }] }, [])).toThrow(
+		"Invalid relocation paths",
+	);
+	expect(existsSync(join(root, "old/app/tracked.txt"))).toBe(true);
+});
 it("rejects absent or mismatching backups and edits made after planning without moving anything", () => {
 	const root = fixture();
 	const plan = planWorkspaceRelocation(root, [{ from: "old/app", to: "app/dev" }]);

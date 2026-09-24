@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import process from "node:process";
 import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Effect } from "effect";
+import * as Result from "effect/Result";
 import { HarnessError } from "./errors.ts";
 import { HSY_APP_TITLE as APP_TITLE, HSY_CONFIG_DIR as CONFIG_DIR_NAME } from "./hsy-runtime-env.ts";
 import { resolveWorkspace, workspaceAgentContext } from "./workspace.ts";
@@ -275,7 +276,13 @@ export function buildHarnessyRuntimeContext(cwd: string, env: NodeJS.ProcessEnv 
 	const agentDir = env.HSY_CODING_AGENT_DIR?.trim() || join(homedir(), CONFIG_DIR_NAME, "agent");
 	const projectConfigDir = join(cwd, CONFIG_DIR_NAME);
 	const agentName = resolveHarnessyAgentName(env);
-	const workspace = resolveWorkspace({ cwd, env });
+	const workspace = Result.try(() => {
+		const resolved = resolveWorkspace({ cwd, env });
+		return resolved === null ? "" : workspaceAgentContext(resolved, cwd);
+	});
+	const workspaceContext = Result.isSuccess(workspace)
+		? workspace.success
+		: "Workspace context unavailable; run harnessy workspace doctor to repair workspace configuration.";
 
 	return `<harnessy_runtime>
 You are running inside Harnessy (hsy), not the pi executable.
@@ -291,7 +298,7 @@ Host isolation invariant:
 
 Self-healing rule:
 When an extension, package, command, or configuration fails because it assumes Pi-specific paths or identity, inspect the failing Harnessy-local resource, repair it to use HSY_CODING_AGENT_DIR, PI_CODING_AGENT_DIR, PI_CONFIG_DIR, or the canonical .hsy project directory as appropriate, then verify the operation again. Keep the repair scoped to Harnessy; never patch or share Pi's configuration. If a safe local repair is impossible, report the exact incompatible path and package instead of silently falling back to ~/.pi.
-${workspace === null ? "" : workspaceAgentContext(workspace, cwd)}
+${workspaceContext}
 </harnessy_runtime>`;
 }
 

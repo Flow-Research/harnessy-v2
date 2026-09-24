@@ -9,6 +9,7 @@ import {
 	readFileSync,
 	realpathSync,
 	renameSync,
+	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -244,6 +245,12 @@ export const inspectWorkspace = (workspace: ResolvedWorkspace): ReadonlyArray<Wo
 					project: project.id,
 					code: "missing_context",
 					message: `${project.path}/${project.contextDir}`,
+				});
+			else if (!statSync(context).isDirectory())
+				issues.push({
+					project: project.id,
+					code: "invalid_path",
+					message: `Context is not a directory: ${context}`,
 				});
 			if (project.worktreesDir) resolveWorkspacePath(workspace.root, project.worktreesDir);
 		});
