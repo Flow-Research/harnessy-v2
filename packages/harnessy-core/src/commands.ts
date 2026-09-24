@@ -9,6 +9,7 @@ import { mcpCommand } from "./cli/mcp.ts";
 import { skillCommand } from "./cli/skill.ts";
 import { doctorCommand, verifyCommand } from "./cli/verify.ts";
 import { webCommand } from "./cli/web.ts";
+import { workspaceCommand } from "./cli/workspace.ts";
 
 export const rootCommand = Command.make("harnessy").pipe(
 	Command.withSubcommands([
@@ -25,6 +26,7 @@ export const rootCommand = Command.make("harnessy").pipe(
 		jarvisCommand,
 		depsCommand,
 		aiCommand,
+		workspaceCommand,
 	] as const),
 	Command.withDescription("Harnessy capability harness CLI"),
 );
