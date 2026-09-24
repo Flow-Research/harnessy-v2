@@ -27,7 +27,10 @@ import { MEETING_PUBLICATION_STORE_SCHEMA_SQL } from "./store-schema.ts";
 export const provisionMeetingPublicationService = (value: unknown) => {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid_input");
 	const input = value as Record<string, unknown>;
-	if (input.kind === "harnessy.meeting-publication.service-adoption.v1") {
+	if (
+		input.kind === "harnessy.meeting-publication.service-adoption.v1" ||
+		input.kind === "harnessy.meeting-publication.service-remount-adoption.v2"
+	) {
 		const prepared = prepareMeetingPublicationServiceTrustAdoption(input);
 		return writeServiceTrust(prepared.controlDirectory, prepared.trust);
 	}
