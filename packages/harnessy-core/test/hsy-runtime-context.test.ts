@@ -1,7 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionAPI, ExtensionCommandContext, RegisteredCommand } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
+	ExtensionContext,
+	RegisteredCommand,
+} from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vitest";
 import {
@@ -28,6 +33,45 @@ describe("Harnessy runtime context", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
+	it("refreshes resumed workspace context once when the registry changes, including returning to an earlier registry", () => {
+		const root = mkdtempSync(join(tmpdir(), "hsy-resume-workspace-"));
+		try {
+			initializeWorkspace(root);
+			const manifestPath = join(root, ".harnessy/workspace.json");
+			const original = readFileSync(manifestPath, "utf8");
+			const handlers = new Map<string, (event: { reason: string }, ctx: ExtensionContext) => void>();
+			const messages: Array<{ type: string; message: { role: string; customType: string; content: string } }> = [];
+			const sendMessage = vi.fn((message: { customType: string; content: string }) => {
+				messages.push({ type: "message", message: { role: "custom", ...message } });
+			});
+			harnessyWelcomeExtension({
+				on: (name: string, handler: (event: { reason: string }, ctx: ExtensionContext) => void) =>
+					handlers.set(name, handler),
+				registerCommand: () => {},
+				sendMessage,
+			} as unknown as ExtensionAPI);
+			const handler = handlers.get("session_start");
+			if (!handler) throw new Error("Missing startup handler");
+			const ctx = {
+				cwd: root,
+				hasUI: false,
+				sessionManager: { getBranch: () => messages },
+			} as unknown as ExtensionContext;
+			handler({ reason: "startup" }, ctx);
+			handler({ reason: "startup" }, ctx);
+			expect(sendMessage).toHaveBeenCalledTimes(1);
+			mkdirSync(join(root, "app"));
+			registerWorkspaceProject(root, { id: "app", path: "app", contextDir: ".jarvis/context" });
+			handler({ reason: "reload" }, ctx);
+			expect(sendMessage).toHaveBeenCalledTimes(2);
+			writeFileSync(manifestPath, original);
+			handler({ reason: "reload" }, ctx);
+			expect(sendMessage).toHaveBeenCalledTimes(3);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("teaches the agent its isolated host paths and self-healing rule", () => {
 		const context = buildHarnessyRuntimeContext("/work/project", {
 			HSY_CODING_AGENT_DIR: "/home/tester/.hsy/agent",

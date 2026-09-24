@@ -213,7 +213,8 @@ export const registerWorkspaceProject = (root: string, project: WorkspaceProject
 			if (
 				existing.id === candidate.id ||
 				(existsSync(resolveWorkspacePath(root, existing.path)) &&
-					realpathSync(resolveWorkspacePath(root, existing.path)) === realpathSync(path))
+					lstatSync(resolveWorkspacePath(root, existing.path)).dev === lstatSync(path).dev &&
+					lstatSync(resolveWorkspacePath(root, existing.path)).ino === lstatSync(path).ino)
 			)
 				throw new Error("Project ID or checkout already registered");
 		}
@@ -233,7 +234,8 @@ export const inspectWorkspace = (workspace: ResolvedWorkspace): ReadonlyArray<Wo
 				issues.push({ project: project.id, code: "missing_project", message: project.path });
 				return;
 			}
-			const actual = realpathSync(path);
+			const stat = lstatSync(path);
+			const actual = `${stat.dev}:${stat.ino}`;
 			if (seen.has(actual)) issues.push({ project: project.id, code: "duplicate_checkout", message: project.path });
 			seen.add(actual);
 			const context = resolveWorkspacePath(workspace.root, `${project.path}/${project.contextDir}`);

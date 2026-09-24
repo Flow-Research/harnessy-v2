@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -129,4 +138,15 @@ describe("portable workspace", () => {
 		expect(() => initializeWorkspace(directory)).toThrow();
 		expect(readFileSync(lock, "utf8")).toBe("other writer");
 	});
+});
+
+it("rejects alternate-case registrations of the same physical checkout on case-insensitive filesystems", () => {
+	const directory = root();
+	initializeWorkspace(directory);
+	mkdirSync(join(directory, "app"));
+	if (!existsSync(join(directory, "APP"))) return;
+	registerWorkspaceProject(directory, { id: "app", path: "app", contextDir: ".jarvis/context" });
+	expect(() =>
+		registerWorkspaceProject(directory, { id: "duplicate", path: "APP", contextDir: ".jarvis/context" }),
+	).toThrow("already registered");
 });
