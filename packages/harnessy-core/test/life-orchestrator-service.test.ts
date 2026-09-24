@@ -17,6 +17,7 @@ import { NodeServices } from "@effect/platform-node";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
+import { HarnessError } from "../src/errors.ts";
 import { resolveLifeOrchestratorSettings } from "../src/jarvis/life-orchestrator/config.ts";
 import { canonicalLifeBriefPath, scanDeliveredLifeBriefs } from "../src/jarvis/life-orchestrator/history.ts";
 import { runLifeDaily } from "../src/jarvis/life-orchestrator/service.ts";
@@ -256,7 +257,7 @@ describe("Life Orchestrator daily service", () => {
 		const scripts = join(root, "compatibility");
 		mkdirSync(project, { recursive: true });
 		mkdirSync(scripts, { recursive: true });
-		writeFileSync(join(scripts, "daily-brief"), "raise SystemExit(1)\n");
+		writeFileSync(join(scripts, "daily-brief"), "raise SystemExit(0)\n");
 		const settings = resolveLifeOrchestratorSettings({
 			projectRoot: project,
 			homeRoot: root,
@@ -267,11 +268,12 @@ describe("Life Orchestrator daily service", () => {
 		await expect(
 			Effect.runPromise(
 				runLifeDaily(settings, { now: new Date("2026-09-08T04:30:00.000Z") }).pipe(
-					Effect.provide(CommandRunner.layer),
-					Effect.provide(NodeServices.layer),
+					Effect.provideService(CommandRunner, {
+						run: () => Effect.fail(new HarnessError({ message: "synthetic runner failure" })),
+					}),
 				),
 			),
-		).rejects.toThrow("Daily preview compatibility adapter failed");
+		).rejects.toThrow("Unable to start Daily brief preview");
 		expect(
 			existsSync(settings.paths.reviewDirectory)
 				? readdirSync(settings.paths.reviewDirectory).filter((entry) => entry.endsWith(".generated.md"))
