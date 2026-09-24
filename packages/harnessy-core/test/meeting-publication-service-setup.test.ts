@@ -97,77 +97,102 @@ it.each(["state exists", "control exists", "public directory", "overlap", "wrong
 	},
 );
 
-it.each(["valid", "wrong pin", "wrong instance", "active lease", "revoked key", "nonempty output", "unsafe output"])(
-	"adopts existing finite trust without resetting state: %s",
-	(failure) => {
-		const initial = provisionMeetingPublicationService(input);
-		const trust = JSON.parse(readFileSync(initial.trustedKeyring.path, "utf8"));
+it.each([
+	"valid",
+	"remounted replay",
+	"remounted stale hash",
+	"wrong pin",
+	"wrong instance",
+	"active lease",
+	"revoked key",
+	"nonempty output",
+	"unsafe output",
+])("adopts existing finite trust without resetting state: %s", (failure) => {
+	const initial = provisionMeetingPublicationService(input);
+	const trust = JSON.parse(readFileSync(initial.trustedKeyring.path, "utf8"));
+	const currentReplay = { ...trust.replay };
+	if (failure !== "remounted replay" && failure !== "remounted stale hash") {
 		trust.kind = "harnessy.meeting-publication.full-review-trust";
 		trust.audience = "harnessy.meeting-publication.full-review.v1";
-		const finitePath = join(root, "finite-trust.json");
-		const finiteBytes = `${canonicalMeetingPublicationSmokeJson(trust)}\n`;
-		writeFileSync(finitePath, finiteBytes, { mode: 0o600 });
-		const db = new DatabaseSync(trust.replay.path);
-		try {
-			db.prepare("INSERT INTO consumed_authorizations VALUES (?,?,?,?,?,?)").run(
-				"old-session",
-				"old-nonce",
-				"a".repeat(64),
-				"existing-key",
-				"2026-01-01T00:00:00.000Z",
-				"drained",
+	}
+	if (failure === "remounted replay" || failure === "remounted stale hash")
+		trust.replay.device = String(BigInt(trust.replay.device) + 1n);
+	const finitePath = join(root, "finite-trust.json");
+	const finiteBytes = `${canonicalMeetingPublicationSmokeJson(trust)}\n`;
+	writeFileSync(finitePath, finiteBytes, { mode: 0o600 });
+	const db = new DatabaseSync(trust.replay.path);
+	try {
+		db.prepare("INSERT INTO consumed_authorizations VALUES (?,?,?,?,?,?)").run(
+			"old-session",
+			"old-nonce",
+			"a".repeat(64),
+			"existing-key",
+			"2026-01-01T00:00:00.000Z",
+			"drained",
+		);
+		db.exec("UPDATE runtime_metadata SET revocation_sequence=1");
+		db.prepare("INSERT INTO revocations VALUES (1,?,?,?)").run(
+			failure === "revoked key" ? "key" : "authorization",
+			failure === "revoked key" ? "existing-key" : "old-session",
+			"2026-01-01T00:00:00.000Z",
+		);
+		if (failure === "wrong instance") db.prepare("UPDATE runtime_metadata SET instance_id=?").run("b".repeat(64));
+		if (failure === "active lease")
+			db.exec(
+				"INSERT INTO active_lease VALUES (1,'lease','old-session','old-nonce','digest','existing-key','501',1,'boot','expired',0,'0',1)",
 			);
-			db.exec("UPDATE runtime_metadata SET revocation_sequence=1");
-			db.prepare("INSERT INTO revocations VALUES (1,?,?,?)").run(
-				failure === "revoked key" ? "key" : "authorization",
-				failure === "revoked key" ? "existing-key" : "old-session",
-				"2026-01-01T00:00:00.000Z",
-			);
-			if (failure === "wrong instance") db.prepare("UPDATE runtime_metadata SET instance_id=?").run("b".repeat(64));
-			if (failure === "active lease")
-				db.exec(
-					"INSERT INTO active_lease VALUES (1,'lease','old-session','old-nonce','digest','existing-key','501',1,'boot','expired',0,'0',1)",
-				);
-		} finally {
-			db.close();
-		}
-		const control = join(root, "adoption");
-		mkdirSync(control, { mode: failure === "unsafe output" ? 0o755 : 0o700 });
-		if (failure === "nonempty output") writeFileSync(join(control, "owner-file"), "keep");
-		const stat = lstatSync(finitePath, { bigint: true });
-		const adoption = {
-			kind: "harnessy.meeting-publication.service-adoption.v1",
-			controlDirectory: control,
-			trustedKeyring: {
-				path: finitePath,
-				device: stat.dev.toString(),
-				inode: stat.ino.toString(),
-				sha256: failure === "wrong pin" ? "0".repeat(64) : createHash("sha256").update(finiteBytes).digest("hex"),
-			},
-		};
-		const paths = [
-			finitePath,
-			initial.trustedKeyring.path,
-			trust.replay.path,
-			join(root, "state/meeting-publication.sqlite3"),
-		];
-		const before = paths.map((path) => readFileSync(path));
-		const outputBefore = readdirSync(control);
-		if (failure === "valid") {
-			const result = provisionMeetingPublicationService(adoption);
-			expect(result.activated).toBe(false);
-			const adopted = JSON.parse(readFileSync(result.trustedKeyring.path, "utf8"));
-			expect(adopted).toEqual({
-				...trust,
-				kind: "harnessy.meeting-publication.service-trust",
-				audience: "harnessy.meeting-publication.service.v1",
-			});
-			expect(readdirSync(control)).toEqual(["service-trust.json"]);
-			expect(() => provisionMeetingPublicationService(adoption)).toThrow();
-		} else {
-			expect(() => provisionMeetingPublicationService(adoption)).toThrow();
-			expect(readdirSync(control)).toEqual(outputBefore);
-		}
-		expect(paths.map((path) => readFileSync(path))).toEqual(before);
-	},
-);
+	} finally {
+		db.close();
+	}
+	const control = join(root, "adoption");
+	mkdirSync(control, { mode: failure === "unsafe output" ? 0o755 : 0o700 });
+	if (failure === "nonempty output") writeFileSync(join(control, "owner-file"), "keep");
+	const stat = lstatSync(finitePath, { bigint: true });
+	const remount = failure === "remounted replay" || failure === "remounted stale hash";
+	const adoption = {
+		kind: remount
+			? ("harnessy.meeting-publication.service-remount-adoption.v2" as const)
+			: ("harnessy.meeting-publication.service-adoption.v1" as const),
+		controlDirectory: control,
+		trustedKeyring: {
+			path: finitePath,
+			device: stat.dev.toString(),
+			inode: stat.ino.toString(),
+			sha256: failure === "wrong pin" ? "0".repeat(64) : createHash("sha256").update(finiteBytes).digest("hex"),
+		},
+		...(remount
+			? {
+					replaySha256:
+						failure === "remounted stale hash"
+							? "0".repeat(64)
+							: createHash("sha256").update(readFileSync(trust.replay.path)).digest("hex"),
+					expectedRevocationSequence: 1,
+				}
+			: {}),
+	};
+	const paths = [
+		finitePath,
+		initial.trustedKeyring.path,
+		trust.replay.path,
+		join(root, "state/meeting-publication.sqlite3"),
+	];
+	const before = paths.map((path) => readFileSync(path));
+	const outputBefore = readdirSync(control);
+	if (failure === "valid" || failure === "remounted replay") {
+		const result = provisionMeetingPublicationService(adoption);
+		expect(result.activated).toBe(false);
+		const adopted = JSON.parse(readFileSync(result.trustedKeyring.path, "utf8"));
+		expect(adopted).toEqual({
+			...trust,
+			kind: "harnessy.meeting-publication.service-trust",
+			audience: "harnessy.meeting-publication.service.v1",
+			replay: currentReplay,
+		});
+		expect(readdirSync(control)).toEqual(["service-trust.json"]);
+		expect(() => provisionMeetingPublicationService(adoption)).toThrow();
+	} else {
+		expect(() => provisionMeetingPublicationService(adoption)).toThrow();
+		expect(readdirSync(control)).toEqual(outputBefore);
+	}
+	expect(paths.map((path) => readFileSync(path))).toEqual(before);
+});

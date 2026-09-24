@@ -1473,11 +1473,20 @@ export const encodeMeetingPublicationServiceEnrollmentRequest = (value: unknown)
 /** Inert adoption of existing trust. Does not promote or sign an old authorization. */
 export const prepareMeetingPublicationServiceTrustAdoption = (value: unknown) => {
 	const input = decode(
-		Schema.Struct({
-			kind: Schema.Literal("harnessy.meeting-publication.service-adoption.v1"),
-			trustedKeyring: BoundFile,
-			controlDirectory: Schema.String,
-		}),
+		Schema.Union([
+			Schema.Struct({
+				kind: Schema.Literal("harnessy.meeting-publication.service-adoption.v1"),
+				trustedKeyring: BoundFile,
+				controlDirectory: Schema.String,
+			}),
+			Schema.Struct({
+				kind: Schema.Literal("harnessy.meeting-publication.service-remount-adoption.v2"),
+				trustedKeyring: BoundFile,
+				controlDirectory: Schema.String,
+				replaySha256: Sha256,
+				expectedRevocationSequence: Schema.Int,
+			}),
+		]),
 		value,
 	);
 	const uid = process.geteuid?.();
@@ -1485,7 +1494,14 @@ export const prepareMeetingPublicationServiceTrustAdoption = (value: unknown) =>
 	const owner = BigInt(uid);
 	assertPrivateDirectory(input.controlDirectory, owner);
 	if (readdirSync(input.controlDirectory).length !== 0) fail("unsafe_input");
-	const file = readCanonical(input.trustedKeyring.path, owner, "private", FullReviewTrustDocument);
+	const file = readCanonical(
+		input.trustedKeyring.path,
+		owner,
+		"private",
+		input.kind === "harnessy.meeting-publication.service-adoption.v1"
+			? FullReviewTrustDocument
+			: Schema.Union([FullReviewTrustDocument, ServiceTrustDocument]),
+	);
 	if (
 		!identityMatches(file.identity, input.trustedKeyring) ||
 		sha256MeetingPublicationSmokeBytes(file.bytes) !== input.trustedKeyring.sha256
@@ -1493,7 +1509,16 @@ export const prepareMeetingPublicationServiceTrustAdoption = (value: unknown) =>
 		fail("invalid_signature");
 	validateTrust(file.value);
 	const replay = readStableMeetingPublicationSmokeFile(file.value.replay.path, owner, "private", MAX_ARTIFACT_BYTES);
-	if (!identityMatches(replay.identity, file.value.replay)) fail("replay_unavailable");
+	if (input.kind === "harnessy.meeting-publication.service-adoption.v1") {
+		if (!identityMatches(replay.identity, file.value.replay)) fail("replay_unavailable");
+	} else if (
+		replay.identity.path !== file.value.replay.path ||
+		replay.identity.inode !== file.value.replay.inode ||
+		sha256MeetingPublicationSmokeBytes(replay.bytes) !== input.replaySha256 ||
+		input.expectedRevocationSequence < 0
+	) {
+		fail("replay_unavailable");
+	}
 	const before = assertMeetingPublicationRollbackDatabaseFile(replay.identity.path);
 	const database = new DatabaseSync(replay.identity.path, { readOnly: true, allowExtension: false, timeout: 1000 });
 	try {
@@ -1504,7 +1529,9 @@ export const prepareMeetingPublicationServiceTrustAdoption = (value: unknown) =>
 			metadata?.instance_id !== file.value.replay.instanceId ||
 			typeof metadata.revocation_sequence !== "number" ||
 			!Number.isSafeInteger(metadata.revocation_sequence) ||
-			metadata.revocation_sequence < 0
+			metadata.revocation_sequence < 0 ||
+			(input.kind === "harnessy.meeting-publication.service-remount-adoption.v2" &&
+				metadata.revocation_sequence !== input.expectedRevocationSequence)
 		)
 			fail("replay_unavailable");
 		if (database.prepare("SELECT 1 FROM active_lease LIMIT 1").get() !== undefined) fail("lease_unavailable");
@@ -1528,6 +1555,7 @@ export const prepareMeetingPublicationServiceTrustAdoption = (value: unknown) =>
 			...file.value,
 			kind: "harnessy.meeting-publication.service-trust" as const,
 			audience: MEETING_PUBLICATION_SERVICE_AUDIENCE,
+			replay: { ...file.value.replay, device: replay.identity.device, inode: replay.identity.inode },
 		},
 	};
 };
