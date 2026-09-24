@@ -6,7 +6,10 @@ import { createInterface } from "node:readline";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { isNativeCommunityReviewProcess } from "../src/jarvis/community-briefing/operational-runtime.ts";
+import {
+	darwinProcessExecutableFromLsof,
+	isNativeCommunityReviewProcess,
+} from "../src/jarvis/community-briefing/operational-runtime.ts";
 
 const suppliedCli = process.env.HARNESSY_COMMUNITY_TEST_CLI;
 if (suppliedCli !== undefined && (!isAbsolute(suppliedCli) || !existsSync(suppliedCli)))
@@ -167,12 +170,25 @@ it.each(["configured", "override"])(
 						encoding: "utf8",
 						timeout: 2000,
 					});
+					const processExecutable =
+						process.platform === "linux"
+							? `/proc/${reviewer.pid}/exe`
+							: darwinProcessExecutableFromLsof(
+									spawnSync("/usr/sbin/lsof", ["-a", "-p", String(reviewer.pid), "-d", "txt", "-F0pfn"], {
+										encoding: "utf8",
+										timeout: 2000,
+										maxBuffer: 1_000_000,
+									}).stdout,
+									reviewer.pid!,
+								);
 					expect(command.status).toBe(0);
 					expect(executable.status).toBe(0);
+					expect(processExecutable).toBeDefined();
 					expect(
 						isNativeCommunityReviewProcess(
 							command.stdout.trim(),
-							process.platform === "linux" ? `/proc/${reviewer.pid}/exe` : executable.stdout.trim(),
+							executable.stdout.trim(),
+							processExecutable!,
 							process.execPath,
 							suppliedCli,
 						),
