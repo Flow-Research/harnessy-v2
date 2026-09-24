@@ -15,7 +15,7 @@ describe("meeting HTTP response lifetime", () => {
 			{ kind: "status", status: 408, code: "request_timeout", retryable: true },
 			{ kind: "status", status: 503, code: "provider_unavailable", retryable: true },
 			{ kind: "invalid", status: 200, code: "invalid_response", retryable: true },
-			{ kind: "oversized", status: 200, code: "response_too_large", retryable: true },
+			{ kind: "oversized", status: 200, code: "response_too_large", retryable: false },
 			{ kind: "disconnect", status: 200, code: "network_error", retryable: true },
 			{ kind: "timeout", status: 200, code: "timeout", retryable: true },
 		])(
@@ -71,7 +71,7 @@ describe("meeting HTTP response lifetime", () => {
 						const uncertain = method !== "GET" && ![401, 403, 429].includes(status);
 						expect(result.failure.code).toBe(uncertain ? "delivery_uncertain" : code);
 						expect(result.failure.retryable).toBe(uncertain ? false : retryable);
-						if (uncertain) expect(result.failure.retryAfterSeconds).toBeNull();
+						if (uncertain || kind === "oversized") expect(result.failure.retryAfterSeconds).toBeNull();
 						if (status === 429) expect(result.failure.retryAfterSeconds).toBe(17);
 					}
 					expect(JSON.stringify(result)).not.toContain("PRIVATE_RESPONSE_CANARY");
@@ -152,7 +152,13 @@ describe("meeting HTTP response lifetime", () => {
 				});
 			const rejected = await Effect.runPromise(invoke("/rejected").pipe(Effect.result));
 			expect(Result.isFailure(rejected)).toBe(true);
-			if (Result.isFailure(rejected)) expect(rejected.failure.code).toBe(expected);
+			if (Result.isFailure(rejected)) {
+				expect(rejected.failure.code).toBe(expected);
+				if (expected === "response_too_large") {
+					expect(rejected.failure.retryable).toBe(false);
+					expect(rejected.failure.retryAfterSeconds).toBeNull();
+				}
+			}
 			expect(JSON.stringify(rejected)).not.toContain("PRIVATE_RESPONSE_CANARY");
 			expect(retained).toHaveLength(1);
 			await expect.poll(() => responseClosed, { timeout: 500 }).toBe(true);

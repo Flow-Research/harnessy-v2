@@ -466,6 +466,7 @@ const publish = Effect.fn("GoogleMeetingPublication.publish")(function* (
 			: yield* getDocumentCheckpoint(context, input.existingDocId, parts, input.itemId);
 	const folderId = checkpoint === null ? yield* ensureFolderPath(context, parts) : null;
 	let docId = checkpoint?.docId ?? (folderId === null ? null : yield* findDocument(context, folderId, input.itemId));
+	const existingDocument = docId !== null;
 	// Keep a proven legacy document in its original folder and marker namespace.
 	const appProperties = community
 		? {
@@ -493,7 +494,18 @@ const publish = Effect.fn("GoogleMeetingPublication.publish")(function* (
 		});
 		if (!safeId(created.id)) return yield* checkpointFailure();
 		docId = created.id;
-	} else {
+	}
+	const document = yield* googleRequest(
+		context,
+		"GET",
+		"docs",
+		`/documents/${encodeURIComponent(docId)}`,
+		DocumentResponse,
+		{ params: { fields: "body/content/endIndex" } },
+	);
+	// Validate the bounded Docs read before changing metadata on an existing
+	// document. A failed read must leave the retained receipt untouched.
+	if (existingDocument) {
 		const updated = yield* googleRequest(
 			context,
 			"PATCH",
@@ -507,13 +519,6 @@ const publish = Effect.fn("GoogleMeetingPublication.publish")(function* (
 		);
 		if (updated.id !== docId) return yield* checkpointFailure();
 	}
-	const document = yield* googleRequest(
-		context,
-		"GET",
-		"docs",
-		`/documents/${encodeURIComponent(docId)}`,
-		DocumentResponse,
-	);
 	const rendered = renderMeetingMarkdown(input.markdown);
 	yield* googleRequest(context, "POST", "docs", `/documents/${encodeURIComponent(docId)}:batchUpdate`, EmptyObject, {
 		body: { requests: googleMeetingBatchRequests(rendered, documentEndIndex(document)) },

@@ -1,12 +1,15 @@
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 import {
 	communityProcessLinePattern,
+	darwinProcessExecutableFromLsof,
 	isNativeCommunityReviewLaunchAgent,
 	isNativeCommunityReviewProcess,
+	parseCommunityProcessConfirmation,
 } from "../src/jarvis/community-briefing/operational-runtime.ts";
 
 it("parses signed OS UIDs without accepting malformed identities or negative PIDs", () => {
@@ -28,6 +31,35 @@ it("parses the real OS process inventory used by the writer-exclusion guard", ()
 	const records = observed.stdout.split("\n").filter((line) => line.trim());
 	expect(records.length).toBeGreaterThan(0);
 	for (const record of records) expect(communityProcessLinePattern.test(record)).toBe(true);
+});
+
+it("parses the newline-terminated single PID confirmation without changing command whitespace", () => {
+	const observed = spawnSync("/bin/ps", ["-p", String(process.pid), "-o", "uid=,pid=,command="], {
+		encoding: "utf8",
+		timeout: 2000,
+		maxBuffer: 1_000_000,
+	});
+	expect(observed.status).toBe(0);
+	expect(observed.stdout.endsWith("\n")).toBe(true);
+	const match = parseCommunityProcessConfirmation(observed.stdout);
+	expect(Number(match?.[1])).toBe(process.geteuid?.());
+	expect(Number(match?.[2])).toBe(process.pid);
+	expect(match?.[3]).toBe(observed.stdout.slice(0, -1).match(communityProcessLinePattern)?.[3]);
+
+	const trailingSpaces = parseCommunityProcessConfirmation("501 123 /bin/example --value  \n");
+	expect(trailingSpaces?.[3]).toBe("/bin/example --value  ");
+});
+
+it("rejects ambiguous or malformed PID confirmation output", () => {
+	for (const output of [
+		"",
+		"\n",
+		"501 123 /bin/example\n\n",
+		"501 123 /bin/example\n501 124 /bin/other\n",
+		"501 123 /bin/example\r\n",
+		"501 123\n",
+	])
+		expect(parseCommunityProcessConfirmation(output), JSON.stringify(output)).toBeUndefined();
 });
 
 it("recognizes only the byte-identical installed review sibling of the service tree", () => {
@@ -55,6 +87,7 @@ it("recognizes only the byte-identical installed review sibling of the service t
 		const matches = (path: string) =>
 			isNativeCommunityReviewProcess(
 				`${process.execPath} ${path} jarvis community briefing review serve --port 8872`,
+				process.execPath,
 				process.execPath,
 				process.execPath,
 				entry,
@@ -86,6 +119,93 @@ it("requires a loaded native review job to own an independently verified process
 	expect(isNativeCommunityReviewLaunchAgent(label, `${output}\npid = 1\n`, verified)).toBe(false);
 });
 
+it("uses the first program-text record without confusing later library mappings", () => {
+	const output = "p42\0\nftxt\0n/releases/old/bin/node\0\nftxt\0n/releases/old/native-addon.node\0\n";
+	expect(darwinProcessExecutableFromLsof(output, 42)).toBe("/releases/old/bin/node");
+	expect(darwinProcessExecutableFromLsof(output, 43)).toBeUndefined();
+	expect(darwinProcessExecutableFromLsof("p42\0\nftxt\0relative\0\n", 42)).toBeUndefined();
+});
+
+it.skipIf(process.platform !== "darwin")(
+	"keeps executable identity bound to a living PID when its launch symlink is retargeted",
+	async () => {
+		const root = mkdtempSync(join(tmpdir(), "community-pid-identity-"));
+		const current = join(root, "current-node");
+		const future = join(root, "future-node");
+		const entry = join(root, "cli.js");
+		symlinkSync(process.execPath, current);
+		writeFileSync(future, "future executable identity\n");
+		writeFileSync(entry, "// Native review fixture.\n");
+		const child = spawn(current, ["-e", "setInterval(() => undefined, 1000)"], { stdio: "ignore" });
+		try {
+			await once(child, "spawn");
+			const observeExecutable = () => {
+				const observed = spawnSync("/usr/sbin/lsof", ["-a", "-p", String(child.pid), "-d", "txt", "-F0pfn"], {
+					encoding: "utf8",
+					timeout: 2_000,
+					maxBuffer: 1_000_000,
+				});
+				expect(observed.status, observed.stderr).toBe(0);
+				return darwinProcessExecutableFromLsof(observed.stdout, child.pid!);
+			};
+			expect(observeExecutable()).toBe(realpathSync(process.execPath));
+
+			rmSync(current);
+			symlinkSync(future, current);
+			expect(realpathSync(current)).toBe(realpathSync(future));
+			const pidExecutable = observeExecutable();
+			expect(pidExecutable).toBe(realpathSync(process.execPath));
+			const commandLine = `${current} ${entry} jarvis community briefing review serve --port 8872`;
+			expect(isNativeCommunityReviewProcess(commandLine, current, pidExecutable!, future, entry)).toBe(false);
+			expect(isNativeCommunityReviewProcess(commandLine, current, pidExecutable!, process.execPath, entry)).toBe(
+				true,
+			);
+		} finally {
+			if (child.exitCode === null && child.signalCode === null) {
+				child.kill("SIGTERM");
+				await once(child, "exit");
+			}
+			rmSync(root, { recursive: true, force: true });
+		}
+	},
+);
+
+it("accepts a verified release symlink but rejects other executables and Node options", () => {
+	const root = mkdtempSync(join(tmpdir(), "community-release-identity-"));
+	try {
+		const executable = join(root, "current node");
+		const entry = join(root, "cli.js");
+		const other = join(root, "other-node");
+		symlinkSync(process.execPath, executable);
+		writeFileSync(entry, "// Native review fixture.\n");
+		writeFileSync(other, "// Not the expected executable.\n");
+		const route = "jarvis community briefing review serve --port 8872";
+		expect(
+			isNativeCommunityReviewProcess(
+				`${executable} ${entry} ${route}`,
+				executable,
+				process.execPath,
+				process.execPath,
+				entry,
+			),
+		).toBe(true);
+		expect(isNativeCommunityReviewProcess(`${other} ${entry} ${route}`, other, other, process.execPath, entry)).toBe(
+			false,
+		);
+		expect(
+			isNativeCommunityReviewProcess(
+				`${executable} --require ${other} ${entry} ${route}`,
+				executable,
+				process.execPath,
+				process.execPath,
+				entry,
+			),
+		).toBe(false);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 it("requires the exact native review entry and independently observed Node executable", () => {
 	const root = mkdtempSync(join(tmpdir(), "community-process-identity-"));
 	try {
@@ -110,6 +230,7 @@ it("requires the exact native review entry and independently observed Node execu
 							`${executable} ${script} ${route}${suffix}`,
 							observed,
 							process.execPath,
+							process.execPath,
 							entry,
 						),
 					).toBe(true);
@@ -125,11 +246,21 @@ it("requires the exact native review entry and independently observed Node execu
 			`${process.execPath} ${entry} jarvis community briefing generate`,
 			`${process.execPath} ${entry} jarvis meeting review serve`,
 		]) {
-			expect(isNativeCommunityReviewProcess(line, observed, process.execPath, entry), line).toBe(false);
+			expect(isNativeCommunityReviewProcess(line, observed, process.execPath, process.execPath, entry), line).toBe(
+				false,
+			);
 		}
-		expect(isNativeCommunityReviewProcess(`node ${entry} ${route}`, "/bin/sh", process.execPath, entry)).toBe(false);
+		expect(isNativeCommunityReviewProcess(`node ${entry} ${route}`, "node", "/bin/sh", process.execPath, entry)).toBe(
+			false,
+		);
 		expect(() =>
-			isNativeCommunityReviewProcess(`node ${entry} ${route}`, join(root, "missing"), process.execPath, entry),
+			isNativeCommunityReviewProcess(
+				`node ${entry} ${route}`,
+				"node",
+				join(root, "missing"),
+				process.execPath,
+				entry,
+			),
 		).toThrow();
 	} finally {
 		rmSync(root, { recursive: true, force: true });

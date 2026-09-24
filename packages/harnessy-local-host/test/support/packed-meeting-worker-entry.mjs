@@ -411,7 +411,7 @@ try {
 	const failedRow = afterFailure[1];
 	const notificationArgs = JSON.parse(readFileSync(notificationArgsPath, "utf8"));
 	const executeIndex = notificationArgs.indexOf("-execute");
-	if (executeIndex < 0 || notificationArgs[executeIndex + 1] !== `${JSON.stringify(reviewOpenPath)} --state-path ${JSON.stringify(config.statePath)}`) {
+	if (executeIndex < 0 || notificationArgs[executeIndex + 1] !== `exec '${reviewOpenPath.replaceAll("'", "'\\''")}' --state-path '${config.statePath.replaceAll("'", "'\\''")}'`) {
 		throw new Error("Packed worker lost the signed review-open command before notification delivery.");
 	}
 	if (

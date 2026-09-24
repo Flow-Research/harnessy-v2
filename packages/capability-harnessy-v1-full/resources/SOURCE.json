@@ -2539,18 +2539,18 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "cb53869328ee89fb74d2dda60184330e6085ee025e058d0b3b0be18ace0ac075",
+    "digest": "b36c80d72476ff1ddad9e9e9209fd6ab186d9faf8c3b69889e3d95de390cbee1",
     "fileCount": 708,
-    "byteCount": 4935186
+    "byteCount": 4936757
   },
   "projections": [
     {
       "id": "flow-install",
       "source": "tools/flow-install",
       "projection": "flow-install",
-      "digest": "43b36bb7ed5d14acfad6af57557d9d73286c5c892fa326e2dc58fe7d0ceed256",
+      "digest": "26764f7175a36dfdb787da4d4dc35aa0f5b9602738f817f3bcc90f5833dc69f7",
       "fileCount": 338,
-      "byteCount": 1865653
+      "byteCount": 1867224
     },
     {
       "id": "context-vault",

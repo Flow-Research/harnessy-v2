@@ -100,20 +100,17 @@ describe("Life Orchestrator schedule cutover", () => {
 		const dailyArgv = [...dailyArgumentsXml.matchAll(/<string>(.*?)<\/string>/g)].map((match) => match[1]!);
 		const argumentsXml = readFileSync(weekly!.path, "utf8").split("<array>")[1]!.split("</array>")[0]!;
 		const argv = [...argumentsXml.matchAll(/<string>(.*?)<\/string>/g)].map((match) => match[1]!);
-		expect(dailyArgv.slice(0, 12)).toEqual([
+		expect(dailyArgv.slice(0, 8)).toEqual([
 			node,
 			cli,
 			"jarvis",
 			"life",
-			"draft",
-			"--kind",
 			"daily",
-			"--timeout-seconds",
-			"600",
 			"--max-output-bytes",
 			"1048576",
 			"--target",
 		]);
+		expect(dailyArgv).not.toContain("draft");
 		expect(argv.slice(0, 12)).toEqual([
 			node,
 			cli,

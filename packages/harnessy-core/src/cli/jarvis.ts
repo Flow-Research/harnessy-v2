@@ -72,6 +72,10 @@ const forceDailyOption = Options.boolean("force").pipe(
 	Options.withDefault(false),
 	Options.withDescription("Regenerate today's brief and update its existing journal entry through V2."),
 );
+const dailyMaximumOutputBytesOption = Options.integer("max-output-bytes").pipe(
+	Options.withDefault(1048576),
+	Options.withDescription("Maximum accepted generated daily brief, 1–1048576 UTF-8 bytes."),
+);
 const noAgentFallbackOption = Options.boolean("no-agent-fallback").pipe(
 	Options.withDefault(false),
 	Options.withDescription("Run only deterministic RSS and Crossref discovery."),
@@ -206,6 +210,7 @@ export const jarvisLifeDailyCommand = Command.make(
 		...lifeOptions,
 		preview: previewOption,
 		force: forceDailyOption,
+		maximumOutputBytes: dailyMaximumOutputBytesOption,
 		prepareNativePrompt: prepareNativePromptOption,
 		draftModel: draftModelOption,
 		nativeRequest: nativeRequestOption,
@@ -218,6 +223,7 @@ export const jarvisLifeDailyCommand = Command.make(
 		compatibilityRoot,
 		preview,
 		force,
+		maximumOutputBytes,
 		prepareNativePrompt,
 		draftModel,
 		nativeRequest,
@@ -226,6 +232,8 @@ export const jarvisLifeDailyCommand = Command.make(
 		json,
 	}) =>
 		Effect.gen(function* () {
+			if (maximumOutputBytes < 1 || maximumOutputBytes > 1048576)
+				return yield* Effect.fail(new Error("Daily output limit must be between 1 and 1048576 bytes."));
 			const settings = lifeSettings(target, homeRoot, compatibilityRoot);
 			const requestPath = Option.getOrUndefined(nativeRequest);
 			const grantPath = Option.getOrUndefined(nativeGrant);
@@ -255,6 +263,7 @@ export const jarvisLifeDailyCommand = Command.make(
 			const result = yield* runLifeDaily(settings, {
 				publish: !preview,
 				force,
+				maximumOutputBytes,
 				nativePreview:
 					nativePaths.length === 3
 						? { requestPath: requestPath!, grantPath: grantPath!, trustedPublicKeyPath: trustedPublicKeyPath! }

@@ -1609,7 +1609,7 @@ describe("meeting publication provider integrations", () => {
 			"-group",
 			"harnessy-meeting-publication",
 			"-execute",
-			`${JSON.stringify(reviewOpenPath)} --state-path ${JSON.stringify(statePath)}`,
+			`exec '${reviewOpenPath}' --state-path '${statePath}'`,
 		]);
 		expect(readFileSync(recordPath, "utf8")).not.toContain("meeting-publication-v2-review.token");
 	});
@@ -1661,7 +1661,7 @@ describe("meeting publication provider integrations", () => {
 							"-group",
 							"harnessy-meeting-publication-google",
 							"-execute",
-							`${JSON.stringify(reviewOpenPath)} --state-path ${JSON.stringify(statePath)}`,
+							`exec '${reviewOpenPath}' --state-path '${statePath}'`,
 						]);
 						if (entry.failure !== "authentication") expect(message).not.toContain("sign in again");
 					}
@@ -1675,9 +1675,7 @@ describe("meeting publication provider integrations", () => {
 					const boundaryArgs = JSON.parse(readFileSync(recordPath, "utf8"));
 					expect(boundaryArgs[3]).toContain("1000000 meetings affected.");
 					expect(boundaryArgs[5]).toBe("harnessy-meeting-publication-discord");
-					expect(boundaryArgs[7]).toBe(
-						`${JSON.stringify(reviewOpenPath)} --state-path ${JSON.stringify(statePath)}`,
-					);
+					expect(boundaryArgs[7]).toBe(`exec '${reviewOpenPath}' --state-path '${statePath}'`);
 					// A marker proves rejected inputs never spawn the configured executable.
 					writeFileSync(recordPath, "NOT_SPAWNED");
 					for (const account of [

@@ -110,6 +110,60 @@ const withGoogle = <A>(
 	);
 
 describe("Google legacy checkpoint provenance", () => {
+	it("projects only end indexes and validates the document read before updating retained metadata", async () => {
+		const wire = seedLegacy();
+		wire.documents.set(input.existingDocId, {
+			body: { content: [{ endIndex: 300_001, textRun: "x".repeat(300_000) }] },
+		});
+		const result = await Effect.runPromise(withGoogle(wire, (publish) => publish()));
+		expect(result).toEqual({
+			ok: true,
+			data: {
+				docId: input.existingDocId,
+				docUrl: `https://docs.google.com/document/d/${input.existingDocId}/view`,
+			},
+		});
+		const documentRead = wire.requests.findIndex(
+			(request) => request.method === "GET" && request.path === `/documents/${input.existingDocId}`,
+		);
+		const metadataUpdate = wire.requests.findIndex(
+			(request) => request.method === "PATCH" && request.path === `/files/${input.existingDocId}`,
+		);
+		expect(documentRead).toBeGreaterThanOrEqual(0);
+		expect(wire.requests[documentRead]?.query).toBe("?fields=body%2Fcontent%2FendIndex");
+		expect(metadataUpdate).toBeGreaterThan(documentRead);
+		expect(wire.requests.filter((request) => request.method === "POST" && request.path === "/files")).toEqual([]);
+		expect(wire.documents.get(input.existingDocId)).toMatchObject({
+			lastBatch: {
+				requests: expect.arrayContaining([{ deleteContentRange: { range: { startIndex: 1, endIndex: 300_000 } } }]),
+			},
+		});
+	});
+
+	it("does not mutate retained metadata when the projected document read exceeds its bound", async () => {
+		const wire = seedLegacy();
+		wire.failures.push({
+			method: "GET",
+			path: `/documents/${input.existingDocId}`,
+			status: 200,
+			headers: { "content-length": "300000" },
+			body: { body: { content: [{ endIndex: 30 }] } },
+		});
+		const before = structuredClone(wire.files.get(input.existingDocId));
+		const result = await Effect.runPromise(withGoogle(wire, (publish) => publish()));
+		expect(result).toMatchObject({
+			ok: false,
+			error: {
+				code: "response_too_large",
+				retryable: false,
+				details: { retryAfterSeconds: null },
+			},
+		});
+		expect(wire.requests.every((request) => request.method === "GET")).toBe(true);
+		expect(wire.files.get(input.existingDocId)).toEqual(before);
+		expect(wire.permissions.size).toBe(0);
+	});
+
 	it("updates an explicitly retained legacy ID across approved revisions without creating or converting folders", async () => {
 		const wire = seedLegacy();
 		wire.failures.push({ method: "GET", path: "/files/root", status: 404 });

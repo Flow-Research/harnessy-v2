@@ -50,14 +50,15 @@ const scheduleFor = (
 	readonly arguments: ReadonlyArray<string>;
 } => {
 	if (label.endsWith("learning-research")) return { hour: 4, minute: 15, weekday: null, arguments: ["research"] };
-	// Scheduled synthesis must stop at a private review artifact. Publication is
-	// a separate, explicit owner action after review.
+	// Daily delivery is an established owner-configured automation: it writes the
+	// canonical brief and its Anytype journal entry. Weekly synthesis remains a
+	// private review artifact because it has no automated publication contract.
 	if (label.endsWith("daily-brief")) {
 		return {
 			hour: 5,
 			minute: 30,
 			weekday: null,
-			arguments: ["draft", "--kind", "daily", "--timeout-seconds", "600", "--max-output-bytes", "1048576"],
+			arguments: ["daily", "--max-output-bytes", "1048576"],
 		};
 	}
 	return {

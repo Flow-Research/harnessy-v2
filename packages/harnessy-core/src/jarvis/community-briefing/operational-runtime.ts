@@ -42,7 +42,8 @@ const command = (path: string, args: ReadonlyArray<string>) => {
  */
 export const isNativeCommunityReviewProcess = (
 	commandLine: string,
-	observedExecutable: string,
+	launchExecutable: string,
+	processExecutable: string,
 	expectedExecutable: string,
 	reviewEntry: string,
 ): boolean => {
@@ -51,9 +52,11 @@ export const isNativeCommunityReviewProcess = (
 	if (routeIndex < 0) return false;
 	const suffix = commandLine.slice(routeIndex + route.length);
 	if (suffix !== "" && !suffix.startsWith(" ")) return false;
-	if (realpathSync(observedExecutable) !== realpathSync(expectedExecutable)) return false;
+	if (realpathSync(processExecutable) !== realpathSync(expectedExecutable)) return false;
 	const prefix = commandLine.slice(0, routeIndex);
-	for (const executable of [expectedExecutable, "node"]) {
+	// The launch spelling may be a stable release symlink. It is only argv
+	// syntax; processExecutable is independently bound to the living PID.
+	for (const executable of [expectedExecutable, launchExecutable, "node"]) {
 		if (!prefix.startsWith(`${executable} `)) continue;
 		const entry = prefix.slice(executable.length + 1);
 		// Require an absolute script path and no preceding Node execution options.
@@ -98,6 +101,30 @@ export const isNativeCommunityReviewProcess = (
 	return false;
 };
 
+/** @internal Parse lsof's NUL-delimited field output. On macOS the first txt
+ * record is the process executable; later txt records may be libraries.
+ */
+export const darwinProcessExecutableFromLsof = (output: string, pid: number): string | undefined => {
+	const lines = output.split("\n");
+	if (lines.pop() !== "" || lines.shift() !== `p${pid}\0` || lines.length === 0) return undefined;
+	const paths: string[] = [];
+	for (const line of lines) {
+		const fields = line.split("\0");
+		if (fields.pop() !== "" || fields.length !== 2 || fields[0] !== "ftxt" || !fields[1]?.startsWith("n/"))
+			return undefined;
+		paths.push(fields[1].slice(1));
+	}
+	return paths[0];
+};
+
+const darwinProcessExecutable = (pid: number): string => {
+	const result = command("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-F0pfn"]);
+	if (result.status !== 0 || result.stderr !== "") throw new Error("probe_failed");
+	const executable = darwinProcessExecutableFromLsof(result.stdout, pid);
+	if (executable === undefined) throw new Error("probe_failed");
+	return executable;
+};
+
 /** A label alone never exempts a legacy or stopped reviewer. */
 export const isNativeCommunityReviewLaunchAgent = (
 	label: string,
@@ -113,6 +140,13 @@ export const isNativeCommunityReviewLaunchAgent = (
 };
 /** @internal Grammar of one OS process record, before filtering by owner. */
 export const communityProcessLinePattern = /^\s*(-?\d+)\s+(\d+)\s+(.+)$/u;
+
+/** @internal Parse the exact single record returned by a PID-scoped ps probe. */
+export const parseCommunityProcessConfirmation = (output: string): RegExpExecArray | undefined => {
+	const record = output.endsWith("\n") ? output.slice(0, -1) : output;
+	if (record === "" || record.includes("\n") || record.includes("\r")) return undefined;
+	return communityProcessLinePattern.exec(record) ?? undefined;
+};
 
 /** Bounded known-process evidence, not protection from arbitrary same-UID code. */
 const proveCompatibilityAbsent = () => {
@@ -133,12 +167,28 @@ const proveCompatibilityAbsent = () => {
 				match[3],
 			)
 		) {
-			const executable = command("/bin/ps", ["-p", match[2], "-o", "comm="]);
+			const launchExecutable = command("/bin/ps", ["-p", match[2], "-o", "comm="]);
+			const processExecutable =
+				process.platform === "linux"
+					? `/proc/${match[2]}/exe`
+					: process.platform === "darwin"
+						? darwinProcessExecutable(Number(match[2]))
+						: (() => {
+								throw new Error("unsupported_platform");
+							})();
+			const confirmed = command("/bin/ps", ["-p", match[2], "-o", "uid=,pid=,command="]);
+			const confirmedMatch = parseCommunityProcessConfirmation(confirmed.stdout);
 			if (
-				executable.status === 0 &&
+				launchExecutable.status === 0 &&
+				confirmed.status === 0 &&
+				confirmedMatch !== undefined &&
+				Number(confirmedMatch[1]) === uid &&
+				confirmedMatch[2] === match[2] &&
+				confirmedMatch[3] === match[3] &&
 				isNativeCommunityReviewProcess(
 					match[3],
-					process.platform === "linux" ? `/proc/${match[2]}/exe` : executable.stdout.trim(),
+					launchExecutable.stdout.trim(),
+					processExecutable,
 					process.execPath,
 					fileURLToPath(new URL("../../cli.js", import.meta.url)),
 				)
