@@ -250,6 +250,35 @@ describe("Life Orchestrator daily service", () => {
 		}
 	});
 
+	it("removes the reserved output file when compatibility preview execution fails", async () => {
+		const root = makeRoot();
+		const project = join(root, "project");
+		const scripts = join(root, "compatibility");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(scripts, { recursive: true });
+		writeFileSync(join(scripts, "daily-brief"), "raise SystemExit(1)\n");
+		const settings = resolveLifeOrchestratorSettings({
+			projectRoot: project,
+			homeRoot: root,
+			compatibilityRoot: scripts,
+			user: "test",
+		});
+
+		await expect(
+			Effect.runPromise(
+				runLifeDaily(settings, { now: new Date("2026-09-08T04:30:00.000Z") }).pipe(
+					Effect.provide(CommandRunner.layer),
+					Effect.provide(NodeServices.layer),
+				),
+			),
+		).rejects.toThrow("Daily preview compatibility adapter failed");
+		expect(
+			existsSync(settings.paths.reviewDirectory)
+				? readdirSync(settings.paths.reviewDirectory).filter((entry) => entry.endsWith(".generated.md"))
+				: [],
+		).toEqual([]);
+	});
+
 	it.each(["active", "incomplete", "recovery"])(
 		"preserves the %s lock when another daily run is rejected",
 		async (state) => {

@@ -561,36 +561,36 @@ export const runLifeDaily = (
 											cause,
 										}),
 								});
-								const preview = yield* runCompatibilityCommand(runner, {
-									id: `${runId}:preview`,
-									label: "Daily brief preview",
-									executable: "python3",
-									args: [
-										script,
-										"--date",
-										date,
-										"--preview-output",
-										generatedPath,
-										"--max-output-bytes",
-										String(maximumOutputBytes),
-									],
-									cwd: settings.paths.projectRoot,
-									env: lifeProviderEnvironment(settings),
-								});
-								if (preview.status === "failed") {
-									if (existsSync(generatedPath)) unlinkSync(generatedPath);
-									return yield* Effect.fail(
-										commandFailure("Daily preview", preview.stderr || preview.error || ""),
-									);
-								}
-								draft = yield* Effect.try({
-									try: () => readPrivateLifeInput(generatedPath, maximumOutputBytes),
-									catch: (cause) =>
-										new LifeOrchestratorError({
-											code: "artifact_invalid",
-											message: `Daily preview was not created within the ${maximumOutputBytes}-byte limit.`,
-											cause,
-										}),
+								draft = yield* Effect.gen(function* () {
+									const preview = yield* runCompatibilityCommand(runner, {
+										id: `${runId}:preview`,
+										label: "Daily brief preview",
+										executable: "python3",
+										args: [
+											script,
+											"--date",
+											date,
+											"--preview-output",
+											generatedPath,
+											"--max-output-bytes",
+											String(maximumOutputBytes),
+										],
+										cwd: settings.paths.projectRoot,
+										env: lifeProviderEnvironment(settings),
+									});
+									if (preview.status === "failed")
+										return yield* Effect.fail(
+											commandFailure("Daily preview", preview.stderr || preview.error || ""),
+										);
+									return yield* Effect.try({
+										try: () => readPrivateLifeInput(generatedPath, maximumOutputBytes),
+										catch: (cause) =>
+											new LifeOrchestratorError({
+												code: "artifact_invalid",
+												message: `Daily preview was not created within the ${maximumOutputBytes}-byte limit.`,
+												cause,
+											}),
+									});
 								}).pipe(
 									Effect.ensuring(Effect.sync(() => existsSync(generatedPath) && unlinkSync(generatedPath))),
 								);
