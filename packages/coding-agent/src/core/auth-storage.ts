@@ -33,6 +33,7 @@ import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
 import { normalizePath } from "../utils/paths.ts";
+import { type AuthFileCipher, createDefaultAuthFileCipher } from "./auth-encryption.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
 
 export type ApiKeyCredential = {
@@ -71,11 +72,37 @@ export interface AuthStorageBackend {
 	withLockAsync<T>(fn: (current: string | undefined) => Promise<LockResult<T>>): Promise<T>;
 }
 
+export {
+	AuthDecryptionError,
+	type AuthEncryptionMode,
+	AuthFileCipher,
+	type AuthFileCipherOptions,
+	type AuthKeychain,
+	createDefaultAuthFileCipher,
+} from "./auth-encryption.ts";
+
+/**
+ * auth.json on disk, encrypted at rest when a key source is available (see
+ * auth-encryption.ts). Callers always see the plaintext credential document.
+ */
 export class FileAuthStorageBackend implements AuthStorageBackend {
 	private authPath: string;
+	private cipher: AuthFileCipher | undefined;
 
-	constructor(authPath: string = join(getAgentDir(), "auth.json")) {
+	constructor(authPath: string = join(getAgentDir(), "auth.json"), cipher?: AuthFileCipher) {
 		this.authPath = normalizePath(authPath);
+		this.cipher = cipher;
+	}
+
+	/** Created lazily so invalid encryption settings surface as storage errors, not constructor throws. */
+	private getCipher(): AuthFileCipher {
+		this.cipher ??= createDefaultAuthFileCipher();
+		return this.cipher;
+	}
+
+	/** Plaintext credential document for raw auth.json content read by another path. */
+	decode(raw: string): string {
+		return this.getCipher().decode(raw);
 	}
 
 	private ensureParentDir(): void {
@@ -154,10 +181,10 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 		let release: (() => void) | undefined;
 		try {
 			release = this.acquireLockSyncWithRetry(this.authPath);
-			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
-			const { result, next } = fn(current);
+			const raw = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
+			const { result, next } = fn(raw === undefined ? undefined : this.decode(raw));
 			if (next !== undefined) {
-				this.writeAtomically(next);
+				this.writeAtomically(this.getCipher().encode(next, raw));
 			}
 			return result;
 		} finally {
@@ -222,11 +249,11 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 			signal?.throwIfAborted();
 
 			throwIfCompromised();
-			const current = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
-			const { result, next } = await fn(current);
+			const raw = existsSync(this.authPath) ? readFileSync(this.authPath, "utf-8") : undefined;
+			const { result, next } = await fn(raw === undefined ? undefined : this.decode(raw));
 			throwIfCompromised();
 			if (next !== undefined) {
-				this.writeAtomically(next);
+				this.writeAtomically(this.getCipher().encode(next, raw));
 			}
 			throwIfCompromised();
 			return result;

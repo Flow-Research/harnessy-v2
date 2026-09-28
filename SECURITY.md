@@ -21,6 +21,19 @@ skills and only to use pi within trusted repositories.  This is because files
 like `AGENTS.md` or instructions in comments can be used to prompt inject the
 coding agent trivially and this cannot be protected against.
 
+## Credential Storage
+
+Credentials saved through `/login` are stored in `~/.pi/agent/auth.json` with
+`0600` permissions and, when a passphrase or OS keychain is available, encrypted
+with AES-256-GCM (see `docs/providers.md` in the coding-agent package).
+
+Encryption keeps credentials unreadable in backups, synchronized folders, disk
+images, and accidental commits. It is not a boundary against code running as the
+same user: extensions and skills run inside the Pi process and can use loaded
+credentials, and the OS keychain releases the key to any process that can invoke
+the platform keychain tool. Set `PI_AUTH_ENCRYPTION=required` to refuse
+plaintext storage.
+
 ## Reporting a Vulnerability
 
 If you believe you found a security vulnerability in pi or another package in
