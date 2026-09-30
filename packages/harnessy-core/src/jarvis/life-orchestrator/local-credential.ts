@@ -49,11 +49,14 @@ export const refreshLocalLifeCredential = async (
 				signal.throwIfAborted();
 				if (!process.getuid || process.platform === "win32") throw new Error("POSIX ownership required.");
 				const uid = BigInt(process.getuid());
+				const backend = new FileAuthStorageBackend(authPath);
+				// The backend hands its callback the decrypted document, so compare like with like.
 				const read = () =>
-					readStableMeetingPublicationSmokeFile(authPath, uid, "private", 65536).bytes.toString("utf8");
+					backend.decode(
+						readStableMeetingPublicationSmokeFile(authPath, uid, "private", 65536).bytes.toString("utf8"),
+					);
 				const initial = decode(read());
 				if (initial.expires > Date.now()) return;
-				const backend = new FileAuthStorageBackend(authPath);
 				await backend.withLockAsync(async (current) => {
 					signal.throwIfAborted();
 					if (current === undefined || current !== read()) throw new Error("Credential changed while locking.");

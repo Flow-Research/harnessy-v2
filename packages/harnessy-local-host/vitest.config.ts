@@ -19,6 +19,8 @@ export default defineConfig({
 		],
 	},
 	test: {
+		// Fixture auth.json files stay plaintext and never touch the owner's OS keychain.
+		env: { PI_AUTH_ENCRYPTION: "off" },
 		testTimeout: 30_000,
 		hookTimeout: 30_000,
 		coverage: {

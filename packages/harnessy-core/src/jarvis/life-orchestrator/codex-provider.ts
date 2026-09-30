@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { createDefaultAuthFileCipher } from "@earendil-works/pi-coding-agent/auth-storage";
 import * as Effect from "effect/Effect";
 
 import { readStableMeetingPublicationSmokeFile } from "../meeting-publication/operational-input.ts";
@@ -40,7 +41,9 @@ export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, p
 							"private",
 							65_536,
 						).bytes;
-						const document: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(authBytes));
+						const document: unknown = JSON.parse(
+							createDefaultAuthFileCipher().decode(new TextDecoder("utf-8", { fatal: true }).decode(authBytes)),
+						);
 						if (typeof document !== "object" || document === null || !("openai-codex" in document))
 							throw new Error();
 						const credential = document["openai-codex"];
