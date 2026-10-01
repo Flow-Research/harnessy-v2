@@ -159,21 +159,22 @@ export class SkillValidator extends Context.Service<
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not read ${filePath}`, cause)));
 
 			/** Recursively collect `.md`/`.yaml`/`.yml` files under a directory. */
-			const collectTextFiles = (root: string): Effect.Effect<ReadonlyArray<string>, HarnessError> =>
-				Effect.gen(function* () {
-					const collected: Array<string> = [];
-					const entries = [...(yield* readDir(root))].sort();
-					for (const entry of entries) {
-						const entryPath = path.join(root, entry);
-						const type = yield* statType(entryPath);
-						if (type === "Directory") {
-							collected.push(...(yield* collectTextFiles(entryPath)));
-						} else if (type === "File" && TEXT_EXTENSIONS.has(path.extname(entry).toLowerCase())) {
-							collected.push(entryPath);
-						}
+			const collectTextFiles: (root: string) => Effect.Effect<ReadonlyArray<string>, HarnessError> = Effect.fn(
+				"SkillValidator.collectTextFiles",
+			)(function* (root: string) {
+				const collected: Array<string> = [];
+				const entries = [...(yield* readDir(root))].sort();
+				for (const entry of entries) {
+					const entryPath = path.join(root, entry);
+					const type = yield* statType(entryPath);
+					if (type === "Directory") {
+						collected.push(...(yield* collectTextFiles(entryPath)));
+					} else if (type === "File" && TEXT_EXTENSIONS.has(path.extname(entry).toLowerCase())) {
+						collected.push(entryPath);
 					}
-					return collected;
-				});
+				}
+				return collected;
+			});
 
 			const validateSkill = Effect.fn("SkillValidator.validateSkill")(function* (
 				skillsRoot: string,
