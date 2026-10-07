@@ -5,5 +5,19 @@
 		"vulnerableVersions": "<=3.0.3",
 		"reason": "No patched release exists (3.0.3 is the latest). In the Executor workspace braces is reached only through development and build tooling (micromatch via changesets, knip and the TanStack router plugin's chokidar watcher), not shipped runtime code. Remove when a fixed release is available.",
 		"expires": "2026-11-07"
+	},
+	{
+		"package": "undici",
+		"url": "https://github.com/advisories/GHSA-rfgv-xxqx-mfg5",
+		"vulnerableVersions": ">=7.0.0 <7.29.1",
+		"reason": "No coherent patched release set exists: undici 7.29.1 ships only in miniflare 5.20261006.0-alpha (wrangler 4.148.0), while the newest @cloudflare/vitest-pool-workers (0.22.0) still pins an older miniflare, and the repository's security invariant requires one coherent wrangler/pool/miniflare owner set. In the Executor workspace undici 7 is reached only through miniflare in development and test tooling. Remove when a pool release pins miniflare with undici >=7.29.1.",
+		"expires": "2026-11-07"
+	},
+	{
+		"package": "undici",
+		"url": "https://github.com/advisories/GHSA-w293-vg96-wgc3",
+		"vulnerableVersions": ">=7.24.1 <7.29.1",
+		"reason": "No coherent patched release set exists: undici 7.29.1 ships only in miniflare 5.20261006.0-alpha (wrangler 4.148.0), while the newest @cloudflare/vitest-pool-workers (0.22.0) still pins an older miniflare, and the repository's security invariant requires one coherent wrangler/pool/miniflare owner set. In the Executor workspace undici 7 is reached only through miniflare in development and test tooling. Remove when a pool release pins miniflare with undici >=7.29.1.",
+		"expires": "2026-11-07"
 	}
 ]

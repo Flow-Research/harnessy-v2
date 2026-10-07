@@ -142,9 +142,6 @@
 		"proxy-addr": "2.0.8",
 		"source-map-js": "1.2.2",
 		"@modelcontextprotocol/sdk": "1.32.1",
-		"agents": {
-			"@modelcontextprotocol/sdk": "1.32.1"
-		},
 		"miniflare": "5.20261006.0-alpha"
 	}
 }
