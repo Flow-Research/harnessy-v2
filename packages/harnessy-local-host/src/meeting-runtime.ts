@@ -147,7 +147,12 @@ export const runLocalHostMeetingFullReview: (
 												Effect.flatMap((result) =>
 													result.exitCode === 0
 														? Effect.void
-														: Effect.fail(new Error("community_publication_stopped")),
+														: Effect.sync(() => {
+																// Record which check stopped publication; the value carries only fixed codes.
+																process.stderr.write(`${JSON.stringify(result.value)}\n`);
+															}).pipe(
+																Effect.andThen(Effect.fail(new Error("community_publication_stopped"))),
+															),
 												),
 											),
 										),
