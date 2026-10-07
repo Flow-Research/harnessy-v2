@@ -23,6 +23,7 @@
 		"check:workspace-builds": "node scripts/check-workspace-builds.mjs",
 		"check:ci-contract": "node scripts/check-ci-contract.mjs",
 		"check:clean-worktree": "node scripts/check-clean-worktree.mjs",
+		"audit:root": "node scripts/audit-root.mjs",
 		"audit:executor": "node scripts/audit-executor.mjs",
 		"qa:ids": "node scripts/qa.mjs ids --profile .jarvis/context/profiles/qa.json",
 		"qa:tests": "node scripts/qa.mjs tests --profile .jarvis/context/profiles/qa.json",

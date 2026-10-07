@@ -29,7 +29,7 @@ export const parseAuditExceptions = (value) => {
 	});
 };
 
-const exceptionApplies = (exception, finding, now) =>
+export const exceptionApplies = (exception, finding, now) =>
 	exception.package === finding.package &&
 	exception.url === finding.url &&
 	exception.vulnerableVersions === finding.vulnerableVersions &&
