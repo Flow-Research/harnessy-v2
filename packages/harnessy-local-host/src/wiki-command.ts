@@ -55,7 +55,12 @@ export async function runWikiCommand(args: readonly string[]): Promise<unknown> 
 			const child = spawn(
 				"npx",
 				["--yes", "--ignore-scripts", "--package=openwiki@0.5.1", "openwiki", "visualize", join(root, "wiki")],
-				{ stdio: "inherit", detached: process.platform !== "win32" },
+				{
+					stdio: "inherit",
+					detached: process.platform !== "win32",
+					// The library is private: opt the viewer out of OpenWiki's usage telemetry.
+					env: { ...process.env, OPENWIKI_TELEMETRY_DISABLED: "1", DO_NOT_TRACK: "1" },
+				},
 			);
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			const signalViewer = (signal: NodeJS.Signals) => {

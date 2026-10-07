@@ -100,7 +100,8 @@ gaps. Queries never fetch new sources. Current-session responses should use
 OpenWiki is pinned to 0.5.1 and invoked only through `visualize`. Its graph uses
 Markdown links and frontmatter directly. The viewer binds loopback and currently
 loads browser libraries from a CDN; editor/Obsidian reading is offline-capable.
-No OpenWiki model account, ingestion, scheduling or coding-agent integration is
+The viewer runs with `OPENWIKI_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1`, so
+OpenWiki sends no usage events. No OpenWiki model account, ingestion, scheduling or coding-agent integration is
 configured. The compatibility fixture validates generated pages with OpenWiki's
 own OKF validator and graph builder and starts its public viewer command.
 
