@@ -39,6 +39,7 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
+| `/plan` | Toggle built-in read-only planning and approve tracked execution; `/plan status` shows progress |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -56,6 +57,12 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
 | `/quit` | Quit pi |
+
+## Plan Mode
+
+Plan mode is built in and inactive by default. The model has an `enter_plan_mode` tool and decides whether planning would help before implementation. You can also toggle it explicitly with `/plan` or Ctrl+Alt+P, or start a session with `pi --plan`.
+
+While planning, built-in write tools are disabled and Bash is restricted to a read-only allowlist. Other active tools remain available without widening explicit `--tools` restrictions; plan mode cannot classify third-party tools, so only enable extension tools you trust. When the assistant returns numbered steps under a `Plan:` heading, pi offers to execute, keep planning, or refine the plan. Approved execution restores the original tool set, shows `plan n/total` in the status line, and tracks `[DONE:n]` markers in the progress widget. `/plan status` prints the current progress.
 
 ## Message Queue
 
@@ -236,6 +243,7 @@ pi --no-extensions -e ./my-extension.ts
 |--------|-------------|
 | `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
 | `--append-system-prompt <text>` | Append to system prompt |
+| `--plan` | Start in built-in plan mode |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
@@ -279,6 +287,9 @@ pi --model sonnet:high "Solve this complex problem"
 # Limit model cycling
 pi --models "claude-*,gpt-4o"
 
+# Start in built-in plan mode
+pi --plan "Plan the authentication refactor"
+
 # Read-only mode
 pi --tools read,grep,find,ls -p "Review the code"
 
@@ -303,6 +314,6 @@ pi --exclude-tools ask_question
 
 Pi keeps the core small and pushes workflow-specific behavior into extensions, skills, prompt templates, and packages.
 
-It intentionally does not include built-in MCP, sub-agents, permission popups, plan mode, to-dos, or background bash. You can build or install those workflows as extensions or packages, or use external tools such as containers and tmux.
+It includes a focused plan mode but intentionally leaves MCP, sub-agents, permission popups, to-dos, and background bash to extensions, packages, or external tools such as containers and tmux.
 
 For the full rationale, read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/).

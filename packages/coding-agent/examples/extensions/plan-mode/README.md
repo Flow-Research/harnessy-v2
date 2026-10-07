@@ -1,66 +1,25 @@
-# Plan Mode Extension
+# Built-in Plan Mode
 
-Read-only exploration mode for safe code analysis.
+Plan mode now ships with Pi and is inactive by default. This directory remains as a no-op compatibility entry point for legacy extension paths; loading it does not register a second copy.
 
-## Features
+## Activation
 
-- **Built-in write tools disabled**: Disables edit/write while preserving other active tools
-- **Bash allowlist**: Only read-only bash commands are allowed
-- **Plan extraction**: Extracts numbered steps from `Plan:` sections
-- **Progress tracking**: Widget shows completion status during execution
-- **[DONE:n] markers**: Explicit step completion tracking
-- **Session persistence**: State survives session resume
+- The model can call `enter_plan_mode` when it decides planning would help.
+- `/plan` toggles read-only planning.
+- `/plan status` shows current execution progress.
+- `Ctrl+Alt+P` toggles planning from the keyboard.
+- `pi --plan` starts a session in planning mode.
 
-## Commands
+## Workflow
 
-- `/plan` - Toggle plan mode
-- `/todos` - Show current plan progress
-- `Ctrl+Alt+P` - Toggle plan mode (shortcut)
+1. Enter plan mode.
+2. Ask the agent to inspect the project and produce numbered steps under a `Plan:` heading.
+3. Choose whether to execute, stay in planning, or refine the plan.
+4. During execution, `[DONE:n]` markers update the status line and progress widget.
 
-## Usage
+While planning, built-in `edit` and `write` are disabled, other active tools are preserved without widening explicit `--tools` restrictions, and Bash is restricted to the read-only command allowlist. Plan mode cannot classify third-party tools, so only enable extension tools you trust during planning.
 
-1. Enable plan mode with `/plan` or `--plan` flag
-2. Ask the agent to analyze code and create a plan
-3. The agent should output a numbered plan under a `Plan:` header:
+The implementation lives in:
 
-```
-Plan:
-1. First step description
-2. Second step description
-3. Third step description
-```
-
-4. Choose "Execute the plan" when prompted
-5. During execution, the agent marks steps complete with `[DONE:n]` tags
-6. Progress widget shows completion status
-
-## How It Works
-
-### Plan Mode (Read-Only)
-- Built-in edit/write tools disabled
-- Other active tools remain available
-- Bash commands filtered through allowlist
-- Agent creates a plan without making changes
-
-### Execution Mode
-- Full tool access restored
-- Agent executes steps in order
-- `[DONE:n]` markers track completion
-- Widget shows progress
-
-### Command Allowlist
-
-Safe commands (allowed):
-- File inspection: `cat`, `head`, `tail`, `less`, `more`
-- Search: `grep`, `find`, `rg`, `fd`
-- Directory: `ls`, `pwd`, `tree`
-- Git read: `git status`, `git log`, `git diff`, `git branch`
-- Package info: `npm list`, `npm outdated`, `yarn info`
-- System info: `uname`, `whoami`, `date`, `uptime`
-
-Blocked commands:
-- File modification: `rm`, `mv`, `cp`, `mkdir`, `touch`
-- Git write: `git add`, `git commit`, `git push`
-- Package install: `npm install`, `yarn add`, `pip install`
-- System: `sudo`, `kill`, `reboot`
-- Editors: `vim`, `nano`, `code`
+- `src/core/extensions/builtin/plan-mode.ts`
+- `src/core/extensions/builtin/plan-mode-utils.ts`

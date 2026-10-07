@@ -2718,7 +2718,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `timed-confirm.ts` | Dialogs with timeout | `ui.confirm` with timeout/signal |
 | `mac-system-theme.ts` | Auto-switch theme | `setTheme`, `exec` |
 | **Complex Extensions** |||
-| `plan-mode/` | Full plan mode implementation | All event types, `registerCommand`, `registerShortcut`, `registerFlag`, `setStatus`, `setWidget`, `sendMessage`, `setActiveTools` |
+| [`src/core/extensions/builtin/plan-mode.ts`](../src/core/extensions/builtin/plan-mode.ts) | Built-in plan mode implementation | Model-callable tool, lifecycle events, command, flag, status line, widget, messages, active tools |
 | `preset.ts` | Saveable presets (model, tools, thinking) | `registerCommand`, `registerShortcut`, `registerFlag`, `setModel`, `setActiveTools`, `setThinkingLevel`, `appendEntry` |
 | `tools.ts` | Toggle tools on/off UI | `registerCommand`, `setActiveTools`, `SettingsList`, session events |
 | **Remote & Sandbox** |||

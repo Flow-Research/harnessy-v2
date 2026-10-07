@@ -113,6 +113,7 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 | `app.model.cycleBackward` | `shift+ctrl+p` | Cycle to previous model |
 | `app.thinking.cycle` | `shift+tab` | Cycle thinking level |
 | `app.thinking.toggle` | `ctrl+t` | Collapse or expand thinking blocks |
+| `app.plan.toggle` | `ctrl+alt+p` | Toggle built-in plan mode |
 
 ### Display and Message Queue
 

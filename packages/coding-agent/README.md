@@ -14,7 +14,7 @@
 
 Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
 
-Pi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask pi to build what you want or install a third party pi package that matches your workflow.
+Pi ships with built-in plan mode. The model can enter it when planning would help, while explicit controls remain available. Pi stays extensible for workflows such as sub-agents, permission gates, and custom orchestration.
 
 Pi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps. See [openclaw/openclaw](https://github.com/openclaw/openclaw) for a real-world SDK integration.
 
@@ -88,7 +88,7 @@ pi
 /login  # Then select provider
 ```
 
-Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
+Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`, plus the built-in `enter_plan_mode` tool. The model decides whether planning would help before implementation. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
 
 **Platform notes:** [Windows](docs/windows.md) | [Termux (Android)](docs/termux.md) | [tmux](docs/tmux.md) | [Terminal setup](docs/terminal-setup.md) | [Shell aliases](docs/shell-aliases.md)
 
@@ -177,6 +177,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
+| `/plan` | Toggle built-in read-only planning and approve tracked execution; `/plan status` shows progress |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -212,6 +213,7 @@ See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. 
 | Shift+Tab | Cycle thinking level |
 | Ctrl+O | Collapse/expand tool output |
 | Ctrl+T | Collapse/expand thinking blocks |
+| Ctrl+Alt+P | Toggle built-in plan mode |
 
 ### Message Queue
 
@@ -376,7 +378,7 @@ The default export can also be `async`. pi waits for async extension factories b
 
 **What's possible:**
 - Custom tools (or replace built-in tools entirely)
-- Sub-agents and plan mode
+- Sub-agents and custom planning workflows
 - Custom compaction and summarization
 - Permission gates and path protection
 - Custom editors and UI components
@@ -494,7 +496,7 @@ Pi is aggressively extensible so it doesn't have to dictate your workflow. Featu
 
 **No permission popups.** Run in a container, or build your own confirmation flow with [extensions](#extensions) inline with your environment and security requirements.
 
-**No plan mode.** Write plans to files, or build it with [extensions](#extensions), or install a package.
+**Built-in plan mode.** The model can call `enter_plan_mode` when planning would help. You can also use `/plan`, `--plan`, or Ctrl+Alt+P. Plan mode disables built-in write tools, restricts Bash to read-only commands, gates execution on approval, and tracks progress in the status line.
 
 **No built-in to-dos.** They confuse models. Use a TODO.md file, or build your own with [extensions](#extensions).
 
@@ -600,6 +602,7 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 |--------|-------------|
 | `--system-prompt <text>` | Replace default prompt (context files and skills still appended) |
 | `--append-system-prompt <text>` | Append to system prompt |
+| `--plan` | Start in built-in plan mode |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
@@ -642,6 +645,9 @@ pi --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
 pi --models "claude-*,gpt-4o"
+
+# Start in built-in plan mode
+pi --plan "Plan the authentication refactor"
 
 # Read-only mode
 pi --tools read,grep,find,ls -p "Review the code"

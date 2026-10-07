@@ -219,7 +219,7 @@ export function parseArgs(args: string[]): Args {
 export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 	const extensionFlagsText =
 		extensionFlags && extensionFlags.length > 0
-			? `\n${chalk.bold("Extension CLI Flags:")}\n${extensionFlags
+			? `\n${chalk.bold("Additional CLI Flags:")}\n${extensionFlags
 					.map((flag) => {
 						const value = flag.type === "string" ? " <value>" : "";
 						const description = flag.description ?? `Registered by ${flag.extensionPath}`;
@@ -284,7 +284,7 @@ ${chalk.bold("Options:")}
   --help, -h                     Show this help
   --version, -v                  Show version number
 
-Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
+Built-ins and extensions can register additional flags.${extensionFlagsText}
 
 ${chalk.bold("Examples:")}
   # Interactive mode
@@ -328,6 +328,9 @@ ${chalk.bold("Examples:")}
 
   # Start with a specific thinking level
   ${APP_NAME} --thinking high "Solve this complex problem"
+
+  # Start in built-in plan mode
+  ${APP_NAME} --plan "Plan the authentication refactor"
 
   # Read-only mode (no file modifications possible)
   ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
