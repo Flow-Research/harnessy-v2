@@ -135,6 +135,8 @@ export const runLocalHostMeetingFullReview: (
 		Effect.gen(function* () {
 			const ready = yield* Deferred.make<void>();
 			let stopCommunity: Effect.Effect<void> = Effect.void;
+			// Fixed failure codes from the last community run, reported with the single stop event.
+			let communityFailure: Record<string, unknown> = {};
 			const onEngine: OnEngine | undefined =
 				communityConfig === undefined
 					? undefined
@@ -148,8 +150,14 @@ export const runLocalHostMeetingFullReview: (
 													result.exitCode === 0
 														? Effect.void
 														: Effect.sync(() => {
-																// Record which check stopped publication; the value carries only fixed codes.
-																process.stderr.write(`${JSON.stringify(result.value)}\n`);
+																const { code, reason } = (result.value ?? {}) as {
+																	code?: unknown;
+																	reason?: unknown;
+																};
+																communityFailure = {
+																	...(typeof code === "string" ? { code } : {}),
+																	...(typeof reason === "string" ? { reason } : {}),
+																};
 															}).pipe(
 																Effect.andThen(Effect.fail(new Error("community_publication_stopped"))),
 															),
@@ -158,7 +166,9 @@ export const runLocalHostMeetingFullReview: (
 										),
 									),
 									Effect.promise(async () => {
-										process.stderr.write('{"error":"community_publication_stopped","retry":false}\n');
+										process.stderr.write(
+											`${JSON.stringify({ error: "community_publication_stopped", retry: false, ...communityFailure })}\n`,
+										);
 										if (!(await notifyMeetingFullReviewStopped(undefined, undefined, "community")))
 											process.stderr.write('{"warning":"community_stop_notification_unavailable"}\n');
 									}),
