@@ -7,8 +7,7 @@
 		"packages/coding-agent/examples/extensions/with-deps",
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
 		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
-		"packages/coding-agent/examples/extensions/sandbox",
-		"packages/coding-agent/examples/extensions/gondolin"
+		"packages/coding-agent/examples/extensions/sandbox"
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces",
@@ -76,7 +75,7 @@
 	"dependencies": {
 		"@cfworker/json-schema": "4.1.1",
 		"@libsql/client": "0.17.3",
-		"@modelcontextprotocol/sdk": "1.29.0",
+		"@modelcontextprotocol/sdk": "1.32.1",
 		"@paralleldrive/cuid2": "3.3.0",
 		"@standard-schema/spec": "1.1.0",
 		"drizzle-orm": "0.45.2",
@@ -103,7 +102,6 @@
 		"jsonc-parser": "3.3.1",
 		"oxlint": "1.65.0",
 		"oxlint-plugin-eslint": "1.67.0",
-		"shx": "0.4.0",
 		"tsx": "4.22.1",
 		"typescript": "5.9.3",
 		"wrangler": "4.128.0"
@@ -124,25 +122,29 @@
 	"version": "0.0.3",
 	"overrides": {
 		"@hono/node-server": "1.19.15",
-		"brace-expansion": "5.0.9",
+		"brace-expansion": "5.0.12",
 		"browserslist": "4.28.8",
-		"fast-uri": "3.1.6",
+		"fast-uri": "3.1.8",
 		"hono": "4.13.7",
-		"ip-address": "10.7.0",
+		"ip-address": "10.7.3",
 		"postcss": {
 			".": "8.5.26",
 			"nanoid": "3.3.18"
 		},
 		"protobufjs": "7.6.5",
 		"qs": "6.16.0",
-		"@earendil-works/gondolin": {
-			"undici": "6.28.0"
-		},
 		"rimraf": "6.1.2",
-		"sharp": "0.35.4",
+		"sharp": "0.35.5",
 		"toml": "4.3.0",
 		"gaxios": {
 			"rimraf": "6.1.2"
-		}
+		},
+		"proxy-addr": "2.0.8",
+		"source-map-js": "1.2.2",
+		"@modelcontextprotocol/sdk": "1.32.1",
+		"agents": {
+			"@modelcontextprotocol/sdk": "1.32.1"
+		},
+		"miniflare": "5.20261006.0-alpha"
 	}
 }

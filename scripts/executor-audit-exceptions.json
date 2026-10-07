@@ -1,0 +1,9 @@
+[
+	{
+		"package": "braces",
+		"url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+		"vulnerableVersions": "<=3.0.3",
+		"reason": "No patched release exists (3.0.3 is the latest). In the Executor workspace braces is reached only through development and build tooling (micromatch via changesets, knip and the TanStack router plugin's chokidar watcher), not shipped runtime code. Remove when a fixed release is available.",
+		"expires": "2026-11-07"
+	}
+]
