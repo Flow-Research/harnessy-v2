@@ -21,6 +21,7 @@ import { Deferred, Effect, Layer } from "effect";
 import type * as Scope from "effect/Scope";
 import { startCommunityBackground } from "./community-background.ts";
 import { enrollCommunityBeforeEngine, runCommunityPublicationCommand } from "./community-publication-command.ts";
+import { makeCommunityStopReporter } from "./community-stop-event.ts";
 import { notifyMeetingFullReviewStopped } from "./meeting-full-review-stop-notification.ts";
 
 type OnEngine = (
@@ -135,8 +136,7 @@ export const runLocalHostMeetingFullReview: (
 		Effect.gen(function* () {
 			const ready = yield* Deferred.make<void>();
 			let stopCommunity: Effect.Effect<void> = Effect.void;
-			// Fixed failure codes from the last community run, reported with the single stop event.
-			let communityFailure: Record<string, unknown> = {};
+			const communityStop = makeCommunityStopReporter();
 			const onEngine: OnEngine | undefined =
 				communityConfig === undefined
 					? undefined
@@ -149,26 +149,13 @@ export const runLocalHostMeetingFullReview: (
 												Effect.flatMap((result) =>
 													result.exitCode === 0
 														? Effect.void
-														: Effect.sync(() => {
-																const { code, reason } = (result.value ?? {}) as {
-																	code?: unknown;
-																	reason?: unknown;
-																};
-																communityFailure = {
-																	...(typeof code === "string" ? { code } : {}),
-																	...(typeof reason === "string" ? { reason } : {}),
-																};
-															}).pipe(
-																Effect.andThen(Effect.fail(new Error("community_publication_stopped"))),
-															),
+														: Effect.fail(communityStop.stopped(result.value)),
 												),
 											),
 										),
 									),
 									Effect.promise(async () => {
-										process.stderr.write(
-											`${JSON.stringify({ error: "community_publication_stopped", retry: false, ...communityFailure })}\n`,
-										);
+										process.stderr.write(communityStop.event());
 										if (!(await notifyMeetingFullReviewStopped(undefined, undefined, "community")))
 											process.stderr.write('{"warning":"community_stop_notification_unavailable"}\n');
 									}),
