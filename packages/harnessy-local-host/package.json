@@ -42,8 +42,8 @@
 		"LICENSE"
 	],
 	"scripts": {
-		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/community-publication-cli.js dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-setup-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js",
+		"clean": "node ../../scripts/fs-tool.mjs rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json && node ../../scripts/fs-tool.mjs chmod +x dist/community-publication-cli.js dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-setup-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js",
 		"typecheck": "tsgo --noEmit -p tsconfig.json",
 		"test": "vitest --run",
 		"test:fixture": "node scripts/test-fixture.mjs"
@@ -56,7 +56,6 @@
 	"devDependencies": {
 		"@effect/vitest": "4.0.0-beta.85",
 		"@types/node": "22.19.19",
-		"shx": "0.4.0",
 		"vitest": "4.1.11"
 	},
 	"engines": {

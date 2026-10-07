@@ -3,6 +3,8 @@ import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { formatNpmAuditReport, runNpmAudit } from "../../../scripts/npm-audit-lib.mjs";
+
 const packageRoot = resolve(new URL("..", import.meta.url).pathname);
 const fixtureSource = join(packageRoot, "test/fixtures/cloudflare-worker");
 const allowedRuntimeExternal = /^(?:node:|cloudflare:)/;
@@ -49,7 +51,9 @@ try {
   );
 
   await run(fixtureRoot, "npm", ["install", "--ignore-scripts"]);
-  await run(fixtureRoot, "npm", ["audit", "--audit-level=moderate"]);
+  const audit = runNpmAudit({ cwd: fixtureRoot });
+  console.log(formatNpmAuditReport(audit));
+  if (!audit.ok) throw new Error("Fixture audit found unexcepted advisories");
   const installedPackageRoot = await realpath(join(fixtureRoot, "node_modules/@harnessy/engine"));
   if (installedPackageRoot.startsWith(packageRoot)) {
     throw new Error(`Fixture resolved @harnessy/engine to monorepo source: ${installedPackageRoot}`);

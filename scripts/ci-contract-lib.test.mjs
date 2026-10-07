@@ -59,7 +59,7 @@ jobs:
   root-dependencies-and-invariants:
     name: Root dependencies and invariants
     steps:
-      - run: npm audit --audit-level=moderate
+      - run: node scripts/audit-root.mjs --json
       - run: node scripts/check-security-invariants.mjs
   executor-dependencies:
     name: Executor dependencies
