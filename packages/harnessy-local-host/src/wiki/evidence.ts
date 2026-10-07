@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
+import type { LookupAddress } from "node:dns";
 import { lookup } from "node:dns/promises";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { BlockList, isIP } from "node:net";
+import { BlockList, isIP, type LookupFunction } from "node:net";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import type { WikiPassage, WikiSourceVersion } from "@harnessy/core/wiki";
@@ -47,6 +48,16 @@ export const isPublicAddress = (address: string): boolean => {
 		: family === 6 && !privateV6Networks.check(address, "ipv6");
 };
 
+/** A `lookup` hook that always answers with one validated address. Node's connection path
+ * may request every address (`all: true`, e.g. with autoSelectFamily), so answer in the
+ * requested shape. */
+export const pinnedLookup =
+	(address: LookupAddress): LookupFunction =>
+	(_host, options, callback) =>
+		options.all
+			? callback(null, [{ address: address.address, family: address.family }])
+			: callback(null, address.address, address.family);
+
 export interface Download {
 	readonly bytes: Buffer;
 	readonly contentType: string;
@@ -74,7 +85,7 @@ export async function download(raw: string, signal: AbortSignal, fixtureOrigin?:
 				{
 					signal,
 					agent: false,
-					lookup: (_host, _options, callback) => callback(null, address.address, address.family),
+					lookup: pinnedLookup(address),
 					headers: {
 						"User-Agent": "Harnessy-Personal-Library/1.0",
 						Accept: "text/html,application/pdf,text/plain,text/markdown",

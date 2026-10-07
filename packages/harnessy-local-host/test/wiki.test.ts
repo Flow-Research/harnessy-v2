@@ -1,10 +1,10 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, get } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WikiExecutor, WikiModelRequest } from "@harnessy/core/wiki";
 import { afterEach, describe, expect, it } from "vitest";
-import { download, extract, htmlEvidence, isPublicAddress } from "../src/wiki/evidence.ts";
+import { download, extract, htmlEvidence, isPublicAddress, pinnedLookup } from "../src/wiki/evidence.ts";
 import { localWikiExecutor } from "../src/wiki/model.ts";
 import { askWiki, briefDate, isoWeek, reconcile, reviewWiki, syncWiki } from "../src/wiki/service.ts";
 import { slug, WikiStore } from "../src/wiki/store.ts";
@@ -339,6 +339,38 @@ describe("personal learning library", () => {
 		for (const ip of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "169.254.169.254", "fc00::1", "192.168.1.1"])
 			expect(isPublicAddress(ip)).toBe(false);
 		expect(isPublicAddress("8.8.8.8")).toBe(true);
+	});
+
+	it("pins hostname connections to the validated address in both lookup shapes", async () => {
+		const lookup = pinnedLookup({ address: "127.0.0.1", family: 4 });
+		const single = await new Promise<unknown[]>((resolve) =>
+			lookup("example.com", {}, (...args: unknown[]) => resolve(args)),
+		);
+		expect(single).toEqual([null, "127.0.0.1", 4]);
+		const all = await new Promise<unknown[]>((resolve) =>
+			lookup("example.com", { all: true }, (...args: unknown[]) => resolve(args)),
+		);
+		expect(all).toEqual([null, [{ address: "127.0.0.1", family: 4 }]]);
+		const server = createServer((_request, response) => response.end("pinned"));
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		if (!address || typeof address === "string") throw new Error("Missing fixture address");
+		try {
+			const body = await new Promise<string>((resolve, reject) => {
+				const request = get(`http://pinned.invalid:${address.port}/`, { agent: false, lookup }, (response) => {
+					let text = "";
+					response.on("data", (chunk: Buffer) => {
+						text += chunk.toString();
+					});
+					response.on("end", () => resolve(text));
+				});
+				request.on("error", reject);
+			});
+			expect(body).toBe("pinned");
+		} finally {
+			server.closeAllConnections();
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		}
 	});
 
 	it("strips HTML elements in linear time, keeps unclosed elements and respects tag boundaries", () => {
