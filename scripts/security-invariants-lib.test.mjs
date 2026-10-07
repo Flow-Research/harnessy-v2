@@ -74,7 +74,7 @@ describe("security invariant scanner", () => {
 			[".github/workflows/npm-audit.yml", ""],
 			[
 				".github/workflows/qa-security-sweep.yml",
-				"npm audit --audit-level=moderate\nnode scripts/audit-executor.mjs --json\nif-no-files-found: error\n",
+				"node scripts/audit-root.mjs --json\nnode scripts/audit-executor.mjs --json\nif-no-files-found: error\n",
 			],
 			[".github/workflows/issue-gate.yml", "steps:\n  - uses: actions/github-script@v7\n"],
 		]);
