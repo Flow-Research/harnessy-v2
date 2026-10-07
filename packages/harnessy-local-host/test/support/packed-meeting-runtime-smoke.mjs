@@ -155,7 +155,8 @@ const runFixture = (path, label) => {
 	// The community negative case must emit exactly one stop event; unexpected
 	// diagnostics and duplicate notifications remain failures.
 	if (label === "community publication") {
-		const expected = '{"error":"community_publication_stopped","retry":false}\n';
+		// The stop event names the community check that failed; revocation is publication_uncertain.
+		const expected = '{"error":"community_publication_stopped","retry":false,"code":"publication_uncertain"}\n';
 		const unavailable = '{"warning":"community_stop_notification_unavailable"}\n';
 		if (result.stderr !== expected && result.stderr !== expected + unavailable)
 			throw new Error(`Packed community revocation did not emit the exact stop diagnostic: ${result.stderr}`);

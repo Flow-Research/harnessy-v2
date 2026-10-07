@@ -22,6 +22,7 @@ import { Schema } from "effect";
 import * as Result from "effect/Result";
 
 import { JarvisMeetingPublicationConfig } from "../config-model.ts";
+import { invokesCommand } from "../process-invocation.ts";
 import { assertMeetingPublicationRollbackDatabaseFile } from "./store-file-safety.ts";
 import { MEETING_PUBLICATION_STORE_SCHEMA_VERSION, validateMeetingPublicationStoreSchema } from "./store-schema.ts";
 
@@ -89,8 +90,9 @@ export const MEETING_PUBLICATION_V1_PROCESS_MARKERS = [
 	"jarvis meeting publish review serve",
 	"jarvis meeting review serve",
 ] as const;
+/** A process running a marker command; text mentioning a marker inside another command does not count. */
 export const isMeetingPublicationV1WriterCommand = (command: string) =>
-	MEETING_PUBLICATION_V1_PROCESS_MARKERS.some((marker) => command.includes(marker));
+	MEETING_PUBLICATION_V1_PROCESS_MARKERS.some((marker) => invokesCommand(command, marker.split(" ")));
 const ARTIFACT_ANCHOR_ROLES = ["core", "host", "sdk", "dependencies"] as const;
 const MAX_INPUT_BYTES = 1_000_000;
 const MAX_MANIFEST_BYTES = 32 * 1024 * 1024;

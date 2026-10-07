@@ -45,7 +45,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Audit root dependencies
-        run: npm audit --audit-level=moderate
+        run: npm run audit:root
 
       - name: Install Executor dependencies
         working-directory: executor
