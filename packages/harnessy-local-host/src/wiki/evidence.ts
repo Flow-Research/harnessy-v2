@@ -140,6 +140,55 @@ const decode = (text: string): string =>
 				({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'", "&nbsp;": " " })[entity] ?? entity,
 		);
 
+/** Find `<name` or `</name` followed by a word boundary, scanning forward once. */
+function findTag(lower: string, prefix: string, names: readonly string[], from: number): { at: number; name: string } {
+	for (let at = lower.indexOf(prefix, from); at !== -1; at = lower.indexOf(prefix, at + 1)) {
+		const name = names.find(
+			(candidate) =>
+				lower.startsWith(candidate, at + prefix.length) &&
+				!/\w/.test(lower[at + prefix.length + candidate.length] ?? ""),
+		);
+		if (name) return { at, name };
+	}
+	return { at: -1, name: "" };
+}
+
+/** Remove complete `<name ...>...</name>` elements in linear time; unclosed elements are kept. */
+function withoutElements(html: string, names: readonly string[]): string {
+	const lower = html.toLowerCase();
+	const open = new Set(names);
+	const parts: string[] = [];
+	let last = 0;
+	let from = 0;
+	while (open.size > 0) {
+		const start = findTag(lower, "<", [...open], from);
+		if (start.at === -1) break;
+		const close = findTag(lower, "</", [start.name], start.at);
+		const end = close.at === -1 ? -1 : lower.indexOf(">", close.at);
+		if (end === -1) {
+			open.delete(start.name);
+			from = start.at;
+			continue;
+		}
+		parts.push(html.slice(last, start.at));
+		last = from = end + 1;
+	}
+	parts.push(html.slice(last));
+	return parts.join("");
+}
+
+/** Return the inner HTML of the first `<article>` or `<main>` element, or undefined. */
+function mainContent(html: string): string | undefined {
+	const lower = html.toLowerCase();
+	const names = ["article", "main"];
+	const start = findTag(lower, "<", names, 0);
+	if (start.at === -1) return undefined;
+	const bodyStart = lower.indexOf(">", start.at);
+	if (bodyStart === -1) return undefined;
+	const close = findTag(lower, "</", names, bodyStart);
+	return close.at === -1 ? undefined : html.slice(bodyStart + 1, close.at);
+}
+
 export function htmlEvidence(html: string): { text: string; mode: WikiSourceVersion["mode"] } {
 	const abstract =
 		[...html.matchAll(/<meta\b[^>]*>/gi)]
@@ -154,9 +203,9 @@ export function htmlEvidence(html: string): { text: string; mode: WikiSourceVers
 				return decode(tag.match(/content\s*=\s*(["'])([\s\S]*?)\1/i)?.[2] ?? "");
 			})
 			.find(Boolean) ?? "";
-	const clean = html.replace(/<(script|style|nav|header|footer|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "");
-	const article = clean.match(/<(?:article|main)\b[^>]*>([\s\S]*?)<\/(?:article|main)\s*>/i)?.[1];
-	const body = article ?? clean.replace(/<head\b[^>]*>[\s\S]*?<\/head\s*>/gi, "");
+	const clean = withoutElements(html, ["script", "style", "nav", "header", "footer", "noscript"]);
+	const article = mainContent(clean);
+	const body = article ?? withoutElements(clean, ["head"]);
 	const text = decode(body.replace(/<\/(?:p|div|h[1-6]|li|section)>/gi, "\n\n").replace(/<[^>]+>/g, " "))
 		.replace(/[ \t]+/g, " ")
 		.trim();

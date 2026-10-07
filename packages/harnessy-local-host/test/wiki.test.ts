@@ -341,6 +341,20 @@ describe("personal learning library", () => {
 		expect(isPublicAddress("8.8.8.8")).toBe(true);
 	});
 
+	it("strips HTML elements in linear time, keeps unclosed elements and respects tag boundaries", () => {
+		const words = "Meaningful article evidence sentence. ".repeat(30);
+		const html = `<html><head><title>T</title></head><body><header>Site nav</header><main><p>${words}</p><style>x{}</style></main></body></html>`;
+		const result = htmlEvidence(html);
+		expect(result.mode).toBe("full");
+		expect(result.text).toContain("Meaningful article evidence");
+		expect(result.text).not.toContain("Site nav");
+		expect(result.text).not.toContain("x{}");
+		const pathological = `${"<script>".repeat(200_000)}<article><p>${words}</p></article>`;
+		const started = performance.now();
+		expect(htmlEvidence(pathological).text).toContain("Meaningful article evidence");
+		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
 	it("executes the configured synthesis adapter as a real bounded process", async () => {
 		const { root } = fixture();
 		const script = join(root, "adapter.cjs");
