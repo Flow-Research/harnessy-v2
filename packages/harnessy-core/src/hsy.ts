@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { runPiCli } from "@earendil-works/pi-coding-agent";
 import { harnessyClaudeBridgeExtension } from "./claude-bridge/index.ts";
 import { resolveExecutorBuiltin } from "./executor-builtin.ts";
@@ -41,16 +42,23 @@ process.env.HARNESSY_EXECUTOR_ARGS = JSON.stringify([
 	"model",
 ]);
 
-void runPiCli(normalizeHsyArgs(process.argv.slice(2)), {
-	appIdentity: {
-		name: HSY_APP_NAME,
-		title: HSY_APP_TITLE,
-		description: HSY_APP_DESCRIPTION,
-		configDir: HSY_CONFIG_DIR,
-		helpEpilogue: HSY_HELP_EPILOGUE,
-	},
-	extensionFactories: [
-		{ name: "harnessy-welcome", factory: harnessyWelcomeExtension },
-		{ name: "harnessy-claude-bridge", factory: harnessyClaudeBridgeExtension },
+void runPiCli(
+	[
+		...normalizeHsyArgs(process.argv.slice(2)),
+		"--skill",
+		fileURLToPath(new URL("../resources/skills/personal-knowledge", import.meta.url)),
 	],
-});
+	{
+		appIdentity: {
+			name: HSY_APP_NAME,
+			title: HSY_APP_TITLE,
+			description: HSY_APP_DESCRIPTION,
+			configDir: HSY_CONFIG_DIR,
+			helpEpilogue: HSY_HELP_EPILOGUE,
+		},
+		extensionFactories: [
+			{ name: "harnessy-welcome", factory: harnessyWelcomeExtension },
+			{ name: "harnessy-claude-bridge", factory: harnessyClaudeBridgeExtension },
+		],
+	},
+);

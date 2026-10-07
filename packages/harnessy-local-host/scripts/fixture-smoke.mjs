@@ -212,6 +212,20 @@ const exactHostInventory = [
 	"dist/owner-service-signing.js",
 	"dist/schema.d.ts",
 	"dist/schema.js",
+	"dist/wiki-cli.js",
+	"dist/wiki-cli.d.ts",
+	"dist/wiki-command.js",
+	"dist/wiki-command.d.ts",
+	"dist/wiki/evidence.js",
+	"dist/wiki/evidence.d.ts",
+	"dist/wiki/model.js",
+	"dist/wiki/model.d.ts",
+	"dist/wiki/service.js",
+	"dist/wiki/service.d.ts",
+	"dist/wiki/store.js",
+	"dist/wiki/store.d.ts",
+	"dist/wiki/synthesis.js",
+	"dist/wiki/synthesis.d.ts",
 	"package.json",
 ].sort();
 
@@ -277,6 +291,7 @@ try {
 	makePrivateDirectory(join(installedHostRoot, "dist"));
 	copyRuntimePackage("effect");
 	copyRuntimePackage("marked");
+	run(process.execPath, [join(packageRoot, "test/support/packed-wiki.mjs"), consumerRoot], consumerRoot);
 	assert(!lstatSync(installedHostRoot).isSymbolicLink(), "Extracted local host must not resolve to workspace source");
 	assert(!lstatSync(installedCoreRoot).isSymbolicLink(), "Extracted Core must not resolve to workspace source");
 

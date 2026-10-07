@@ -91,6 +91,21 @@
         "qa/security/scripts/security-invariants.md"
       ],
       "scenario_count": 1
+    },
+    {
+      "slug": "personal-knowledge",
+      "name": "Personal learning library",
+      "id_prefix": "WIKI",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/personal-knowledge.md"
+      ],
+      "scenario_count": 1
     }
   ]
 }

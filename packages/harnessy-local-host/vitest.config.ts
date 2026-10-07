@@ -8,6 +8,7 @@ export default defineConfig({
 		dedupe: ["effect", "@effect/vitest"],
 		alias: [
 			{ find: /^@harnessy\/core\/community-briefing$/, replacement: fileURLToPath(new URL("../harnessy-core/src/community-briefing.ts", import.meta.url)) },
+			{ find: /^@harnessy\/core\/wiki$/, replacement: fileURLToPath(new URL("../harnessy-core/src/wiki.ts", import.meta.url)) },
 			{
 				find: /^@harnessy\/core\/meeting-publication$/,
 				replacement: fileURLToPath(new URL("../harnessy-core/src/meeting-publication.ts", import.meta.url)),
