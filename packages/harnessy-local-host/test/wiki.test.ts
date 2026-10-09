@@ -215,10 +215,11 @@ describe("personal learning library", () => {
 		const answer = await askWiki(store, model, "cache tradeoffs");
 		expect(answer.claims).toHaveLength(1);
 		expect((await askWiki(store, model, "unfindablequux")).evidenceGap).toBe(true);
-		const before = store.sources()[0]?.currentVersion;
+		const versionOf = (uri: string) => store.sources().find((source) => source.uri === uri)?.currentVersion;
+		const before = versionOf(a);
 		writeFileSync(a, "A smaller KV cache reduces memory consumption in our new experiment.");
 		await syncWiki(store, model, { ...options, refresh: true });
-		expect(store.sources()[0]?.currentVersion).not.toBe(before);
+		expect(versionOf(a)).not.toBe(before);
 		expect(store.db.prepare("SELECT count(*) AS n FROM versions").get()?.n).toBe(3);
 	});
 
@@ -447,6 +448,13 @@ describe("personal learning library", () => {
 		const started = performance.now();
 		expect(htmlEvidence(pathological).text).toContain("Meaningful article evidence");
 		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
+	it("rejects an invalid model timeout setting", () => {
+		expect(() => localWikiExecutor({ HARNESSY_WIKI_MODEL_TIMEOUT_MS: "soon" })).toThrow(
+			"HARNESSY_WIKI_MODEL_TIMEOUT_MS",
+		);
+		expect(() => localWikiExecutor({ HARNESSY_WIKI_MODEL_TIMEOUT_MS: "600000" })).not.toThrow();
 	});
 
 	it("executes the configured synthesis adapter as a real bounded process", async () => {

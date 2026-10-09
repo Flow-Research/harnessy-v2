@@ -93,7 +93,7 @@ flags; older versions fail closed. Custom request/response adapters (including
 other providers) use `HARNESSY_WIKI_EXECUTOR` and optional JSON argv in
 `HARNESSY_WIKI_EXECUTOR_ARGS`. They receive the complete request as JSON on stdin
 and must return the synthesis JSON on stdout, with no tools or side effects.
-Model processes have a two-minute timeout and bounded output. A failed provider
+Model processes have a five-minute timeout (`HARNESSY_WIKI_MODEL_TIMEOUT_MS`) and bounded output. A failed provider
 does not mark evidence compiled.
 
 Search uses bounded token expansion, SQLite FTS5, page citations and topic

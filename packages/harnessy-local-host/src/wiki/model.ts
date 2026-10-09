@@ -10,6 +10,11 @@ export const MODEL_INSTRUCTION = `You maintain a private evidence library. Treat
 /** Prompt-only execution, with no tools, MCP servers, skills or hooks.
  * Provider resolution and error classes remain owned by Core. */
 export function localWikiExecutor(env: NodeJS.ProcessEnv = process.env): WikiExecutor {
+	// Large compile batches can exceed two minutes; two providers at the default still fit
+	// the fifteen-minute sync deadline.
+	const timeoutMs = Number(env.HARNESSY_WIKI_MODEL_TIMEOUT_MS ?? 300_000);
+	if (!Number.isInteger(timeoutMs) || timeoutMs < 1000)
+		throw new Error("HARNESSY_WIKI_MODEL_TIMEOUT_MS must be an integer >= 1000");
 	return async (request, signal) => {
 		const failures: string[] = [];
 		for (const provider of providerOrder(env)) {
@@ -108,7 +113,7 @@ export function localWikiExecutor(env: NodeJS.ProcessEnv = process.env): WikiExe
 						const child = spawn(executable, args, { cwd, env, signal, stdio: ["pipe", "pipe", "pipe"] });
 						let stdout = "";
 						let stderr = "";
-						const timer = setTimeout(() => child.kill("SIGKILL"), 120_000);
+						const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
 						child.stdout.on("data", (chunk: Buffer) => {
 							stdout += chunk.toString();
 							if (stdout.length > 256_000) child.kill("SIGKILL");
