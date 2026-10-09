@@ -48,6 +48,8 @@ export interface WikiPageProposal {
 
 export interface WikiSynthesisResult {
 	readonly pages: readonly WikiPageProposal[];
+	/** Claims, pages or links rejected by verification and left out of `pages`. */
+	readonly dropped?: readonly string[];
 }
 
 export interface WikiEvidence {

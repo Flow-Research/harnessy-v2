@@ -76,8 +76,12 @@ and bounded existing pages. A source's topic correction takes precedence over
 automatic classification. The model proposes structured claims and links;
 deterministic validation rejects uncited material claims, invented versions,
 nonmatching quotes, cross-source claims citing only one source, invalid paths,
-markup and unresolved links. Citation validation proves evidence exists; it does
-not prove an interpretation. An unchanged sync makes no model call or page edit.
+markup and unresolved links. A failing claim, page or link is dropped and reported
+(`dropped`, `droppedCount`); the remaining verified content is applied, so one bad
+citation does not discard a batch. The batch fails only when no page survives.
+Source pages are written whether or not synthesis succeeds. Citation validation
+proves evidence exists; it does not prove an interpretation. An unchanged sync
+makes no model call or page edit.
 
 Standalone synthesis uses Core's provider order and model resolution. Claude is
 invoked with no tools, MCP, skills, hooks or session persistence. Codex uses an

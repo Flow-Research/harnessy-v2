@@ -125,6 +125,7 @@ export async function syncWiki(
 	const scanned = await store.write(async () => reconcile(store, options.homeRoot, options.projectRoot));
 	if (options.captureOnly) return { scanned, ...statusWiki(store) };
 	const failures: string[] = [];
+	let dropped: readonly string[] = [];
 	let fetched = 0;
 	let generated = 0;
 	await store.write(async () => {
@@ -206,6 +207,19 @@ export async function syncWiki(
 					.pages()
 					.filter((page) => !page.path.startsWith("sources/"))
 					.slice(0, 12);
+				// Source pages hold only captured evidence, so write them whether or not synthesis succeeds.
+				for (const item of evidence) {
+					const path = `sources/${item.version.id}.md`;
+					if (
+						stablePage(
+							store,
+							path,
+							sourcePage({ source: item.source, version: store.version(item.version.id) }),
+							store.pageHash(path),
+						)
+					)
+						generated++;
+				}
 				const expected = new Map(store.pages().map((page) => [page.path, store.pageHash(page.path)]));
 				let applying = false;
 				try {
@@ -226,37 +240,29 @@ export async function syncWiki(
 						evidence,
 						store.pages().map((page) => page.path),
 					);
-					for (const page of result.pages)
-						if (page.path.startsWith("reviews/")) throw new Error("Compilation cannot replace reviews");
-					const required = [
+					const omitted = [...(result.dropped ?? [])];
+					const pages = result.pages.filter((page) => {
+						if (!page.path.startsWith("reviews/")) return true;
+						omitted.push(`${page.path}: Compilation cannot replace reviews`);
+						return false;
+					});
+					if (!pages.length) throw new Error("No verified synthesis pages");
+					for (const path of [
 						"questions.md",
 						...new Set(pending.flatMap((source) => source.topics).map((topic) => `topics/${slug(topic)}.md`)),
-					];
-					for (const path of required)
-						if (!result.pages.some((page) => page.path === path))
-							throw new Error(`Synthesis omitted required page: ${path}`);
+					])
+						if (!pages.some((page) => page.path === path)) omitted.push(`${path}: not synthesized this run`);
 					// Validate all destinations before applying any proposal.
-					for (const page of result.pages)
+					for (const page of pages)
 						if (store.pageHash(page.path) !== (expected.get(page.path) ?? null))
 							throw new Error(`Manual edit conflict: ${page.path}`);
 					applying = true;
-					for (const item of evidence) {
-						const path = `sources/${item.version.id}.md`;
-						if (
-							stablePage(
-								store,
-								path,
-								sourcePage({ source: item.source, version: store.version(item.version.id) }),
-								store.pageHash(path),
-							)
-						)
-							generated++;
-					}
-					for (const page of result.pages)
+					dropped = omitted;
+					for (const page of pages)
 						if (stablePage(store, page.path, renderPage(page), expected.get(page.path) ?? null)) generated++;
 					for (const source of pending) {
 						if (!source.manualTopics) {
-							const inferred = result.pages
+							const inferred = pages
 								.filter((page) =>
 									page.claims.some((claim) =>
 										claim.citations.some((citation) => citation.versionId === source.currentVersion),
@@ -275,6 +281,7 @@ export async function syncWiki(
 						);
 					}
 					store.setMeta("lastSynthesisError", "");
+					store.setMeta("lastSynthesisDropped", String(omitted.length));
 				} catch (error) {
 					if (applying) throw error;
 					const message = error instanceof Error ? error.message : "Synthesis failed";
@@ -308,7 +315,15 @@ export async function syncWiki(
 				generated = 0;
 				await store.write(async () => store.setMeta("lastSynthesisError", message));
 			});
-	return { scanned, fetched, generated, failures, ...statusWiki(store) };
+	return {
+		scanned,
+		fetched,
+		generated,
+		failures,
+		dropped: dropped.slice(0, 20),
+		droppedCount: dropped.length,
+		...statusWiki(store),
+	};
 }
 
 export function statusWiki(store: WikiStore): Record<string, unknown> {

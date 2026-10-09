@@ -222,7 +222,7 @@ describe("personal learning library", () => {
 		expect(store.db.prepare("SELECT count(*) AS n FROM versions").get()?.n).toBe(3);
 	});
 
-	it("rejects fabricated citations, uncited claims, injected markup and unresolved links", async () => {
+	it("drops fabricated citations, uncited claims, injected markup and unresolved links, keeping verified claims", async () => {
 		const { root, store, options } = fixture();
 		const path = join(root, "evidence.md");
 		writeFileSync(path, "Known source passage with verifiable text.");
@@ -230,24 +230,86 @@ describe("personal learning library", () => {
 			store.capture({ uri: path, kind: "saved", event: path, occurredAt: "2026-09-13" });
 		});
 		await syncWiki(store, execute, options);
-		const request = {
-			task: "compile" as const,
-			evidence: store.search("verifiable").sources,
-			instruction: "",
-			pages: [],
-			topics: [],
+		const evidence = store.search("verifiable").sources;
+		const item = evidence[0];
+		if (!item) throw new Error("Missing evidence");
+		const passage = item.version.passages[0];
+		if (!passage) throw new Error("Missing passage");
+		const good = {
+			text: "The source states a verifiable fact.",
+			kind: "finding",
+			citations: [{ versionId: item.version.id, locator: passage.locator, quote: passage.text }],
 		};
-		const invalid = proposal(request);
-		invalid.pages[0]!.claims[0]!.citations[0]!.quote = "fabricated passage";
-		expect(() => validateSynthesis(invalid, request.evidence, [])).toThrow("Citation");
-		const missing = proposal(request);
-		missing.pages[0]!.claims[0]!.citations = [];
-		expect(() => validateSynthesis(missing, request.evidence, [])).toThrow("citation");
-		const injection = proposal(request);
-		injection.pages[0]!.claims[0]!.text = "<script>steal()</script>";
-		expect(() => validateSynthesis(injection, request.evidence, [])).toThrow("plain");
-		const links = { ...proposal(request), pages: [{ ...proposal(request).pages[0], links: ["../../escape.md"] }] };
-		expect(() => validateSynthesis(links, request.evidence, [])).toThrow("link");
+		const page = (claims: unknown[], links: string[] = []) => ({
+			path: "concepts/checked.md",
+			title: "Checked",
+			topics: [],
+			claims,
+			links,
+		});
+		const result = validateSynthesis(
+			{
+				pages: [
+					page(
+						[
+							good,
+							{ ...good, citations: [{ ...good.citations[0], quote: "fabricated passage" }] },
+							{ ...good, citations: [] },
+							{ ...good, text: "<script>steal()</script>" },
+						],
+						["../../escape.md"],
+					),
+				],
+			},
+			evidence,
+			[],
+		);
+		expect(result.pages).toHaveLength(1);
+		expect(result.pages[0]?.claims).toEqual([good]);
+		expect(result.pages[0]?.links).toEqual([]);
+		const dropped = (result.dropped ?? []).join("\n");
+		expect(dropped).toContain("Citation does not match");
+		expect(dropped).toContain("lacks citation");
+		expect(dropped).toContain("plain");
+		expect(dropped).toContain("Unresolved wiki link");
+		expect(() =>
+			validateSynthesis(
+				{ pages: [page([{ ...good, citations: [{ ...good.citations[0], quote: "fabricated passage" }] }])] },
+				evidence,
+				[],
+			),
+		).toThrow("No verified synthesis pages");
+	});
+
+	it("keeps verified pages and source pages when part of a compile batch fails verification", async () => {
+		const { root, store, options } = fixture();
+		const path = join(root, "partial.md");
+		writeFileSync(path, "Measured evidence about partial synthesis batches.");
+		await store.write(async () => {
+			store.capture({ uri: path, kind: "saved", event: path, occurredAt: "2026-09-13" });
+		});
+		const partial: WikiExecutor = async (request) => {
+			const result = proposal(request);
+			const broken = result.pages[0];
+			if (broken)
+				result.pages[0] = {
+					...broken,
+					claims: [
+						{
+							...broken.claims[0]!,
+							citations: [{ ...broken.claims[0]!.citations[0]!, quote: "invented quote text" }],
+						},
+					],
+				};
+			return result;
+		};
+		const outcome = await syncWiki(store, partial, options);
+		expect(outcome.failures).toEqual([]);
+		expect(outcome.droppedCount).toBeGreaterThan(0);
+		const paths = store.pages().map((item) => item.path);
+		expect(paths.some((item) => item.startsWith("sources/"))).toBe(true);
+		expect(paths).toContain("questions.md");
+		expect(paths).not.toContain("concepts/cache-tradeoffs.md");
 	});
 
 	it("preserves personal notes and intervening generated-page edits", async () => {

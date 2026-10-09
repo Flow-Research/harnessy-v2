@@ -16,65 +16,88 @@ const list = (value: unknown, max: number): unknown[] => {
 	return value;
 };
 
+const reason = (error: unknown): string => (error instanceof Error ? error.message : "Invalid synthesis item");
+
 /** Verifies existence and exact quotations, not entailment or truth. All citations must
- * refer to the bounded evidence actually supplied to this model invocation. */
+ * refer to the bounded evidence actually supplied to this model invocation. A claim, page or
+ * link that fails verification is dropped and reported in `dropped`; only verified content is
+ * returned. The whole result is rejected only when it is malformed or nothing survives. */
 export function validateSynthesis(
 	raw: unknown,
 	evidence: readonly WikiEvidence[],
 	existing: readonly string[],
 ): WikiSynthesisResult {
-	const pages: WikiPageProposal[] = list(object(raw).pages, 16).map((value) => {
-		const page = object(value);
-		const path = plain(page.path, 160);
-		if (!/^(?:questions|topics\/[a-z0-9-]+|concepts\/[a-z0-9-]+|reviews\/\d{4}-W\d{2})\.md$/.test(path))
-			throw new Error(`Invalid proposed page: ${path}`);
-		const claims: WikiClaim[] = list(page.claims, 50).map((value) => {
-			const claim = object(value);
-			const kind = plain(claim.kind) as WikiClaim["kind"];
-			if (!["finding", "agreement", "disagreement", "connection", "implication", "question", "gap"].includes(kind))
-				throw new Error("Unknown claim kind");
-			const citations: WikiCitation[] = list(claim.citations, 12).map((value) => {
-				const citation = object(value);
-				if (
-					typeof citation.versionId !== "string" ||
-					typeof citation.locator !== "string" ||
-					typeof citation.quote !== "string" ||
-					citation.quote.trim().length < 8 ||
-					citation.quote.length > 1800
-				)
-					throw new Error("Invalid citation");
-				const version = evidence.find((item) => item.version.id === citation.versionId)?.version;
-				const passage = version?.passages.find((item) => item.locator === citation.locator);
-				if (!passage || !passage.text.includes(citation.quote))
-					throw new Error("Citation does not match supplied evidence");
-				return { versionId: citation.versionId, locator: citation.locator, quote: citation.quote };
-			});
-			if (!["question", "gap"].includes(kind) && !citations.length) throw new Error("Material claim lacks citation");
+	const dropped: string[] = [];
+	const claimOf = (value: unknown): WikiClaim => {
+		const claim = object(value);
+		const kind = plain(claim.kind) as WikiClaim["kind"];
+		if (!["finding", "agreement", "disagreement", "connection", "implication", "question", "gap"].includes(kind))
+			throw new Error("Unknown claim kind");
+		const citations: WikiCitation[] = list(claim.citations, 12).map((value) => {
+			const citation = object(value);
 			if (
-				["agreement", "disagreement", "connection"].includes(kind) &&
-				new Set(
-					citations.map((citation) => evidence.find((item) => item.version.id === citation.versionId)?.source.id),
-				).size < 2
+				typeof citation.versionId !== "string" ||
+				typeof citation.locator !== "string" ||
+				typeof citation.quote !== "string" ||
+				citation.quote.trim().length < 8 ||
+				citation.quote.length > 1800
 			)
-				throw new Error("Cross-source claim requires two sources");
-			return { text: plain(claim.text), kind, citations };
+				throw new Error("Invalid citation");
+			const version = evidence.find((item) => item.version.id === citation.versionId)?.version;
+			const passage = version?.passages.find((item) => item.locator === citation.locator);
+			if (!passage || !passage.text.includes(citation.quote))
+				throw new Error("Citation does not match supplied evidence");
+			return { versionId: citation.versionId, locator: citation.locator, quote: citation.quote };
 		});
-		if (!claims.length) throw new Error("Empty proposed page");
-		return {
-			path,
-			title: plain(page.title, 200),
-			topics: list(page.topics, 12).map((value) => plain(value, 300)),
-			claims,
-			links: list(page.links, 20).map((value) => plain(value, 160)),
-		};
-	});
-	if (!pages.length || new Set(pages.map((page) => page.path)).size !== pages.length)
-		throw new Error("Empty or duplicate proposed pages");
-	const known = new Set([...existing, ...pages.map((page) => page.path)]);
-	for (const page of pages)
-		for (const link of page.links)
-			if (!known.has(link) || link.includes("..")) throw new Error(`Unresolved wiki link: ${link}`);
-	return { pages };
+		if (!["question", "gap"].includes(kind) && !citations.length) throw new Error("Material claim lacks citation");
+		if (
+			["agreement", "disagreement", "connection"].includes(kind) &&
+			new Set(
+				citations.map((citation) => evidence.find((item) => item.version.id === citation.versionId)?.source.id),
+			).size < 2
+		)
+			throw new Error("Cross-source claim requires two sources");
+		return { text: plain(claim.text), kind, citations };
+	};
+	const proposed: WikiPageProposal[] = [];
+	for (const value of list(object(raw).pages, 16)) {
+		try {
+			const page = object(value);
+			const path = plain(page.path, 160);
+			if (!/^(?:questions|topics\/[a-z0-9-]+|concepts\/[a-z0-9-]+|reviews\/\d{4}-W\d{2})\.md$/.test(path))
+				throw new Error(`Invalid proposed page: ${path}`);
+			if (proposed.some((item) => item.path === path)) throw new Error(`Duplicate proposed page: ${path}`);
+			const claims: WikiClaim[] = [];
+			for (const [index, claim] of list(page.claims, 50).entries()) {
+				try {
+					claims.push(claimOf(claim));
+				} catch (error) {
+					dropped.push(`${path} claim ${index + 1}: ${reason(error)}`);
+				}
+			}
+			if (!claims.length) throw new Error(`No verified claims: ${path}`);
+			proposed.push({
+				path,
+				title: plain(page.title, 200),
+				topics: list(page.topics, 12).map((value) => plain(value, 300)),
+				claims,
+				links: list(page.links, 20).map((value) => plain(value, 160)),
+			});
+		} catch (error) {
+			dropped.push(`page: ${reason(error)}`);
+		}
+	}
+	if (!proposed.length) throw new Error(`No verified synthesis pages${dropped.length ? ` (${dropped[0]})` : ""}`);
+	const known = new Set([...existing, ...proposed.map((page) => page.path)]);
+	const pages = proposed.map((page) => ({
+		...page,
+		links: page.links.filter((link) => {
+			const ok = known.has(link) && !link.includes("..");
+			if (!ok) dropped.push(`${page.path} link: Unresolved wiki link: ${link}`);
+			return ok;
+		}),
+	}));
+	return { pages, dropped };
 }
 
 export const escapeMarkdown = (value: string): string => value.replace(/[\\`*_{}[\]()#+.!|<>-]/g, "\\$&");
