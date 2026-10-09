@@ -31,6 +31,7 @@ import { JarvisPathResolver } from "../jarvis/paths.ts";
 import { jarvisCalendarCommand } from "./calendar.ts";
 import { communityDraftCommand, communityReviewServeCommand } from "./community-draft.ts";
 import { jsonOption, targetOption } from "./shared.ts";
+import { runWikiHost, wikiCommand } from "./wiki.ts";
 
 const homeRootOption = Options.string("home-root").pipe(
 	Options.optional,
@@ -269,6 +270,19 @@ export const jarvisLifeDailyCommand = Command.make(
 						? { requestPath: requestPath!, grantPath: grantPath!, trustedPublicKeyPath: trustedPublicKeyPath! }
 						: undefined,
 			});
+			if (result.published)
+				yield* Effect.tryPromise({
+					try: () =>
+						runWikiHost([
+							"sync",
+							"--home-root",
+							lifeSettings(target, homeRoot, compatibilityRoot).paths.homeRoot,
+							"--target",
+							resolve(target),
+							"--json",
+						]),
+					catch: (error) => new Error(String(error)),
+				}).pipe(Effect.catch((error) => Console.error(`Wiki sync pending for retry: ${error.message}`)));
 			if (json)
 				return yield* Console.log(JSON.stringify({ command: "jarvis life daily", ok: true, ...result }, null, 2));
 			yield* Console.log(`${result.published ? "Published" : "Prepared"} daily brief: ${result.briefPath}`);
@@ -331,6 +345,10 @@ export const jarvisLifeWeeklyCommand = Command.make(
 			});
 			if (result === undefined)
 				return yield* Effect.fail(new Error("Native weekly Life did not return a draft receipt."));
+			yield* Effect.tryPromise({
+				try: () => runWikiHost(["review", "--home-root", settings.paths.homeRoot, "--life-companion", "--json"]),
+				catch: (error) => new Error(String(error)),
+			}).pipe(Effect.catch((error) => Console.error(`Wiki weekly review pending for retry: ${error.message}`)));
 			if (json)
 				return yield* Console.log(JSON.stringify({ command: "jarvis life weekly", ok: true, ...result }, null, 2));
 			yield* Console.log(`Prepared weekly plan: ${result.briefPath}`);
@@ -784,6 +802,7 @@ export const jarvisCommand = Command.make("jarvis").pipe(
 		jarvisCommunityCommand,
 		jarvisMeetingCommand,
 		jarvisCalendarCommand,
+		wikiCommand,
 	] as const),
 	Command.withDescription("Inspect Jarvis compatibility and run migrated V2 domains"),
 );
