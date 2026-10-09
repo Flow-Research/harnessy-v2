@@ -154,6 +154,9 @@ export async function syncWiki(
 						options.fixtureOrigin,
 					);
 				} catch (error) {
+					// The legacy Life archive only fills a public source that has no evidence yet;
+					// it never replaces a newer captured version or applies to local files.
+					if (source.currentVersion || !/^https?:/i.test(source.uri)) throw error;
 					const archived = archiveEvidence(
 						source.uri,
 						join(options.homeRoot, ".jarvis", "wikis", "founder-learning", "raw", "articles"),
@@ -261,6 +264,22 @@ export async function syncWiki(
 					for (const page of pages)
 						if (stablePage(store, page.path, renderPage(page), expected.get(page.path) ?? null)) generated++;
 					for (const source of pending) {
+						const cited = pages.some((page) =>
+							page.claims.some((claim) =>
+								claim.citations.some((citation) => citation.versionId === source.currentVersion),
+							),
+						);
+						if (!cited) {
+							// Retry a source whose claims were all dropped; give up after three batches so
+							// one unverifiable source cannot occupy a compile slot forever.
+							const attempts = Number(store.meta(`synthesisAttempts:${source.id}`) ?? 0) + 1;
+							store.setMeta(`synthesisAttempts:${source.id}`, String(attempts));
+							if (attempts < 3) {
+								omitted.push(`${source.id}: no verified claims; will retry`);
+								continue;
+							}
+							omitted.push(`${source.id}: no verified claims after ${attempts} attempts`);
+						}
 						if (!source.manualTopics) {
 							const inferred = pages
 								.filter((page) =>
@@ -391,6 +410,14 @@ export function isoWeek(date: Date): string {
 	const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 	d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
 	return `${d.getUTCFullYear()}-W${String(Math.ceil(((d.getTime() - Date.UTC(d.getUTCFullYear(), 0, 1)) / 86_400_000 + 1) / 7)).padStart(2, "0")}`;
+}
+
+/** Monday 12:00 UTC of an ISO week, so paths derived from it name that week. */
+export function isoWeekMonday(week: string): Date {
+	const year = Number(week.slice(0, 4));
+	const jan4 = new Date(Date.UTC(year, 0, 4, 12));
+	jan4.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() || 7) - 1) + (Number(week.slice(-2)) - 1) * 7);
+	return jan4;
 }
 
 export async function reviewWiki(

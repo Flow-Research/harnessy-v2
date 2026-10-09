@@ -20,12 +20,16 @@ export const runWikiHost = (args: readonly string[]): Promise<string> =>
 		});
 		let stdout = "";
 		let stderr = "";
+		let truncated = false;
 		const stop = () => child.kill("SIGTERM");
 		process.once("SIGINT", stop);
 		process.once("SIGTERM", stop);
 		child.stdout?.on("data", (chunk: Buffer) => {
 			stdout += chunk.toString();
-			if (stdout.length > 2_000_000) child.kill();
+			if (stdout.length > 2_000_000 && !truncated) {
+				truncated = true;
+				child.kill();
+			}
 		});
 		child.stderr?.on("data", (chunk: Buffer) => {
 			stderr = (stderr + chunk.toString()).slice(-8000);
@@ -34,7 +38,8 @@ export const runWikiHost = (args: readonly string[]): Promise<string> =>
 		child.on("close", (code) => {
 			process.removeListener("SIGINT", stop);
 			process.removeListener("SIGTERM", stop);
-			if (code === 0) resolve(stdout);
+			if (truncated) reject(new Error("Wiki host output exceeded the 2,000,000-character limit"));
+			else if (code === 0) resolve(stdout);
 			else reject(new Error(stderr || `Wiki host exited ${code}`));
 		});
 	});
@@ -103,8 +108,8 @@ export const wikiCommand = Command.make("wiki").pipe(
 			(value) => invoke(["ask", value.question, ...baseArgs(value), ...(value.context ? ["--context"] : [])]),
 		),
 		Command.make("status", common, (value) => invoke(["status", ...baseArgs(value)])),
-		Command.make("review", { ...common, week: Flag.string("week") }, (value) =>
-			invoke(["review", "--week", value.week, ...baseArgs(value)]),
+		Command.make("review", { ...common, week: Flag.string("week").pipe(Flag.optional) }, (value) =>
+			invoke(["review", ...(Option.isSome(value.week) ? ["--week", value.week.value] : []), ...baseArgs(value)]),
 		),
 		Command.make("open", common, (value) => invoke(["open", ...baseArgs(value)])),
 	] as const),

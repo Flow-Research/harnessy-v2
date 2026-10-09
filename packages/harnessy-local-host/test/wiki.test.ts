@@ -6,7 +6,7 @@ import type { WikiExecutor, WikiModelRequest } from "@harnessy/core/wiki";
 import { afterEach, describe, expect, it } from "vitest";
 import { download, extract, htmlEvidence, isPublicAddress, pinnedLookup } from "../src/wiki/evidence.ts";
 import { localWikiExecutor } from "../src/wiki/model.ts";
-import { askWiki, briefDate, isoWeek, reconcile, reviewWiki, syncWiki } from "../src/wiki/service.ts";
+import { askWiki, briefDate, isoWeek, isoWeekMonday, reconcile, reviewWiki, syncWiki } from "../src/wiki/service.ts";
 import { slug, WikiStore } from "../src/wiki/store.ts";
 import { validateSynthesis } from "../src/wiki/synthesis.ts";
 import { runWikiCommand } from "../src/wiki-command.ts";
@@ -313,6 +313,39 @@ describe("personal learning library", () => {
 		expect(paths).not.toContain("concepts/cache-tradeoffs.md");
 	});
 
+	it("keeps a source pending while no verified page cites it, then stops retrying after three batches", async () => {
+		const { root, store, options } = fixture();
+		const cited = join(root, "cited.md");
+		const uncited = join(root, "uncited.md");
+		writeFileSync(cited, "Cited evidence about bounded synthesis retries.");
+		writeFileSync(uncited, "Uncited evidence that the model never quotes correctly.");
+		await store.write(async () => {
+			for (const uri of [cited, uncited])
+				store.capture({
+					uri,
+					kind: "saved",
+					event: uri,
+					occurredAt: "2026-09-13",
+					topics: ["Transformer inference systems"],
+				});
+		});
+		let calls = 0;
+		const onlyCited: WikiExecutor = async (request) => {
+			calls++;
+			return proposal({
+				...request,
+				evidence: request.evidence.filter((item) => item.source.uri === cited),
+			});
+		};
+		const first = await syncWiki(store, onlyCited, options);
+		expect(first.synthesisPending).toBe(1);
+		await syncWiki(store, onlyCited, options);
+		const third = await syncWiki(store, onlyCited, options);
+		expect(third.synthesisPending).toBe(0);
+		expect(calls).toBe(3);
+		expect(String((third.dropped as string[]).join("\n"))).toContain("after 3 attempts");
+	});
+
 	it("preserves personal notes and intervening generated-page edits", async () => {
 		const { root, store, options } = fixture();
 		const path = join(root, "source.txt");
@@ -399,7 +432,15 @@ describe("personal learning library", () => {
 			).mode,
 		).toBe("abstract");
 		expect(() => htmlEvidence("<p>Access denied</p>")).toThrow("access-restricted");
-		for (const ip of ["127.0.0.1", "::1", "::ffff:127.0.0.1", "169.254.169.254", "fc00::1", "192.168.1.1"])
+		for (const ip of [
+			"127.0.0.1",
+			"::1",
+			"::ffff:127.0.0.1",
+			"169.254.169.254",
+			"fc00::1",
+			"192.168.1.1",
+			"64:ff9b:1::a00:1",
+		])
 			expect(isPublicAddress(ip)).toBe(false);
 		expect(isPublicAddress("8.8.8.8")).toBe(true);
 	});
@@ -448,6 +489,12 @@ describe("personal learning library", () => {
 		const started = performance.now();
 		expect(htmlEvidence(pathological).text).toContain("Meaningful article evidence");
 		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
+	it("maps an ISO week back to a date inside that week", () => {
+		for (const week of ["2026-W01", "2026-W38", "2026-W53", "2027-W01", "2028-W52"])
+			expect(isoWeek(isoWeekMonday(week))).toBe(week);
+		expect(isoWeekMonday("2026-W38").getUTCDay()).toBe(1);
 	});
 
 	it("rejects an invalid model timeout setting", () => {

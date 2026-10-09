@@ -8,6 +8,7 @@ import { localWikiExecutor } from "./wiki/model.ts";
 import {
 	askWiki,
 	isoWeek,
+	isoWeekMonday,
 	queryContext,
 	reviewWiki,
 	statusWiki,
@@ -124,7 +125,7 @@ export async function runWikiCommand(args: readonly string[]): Promise<unknown> 
 			const week = values.week ?? isoWeek(new Date());
 			const result = await reviewWiki(store, execute, week);
 			if (values["life-companion"]) {
-				const companion = weeklyCompanionPath(join(homeRoot, ".agents", "life"), new Date());
+				const companion = weeklyCompanionPath(join(homeRoot, ".agents", "life"), isoWeekMonday(week));
 				const link = relative(dirname(companion), join(root, "wiki", "reviews", `${week}.md`))
 					.split("\\")
 					.join("/");

@@ -42,23 +42,23 @@ process.env.HARNESSY_EXECUTOR_ARGS = JSON.stringify([
 	"model",
 ]);
 
-void runPiCli(
-	[
-		...normalizeHsyArgs(process.argv.slice(2)),
-		"--skill",
-		fileURLToPath(new URL("../resources/skills/personal-knowledge", import.meta.url)),
-	],
-	{
-		appIdentity: {
-			name: HSY_APP_NAME,
-			title: HSY_APP_TITLE,
-			description: HSY_APP_DESCRIPTION,
-			configDir: HSY_CONFIG_DIR,
-			helpEpilogue: HSY_HELP_EPILOGUE,
-		},
-		extensionFactories: [
-			{ name: "harnessy-welcome", factory: harnessyWelcomeExtension },
-			{ name: "harnessy-claude-bridge", factory: harnessyClaudeBridgeExtension },
-		],
+const args = normalizeHsyArgs(process.argv.slice(2));
+// Package and config parsers reject agent flags, so only agent invocations receive the bundled skill.
+const agentArgs =
+	args[0] !== undefined && PACKAGE_COMMANDS.has(args[0])
+		? args
+		: [...args, "--skill", fileURLToPath(new URL("../resources/skills/personal-knowledge", import.meta.url))];
+
+void runPiCli(agentArgs, {
+	appIdentity: {
+		name: HSY_APP_NAME,
+		title: HSY_APP_TITLE,
+		description: HSY_APP_DESCRIPTION,
+		configDir: HSY_CONFIG_DIR,
+		helpEpilogue: HSY_HELP_EPILOGUE,
 	},
-);
+	extensionFactories: [
+		{ name: "harnessy-welcome", factory: harnessyWelcomeExtension },
+		{ name: "harnessy-claude-bridge", factory: harnessyClaudeBridgeExtension },
+	],
+});

@@ -26,6 +26,8 @@ const invoke = args => new Promise((resolve, reject) => {
 	child.on("error", reject); child.on("close", code => code === 0 ? resolve(JSON.parse(output)) : reject(new Error(errors)));
 });
 let child;
+let closed;
+const running = () => child && child.exitCode === null && child.signalCode === null;
 try {
 	await invoke(["ingest", source, "--topic", "Cache"]);
 	const result = await invoke(["sync"]); assert.deepEqual(result.result.failures, []);
@@ -39,14 +41,15 @@ for(const n of graph.nodes){const text=await readFile(join(root,n.id+".md"),"utf
 console.log(JSON.stringify({nodes:graph.nodes.length,edges:graph.edges.length,okf:"0.2"}));`);
 	await new Promise((resolve, reject) => { const verifier = spawn(process.execPath, [verify], { stdio: "inherit" }); verifier.on("error", reject); verifier.on("close", code => code === 0 ? resolve() : reject(new Error("Viewer graph validation failed"))); });
 	child = spawn(process.execPath, [join(installed, "dist/cli/cli.js"), "visualize", join(root, "vault/wiki"), "--no-open", "--port", String(port)], { env: { ...process.env, OPENWIKI_TELEMETRY_DISABLED: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+	closed = new Promise(resolve => child.once("close", resolve));
 	let output = ""; child.stdout.on("data", c => output += c); child.stderr.on("data", c => output += c);
 	let graph;
 	for (let attempt = 0; attempt < 100; attempt++) {
-		if (child.exitCode !== null) throw new Error(output);
+		if (!running()) throw new Error(output);
 		try { const response = await fetch(`http://127.0.0.1:${port}/api/graph`); if (response.ok) { graph = await response.json(); break; } } catch { /* Poll only the loopback fixture. */ }
 		await new Promise(resolve => setTimeout(resolve, 100));
 	}
 	assert(graph?.nodes.some(node => node.id === "topics/cache"), output);
 	const page = await fetch(`http://127.0.0.1:${port}/`); assert.equal(page.status, 200); assert((await page.text()).includes("client.js"));
 	console.log("OpenWiki 0.5.1 public visualize command, graph, OKF frontmatter and reader assets passed.");
-} finally { if (child && child.exitCode === null) { const closed = new Promise(resolve => child.once("close", resolve)); const timer = setTimeout(() => child.kill("SIGKILL"), 5000); child.kill("SIGINT"); await closed; clearTimeout(timer); } rmSync(root, { recursive: true, force: true }); }
+} finally { if (running()) { const timer = setTimeout(() => child.kill("SIGKILL"), 5000); child.kill("SIGINT"); await closed; clearTimeout(timer); } rmSync(root, { recursive: true, force: true }); }
