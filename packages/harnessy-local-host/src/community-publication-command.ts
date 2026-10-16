@@ -70,7 +70,14 @@ export const runCommunityPublicationCommand = (args: ReadonlyArray<string>, owne
 			onFailure: (cause) => ({
 				exitCode: 1,
 				stream: "stderr" as const,
-				value: { error: "community_publication_failed", code: cause === "invalid_arguments" ? cause : cause.code },
+				value:
+					cause === "invalid_arguments"
+						? { error: "community_publication_failed", code: cause }
+						: {
+								error: "community_publication_failed",
+								code: cause.code,
+								...("reason" in cause && cause.reason !== undefined ? { reason: cause.reason } : {}),
+							},
 			}),
 		}),
 	);
