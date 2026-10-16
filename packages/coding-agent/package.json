@@ -18,6 +18,10 @@
 		},
 		"./rpc-entry": {
 			"import": "./dist/rpc-entry.js"
+		},
+		"./auth-storage": {
+			"types": "./dist/core/auth-storage.d.ts",
+			"import": "./dist/core/auth-storage.js"
 		}
 	},
 	"files": [
@@ -26,6 +30,7 @@
 		"examples",
 		"containerization.md",
 		"CHANGELOG.md",
+		"LICENSE",
 		"npm-shrinkwrap.json"
 	],
 	"scripts": {
@@ -42,6 +47,7 @@
 		"@earendil-works/pi-agent-core": "^0.80.3",
 		"@earendil-works/pi-ai": "^0.80.3",
 		"@earendil-works/pi-tui": "^0.80.3",
+		"@modelcontextprotocol/sdk": "1.29.0",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
 		"cross-spawn": "7.0.6",
@@ -55,7 +61,7 @@
 		"proper-lockfile": "4.1.2",
 		"semver": "7.8.0",
 		"typebox": "1.1.38",
-		"undici": "8.5.0",
+		"undici": "8.10.1",
 		"yaml": "2.9.0"
 	},
 	"overrides": {
@@ -77,7 +83,7 @@
 		"@types/semver": "7.7.1",
 		"shx": "0.4.0",
 		"typescript": "5.9.3",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
 	},
 	"keywords": [
 		"coding-agent",

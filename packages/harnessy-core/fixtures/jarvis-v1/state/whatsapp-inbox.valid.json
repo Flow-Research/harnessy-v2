@@ -1,0 +1,16 @@
+{
+  "received_at": "2026-07-11T00:00:00+00:00",
+  "account": "personal",
+  "provider": "meta",
+  "verified": true,
+  "headers": {
+    "x-hub-signature-256": "sha256=fixture",
+    "content-type": "application/json",
+    "user-agent": "fixture"
+  },
+  "payload": {
+    "object": "whatsapp_business_account",
+    "entry": []
+  },
+  "raw_text": "{\"object\":\"whatsapp_business_account\",\"entry\":[]}"
+}

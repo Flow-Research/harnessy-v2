@@ -1,0 +1,19 @@
+{
+  "name": "harnessy-engine-cloudflare-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dry-run": "wrangler deploy --dry-run --outdir .wrangler-output"
+  },
+  "dependencies": {
+    "@harnessy/engine": "file:HARNESSY_ENGINE_TARBALL"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "wrangler": "4.128.0"
+  },
+  "overrides": {
+    "sharp": "0.35.4"
+  }
+}

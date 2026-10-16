@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1780729924132,
+      "tag": "0000_v2_baseline",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1780991784172,
+      "tag": "0001_past_doctor_strange",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1782150869757,
+      "tag": "0002_empty_rictor",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1783025153772,
+      "tag": "0003_graceful_the_fallen",
+      "breakpoints": true
+    }
+  ]
+}

@@ -9,7 +9,8 @@ jarvis text-hygiene clean <generated-file-or-folder> --report
 Use this for README files, PRDs, design specs, technical specs, review reports,
 life plans, daily briefs, and content drafts. The cleaner removes configured
 AI-speak phrase and regex patterns while skipping YAML frontmatter, fenced code
-blocks, and inline code.
+blocks, and inline code. Some patterns are flagged instead of deleted because
+they need a context-specific rewrite.
 
 Personal patterns live at:
 

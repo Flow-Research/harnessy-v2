@@ -1,13 +1,13 @@
 name: jarvis
 type: opencode
-version: 0.1.0
+version: 0.2.11
 owner: julian
 status: experimental
 blast_radius: medium
 description: "Bridge to Jarvis CLI for scheduling, journaling, reading list orchestration, and context management."
 permissions: [write]
 data_categories: [credentials]
-egress: [api.anthropic.com]
+egress: [api.anthropic.com, www.googleapis.com, docs.googleapis.com, discord.com]
 invoke: "/jarvis"
 location: tools/flow-install/skills/jarvis
 
@@ -21,3 +21,21 @@ autoresearch:
     max_human_intervention: 0.5
 traces:
   enabled: true
+
+dependencies:
+  - tool: gws
+    description: "Google Workspace CLI with the macOS native-Keychain credential fix"
+    check: "gws --version 2>&1 | grep -Eq '^gws (0[.]22[.][3-9]|0[.]2[3-9][.]|0[.][3-9][0-9][.]|[1-9][0-9]*[.])'"
+    auth_check: "gws auth export --unmasked >/dev/null 2>&1"
+    install:
+      darwin: "npm install -g @googleworkspace/cli@latest"
+      linux: "npm install -g @googleworkspace/cli@latest"
+      fallback: "https://github.com/googleworkspace/cli"
+    required: true
+  - tool: terminal-notifier
+    description: "Optional clickable macOS notifications for meeting publication review"
+    check: "command -v terminal-notifier"
+    install:
+      darwin: "brew install terminal-notifier"
+      fallback: "https://github.com/julienXX/terminal-notifier"
+    required: false

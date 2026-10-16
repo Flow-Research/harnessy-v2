@@ -1,0 +1,7967 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "kind": "jarvis-click",
+    "version": "0.1.0",
+    "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli",
+    "pythonSourceSha256": "26f4ffe3bb0713d3f101a906fcd2324cc7482b386f7678c28600b4700249f455"
+  },
+  "generatedBy": "scripts/export-jarvis-command-manifest.py",
+  "normalization": {
+    "sort": "path",
+    "renderedHelpExcluded": true,
+    "unsetDefault": {
+      "kind": "unset"
+    },
+    "dynamicDefault": {
+      "kind": "dynamic"
+    }
+  },
+  "commands": [
+    {
+      "path": [
+        "jarvis"
+      ],
+      "kind": "group",
+      "semanticName": "cli",
+      "alias": false,
+      "help": "Jarvis - AI-powered personal assistant for AnyType.\n\n    Features:\n    - Task scheduling: Analyze and optimize your schedule\n    - Journaling: AI-powered freeform journaling\n\n    Use 'jarvis <command> --help' for more information.\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--version"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "analyze"
+      ],
+      "kind": "command",
+      "semanticName": "analyze",
+      "alias": false,
+      "help": "Analyze current schedule workload.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--days"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 14
+        },
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "android"
+      ],
+      "kind": "group",
+      "semanticName": "android",
+      "alias": false,
+      "help": "Run Android emulator and APK workflows.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "android",
+        "avds"
+      ],
+      "kind": "command",
+      "semanticName": "avds",
+      "alias": false,
+      "help": "List available Android Virtual Devices.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "android",
+        "run"
+      ],
+      "kind": "command",
+      "semanticName": "run",
+      "alias": false,
+      "help": "Install an APK on an Android emulator and optionally launch it.",
+      "arguments": [
+        {
+          "name": "apk_path",
+          "type": "file",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--avd"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--reinstall"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-launch"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--timeout"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 180
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "apk"
+      ],
+      "kind": "command",
+      "semanticName": "apk",
+      "alias": false,
+      "help": "Quick alias for 'android run'.",
+      "arguments": [
+        {
+          "name": "apk_path",
+          "type": "file",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--avd"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--reinstall"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-launch"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--timeout"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 180
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "apply"
+      ],
+      "kind": "command",
+      "semanticName": "apply",
+      "alias": false,
+      "help": "Apply pending suggestions to the backend.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--yes",
+            "-y"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "calendar"
+      ],
+      "kind": "group",
+      "semanticName": "calendar",
+      "alias": false,
+      "help": "",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "calendar",
+        "apply"
+      ],
+      "kind": "command",
+      "semanticName": "apply",
+      "alias": false,
+      "help": "",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--plan"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "calendar",
+        "plan"
+      ],
+      "kind": "command",
+      "semanticName": "plan",
+      "alias": false,
+      "help": "",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--days"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 14
+        },
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--min-block"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 30
+        },
+        {
+          "names": [
+            "--interactive",
+            "--no-interactive"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--enforce-due-dates",
+            "--allow-post-deadline"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--force-non-interactive"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community"
+      ],
+      "kind": "group",
+      "semanticName": "community",
+      "alias": false,
+      "help": "Prepare and deliver community-facing updates.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing"
+      ],
+      "kind": "group",
+      "semanticName": "briefing",
+      "alias": false,
+      "help": "Generate, review, and publish the weekly Flow Research briefing.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "generate"
+      ],
+      "kind": "command",
+      "semanticName": "generate",
+      "alias": false,
+      "help": "Generate the latest due Sunday draft, catching up safely after downtime.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--week-start"
+          ],
+          "type": "datetime",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--regenerate"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "preflight"
+      ],
+      "kind": "command",
+      "semanticName": "preflight",
+      "alias": false,
+      "help": "Fail closed until collection, review, scheduling, and providers are ready.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--no-runtime"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-providers"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "review"
+      ],
+      "kind": "group",
+      "semanticName": "review",
+      "alias": false,
+      "help": "Review weekly briefings locally.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "review",
+        "open"
+      ],
+      "kind": "command",
+      "semanticName": "open",
+      "alias": false,
+      "help": "Open the authenticated local review inbox.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--port"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "review",
+        "serve"
+      ],
+      "kind": "command",
+      "semanticName": "serve",
+      "alias": false,
+      "help": "Serve only briefing review; no meeting queue or publication worker is opened.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--port"
+          ],
+          "type": "integer range",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "setup"
+      ],
+      "kind": "command",
+      "semanticName": "setup",
+      "alias": false,
+      "help": "Configure non-secret paths and the dedicated briefing destination.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--discord-channel-id"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--source-path"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--draft-path"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--enable",
+            "--disable"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show content-free configuration and queue health.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "community",
+        "briefing",
+        "worker"
+      ],
+      "kind": "command",
+      "semanticName": "worker",
+      "alias": false,
+      "help": "Publish approved briefing artifacts with content-free scheduler output.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--max-items"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 3
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "config"
+      ],
+      "kind": "group",
+      "semanticName": "config",
+      "alias": false,
+      "help": "Manage Jarvis configuration.\n\n    Configuration is stored in ~/.jarvis/config.yaml and controls:\n    - Which backend to use (anytype, notion)\n    - Backend-specific settings\n    - Analytics preferences\n    ",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "config",
+        "backend"
+      ],
+      "kind": "command",
+      "semanticName": "backend",
+      "alias": false,
+      "help": "Show or set the active backend.\n\n    Without arguments, shows the current backend.\n    With NAME argument, switches to that backend.\n\n    Examples:\n        jarvis config backend           # Show current\n        jarvis config backend anytype   # Switch to AnyType\n        jarvis config backend notion    # Switch to Notion\n    ",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "text",
+          "required": false,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "config",
+        "capabilities"
+      ],
+      "kind": "command",
+      "semanticName": "capabilities",
+      "alias": false,
+      "help": "List capabilities of the current backend.\n\n    Shows which features are supported by the active backend\n    or a specified backend.\n\n    Examples:\n        jarvis config capabilities              # Show current backend\n        jarvis config capabilities -b notion    # Show Notion capabilities\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--backend",
+            "-b"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "config",
+        "fathom-setup"
+      ],
+      "kind": "command",
+      "semanticName": "fathom-setup",
+      "alias": false,
+      "help": "Interactively configure Fathom accounts, env vars, and shell activation.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--env-file"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--shell-profile"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--no-shell-profile"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "config",
+        "init"
+      ],
+      "kind": "command",
+      "semanticName": "init",
+      "alias": false,
+      "help": "Initialize configuration file with defaults.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--force",
+            "-f"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "config",
+        "path"
+      ],
+      "kind": "command",
+      "semanticName": "path",
+      "alias": false,
+      "help": "Show the path to the configuration file.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "config",
+        "show"
+      ],
+      "kind": "command",
+      "semanticName": "show",
+      "alias": false,
+      "help": "Show current configuration.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "config",
+        "whatsapp-setup"
+      ],
+      "kind": "command",
+      "semanticName": "whatsapp-setup",
+      "alias": false,
+      "help": "Interactively configure WhatsApp accounts, env vars, and shell activation.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--env-file"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--shell-profile"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--no-shell-profile"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "content"
+      ],
+      "kind": "group",
+      "semanticName": "content-cli",
+      "alias": true,
+      "help": "Manage the content publishing pipeline.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "approve"
+      ],
+      "kind": "command",
+      "semanticName": "approve",
+      "alias": false,
+      "help": "Approve content and push to AnyType.\n\n    PATH is the piece folder (e.g., drafts/2026/Apr/02-flow-thesis-thread).\n    Use --all to approve all pieces currently in 'review' status.\n    ",
+      "arguments": [
+        {
+          "name": "path",
+          "type": "text",
+          "required": false,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--all"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "audit-anytype"
+      ],
+      "kind": "command",
+      "semanticName": "audit-anytype",
+      "alias": false,
+      "help": "Audit Anytype Collection links for duplicates for one content piece.",
+      "arguments": [
+        {
+          "name": "path",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--sync-preset"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--sync-source"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--sync-destination"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "list"
+      ],
+      "kind": "command",
+      "semanticName": "list",
+      "alias": false,
+      "help": "List content pieces with status.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--status",
+            "-s"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "draft",
+            "review",
+            "approved",
+            "published",
+            "rejected"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "migrate"
+      ],
+      "kind": "command",
+      "semanticName": "migrate",
+      "alias": false,
+      "help": "Restructure flat content files to folder model.\n\n    Converts dd-slug.md files to dd-slug/index.md + platform files.\n    ",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "package"
+      ],
+      "kind": "command",
+      "semanticName": "package",
+      "alias": false,
+      "help": "Build a journal-ready package file for a content piece.",
+      "arguments": [
+        {
+          "name": "path",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--output"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "journal.md"
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "publish-draft"
+      ],
+      "kind": "command",
+      "semanticName": "publish-draft",
+      "alias": false,
+      "help": "Package, verify, journal, sync, and dedupe a content draft.",
+      "arguments": [
+        {
+          "name": "path",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--journal",
+            "--no-journal"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--sync",
+            "--no-sync"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--dedupe",
+            "--no-dedupe"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--sync-preset"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--sync-source"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--sync-destination"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--require"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--forbid"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--hygiene",
+            "--no-hygiene"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--hygiene-config"
+          ],
+          "type": "file",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "push"
+      ],
+      "kind": "command",
+      "semanticName": "push",
+      "alias": false,
+      "help": "Push all approved pieces to AnyType.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--force"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show content pipeline status summary.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "strategy"
+      ],
+      "kind": "command",
+      "semanticName": "strategy",
+      "alias": false,
+      "help": "Push the content strategy document to AnyType.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "content",
+        "verify"
+      ],
+      "kind": "command",
+      "semanticName": "verify",
+      "alias": false,
+      "help": "Verify a content piece before publishing/syncing.",
+      "arguments": [
+        {
+          "name": "path",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--require-file"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": [
+            "index.md"
+          ]
+        },
+        {
+          "names": [
+            "--require"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--forbid"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--hygiene",
+            "--no-hygiene"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--hygiene-config"
+          ],
+          "type": "file",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "context"
+      ],
+      "kind": "group",
+      "semanticName": "context",
+      "alias": false,
+      "help": "Manage Jarvis context files.\n\n    Context files store your preferences, patterns, and constraints.\n    They are loaded from two levels:\n    - Global: ~/.jarvis/context/ (applies to all projects)\n    - Folder: ./.jarvis/context/ (project-specific overrides)\n    ",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "context",
+        "edit"
+      ],
+      "kind": "command",
+      "semanticName": "edit",
+      "alias": false,
+      "help": "Open a context file in your editor.\n\n    FILE is the context file name (e.g., 'preferences', 'goals').\n    ",
+      "arguments": [
+        {
+          "name": "file",
+          "type": "text",
+          "required": false,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--global"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "context",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show context loading status.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "docs"
+      ],
+      "kind": "command",
+      "semanticName": "docs",
+      "alias": false,
+      "help": "Output comprehensive CLI documentation for AI agents.\n\n    This command dumps full documentation of all Jarvis commands,\n    options, and usage examples in a format optimized for AI consumption.\n\n    Example:\n        jarvis docs          # Human-readable markdown\n        jarvis docs --json   # Machine-readable JSON\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "init"
+      ],
+      "kind": "command",
+      "semanticName": "init",
+      "alias": false,
+      "help": "Initialize Jarvis in current directory or globally.\n\n    Creates the .jarvis/ directory structure with context files.\n\n    Examples:\n        jarvis init           # Initialize both global and folder\n        jarvis init --global  # Initialize global ~/.jarvis/context/\n        jarvis init --folder  # Initialize folder ./.jarvis/context/\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--global"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--folder"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "j"
+      ],
+      "kind": "command",
+      "semanticName": "write",
+      "alias": true,
+      "help": "Write a new journal entry.\n\n    Examples:\n        jarvis journal write \"Had a breakthrough today\"\n        jarvis journal write -e\n        jarvis journal write -i\n        jarvis journal write --file ./notes.md\n    ",
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text",
+          "required": false,
+          "nargs": 1,
+          "default": null
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "-e",
+            "--editor"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "-i",
+            "--interactive"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "-f",
+            "--file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--title"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--no-deep-dive"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "journal"
+      ],
+      "kind": "group",
+      "semanticName": "journal",
+      "alias": false,
+      "help": "AI-powered journaling for AnyType.\n\n    Write, search, and analyze your journal entries with AI assistance.\n    ",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "journal",
+        "insights"
+      ],
+      "kind": "command",
+      "semanticName": "insights",
+      "alias": false,
+      "help": "AI analysis across journal entries.\n\n    Analyzes patterns and themes in recent journal entries.\n\n    Examples:\n        jarvis journal insights\n        jarvis journal insights --since \"1 month\"\n        jarvis journal insights --limit 20\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--since"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "2 weeks"
+        },
+        {
+          "names": [
+            "--limit"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 50
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "journal",
+        "list"
+      ],
+      "kind": "command",
+      "semanticName": "list",
+      "alias": false,
+      "help": "List recent journal entries.\n\n    Examples:\n        jarvis journal list\n        jarvis journal list -n 20\n        jarvis journal list --all\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "-n",
+            "--limit"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 10
+        },
+        {
+          "names": [
+            "--all"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "journal",
+        "read"
+      ],
+      "kind": "command",
+      "semanticName": "read",
+      "alias": false,
+      "help": "Read a journal entry.\n\n    Examples:\n        jarvis journal read --latest\n        jarvis journal read -n 1\n        jarvis journal read entry_abc123\n    ",
+      "arguments": [
+        {
+          "name": "entry_id",
+          "type": "text",
+          "required": false,
+          "nargs": 1,
+          "default": null
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "-n",
+            "--number"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--latest"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "journal",
+        "search"
+      ],
+      "kind": "command",
+      "semanticName": "search",
+      "alias": false,
+      "help": "Search journal entries.\n\n    Searches titles and content previews for matching text.\n\n    Examples:\n        jarvis journal search \"project\"\n        jarvis journal search feelings -n 20\n    ",
+      "arguments": [
+        {
+          "name": "query",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "-n",
+            "--limit"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 10
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "journal",
+        "write"
+      ],
+      "kind": "command",
+      "semanticName": "write",
+      "alias": false,
+      "help": "Write a new journal entry.\n\n    Examples:\n        jarvis journal write \"Had a breakthrough today\"\n        jarvis journal write -e\n        jarvis journal write -i\n        jarvis journal write --file ./notes.md\n    ",
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text",
+          "required": false,
+          "nargs": 1,
+          "default": null
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "-e",
+            "--editor"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "-i",
+            "--interactive"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "-f",
+            "--file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--title"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--no-deep-dive"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting"
+      ],
+      "kind": "group",
+      "semanticName": "meeting",
+      "alias": false,
+      "help": "Ingest meeting transcripts and summaries into Jarvis destinations.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom"
+      ],
+      "kind": "group",
+      "semanticName": "fathom",
+      "alias": false,
+      "help": "Pull and ingest meetings directly from Fathom.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "ingest"
+      ],
+      "kind": "command",
+      "semanticName": "ingest",
+      "alias": false,
+      "help": "Fetch a Fathom meeting by recording ID and ingest it into destinations.",
+      "arguments": [
+        {
+          "name": "recording_id",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--project"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": ""
+        },
+        {
+          "names": [
+            "--auto-route",
+            "--no-auto-route"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--tag"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "private-context",
+            "wiki",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--wiki-domain"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--created-after"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--journal-space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "ingest-today"
+      ],
+      "kind": "command",
+      "semanticName": "ingest-today",
+      "alias": false,
+      "help": "Ingest Fathom recordings as a webhook safety poll.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--date"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--lookback-hours"
+          ],
+          "type": "float range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--all-unpulled"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--limit"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 100
+        },
+        {
+          "names": [
+            "--max-pages"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 5
+        },
+        {
+          "names": [
+            "--project"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": ""
+        },
+        {
+          "names": [
+            "--auto-route",
+            "--no-auto-route"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--tag"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "private-context",
+            "wiki",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--wiki-domain"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--journal-space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--skip-existing",
+            "--no-skip-existing"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "list"
+      ],
+      "kind": "command",
+      "semanticName": "list",
+      "alias": false,
+      "help": "List recent Fathom meetings with recording IDs for ingestion.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--limit"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 10
+        },
+        {
+          "names": [
+            "--created-after"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "poll"
+      ],
+      "kind": "command",
+      "semanticName": "poll",
+      "alias": false,
+      "help": "Poll configured Fathom accounts incrementally for unpulled recordings.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--initial-lookback-hours"
+          ],
+          "type": "float range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 48.0
+        },
+        {
+          "names": [
+            "--overlap-hours"
+          ],
+          "type": "float range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 6.0
+        },
+        {
+          "names": [
+            "--limit"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 100
+        },
+        {
+          "names": [
+            "--max-pages"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 5
+        },
+        {
+          "names": [
+            "--project"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": ""
+        },
+        {
+          "names": [
+            "--auto-route",
+            "--no-auto-route"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--tag"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "private-context",
+            "wiki",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--wiki-domain"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--journal-space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--skip-existing",
+            "--no-skip-existing"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--state-file"
+          ],
+          "type": "file",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "start"
+      ],
+      "kind": "command",
+      "semanticName": "start",
+      "alias": false,
+      "help": "Launch the Fathom webhook receiver and tunnel together in tmux.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--port"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 8765
+        },
+        {
+          "names": [
+            "--auto-ingest",
+            "--no-auto-ingest"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--project"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": ""
+        },
+        {
+          "names": [
+            "--auto-route",
+            "--no-auto-route"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--tag"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "private-context",
+            "wiki",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--wiki-domain"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--journal-space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--layout"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "windows",
+          "choices": [
+            "windows",
+            "panes"
+          ]
+        },
+        {
+          "names": [
+            "--verify-signatures",
+            "--no-verify-signatures"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--tolerance-seconds"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 300
+        },
+        {
+          "names": [
+            "--session-name"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--tunnel-name"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--attach",
+            "--no-attach"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "webhook"
+      ],
+      "kind": "group",
+      "semanticName": "webhook",
+      "alias": false,
+      "help": "Receive and process local Fathom webhooks.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "webhook",
+        "create"
+      ],
+      "kind": "command",
+      "semanticName": "create",
+      "alias": false,
+      "help": "Create a Fathom webhook via API and optionally persist its secret.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--destination-url"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--triggered-for"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": [
+            "my_recordings"
+          ],
+          "choices": [
+            "my_recordings",
+            "shared_external_recordings",
+            "my_shared_with_team_recordings",
+            "shared_team_recordings"
+          ]
+        },
+        {
+          "names": [
+            "--include-transcript",
+            "--no-include-transcript"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--include-summary",
+            "--no-include-summary"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--include-action-items",
+            "--no-include-action-items"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--include-crm-matches",
+            "--no-include-crm-matches"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--save",
+            "--no-save"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--env-file"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--show-secret"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "webhook",
+        "delete"
+      ],
+      "kind": "command",
+      "semanticName": "delete",
+      "alias": false,
+      "help": "Delete a Fathom webhook via API.",
+      "arguments": [
+        {
+          "name": "webhook_id",
+          "type": "text",
+          "required": false,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--clear-saved",
+            "--no-clear-saved"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "webhook",
+        "ingest-inbox"
+      ],
+      "kind": "command",
+      "semanticName": "ingest-inbox",
+      "alias": false,
+      "help": "Ingest archived webhook payloads from the local Fathom inbox.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--project"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": ""
+        },
+        {
+          "names": [
+            "--auto-route",
+            "--no-auto-route"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--tag"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "private-context",
+            "wiki",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--wiki-domain"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--journal-space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--limit"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--keep"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "webhook",
+        "serve"
+      ],
+      "kind": "command",
+      "semanticName": "serve",
+      "alias": false,
+      "help": "Run a local webhook receiver and archive payloads into the Fathom inbox.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--port"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 8765
+        },
+        {
+          "names": [
+            "--verify-signatures",
+            "--no-verify-signatures"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--tolerance-seconds"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 300
+        },
+        {
+          "names": [
+            "--auto-ingest",
+            "--no-auto-ingest"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--project"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": ""
+        },
+        {
+          "names": [
+            "--auto-route",
+            "--no-auto-route"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--tag"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "private-context",
+            "wiki",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--wiki-domain"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--journal-space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "fathom",
+        "webhook",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show local Fathom webhook configuration and inbox health.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--check-url",
+            "--no-check-url"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "ingest"
+      ],
+      "kind": "command",
+      "semanticName": "ingest",
+      "alias": false,
+      "help": "Ingest a meeting transcript-like source into one or more destinations.\n\n    SOURCE may be a file path, URL, AnyType/Notion object, or '-' for stdin.\n    ",
+      "arguments": [
+        {
+          "name": "source",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--resolver"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "anytype",
+            "notion",
+            "file",
+            "url",
+            "stdin"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--title"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--project"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": ""
+        },
+        {
+          "names": [
+            "--auto-route",
+            "--no-auto-route"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--tag"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "private-context",
+            "wiki",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--wiki-domain"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--journal-space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--enrich-ai",
+            "--no-enrich-ai"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish"
+      ],
+      "kind": "group",
+      "semanticName": "publish",
+      "alias": false,
+      "help": "Review and publish Flow meeting notes to Google Docs and Discord.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "approve"
+      ],
+      "kind": "command",
+      "semanticName": "approve",
+      "alias": false,
+      "help": "Approve the exact current source hash for one meeting.",
+      "arguments": [
+        {
+          "name": "item_id",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "cutover"
+      ],
+      "kind": "command",
+      "semanticName": "cutover",
+      "alias": false,
+      "help": "Set a launch floor and reversibly archive older unpublished meetings.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--date"
+          ],
+          "type": "datetime",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--apply",
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "preflight"
+      ],
+      "kind": "command",
+      "semanticName": "preflight",
+      "alias": false,
+      "help": "Fail closed unless the meeting publication runtime is ready to go live.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--no-runtime"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-providers"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "reject"
+      ],
+      "kind": "command",
+      "semanticName": "reject",
+      "alias": false,
+      "help": "Reject one meeting's current version.",
+      "arguments": [
+        {
+          "name": "item_id",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review"
+      ],
+      "kind": "group",
+      "semanticName": "review",
+      "alias": false,
+      "help": "Run or manage the authenticated localhost review inbox.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review",
+        "install"
+      ],
+      "kind": "command",
+      "semanticName": "install",
+      "alias": false,
+      "help": "Install and start the owner-local launchd review service.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review",
+        "open"
+      ],
+      "kind": "command",
+      "semanticName": "open",
+      "alias": false,
+      "help": "Open the authenticated local inbox in the default browser.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review",
+        "serve"
+      ],
+      "kind": "command",
+      "semanticName": "serve",
+      "alias": false,
+      "help": "Serve the review inbox on the configured loopback address.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "review",
+        "uninstall"
+      ],
+      "kind": "command",
+      "semanticName": "uninstall",
+      "alias": false,
+      "help": "Stop and remove the generated launchd review service.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "scan"
+      ],
+      "kind": "command",
+      "semanticName": "scan",
+      "alias": false,
+      "help": "Discover eligible Flow notes; dry-run unless --enqueue is supplied.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--since-days"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--enqueue",
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "setup"
+      ],
+      "kind": "command",
+      "semanticName": "setup",
+      "alias": false,
+      "help": "Configure non-secret destinations and optionally authorize Google.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--discord-channel-id"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--discord-token-env-var"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--google-owner-email"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--source-path"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--authorize-google"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--install-review",
+            "--no-install-review"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--enable",
+            "--disable"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show queue health and configured destination without exposing secrets.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "meeting",
+        "publish",
+        "worker"
+      ],
+      "kind": "command",
+      "semanticName": "worker",
+      "alias": false,
+      "help": "Scan and publish approved items; output contains counters only.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--max-items"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 10
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "n"
+      ],
+      "kind": "command",
+      "semanticName": "note",
+      "alias": true,
+      "help": "Capture a quick note for the daily brief.\n\n    Notes are appended to .jarvis/context/private/<user>/notes/YYYY/Mon/dd.md\n    (where <user> resolves from $FLOW_USER, $USER, or \"default\") and are\n    automatically picked up by the life orchestrator's daily brief.\n\n    Examples:\n        jarvis note \"Decided to deprioritize Sentinel\"\n        jarvis note -c decision \"Parking Anchor until after AA hire\"\n        jarvis note -c blocker \"TAO stake needed for miner registration\"\n        jarvis note -c meeting \"Chizi confirmed OpenAI research for April 7\"\n        jarvis note -i\n    ",
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text",
+          "required": false,
+          "nargs": -1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "-c",
+            "--category"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "decision",
+            "meeting",
+            "idea",
+            "blocker",
+            "followup",
+            "priority"
+          ]
+        },
+        {
+          "names": [
+            "-i",
+            "--interactive"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "note"
+      ],
+      "kind": "command",
+      "semanticName": "note",
+      "alias": false,
+      "help": "Capture a quick note for the daily brief.\n\n    Notes are appended to .jarvis/context/private/<user>/notes/YYYY/Mon/dd.md\n    (where <user> resolves from $FLOW_USER, $USER, or \"default\") and are\n    automatically picked up by the life orchestrator's daily brief.\n\n    Examples:\n        jarvis note \"Decided to deprioritize Sentinel\"\n        jarvis note -c decision \"Parking Anchor until after AA hire\"\n        jarvis note -c blocker \"TAO stake needed for miner registration\"\n        jarvis note -c meeting \"Chizi confirmed OpenAI research for April 7\"\n        jarvis note -i\n    ",
+      "arguments": [
+        {
+          "name": "text",
+          "type": "text",
+          "required": false,
+          "nargs": -1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "-c",
+            "--category"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "decision",
+            "meeting",
+            "idea",
+            "blocker",
+            "followup",
+            "priority"
+          ]
+        },
+        {
+          "names": [
+            "-i",
+            "--interactive"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "o"
+      ],
+      "kind": "command",
+      "semanticName": "o",
+      "alias": false,
+      "help": "Quick object lookup and edit.\n\n    Fetches an object by ID/URL and shows its details.\n    Add --set to update properties, --body to replace content,\n    or --edit for interactive mode.\n\n    Examples:\n        jarvis o bafyreig...                               # Show object\n        jarvis o bafyreig... --edit                         # Interactive edit\n        jarvis o bafyreig... --set due_date=2026-04-01      # Quick update\n        jarvis o bafyreig... --body \"# New Content\"         # Replace body\n        jarvis o bafyreig... --body-file content.md         # Body from file\n    ",
+      "arguments": [
+        {
+          "name": "object_id_or_url",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--set"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--body"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--body-file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--raw"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--edit",
+            "-e"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "object"
+      ],
+      "kind": "group",
+      "semanticName": "object",
+      "alias": false,
+      "help": "Inspect and update any object by ID.\n\n    Paste an object ID, AnyType link, or Notion URL to fetch\n    and inspect any object from your knowledge base.\n    ",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "object",
+        "edit"
+      ],
+      "kind": "command",
+      "semanticName": "edit",
+      "alias": false,
+      "help": "Inspect and edit an object's properties and content.\n\n    Without flags, enters interactive mode. With --set, applies\n    property updates. With --body or --body-file, replaces the\n    object's markdown body content.\n\n    Examples:\n        jarvis object edit bafyreig...                          # Interactive\n        jarvis object edit bafyreig... --set due_date=2026-04-01  # Inline\n        jarvis object edit bafyreig... --body \"# New Content\"     # Replace body\n        jarvis object edit bafyreig... --body-file content.md     # From file\n    ",
+      "arguments": [
+        {
+          "name": "object_id_or_url",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--set"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--body"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--body-file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "object",
+        "get"
+      ],
+      "kind": "command",
+      "semanticName": "get",
+      "alias": false,
+      "help": "Fetch and display an object by ID or URL.\n\n    Accepts raw IDs, AnyType deeplinks, or Notion page URLs.\n\n    Examples:\n        jarvis object get bafyreig...\n        jarvis object get https://notion.so/My-Page-abc123def456...\n        jarvis o bafyreig...\n    ",
+      "arguments": [
+        {
+          "name": "object_id_or_url",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--raw"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "p"
+      ],
+      "kind": "command",
+      "semanticName": "p",
+      "alias": false,
+      "help": "Alias for 'jarvis plan'. See 'jarvis plan --help' for details.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--days",
+            "-d"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 7
+        },
+        {
+          "names": [
+            "--interactive",
+            "-i"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--save",
+            "-s"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "plan"
+      ],
+      "kind": "command",
+      "semanticName": "plan",
+      "alias": false,
+      "help": "Generate a weekly plan based on your goals and scheduled tasks.\n\n    Analyzes your context files (goals.md, focus.md, priorities.md, etc.)\n    and compares them against your scheduled tasks to identify:\n\n    \b\n    - Goals without supporting tasks\n    - Focus mode conflicts\n    - Overloaded or empty days\n    - Recommended actions for alignment\n\n    Examples:\n\n    \b\n        jarvis plan              # Generate 7-day plan\n        jarvis plan --days 14    # Generate 14-day plan\n        jarvis plan -i           # Interactive mode with Q&A\n        jarvis plan --save       # Save plan to file\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--days",
+            "-d"
+          ],
+          "type": "integer range",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 7
+        },
+        {
+          "names": [
+            "--interactive",
+            "-i"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--save",
+            "-s"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "reading-list"
+      ],
+      "kind": "group",
+      "semanticName": "reading-list",
+      "alias": false,
+      "help": "Organize and prioritize reading lists against current project context.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "reading-list",
+        "cache-clear"
+      ],
+      "kind": "command",
+      "semanticName": "cache-clear",
+      "alias": false,
+      "help": "Clear reading list caches.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "reading-list",
+        "extract"
+      ],
+      "kind": "command",
+      "semanticName": "extract",
+      "alias": false,
+      "help": "Extract raw reading items as JSON for agent consumption.\n\n    Returns source metadata and unscored items \u2014 no AI prioritization.\n    Designed for agent orchestration: the agent scores items using its own\n    context and reasoning, then writes back via `reading-list write-back`.\n    ",
+      "arguments": [
+        {
+          "name": "target",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--resolver"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "anytype",
+            "notion",
+            "file",
+            "url",
+            "stdin"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "reading-list",
+        "list"
+      ],
+      "kind": "command",
+      "semanticName": "list",
+      "alias": false,
+      "help": "Extract and display links from a reading list source.",
+      "arguments": [
+        {
+          "name": "target",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--resolver"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "anytype",
+            "notion",
+            "file",
+            "url",
+            "stdin"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "reading-list",
+        "organize"
+      ],
+      "kind": "command",
+      "semanticName": "organize",
+      "alias": false,
+      "help": "Deep research and prioritize a reading list.",
+      "arguments": [
+        {
+          "name": "target",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--resolver"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "anytype",
+            "notion",
+            "file",
+            "url",
+            "stdin"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--output"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--format"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "table",
+          "choices": [
+            "table",
+            "json",
+            "markdown"
+          ]
+        },
+        {
+          "names": [
+            "--tier"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "read_now",
+            "this_week",
+            "this_month",
+            "reference",
+            "deferred"
+          ]
+        },
+        {
+          "names": [
+            "--topic"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--journal"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-fetch"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-cache"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--write-back"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "reading-list",
+        "write-back"
+      ],
+      "kind": "command",
+      "semanticName": "write-back",
+      "alias": false,
+      "help": "Write agent-formatted markdown back to a reading list source.\n\n    Accepts markdown from --file or --stdin and writes it to the target\n    object (AnyType/Notion). Use after the agent has scored and formatted\n    items independently.\n    ",
+      "arguments": [
+        {
+          "name": "target",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--resolver"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "anytype",
+            "notion",
+            "file",
+            "url",
+            "stdin"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--file"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--stdin"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "rebalance"
+      ],
+      "kind": "command",
+      "semanticName": "rebalance",
+      "alias": false,
+      "help": "Rebalance all tasks: overdue + next 2 months \u2192 redistribute evenly.\n\n    Collects:\n    - Overdue tasks (due today or before, not done, not ongoing)\n    - Scheduled tasks for next 2 months (not done, not ongoing)\n\n    Redistributes across Feb-Mar (or next 2 months) on weekdays.\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--yes",
+            "-y"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "reorganize"
+      ],
+      "kind": "command",
+      "semanticName": "reorganize",
+      "alias": false,
+      "help": "",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--days"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 14
+        },
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "rl"
+      ],
+      "kind": "command",
+      "semanticName": "rl",
+      "alias": false,
+      "help": "Quick alias for reading-list organize.",
+      "arguments": [
+        {
+          "name": "target",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--resolver"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "anytype",
+            "notion",
+            "file",
+            "url",
+            "stdin"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--output"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--format"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "table",
+          "choices": [
+            "table",
+            "json",
+            "markdown"
+          ]
+        },
+        {
+          "names": [
+            "--tier"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "read_now",
+            "this_week",
+            "this_month",
+            "reference",
+            "deferred"
+          ]
+        },
+        {
+          "names": [
+            "--topic"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--journal"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-fetch"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--no-cache"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--write-back"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "spaces"
+      ],
+      "kind": "command",
+      "semanticName": "spaces",
+      "alias": false,
+      "help": "List available spaces and select one.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show Jarvis status and connection information.\n\n    Displays the current backend, connection status, workspace information,\n    and supported capabilities.\n\n    Examples:\n        jarvis status              # Show basic status\n        jarvis status --diagnose   # Run connection diagnostics\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--diagnose"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "suggest"
+      ],
+      "kind": "command",
+      "semanticName": "suggest",
+      "alias": false,
+      "help": "Generate rescheduling suggestions using AI.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--days"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 14
+        },
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "sync"
+      ],
+      "kind": "group",
+      "semanticName": "sync",
+      "alias": false,
+      "help": "Sync local folders/files to an Anytype Collection.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "sync",
+        "dedupe"
+      ],
+      "kind": "command",
+      "semanticName": "dedupe",
+      "alias": false,
+      "help": "Remove duplicate Collection links using the current sync state as truth.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--preset"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--source"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--destination"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--path"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "sync",
+        "preset"
+      ],
+      "kind": "group",
+      "semanticName": "preset",
+      "alias": false,
+      "help": "Manage saved sync presets.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "sync",
+        "preset",
+        "add"
+      ],
+      "kind": "command",
+      "semanticName": "add",
+      "alias": false,
+      "help": "Interactively define a new preset.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "sync",
+        "preset",
+        "delete"
+      ],
+      "kind": "command",
+      "semanticName": "delete",
+      "alias": false,
+      "help": "Delete a preset (with confirmation).",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "sync",
+        "preset",
+        "edit"
+      ],
+      "kind": "command",
+      "semanticName": "edit",
+      "alias": false,
+      "help": "Edit an existing preset interactively.",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "sync",
+        "preset",
+        "list"
+      ],
+      "kind": "command",
+      "semanticName": "list",
+      "alias": false,
+      "help": "List all saved presets.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "sync",
+        "preset",
+        "show"
+      ],
+      "kind": "command",
+      "semanticName": "show",
+      "alias": false,
+      "help": "Show one preset's full config.",
+      "arguments": [
+        {
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "sync",
+        "run"
+      ],
+      "kind": "command",
+      "semanticName": "run",
+      "alias": false,
+      "help": "Run a sync. Prompts interactively for any missing source/destination.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--preset"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--source"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--destination"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--prune"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--yes"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--include-extension"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--ignore"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--skip-destination-check"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--unsupported-mode"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "upload",
+            "warn",
+            "stub",
+            "error"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "t"
+      ],
+      "kind": "command",
+      "semanticName": "create",
+      "alias": true,
+      "help": "Create a new task.\n\n    Examples:\n        jarvis task create \"Buy groceries\" --due tomorrow\n        jarvis task create \"Review PR\" -d friday -p high -t work\n        jarvis task create \"Q1 Planning\" --due \"next friday\" -e\n    ",
+      "arguments": [
+        {
+          "name": "title",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--due",
+            "-d"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--priority",
+            "-p"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        {
+          "names": [
+            "--tag",
+            "-t"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--editor",
+            "-e"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--verbose",
+            "-v"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "task"
+      ],
+      "kind": "group",
+      "semanticName": "task-cli",
+      "alias": true,
+      "help": "Manage tasks.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "task",
+        "create"
+      ],
+      "kind": "command",
+      "semanticName": "create",
+      "alias": false,
+      "help": "Create a new task.\n\n    Examples:\n        jarvis task create \"Buy groceries\" --due tomorrow\n        jarvis task create \"Review PR\" -d friday -p high -t work\n        jarvis task create \"Q1 Planning\" --due \"next friday\" -e\n    ",
+      "arguments": [
+        {
+          "name": "title",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--due",
+            "-d"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--priority",
+            "-p"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        {
+          "names": [
+            "--tag",
+            "-t"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--editor",
+            "-e"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--space"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--verbose",
+            "-v"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "text-hygiene"
+      ],
+      "kind": "group",
+      "semanticName": "text-hygiene",
+      "alias": false,
+      "help": "Check and clean AI-speak patterns from generated text.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "text-hygiene",
+        "check"
+      ],
+      "kind": "command",
+      "semanticName": "check",
+      "alias": false,
+      "help": "Report configured AI-speak patterns without changing files.",
+      "arguments": [
+        {
+          "name": "paths",
+          "type": "path",
+          "required": true,
+          "nargs": -1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--config"
+          ],
+          "type": "file",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "text-hygiene",
+        "clean"
+      ],
+      "kind": "command",
+      "semanticName": "clean",
+      "alias": false,
+      "help": "Remove configured AI-speak patterns from files in place.",
+      "arguments": [
+        {
+          "name": "paths",
+          "type": "path",
+          "required": true,
+          "nargs": -1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--config"
+          ],
+          "type": "file",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--report",
+            "--no-report"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w"
+      ],
+      "kind": "group",
+      "semanticName": "wiki-cli",
+      "alias": true,
+      "help": "Manage Jarvis wiki knowledge domains.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "ask"
+      ],
+      "kind": "command",
+      "semanticName": "ask",
+      "alias": false,
+      "help": "Ask a question against a wiki domain.\n\n    QUESTION words are joined into a single question string.\n    Use --interactive to enter a loop (Ctrl-C to exit).\n    ",
+      "arguments": [
+        {
+          "name": "question",
+          "type": "text",
+          "required": false,
+          "nargs": -1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--format",
+            "-f"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "md",
+          "choices": [
+            "md",
+            "slides",
+            "chart"
+          ]
+        },
+        {
+          "names": [
+            "--file-back",
+            "--no-file-back"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--interactive",
+            "-i"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "compile"
+      ],
+      "kind": "command",
+      "semanticName": "compile",
+      "alias": false,
+      "help": "Run the compilation pipeline for a wiki domain.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--force"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--source"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--verbose",
+            "-v"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "dedupe"
+      ],
+      "kind": "command",
+      "semanticName": "dedupe",
+      "alias": false,
+      "help": "Find and merge legacy duplicate concept pages.\n\n    Track 1's compiler dedup prevents NEW duplicates; this command collapses\n    duplicates that already exist on disk. For each candidate pair (same\n    normalized form OR Jaccard \u2265 0.5) it asks the LLM to confirm, then\n    merges the bodies and deletes the secondary file.\n\n    Defaults to dry-run for safety. Pass --confirm to apply.\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--confirm"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--confidence"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 0.75
+        },
+        {
+          "names": [
+            "--max-pairs"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "enhance"
+      ],
+      "kind": "command",
+      "semanticName": "enhance",
+      "alias": false,
+      "help": "Identify articles needing improvement and suggest enhancements.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--article"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--stale-only"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "export"
+      ],
+      "kind": "command",
+      "semanticName": "export",
+      "alias": false,
+      "help": "Package a wiki domain for sharing or backup.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--format",
+            "-f"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "zip",
+          "choices": [
+            "zip",
+            "html"
+          ]
+        },
+        {
+          "names": [
+            "--output",
+            "-o"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "ingest"
+      ],
+      "kind": "command",
+      "semanticName": "ingest",
+      "alias": false,
+      "help": "Ingest SOURCE into a wiki domain's raw/ directory.\n\n    SOURCE may be a URL, a file path, or a directory path.\n    When SOURCE is a directory, all .md and .pdf files are ingested recursively.\n    ",
+      "arguments": [
+        {
+          "name": "source",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--type",
+            "-t"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "article",
+          "choices": [
+            "article",
+            "paper",
+            "note",
+            "repo",
+            "clip"
+          ]
+        },
+        {
+          "names": [
+            "--title"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--tags"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--category",
+            "-c"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--compile-now"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "init"
+      ],
+      "kind": "command",
+      "semanticName": "init",
+      "alias": false,
+      "help": "Create a new wiki domain at ~/.jarvis/wikis/<DOMAIN>/.\n\n    DOMAIN must be lowercase kebab-case (e.g. seas, crypto, ai-research).\n    ",
+      "arguments": [
+        {
+          "name": "domain",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--title",
+            "-t"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--description",
+            "-d"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": ""
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "lint"
+      ],
+      "kind": "command",
+      "semanticName": "lint",
+      "alias": false,
+      "help": "Check a wiki domain for quality issues and report health scores.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--fix"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--output",
+            "-o"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "open"
+      ],
+      "kind": "command",
+      "semanticName": "open",
+      "alias": false,
+      "help": "Open a wiki domain in Obsidian, Cursor, or VS Code.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--app"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "obsidian",
+          "choices": [
+            "obsidian",
+            "cursor",
+            "vscode"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "program"
+      ],
+      "kind": "command",
+      "semanticName": "program",
+      "alias": false,
+      "help": "View, edit, or validate the per-domain research steering file.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--edit"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--validate"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "research"
+      ],
+      "kind": "command",
+      "semanticName": "research",
+      "alias": false,
+      "help": "Run an autonomous research session for a wiki domain.\n\n    Spawns a Claude agent with WebSearch/WebFetch/Read/Write tools, reads\n    `program.md` and `seeds.md`, finds new sources online, drops them into\n    `raw/articles/`, and (by default) runs the compile pipeline on the new\n    files. Findings land in `.state/findings/` for the morning brief.\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--topic"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--max-sources"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--seeds-only"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--auto-compile",
+            "--no-auto-compile"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--max-turns"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 25
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "search"
+      ],
+      "kind": "command",
+      "semanticName": "search",
+      "alias": false,
+      "help": "Grep for QUERY across wiki articles (or raw sources with --scope).",
+      "arguments": [
+        {
+          "name": "query",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--scope"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "wiki",
+          "choices": [
+            "wiki",
+            "raw",
+            "all"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "seed"
+      ],
+      "kind": "command",
+      "semanticName": "seed",
+      "alias": false,
+      "help": "Add a research seed (URL, topic, or note) or list the queue.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--url"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--topic"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--note"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--priority"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "medium",
+          "choices": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        {
+          "names": [
+            "--list"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "w",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show wiki domain status and article counts.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--all"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp"
+      ],
+      "kind": "group",
+      "semanticName": "whatsapp",
+      "alias": false,
+      "help": "Capture WhatsApp messages, manage local threads, and send replies.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "send"
+      ],
+      "kind": "command",
+      "semanticName": "send",
+      "alias": false,
+      "help": "Send a free-form WhatsApp reply through the Meta Cloud API.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--to"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--text"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--preview-url",
+            "--no-preview-url"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--window-check",
+            "--no-window-check"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "send-template"
+      ],
+      "kind": "command",
+      "semanticName": "send-template",
+      "alias": false,
+      "help": "Send an approved WhatsApp template through the Meta Cloud API.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--to"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--template"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--language"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "en_US"
+        },
+        {
+          "names": [
+            "--components-json"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "setup"
+      ],
+      "kind": "command",
+      "semanticName": "setup",
+      "alias": false,
+      "help": "Show the config and provider setup checklist for a Meta WhatsApp account.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "personal"
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "start"
+      ],
+      "kind": "command",
+      "semanticName": "start",
+      "alias": false,
+      "help": "Launch the WhatsApp webhook receiver and tunnel together in tmux.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--port"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 8787
+        },
+        {
+          "names": [
+            "--auto-ingest",
+            "--no-auto-ingest"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "team-inbox",
+            "private-context",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--layout"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "windows",
+          "choices": [
+            "windows",
+            "panes"
+          ]
+        },
+        {
+          "names": [
+            "--verify-signatures",
+            "--no-verify-signatures"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--session-name"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--tunnel-name"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--attach",
+            "--no-attach"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "threads"
+      ],
+      "kind": "group",
+      "semanticName": "threads",
+      "alias": false,
+      "help": "Inspect and triage local WhatsApp threads.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "threads",
+        "list"
+      ],
+      "kind": "command",
+      "semanticName": "list",
+      "alias": false,
+      "help": "List local WhatsApp conversation threads.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--status"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null,
+          "choices": [
+            "new",
+            "triaged",
+            "waiting",
+            "done"
+          ]
+        },
+        {
+          "names": [
+            "--limit"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 50
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "threads",
+        "read"
+      ],
+      "kind": "command",
+      "semanticName": "read",
+      "alias": false,
+      "help": "Read one local WhatsApp conversation thread.",
+      "arguments": [
+        {
+          "name": "thread_id",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "threads",
+        "set-status"
+      ],
+      "kind": "command",
+      "semanticName": "set-status",
+      "alias": false,
+      "help": "Update the review status for one local WhatsApp thread.",
+      "arguments": [
+        {
+          "name": "thread_id",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--status"
+          ],
+          "type": "choice",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "new",
+            "triaged",
+            "waiting",
+            "done"
+          ]
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "webhook"
+      ],
+      "kind": "group",
+      "semanticName": "webhook",
+      "alias": false,
+      "help": "Receive and process local WhatsApp webhooks.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "webhook",
+        "ingest-inbox"
+      ],
+      "kind": "command",
+      "semanticName": "ingest-inbox",
+      "alias": false,
+      "help": "Ingest archived WhatsApp webhook payloads from the local inbox.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "team-inbox",
+            "private-context",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--limit"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--keep"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "webhook",
+        "serve"
+      ],
+      "kind": "command",
+      "semanticName": "serve",
+      "alias": false,
+      "help": "Run a local webhook receiver for Meta WhatsApp events.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--port"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 8787
+        },
+        {
+          "names": [
+            "--verify-signatures",
+            "--no-verify-signatures"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--auto-ingest",
+            "--no-auto-ingest"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--dest"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          },
+          "choices": [
+            "team-inbox",
+            "private-context",
+            "journal",
+            "memory"
+          ]
+        },
+        {
+          "names": [
+            "--backend"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "whatsapp",
+        "webhook",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show local WhatsApp webhook config and inbox health.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--account"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--json"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki"
+      ],
+      "kind": "group",
+      "semanticName": "wiki-cli",
+      "alias": true,
+      "help": "Manage Jarvis wiki knowledge domains.",
+      "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "ask"
+      ],
+      "kind": "command",
+      "semanticName": "ask",
+      "alias": false,
+      "help": "Ask a question against a wiki domain.\n\n    QUESTION words are joined into a single question string.\n    Use --interactive to enter a loop (Ctrl-C to exit).\n    ",
+      "arguments": [
+        {
+          "name": "question",
+          "type": "text",
+          "required": false,
+          "nargs": -1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--format",
+            "-f"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "md",
+          "choices": [
+            "md",
+            "slides",
+            "chart"
+          ]
+        },
+        {
+          "names": [
+            "--file-back",
+            "--no-file-back"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--interactive",
+            "-i"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "compile"
+      ],
+      "kind": "command",
+      "semanticName": "compile",
+      "alias": false,
+      "help": "Run the compilation pipeline for a wiki domain.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--force"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--source"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--verbose",
+            "-v"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "dedupe"
+      ],
+      "kind": "command",
+      "semanticName": "dedupe",
+      "alias": false,
+      "help": "Find and merge legacy duplicate concept pages.\n\n    Track 1's compiler dedup prevents NEW duplicates; this command collapses\n    duplicates that already exist on disk. For each candidate pair (same\n    normalized form OR Jaccard \u2265 0.5) it asks the LLM to confirm, then\n    merges the bodies and deletes the secondary file.\n\n    Defaults to dry-run for safety. Pass --confirm to apply.\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--confirm"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--confidence"
+          ],
+          "type": "float",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 0.75
+        },
+        {
+          "names": [
+            "--max-pairs"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "enhance"
+      ],
+      "kind": "command",
+      "semanticName": "enhance",
+      "alias": false,
+      "help": "Identify articles needing improvement and suggest enhancements.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--article"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--stale-only"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "export"
+      ],
+      "kind": "command",
+      "semanticName": "export",
+      "alias": false,
+      "help": "Package a wiki domain for sharing or backup.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--format",
+            "-f"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "zip",
+          "choices": [
+            "zip",
+            "html"
+          ]
+        },
+        {
+          "names": [
+            "--output",
+            "-o"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "ingest"
+      ],
+      "kind": "command",
+      "semanticName": "ingest",
+      "alias": false,
+      "help": "Ingest SOURCE into a wiki domain's raw/ directory.\n\n    SOURCE may be a URL, a file path, or a directory path.\n    When SOURCE is a directory, all .md and .pdf files are ingested recursively.\n    ",
+      "arguments": [
+        {
+          "name": "source",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--type",
+            "-t"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "article",
+          "choices": [
+            "article",
+            "paper",
+            "note",
+            "repo",
+            "clip"
+          ]
+        },
+        {
+          "names": [
+            "--title"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--tags"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": true,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--category",
+            "-c"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--compile-now"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "init"
+      ],
+      "kind": "command",
+      "semanticName": "init",
+      "alias": false,
+      "help": "Create a new wiki domain at ~/.jarvis/wikis/<DOMAIN>/.\n\n    DOMAIN must be lowercase kebab-case (e.g. seas, crypto, ai-research).\n    ",
+      "arguments": [
+        {
+          "name": "domain",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--title",
+            "-t"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--description",
+            "-d"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": ""
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "lint"
+      ],
+      "kind": "command",
+      "semanticName": "lint",
+      "alias": false,
+      "help": "Check a wiki domain for quality issues and report health scores.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--fix"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--output",
+            "-o"
+          ],
+          "type": "path",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "open"
+      ],
+      "kind": "command",
+      "semanticName": "open",
+      "alias": false,
+      "help": "Open a wiki domain in Obsidian, Cursor, or VS Code.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--app"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "obsidian",
+          "choices": [
+            "obsidian",
+            "cursor",
+            "vscode"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "program"
+      ],
+      "kind": "command",
+      "semanticName": "program",
+      "alias": false,
+      "help": "View, edit, or validate the per-domain research steering file.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--edit"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--validate"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "research"
+      ],
+      "kind": "command",
+      "semanticName": "research",
+      "alias": false,
+      "help": "Run an autonomous research session for a wiki domain.\n\n    Spawns a Claude agent with WebSearch/WebFetch/Read/Write tools, reads\n    `program.md` and `seeds.md`, finds new sources online, drops them into\n    `raw/articles/`, and (by default) runs the compile pipeline on the new\n    files. Findings land in `.state/findings/` for the morning brief.\n    ",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--topic"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--max-sources"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--seeds-only"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        },
+        {
+          "names": [
+            "--auto-compile",
+            "--no-auto-compile"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": true
+        },
+        {
+          "names": [
+            "--max-turns"
+          ],
+          "type": "integer",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": 25
+        },
+        {
+          "names": [
+            "--dry-run"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "search"
+      ],
+      "kind": "command",
+      "semanticName": "search",
+      "alias": false,
+      "help": "Grep for QUERY across wiki articles (or raw sources with --scope).",
+      "arguments": [
+        {
+          "name": "query",
+          "type": "text",
+          "required": true,
+          "nargs": 1,
+          "default": {
+            "kind": "unset"
+          }
+        }
+      ],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--scope"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "wiki",
+          "choices": [
+            "wiki",
+            "raw",
+            "all"
+          ]
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "seed"
+      ],
+      "kind": "command",
+      "semanticName": "seed",
+      "alias": false,
+      "help": "Add a research seed (URL, topic, or note) or list the queue.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": true,
+          "multiple": false,
+          "count": false,
+          "default": {
+            "kind": "unset"
+          }
+        },
+        {
+          "names": [
+            "--url"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--topic"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--note"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--priority"
+          ],
+          "type": "choice",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": "medium",
+          "choices": [
+            "high",
+            "medium",
+            "low"
+          ]
+        },
+        {
+          "names": [
+            "--list"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "wiki",
+        "status"
+      ],
+      "kind": "command",
+      "semanticName": "status",
+      "alias": false,
+      "help": "Show wiki domain status and article counts.",
+      "arguments": [],
+      "options": [
+        {
+          "names": [
+            "--domain",
+            "-d"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--all"
+          ],
+          "type": "boolean",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": false
+        }
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 const dependencySections = ["dependencies", "devDependencies", "optionalDependencies"];
 const exactVersionPattern = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-const ignoredDirectories = new Set([".git", "dist", "node_modules", "open-src"]);
+const ignoredDirectories = new Set([".git", "dist", "node_modules", "open-src", "vendor", "executor"]);
 const packageJsonFiles = [];
 
 function collectPackageJsonFiles(directory) {

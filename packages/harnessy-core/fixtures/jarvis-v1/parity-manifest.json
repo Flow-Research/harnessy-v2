@@ -1,0 +1,1398 @@
+{
+  "schemaVersion": 1,
+  "sourceVersion": "0.1.0",
+  "entries": [
+    {
+      "id": "channel:fathom",
+      "surface": "channel",
+      "legacyReference": "meetings/fathom",
+      "status": "partial",
+      "replacement": "V2 Fathom poll and inbox/checkpoint boundary",
+      "rationale": "Native bounded polling and ingestion are implemented with isolated V2 state; live scheduler activation and production handover remain separately gated."
+    },
+    {
+      "id": "channel:meetings",
+      "surface": "channel",
+      "legacyReference": "meetings",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationReviewServer",
+      "rationale": "Native lifecycle, secure loopback review, checkpointing, and production-shaped provider adapters exist locally; CLI/host integration, live credentials, and activation remain pending."
+    },
+    {
+      "id": "channel:whatsapp",
+      "surface": "channel",
+      "legacyReference": "whatsapp",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis",
+      "surface": "command",
+      "legacyReference": "jarvis",
+      "status": "partial",
+      "replacement": "hsy jarvis",
+      "rationale": "The native compatibility command group is available."
+    },
+    {
+      "id": "command:jarvis:analyze",
+      "surface": "command",
+      "legacyReference": "jarvis analyze",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:android",
+      "surface": "command",
+      "legacyReference": "jarvis android",
+      "status": "intentionally-retired",
+      "replacement": "Optional Android host capability",
+      "rationale": "Android SDK requirements do not belong in the portable core."
+    },
+    {
+      "id": "command:jarvis:android:avds",
+      "surface": "command",
+      "legacyReference": "jarvis android avds",
+      "status": "intentionally-retired",
+      "replacement": "Optional Android host capability",
+      "rationale": "Android SDK requirements do not belong in the portable core."
+    },
+    {
+      "id": "command:jarvis:android:run",
+      "surface": "command",
+      "legacyReference": "jarvis android run",
+      "status": "intentionally-retired",
+      "replacement": "Optional Android host capability",
+      "rationale": "Android SDK requirements do not belong in the portable core."
+    },
+    {
+      "id": "command:jarvis:apk",
+      "surface": "command",
+      "legacyReference": "jarvis apk",
+      "status": "intentionally-retired",
+      "replacement": "Optional Android host capability",
+      "rationale": "Android SDK requirements do not belong in the portable core."
+    },
+    {
+      "id": "command:jarvis:apply",
+      "surface": "command",
+      "legacyReference": "jarvis apply",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:calendar",
+      "surface": "command",
+      "legacyReference": "jarvis calendar",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:calendar:apply",
+      "surface": "command",
+      "legacyReference": "jarvis calendar apply",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:calendar:plan",
+      "surface": "command",
+      "legacyReference": "jarvis calendar plan",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community",
+      "surface": "command",
+      "legacyReference": "jarvis community",
+      "status": "partial",
+      "replacement": "V2 community inspection commands",
+      "rationale": "The native namespace exists for read-only status and offline preflight; generation, review and publication remain on the preserved implementation."
+    },
+    {
+      "id": "command:jarvis:community:briefing",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing",
+      "status": "partial",
+      "replacement": "V2 community briefing inspection boundary",
+      "rationale": "Status and offline preflight are native; mutation and review are intentionally still delegated to the preserved workflow."
+    },
+    {
+      "id": "command:jarvis:community:briefing:generate",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing generate",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community:briefing:preflight",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing preflight",
+      "status": "compatible",
+      "replacement": "jarvis community briefing preflight",
+      "rationale": "Native offline validation checks configuration, source/draft paths, queue schema and delivery configuration without providers or mutation."
+    },
+    {
+      "id": "command:jarvis:community:briefing:review",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing review",
+      "status": "partial",
+      "replacement": "Preserved compatibility workflow: jarvis community briefing review open",
+      "rationale": "Core intentionally does not launch the preserved writer; review remains in the compatibility/local-host boundary until a V2-owned review consumer exists."
+    },
+    {
+      "id": "command:jarvis:community:briefing:review:open",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing review open",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community:briefing:review:serve",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing review serve",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community:briefing:setup",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing setup",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community:briefing:status",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing status",
+      "status": "compatible",
+      "replacement": "jarvis community briefing status",
+      "rationale": "Native read-only queue and configuration inspection reports the existing V2 bindings without creating state or contacting providers."
+    },
+    {
+      "id": "command:jarvis:community:briefing:worker",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing worker",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:config",
+      "surface": "command",
+      "legacyReference": "jarvis config",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:config:backend",
+      "surface": "command",
+      "legacyReference": "jarvis config backend",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:config:capabilities",
+      "surface": "command",
+      "legacyReference": "jarvis config capabilities",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:config:fathom-setup",
+      "surface": "command",
+      "legacyReference": "jarvis config fathom-setup",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:config:init",
+      "surface": "command",
+      "legacyReference": "jarvis config init",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:config:path",
+      "surface": "command",
+      "legacyReference": "jarvis config path",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:config:show",
+      "surface": "command",
+      "legacyReference": "jarvis config show",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:config:whatsapp-setup",
+      "surface": "command",
+      "legacyReference": "jarvis config whatsapp-setup",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content",
+      "surface": "command",
+      "legacyReference": "jarvis content",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:approve",
+      "surface": "command",
+      "legacyReference": "jarvis content approve",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:audit-anytype",
+      "surface": "command",
+      "legacyReference": "jarvis content audit-anytype",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:list",
+      "surface": "command",
+      "legacyReference": "jarvis content list",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:migrate",
+      "surface": "command",
+      "legacyReference": "jarvis content migrate",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:package",
+      "surface": "command",
+      "legacyReference": "jarvis content package",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:publish-draft",
+      "surface": "command",
+      "legacyReference": "jarvis content publish-draft",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:push",
+      "surface": "command",
+      "legacyReference": "jarvis content push",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:status",
+      "surface": "command",
+      "legacyReference": "jarvis content status",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:strategy",
+      "surface": "command",
+      "legacyReference": "jarvis content strategy",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:content:verify",
+      "surface": "command",
+      "legacyReference": "jarvis content verify",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:context",
+      "surface": "command",
+      "legacyReference": "jarvis context",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:context:edit",
+      "surface": "command",
+      "legacyReference": "jarvis context edit",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:context:status",
+      "surface": "command",
+      "legacyReference": "jarvis context status",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:docs",
+      "surface": "command",
+      "legacyReference": "jarvis docs",
+      "status": "intentionally-retired",
+      "replacement": "Generated hsy CLI, tool-schema, slash-command, and skill documentation",
+      "rationale": "Documentation is generated from native definitions rather than maintained as a legacy command registry."
+    },
+    {
+      "id": "command:jarvis:init",
+      "surface": "command",
+      "legacyReference": "jarvis init",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:j",
+      "surface": "command",
+      "legacyReference": "jarvis j",
+      "status": "intentionally-retired",
+      "replacement": "Canonical hsy domain tool, slash command, skill, or CLI surface",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:journal",
+      "surface": "command",
+      "legacyReference": "jarvis journal",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:journal:insights",
+      "surface": "command",
+      "legacyReference": "jarvis journal insights",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:journal:list",
+      "surface": "command",
+      "legacyReference": "jarvis journal list",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:journal:read",
+      "surface": "command",
+      "legacyReference": "jarvis journal read",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:journal:search",
+      "surface": "command",
+      "legacyReference": "jarvis journal search",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:journal:write",
+      "surface": "command",
+      "legacyReference": "jarvis journal write",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting",
+      "surface": "command",
+      "legacyReference": "jarvis meeting",
+      "status": "partial",
+      "replacement": "V2 meeting capability inspections",
+      "rationale": "Native meeting publication and Fathom status boundaries exist; remaining ingest and publication workflow commands are tracked separately."
+    },
+    {
+      "id": "command:jarvis:meeting:fathom",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom",
+      "status": "partial",
+      "replacement": "jarvis meeting fathom status",
+      "rationale": "Native read-only account, poll-state and inbox discovery exists; provider polling and ingestion remain on the preserved implementation."
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:ingest",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom ingest",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:ingest-today",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom ingest-today",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:list",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom list",
+      "status": "partial",
+      "replacement": "jarvis meeting fathom list",
+      "rationale": "Native bounded local inbox metadata listing exists; remote Fathom listing and import remain on the preserved implementation."
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:poll",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom poll",
+      "status": "partial",
+      "replacement": "jarvis meeting fathom poll",
+      "rationale": "Native bounded polling and ingestion use the V2 inbox/checkpoint store for the configured account; live scheduler activation remains separately gated."
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:start",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom start",
+      "status": "intentionally-retired",
+      "replacement": "Separate Effect channel daemon plus optional hsy daemon supervision",
+      "rationale": "Persistent receivers do not run inside the interactive agent process."
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:webhook",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom webhook",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:webhook:create",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom webhook create",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:webhook:delete",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom webhook delete",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:webhook:ingest-inbox",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom webhook ingest-inbox",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:webhook:serve",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom webhook serve",
+      "status": "intentionally-retired",
+      "replacement": "Separate Effect channel daemon plus optional hsy daemon supervision",
+      "rationale": "Persistent receivers do not run inside the interactive agent process."
+    },
+    {
+      "id": "command:jarvis:meeting:fathom:webhook:status",
+      "surface": "command",
+      "legacyReference": "jarvis meeting fathom webhook status",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:ingest",
+      "surface": "command",
+      "legacyReference": "jarvis meeting ingest",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:approve",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish approve",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:cutover",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish cutover",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:preflight",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish preflight",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:reject",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish reject",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review:install",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review install",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review:open",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review open",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review:serve",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review serve",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review:uninstall",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review uninstall",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:scan",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish scan",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:setup",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish setup",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:status",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish status",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:worker",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish worker",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:n",
+      "surface": "command",
+      "legacyReference": "jarvis n",
+      "status": "intentionally-retired",
+      "replacement": "Canonical hsy domain tool, slash command, skill, or CLI surface",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:note",
+      "surface": "command",
+      "legacyReference": "jarvis note",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:o",
+      "surface": "command",
+      "legacyReference": "jarvis o",
+      "status": "intentionally-retired",
+      "replacement": "Canonical hsy domain tool, slash command, skill, or CLI surface",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:object",
+      "surface": "command",
+      "legacyReference": "jarvis object",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:object:edit",
+      "surface": "command",
+      "legacyReference": "jarvis object edit",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:object:get",
+      "surface": "command",
+      "legacyReference": "jarvis object get",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:p",
+      "surface": "command",
+      "legacyReference": "jarvis p",
+      "status": "intentionally-retired",
+      "replacement": "Canonical hsy domain tool, slash command, skill, or CLI surface",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:plan",
+      "surface": "command",
+      "legacyReference": "jarvis plan",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:reading-list",
+      "surface": "command",
+      "legacyReference": "jarvis reading-list",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:reading-list:cache-clear",
+      "surface": "command",
+      "legacyReference": "jarvis reading-list cache-clear",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:reading-list:extract",
+      "surface": "command",
+      "legacyReference": "jarvis reading-list extract",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:reading-list:list",
+      "surface": "command",
+      "legacyReference": "jarvis reading-list list",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:reading-list:organize",
+      "surface": "command",
+      "legacyReference": "jarvis reading-list organize",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:reading-list:write-back",
+      "surface": "command",
+      "legacyReference": "jarvis reading-list write-back",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:rebalance",
+      "surface": "command",
+      "legacyReference": "jarvis rebalance",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:reorganize",
+      "surface": "command",
+      "legacyReference": "jarvis reorganize",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:rl",
+      "surface": "command",
+      "legacyReference": "jarvis rl",
+      "status": "intentionally-retired",
+      "replacement": "Canonical hsy domain tool, slash command, skill, or CLI surface",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:spaces",
+      "surface": "command",
+      "legacyReference": "jarvis spaces",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:status",
+      "surface": "command",
+      "legacyReference": "jarvis status",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:suggest",
+      "surface": "command",
+      "legacyReference": "jarvis suggest",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:sync",
+      "surface": "command",
+      "legacyReference": "jarvis sync",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:sync:dedupe",
+      "surface": "command",
+      "legacyReference": "jarvis sync dedupe",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:sync:preset",
+      "surface": "command",
+      "legacyReference": "jarvis sync preset",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:sync:preset:add",
+      "surface": "command",
+      "legacyReference": "jarvis sync preset add",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:sync:preset:delete",
+      "surface": "command",
+      "legacyReference": "jarvis sync preset delete",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:sync:preset:edit",
+      "surface": "command",
+      "legacyReference": "jarvis sync preset edit",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:sync:preset:list",
+      "surface": "command",
+      "legacyReference": "jarvis sync preset list",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:sync:preset:show",
+      "surface": "command",
+      "legacyReference": "jarvis sync preset show",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:sync:run",
+      "surface": "command",
+      "legacyReference": "jarvis sync run",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:t",
+      "surface": "command",
+      "legacyReference": "jarvis t",
+      "status": "intentionally-retired",
+      "replacement": "Canonical hsy domain tool, slash command, skill, or CLI surface",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:task",
+      "surface": "command",
+      "legacyReference": "jarvis task",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:task:create",
+      "surface": "command",
+      "legacyReference": "jarvis task create",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:text-hygiene",
+      "surface": "command",
+      "legacyReference": "jarvis text-hygiene",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:text-hygiene:check",
+      "surface": "command",
+      "legacyReference": "jarvis text-hygiene check",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:text-hygiene:clean",
+      "surface": "command",
+      "legacyReference": "jarvis text-hygiene clean",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:w",
+      "surface": "command",
+      "legacyReference": "jarvis w",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:ask",
+      "surface": "command",
+      "legacyReference": "jarvis w ask",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki ask",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:compile",
+      "surface": "command",
+      "legacyReference": "jarvis w compile",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki compile",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:dedupe",
+      "surface": "command",
+      "legacyReference": "jarvis w dedupe",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki dedupe",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:enhance",
+      "surface": "command",
+      "legacyReference": "jarvis w enhance",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki enhance",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:export",
+      "surface": "command",
+      "legacyReference": "jarvis w export",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki export",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:ingest",
+      "surface": "command",
+      "legacyReference": "jarvis w ingest",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki ingest",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:init",
+      "surface": "command",
+      "legacyReference": "jarvis w init",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki init",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:lint",
+      "surface": "command",
+      "legacyReference": "jarvis w lint",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki lint",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:open",
+      "surface": "command",
+      "legacyReference": "jarvis w open",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki open",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:program",
+      "surface": "command",
+      "legacyReference": "jarvis w program",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki program",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:research",
+      "surface": "command",
+      "legacyReference": "jarvis w research",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki research",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:search",
+      "surface": "command",
+      "legacyReference": "jarvis w search",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki search",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:seed",
+      "surface": "command",
+      "legacyReference": "jarvis w seed",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki seed",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:w:status",
+      "surface": "command",
+      "legacyReference": "jarvis w status",
+      "status": "intentionally-retired",
+      "replacement": "jarvis wiki status",
+      "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:whatsapp",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:send",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp send",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:send-template",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp send-template",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:setup",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp setup",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:start",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp start",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:threads",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp threads",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:threads:list",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp threads list",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:threads:read",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp threads read",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:threads:set-status",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp threads set-status",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:webhook",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp webhook",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:webhook:ingest-inbox",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp webhook ingest-inbox",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:webhook:serve",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp webhook serve",
+      "status": "intentionally-retired",
+      "replacement": "Separate Effect channel daemon plus optional hsy daemon supervision",
+      "rationale": "Persistent receivers do not run inside the interactive agent process."
+    },
+    {
+      "id": "command:jarvis:whatsapp:webhook:status",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp webhook status",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki",
+      "surface": "command",
+      "legacyReference": "jarvis wiki",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:ask",
+      "surface": "command",
+      "legacyReference": "jarvis wiki ask",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:compile",
+      "surface": "command",
+      "legacyReference": "jarvis wiki compile",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:dedupe",
+      "surface": "command",
+      "legacyReference": "jarvis wiki dedupe",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:enhance",
+      "surface": "command",
+      "legacyReference": "jarvis wiki enhance",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:export",
+      "surface": "command",
+      "legacyReference": "jarvis wiki export",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:ingest",
+      "surface": "command",
+      "legacyReference": "jarvis wiki ingest",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:init",
+      "surface": "command",
+      "legacyReference": "jarvis wiki init",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:lint",
+      "surface": "command",
+      "legacyReference": "jarvis wiki lint",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:open",
+      "surface": "command",
+      "legacyReference": "jarvis wiki open",
+      "status": "intentionally-retired",
+      "replacement": "Optional Obsidian desktop capability",
+      "rationale": "Core preserves URL generation without depending on a desktop application."
+    },
+    {
+      "id": "command:jarvis:wiki:program",
+      "surface": "command",
+      "legacyReference": "jarvis wiki program",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:research",
+      "surface": "command",
+      "legacyReference": "jarvis wiki research",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:search",
+      "surface": "command",
+      "legacyReference": "jarvis wiki search",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:seed",
+      "surface": "command",
+      "legacyReference": "jarvis wiki seed",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:wiki:status",
+      "surface": "command",
+      "legacyReference": "jarvis wiki status",
+      "status": "missing"
+    },
+    {
+      "id": "connector:anytype",
+      "surface": "connector",
+      "legacyReference": "AnyTypeAdapter",
+      "status": "partial",
+      "replacement": "Focused Effect knowledge services",
+      "rationale": "Existing native reads cover list spaces, search, and get object."
+    },
+    {
+      "id": "connector:notion",
+      "surface": "connector",
+      "legacyReference": "NotionAdapter",
+      "status": "missing"
+    },
+    {
+      "id": "context:blockers.md",
+      "surface": "context",
+      "legacyReference": "blockers.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:calendar.md",
+      "surface": "context",
+      "legacyReference": "calendar.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:constraints.md",
+      "surface": "context",
+      "legacyReference": "constraints.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:decisions.md",
+      "surface": "context",
+      "legacyReference": "decisions.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:delegation.md",
+      "surface": "context",
+      "legacyReference": "delegation.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:focus.md",
+      "surface": "context",
+      "legacyReference": "focus.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:goals.md",
+      "surface": "context",
+      "legacyReference": "goals.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:patterns.md",
+      "surface": "context",
+      "legacyReference": "patterns.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:preferences.md",
+      "surface": "context",
+      "legacyReference": "preferences.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:priorities.md",
+      "surface": "context",
+      "legacyReference": "priorities.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:projects.md",
+      "surface": "context",
+      "legacyReference": "projects.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "context:recurring.md",
+      "surface": "context",
+      "legacyReference": "recurring.md",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "Global/project precedence and {{global}} expansion are covered by native compatibility tests."
+    },
+    {
+      "id": "host-capability:android",
+      "surface": "host-capability",
+      "legacyReference": "android/apk",
+      "status": "intentionally-retired",
+      "replacement": "Optional Android host capability",
+      "rationale": "Android SDK requirements do not belong in the portable core."
+    },
+    {
+      "id": "host-capability:cloudflared",
+      "surface": "host-capability",
+      "legacyReference": "cloudflared tunnel launch",
+      "status": "intentionally-retired",
+      "replacement": "Optional tunnel capability",
+      "rationale": "Tunnel lifecycle is separate from channel domain services."
+    },
+    {
+      "id": "host-capability:obsidian-open",
+      "surface": "host-capability",
+      "legacyReference": "Obsidian launching",
+      "status": "intentionally-retired",
+      "replacement": "Optional desktop integration capability",
+      "rationale": "Core preserves URL generation without depending on a desktop application."
+    },
+    {
+      "id": "host-capability:shell-profile",
+      "surface": "host-capability",
+      "legacyReference": "shell profile mutation",
+      "status": "intentionally-retired",
+      "replacement": "Optional shell integration capability",
+      "rationale": "Core services must not mutate shell startup files."
+    },
+    {
+      "id": "host-capability:tmux",
+      "surface": "host-capability",
+      "legacyReference": "tmux process management",
+      "status": "intentionally-retired",
+      "replacement": "Optional process-supervision capability",
+      "rationale": "Interactive hsy does not own persistent process supervision."
+    },
+    {
+      "id": "state:fathom-inbox-json-v1",
+      "surface": "state",
+      "legacyReference": "fathom-inbox-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:fathom-poll-state-json-v1",
+      "surface": "state",
+      "legacyReference": "fathom-poll-state-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:journal-deep-dives-json-v1",
+      "surface": "state",
+      "legacyReference": "journal-deep-dives-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:journal-draft-text-v1",
+      "surface": "state",
+      "legacyReference": "journal-draft-text-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:journal-index-json-v1",
+      "surface": "state",
+      "legacyReference": "journal-index-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:legacy-config-yaml-v1",
+      "surface": "state",
+      "legacyReference": "legacy-config-yaml-v1",
+      "status": "compatible",
+      "replacement": "JarvisConfigReader",
+      "rationale": "Effect schemas reproduce legacy YAML, environment, account, and credential-source resolution."
+    },
+    {
+      "id": "state:pending-suggestions-json-v1",
+      "surface": "state",
+      "legacyReference": "pending-suggestions-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:plan-apply-json-v1",
+      "surface": "state",
+      "legacyReference": "plan-apply-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:project-context-v1",
+      "surface": "state",
+      "legacyReference": "project-context-v1",
+      "status": "compatible",
+      "replacement": "JarvisContextLoader",
+      "rationale": "The native loader reproduces the twelve-file legacy merge contract."
+    },
+    {
+      "id": "state:reading-list-result-cache-v1",
+      "surface": "state",
+      "legacyReference": "reading-list-result-cache-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:reading-list-url-cache-v1",
+      "surface": "state",
+      "legacyReference": "reading-list-url-cache-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:schedule-plan-json-v1",
+      "surface": "state",
+      "legacyReference": "schedule-plan-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:selected-space-json-v1",
+      "surface": "state",
+      "legacyReference": "selected-space-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:sync-presets-yaml-v1",
+      "surface": "state",
+      "legacyReference": "sync-presets-yaml-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:sync-state-json-v1",
+      "surface": "state",
+      "legacyReference": "sync-state-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:weekly-plan-markdown-v1",
+      "surface": "state",
+      "legacyReference": "weekly-plan-markdown-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:whatsapp-inbox-json-v1",
+      "surface": "state",
+      "legacyReference": "whatsapp-inbox-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:whatsapp-thread-json-v1",
+      "surface": "state",
+      "legacyReference": "whatsapp-thread-json-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:whatsapp-thread-markdown-v1",
+      "surface": "state",
+      "legacyReference": "whatsapp-thread-markdown-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "state:wiki-domain-v1",
+      "surface": "state",
+      "legacyReference": "wiki-domain-v1",
+      "status": "compatible",
+      "replacement": "JarvisStateReader",
+      "rationale": "The bounded native reader reports versioned readiness without mutating legacy state."
+    },
+    {
+      "id": "workflow:journal-notes",
+      "surface": "workflow",
+      "legacyReference": "journal/note",
+      "status": "missing"
+    },
+    {
+      "id": "workflow:reading-content-sync",
+      "surface": "workflow",
+      "legacyReference": "reading_list/content/sync",
+      "status": "missing"
+    },
+    {
+      "id": "workflow:tasks-planning",
+      "surface": "workflow",
+      "legacyReference": "task/analyzer/plan",
+      "status": "missing"
+    },
+    {
+      "id": "workflow:wiki",
+      "surface": "workflow",
+      "legacyReference": "wiki",
+      "status": "missing"
+    }
+  ]
+}

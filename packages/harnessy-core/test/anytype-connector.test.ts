@@ -1,28 +1,44 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import { HttpClient } from "effect/unstable/http";
 
-import { AnytypeConfig, AnytypeConnector } from "../src/connectors/anytype.ts";
+import { AnytypeConfig, anytypeKnowledgeLayer } from "../src/connectors/anytype.ts";
+import {
+	KnowledgeCapabilities,
+	KnowledgeObjects,
+	KnowledgeSpaces,
+	KnowledgeTasks,
+	MutationAuditMetadata,
+	MutationIdempotencyMetadata,
+	MutationMetadata,
+	MutationPolicyMetadata,
+	UpdateObjectRequest,
+} from "../src/connectors/knowledge.ts";
 import { type FakeHttp, makeFakeHttp } from "./lib/fake-http.ts";
 
-const withFake = <A, E>(fake: FakeHttp, effect: Effect.Effect<A, E, AnytypeConnector>) =>
+const withFake = <A, E, R>(fake: FakeHttp, effect: Effect.Effect<A, E, R>) =>
 	effect.pipe(
-		Effect.provide(AnytypeConnector.layer),
+		Effect.provide(anytypeKnowledgeLayer),
 		Effect.provide(AnytypeConfig.layer({ baseUrl: "http://anytype.test", apiKey: "secret-key" })),
 		Effect.provide(fake.layer),
 	);
 
-describe("AnytypeConnector", () => {
-	it.effect("lists spaces and sends auth + version headers", () => {
-		const fake = makeFakeHttp(() => ({
-			body: { data: [{ id: "space-1", name: "Flow", extra: "ignored" }] },
-		}));
+const mutationMetadata = new MutationMetadata({
+	policy: new MutationPolicyMetadata({ policyId: "pending-48" }),
+	idempotency: new MutationIdempotencyMetadata({ key: "object-update-1" }),
+	audit: new MutationAuditMetadata({ actorId: "agent:test", reason: "contract test", correlationId: "run-1" }),
+});
+
+describe("AnyType focused knowledge services", () => {
+	it.effect("normalizes spaces and sends auth + version headers", () => {
+		const fake = makeFakeHttp(() => ({ body: { data: [{ id: "space-1", name: "Flow", extra: "ignored" }] } }));
 		return withFake(
 			fake,
 			Effect.gen(function* () {
-				const anytype = yield* AnytypeConnector;
-				const spaces = yield* anytype.listSpaces();
-				expect(spaces).toHaveLength(1);
-				expect(spaces[0]).toMatchObject({ id: "space-1", name: "Flow" });
+				const spaces = yield* (yield* KnowledgeSpaces).list();
+				expect(spaces[0]).toMatchObject({ backend: "anytype", id: "space-1", name: "Flow" });
 				expect(fake.calls[0]?.url).toBe("http://anytype.test/v1/spaces");
 				expect(fake.calls[0]?.headers.authorization).toBe("Bearer secret-key");
 				expect(fake.calls[0]?.headers["anytype-version"]).toBeDefined();
@@ -30,26 +46,72 @@ describe("AnytypeConnector", () => {
 		);
 	});
 
-	it.effect("searches a space and flattens the nested type name", () => {
+	it.effect("normalizes search summaries and flattens the nested type name", () => {
 		const fake = makeFakeHttp(() => ({
 			body: { data: [{ id: "obj-1", name: "25 - Meeting", type: { name: "Page" } }] },
 		}));
 		return withFake(
 			fake,
 			Effect.gen(function* () {
-				const anytype = yield* AnytypeConnector;
-				const results = yield* anytype.search("space-1", "meeting");
-				expect(results[0]).toMatchObject({ id: "obj-1", name: "25 - Meeting", type: "Page" });
-				expect(fake.calls[0]?.method).toBe("POST");
-				expect(fake.calls[0]?.url).toBe("http://anytype.test/v1/spaces/space-1/search");
-				// The query is sent as a JSON body with the right content-type.
+				const results = yield* (yield* KnowledgeObjects).search("space-1", "meeting");
+				expect(results[0]).toMatchObject({
+					backend: "anytype",
+					spaceId: "space-1",
+					id: "obj-1",
+					name: "25 - Meeting",
+					type: "Page",
+				});
 				expect(JSON.parse(fake.calls[0]?.body ?? "{}")).toEqual({ query: "meeting" });
-				expect(fake.calls[0]?.headers["content-type"]).toContain("application/json");
 			}),
 		);
 	});
 
-	it.effect("follows cursor pagination for spaces", () => {
+	it.effect("normalizes full objects and preserves semantic properties", () => {
+		const fake = makeFakeHttp(() => ({
+			body: {
+				object: {
+					id: "obj-1",
+					name: "Meeting",
+					type: { name: "Page" },
+					markdown: "# Meeting\nbody",
+					properties: [
+						{ key: "due", format: "date", date: "2026-07-11T12:00:00Z" },
+						{ key: "done", format: "checkbox", checkbox: true },
+						{
+							key: "tag",
+							format: "multi_select",
+							multi_select: [{ name: "work" }, { name: "" }, {}],
+						},
+						{ key: "status", format: "select", select: { name: "Done" } },
+						{ key: "score", format: "number", number: 3 },
+						{ key: "notes", format: "text", text: "Prepared" },
+					],
+				},
+			},
+		}));
+		return withFake(
+			fake,
+			Effect.gen(function* () {
+				const object = yield* (yield* KnowledgeObjects).get("space-1", "obj-1");
+				expect(object).toMatchObject({
+					backend: "anytype",
+					spaceId: "space-1",
+					id: "obj-1",
+					type: "Page",
+					properties: {
+						due: "2026-07-11T12:00:00Z",
+						done: true,
+						tags: ["work"],
+						status: "Done",
+						score: 3,
+						notes: "Prepared",
+					},
+				});
+			}),
+		);
+	});
+
+	it.effect("follows cursor pagination without truncation", () => {
 		const fake = makeFakeHttp((request) => {
 			if (request.url.endsWith("/v1/spaces")) {
 				return { body: { data: [{ id: "space-1" }], pagination: { next_cursor: "page-2" } } };
@@ -59,99 +121,120 @@ describe("AnytypeConnector", () => {
 		return withFake(
 			fake,
 			Effect.gen(function* () {
-				const anytype = yield* AnytypeConnector;
-				const spaces = yield* anytype.listSpaces();
+				const spaces = yield* (yield* KnowledgeSpaces).list();
 				expect(spaces.map((space) => space.id)).toEqual(["space-1", "space-2"]);
 				expect(fake.calls[1]?.url).toBe("http://anytype.test/v1/spaces?cursor=page-2");
 			}),
 		);
 	});
 
-	it.effect("follows cursor pagination for search", () => {
-		const fake = makeFakeHttp((request) => {
-			const body = JSON.parse(request.body ?? "{}") as { readonly cursor?: string };
-			if (body.cursor === "page-2") {
-				return { body: { data: [{ id: "obj-2", name: "Second" }] } };
-			}
-			return { body: { data: [{ id: "obj-1", name: "First" }], pagination: { next_cursor: "page-2" } } };
-		});
+	it.effect("returns capability evidence for unsupported reads", () => {
+		const fake = makeFakeHttp();
 		return withFake(
 			fake,
 			Effect.gen(function* () {
-				const anytype = yield* AnytypeConnector;
-				const results = yield* anytype.search("space-1", "meeting");
-				expect(results.map((result) => result.id)).toEqual(["obj-1", "obj-2"]);
-				expect(JSON.parse(fake.calls[1]?.body ?? "{}")).toEqual({ query: "meeting", cursor: "page-2" });
+				const report = yield* (yield* KnowledgeCapabilities).discover();
+				const tasksEvidence = report.capabilities.find((item) => item.capability === "tasks");
+				expect(tasksEvidence).toMatchObject({ readable: false, mutable: false });
+				const error = yield* Effect.flip((yield* KnowledgeTasks).list("space-1"));
+				expect(error._tag).toBe("ConnectorUnsupportedCapabilityError");
+				if (error._tag === "ConnectorUnsupportedCapabilityError") {
+					expect(error.evidence).toEqual(tasksEvidence);
+				}
+				expect(fake.calls).toHaveLength(0);
 			}),
 		);
 	});
 
-	it.effect("fails rather than truncating unsupported paginated search responses", () => {
-		const fake = makeFakeHttp(() => ({
-			body: { data: [{ id: "obj-1", name: "First" }], pagination: { has_more: true } },
-		}));
+	it.effect("keeps mutation metadata in the request but blocks execution before transport", () => {
+		const fake = makeFakeHttp();
 		return withFake(
 			fake,
 			Effect.gen(function* () {
-				const anytype = yield* AnytypeConnector;
-				const error = yield* Effect.flip(anytype.search("space-1", "meeting"));
-				expect(error._tag).toBe("HarnessError");
-				expect(error.message).toContain("paginated response did not include a cursor or offset/limit");
+				const request = new UpdateObjectRequest({
+					spaceId: "space-1",
+					objectId: "obj-1",
+					updates: { name: "Changed" },
+					metadata: mutationMetadata,
+				});
+				expect(request.metadata.idempotency.key).toBe("object-update-1");
+				const error = yield* Effect.flip((yield* KnowledgeObjects).update(request));
+				expect(error).toMatchObject({ _tag: "ConnectorMutationDisabledError", blockedByIssue: 48 });
+				expect(fake.calls).toHaveLength(0);
 			}),
 		);
 	});
 
-	it.effect("url-encodes space and object ids in the path", () => {
-		const fake = makeFakeHttp(() => ({ body: { object: { id: "x", name: "x" } } }));
-		return withFake(
-			fake,
-			Effect.gen(function* () {
-				const anytype = yield* AnytypeConnector;
-				yield* anytype.getObject("space/with slash", "obj#frag");
-				expect(fake.calls[0]?.url).toBe("http://anytype.test/v1/spaces/space%2Fwith%20slash/objects/obj%23frag");
-			}),
-		);
-	});
-
-	it.effect("fetches an object with its markdown body", () => {
-		const fake = makeFakeHttp(() => ({
-			body: { object: { id: "obj-1", name: "Meeting", snippet: "summary", markdown: "# Meeting\nbody" } },
-		}));
-		return withFake(
-			fake,
-			Effect.gen(function* () {
-				const anytype = yield* AnytypeConnector;
-				const object = yield* anytype.getObject("space-1", "obj-1");
-				expect(object.markdown).toContain("# Meeting");
-				expect(object.snippet).toBe("summary");
-			}),
-		);
-	});
-
-	it.effect("fails with a HarnessError on a non-2xx response", () => {
+	it.effect("classifies authentication failures", () => {
 		const fake = makeFakeHttp(() => ({ status: 401, body: { error: "unauthorized" } }));
 		return withFake(
 			fake,
 			Effect.gen(function* () {
-				const anytype = yield* AnytypeConnector;
-				const error = yield* Effect.flip(anytype.listSpaces());
-				// Surfaced as a HarnessError whose message names the failing action.
-				expect(error._tag).toBe("HarnessError");
-				expect(error.message).toContain("AnyType list spaces");
+				const error = yield* Effect.flip((yield* KnowledgeSpaces).list());
+				expect(error).toMatchObject({ _tag: "ConnectorAuthError", status: 401, backend: "anytype" });
 			}),
 		);
 	});
 
-	it.effect("tolerates missing/extra fields without breaking", () => {
-		const fake = makeFakeHttp(() => ({ body: { data: [{ id: "only-id" }], unexpected: true } }));
+	it.effect("classifies transport failures", () => {
+		const fake = makeFakeHttp(() => ({ status: 503, body: { error: "unavailable" } }));
 		return withFake(
 			fake,
 			Effect.gen(function* () {
-				const anytype = yield* AnytypeConnector;
-				const spaces = yield* anytype.listSpaces();
-				expect(spaces[0]).toMatchObject({ id: "only-id" });
-				expect(spaces[0]?.name).toBeUndefined();
+				const error = yield* Effect.flip((yield* KnowledgeSpaces).list());
+				expect(error).toMatchObject({ _tag: "ConnectorTransportError", retryable: true });
 			}),
 		);
+	});
+
+	it.effect("classifies malformed backend data", () => {
+		const fake = makeFakeHttp(() => ({ body: { data: [{ name: "missing id" }] } }));
+		return withFake(
+			fake,
+			Effect.gen(function* () {
+				const error = yield* Effect.flip((yield* KnowledgeSpaces).list());
+				expect(error._tag).toBe("ConnectorDataError");
+			}),
+		);
+	});
+
+	it.effect("classifies object not-found failures with resource evidence", () => {
+		const fake = makeFakeHttp(() => ({ status: 404, body: { error: "missing" } }));
+		return withFake(
+			fake,
+			Effect.gen(function* () {
+				const error = yield* Effect.flip((yield* KnowledgeObjects).get("space-1", "obj-404"));
+				expect(error).toMatchObject({
+					_tag: "ConnectorNotFoundError",
+					resourceType: "object",
+					resourceId: "obj-404",
+				});
+			}),
+		);
+	});
+
+	it.effect("preserves cancellation as interruption", () => {
+		let interrupted = false;
+		const hangingClient = HttpClient.make(() =>
+			Effect.never.pipe(
+				Effect.onInterrupt(() =>
+					Effect.sync(() => {
+						interrupted = true;
+					}),
+				),
+			),
+		);
+		const hangingLayer = Layer.succeed(HttpClient.HttpClient, hangingClient);
+		const program = Effect.gen(function* () {
+			const fiber = yield* (yield* KnowledgeSpaces).list().pipe(Effect.forkChild);
+			yield* Effect.yieldNow;
+			yield* Fiber.interrupt(fiber);
+			expect(interrupted).toBe(true);
+		}).pipe(
+			Effect.provide(anytypeKnowledgeLayer),
+			Effect.provide(AnytypeConfig.layer({ baseUrl: "http://anytype.test", apiKey: "secret-key" })),
+			Effect.provide(hangingLayer),
+		);
+		return program;
 	});
 });

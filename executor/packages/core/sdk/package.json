@@ -1,0 +1,133 @@
+{
+  "name": "@executor-js/sdk",
+  "version": "1.5.33",
+  "homepage": "https://github.com/UsefulSoftwareCo/executor/tree/main/packages/core/sdk",
+  "bugs": {
+    "url": "https://github.com/UsefulSoftwareCo/executor/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UsefulSoftwareCo/executor.git",
+    "directory": "packages/core/sdk"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/index.ts",
+    "./shared": "./src/shared.ts",
+    "./host-internal": "./src/host-internal.ts",
+    "./promise": "./src/promise.ts",
+    "./client": "./src/client.ts",
+    "./testing": "./src/testing.ts",
+    "./migration": "./src/migration-spec.ts",
+    "./http-auth": "./src/http-auth/index.ts",
+    "./public-origin": "./src/public-origin.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/promise.d.ts",
+          "default": "./dist/index.js"
+        }
+      },
+      "./core": {
+        "import": {
+          "types": "./dist/index.d.ts",
+          "default": "./dist/core.js"
+        }
+      },
+      "./shared": {
+        "import": {
+          "types": "./dist/shared.d.ts",
+          "default": "./dist/shared.js"
+        }
+      },
+      "./host-internal": {
+        "import": {
+          "types": "./dist/host-internal.d.ts",
+          "default": "./dist/host-internal.js"
+        }
+      },
+      "./client": {
+        "import": {
+          "types": "./dist/client.d.ts",
+          "default": "./dist/client.js"
+        }
+      },
+      "./testing": {
+        "import": {
+          "types": "./dist/testing.d.ts",
+          "default": "./dist/testing.js"
+        }
+      },
+      "./migration": {
+        "import": {
+          "types": "./dist/migration-spec.d.ts",
+          "default": "./dist/migration-spec.js"
+        }
+      },
+      "./http-auth": {
+        "import": {
+          "types": "./dist/http-auth.d.ts",
+          "default": "./dist/http-auth.js"
+        }
+      },
+      "./public-origin": {
+        "import": {
+          "types": "./dist/public-origin.d.ts",
+          "default": "./dist/public-origin.js"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup && (tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src || true)",
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run",
+    "typecheck:slow": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@executor-js/fumadb": "workspace:*",
+    "@standard-schema/spec": "^1.1.0",
+    "fractional-indexing": "^3.2.0",
+    "oauth4webapi": "^3.8.5",
+    "tldts": "^7.0.28"
+  },
+  "devDependencies": {
+    "@effect/atom-react": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@libsql/client": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "drizzle-orm": "catalog:",
+    "effect": "catalog:",
+    "react": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@effect/atom-react": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:",
+    "react": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@effect/platform-node": {
+      "optional": true
+    },
+    "@effect/atom-react": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  }
+}

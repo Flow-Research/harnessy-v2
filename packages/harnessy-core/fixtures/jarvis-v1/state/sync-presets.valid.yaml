@@ -1,0 +1,16 @@
+version: 1
+presets:
+  - name: research
+    source: null
+    destination: null
+    ignore:
+      - .git
+      - .DS_Store
+      - node_modules
+    options:
+      include_extensions:
+        - .md
+        - .txt
+        - .markdown
+        - .text
+      unsupported_mode: upload

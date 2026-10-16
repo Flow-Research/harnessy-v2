@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import errno
+import subprocess
 import sys
 from pathlib import Path
 
@@ -95,3 +97,37 @@ def test_run_ai_prompt_falls_back_after_provider_failure(monkeypatch) -> None:
     assert result.provider == "codex"
     assert calls == ["claude", "codex"]
     assert result.warning
+
+
+def test_opencode_argument_limit_is_a_permanent_structured_failure(monkeypatch) -> None:
+    monkeypatch.setattr(ai_runner.shutil, "which", lambda _cmd: "/usr/bin/opencode")
+    monkeypatch.setattr(
+        ai_runner,
+        "_run_subprocess",
+        lambda *_args, **_kwargs: OSError(errno.E2BIG, "Argument list too long"),
+    )
+
+    result = ai_runner.run_provider("opencode", "x" * 1_000_000)
+
+    assert not result.ok
+    assert result.error_type == "prompt_too_large"
+    assert "standard input" in result.error
+    assert result.error_type in ai_runner.PERMANENT_FAILURES
+
+
+def test_codex_runner_overrides_incompatible_user_reasoning_effort(monkeypatch) -> None:
+    captured: list[str] = []
+
+    def fake_run(cmd, **_kwargs):
+        captured.extend(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="## One\n\n## Two\n", stderr="")
+
+    monkeypatch.setattr(ai_runner.shutil, "which", lambda _cmd: "/usr/bin/codex")
+    monkeypatch.setattr(ai_runner, "_run_subprocess", fake_run)
+    monkeypatch.delenv("HARNESSY_AI_CODEX_REASONING_EFFORT", raising=False)
+
+    result = ai_runner.run_provider("codex", "prompt", model="gpt-5.4-mini")
+
+    assert result.ok
+    config_index = captured.index("-c")
+    assert captured[config_index + 1] == 'model_reasoning_effort="high"'

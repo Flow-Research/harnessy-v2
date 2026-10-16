@@ -3,25 +3,119 @@
 	"compilerOptions": {
 		"noEmit": true,
 		"paths": {
-			"*": ["./*"],
-			"@earendil-works/pi-ai": ["./packages/ai/src/index.ts"],
-			"@earendil-works/pi-ai/oauth": ["./packages/ai/src/oauth.ts"],
-			"@earendil-works/pi-ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],
-			"@earendil-works/pi-ai/dist/*": ["./packages/ai/src/*"],
-			"@earendil-works/pi-agent-core": ["./packages/agent/src/index.ts"],
-			"@earendil-works/pi-agent-core/*": ["./packages/agent/src/*"],
-			"@earendil-works/pi-coding-agent": ["./packages/coding-agent/src/index.ts"],
-			"@earendil-works/pi-coding-agent/hooks": ["./packages/coding-agent/src/core/hooks/index.ts"],
-			"@earendil-works/pi-coding-agent/*": ["./packages/coding-agent/src/*"],
-			"@earendil-works/pi-orchestrator": ["./packages/orchestrator/src/index.ts"],
-			"@earendil-works/pi-orchestrator/*": ["./packages/orchestrator/src/*"],
-			"typebox": ["./node_modules/typebox"],
-			"@earendil-works/pi-tui": ["./packages/tui/src/index.ts"],
-			"@earendil-works/pi-tui/*": ["./packages/tui/src/*"],
-			"@earendil-works/pi-agent-old": ["./packages/agent-old/src/index.ts"],
-			"@earendil-works/pi-agent-old/*": ["./packages/agent-old/src/*"]
+			"@harnessy/core": ["./packages/harnessy-core/src/index.ts"],
+			"@harnessy/core/community-briefing": ["./packages/harnessy-core/src/community-briefing.ts"],
+			"@harnessy/core/connectors/anytype": ["./packages/harnessy-core/src/connectors/anytype.ts"],
+			"@harnessy/core/connectors/knowledge": ["./packages/harnessy-core/src/connectors/knowledge.ts"],
+			"@harnessy/core/connectors/loopback": ["./packages/harnessy-core/src/connectors/loopback.ts"],
+			"@harnessy/core/meeting-publication-inspector": ["./packages/harnessy-core/src/meeting-publication-inspector.ts"],
+			"@harnessy/core/meeting-publication": ["./packages/harnessy-core/src/meeting-publication.ts"],
+			"*": [
+				"./*"
+			],
+			"@executor-js/fumadb": [
+				"./executor/packages/core/fumadb/src/index.ts"
+			],
+			"@executor-js/fumadb/adapters/drizzle": [
+				"./executor/packages/core/fumadb/src/adapters/drizzle/index.ts"
+			],
+			"@executor-js/fumadb/adapters/memory": [
+				"./executor/packages/core/fumadb/src/adapters/memory/index.ts"
+			],
+			"@executor-js/fumadb/query": [
+				"./executor/packages/core/fumadb/src/query/index.ts"
+			],
+			"@executor-js/fumadb/schema": [
+				"./executor/packages/core/fumadb/src/schema/index.ts"
+			],
+			"@executor-js/integrations-registry": [
+				"./executor/packages/core/integrations-registry/src/index.ts"
+			],
+			"@executor-js/plugin-file-secrets": [
+				"./executor/packages/plugins/file-secrets/src/index.ts"
+			],
+			"@executor-js/plugin-mcp": [
+				"./executor/packages/plugins/mcp/src/sdk/index.ts"
+			],
+			"@executor-js/plugin-openapi": [
+				"./executor/packages/plugins/openapi/src/sdk/index.ts"
+			],
+			"@executor-js/sdk": [
+				"./executor/packages/core/sdk/src/index.ts"
+			],
+			"@executor-js/sdk/core": [
+				"./executor/packages/core/sdk/src/index.ts"
+			],
+			"@executor-js/sdk/http-auth": [
+				"./executor/packages/core/sdk/src/http-auth/index.ts"
+			],
+			"@executor-js/sdk/shared": [
+				"./executor/packages/core/sdk/src/shared.ts"
+			],
+			"@earendil-works/pi-ai": [
+				"./packages/ai/src/index.ts"
+			],
+			"@earendil-works/pi-ai/oauth": [
+				"./packages/ai/src/oauth.ts"
+			],
+			"@earendil-works/pi-ai/*": [
+				"./packages/ai/src/*.ts",
+				"./packages/ai/src/providers/*.ts"
+			],
+			"@earendil-works/pi-ai/dist/*": [
+				"./packages/ai/src/*"
+			],
+			"@earendil-works/pi-agent-core": [
+				"./packages/agent/src/index.ts"
+			],
+			"@earendil-works/pi-agent-core/*": [
+				"./packages/agent/src/*"
+			],
+			"@earendil-works/pi-coding-agent": [
+				"./packages/coding-agent/src/index.ts"
+			],
+			"@earendil-works/pi-coding-agent/hooks": [
+				"./packages/coding-agent/src/core/hooks/index.ts"
+			],
+			"@earendil-works/pi-coding-agent/*": [
+				"./packages/coding-agent/src/*"
+			],
+			"@earendil-works/pi-orchestrator": [
+				"./packages/orchestrator/src/index.ts"
+			],
+			"@earendil-works/pi-orchestrator/*": [
+				"./packages/orchestrator/src/*"
+			],
+			"typebox": [
+				"./node_modules/typebox"
+			],
+			"@earendil-works/pi-tui": [
+				"./packages/tui/src/index.ts"
+			],
+			"@earendil-works/pi-tui/*": [
+				"./packages/tui/src/*"
+			],
+			"@earendil-works/pi-agent-old": [
+				"./packages/agent-old/src/index.ts"
+			],
+			"@earendil-works/pi-agent-old/*": [
+				"./packages/agent-old/src/*"
+			]
 		}
 	},
-	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*"],
-	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
+	"include": [
+		"packages/*/src/**/*",
+		"packages/*/test/**/*",
+		"packages/coding-agent/examples/**/*"
+	],
+	"exclude": [
+		"**/dist/**",
+		"packages/coding-agent/examples/extensions/gondolin/**",
+		"packages/harnessy-core/test/engine-smoke.test.ts",
+		"packages/harnessy-core/test/effect-identity-probe.test.ts",
+		"packages/harnessy-sdk/src/**",
+		"packages/harnessy-sdk/test/**",
+		"packages/harnessy-engine/src/**",
+		"packages/harnessy-engine/test/**"
+	]
 }

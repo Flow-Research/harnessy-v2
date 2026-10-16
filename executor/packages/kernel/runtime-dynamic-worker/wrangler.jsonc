@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "runtime-dynamic-worker-test",
+  "compatibility_date": "2025-06-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "worker_loaders": [
+    {
+      "binding": "LOADER",
+    },
+  ],
+  "vars": {
+    "DATABASE_URL": "postgresql://postgres:postgres@127.0.0.1:5435/postgres",
+  },
+}

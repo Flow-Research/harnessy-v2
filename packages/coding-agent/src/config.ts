@@ -494,6 +494,8 @@ export interface AppIdentityConfig {
 	title?: string;
 	description?: string;
 	configDir?: string;
+	/** Extra help text appended to `--help`, for embedders shipping surfaces beyond the agent. */
+	helpEpilogue?: string;
 }
 
 interface ResolvedAppIdentity {
@@ -501,6 +503,7 @@ interface ResolvedAppIdentity {
 	title: string;
 	description: string;
 	configDir: string;
+	helpEpilogue: string;
 }
 
 const DEFAULT_APP_DESCRIPTION = "AI coding assistant with read, bash, edit, write tools";
@@ -513,6 +516,7 @@ function resolveAppIdentity(config: AppIdentityConfig = {}): ResolvedAppIdentity
 		title: config.title ?? nonEmptyEnv("PI_APP_TITLE") ?? (configuredName ? name : "π"),
 		description: config.description ?? nonEmptyEnv("PI_APP_DESCRIPTION") ?? DEFAULT_APP_DESCRIPTION,
 		configDir: config.configDir ?? nonEmptyEnv("PI_CONFIG_DIR") ?? pkg.piConfig?.configDir ?? ".pi",
+		helpEpilogue: config.helpEpilogue ?? "",
 	};
 }
 
@@ -520,6 +524,7 @@ export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent
 export let APP_NAME = "pi";
 export let APP_TITLE = "π";
 export let APP_DESCRIPTION = DEFAULT_APP_DESCRIPTION;
+export let APP_HELP_EPILOGUE = "";
 export let CONFIG_DIR_NAME = ".pi";
 export const VERSION: string = pkg.version || "0.0.0";
 
@@ -532,6 +537,7 @@ export function configureAppIdentity(config?: AppIdentityConfig): void {
 	APP_NAME = identity.name;
 	APP_TITLE = identity.title;
 	APP_DESCRIPTION = identity.description;
+	APP_HELP_EPILOGUE = identity.helpEpilogue;
 	CONFIG_DIR_NAME = identity.configDir;
 	ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 	ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;

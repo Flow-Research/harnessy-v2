@@ -1,0 +1,104 @@
+{
+	"version": 1,
+	"specs": [
+		{
+			"path": "qa/api/scripts/canonical-cutover.md",
+			"app": "harnessy-v2",
+			"layer": "api"
+		},
+		{
+			"path": "qa/security/scripts/security-invariants.md",
+			"app": "harnessy-v2",
+			"layer": "security"
+		},
+		{
+			"path": "qa/api/scripts/meeting-publication.md",
+			"app": "harnessy-v2",
+			"layer": "api"
+		}
+	],
+	"apps": [
+		{
+			"id": "harnessy-v2",
+			"tests": {
+				"browser": [],
+				"api": [
+					"qa/tests"
+				]
+			}
+		}
+	],
+	"output": {
+		"coverage": "qa/qa-coverage.md",
+		"featureCatalog": "qa/features.generated.yaml",
+		"featureOverrides": "qa/features.overrides.yaml",
+		"featureChangelog": "qa/features.changelog.md",
+		"runResultsDir": "qa/run-results",
+		"securityFindingsDir": "qa/security/findings",
+		"walkthroughDir": ".qa-sweep"
+	},
+	"resultSinks": [],
+	"commands": {
+		"plan": "npm run qa:ids",
+		"execute": "npm run test:qa-scenarios",
+		"syncSpecs": "",
+		"syncResults": "",
+		"integration": "npm run test:qa-scenarios"
+	},
+	"testEnvironment": {
+		"runtimePreference": "native",
+		"composeFile": "",
+		"services": [
+			"filesystem",
+			"local-process",
+			"loopback-http",
+			"sqlite",
+			"workerd"
+		],
+		"mockPolicy": {
+			"default": "warn",
+			"allowedExternalBoundaries": [
+				"public-package-registry"
+			],
+			"exceptions": [
+				"The SDK consumer uses a loopback AnyType contract server; no live credential or tenant is permitted."
+			]
+		}
+	},
+	"catalog": {
+		"generator": "npm run qa:catalog",
+		"check": "npm run qa:catalog:check",
+		"features": [
+			{
+				"prefix": "CAP",
+				"slug": "capability-portability",
+				"name": "Capability portability"
+			},
+			{
+				"prefix": "PKG",
+				"slug": "packaging-release-contracts",
+				"name": "Packaging and release contracts"
+			},
+			{
+				"prefix": "RECON",
+				"slug": "v1-reconciliation",
+				"name": "V1 reconciliation"
+			},
+			{
+				"prefix": "SDK",
+				"slug": "private-sdk-consumer",
+				"name": "Private SDK consumer"
+			},
+			{
+				"prefix": "SEC",
+				"slug": "security-invariants",
+				"name": "Security invariants"
+			},
+			{
+				"prefix": "MEET",
+				"slug": "meeting-publication-migration",
+				"name": "Meeting publication migration"
+			}
+		]
+	}
+}

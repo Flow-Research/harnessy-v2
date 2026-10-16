@@ -10,7 +10,7 @@
 
 ---
 
-## Decisions For You
+## Decisions and Actions for You
 
 {{what_needs_you_today}}
 
@@ -22,12 +22,18 @@
 
 ---
 
-## In The Background
+## Delegated or Waiting
 
-{{background_agents}}
+{{delegated_or_waiting}}
 
 ---
 
-## Today's Scheduled Tasks
+## Open Threads and Risks
 
-{{todays_scheduled_tasks}}
+{{open_threads_and_risks}}
+
+---
+
+## In The Background
+
+{{background_agents}}

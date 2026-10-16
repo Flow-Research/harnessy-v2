@@ -1,0 +1,109 @@
+{
+  "name": "@executor-js/plugin-mcp",
+  "version": "1.5.33",
+  "homepage": "https://github.com/UsefulSoftwareCo/executor/tree/main/packages/plugins/mcp",
+  "bugs": {
+    "url": "https://github.com/UsefulSoftwareCo/executor/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UsefulSoftwareCo/executor.git",
+    "directory": "packages/plugins/mcp"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/sdk/index.ts",
+    "./promise": "./src/promise.ts",
+    "./api": "./src/api/index.ts",
+    "./react": "./src/react/index.ts",
+    "./presets": "./src/sdk/presets.ts",
+    "./client": "./src/react/plugin-client.tsx",
+    "./testing": "./src/testing/index.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/promise.d.ts",
+          "default": "./dist/index.js"
+        }
+      },
+      "./core": {
+        "import": {
+          "types": "./dist/sdk/index.d.ts",
+          "default": "./dist/core.js"
+        }
+      },
+      "./client": {
+        "import": {
+          "types": "./dist/react/plugin-client.d.ts",
+          "default": "./dist/client.js"
+        }
+      },
+      "./testing": {
+        "import": {
+          "types": "./dist/testing/index.d.ts",
+          "default": "./dist/testing.js"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup && (tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src || true)",
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck:slow": "bunx tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@effect/platform-node": "catalog:",
+    "@executor-js/config": "workspace:*",
+    "@executor-js/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@effect/atom-react": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@executor-js/api": "workspace:*",
+    "@executor-js/react": "workspace:*",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "bun-types": "catalog:",
+    "effect": "catalog:",
+    "react": "catalog:",
+    "tsup": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@effect/atom-react": "catalog:",
+    "@executor-js/api": "workspace:*",
+    "@executor-js/react": "workspace:*",
+    "@tanstack/react-router": "catalog:",
+    "effect": "catalog:",
+    "react": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "@effect/atom-react": {
+      "optional": true
+    },
+    "@tanstack/react-router": {
+      "optional": true
+    },
+    "@executor-js/api": {
+      "optional": true
+    },
+    "@executor-js/react": {
+      "optional": true
+    }
+  }
+}

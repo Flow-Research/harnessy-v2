@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "harnessy-engine-cloudflare-fixture",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "HARNESSY_ENGINE_MCP_SESSION",
+        "class_name": "HarnessyEngineMcpSession"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["HarnessyEngineMcpSession"]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "HARNESSY_ENGINE_BLOBS",
+      "bucket_name": "harnessy-engine-fixture"
+    }
+  ]
+}

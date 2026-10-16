@@ -13,6 +13,10 @@ packages/*/dist-firefox/
 # Environment
 .env
 
+# Owner-private context and machine bindings; never part of public source.
+/.jarvis/context/private/
+/.jarvis/context/local.md
+
 # Editor files
 .vscode/
 .zed/
@@ -37,8 +41,15 @@ out.html
 packages/coding-agent/binaries/
 todo.md
 plans/
+!packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/plans/
+!packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
 
 harnessy-v1/
+.supply-chain-evidence/
+.supply-chain-repro/
+.supply-chain-python/
+# Generated Executor task cache; source and other untracked output remain checked.
+/executor/.turbo/cache/

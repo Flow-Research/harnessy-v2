@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "plan_id": "plan_test",
+  "applied_at": "2026-03-01T12:30:00Z",
+  "results": [
+    {
+      "block_id": "blk_1",
+      "task_id": "task_1",
+      "status": "created",
+      "event_id": "event_1",
+      "error": null
+    }
+  ]
+}

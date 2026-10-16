@@ -1,0 +1,48 @@
+{
+  "name": "@executor-js/host-mcp",
+  "version": "1.4.4",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./tool-server": {
+      "types": "./src/tool-server.ts",
+      "default": "./src/tool-server.ts"
+    },
+    "./in-memory-session-store": {
+      "types": "./src/in-memory-session-store.ts",
+      "default": "./src/in-memory-session-store.ts"
+    },
+    "./browser-approval": {
+      "types": "./src/browser-approval.ts",
+      "default": "./src/browser-approval.ts"
+    },
+    "./browser-approval-store": {
+      "types": "./src/browser-approval-store.ts",
+      "default": "./src/browser-approval-store.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck:slow": "bunx tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@executor-js/execution": "workspace:*",
+    "@executor-js/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "effect": "catalog:",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "bun-types": "catalog:",
+    "vitest": "catalog:"
+  }
+}

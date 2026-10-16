@@ -1,0 +1,54 @@
+{
+  "name": "@executor-js/plugin-desktop-settings",
+  "version": "1.5.33",
+  "homepage": "https://github.com/UsefulSoftwareCo/executor/tree/main/packages/plugins/desktop-settings",
+  "bugs": {
+    "url": "https://github.com/UsefulSoftwareCo/executor/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UsefulSoftwareCo/executor.git",
+    "directory": "packages/plugins/desktop-settings"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    "./server": "./src/server.ts",
+    "./client": "./src/client.tsx"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      "./server": {
+        "import": {
+          "types": "./dist/server.d.ts",
+          "default": "./dist/server.js"
+        }
+      },
+      "./client": {
+        "import": {
+          "types": "./dist/client.d.ts",
+          "default": "./dist/client.js"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsgo --noEmit",
+    "typecheck:slow": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@executor-js/sdk": "workspace:*",
+    "react": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "tsup": "catalog:",
+    "typescript": "catalog:"
+  }
+}

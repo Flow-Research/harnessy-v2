@@ -1,0 +1,55 @@
+{
+	// @harnessy/sdk imports the vendored Executor source directly. Upstream uses
+	// extensionless imports and non-erasable syntax, so this package must compile
+	// with Bundler resolution outside the root Node16 project.
+	"extends": "../../tsconfig.json",
+	"compilerOptions": {
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"erasableSyntaxOnly": false,
+		"noEmit": true,
+		"types": ["node"],
+		"paths": {
+			"@harnessy/core": ["../harnessy-core/src/index.ts"],
+			"@harnessy/core/community-briefing": ["../harnessy-core/src/community-briefing.ts"],
+			"@executor-js/plugin-graphql": ["../../executor/packages/plugins/graphql/src/sdk/index.ts"],
+			"@executor-js/plugin-provider-service-split": ["../../executor/packages/plugins/provider-service-split/src/index.ts"],
+			"@executor-js/plugin-openapi/providers/google": ["../../executor/packages/plugins/openapi/src/providers/google/index.ts"],
+			"@packed/core-operational-runtime": ["../harnessy-core/src/jarvis/meeting-publication/operational-runtime.ts"],
+			"@packed/local-host-smoke-command": ["../harnessy-local-host/src/meeting-smoke-command.ts"],
+			"@harnessy/core/connectors/anytype": ["../harnessy-core/src/connectors/anytype.ts"],
+			"@harnessy/core/connectors/knowledge": ["../harnessy-core/src/connectors/knowledge.ts"],
+			"@harnessy/core/connectors/loopback": ["../harnessy-core/src/connectors/loopback.ts"],
+			"@harnessy/core/meeting-publication": ["../harnessy-core/src/meeting-publication.ts"],
+			"@executor-js/fumadb": ["../../executor/packages/core/fumadb/src/index.ts"],
+			"@executor-js/fumadb/adapters/drizzle": [
+				"../../executor/packages/core/fumadb/src/adapters/drizzle/index.ts"
+			],
+			"@executor-js/fumadb/adapters/memory": [
+				"../../executor/packages/core/fumadb/src/adapters/memory/index.ts"
+			],
+			"@executor-js/fumadb/query": ["../../executor/packages/core/fumadb/src/query/index.ts"],
+			"@executor-js/fumadb/schema": ["../../executor/packages/core/fumadb/src/schema/index.ts"],
+			"@executor-js/plugin-file-secrets": [
+				"../../executor/packages/plugins/file-secrets/src/index.ts"
+			],
+			"@executor-js/plugin-mcp": ["../../executor/packages/plugins/mcp/src/sdk/index.ts"],
+			"@executor-js/plugin-openapi": ["../../executor/packages/plugins/openapi/src/sdk/index.ts"],
+			"@executor-js/sdk": ["../../executor/packages/core/sdk/src/index.ts"],
+			"@executor-js/sdk/core": ["../../executor/packages/core/sdk/src/index.ts"],
+			"@executor-js/sdk/http-auth": ["../../executor/packages/core/sdk/src/http-auth/index.ts"],
+			"@executor-js/sdk/host-internal": ["../../executor/packages/core/sdk/src/host-internal.ts"],
+			"@executor-js/sdk/shared": ["../../executor/packages/core/sdk/src/shared.ts"],
+			// /executor has a self-contained beta.59 runtime for hsy web. Source
+			// composition must always bind to Harnessy's beta.85 instance.
+			"effect": ["../../node_modules/effect/dist/index.d.ts"],
+			"effect/*": [
+				"../../node_modules/effect/dist/*.d.ts",
+				"../../node_modules/effect/dist/*/index.d.ts"
+			]
+		}
+	},
+	"include": ["src/**/*.ts", "test/**/*.ts"],
+	"exclude": ["node_modules", "dist"]
+}

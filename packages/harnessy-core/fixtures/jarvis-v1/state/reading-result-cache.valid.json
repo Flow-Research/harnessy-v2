@@ -1,0 +1,15 @@
+{
+  "source": {
+    "source_type": "file",
+    "source_ref": "/fixture/example.md",
+    "title": "Reading list",
+    "markdown": "",
+    "last_modified": "1",
+    "object_id": "",
+    "space_id": ""
+  },
+  "items": [],
+  "fetch_successes": 0,
+  "fetch_failures": 0,
+  "generated_at": "2026-07-11T00:00:00Z"
+}

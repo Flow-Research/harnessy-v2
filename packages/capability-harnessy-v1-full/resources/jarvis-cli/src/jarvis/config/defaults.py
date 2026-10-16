@@ -83,6 +83,37 @@ whatsapp:
   #     app_secret_env_var: "JARVIS_WHATSAPP_META_APP_SECRET_PERSONAL"
   #     verify_token_env_var: "JARVIS_WHATSAPP_VERIFY_TOKEN_PERSONAL"
   #     api_version: "v24.0"
+
+# Approval-gated Flow meeting publication
+meeting_publication:
+  enabled: false
+  project: flow
+  backfill_days: 30
+  # Optional hard floor for a controlled launch/backfill.
+  # cutover_date: 2026-08-28
+  review_host: 127.0.0.1
+  review_port: 8770
+  reminder_hours: 4
+  google_owner_email: "julian.duru@flowresearch.tech"
+  google_drive_folder: "Flow Research/Meeting Notes"
+  # Numeric Discord text-channel ID; configurable per installation.
+  # discord_channel_id: "123456789012345678"
+  discord_bot_token_env_var: "JARVIS_DISCORD_BOT_TOKEN"
+
+# Approval-gated Sunday community briefing. It remains disabled until a
+# dedicated Discord channel ID is configured explicitly.
+community_briefing:
+  enabled: false
+  timezone: "Africa/Lagos"
+  review_host: 127.0.0.1
+  review_port: 8770
+  reminder_hours: 4
+  google_owner_email: "julian.duru@flowresearch.tech"
+  google_drive_folder: "Flow Research/Weekly Briefings"
+  # discord_channel_id: "123456789012345678"
+  discord_bot_token_env_var: "JARVIS_DISCORD_BOT_TOKEN"
+  ai_provider: auto
+  max_sources: 60
 """
 
 # Valid backend names

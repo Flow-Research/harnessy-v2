@@ -33,6 +33,8 @@ export interface FakeHttpResponse {
 	readonly status?: number;
 	/** JSON body to return. */
 	readonly body?: unknown;
+	/** Response headers, such as Retry-After. */
+	readonly headers?: Readonly<Record<string, string>>;
 }
 
 export interface FakeHttp {
@@ -60,7 +62,7 @@ export const makeFakeHttp = (handler: (request: RecordedRequest) => FakeHttpResp
 		const response = handler(recorded);
 		const web = new Response(JSON.stringify(response.body ?? {}), {
 			status: response.status ?? 200,
-			headers: { "content-type": "application/json" },
+			headers: { "content-type": "application/json", ...response.headers },
 		});
 		return Effect.succeed(HttpClientResponse.fromWeb(request, web));
 	});

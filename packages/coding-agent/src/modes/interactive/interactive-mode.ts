@@ -978,7 +978,7 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private formatDisplayPath(p: string): string {
-		const home = os.homedir();
+		const home = path.resolve(process.env.HOME || process.env.USERPROFILE || os.homedir());
 		let result = p;
 
 		// Replace home directory with ~

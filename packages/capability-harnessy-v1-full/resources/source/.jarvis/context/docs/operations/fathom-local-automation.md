@@ -221,6 +221,22 @@ Normalized private-context meeting notes:
 .jarvis/context/private/<user>/<project>/meetings/YYYY/Mon/dd-<slug>.md
 ```
 
+### Project aliases
+
+Use `project_aliases` in the private route configuration when a legacy or
+merged project should write into a canonical project folder:
+
+```yaml
+# .jarvis/context/private/<user>/meeting-routes.yaml
+project_aliases:
+  garden: flow
+```
+
+Aliases apply both to inferred routes and explicit values such as
+`--project garden`. Scores from the alias and canonical project are combined
+before a route is selected. The canonical project becomes `flow`, while the
+source alias is retained once in the meeting tags (`garden`) for provenance.
+
 ## Manual Inbox Mode
 
 If you do not use `--auto-ingest`, Jarvis still archives the webhook payloads.
@@ -260,6 +276,12 @@ account, stores a per-account watermark under `~/.jarvis/state/fathom/`, applies
 a safety overlap, and still skips recordings already present in private meeting
 context. Keep `ingest-today --all-unpulled` as an explicit backfill/repair
 command when you need to scan account history without a date cutoff.
+
+For scheduled polling, omit `--json`. Full JSON serializes the complete meeting
+record, including transcript and raw markdown, while the normal output reports
+only per-account counts and the state path. `flow-cron` stores its state and
+task logs under `~/.agents/cron/` using owner-only directories (`0700`) and
+files (`0600`).
 
 ## Troubleshooting
 
@@ -324,5 +346,5 @@ jarvis meeting fathom webhook ingest-inbox --account personal --dest private-con
 Run the direct API fallback poll:
 
 ```bash
-jarvis meeting fathom poll --dest private-context --json
+jarvis meeting fathom poll --dest private-context
 ```

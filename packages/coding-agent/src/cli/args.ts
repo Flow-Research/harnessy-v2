@@ -4,7 +4,14 @@
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
-import { APP_DESCRIPTION, APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
+import {
+	APP_DESCRIPTION,
+	APP_HELP_EPILOGUE,
+	APP_NAME,
+	CONFIG_DIR_NAME,
+	ENV_AGENT_DIR,
+	ENV_SESSION_DIR,
+} from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 
 export type Mode = "text" | "json" | "rpc";
@@ -386,5 +393,5 @@ ${chalk.bold("Built-in Tool Names:")}
   grep   - Search file contents (read-only, off by default)
   find   - Find files by glob pattern (read-only, off by default)
   ls     - List directory contents (read-only, off by default)
-`);
+${APP_HELP_EPILOGUE ? `\n${APP_HELP_EPILOGUE}\n` : ""}`);
 }

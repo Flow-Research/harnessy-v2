@@ -53,3 +53,18 @@ the architecture review skill's LANGUAGE.md.
 
 - **Pi** — the agent runtime Harnessy builds on (vendored `packages/agent`,
   `ai`, `coding-agent`, `tui`). Harnessy users run on top of Pi.
+
+## Ecosystem term map
+
+The same words mean different things across Harnessy, Garden, and Executor.
+When talking across projects, translate:
+
+| Harnessy | Garden | Executor | The thing |
+| --- | --- | --- | --- |
+| connector (adapter) | `ConnectorSpec` | integration (plugin-produced) | per-service unit that yields tools |
+| — (host concern) | `workspace_connector` + secret row | connection `(scope, integration, name)` | a credential, bound to an account |
+| operation | classified tool (`riskClass`) | tool (JSON-schema, addressed) | one callable action |
+| mutation gating (issue #48) | trust level (`auto/allow/ask`) | policy (`approve/require_approval/block`) | write governance |
+| capability evidence / readiness | availability check | health check + `incomplete` catalog state | "is it actually usable here?" |
+| capability pack | — | toolkit (curation only) | a pack also carries skills/context/checks; a toolkit only curates tools |
+| **capability (semantic contract)** | — | — | cross-backend typed contract (e.g. `KnowledgeTasks`); exists only in Harnessy |

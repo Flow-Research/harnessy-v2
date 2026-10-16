@@ -8,7 +8,7 @@ import { CommandLookup } from "../runtime/command-lookup.ts";
 import type { HarnessLockfile } from "../runtime/lockfile.ts";
 import type { CapabilityCheck } from "./manifest.ts";
 import type { CapabilityEntry } from "./source.ts";
-import { localCapabilityPath } from "./source.ts";
+import { makeCapabilitySlug } from "./source.ts";
 
 /** Manifest-defined deterministic check kinds that the local runner supports. */
 export const CapabilityCheckKind = Schema.Literals(["path-exists", "file-contains", "tool-available"]);
@@ -51,7 +51,7 @@ export interface CapabilityCheckReport {
 type LocalRootStatus =
 	| { readonly _tag: "local"; readonly root: string }
 	| { readonly _tag: "missing"; readonly root: string }
-	| { readonly _tag: "remote"; readonly message: string };
+	| { readonly _tag: "unresolved"; readonly message: string };
 
 const checkRequired = (check: CapabilityCheck): boolean => check.required ?? true;
 
@@ -107,20 +107,18 @@ export class CapabilityChecker extends Context.Service<
 				return resolved;
 			};
 
-			/** Resolve and validate the local source root for a capability. */
+			/** Resolve the installed canonical package root for a capability. */
 			const localRootStatus = Effect.fn("CapabilityChecker.localRootStatus")(function* (
 				paths: HarnessPaths,
 				capability: CapabilityEntry,
 			) {
-				const root = yield* localCapabilityPath(paths.targetDir, capability.source).pipe(
-					Effect.provideService(Path.Path, path),
-				);
-				if (root === null) {
+				if (capability.source.type !== "local") {
 					return {
-						_tag: "remote",
-						message: `Skipped ${capability.source.type} capability ${capability.id}; source is not materialized locally.`,
+						_tag: "unresolved",
+						message: `${capability.source.type} capability ${capability.id} is unresolved and has no trusted local package.`,
 					} satisfies LocalRootStatus;
 				}
+				const root = path.join(paths.capabilitiesDir, makeCapabilitySlug(capability.id), "package");
 
 				const exists = yield* fs
 					.exists(root)
@@ -232,8 +230,8 @@ export class CapabilityChecker extends Context.Service<
 				if (checks.length === 0) return [];
 
 				const rootStatus = yield* localRootStatus(paths, capability);
-				if (rootStatus._tag === "remote") {
-					return checks.map((check) => makeResult(capability, check, "skipped", rootStatus.message));
+				if (rootStatus._tag === "unresolved") {
+					return checks.map((check) => makeResult(capability, check, "failed", rootStatus.message));
 				}
 				if (rootStatus._tag === "missing") {
 					return checks.map((check) =>

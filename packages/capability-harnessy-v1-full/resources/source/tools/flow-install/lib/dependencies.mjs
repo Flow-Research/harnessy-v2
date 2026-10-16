@@ -39,6 +39,7 @@ export const parseManifestContent = (content) => {
     index++;
     let current = null;
     let inInstallBlock = false;
+    let installIndent = null;
     for (; index < lines.length; index++) {
       const line = lines[index];
       const stripped = line.trim();
@@ -56,12 +57,18 @@ export const parseManifestContent = (content) => {
           install: {},
         };
         inInstallBlock = false;
+        installIndent = null;
         continue;
       }
       if (!current) continue;
       if (stripped === "install:") {
         inInstallBlock = true;
+        installIndent = indent;
         continue;
+      }
+      if (inInstallBlock && installIndent !== null && indent <= installIndent) {
+        inInstallBlock = false;
+        installIndent = null;
       }
       const separatorIndex = stripped.indexOf(":");
       if (separatorIndex === -1) continue;

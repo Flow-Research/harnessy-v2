@@ -1,0 +1,29 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "remoteCache": {
+    "signature": true
+  },
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "test": {
+      "dependsOn": ["^test"],
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    },
+    "typecheck:slow": {
+      "dependsOn": ["^typecheck:slow"],
+      "outputs": []
+    },
+    "dev": {
+      "dependsOn": ["@executor-js/vite-plugin#build"],
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

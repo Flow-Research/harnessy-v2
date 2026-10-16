@@ -1,0 +1,259 @@
+{
+  "schemaVersion": 1,
+  "pythonSourceSha256": "64508addd52bacfbe1baa868f20df6286e8b96e9e417a563ec08b86ca630c56b",
+  "stateManifestSha256": "4dd715f70716bcf6d9310ae93562cefa5f5bcc5ac0b1b97dc4580a52bd0ef0ed",
+  "validations": [
+    {
+      "storeId": "legacy-config-yaml-v1",
+      "kind": "valid",
+      "fixture": "state/config.valid.yaml",
+      "sha256": "9bae5c55f33a5a6853efcf35dd3add3e1dfe6fe54892164020c578f4985baedf",
+      "validator": "JarvisConfig"
+    },
+    {
+      "storeId": "legacy-config-yaml-v1",
+      "kind": "malformed",
+      "fixture": "state/config.malformed.yaml",
+      "sha256": "b399c3a164f2af67061f414be8b6bfc17c51c26a49b4d21ff4fedfe1b1ce0b0f",
+      "validator": "JarvisConfig"
+    },
+    {
+      "storeId": "selected-space-json-v1",
+      "kind": "valid",
+      "fixture": "state/selected-space.valid.json",
+      "sha256": "dd4e571cba2ff5d523e697118a801d8c1f588750e9e2d7f43bdcaf45bca81fef",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "selected-space-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "pending-suggestions-json-v1",
+      "kind": "valid",
+      "fixture": "state/pending.valid.json",
+      "sha256": "e1be91f9fce765fc91f90fbb86ab6e89bfa89443d37f054579a8f305d3c1290f",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "pending-suggestions-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "journal-index-json-v1",
+      "kind": "valid",
+      "fixture": "state/journal-index.valid.json",
+      "sha256": "37bf55b9c434a96deabd68231dfcd95a925947226c6b71a8e4d61005a5f9a545",
+      "validator": "JournalEntryReference[]"
+    },
+    {
+      "storeId": "journal-index-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "JournalEntryReference[]"
+    },
+    {
+      "storeId": "journal-deep-dives-json-v1",
+      "kind": "valid",
+      "fixture": "state/journal-deep-dives.valid.json",
+      "sha256": "620bcc35aad8dcc911f0403ca446c95ba05e671565b84f3b00c2ec496f2acf1d",
+      "validator": "DeepDive[]"
+    },
+    {
+      "storeId": "journal-deep-dives-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "DeepDive[]"
+    },
+    {
+      "storeId": "journal-draft-text-v1",
+      "kind": "valid",
+      "fixture": "state/journal-draft.valid.txt",
+      "sha256": "d5cfa489abac626cf290cd500ceaefed414de07bb1d31afd35d7ffd81f925e04",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "schedule-plan-json-v1",
+      "kind": "valid",
+      "fixture": "state/schedule-plan.valid.json",
+      "sha256": "9f60bf6154ec65838167033e9b629c5778d7e8f4ff5d710ec90f4722c40090c6",
+      "validator": "SchedulePlan"
+    },
+    {
+      "storeId": "schedule-plan-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "SchedulePlan"
+    },
+    {
+      "storeId": "plan-apply-json-v1",
+      "kind": "valid",
+      "fixture": "state/plan-apply.valid.json",
+      "sha256": "6af7d41ec6c2036db4a8efd64af6f28e749d630731e7a778fb3f32b2466ead45",
+      "validator": "PlanApplyResult"
+    },
+    {
+      "storeId": "plan-apply-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "PlanApplyResult"
+    },
+    {
+      "storeId": "weekly-plan-markdown-v1",
+      "kind": "valid",
+      "fixture": "state/weekly-plan.valid.md",
+      "sha256": "309d207d4d721f120c760ffc1057a474deff1948aa3c01be289bdb213be21702",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "sync-presets-yaml-v1",
+      "kind": "valid",
+      "fixture": "state/sync-presets.valid.yaml",
+      "sha256": "f9fcd5a2739b524a7a48c6c37b0b80b9da48b40bbcaa9f780999ef6f0306a4dd",
+      "validator": "PresetRegistry"
+    },
+    {
+      "storeId": "sync-presets-yaml-v1",
+      "kind": "malformed",
+      "fixture": "state/sync-presets.malformed.yaml",
+      "sha256": "9be780dd352e8d647d207796771c117ed78bbe460e3a4914db475937abe590df",
+      "validator": "PresetRegistry"
+    },
+    {
+      "storeId": "sync-state-json-v1",
+      "kind": "valid",
+      "fixture": "state/sync.valid.json",
+      "sha256": "5034bf21db9f6962c592412a7925ca91c86d93482c198f26db005834f4eaa5ee",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "sync-state-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "fathom-poll-state-json-v1",
+      "kind": "valid",
+      "fixture": "state/fathom-poll.valid.json",
+      "sha256": "7dc56eb078d861c524b5135ddbdf4340ee72043dcac3864f05aeb5d62962b14c",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "fathom-poll-state-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "reading-list-url-cache-v1",
+      "kind": "valid",
+      "fixture": "state/reading-url-cache.valid.json",
+      "sha256": "79a97364beb68e8deadae442640f554e11acf8bf6e2fe83a016f69e4ea1f3d12",
+      "validator": "FetchedContent"
+    },
+    {
+      "storeId": "reading-list-url-cache-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "FetchedContent"
+    },
+    {
+      "storeId": "reading-list-result-cache-v1",
+      "kind": "valid",
+      "fixture": "state/reading-result-cache.valid.json",
+      "sha256": "29e0c910c4046a0616f1722a42759d155f40ef4f86818f53abd0400481e1ed34",
+      "validator": "PrioritizationResult"
+    },
+    {
+      "storeId": "reading-list-result-cache-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "PrioritizationResult"
+    },
+    {
+      "storeId": "wiki-domain-v1",
+      "kind": "valid",
+      "fixture": "state/wiki-domain.valid.yaml",
+      "sha256": "73449812079125f1a54dbf4b0210a3487f526d0af828b30ab429928ecec8e93e",
+      "validator": "WikiDomain"
+    },
+    {
+      "storeId": "wiki-domain-v1",
+      "kind": "malformed",
+      "fixture": "state/wiki-domain.malformed.yaml",
+      "sha256": "acdf8db1740b5202c58e6751dc9e710ab9cc1d89222f328341946364168ee108",
+      "validator": "WikiDomain"
+    },
+    {
+      "storeId": "project-context-v1",
+      "kind": "valid",
+      "fixture": "state/context-preferences.valid.md",
+      "sha256": "c441b1dd46cb7167f1c38438e8ce58bae0d0b9fac687e81ae7bb404b23efada3",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "fathom-inbox-json-v1",
+      "kind": "valid",
+      "fixture": "state/fathom-inbox.valid.json",
+      "sha256": "08191ad935f9681ef4e966a8b1e173aaccfa9bc70769a78515baf2a225c62faa",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "fathom-inbox-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "whatsapp-inbox-json-v1",
+      "kind": "valid",
+      "fixture": "state/whatsapp-inbox.valid.json",
+      "sha256": "9b1f055f4f93035fc4a841e2f92847a9fea52299dcfd271a0a8c0a1dbd9f113f",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "whatsapp-inbox-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "syntax/non-empty"
+    },
+    {
+      "storeId": "whatsapp-thread-json-v1",
+      "kind": "valid",
+      "fixture": "state/whatsapp-thread.valid.json",
+      "sha256": "3ace73c1c480b832ab072a0ddab9eeefb93e6c942900fc68a444105abb04106a",
+      "validator": "WhatsAppThread"
+    },
+    {
+      "storeId": "whatsapp-thread-json-v1",
+      "kind": "malformed",
+      "fixture": "state/pending.malformed.json",
+      "sha256": "d8122522e6ef43a78e3f45374574853b4c3d70eb10f7018dc4628ba437eca700",
+      "validator": "WhatsAppThread"
+    },
+    {
+      "storeId": "whatsapp-thread-markdown-v1",
+      "kind": "valid",
+      "fixture": "state/whatsapp-thread.valid.md",
+      "sha256": "79eb308922dce4eca0c1c1e7246b569baf192b8e0fe4394e11150819b8afb33c",
+      "validator": "syntax/non-empty"
+    }
+  ]
+}

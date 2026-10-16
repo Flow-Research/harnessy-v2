@@ -1702,6 +1702,8 @@ Content`,
 		});
 
 		it("should resolve autoload-disabled package entries as positive-only without a global package", async () => {
+			const previousHome = process.env.HOME;
+			process.env.HOME = tempDir;
 			const pkgDir = join(tempDir, "positive-only-pkg");
 			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
 			mkdirSync(join(pkgDir, "skills", "foo"), { recursive: true });
@@ -1712,10 +1714,15 @@ Content`,
 				{ source: relative(join(tempDir, ".pi"), pkgDir), autoload: false, extensions: ["+extensions/foo.ts"] },
 			]);
 
-			const result = await packageManager.resolve();
+			try {
+				const result = await packageManager.resolve();
 
-			expect(result.extensions.map((resource) => resource.path)).toEqual([join(pkgDir, "extensions", "foo.ts")]);
-			expect(result.skills).toEqual([]);
+				expect(result.extensions.map((resource) => resource.path)).toEqual([join(pkgDir, "extensions", "foo.ts")]);
+				expect(result.skills).toEqual([]);
+			} finally {
+				if (previousHome === undefined) delete process.env.HOME;
+				else process.env.HOME = previousHome;
+			}
 		});
 	});
 

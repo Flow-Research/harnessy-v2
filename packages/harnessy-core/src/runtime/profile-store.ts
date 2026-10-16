@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import { causeMessage, HarnessError } from "../errors.ts";
 import type { HarnessPaths } from "../paths.ts";
 import { expandHomePath } from "../paths.ts";
+import { formatManifestJson } from "./lockfile.ts";
 import { type HarnessProfile, parseProfile } from "./profile.ts";
 
 /** Result of verifying a Harnessy profile and its referenced context and memory files. */
@@ -22,6 +23,8 @@ export class ProfileStore extends Context.Service<
 	{
 		/** Read and validate the target project's default profile. */
 		readonly readDefault: (paths: HarnessPaths) => Effect.Effect<HarnessProfile, HarnessError>;
+		/** Atomically write the target project's default profile. */
+		readonly writeDefault: (paths: HarnessPaths, profile: HarnessProfile) => Effect.Effect<void, HarnessError>;
 		/** Verify the default profile and every context or memory path it references. */
 		readonly verifyDefault: (paths: HarnessPaths) => Effect.Effect<ProfileVerification, HarnessError>;
 	}
@@ -74,6 +77,60 @@ export class ProfileStore extends Context.Service<
 				return yield* parseProfile(raw, paths.defaultProfile);
 			});
 
+			const writeDefault = Effect.fn("ProfileStore.writeDefault")(function* (
+				paths: HarnessPaths,
+				profile: HarnessProfile,
+			) {
+				const temporary = yield* fs
+					.makeTempFile({ directory: paths.profilesDir, prefix: ".default-", suffix: ".json" })
+					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not stage ${paths.defaultProfile}`, cause)));
+				return yield* Effect.gen(function* () {
+					yield* fs
+						.writeFileString(temporary, formatManifestJson(profile))
+						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not write ${temporary}`, cause)));
+					const profileExists = yield* fs
+						.exists(paths.defaultProfile)
+						.pipe(
+							Effect.mapError((cause) => mapPlatformError(`Could not inspect ${paths.defaultProfile}`, cause)),
+						);
+					if (!profileExists) {
+						yield* fs
+							.rename(temporary, paths.defaultProfile)
+							.pipe(
+								Effect.mapError((cause) =>
+									mapPlatformError(`Could not install ${paths.defaultProfile}`, cause),
+								),
+							);
+						return;
+					}
+					const backup = yield* fs
+						.makeTempFile({ directory: paths.profilesDir, prefix: ".default-backup-", suffix: ".json" })
+						.pipe(
+							Effect.mapError((cause) => mapPlatformError(`Could not back up ${paths.defaultProfile}`, cause)),
+						);
+					yield* fs
+						.remove(backup, { force: true })
+						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not remove ${backup}`, cause)));
+					yield* fs
+						.rename(paths.defaultProfile, backup)
+						.pipe(
+							Effect.mapError((cause) => mapPlatformError(`Could not back up ${paths.defaultProfile}`, cause)),
+						);
+					yield* fs.rename(temporary, paths.defaultProfile).pipe(
+						Effect.mapError((cause) => mapPlatformError(`Could not install ${paths.defaultProfile}`, cause)),
+						Effect.catch((error) =>
+							fs.rename(backup, paths.defaultProfile).pipe(
+								Effect.mapError((cause) =>
+									mapPlatformError(`Could not restore ${paths.defaultProfile}`, cause),
+								),
+								Effect.andThen(Effect.fail(error)),
+							),
+						),
+					);
+					yield* fs.remove(backup, { force: true }).pipe(Effect.ignore);
+				}).pipe(Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.ignore)));
+			});
+
 			const verifyDefault = Effect.fn("ProfileStore.verifyDefault")(function* (paths: HarnessPaths) {
 				const profile = yield* readDefault(paths);
 				const contextIssues = yield* verifyReferencedPaths(
@@ -89,7 +146,7 @@ export class ProfileStore extends Context.Service<
 				return { profile, issues: [...contextIssues, ...memoryIssues] } satisfies ProfileVerification;
 			});
 
-			return { readDefault, verifyDefault };
+			return { readDefault, writeDefault, verifyDefault };
 		}),
 	);
 }

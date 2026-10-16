@@ -9,6 +9,7 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
+import { harnessyEngineEnabled, harnessyEngineExtension } from "./extensions/builtin/harnessy-engine.ts";
 import {
 	clearExtensionCache,
 	createExtensionRuntime,
@@ -228,7 +229,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.additionalSkillPaths = options.additionalSkillPaths ?? [];
 		this.additionalPromptTemplatePaths = options.additionalPromptTemplatePaths ?? [];
 		this.additionalThemePaths = options.additionalThemePaths ?? [];
-		this.extensionFactories = options.extensionFactories ?? [];
+		// Built-in extensions ship with the agent itself — the Harnessy engine
+		// bridge is part of the product, not user configuration.
+		const builtinFactories: InlineExtension[] = harnessyEngineEnabled()
+			? [{ name: "harnessy-engine", factory: harnessyEngineExtension }]
+			: [];
+		this.extensionFactories = [...builtinFactories, ...(options.extensionFactories ?? [])];
 		this.noExtensions = options.noExtensions ?? false;
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;

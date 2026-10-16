@@ -1,6 +1,8 @@
 """CLI tests for meeting ingestion commands."""
 
 import json
+import shlex
+import sys
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -354,6 +356,47 @@ class TestMeetingCli:
         assert result.exit_code == 0
         assert seen["created_after"] == "2026-05-23T01:00:00+01:00"
 
+    def test_fathom_poll_default_output_excludes_meeting_content(
+        self, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        runner = CliRunner()
+        meeting = _meeting_record()
+        cfg = SimpleNamespace(
+            fathom=SimpleNamespace(
+                accounts={"personal": SimpleNamespace()},
+                default_account="personal",
+            )
+        )
+        monkeypatch.setattr("jarvis.meetings.cli.load_config", lambda reload=False: cfg)
+        monkeypatch.setattr(
+            "jarvis.meetings.cli.get_fathom_api_key",
+            lambda account=None: "key",
+        )
+        monkeypatch.setattr("jarvis.meetings.cli.load_poll_state", lambda path=None: {})
+        monkeypatch.setattr(
+            "jarvis.meetings.cli.save_poll_state",
+            lambda state, path=None: "/tmp/poll-state.json",
+        )
+        monkeypatch.setattr(
+            "jarvis.meetings.cli.ingest_fathom_meetings_since",
+            lambda **kwargs: [
+                MeetingIngestResult(
+                    meeting=meeting,
+                    destinations=["private-context"],
+                    written_paths=["/tmp/meeting.md"],
+                )
+            ],
+        )
+
+        result = runner.invoke(meeting_cli, ["fathom", "poll"])
+
+        assert result.exit_code == 0
+        assert "personal ingested: 1" in result.output
+        assert "State: /tmp/poll-state.json" in result.output
+        assert meeting.transcript not in result.output
+        assert meeting.raw_markdown not in result.output
+        assert meeting.summary not in result.output
+
     def test_fathom_poll_command_continues_after_account_error(
         self, monkeypatch
     ) -> None:  # type: ignore[no-untyped-def]
@@ -686,6 +729,40 @@ class TestMeetingCli:
         assert "--dest private-context --dest memory" in parsed["webhook_command"]
         assert "cloudflared tunnel" in parsed["tunnel_command"]
         assert parsed["layout"] == "windows"
+
+    def test_fathom_start_uses_current_isolated_interpreter_for_restarts(
+        self, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        runtime = "/opt/Harnessy Runtime/jarvis-runtime/bin/python"
+        monkeypatch.setattr(sys, "executable", runtime)
+        monkeypatch.setattr(
+            "jarvis.meetings.cli.load_config",
+            lambda: type(
+                "Cfg",
+                (),
+                {
+                    "fathom": type(
+                        "F",
+                        (),
+                        {"accounts": {"work": object()}, "default_account": "work"},
+                    )()
+                },
+            )(),
+        )
+        monkeypatch.setattr("jarvis.meetings.cli.require_command", lambda name: None)
+        runner = CliRunner()
+
+        commands = []
+        for _ in range(2):
+            result = runner.invoke(
+                meeting_cli,
+                ["fathom", "start", "--account", "work", "--dry-run", "--json"],
+            )
+            assert result.exit_code == 0
+            commands.append(json.loads(result.output)["webhook_command"])
+
+        assert commands[0] == commands[1]
+        assert shlex.split(commands[0])[:5] == [runtime, "-I", "-B", "-m", "jarvis"]
 
     def test_fathom_start_command_named_tunnel_dry_run_json(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         runner = CliRunner()

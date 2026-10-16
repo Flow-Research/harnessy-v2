@@ -203,6 +203,7 @@ const getArgValue = (flag) => {
 };
 
 const showVersion = args.has("--version") || args.has("-v");
+const showHelp = args.has("--help") || args.has("-h");
 const dryRun = args.has("--dry-run");
 const yesAll = args.has("--yes");
 const targetArg = getArgValue("--target");
@@ -227,6 +228,24 @@ const runAll = !hasSpecificStepFlag;
 // ---------------------------------------------------------------------------
 
 const main = async () => {
+  if (showHelp) {
+    console.log(`Usage: flow-install [options]
+
+Options:
+  --yes                    Run non-interactively
+  --target <path>          Install into a specific project
+  --skills                 Install skills and refresh agent registration only
+  --memory                 Install the memory system only
+  --agents-md              Merge the Harnessy block into AGENTS.md only
+  --update-context-agents  Refresh the managed context-agent block only
+  --reconfigure            Revisit install-path configuration
+  --force                  Bypass skill version checks
+  --dry-run                Preview changes without writing
+  --version, -v            Print the installer version
+  --help, -h               Print this help without changing state`);
+    return;
+  }
+
   const pkg = await readJsonSafe(path.join(__dirname, "package.json"));
   const version = pkg?.version || "1.0.0";
 

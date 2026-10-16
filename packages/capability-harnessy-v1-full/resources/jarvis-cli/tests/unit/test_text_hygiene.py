@@ -108,3 +108,81 @@ def test_text_hygiene_cli_clean_writes_file(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Text hygiene found 1 match" in result.output
     assert doc.read_text(encoding="utf-8") == ".\n"
+
+
+def test_flag_action_reports_without_cleaning(tmp_path: Path) -> None:
+    config = tmp_path / "ai-speak-patterns.yaml"
+    config.write_text(
+        """version: 1
+rules:
+  - id: not-just-x
+    kind: regex
+    pattern: '\\bnot just\\b'
+    flags: ["i"]
+    action: flag
+    note: "Synthetic contrast formula; rewrite by hand."
+""",
+        encoding="utf-8",
+    )
+    doc = tmp_path / "notes.md"
+    doc.write_text("This is not just an AI project.\n", encoding="utf-8")
+
+    checked = check_paths([doc], config_path=config)
+
+    assert len(checked.findings) == 1
+    assert checked.findings[0].rule_id == "not-just-x"
+    assert checked.findings[0].action == "flag"
+
+    cleaned = clean_paths([doc], config_path=config)
+
+    assert len(cleaned.findings) == 1
+    assert cleaned.findings[0].action == "flag"
+    assert cleaned.changed_files == ()
+    assert doc.read_text(encoding="utf-8") == "This is not just an AI project.\n"
+
+
+def test_cli_clean_reports_flag_action_without_writing(tmp_path: Path) -> None:
+    config = tmp_path / "ai-speak-patterns.yaml"
+    config.write_text(
+        """version: 1
+rules:
+  - id: not-x-it-is-y
+    kind: regex
+    pattern: '\\bnot\\b[^.?!]{1,120}[.?!]\\s+It is\\b'
+    flags: ["i"]
+    action: flag
+""",
+        encoding="utf-8",
+    )
+    doc = tmp_path / "notes.md"
+    doc.write_text("This is not about a launch. It is about the work.\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        cli,
+        ["text-hygiene", "clean", str(doc), "--config", str(config), "--json"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["summary"]["matches"] == 1
+    assert payload["summary"]["files_changed"] == 0
+    assert payload["findings"][0]["action"] == "flag"
+    assert (
+        doc.read_text(encoding="utf-8")
+        == "This is not about a launch. It is about the work.\n"
+    )
+
+
+def test_default_rules_flag_substrate_without_rewriting(tmp_path: Path) -> None:
+    doc = tmp_path / "notes.md"
+    doc.write_text("Better Auth is the V1 auth substrate.\n", encoding="utf-8")
+
+    cleaned = clean_paths([doc])
+
+    assert len(cleaned.findings) == 1
+    assert cleaned.findings[0].rule_id == "abstract-substrate"
+    assert cleaned.findings[0].action == "flag"
+    assert cleaned.changed_files == ()
+    assert doc.read_text(encoding="utf-8") == (
+        "Better Auth is the V1 auth substrate.\n"
+    )

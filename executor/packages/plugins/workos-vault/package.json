@@ -1,0 +1,81 @@
+{
+  "name": "@executor-js/plugin-workos-vault",
+  "version": "0.0.2",
+  "homepage": "https://github.com/UsefulSoftwareCo/executor/tree/main/packages/plugins/workos-vault",
+  "bugs": {
+    "url": "https://github.com/UsefulSoftwareCo/executor/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UsefulSoftwareCo/executor.git",
+    "directory": "packages/plugins/workos-vault"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./src/sdk/index.ts",
+    "./promise": "./src/promise.ts",
+    "./react": "./src/react/index.ts",
+    "./client": "./src/react/plugin-client.tsx",
+    "./testing": "./src/sdk/testing.ts"
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "import": {
+          "types": "./dist/promise.d.ts",
+          "default": "./dist/index.js"
+        }
+      },
+      "./core": {
+        "import": {
+          "types": "./dist/sdk/index.d.ts",
+          "default": "./dist/core.js"
+        }
+      },
+      "./testing": {
+        "import": {
+          "types": "./dist/sdk/testing.d.ts",
+          "default": "./dist/testing.js"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup && (tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src || true)",
+    "typecheck": "tsgo --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck:slow": "bunx tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@executor-js/sdk": "workspace:*",
+    "@workos-inc/node": "^8.11.1"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "effect": "catalog:",
+    "react": "catalog:",
+    "tsup": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@executor-js/react": "workspace:*",
+    "effect": "catalog:",
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "@executor-js/react": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  }
+}

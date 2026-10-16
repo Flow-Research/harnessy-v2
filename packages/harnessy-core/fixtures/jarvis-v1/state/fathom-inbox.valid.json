@@ -1,0 +1,17 @@
+{
+  "received_at": "2026-07-11T00:00:00+00:00",
+  "account": "work",
+  "verified": true,
+  "headers": {
+    "webhook-id": "fixture-id",
+    "webhook-timestamp": "1",
+    "webhook-signature": "fixture-signature",
+    "content-type": "application/json"
+  },
+  "payload": {
+    "recording_id": 123,
+    "default_summary": {},
+    "transcript": []
+  },
+  "raw_text": "{\"recording_id\":123,\"default_summary\":{},\"transcript\":[]}"
+}

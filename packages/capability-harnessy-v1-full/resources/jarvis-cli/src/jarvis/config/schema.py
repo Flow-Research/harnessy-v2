@@ -1,5 +1,6 @@
 """Configuration schema models using Pydantic Settings."""
 
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -169,6 +170,138 @@ class WhatsAppConfig(BaseModel):
     accounts: dict[str, WhatsAppAccountConfig] = Field(default_factory=dict)
 
 
+class MeetingPublicationConfig(BaseModel):
+    """Local-first meeting review and publication settings.
+
+    Secrets intentionally do not live in this model. Discord credentials are
+    resolved from ``discord_bot_token_env_var`` and Google authentication is
+    delegated to the local Google Workspace CLI credential store.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="Enable scanning and publication worker commands",
+    )
+    project: str = Field(default="flow", description="Only publish this canonical project")
+    source_path: str | None = Field(
+        default=None,
+        description="Optional canonical meeting-note directory override",
+    )
+    state_path: str = Field(
+        default="~/.jarvis/state/meeting-publication",
+        description="Owner-only queue, review token, and service log directory",
+    )
+    backfill_days: int = Field(
+        default=30,
+        ge=1,
+        le=365,
+        description="Rolling local note window scanned by the worker",
+    )
+    cutover_date: date | None = Field(
+        default=None,
+        description="Hard publication floor; meetings before this date stay archived",
+    )
+    review_host: str = Field(default="127.0.0.1")
+    review_port: int = Field(default=8770, ge=1024, le=65535)
+    reminder_hours: int = Field(default=4, ge=1, le=168)
+    google_owner_email: str = Field(default="julian.duru@flowresearch.tech")
+    google_drive_folder: str = Field(default="Flow Research/Meeting Notes")
+    discord_channel_id: str | None = Field(
+        default=None,
+        description="Configurable Discord text-channel ID for new meeting posts",
+    )
+    discord_bot_token_env_var: str = Field(default="JARVIS_DISCORD_BOT_TOKEN")
+    discord_api_base: str = Field(default="https://discord.com/api/v10")
+
+    @field_validator("review_host")
+    @classmethod
+    def validate_review_host(cls, value: str) -> str:
+        """Keep the approval surface strictly local."""
+
+        if value not in {"127.0.0.1", "localhost"}:
+            raise ValueError("meeting publication review_host must be localhost")
+        return value
+
+    @field_validator("discord_channel_id")
+    @classmethod
+    def validate_discord_channel_id(cls, value: str | None) -> str | None:
+        """Accept Discord snowflakes without silently accepting channel names."""
+
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned.isdigit() or len(cleaned) < 15:
+            raise ValueError("discord_channel_id must be a Discord numeric channel ID")
+        return cleaned
+
+
+class CommunityBriefingConfig(BaseModel):
+    """Approval-gated weekly community briefing settings.
+
+    Source material and generated drafts stay local. Secrets remain outside the
+    YAML config and are resolved through the existing meeting-publication
+    runtime environment.
+    """
+
+    enabled: bool = Field(default=False, description="Enable generation and publication workers")
+    source_path: str | None = Field(
+        default=None,
+        description="Private contributor context root scanned for Flow-relevant weekly evidence",
+    )
+    draft_path: str | None = Field(
+        default=None,
+        description="Owner-only weekly briefing artifact directory",
+    )
+    state_path: str = Field(
+        default="~/.jarvis/state/meeting-publication",
+        description="Owner-only queue and shared review-token directory",
+    )
+    timezone: str = Field(default="Africa/Lagos")
+    review_host: str = Field(default="127.0.0.1")
+    review_port: int = Field(default=8770, ge=1024, le=65535)
+    reminder_hours: int = Field(default=4, ge=1, le=168)
+    google_owner_email: str = Field(default="julian.duru@flowresearch.tech")
+    google_drive_folder: str = Field(default="Flow Research/Weekly Briefings")
+    discord_channel_id: str | None = Field(
+        default=None,
+        description="Dedicated Discord text-channel ID for weekly community briefings",
+    )
+    discord_bot_token_env_var: str = Field(default="JARVIS_DISCORD_BOT_TOKEN")
+    discord_api_base: str = Field(default="https://discord.com/api/v10")
+    ai_provider: Literal["auto", "claude", "codex", "opencode"] = Field(default="auto")
+    max_sources: int = Field(default=60, ge=1, le=200)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        """Keep the agreed weekly boundary stable across machines."""
+
+        if value != "Africa/Lagos":
+            raise ValueError("community briefing timezone must be Africa/Lagos")
+        return value
+
+    @field_validator("review_host")
+    @classmethod
+    def validate_review_host(cls, value: str) -> str:
+        """Keep briefing approval on the existing loopback-only inbox."""
+
+        if value not in {"127.0.0.1", "localhost"}:
+            raise ValueError("community briefing review_host must be localhost")
+        return value
+
+    @field_validator("discord_channel_id")
+    @classmethod
+    def validate_discord_channel_id(cls, value: str | None) -> str | None:
+        """Accept Discord snowflakes without accepting human channel names."""
+
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned.isdigit() or len(cleaned) < 15:
+            raise ValueError("discord_channel_id must be a Discord numeric channel ID")
+        return cleaned
+
+
 class JarvisConfig(BaseSettings):
     """Root configuration model for Jarvis.
 
@@ -195,6 +328,8 @@ class JarvisConfig(BaseSettings):
     analytics: AnalyticsConfig = Field(default_factory=AnalyticsConfig)
     fathom: FathomConfig = Field(default_factory=FathomConfig)
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
+    meeting_publication: MeetingPublicationConfig = Field(default_factory=MeetingPublicationConfig)
+    community_briefing: CommunityBriefingConfig = Field(default_factory=CommunityBriefingConfig)
 
     @field_validator("active_backend")
     @classmethod

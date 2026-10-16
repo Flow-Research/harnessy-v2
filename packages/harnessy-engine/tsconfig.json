@@ -1,0 +1,47 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "erasableSyntaxOnly": false,
+    "noEmit": true,
+    "types": ["node", "@cloudflare/workers-types"],
+    "paths": {
+      "@executor-js/api": ["../../executor/packages/core/api/src/index.ts"],
+      "@executor-js/api/server": ["../../executor/packages/core/api/src/server.ts"],
+      "@executor-js/execution": ["../../executor/packages/core/execution/src/index.ts"],
+      "@executor-js/host-mcp": ["../../executor/packages/hosts/mcp/src/index.ts"],
+      "@executor-js/host-mcp/tool-server": ["../../executor/packages/hosts/mcp/src/tool-server.ts"],
+      "@executor-js/host-mcp/browser-approval": ["./build/browser-approval.d.ts"],
+      "@executor-js/host-mcp/browser-approval-store": ["../../executor/packages/hosts/mcp/src/browser-approval-store.ts"],
+      "@executor-js/host-mcp/in-memory-session-store": ["../../executor/packages/hosts/mcp/src/in-memory-session-store.ts"],
+      "@executor-js/cloudflare/blob-store": ["../../executor/packages/hosts/cloudflare/src/blob-store.ts"],
+      "@executor-js/cloudflare/mcp/agent-durable-object": ["../../executor/packages/hosts/cloudflare/src/mcp/agent-session-durable-object.ts"],
+      "@executor-js/sdk": ["../../executor/packages/core/sdk/src/index.ts"],
+      "@executor-js/sdk/core": ["../../executor/packages/core/sdk/src/index.ts"],
+      "@executor-js/sdk/host-internal": ["../../executor/packages/core/sdk/src/host-internal.ts"],
+      "@executor-js/sdk/testing": ["../../executor/packages/core/sdk/src/testing.ts"],
+      "@executor-js/sdk/http-auth": ["../../executor/packages/core/sdk/src/http-auth/index.ts"],
+      "@executor-js/sdk/shared": ["../../executor/packages/core/sdk/src/shared.ts"],
+      "@executor-js/fumadb": ["../../executor/packages/core/fumadb/src/index.ts"],
+      "@executor-js/fumadb/adapters/drizzle": ["../../executor/packages/core/fumadb/src/adapters/drizzle/index.ts"],
+      "@executor-js/fumadb/adapters/memory": ["../../executor/packages/core/fumadb/src/adapters/memory/index.ts"],
+      "@executor-js/fumadb/query": ["../../executor/packages/core/fumadb/src/query/index.ts"],
+      "@executor-js/fumadb/schema": ["../../executor/packages/core/fumadb/src/schema/index.ts"],
+      "@executor-js/codemode-core": ["../../executor/packages/kernel/core/src/index.ts"],
+      "@executor-js/integrations-registry": ["../../executor/packages/core/integrations-registry/src/index.ts"],
+      "@cloudflare/workers-types": ["../../node_modules/@cloudflare/workers-types/index.d.ts"],
+      "agents": ["../../node_modules/agents/dist/index.d.ts"],
+      "agents/mcp": ["../../node_modules/agents/dist/mcp/index.d.ts"],
+      "@modelcontextprotocol/sdk/*": ["../../node_modules/@modelcontextprotocol/sdk/dist/esm/*"],
+      "effect": ["../../node_modules/effect/dist/index.d.ts"],
+      "effect/*": [
+        "../../node_modules/effect/dist/*.d.ts",
+        "../../node_modules/effect/dist/*/index.d.ts"
+      ]
+    }
+  },
+  "include": ["build/**/*.ts", "src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test/fixtures/**"]
+}

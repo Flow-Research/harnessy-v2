@@ -1,7 +1,7 @@
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 
 import { FileSystem, Path, Schema } from "effect";
 import * as Context from "effect/Context";
@@ -11,11 +11,12 @@ import * as Layer from "effect/Layer";
 import { causeMessage, HarnessError } from "../errors.ts";
 import type { HarnessPaths } from "../paths.ts";
 import type { InstallPaths } from "./install-paths.ts";
+import { correctLifeInstructions } from "./life-monthly-correction.ts";
 
-const srcDir = dirname(fileURLToPath(import.meta.url));
-// This module lives in src/runtime/ (and dist/runtime/), two levels under the
-// package root, so reach the sibling v1 pack with three `..` segments.
-const v1SourceRoot = resolve(srcDir, "../../../capability-harnessy-v1-full/resources/source");
+const v1SourceRoot = join(
+	dirname(createRequire(import.meta.url).resolve("@harnessy/capability-harnessy-v1-full/package.json")),
+	"resources/source",
+);
 
 const CANONICAL_FLOW_SCRIPTS = [
 	"agents.mjs",
@@ -117,6 +118,8 @@ export class HarnessRuntimeAssetSyncResult extends Schema.Class<HarnessRuntimeAs
 
 /** Options for syncing v1 runtime assets. */
 export interface HarnessRuntimeAssetSyncOptions {
+	/** Prepared bootstrap source for the fallback command, when bootstrap owns it. */
+	readonly jarvisCliRoot?: string;
 	/** Preview writes instead of applying them. */
 	readonly dryRun: boolean;
 	/** Overwrite hook config and skill installs where v1 force mode would. */
@@ -368,9 +371,10 @@ export const parseFrontmatter = (content) => {
 };
 `;
 
-			const generatedJarvisShim = (): string => `#!/usr/bin/env bash
+			const generatedJarvisShim = (sourceRoot: string): string => `#!/usr/bin/env bash
 set -euo pipefail
-JARVIS_CLI_ROOT="\${HARNESSY_JARVIS_CLI_ROOT:-${jarvisCliRoot}}"
+JARVIS_CLI_ROOT='${sourceRoot.replaceAll("'", "'\\''")}'
+JARVIS_CLI_ROOT="\${HARNESSY_JARVIS_CLI_ROOT:-\${JARVIS_CLI_ROOT}}"
 exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 `;
 
@@ -497,7 +501,24 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 						if (options.dryRun) written.push(targetPath);
 						continue;
 					}
-					const linked = yield* symlinkExecutable(sourcePath, targetPath, false);
+					// Skill commands resolve sibling modules from their installed directory.
+					// Copying just the executable into bin breaks those imports. Only the
+					// user-owned installed copy gets executable permissions, never the pack.
+					yield* makeDirectory(path.dirname(targetPath));
+					const linked = yield* fs.symlink(sourcePath, targetPath).pipe(
+						Effect.as(true),
+						Effect.catch((cause) =>
+							cause.reason._tag === "AlreadyExists"
+								? Effect.succeed(false)
+								: Effect.fail(mapPlatformError(`Could not link ${targetPath}`, cause)),
+						),
+					);
+					if (linked)
+						yield* fs
+							.chmod(sourcePath, 0o755)
+							.pipe(
+								Effect.mapError((cause) => mapPlatformError(`Could not make ${sourcePath} executable`, cause)),
+							);
 					actions.push(
 						makeAction({
 							kind: "global-skill-shim",
@@ -699,12 +720,13 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 				written: Array<string>,
 			) {
 				const targetPath = path.join(globals.globalCommandsDir, "jarvis");
+				const sourceRoot = options.jarvisCliRoot ?? jarvisCliRoot;
 				if (options.dryRun || options.applyGlobal !== true) {
 					actions.push(
 						makeAction({
 							kind: "global-runtime-command",
 							label: "Install runtime command jarvis",
-							sourcePath: jarvisCliRoot,
+							sourcePath: sourceRoot,
 							targetPath,
 							unsafeGlobal: true,
 							status: "planned",
@@ -714,19 +736,34 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 					if (options.dryRun) written.push(targetPath);
 					return;
 				}
-				yield* writeFileString(targetPath, generatedJarvisShim());
-				yield* fs.chmod(targetPath, 0o755).pipe(Effect.catch(() => Effect.void));
+				// Bootstrap may already have installed a uv-managed executable here.
+				// Exclusive creation protects dangling links as well as installed tools.
+				// Asset force is not authorization to overwrite another installation.
+				yield* makeDirectory(path.dirname(targetPath));
+				const created = yield* fs
+					.writeFileString(targetPath, generatedJarvisShim(sourceRoot), { flag: "wx", mode: 0o755 })
+					.pipe(
+						Effect.as(true),
+						Effect.catch((cause) =>
+							cause.reason._tag === "AlreadyExists"
+								? Effect.succeed(false)
+								: Effect.fail(mapPlatformError(`Could not create ${targetPath}`, cause)),
+						),
+					);
 				actions.push(
 					makeAction({
 						kind: "global-runtime-command",
 						label: "Install runtime command jarvis",
-						sourcePath: jarvisCliRoot,
+						sourcePath: sourceRoot,
 						targetPath,
 						unsafeGlobal: true,
-						status: "written",
+						status: created ? "written" : "skipped",
+						reason: created
+							? undefined
+							: "Jarvis command already exists; preserve its installation and upgrade separately.",
 					}),
 				);
-				written.push(targetPath);
+				if (created) written.push(targetPath);
 			});
 
 			const installHooksAndPipelineScripts = Effect.fn("HarnessRuntimeAssets.installHooksAndPipelineScripts")(
@@ -814,6 +851,23 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 					return;
 				}
 
+				// Preserved commands import this sibling library outside the skills root.
+				const supportSource = path.join(flowInstallRoot, "lib", "dependencies.mjs");
+				const supportTarget = path.join(path.dirname(globals.globalSkillsDir), "lib", "dependencies.mjs");
+				const supportPlanned = options.dryRun || options.applyGlobal !== true;
+				if (!supportPlanned) yield* copyFile(supportSource, supportTarget);
+				actions.push(
+					makeAction({
+						kind: "global-helper-script",
+						label: "Install skill dependency support library",
+						sourcePath: supportSource,
+						targetPath: supportTarget,
+						unsafeGlobal: true,
+						status: supportPlanned ? "planned" : "written",
+					}),
+				);
+				if (options.dryRun || !supportPlanned) written.push(supportTarget);
+
 				if (options.dryRun || options.applyGlobal !== true) {
 					for (const skill of sourceSkills) {
 						const targetDir = path.join(globals.globalSkillsDir, skill.name);
@@ -892,6 +946,18 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 
 					yield* removePath(targetDir);
 					yield* copyPath(skill.sourceDir, targetDir);
+					if (skill.name === "life-orchestrator") {
+						for (const file of ["SKILL.md", "commands/life.md"] as const) {
+							const target = path.join(targetDir, file);
+							const source = yield* readFileString(target);
+							const corrected = yield* Effect.try(() => correctLifeInstructions(file, source)).pipe(
+								Effect.mapError((cause) =>
+									mapPlatformError("Could not prepare native monthly workflow", cause),
+								),
+							);
+							yield* writeFileString(target, corrected);
+						}
+					}
 					actions.push(
 						makeAction({
 							kind: "global-skill-install",

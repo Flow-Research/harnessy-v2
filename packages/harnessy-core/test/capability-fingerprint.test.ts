@@ -75,4 +75,26 @@ describe("CapabilityFingerprinter", () => {
 			}),
 		),
 	);
+
+	it.effect("rejects a symlink root and reports nested symlinks as fingerprint issues", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const parent = yield* fs.makeTempDirectoryScoped();
+				const root = `${parent}/root`;
+				yield* fs.makeDirectory(root);
+				yield* fs.writeFileString(`${root}/safe.txt`, "safe\n");
+				yield* fs.writeFileString(`${parent}/outside.txt`, "outside\n");
+				yield* fs.symlink(`${parent}/outside.txt`, `${root}/linked.txt`);
+				yield* fs.symlink(root, `${parent}/root-link`);
+
+				const fingerprinter = yield* CapabilityFingerprinter;
+				const result = yield* fingerprinter.fingerprintPath(root);
+				expect(result.files.map((file) => file.path)).toEqual(["safe.txt"]);
+				expect(result.issues).toEqual(["Skipped symbolic link: linked.txt"]);
+				const rootError = yield* Effect.flip(fingerprinter.fingerprintPath(`${parent}/root-link`));
+				expect(rootError.message).toContain("symbolic link root");
+			}),
+		),
+	);
 });

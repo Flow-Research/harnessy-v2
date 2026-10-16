@@ -23,6 +23,12 @@
 					}
 				]
 			}
+		},
+		{
+			"files": ["packages/harnessy-core/src/claude-bridge/**/*.ts"],
+			"rules": {
+				"eslint-js/no-restricted-syntax": "off"
+			}
 		}
 	]
 }

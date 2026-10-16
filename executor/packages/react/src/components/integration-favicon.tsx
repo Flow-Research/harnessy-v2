@@ -1,0 +1,189 @@
+import { BoxIcon } from "lucide-react";
+import { useState } from "react";
+import type { IntegrationPlugin } from "@executor-js/sdk/client";
+import { getDomain } from "tldts";
+
+// ---------------------------------------------------------------------------
+// IntegrationFavicon — renders a small favicon derived from an integration URL.
+// Falls back to a neutral icon if the URL is missing or the image fails to load.
+// ---------------------------------------------------------------------------
+
+const integrationFaviconDomain = (url: string | undefined): string | null => {
+  if (!url) return null;
+  return getDomain(url) ?? (URL.canParse(url) ? getDomain(new URL(url).hostname) : null);
+};
+
+// integrations.sh/logo proxies context.dev's Logo Link behind an edge cache
+// and is executor's single logo source. Fallbacks (Google's favicon service,
+// a letter placeholder for unknown domains) live inside the proxy, so clients
+// never resolve favicons against a third party directly.
+export function integrationFaviconUrl(url: string | undefined, size: number): string | null {
+  const domain = integrationFaviconDomain(url);
+  if (!domain) return null;
+  return `https://integrations.sh/logo/${domain}?sz=${size * 2}`;
+}
+
+export function integrationLocalIconUrl(integrationId: string | undefined): string | null {
+  if (integrationId !== "executor") return null;
+  return "/favicon-32.png";
+}
+
+const KIND_TO_PLUGIN_KEY: Record<string, string> = {
+  openapi: "openapi",
+  mcp: "mcp",
+  graphql: "graphql",
+  googleDiscovery: "google",
+};
+
+const normalizeUrl = (url: string | undefined): string | null => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    parsed.searchParams.sort();
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return url.trim().replace(/\/$/, "");
+  }
+};
+
+const googleApiServiceFromUrl = (url: string | undefined): string | null => {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const segments = parsed.pathname.split("/").filter(Boolean);
+
+    if (
+      hostname === "www.googleapis.com" &&
+      segments[0] === "discovery" &&
+      segments[2] === "apis" &&
+      segments[3]
+    ) {
+      return segments[3];
+    }
+
+    if (hostname === "www.googleapis.com") return segments[0] ?? null;
+
+    const suffix = ".googleapis.com";
+    if (hostname.endsWith(suffix)) {
+      const service = hostname.slice(0, -suffix.length);
+      return service.length > 0 ? service : null;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+export function integrationInferredUrl(integration: {
+  readonly id: string;
+  readonly name?: string;
+}): string | null {
+  const hostPattern = /^[a-z0-9][a-z0-9.-]*\.(?:app|co|com|dev|io|net|org)(?:\/.*)?$/i;
+  const hostLike = [integration.name, integration.id.replaceAll("_", ".")]
+    .filter((value): value is string => value != null && value.length > 0)
+    .find((value) => hostPattern.test(value.trim()));
+  if (hostLike) return `https://${hostLike.trim().replace(/^https?:\/\//i, "")}`;
+
+  return null;
+}
+
+// Exact identity signals only — preset defaultSlug, normalized URL equality,
+// or the same Google discovery service. Fuzzy name/slug token matching used to
+// live here and matched unrelated brands sharing a word fragment ("ClickHouse
+// Cloud" rendered Cloudflare's logo via "cloud"). A missed match is recoverable
+// (the cascade falls through to the domain-derived integrations.sh favicon,
+// which is always the right brand); a wrong-brand icon is not.
+export function integrationPresetIconUrl(
+  integration: {
+    readonly id: string;
+    readonly kind: string;
+    readonly name?: string;
+    readonly url?: string;
+  },
+  integrationPlugins: readonly IntegrationPlugin[],
+): string | null {
+  const pluginKey = KIND_TO_PLUGIN_KEY[integration.kind] ?? integration.kind;
+  const plugin = integrationPlugins.find((p) => p.key === pluginKey);
+  const presets = plugin?.presets ?? [];
+  const exactSlugIcon = presets.find((p) => p.defaultSlug === integration.id)?.icon;
+  if (exactSlugIcon) return exactSlugIcon;
+
+  const integrationUrl = normalizeUrl(integration.url);
+  const integrationGoogleService = googleApiServiceFromUrl(integration.url);
+
+  const preset = presets.find((p) => {
+    const presetUrl = normalizeUrl(p.url);
+    const presetGoogleService = googleApiServiceFromUrl(p.url);
+    return (
+      (integrationUrl !== null && presetUrl === integrationUrl) ||
+      (integrationGoogleService !== null && presetGoogleService === integrationGoogleService)
+    );
+  });
+
+  return preset?.icon ?? null;
+}
+
+// Resolution cascade for the rendered favicon: first non-null, non-failed of an
+// explicit preset icon, the bundled local icon for a known integration id, then
+// the integrations.sh logo proxy derived from the integration URL (which owns
+// its own upstream fallbacks). The built-in executor integration has no preset
+// icon and no URL, so it resolves ONLY through the integrationId branch: callers
+// that drop integrationId fall through to the neutral BoxIcon placeholder.
+export function integrationFaviconSrc(args: {
+  icon?: string | null;
+  integrationId?: string;
+  url?: string;
+  size: number;
+  failedSrcs?: readonly string[];
+}): string | null {
+  const failedSrcs = args.failedSrcs ?? [];
+  return (
+    [
+      args.icon ?? null,
+      integrationLocalIconUrl(args.integrationId),
+      integrationFaviconUrl(args.url, args.size),
+    ].find((candidate) => candidate !== null && !failedSrcs.includes(candidate)) ?? null
+  );
+}
+
+export function IntegrationFavicon({
+  icon,
+  integrationId,
+  url,
+  size = 16,
+}: {
+  icon?: string | null;
+  integrationId?: string;
+  url?: string;
+  size?: number;
+}) {
+  const [failedSrcs, setFailedSrcs] = useState<readonly string[]>([]);
+  const src = integrationFaviconSrc({ icon, integrationId, url, size, failedSrcs });
+
+  if (!src) {
+    return (
+      <BoxIcon
+        aria-hidden
+        className="shrink-0 text-muted-foreground"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt=""
+      width={size}
+      height={size}
+      loading="lazy"
+      onError={() =>
+        setFailedSrcs((current) => (current.includes(src) ? current : [...current, src]))
+      }
+      className="shrink-0 rounded-sm"
+      style={{ width: size, height: size }}
+    />
+  );
+}

@@ -1,10 +1,17 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import process from "node:process";
 import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import { Effect } from "effect";
+import * as Result from "effect/Result";
+import { HarnessError } from "./errors.ts";
+import { HSY_APP_TITLE as APP_TITLE, HSY_CONFIG_DIR as CONFIG_DIR_NAME } from "./hsy-runtime-env.ts";
+import { resolveWorkspace, workspaceAgentContext } from "./workspace.ts";
 
-const APP_TITLE = "Harnessy";
-const CONFIG_DIR_NAME = ".hsy";
+const RUNTIME_CONTEXT_TYPE = "harnessy-runtime-context";
+const WEB_COMMAND_TIMEOUT_MS = 150_000;
+export const DEFAULT_HSY_AGENT_NAME = "Jarvis";
 
 const APP_LOGO = [
 	"██ ██ ████       ",
@@ -193,6 +200,7 @@ function buildRightColumn(data: WelcomeData, width: number): string[] {
 	return [
 		` ${bold(accent("Tips"))}`,
 		` ${dim("/")} for commands`,
+		` ${dim("/web")} open cockpit`,
 		` ${dim("!")} to run bash`,
 		` ${dim("Shift+Tab")} cycle thinking`,
 		separator,
@@ -240,6 +248,82 @@ function renderWelcome(data: WelcomeData, terminalWidth: number): string[] {
 	return lines;
 }
 
+function normalizeAgentName(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const name = value.trim();
+	return name && name.length <= 80 && !/[\r\n]/.test(name) ? name : undefined;
+}
+
+export function resolveHarnessyAgentName(env: NodeJS.ProcessEnv = process.env): string {
+	const environmentName = normalizeAgentName(env.HSY_AGENT_NAME);
+	if (environmentName) return environmentName;
+
+	const agentDir = env.HSY_CODING_AGENT_DIR?.trim() || join(homedir(), CONFIG_DIR_NAME, "agent");
+	const settings = Effect.runSync(
+		Effect.try({
+			try: () => JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8")) as unknown,
+			catch: () => undefined,
+		}).pipe(Effect.catch(() => Effect.succeed(undefined))),
+	);
+	if (typeof settings === "object" && settings !== null && "agentName" in settings) {
+		return normalizeAgentName(settings.agentName) ?? DEFAULT_HSY_AGENT_NAME;
+	}
+
+	return DEFAULT_HSY_AGENT_NAME;
+}
+
+export function buildHarnessyRuntimeContext(cwd: string, env: NodeJS.ProcessEnv = process.env): string {
+	const agentDir = env.HSY_CODING_AGENT_DIR?.trim() || join(homedir(), CONFIG_DIR_NAME, "agent");
+	const projectConfigDir = join(cwd, CONFIG_DIR_NAME);
+	const agentName = resolveHarnessyAgentName(env);
+	const workspace = Result.try(() => {
+		const resolved = resolveWorkspace({ cwd, env });
+		return resolved === null ? "" : workspaceAgentContext(resolved, cwd);
+	});
+	const workspaceContext = Result.isSuccess(workspace)
+		? workspace.success
+		: "Workspace context unavailable; run harnessy workspace doctor to repair workspace configuration.";
+
+	return `<harnessy_runtime>
+You are running inside Harnessy (hsy), not the pi executable.
+Your agent name is ${JSON.stringify(agentName)}.
+Canonical global agent directory: ${JSON.stringify(agentDir)}
+Canonical project configuration directory: ${JSON.stringify(projectConfigDir)}
+PI_CODING_AGENT_DIR and other PI_* identity variables are legacy compatibility aliases for this Harnessy runtime. They do not authorize access to Pi's ~/.pi state.
+
+Host isolation invariant:
+- Read and write Harnessy state only under the canonical directories above.
+- Do not invoke the pi executable or automatically read, write, install into, or migrate state from ~/.pi or a project-local .pi directory.
+- Package names and imports containing "pi" are valid compatibility APIs; filesystem paths targeting .pi are compatibility defects unless the user explicitly requested Pi-state inspection or migration.
+
+Self-healing rule:
+When an extension, package, command, or configuration fails because it assumes Pi-specific paths or identity, inspect the failing Harnessy-local resource, repair it to use HSY_CODING_AGENT_DIR, PI_CODING_AGENT_DIR, PI_CONFIG_DIR, or the canonical .hsy project directory as appropriate, then verify the operation again. Keep the repair scoped to Harnessy; never patch or share Pi's configuration. If a safe local repair is impossible, report the exact incompatible path and package instead of silently falling back to ~/.pi.
+${workspaceContext}
+</harnessy_runtime>`;
+}
+
+export function createHarnessyRuntimeContextMessage(cwd: string, env: NodeJS.ProcessEnv = process.env) {
+	return {
+		customType: RUNTIME_CONTEXT_TYPE,
+		content: buildHarnessyRuntimeContext(cwd, env),
+		display: false,
+	};
+}
+
+function sessionHasHarnessyRuntimeContext(ctx: ExtensionContext, content: string): boolean {
+	const latest = ctx.sessionManager
+		.getBranch()
+		.slice()
+		.reverse()
+		.find(
+			(entry) =>
+				entry.type === "message" &&
+				entry.message.role === "custom" &&
+				entry.message.customType === RUNTIME_CONTEXT_TYPE,
+		);
+	return latest?.type === "message" && latest.message.role === "custom" && latest.message.content === content;
+}
+
 function setHarnessyHeader(ctx: ExtensionContext): void {
 	const data: WelcomeData = {
 		modelName: ctx.model?.name ?? ctx.model?.id ?? "No model",
@@ -257,9 +341,69 @@ function setHarnessyHeader(ctx: ExtensionContext): void {
 }
 
 export const harnessyWelcomeExtension: ExtensionFactory = (pi) => {
+	pi.registerCommand("web", {
+		description: "Start or attach Harnessy Engine and open the cockpit",
+		handler: async (_args, ctx) => {
+			ctx.ui.setStatus("harnessy-web", "Opening Harnessy cockpit...");
+			await Effect.runPromise(
+				Effect.tryPromise({
+					try: () =>
+						pi.exec("harnessy", ["web"], {
+							cwd: ctx.cwd,
+							timeout: WEB_COMMAND_TIMEOUT_MS,
+						}),
+					catch: (cause) =>
+						new HarnessError({
+							message: `Could not open Harnessy cockpit: ${cause instanceof Error ? cause.message : String(cause)}`,
+							cause,
+						}),
+				}).pipe(
+					Effect.match({
+						onFailure: (error) => ctx.ui.notify(error.message, "error"),
+						onSuccess: (result) => {
+							if (result.killed) {
+								ctx.ui.notify("Timed out opening Harnessy cockpit after 150 seconds.", "error");
+								return;
+							}
+							if (result.code !== 0) {
+								const detail = [result.stdout.trim(), result.stderr.trim()].filter(Boolean).join("\n");
+								ctx.ui.notify(
+									`Could not open Harnessy cockpit: ${(detail || `exit code ${result.code}`).slice(-500)}`,
+									"error",
+								);
+								return;
+							}
+							const openingLine = result.stdout
+								.split("\n")
+								.map((line) => line.trim())
+								.find((line) => line.startsWith("Opening http"));
+							const warningLine = result.stderr
+								.split("\n")
+								.map((line) => line.trim())
+								.find((line) => line.includes("Bundled AnyType registration warning:"));
+							const readyMessage =
+								openingLine === undefined
+									? "Harnessy cockpit ready; browser opening requested."
+									: `Harnessy cockpit ready: ${openingLine.slice("Opening ".length)}`;
+							ctx.ui.notify(
+								warningLine === undefined ? readyMessage : `${readyMessage}\n${warningLine}`,
+								warningLine === undefined ? "info" : "warning",
+							);
+						},
+					}),
+					Effect.ensuring(Effect.sync(() => ctx.ui.setStatus("harnessy-web", undefined))),
+				),
+			);
+		},
+	});
+
 	pi.on("session_start", (event, ctx) => {
-		if (!ctx.hasUI) return;
-		if (event.reason === "startup" || event.reason === "reload") {
+		const message = createHarnessyRuntimeContextMessage(ctx.cwd);
+		if (!sessionHasHarnessyRuntimeContext(ctx, message.content)) {
+			pi.sendMessage(message, { triggerTurn: false });
+		}
+
+		if (ctx.hasUI && (event.reason === "startup" || event.reason === "reload")) {
 			setHarnessyHeader(ctx);
 		}
 	});

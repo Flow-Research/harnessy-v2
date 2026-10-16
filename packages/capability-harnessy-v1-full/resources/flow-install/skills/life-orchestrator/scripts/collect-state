@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -52,13 +53,21 @@ GOAL_AGENT_DIR = os.path.join(PROJECT_ROOT, ".goal-agent")
 AUTOFLOW_STATE = os.path.join(PROJECT_ROOT, ".jarvis", "context", "autoflow", "state.json")
 CRON_YAML = os.path.join(PROJECT_ROOT, ".jarvis", "cron.yaml")
 JARVIS_PLANS = os.path.expanduser("~/.jarvis/plans")
-JARVIS_WIKIS = os.path.expanduser("~/.jarvis/wikis")
+JARVIS_WIKIS = os.path.expanduser(
+    os.environ.get("JARVIS_WIKIS_DIR", "~/.jarvis/wikis")
+)
 AGENTS_LIFE_DIR = os.path.expanduser(os.environ.get("AGENTS_LIFE_DIR", "~/.agents/life"))
 LIFE_PRIORITIES_FILE = os.path.expanduser(
     os.environ.get("LIFE_PRIORITIES_FILE", os.path.join(AGENTS_LIFE_DIR, "priorities.md"))
 )
 LAST_CRAWL = os.path.join(AGENTS_LIFE_DIR, ".last-crawl.json")
 NOTES_DIR = os.path.join(PRIVATE_DIR, "notes")
+COMPETENCE_PRIORITIES_FILE = os.path.expanduser(
+    os.environ.get(
+        "LIFE_COMPETENCE_PRIORITIES_FILE",
+        os.path.join(PRIVATE_DIR, "competence-priorities.md"),
+    )
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -97,6 +106,54 @@ def file_hash(text):
     if text is None:
         return None
     return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+
+def canonicalize_url(value):
+    """Normalize equivalent public URLs before deduplication."""
+    try:
+        parsed = urllib.parse.urlsplit(value.strip())
+    except (AttributeError, ValueError):
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    hostname = parsed.hostname.lower()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    netloc = hostname
+    if port and not (
+        (parsed.scheme.lower() == "http" and port == 80)
+        or (parsed.scheme.lower() == "https" and port == 443)
+    ):
+        netloc = f"{hostname}:{port}"
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/")
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query = [
+        (key, item)
+        for key, item in query
+        if not key.lower().startswith("utm_")
+        and key.lower() not in {"fbclid", "gclid", "mc_cid", "mc_eid"}
+    ]
+    return urllib.parse.urlunsplit(
+        (parsed.scheme.lower(), netloc, path, urllib.parse.urlencode(query), "")
+    )
+
+
+def _frontmatter_datetime(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(str(value).strip().strip("'\"").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
 
 
 def run_cmd(args, cwd=None):
@@ -139,7 +196,7 @@ def scan_dir(dirpath):
 # ── Section collectors ───────────────────────────────────────────────────────
 
 def collect_priorities():
-    """Parse priorities.md — extract table rows, constraints, personal notes."""
+    """Parse priorities.md without assuming one fixed document shape."""
     priorities_path = os.path.join(PRIVATE_DIR, "priorities.md")
     text = read_file(priorities_path)
     if text is None:
@@ -159,6 +216,7 @@ def collect_priorities():
         "constraints": [],
         "personal": [],
         "standing_instructions": [],
+        "sections": {},
     }
     if result["external_modified"] and result["source_modified"]:
         result["external_older"] = result["external_modified"] < result["source_modified"]
@@ -200,7 +258,54 @@ def collect_priorities():
         if current_section and line.strip().startswith("- "):
             result[current_section].append(line.strip()[2:])
 
+    # Preserve every H2 section as a bounded, schema-independent fallback.
+    # The priorities document is intentionally allowed to evolve; daily
+    # synthesis must not silently lose it when headings or tables change.
+    heading = None
+    section_lines = []
+
+    def save_section():
+        if heading is None:
+            return
+        content = "\n".join(section_lines).strip()
+        if content:
+            result["sections"][heading] = content[:4000]
+
+    for line in text.splitlines():
+        match = re.match(r"^##\s+(.+)", line)
+        if match:
+            save_section()
+            heading = match.group(1).strip()
+            section_lines = []
+            continue
+        if heading is not None:
+            section_lines.append(line)
+    save_section()
+
     return result
+
+
+def collect_competence_priorities():
+    """Collect the user's durable learning strategy as a bounded planning input.
+
+    Immediate portfolio priorities remain sovereign. This separate input keeps
+    long-term technical and institutional development visible without copying a
+    full strategy archive into every brief.
+    """
+    text = read_file(COMPETENCE_PRIORITIES_FILE)
+    if text is None:
+        return None
+    return {
+        "source_path": (
+            os.path.relpath(COMPETENCE_PRIORITIES_FILE, PROJECT_ROOT)
+            if os.path.commonpath(
+                [os.path.abspath(COMPETENCE_PRIORITIES_FILE), os.path.abspath(PROJECT_ROOT)]
+            ) == os.path.abspath(PROJECT_ROOT)
+            else COMPETENCE_PRIORITIES_FILE
+        ),
+        "source_modified": file_modified_iso(COMPETENCE_PRIORITIES_FILE),
+        "raw": text[:20_000],
+    }
 
 
 def collect_projects():
@@ -223,6 +328,8 @@ def collect_projects():
             dirpath = os.path.join(PRIVATE_DIR, entry)
             files, newest = scan_dir(dirpath)
             status_md = read_file(os.path.join(dirpath, "status.md"))
+            if status_md is None:
+                status_md = read_file(os.path.join(dirpath, "README.md"))
 
             # Extract description from status.md first heading, or use dirname
             description = entry
@@ -333,6 +440,185 @@ def collect_project_context_vaults():
     return vaults
 
 
+def _weekly_plan_period(path):
+    """Return an explicit date range from a weekly-plan heading when present."""
+    text = (read_file(path) or "")[:1200]
+    if not text:
+        return None
+
+    iso_match = re.search(
+        r"(\d{4}-\d{2}-\d{2})\s*(?:–|—|-|to)\s*(\d{4}-\d{2}-\d{2})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if iso_match:
+        try:
+            return (
+                datetime.date.fromisoformat(iso_match.group(1)),
+                datetime.date.fromisoformat(iso_match.group(2)),
+            )
+        except ValueError:
+            return None
+
+    inferred_year = datetime.date.today().year
+    for part in reversed(os.path.normpath(path).split(os.sep)):
+        if re.fullmatch(r"\d{4}", part):
+            inferred_year = int(part)
+            break
+
+    weekday = r"(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)"
+
+    def month_number(raw):
+        try:
+            return datetime.datetime.strptime(raw[:3].title(), "%b").month
+        except ValueError:
+            return None
+
+    day_first = re.search(
+        rf"\b(\d{{1,2}})\s+([A-Za-z]{{3,9}})\s*(?:–|—|-|to)\s*"
+        rf"(?:{weekday}\s+)?(\d{{1,2}})\s+([A-Za-z]{{3,9}})(?:,?\s+(\d{{4}}))?\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if day_first:
+        start_day, start_month_raw, end_day, end_month_raw, raw_year = day_first.groups()
+        start_month = month_number(start_month_raw)
+        end_month = month_number(end_month_raw)
+    else:
+        month_first = re.search(
+            rf"\b(?:{weekday}\s+)?([A-Za-z]{{3,9}})\s+(\d{{1,2}})\s*"
+            rf"(?:–|—|-|to)\s*(?:{weekday}\s+)?"
+            rf"(?:([A-Za-z]{{3,9}})\s+)?(\d{{1,2}})(?:,?\s+(\d{{4}}))?\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not month_first:
+            return None
+        start_month_raw, start_day, end_month_raw, end_day, raw_year = month_first.groups()
+        start_month = month_number(start_month_raw)
+        end_month = month_number(end_month_raw or start_month_raw)
+
+    if not start_month or not end_month:
+        return None
+    end_year = int(raw_year) if raw_year else inferred_year
+    start_year = end_year if start_month <= end_month else end_year - 1
+    if not raw_year:
+        start_year = inferred_year
+        end_year = start_year + (1 if end_month < start_month else 0)
+    try:
+        start = datetime.date(start_year, start_month, int(start_day))
+        end = datetime.date(end_year, end_month, int(end_day))
+    except ValueError:
+        return None
+    if end < start or (end - start).days > 14:
+        return None
+    return start, end
+
+
+def collect_life_context():
+    """Collect the planning layers that should compound into the daily brief."""
+    today = datetime.date.today()
+    year = today.strftime("%Y")
+    month = today.strftime("%b")
+    week = f"{today.isocalendar().week:02d}"
+    current_week_path = os.path.join(
+        AGENTS_LIFE_DIR,
+        year,
+        month,
+        f"week-{week}-plan.md",
+    )
+
+    weekly_path = None
+    weekly_is_current = False
+    weekly_period = None
+    previous_briefs = []
+    weekly_plans = []
+    monthly_reviews = []
+
+    if os.path.isdir(AGENTS_LIFE_DIR):
+        for root, _dirs, filenames in os.walk(AGENTS_LIFE_DIR):
+            for filename in filenames:
+                path = os.path.join(root, filename)
+                if re.match(r"^week-\d{2}-plan\.md$", filename):
+                    weekly_plans.append(path)
+                    continue
+                if filename == "monthly-review.md":
+                    monthly_reviews.append(path)
+                    continue
+                match = re.match(r"^(\d{2})-daily-brief\.md$", filename)
+                if not match:
+                    continue
+                try:
+                    month_name = os.path.basename(root)
+                    year_name = os.path.basename(os.path.dirname(root))
+                    brief_date = datetime.datetime.strptime(
+                        f"{year_name}-{month_name}-{match.group(1)}",
+                        "%Y-%b-%d",
+                    ).date()
+                except ValueError:
+                    continue
+                if brief_date < today:
+                    previous_briefs.append((brief_date, path))
+
+    covering_plans = []
+    for path in weekly_plans:
+        period = _weekly_plan_period(path)
+        if period and period[0] <= today <= period[1]:
+            covering_plans.append((path, period))
+
+    if covering_plans:
+        weekly_path, weekly_period = max(
+            covering_plans,
+            key=lambda item: os.path.getmtime(item[0]),
+        )
+        weekly_is_current = True
+    elif os.path.isfile(current_week_path):
+        weekly_path = current_week_path
+        weekly_period = _weekly_plan_period(weekly_path)
+        weekly_is_current = weekly_period is None or (
+            weekly_period[0] <= today <= weekly_period[1]
+        )
+    elif weekly_plans:
+        weekly_path = max(weekly_plans, key=lambda path: os.path.getmtime(path))
+        weekly_period = _weekly_plan_period(weekly_path)
+
+    previous_path = None
+    if previous_briefs:
+        previous_path = max(previous_briefs, key=lambda item: item[0])[1]
+
+    monthly_path = None
+    current_monthly = os.path.join(AGENTS_LIFE_DIR, year, month, "monthly-review.md")
+    if os.path.isfile(current_monthly):
+        monthly_path = current_monthly
+    elif monthly_reviews:
+        monthly_path = max(monthly_reviews, key=lambda path: os.path.getmtime(path))
+
+    def artifact(path, **extra):
+        if path is None:
+            return None
+        return {
+            "path": path,
+            "modified": file_modified_iso(path),
+            "content": read_file(path),
+            **extra,
+        }
+
+    weekly_extra = {"current_for_week": weekly_is_current}
+    if weekly_period:
+        weekly_extra.update(
+            {
+                "period_start": weekly_period[0].isoformat(),
+                "period_end": weekly_period[1].isoformat(),
+            }
+        )
+
+    return {
+        "weekly_plan": artifact(weekly_path, **weekly_extra),
+        "previous_daily_brief": artifact(previous_path),
+        "monthly_review": artifact(monthly_path),
+    }
+
+
 def collect_git():
     """Recent commits, current branch, uncommitted changes."""
     return {
@@ -403,8 +689,8 @@ def collect_recent_meetings():
     daily brief only needs enough signal to notice new decisions and action
     items, so keep this date-bounded and section-based.
     """
-    lookback_days = int(os.environ.get("LIFE_ORCHESTRATOR_MEETING_LOOKBACK_DAYS", "5"))
-    limit = int(os.environ.get("LIFE_ORCHESTRATOR_RECENT_MEETINGS_LIMIT", "12"))
+    lookback_days = int(os.environ.get("LIFE_ORCHESTRATOR_MEETING_LOOKBACK_DAYS", "14"))
+    limit = int(os.environ.get("LIFE_ORCHESTRATOR_RECENT_MEETINGS_LIMIT", "20"))
     today = datetime.date.today()
     cutoff = today - datetime.timedelta(days=max(lookback_days - 1, 0))
     meetings = []
@@ -431,11 +717,144 @@ def collect_recent_meetings():
 
     deduped = {}
     for meeting in meetings:
-        deduped[meeting["path"]] = meeting
+        key = _meeting_dedupe_key(meeting)
+        existing = deduped.get(key)
+        if existing is None:
+            deduped[key] = meeting
+        else:
+            deduped[key] = _merge_meetings(existing, meeting)
 
     meetings = list(deduped.values())
-    meetings.sort(key=lambda item: (item["date"], item["path"]), reverse=True)
+    meetings.sort(
+        key=lambda item: (_meeting_priority(item), item["date"], item["path"]),
+        reverse=True,
+    )
     return meetings[:limit]
+
+
+def _meeting_dedupe_key(meeting):
+    fingerprint = (meeting.get("fingerprint") or "").strip()
+    timestamp_match = re.search(
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)$",
+        fingerprint,
+    )
+    title = re.sub(r"\s+", " ", (meeting.get("title") or "").strip().lower())
+    title = re.sub(r"(?:\s*[-_]\s*)?(?:copy|duplicate|\d+)$", "", title).strip()
+    project = re.sub(r"\s+", " ", (meeting.get("project") or "").strip().lower())
+    if timestamp_match:
+        try:
+            started = datetime.datetime.strptime(
+                timestamp_match.group(1),
+                "%Y-%m-%dT%H:%M:%SZ",
+            )
+            five_minute_bucket = int(started.timestamp()) // 300
+            return ("timed", project, title, five_minute_bucket)
+        except ValueError:
+            pass
+
+    source_ref = (meeting.get("source_ref") or "").strip().lower()
+    if source_ref:
+        return ("source", source_ref.split("?", 1)[0].rstrip("/"))
+
+    return ("fallback", meeting.get("date") or "", project, title)
+
+
+def _meeting_richness(meeting):
+    return len(meeting.get("summary") or "") + sum(
+        len(item) for item in (meeting.get("action_items") or [])
+    )
+
+
+def _merge_meetings(first, second):
+    richer, other = (
+        (first, second)
+        if _meeting_richness(first) >= _meeting_richness(second)
+        else (second, first)
+    )
+    merged = dict(richer)
+
+    summaries = []
+    for candidate in (richer.get("summary") or "", other.get("summary") or ""):
+        normalized = re.sub(r"\s+", " ", candidate).strip().lower()
+        if candidate and normalized not in {
+            re.sub(r"\s+", " ", existing).strip().lower()
+            for existing in summaries
+        }:
+            summaries.append(candidate)
+    merged["summary"] = _compact_text("\n".join(summaries), max_chars=1800)
+
+    actions = []
+    seen_actions = set()
+    for candidate in (first, second):
+        for action in candidate.get("action_items") or []:
+            key = re.sub(r"\s+", " ", action).strip().lower()
+            if not key or key in seen_actions:
+                continue
+            seen_actions.add(key)
+            actions.append(action)
+    merged["action_items"] = actions[:12]
+
+    def unique_values(field):
+        values = []
+        for candidate in (first, second):
+            value = candidate.get(field)
+            if value and value not in values:
+                values.append(value)
+            for nested in candidate.get(f"{field}s") or []:
+                if nested and nested not in values:
+                    values.append(nested)
+        return values
+
+    merged["duplicate_count"] = (
+        int(first.get("duplicate_count") or 1)
+        + int(second.get("duplicate_count") or 1)
+    )
+    merged["source_refs"] = unique_values("source_ref")
+    merged["paths"] = unique_values("path")
+    merged["fingerprints"] = unique_values("fingerprint")
+    return merged
+
+
+def _meeting_priority(meeting):
+    text = " ".join(
+        [
+            meeting.get("title") or "",
+            meeting.get("summary") or "",
+            " ".join(meeting.get("action_items") or []),
+        ]
+    ).lower()
+    score = min(len(meeting.get("action_items") or []), 4)
+    if meeting.get("summary"):
+        score += 1
+    else:
+        score -= 8
+    try:
+        meeting_date = datetime.date.fromisoformat(meeting.get("date") or "")
+        age_days = max((datetime.date.today() - meeting_date).days, 0)
+        score += max(6 - age_days, 0)
+    except ValueError:
+        pass
+    if "julian" in text:
+        score += 2
+    for term in (
+        "co-founder",
+        "cofounder",
+        "board",
+        "investor",
+        "funding",
+        "fundraise",
+        "capital",
+        "partner",
+        "customer",
+        "client",
+        "proposal",
+        "strategy",
+        "3mtt",
+        "decision",
+    ):
+        if term in text:
+            score += 2
+    return score
 
 
 def _collect_meetings_under(context_root, cutoff, default_project="", limit=None):
@@ -460,6 +879,7 @@ def _collect_meetings_under(context_root, cutoff, default_project="", limit=None
                     "project": project,
                     "title": _extract_markdown_title(text) or os.path.splitext(fname)[0],
                     "source_ref": _extract_metadata_value(text, "Source Ref"),
+                    "fingerprint": _extract_metadata_value(text, "Fingerprint"),
                     "path": rel_path,
                     "summary": _compact_text(
                         _extract_first_section(
@@ -476,7 +896,14 @@ def _collect_meetings_under(context_root, cutoff, default_project="", limit=None
                     ),
                     "action_items": _extract_bullets_from_sections(
                         text,
-                        ("Action Items", "Next Steps", "Concrete Follow-Ups", "Action Checklist"),
+                        (
+                            "Action Items",
+                            "Next Steps",
+                            "Concrete Follow-Ups",
+                            "Action Checklist",
+                            "Decisions and Commitments",
+                            "Commitments",
+                        ),
                         max_items=8,
                     ),
                 }
@@ -563,6 +990,10 @@ def _extract_bullets_from_sections(text, headings, max_items=8):
             stripped = line.strip()
             if stripped.startswith(("- ", "* ")):
                 bullet = _clean_markdown_inline(stripped[2:].strip())
+                # Generated meeting notes often use an owner-only bullet as a
+                # visual parent for nested actions. It is not an action itself.
+                if bullet.endswith(":") and len(bullet.split()) <= 5:
+                    continue
                 key = re.sub(r"\s+", " ", bullet).lower()
                 if not bullet or key in seen:
                     continue
@@ -696,6 +1127,149 @@ def collect_wiki_updates():
     }
 
 
+def collect_learning_readings():
+    """Collect fresh, not-yet-surfaced links from the founder-learning wiki.
+
+    Discovery and source inspection happen in the separate research job. This
+    collector is deliberately deterministic: it reads provenance metadata,
+    rejects malformed/non-HTTP records, removes links already present in recent
+    canonical briefs, and returns a bounded newest-first candidate set.
+    """
+    domain = os.environ.get("LIFE_LEARNING_RESEARCH_DOMAIN", "founder-learning")
+    raw_dir = os.path.join(JARVIS_WIKIS, domain, "raw", "articles")
+    if not os.path.isdir(raw_dir):
+        return None
+
+    lookback_days = int(os.environ.get("LIFE_READING_LOOKBACK_DAYS", "21"))
+    max_candidates = int(os.environ.get("LIFE_READING_MAX_CANDIDATES", "12"))
+    cutoff = datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(
+        days=lookback_days
+    )
+
+    surfaced_urls = set()
+    all_surfaced_urls = set()
+    brief_cutoff = cutoff.timestamp()
+    if os.path.isdir(AGENTS_LIFE_DIR):
+        for root, dirs, files in os.walk(AGENTS_LIFE_DIR):
+            # A preview is not a delivered recommendation and must not consume
+            # a candidate before the user publishes the brief.
+            dirs[:] = [name for name in dirs if name not in {"previews", "feedback"}]
+            for filename in files:
+                if not filename.endswith("-daily-brief.md"):
+                    continue
+                path = os.path.join(root, filename)
+                try:
+                    is_recent_brief = os.path.getmtime(path) >= brief_cutoff
+                except OSError:
+                    is_recent_brief = False
+                text = read_file(path) or ""
+                for found in re.findall(r"https?://[^\s)>\]]+", text):
+                    canonical = canonicalize_url(found.rstrip(".,;"))
+                    if canonical:
+                        all_surfaced_urls.add(canonical)
+                        if is_recent_brief:
+                            surfaced_urls.add(canonical)
+
+    candidates = []
+    fallback_candidates = []
+    seen_urls = set()
+    for filename in os.listdir(raw_dir):
+        if not filename.endswith(".md"):
+            continue
+        path = os.path.join(raw_dir, filename)
+        try:
+            modified = datetime.datetime.fromtimestamp(
+                os.path.getmtime(path), tz=datetime.timezone.utc
+            )
+        except OSError:
+            continue
+        frontmatter = _parse_simple_frontmatter(read_file(path) or "")
+        url = (frontmatter.get("source_url") or "").strip()
+        canonical_url = canonicalize_url(url.rstrip(".,;"))
+        if not canonical_url:
+            continue
+        if canonical_url in seen_urls:
+            continue
+        published_at = _frontmatter_datetime(frontmatter.get("published_at"))
+        fetched_at = _frontmatter_datetime(frontmatter.get("fetched_at"))
+        selected_at = _frontmatter_datetime(frontmatter.get("selected_at"))
+        selection_lane = (frontmatter.get("selection_lane") or "").strip().strip("'\"")
+        effective_date = (
+            (selected_at or fetched_at or modified)
+            if selection_lane == "evergreen"
+            else (published_at or fetched_at or modified)
+        )
+        if effective_date < cutoff:
+            continue
+        if selection_lane == "evergreen" and canonical_url in all_surfaced_urls:
+            continue
+        seen_urls.add(canonical_url)
+        source_max_per_brief = frontmatter.get("source_max_per_brief")
+        try:
+            source_max_per_brief = max(1, int(source_max_per_brief))
+        except (TypeError, ValueError):
+            source_max_per_brief = None
+        try:
+            evergreen_score = max(0, int(frontmatter.get("evergreen_score") or 0))
+        except (TypeError, ValueError):
+            evergreen_score = 0
+        candidate = {
+            "title": (frontmatter.get("source_title") or filename.removesuffix(".md"))
+            .strip()
+            .strip("'\""),
+            "url": url.rstrip(".,;"),
+            "canonical_url": canonical_url,
+            "topic": (frontmatter.get("topic") or "").strip().strip("'\"") or None,
+            "published_at": frontmatter.get("published_at"),
+            "fetched_at": frontmatter.get("fetched_at"),
+            "selected_at": frontmatter.get("selected_at"),
+            "selection_lane": selection_lane or None,
+            "evergreen_score": evergreen_score,
+            "source_name": (frontmatter.get("source_name") or "").strip().strip("'\"") or None,
+            "source_tier": (frontmatter.get("source_tier") or "").strip().strip("'\"") or None,
+            "content_mode": (frontmatter.get("content_mode") or "").strip().strip("'\"") or None,
+            "source_max_per_brief": source_max_per_brief,
+            "source_file": filename,
+            "modified": modified.isoformat(),
+            "effective_date": effective_date.isoformat(),
+        }
+        if canonical_url in surfaced_urls:
+            fallback_candidates.append(candidate)
+        else:
+            candidates.append(candidate)
+
+    def apply_source_caps(items):
+        items.sort(
+            key=lambda item: (item["effective_date"], item.get("evergreen_score") or 0),
+            reverse=True,
+        )
+        counts = {}
+        bounded = []
+        for item in items:
+            source_name = item.get("source_name")
+            limit = item.get("source_max_per_brief")
+            if source_name and limit:
+                key = str(source_name).lower()
+                if counts.get(key, 0) >= limit:
+                    continue
+                counts[key] = counts.get(key, 0) + 1
+            bounded.append(item)
+        return bounded
+
+    candidates = apply_source_caps(candidates)
+    fallback_candidates = apply_source_caps(fallback_candidates)
+    if not candidates and not fallback_candidates:
+        return None
+    return {
+        "domain": domain,
+        "lookback_days": lookback_days,
+        "candidates": candidates[:max_candidates],
+        # Previously surfaced, still-recent sources are a resilience reserve.
+        # The daily brief uses them only after its research wait expires.
+        "fallback_candidates": fallback_candidates[:max_candidates],
+    }
+
+
 def _parse_simple_frontmatter(text):
     """Parse top YAML frontmatter as a flat dict (no yaml dep)."""
     if not text.startswith("---"):
@@ -811,8 +1385,10 @@ def main():
 
     state = {
         "priorities": collect_priorities(),
+        "competence_priorities": collect_competence_priorities(),
         "projects": collect_projects(),
         "project_context_vaults": collect_project_context_vaults(),
+        "life_context": collect_life_context(),
         "notes": collect_notes(),
         "recent_meetings": collect_recent_meetings(),
         "git": collect_git(),
@@ -821,6 +1397,7 @@ def main():
         "cron": collect_cron(),
         "jarvis": collect_jarvis_plans(),
         "wiki_updates": collect_wiki_updates(),
+        "learning_readings": collect_learning_readings(),
         "timestamp": datetime.datetime.now(tz=datetime.timezone.utc).isoformat(),
     }
 
