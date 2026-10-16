@@ -40,7 +40,7 @@ jobs:
         run: mkdir -p .security-sweep-output
 
       - name: Audit root dependencies
-        run: npm audit --audit-level=moderate --json > .security-sweep-output/root-npm-audit.json
+        run: node scripts/audit-root.mjs --json > .security-sweep-output/root-npm-audit.json
 
       - name: Test and run repository security invariants
         run: node --test scripts/security-invariants-lib.test.mjs && node scripts/check-security-invariants.mjs --output .security-sweep-output/security-invariants.json
