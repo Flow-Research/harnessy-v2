@@ -6,7 +6,8 @@ import { fixtureEnvironment } from "./support/fixture-environment.mjs";
 
 test("fixture environment drops credentials, profile paths and caller preload hooks", () => {
 	const env = fixtureEnvironment({ PATH: "/usr/bin:/bin", DISCORD_TOKEN: "canary", GOOGLE_WORKSPACE_CLI_CONFIG_DIR: "/private", NODE_OPTIONS: "--require=untrusted", HOME: "/private/home", HTTPS_PROXY: "http://proxy" });
-	assert.deepEqual(Object.keys(env).sort(), ["NODE_NO_WARNINGS", "NODE_OPTIONS", "PATH", "npm_config_offline", "npm_config_update_notifier"].sort());
+	assert.deepEqual(Object.keys(env).sort(), ["NODE_NO_WARNINGS", "NODE_OPTIONS", "PATH", "PI_AUTH_ENCRYPTION", "npm_config_offline", "npm_config_update_notifier"].sort());
+	assert.equal(env.PI_AUTH_ENCRYPTION, "off");
 	assert(!JSON.stringify(env).includes("canary"));
 	assert(!JSON.stringify(env).includes("untrusted"));
 });

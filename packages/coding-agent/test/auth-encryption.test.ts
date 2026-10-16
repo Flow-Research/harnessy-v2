@@ -25,7 +25,7 @@ class FakeKeychain implements AuthKeychain {
 	}
 }
 
-const SECRET = "sk-synthetic-secret-value";
+const SECRET = "synthetic-secret-value";
 const roots: string[] = [];
 
 const fixture = (content?: string) => {
