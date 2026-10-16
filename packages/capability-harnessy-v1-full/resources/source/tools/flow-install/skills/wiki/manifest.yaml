@@ -1,0 +1,19 @@
+name: wiki
+type: opencode
+version: 0.1.0
+owner: julian
+status: experimental
+blast_radius: low
+description: "Open Julian's personal learning wiki viewer (OpenWiki, local-only on http://127.0.0.1:4321) through the persistent launchd service, restarting it if needed."
+permissions: [read, shell]
+data_categories: [personal-knowledge]
+egress: []
+invoke: "/wiki"
+location: tools/flow-install/skills/wiki
+dependencies:
+  - tool: learning
+    description: "Machine-local preview command for the Harnessy personal learning library (PR #99); manages the OpenWiki launchd service"
+    check: "command -v learning"
+    required: true
+traces:
+  enabled: false
