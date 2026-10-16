@@ -433,3 +433,34 @@ export {
 	renderVerifyJson,
 	verifyJsonOutput,
 } from "./structured-output.ts";
+
+export {
+	initializeWorkspace,
+	inspectWorkspace,
+	parseWorkspaceManifest,
+	type ResolvedWorkspace,
+	readWorkspace,
+	registerWorkspaceProject,
+	resolveWorkspace,
+	resolveWorkspacePath,
+	WORKSPACE_MANIFEST,
+	type WorkspaceIssue,
+	type WorkspaceManifest,
+	type WorkspaceProject,
+	workspaceAgentContext,
+} from "./workspace.ts";
+
+export {
+	executeWorkspaceRelocation,
+	planWorkspaceRelocation,
+	type RelocationBackup,
+	type RelocationMove,
+	type RelocationPlan,
+	relocationTreeDigest,
+} from "./workspace-relocation.ts";
+export {
+	applyWorkspaceStateMigration,
+	planWorkspaceStateMigration,
+	type WorkspaceStateKind,
+	type WorkspaceStateMigration,
+} from "./workspace-state-migration.ts";
