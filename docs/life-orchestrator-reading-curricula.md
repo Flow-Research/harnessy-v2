@@ -1,8 +1,8 @@
 # Life Orchestrator reading curricula
 
 Life Orchestrator V2 can mix an ordered learning curriculum with current research in the daily `Worth Reading`
-section. Curriculum links use the same permanent delivery ledger as feed and research-agent links, so a published link
-is not recommended again.
+section. Curriculum links use the same permanent delivery ledger as feed and research-agent links. A link is not
+recommended again once its canonical URL has been published, even if it was first published from another source.
 
 Enable a curriculum in `~/.agents/life/config.json`:
 
@@ -29,5 +29,6 @@ With `max_per_brief` set to `2`, V2 reserves up to two curriculum readings first
 current research. A preview does not consume the pair. The pair advances only after the reviewed daily brief is
 published and its journal marker exists. At two readings per published brief, the curriculum lasts 39 days.
 
-Unknown, disabled, and duplicate curriculum entries are ignored. Set `enabled` to `false` to pause a curriculum
-without losing its place in the permanent ledger.
+Unknown, disabled, and duplicate curriculum entries are ignored. Set `enabled` to `false` (or remove the entry) to
+pause a curriculum without losing its place in the permanent ledger. While paused, its queued readings stay in the
+ledger but are not reserved for any brief.

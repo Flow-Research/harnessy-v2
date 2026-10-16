@@ -31,10 +31,30 @@ describe("Life Orchestrator reading curricula", () => {
 		]);
 
 		const deliveredFirst = {
-			identity: readingIdentity(first[0]!).identity,
+			...readingIdentity(first[0]!),
 			status: "delivered" as const,
 		};
 		expect(nextLifeCurriculumReadings(selection, [deliveredFirst]).map((item) => item.title)).toEqual([
+			"Bounties",
+			"Milestone-Based Funding",
+		]);
+	});
+
+	it("skips a curriculum link whose canonical URL was delivered from another source", () => {
+		const [first] = nextLifeCurriculumReadings(selection, []);
+		const deliveredFromRss = {
+			...readingIdentity({
+				url: `${first!.url}?utm_source=rss`,
+				title: first!.title,
+				topic: "Feed item",
+				publishedAt: null,
+				sourceName: "Gitcoin blog",
+				sourceKind: "rss",
+			}),
+			status: "delivered" as const,
+		};
+		expect(deliveredFromRss.identity).not.toBe(readingIdentity(first!).identity);
+		expect(nextLifeCurriculumReadings(selection, [deliveredFromRss]).map((item) => item.title)).toEqual([
 			"Bounties",
 			"Milestone-Based Funding",
 		]);

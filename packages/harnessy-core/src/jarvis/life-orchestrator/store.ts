@@ -273,7 +273,7 @@ delivered_brief=COALESCE(reading_candidates.delivered_brief,excluded.delivered_b
 		maximum = 3,
 		staleBefore = new Date(new Date(now).getTime() - 2 * 60 * 60 * 1_000).toISOString(),
 		sourceMaximums: ReadonlyMap<string, number> = new Map(),
-		preferredSources: ReadonlySet<string> = new Set(),
+		activeCurriculumSources: ReadonlySet<string> = new Set(),
 	): Effect.Effect<ReadonlyArray<LifeReadingCandidate>, LifeOrchestratorError> {
 		return this.#transact(() => {
 			this.#database
@@ -286,10 +286,18 @@ delivered_brief=COALESCE(reading_candidates.delivered_brief,excluded.delivered_b
 					"SELECT * FROM reading_candidates WHERE status='available' ORDER BY COALESCE(published_at,discovered_at) DESC,identity",
 				)
 				.all() as Array<Row>;
-			rows.sort((left, right) => {
+			const deliveredUrls = this.#deliveredCanonicalUrlSet();
+			// Rows of a curriculum that is no longer configured stay in the ledger (keeping delivered
+			// progress) but are not reserved until the curriculum is enabled again.
+			const eligible = rows.filter(
+				(row) =>
+					!nullableText(row, "source_id")?.startsWith("curriculum:") ||
+					activeCurriculumSources.has(text(row, "source_name")),
+			);
+			eligible.sort((left, right) => {
 				const preferredOrder =
-					Number(!preferredSources.has(text(left, "source_name"))) -
-					Number(!preferredSources.has(text(right, "source_name")));
+					Number(!activeCurriculumSources.has(text(left, "source_name"))) -
+					Number(!activeCurriculumSources.has(text(right, "source_name")));
 				if (preferredOrder !== 0) return preferredOrder;
 				const leftSourceId = nullableText(left, "source_id");
 				const rightSourceId = nullableText(right, "source_id");
@@ -300,13 +308,19 @@ delivered_brief=COALESCE(reading_candidates.delivered_brief,excluded.delivered_b
 			});
 			const sourceCounts = new Map<string, number>();
 			const selected: Array<Row> = [];
-			for (const row of rows) {
+			const selectedUrls = new Set<string>();
+			for (const row of eligible) {
 				if (selected.length >= maximum) break;
+				// The same canonical URL can exist under several identities (for example a curriculum
+				// entry and an RSS item); never select a delivered URL or the same URL twice.
+				const canonicalUrl = text(row, "canonical_url");
+				if (deliveredUrls.has(canonicalUrl) || selectedUrls.has(canonicalUrl)) continue;
 				const sourceName = text(row, "source_name");
 				const count = sourceCounts.get(sourceName) ?? 0;
 				const sourceMaximum = sourceMaximums.get(sourceName) ?? maximum;
 				if (count >= sourceMaximum) continue;
 				sourceCounts.set(sourceName, count + 1);
+				selectedUrls.add(canonicalUrl);
 				selected.push(row);
 			}
 			const update = this.#database.prepare(
@@ -359,6 +373,17 @@ delivered_brief=COALESCE(reading_candidates.delivered_brief,excluded.delivered_b
 				.all() as Array<Row>;
 			return new Set(rows.map((row) => text(row, "identity")));
 		});
+	}
+
+	deliveredCanonicalUrls(): Effect.Effect<ReadonlySet<string>, LifeOrchestratorError> {
+		return this.#read(() => this.#deliveredCanonicalUrlSet());
+	}
+
+	#deliveredCanonicalUrlSet(): Set<string> {
+		const rows = this.#database
+			.prepare("SELECT canonical_url FROM reading_candidates WHERE status='delivered'")
+			.all() as Array<Row>;
+		return new Set(rows.map((row) => text(row, "canonical_url")));
 	}
 
 	counts(): Effect.Effect<LifeReadingCounts, LifeOrchestratorError> {

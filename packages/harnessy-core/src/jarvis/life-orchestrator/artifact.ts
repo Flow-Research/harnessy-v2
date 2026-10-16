@@ -107,6 +107,7 @@ export const validateWorthReadingSection = (
 	markdown: string,
 	selected: ReadonlyArray<LifeReadingCandidate>,
 	deliveredIdentities: ReadonlySet<string>,
+	deliveredCanonicalUrls: ReadonlySet<string> = new Set(),
 ): void => {
 	const actual = extractWorthReadingUrls(markdown);
 	const expected = selected.map((candidate) => candidate.canonicalUrl);
@@ -116,7 +117,9 @@ export const validateWorthReadingSection = (
 			message: "Worth Reading does not exactly match the ledger reservation.",
 		});
 	}
-	const repeated = selected.find((candidate) => deliveredIdentities.has(candidate.identity));
+	const repeated = selected.find(
+		(candidate) => deliveredIdentities.has(candidate.identity) || deliveredCanonicalUrls.has(candidate.canonicalUrl),
+	);
 	if (repeated !== undefined) {
 		throw new LifeOrchestratorError({
 			code: "artifact_invalid",

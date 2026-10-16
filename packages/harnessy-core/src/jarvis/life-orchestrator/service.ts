@@ -496,14 +496,16 @@ export const runLifeDaily = (
 						for (const selection of settings.curricula) {
 							sourceMaximums.set(selection.curriculum.name, selection.maxPerBrief);
 						}
-						const preferredSources = new Set(settings.curricula.map((selection) => selection.curriculum.name));
+						const activeCurriculumSources = new Set(
+							settings.curricula.map((selection) => selection.curriculum.name),
+						);
 						const selected = yield* ledger.reserve(
 							runId,
 							now.toISOString(),
 							settings.maximumReadings,
 							staleBefore,
 							sourceMaximums,
-							preferredSources,
+							activeCurriculumSources,
 						);
 						const execute = Effect.gen(function* () {
 							mkdirSync(settings.paths.reviewDirectory, { recursive: true, mode: 0o700 });
@@ -617,6 +619,7 @@ export const runLifeDaily = (
 								);
 							}
 							const delivered = yield* ledger.deliveredIdentities();
+							const deliveredUrls = yield* ledger.deliveredCanonicalUrls();
 							const reviewed = replaceWorthReadingSection(draft, selected, now);
 							if (Buffer.byteLength(reviewed, "utf8") > maximumOutputBytes)
 								return yield* Effect.fail(
@@ -626,7 +629,7 @@ export const runLifeDaily = (
 									}),
 								);
 							yield* Effect.try({
-								try: () => validateWorthReadingSection(reviewed, selected, delivered),
+								try: () => validateWorthReadingSection(reviewed, selected, delivered, deliveredUrls),
 								catch: (cause) =>
 									cause instanceof LifeOrchestratorError
 										? cause

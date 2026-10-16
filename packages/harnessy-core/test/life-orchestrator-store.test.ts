@@ -343,4 +343,108 @@ PRAGMA user_version = 1;`);
 			ledger.close();
 		}
 	});
+	it("does not reserve rows of a curriculum that is no longer configured", async () => {
+		const ledger = await Effect.runPromise(LifeReadingLedger.open(makeDatabasePath()));
+		try {
+			await Effect.runPromise(
+				ledger.upsertCandidates(
+					[
+						{
+							url: "https://gitcoin.co/mechanisms/direct-grants",
+							title: "Direct Grants",
+							topic: "Funding",
+							publishedAt: null,
+							sourceName: "Gitcoin funding mechanisms",
+							sourceKind: "curated",
+							sourceId: "curriculum:gitcoin-funding-mechanisms:001",
+						},
+						{
+							url: "https://example.com/current",
+							title: "Current research",
+							topic: "Current research",
+							publishedAt: "2026-09-13T00:00:00.000Z",
+							sourceName: "Research Press",
+							sourceKind: "rss",
+						},
+					],
+					"2026-09-13T04:15:00.000Z",
+				),
+			);
+			const paused = await Effect.runPromise(
+				ledger.reserve("daily:2026-09-13", "2026-09-13T05:30:00.000Z", 3, "2026-09-13T04:00:00.000Z"),
+			);
+			expect(paused.map((candidate) => candidate.title)).toEqual(["Current research"]);
+			expect(await Effect.runPromise(ledger.counts())).toMatchObject({ available: 1, reserved: 1 });
+
+			const resumed = await Effect.runPromise(
+				ledger.reserve(
+					"daily:2026-09-14",
+					"2026-09-14T05:30:00.000Z",
+					3,
+					"2026-09-14T04:00:00.000Z",
+					new Map(),
+					new Set(["Gitcoin funding mechanisms"]),
+				),
+			);
+			// The stale cutoff also releases the earlier run's reservation; the curriculum row now leads.
+			expect(resumed.map((candidate) => candidate.title)).toEqual(["Direct Grants", "Current research"]);
+		} finally {
+			ledger.close();
+		}
+	});
+
+	it("never reserves a canonical URL that was delivered or is already selected under another identity", async () => {
+		const ledger = await Effect.runPromise(LifeReadingLedger.open(makeDatabasePath()));
+		try {
+			await Effect.runPromise(
+				ledger.backfillDelivered([
+					{
+						url: "https://gitcoin.co/mechanisms/direct-grants",
+						briefPath: "/brief.md",
+						deliveredAt: "2026-09-01T05:30:00.000Z",
+					},
+				]),
+			);
+			await Effect.runPromise(
+				ledger.upsertCandidates(
+					[
+						...(["direct-grants", "bounties"] as const).map((slug, index) => ({
+							url: `https://gitcoin.co/mechanisms/${slug}`,
+							title: `Curriculum ${slug}`,
+							topic: "Funding",
+							publishedAt: null,
+							sourceName: "Gitcoin funding mechanisms",
+							sourceKind: "curated" as const,
+							sourceId: `curriculum:gitcoin-funding-mechanisms:00${index + 1}`,
+						})),
+						{
+							url: "https://gitcoin.co/mechanisms/bounties?utm_source=rss",
+							title: "Feed bounties",
+							topic: "Funding",
+							publishedAt: "2026-09-13T00:00:00.000Z",
+							sourceName: "Gitcoin blog",
+							sourceKind: "rss",
+						},
+					],
+					"2026-09-13T04:15:00.000Z",
+				),
+			);
+			expect(await Effect.runPromise(ledger.deliveredCanonicalUrls())).toEqual(
+				new Set(["https://gitcoin.co/mechanisms/direct-grants"]),
+			);
+			const reserved = await Effect.runPromise(
+				ledger.reserve(
+					"daily:2026-09-13",
+					"2026-09-13T05:30:00.000Z",
+					3,
+					"2026-09-13T04:00:00.000Z",
+					new Map(),
+					new Set(["Gitcoin funding mechanisms"]),
+				),
+			);
+			expect(reserved.map((candidate) => candidate.title)).toEqual(["Curriculum bounties"]);
+		} finally {
+			ledger.close();
+		}
+	});
 });

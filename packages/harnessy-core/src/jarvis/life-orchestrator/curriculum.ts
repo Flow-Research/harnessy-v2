@@ -213,16 +213,23 @@ const curriculumInput = (
 	sourceId: `curriculum:${curriculum.id}:${String(index + 1).padStart(3, "0")}`,
 });
 
-/** Select the next ordered readings, keeping the same pair until delivery succeeds. */
+/**
+ * Select the next ordered readings, keeping the same pair until delivery succeeds.
+ * A reading counts as delivered when its curriculum identity or its canonical URL was delivered,
+ * so links already published from another source are never recommended again.
+ */
 export const nextLifeCurriculumReadings = (
 	selection: LifeCurriculumSelection,
-	existing: ReadonlyArray<Pick<LifeReadingCandidate, "identity" | "status">>,
+	existing: ReadonlyArray<Pick<LifeReadingCandidate, "identity" | "canonicalUrl" | "status">>,
 ): ReadonlyArray<LifeReadingInput> => {
-	const delivered = new Set(
-		existing.filter((candidate) => candidate.status === "delivered").map((candidate) => candidate.identity),
-	);
+	const deliveredRows = existing.filter((candidate) => candidate.status === "delivered");
+	const deliveredIdentities = new Set(deliveredRows.map((candidate) => candidate.identity));
+	const deliveredUrls = new Set(deliveredRows.map((candidate) => candidate.canonicalUrl));
 	return selection.curriculum.items
 		.map((item, index) => curriculumInput(selection.curriculum, item, index))
-		.filter((input) => !delivered.has(readingIdentity(input).identity))
+		.filter((input) => {
+			const { identity, canonicalUrl } = readingIdentity(input);
+			return !deliveredIdentities.has(identity) && !deliveredUrls.has(canonicalUrl);
+		})
 		.slice(0, Math.max(0, selection.maxPerBrief));
 };
