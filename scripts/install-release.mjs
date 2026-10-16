@@ -4,6 +4,7 @@ import { chmodSync, constants, copyFileSync, existsSync, lstatSync, mkdirSync, r
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { satisfies } from "semver";
+import { formatNpmAuditReport, runNpmAudit } from "./npm-audit-lib.mjs";
 import { stageV1Compatibility } from "./v1-compatibility-lib.mjs";
 import { installLocalJarvisRuntime } from "./install-local-jarvis-runtime.mjs";
 import { stageLocalServiceRuntime } from "./stage-local-service-runtime.mjs";
@@ -154,10 +155,12 @@ async function stageRelease(inspected, destination) {
 	mkdirSync(target, { mode: 0o700 });
 	writeFileSync(join(target, "package.json"), JSON.stringify({ private: true, dependencies, overrides: dependencies }, null, 2));
 	const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-	for (const args of [["install", "--omit=dev", "--ignore-scripts"], ["audit", "--omit=dev", "--audit-level=moderate"]]) {
-		const result = spawnSync(npm, args, { cwd: target, stdio: "inherit", shell: process.platform === "win32" });
-		if (result.error || result.status !== 0) throw new Error("Release installation failed; incomplete directory preserved for inspection");
-	}
+	const installed = spawnSync(npm, ["install", "--omit=dev", "--ignore-scripts"], { cwd: target, stdio: "inherit", shell: process.platform === "win32" });
+	if (installed.error || installed.status !== 0) throw new Error("Release installation failed; incomplete directory preserved for inspection");
+	// Moderate or higher advisories fail installation unless an exact, unexpired reviewed exception covers them.
+	const audit = runNpmAudit({ cwd: target, omitDev: true, npm });
+	process.stdout.write(`${formatNpmAuditReport(audit)}\n`);
+	if (!audit.ok) throw new Error("Release installation failed; incomplete directory preserved for inspection");
 	const modules = join(target, "node_modules");
 	const service = stageLocalServiceRuntime(modules, join(target, "service"));
 	await stageV1Compatibility(join(modules, "@harnessy/capability-harnessy-v1-full"), join(target, "reused-source"));
