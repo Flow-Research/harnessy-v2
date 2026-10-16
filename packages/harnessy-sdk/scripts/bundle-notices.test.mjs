@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -13,7 +14,10 @@ test("a real SDK bundle emits notices into a previously absent output directory"
 	const output = join(root, "dist");
 	assert.equal(existsSync(output), false);
 	const packageRoot = fileURLToPath(new URL("../", import.meta.url));
-	const result = spawnSync(process.execPath, [join(packageRoot, "../../node_modules/tsup/dist/cli-default.js"), "--out-dir", output, "--no-dts"], {
+	// Resolve tsup the way the package does: npm may hoist it or nest it under this workspace.
+	const tsupPackage = createRequire(join(packageRoot, "package.json")).resolve("tsup/package.json");
+	const tsupCli = join(dirname(tsupPackage), JSON.parse(readFileSync(tsupPackage, "utf8")).bin.tsup);
+	const result = spawnSync(process.execPath, [tsupCli, "--out-dir", output, "--no-dts"], {
 		cwd: packageRoot, encoding: "utf8", timeout: 60_000,
 	});
 	assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
