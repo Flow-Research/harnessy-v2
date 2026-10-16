@@ -1,0 +1,9 @@
+[
+	{
+		"package": "@modelcontextprotocol/sdk",
+		"url": "https://github.com/advisories/GHSA-6qxp-vccf-f47h",
+		"vulnerableVersions": ">=1.12.0 <1.31.0",
+		"reason": "Cloudflare agents pins @modelcontextprotocol/sdk 1.29.0 exactly in every release (0.17.x through 0.26.0), so no agents release uses the fixed SDK, and forcing 1.32.1 leaves an invalid tree that npm sbom rejects. Only the copy nested under agents is affected; every other consumer resolves 1.32.1. Remove when agents ships a patched SDK or the engine migrates off agents 0.17.",
+		"expires": "2026-11-07"
+	}
+]
