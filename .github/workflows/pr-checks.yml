@@ -1,0 +1,31 @@
+name: PR Checks
+
+# Lightweight checks split from ci.yml so that editing a PR description re-runs only
+# the template lint, not the full build and QA workflow.
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  credential-scan:
+    name: Credential Scanner
+    # A description edit changes no code, so the scan runs only on code events.
+    if: github.event.action != 'edited'
+    uses: Flow-Research/.github/.github/workflows/credential-scanner.yml@e519272096a29214dc6f4f36f1a7de2fc6fba96a
+
+  pr-lint:
+    name: PR Template Check
+    if: github.event_name == 'pull_request'
+    uses: Flow-Research/.github/.github/workflows/pr-template-linter.yml@e519272096a29214dc6f4f36f1a7de2fc6fba96a
+    with:
+      pr-body: ${{ github.event.pull_request.body }}
