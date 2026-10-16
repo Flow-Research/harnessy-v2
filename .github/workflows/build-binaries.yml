@@ -150,7 +150,7 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Audit root dependencies
-        run: npm audit --audit-level=moderate
+        run: npm run audit:root
 
       - name: Audit Executor dependency graph
         run: npm run audit:executor
