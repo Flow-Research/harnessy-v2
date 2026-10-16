@@ -16,6 +16,11 @@
 			"path": "qa/api/scripts/meeting-publication.md",
 			"app": "harnessy-v2",
 			"layer": "api"
+		},
+		{
+			"path": "qa/api/scripts/meeting-context.md",
+			"app": "harnessy-v2",
+			"layer": "api"
 		}
 	],
 	"apps": [
@@ -100,6 +105,11 @@
 				"prefix": "MEET",
 				"slug": "meeting-publication-migration",
 				"name": "Meeting publication migration"
+			},
+			{
+				"prefix": "MCTX",
+				"slug": "meeting-context-catalog",
+				"name": "Meeting context catalog"
 			}
 		]
 	}

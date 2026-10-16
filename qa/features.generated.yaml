@@ -18,6 +18,21 @@
       "scenario_count": 1
     },
     {
+      "slug": "meeting-context-catalog",
+      "name": "Meeting context catalog",
+      "id_prefix": "MCTX",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/meeting-context.md"
+      ],
+      "scenario_count": 6
+    },
+    {
       "slug": "meeting-publication-migration",
       "name": "Meeting publication migration",
       "id_prefix": "MEET",
