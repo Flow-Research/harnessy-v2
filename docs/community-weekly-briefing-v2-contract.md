@@ -130,6 +130,43 @@ to reactivate V1 writers. See `PORT_MAP.md` for current verified implementation
 evidence and the migration runbook for operational authorization. This document
 does not establish current live scheduling or publication ownership.
 
+## Source traversal scope (deviation from the V1 operations contract)
+
+The preserved V1 operations document says collection is semantic across the
+contributor's whole private context root, with non-meeting context dated by its
+local modification time. V2 deliberately narrows that. A whole-tree walk of a
+real private root exceeded the collector's 10,000-entry safety limit, so the
+review service failed at startup with `directory entry limit exceeded`.
+
+The installed collector correction now prunes before descending:
+
+- private-category folders (`archive`, `transcripts`, `hiring` and the rest of
+  `_EXCLUDED_PARTS`) are never opened;
+- `YYYY`, `YYYY/Mmm` and `YYYY/Mmm/DD-*` folders are skipped when their whole
+  date range lies more than seven days (`_DATED_MARGIN`) outside the target
+  week; undated folders and names outside that convention are always walked.
+
+The depth, byte, link, special-file and entry limits still apply to everything
+walked, and the service still fails closed when they are exceeded. Review
+startup checks only undated folders; each generation and collection checks its
+own week before reading it.
+
+Consequence: a file inside a dated folder more than seven days outside the week
+is not collected, even when its `Date:` line or modification time falls in the
+week. A read-only measurement against the live private root on 16 October 2026
+found 0 to 3 such files per week for the weeks of 21 September to 19 October
+(for example, a README edited weeks after its dated folder was created). The week of 14
+September lost 654 files, but their in-week dates came from a bulk
+modification-time change during that week, not from new evidence.
+
+An alternative that also listed the direct files of pruned dated folders was
+measured and rejected: it walked about 4,500 more entries per week, exceeded
+the limit for the weeks of 28 September and 5 October, and its cost grows with
+all dated history. Collection skip counts report pruned dated folders as
+`pruned_outside_week` (one per folder), separately from the per-file
+`outside_week` count. A pruned private-category folder counts once in
+`private_category`, where V1 counted each file inside it.
+
 ## Remaining persistent-publication change
 
 The existing one-shot envelope signs a briefing ID, revision hash, queue/engine

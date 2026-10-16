@@ -256,6 +256,9 @@ def iter_content_files(
     inclusive (first, last) week window, dated folders that cannot hold that week
     are pruned too; undated_only prunes every dated folder. Undated folders are
     always traversed, and every traversed entry counts toward the entry limit.
+    Each pruned private-category folder counts once in pruned["private_category"]
+    (V1 counted each file in it); each dated folder pruned for the week counts once
+    in pruned["pruned_outside_week"], apart from the per-file "outside_week" count.
     """
     generated = {
         ".git",
@@ -295,7 +298,7 @@ def iter_content_files(
                             first, last, child = span
                             if undated_only or (window is not None and (last < low or first > high)):
                                 if pruned is not None:
-                                    pruned["outside_week"] += 1
+                                    pruned["pruned_outside_week"] += 1
                                 continue
                     pending.append((Path(entry.path), child))
                 elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:

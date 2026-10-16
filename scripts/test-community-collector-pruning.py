@@ -63,7 +63,9 @@ class CollectorPruningTests(unittest.TestCase):
         result = self.collect()
         self.assertEqual([source.title for source in result.sources], ["Community Sync"])
         self.assertEqual(result.files_seen, 1)
-        self.assertEqual(result.skipped["outside_week"], 1)
+        # Pruned folders are counted apart from per-file skips.
+        self.assertEqual(result.skipped["pruned_outside_week"], 1)
+        self.assertNotIn("outside_week", result.skipped)
 
     def test_year_and_month_levels_outside_the_window_are_pruned_before_descent(self):
         plant_fifo(self.root / "notes/2025")
@@ -76,7 +78,7 @@ class CollectorPruningTests(unittest.TestCase):
         result = self.collect()
         self.assertEqual(sorted(source.title for source in result.sources), ["October Update", "Year Level Overview"])
         # 2025, Aug, Nov/30, Sep, 2027: each pruned folder counts once.
-        self.assertEqual(result.skipped["outside_week"], 5)
+        self.assertEqual(result.skipped["pruned_outside_week"], 5)
 
     def test_window_margin_is_inclusive_at_each_boundary(self):
         in_week = date(2026, 10, 14)
@@ -94,6 +96,20 @@ class CollectorPruningTests(unittest.TestCase):
         for folder in ("2026/Sep/27-g", "2026/Sep/28-h"):
             write_source(self.root / "flow/docs" / folder / "note.md", folder, date(2026, 10, 7))
         self.assertEqual(self.titles(week), ["2026/Sep/28-h"])
+
+    def test_month_is_pruned_only_when_it_ends_before_the_margin(self):
+        # Week 2026-06-08..14 has low edge 2026-06-01, so all of May (ending
+        # 2026-05-31) lies outside it and an undated folder inside May is never
+        # opened. One day earlier (low edge 2026-05-31) May must be traversed.
+        plant_fifo(self.root / "flow/docs/2026/May/notes")
+        result = self.collect((date(2026, 6, 8), date(2026, 6, 14)))
+        self.assertEqual(result.skipped["pruned_outside_week"], 1)
+        with self.assertRaisesRegex(ValueError, "linked or special content refused"):
+            self.collect((date(2026, 6, 7), date(2026, 6, 13)))
+        (self.root / "flow/docs/2026/May/notes/refused.md").unlink()
+        write_source(self.root / "flow/docs/2026/May/notes/late.md", "Late May Notes", date(2026, 6, 9))
+        self.assertEqual(self.titles((date(2026, 6, 7), date(2026, 6, 13))), ["Late May Notes"])
+        self.assertEqual(self.titles((date(2026, 6, 8), date(2026, 6, 14))), [])
 
     def test_undated_and_unconventional_folders_are_always_traversed(self):
         in_week = date(2026, 10, 14)
@@ -130,6 +146,7 @@ class CollectorPruningTests(unittest.TestCase):
         write_source(self.root / "flow/meetings/2026/Oct/14-sync/notes.md", "Synced Notes", date(2026, 10, 14))
         result = self.collect()
         self.assertEqual([source.title for source in result.sources], ["Synced Notes"])
+        # One count per pruned folder: Archive, transcripts and hiring.
         self.assertEqual(result.skipped["private_category"], 3)
 
     def test_safety_bounds_still_apply_to_traversed_folders(self):

@@ -5,7 +5,7 @@ const ORIGINAL_DIGEST = "2f69c284c3ac5bd47ccc657e76c2f344c1186c1b11fb33fa56e09e3
 /** The first V2 correction: bounded traversal without week pruning. Upgraded in place. */
 const PREVIOUS_CORRECTED_DIGEST = "d8c93d4290f4a449aaff22f1aec95149ec3ae99688b7d7f72f98ab747631801d";
 /** The canonical corrected collector shipped in the V1 capability resources. */
-const CORRECTED_DIGEST = "f6146baa6efbfb5a7a85328168f6e8ce8fa842b205f45325e6d3dd15b0cbfcd5";
+const CORRECTED_DIGEST = "171fdd61fca3f14d9bbbcc3fea33ae27bae2440eb5648346b680157b8fd530a0";
 
 const PREVIOUS_HELPER_MARKER = "\n\ndef iter_content_files(";
 const PREVIOUS_LOOP = 'sorted(path for path in iter_content_files(root) if path.suffix == ".md")';
@@ -65,6 +65,9 @@ def iter_content_files(
     inclusive (first, last) week window, dated folders that cannot hold that week
     are pruned too; undated_only prunes every dated folder. Undated folders are
     always traversed, and every traversed entry counts toward the entry limit.
+    Each pruned private-category folder counts once in pruned["private_category"]
+    (V1 counted each file in it); each dated folder pruned for the week counts once
+    in pruned["pruned_outside_week"], apart from the per-file "outside_week" count.
     """
     generated = {
         ".git",
@@ -104,7 +107,7 @@ def iter_content_files(
                             first, last, child = span
                             if undated_only or (window is not None and (last < low or first > high)):
                                 if pruned is not None:
-                                    pruned["outside_week"] += 1
+                                    pruned["pruned_outside_week"] += 1
                                 continue
                     pending.append((Path(entry.path), child))
                 elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:

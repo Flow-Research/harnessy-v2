@@ -2539,9 +2539,9 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "9c01d1892e42bc08ae716df928598b27a4ab80ac0d8b659683de65204c83f2fd",
+    "digest": "0445778a5cb2be813c61199cb700c90facc50babb9c5a073696fffec85028bb2",
     "fileCount": 712,
-    "byteCount": 4979359
+    "byteCount": 4979616
   },
   "projections": [
     {
@@ -2564,9 +2564,9 @@
       "id": "jarvis-cli",
       "source": "jarvis-cli",
       "projection": "jarvis-cli",
-      "digest": "ef0a4541b97f22f77ebd4f3cdcbd4b9226aeeff7e82b951d865263bae46856d6",
+      "digest": "3215d66257442f6b4b96097e73fea104c581665a670111c528894a1bf9fa65fa",
       "fileCount": 282,
-      "byteCount": 2743723
+      "byteCount": 2743980
     },
     {
       "id": "root-installer",
