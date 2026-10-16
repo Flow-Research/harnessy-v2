@@ -5,10 +5,13 @@ import { Command } from "effect/unstable/cli";
 
 import { rootCommand } from "./commands.ts";
 import { HARNESSY_VERSION } from "./constants.ts";
+import { JarvisConfigReader } from "./jarvis/config.ts";
+import { JarvisCredentialResolver } from "./jarvis/credentials.ts";
 import { JarvisDiagnostic } from "./jarvis/diagnostic.ts";
 import { JarvisParityReporter } from "./jarvis/parity-report.ts";
-import { JarvisRuntimeRoots } from "./jarvis/paths.ts";
+import { JarvisPathResolver, JarvisRuntimeRoots } from "./jarvis/paths.ts";
 import { HarnessProject } from "./operations.ts";
+import { CommandRunner } from "./runtime/command-runner.ts";
 
 /** Render Effect failures as concise CLI output by default. */
 const renderCliError = (cause: Cause.Cause<unknown>): string => {
@@ -26,8 +29,12 @@ const runCli = Command.run(rootCommand, {
 const program = runCli.pipe(
 	Effect.provide(HarnessProject.layer),
 	Effect.provide(JarvisDiagnostic.liveLayer),
+	Effect.provide(JarvisConfigReader.liveLayer),
+	Effect.provide(JarvisCredentialResolver.liveLayer),
 	Effect.provide(JarvisParityReporter.layer),
+	Effect.provide(JarvisPathResolver.layer),
 	Effect.provide(JarvisRuntimeRoots.liveLayer),
+	Effect.provide(CommandRunner.layer),
 	Effect.provide(NodeServices.layer),
 	Effect.catchCause((cause) =>
 		Effect.sync(() => {

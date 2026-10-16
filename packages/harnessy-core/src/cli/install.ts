@@ -142,17 +142,17 @@ export const bootstrapCommand = Command.make(
 					scriptsDir: Option.getOrUndefined(scriptsDir),
 				},
 			});
+			const failedExternal = result.bootstrap.actions.filter((action) => action.status === "failed");
 			yield* Console.log(
 				result.dryRun
 					? `Dry run: Harnessy bootstrap ${result.mode} for ${result.bootstrap.targetRoot}`
-					: `Bootstrapped Harnessy ${result.mode} for ${result.bootstrap.targetRoot}`,
+					: `${failedExternal.length > 0 ? "Incomplete bootstrap of" : "Bootstrapped"} Harnessy ${result.mode} for ${result.bootstrap.targetRoot}`,
 			);
 			yield* Console.log(`Installer source: ${result.bootstrap.flowRoot}`);
 			yield* logWrittenFiles(result.written);
 			const externalActions = result.bootstrap.actions.filter((action) => action.unsafeExternal);
 			const plannedExternal = externalActions.filter((action) => action.status === "planned");
 			const executedExternal = externalActions.filter((action) => action.status === "written");
-			const failedExternal = externalActions.filter((action) => action.status === "failed");
 			if (plannedExternal.length > 0) {
 				yield* Console.log(`Planned external bootstrap actions: ${plannedExternal.length}`);
 			}
@@ -170,6 +170,12 @@ export const bootstrapCommand = Command.make(
 						: action.run?.status);
 				yield* Console.log(`Failed external bootstrap action: ${action.label}${detail ? ` (${detail})` : ""}`);
 			}
+			if (failedExternal.length > 0)
+				return yield* Effect.fail(
+					new HarnessError({
+						message: "Bootstrap incomplete: external actions failed; completed files were preserved.",
+					}),
+				);
 		}),
 ).pipe(Command.withDescription("Prepare or apply v1 install.sh bootstrap behavior"));
 

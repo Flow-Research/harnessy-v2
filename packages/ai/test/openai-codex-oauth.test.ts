@@ -448,4 +448,24 @@ describe("OpenAI Codex OAuth", () => {
 		);
 		expect(consoleError).not.toHaveBeenCalled();
 	});
+
+	it("bounds refresh and propagates cancellation without permitting redirects", async () => {
+		const controller = new AbortController();
+		let refreshSignal: AbortSignal | undefined;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (_input: unknown, init?: RequestInit): Promise<Response> => {
+				expect(init?.redirect).toBe("error");
+				refreshSignal = init?.signal ?? undefined;
+				expect(refreshSignal).toBeInstanceOf(AbortSignal);
+				return new Promise((_resolve, reject) => {
+					refreshSignal!.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+				});
+			}),
+		);
+		const pending = refreshOpenAICodexToken("synthetic-refresh", controller.signal);
+		controller.abort();
+		await expect(pending).rejects.toThrow("cancelled");
+		expect(refreshSignal?.aborted).toBe(true);
+	});
 });

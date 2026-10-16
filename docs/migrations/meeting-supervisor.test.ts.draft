@@ -1,0 +1,98 @@
+import { createHash } from "node:crypto";
+import { chmodSync, cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { type MeetingSupervisorInput, runMeetingSupervisor } from "../src/meeting-supervisor.ts";
+
+const roots: Array<string> = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const pin = (path: string) => ({ path, sha256: createHash("sha256").update(readFileSync(path)).digest("hex") });
+const guard = resolve(dirname(fileURLToPath(import.meta.url)), "support/fixture-network-guard.mjs");
+const setup = (mode = "normal", issuerMode = "normal") => {
+	const root = mkdtempSync(join(realpathSync(tmpdir()), "meeting-supervisor-")); roots.push(root); chmodSync(root, 0o700);
+	const runtime = join(root, "node"); cpSync(realpathSync(process.execPath), runtime); chmodSync(runtime, 0o500);
+	const queuePath = join(root, "queue.sqlite3");
+	const replayPath = join(root, "replay.sqlite3");
+	for (const [path, schema] of [[queuePath, "CREATE TABLE publication_items(status TEXT,lease_until TEXT); INSERT INTO publication_items VALUES('approved',NULL)"],
+		[replayPath, "CREATE TABLE active_lease(pid INTEGER)"]] as const) {
+		const database = new DatabaseSync(path); database.exec(schema); database.close(); chmodSync(path, 0o600);
+	}
+	const first = join(root, "first.json"); const next = join(root, "next.json"); const trustPath = join(root, "trust.json");
+	writeFileSync(first, JSON.stringify({ id: "first", mode }), { mode: 0o600 });
+	writeFileSync(next, JSON.stringify({ id: "next", mode: "normal" }), { mode: 0o600 });
+	writeFileSync(trustPath, "{}", { mode: 0o600 });
+	const entry = join(root, "child.mjs");
+	writeFileSync(entry, `import ${JSON.stringify(guard)};
+import {readFileSync} from 'node:fs'; import {DatabaseSync} from 'node:sqlite';
+const input=JSON.parse(readFileSync(process.argv[process.argv.indexOf('--authorization')+1],'utf8'));
+if(process.env.PRIVATE_SIGNER_SECRET || process.env.NODE_OPTIONS) process.exit(8);
+if(input.mode==='crash') process.exit(9);
+const replay=new DatabaseSync(${JSON.stringify(replayPath)}); replay.exec('INSERT INTO active_lease VALUES('+process.pid+')');
+process.on('SIGUSR2',()=>{replay.exec('DELETE FROM active_lease');replay.close();
+if(input.mode==='publishing'){const q=new DatabaseSync(${JSON.stringify(queuePath)});q.exec("UPDATE publication_items SET status='publishing'");q.close();}
+process.exit(0);});
+process.stdout.write(JSON.stringify({kind:'harnessy.meeting-publication.full-review-ready',origin:'http://127.0.0.1:8770',authorizationId:input.id,expiresAt:new Date(Date.now()+1000).toISOString(),runtimeMode:input.mode==='bounded'?'bounded':'long_running'})+'\\n');
+setInterval(()=>{},1000);
+`, { mode: 0o600 });
+	const issuer = join(root, "issuer.mjs");
+	writeFileSync(issuer, `import ${JSON.stringify(guard)};
+import {writeFileSync} from 'node:fs';
+if(process.env.PRIVATE_SIGNER_SECRET || process.env.NODE_OPTIONS) process.exit(8);
+let input='';for await(const chunk of process.stdin)input+=chunk;
+const request=JSON.parse(input);if(request.predecessorAuthorizationId!=='first'||!request.requestId)process.exit(7);
+writeFileSync(${JSON.stringify(join(root, "issuer-called"))},'yes',{mode:0o600});
+${issuerMode === "timeout" ? "setInterval(()=>{},1000);" : issuerMode === "malformed" ? "process.stdout.write('bad');" : `process.stdout.write(JSON.stringify({authorizationPath:${JSON.stringify(next)}})+'\\n');`}
+`, { mode: 0o600 });
+	const trust = statSync(trustPath);
+	const input: MeetingSupervisorInput = { runtime: pin(runtime), fullReviewEntry: pin(entry),
+		initial: { authorizationPath: first, trustedKeyring: { ...pin(trustPath), device: String(trust.dev), inode: String(trust.ino) } },
+		queuePath, replayPath, issuer: { ...pin(runtime), args: [issuer] }, renewalLeadMs: 31_000, startupTimeoutMs: 5000, issuerTimeoutMs: 500 };
+	return { input, root };
+};
+
+describe("meeting supervisor subprocess protocol (not signed Core acceptance)", () => {
+	it("drains before issuing, starts one replacement and scrubs inherited credentials", async () => {
+		const { input } = setup(); const controller = new AbortController(); const ids: Array<string> = [];
+		const previous = process.env.PRIVATE_SIGNER_SECRET; process.env.PRIVATE_SIGNER_SECRET = "synthetic-only";
+		try {
+			expect(await runMeetingSupervisor(input, { signal: controller.signal, onReady: (ready) => {
+				ids.push(ready.authorizationId); if (ids.length === 2) controller.abort();
+			} })).toEqual({ renewals: 1 });
+			expect(ids).toEqual(["first", "next"]);
+			const replay = new DatabaseSync(input.replayPath, { readOnly: true });
+			try { expect(replay.prepare("SELECT COUNT(*) AS count FROM active_lease").get()?.count).toBe(0); } finally { replay.close(); }
+		} finally { if (previous === undefined) delete process.env.PRIVATE_SIGNER_SECRET; else process.env.PRIVATE_SIGNER_SECRET = previous; }
+	});
+	for (const mode of ["crash", "bounded", "publishing"]) {
+		it(`refuses renewal for ${mode}`, async () => {
+			const { input, root } = setup(mode);
+			await expect(runMeetingSupervisor(input, { signal: new AbortController().signal })).rejects.toMatchObject({
+				code: mode === "publishing" ? "reconciliation_required" : "child_failed",
+			});
+			expect(() => readFileSync(join(root, "issuer-called"))).toThrow();
+		});
+	}
+	for (const mode of ["malformed", "timeout"]) {
+		it(`stops after ${mode} issuer without restarting`, async () => {
+			const { input } = setup("normal", mode);
+			await expect(runMeetingSupervisor(input, { signal: new AbortController().signal })).rejects.toMatchObject({
+				code: mode === "timeout" ? "issuer_failed" : "unsafe_input",
+			});
+		});
+	}
+	it("does not clear an existing activation lease", async () => {
+		const { input } = setup(); const db = new DatabaseSync(input.replayPath); db.exec("INSERT INTO active_lease VALUES(123)"); db.close();
+		await expect(runMeetingSupervisor(input, { signal: new AbortController().signal })).rejects.toMatchObject({ code: "reconciliation_required" });
+		const current = new DatabaseSync(input.replayPath, { readOnly: true });
+		try { expect(current.prepare("SELECT pid FROM active_lease").get()?.pid).toBe(123); } finally { current.close(); }
+	});
+	it("rejects artifact drift before any child starts", async () => {
+		const { input } = setup(); writeFileSync(input.fullReviewEntry.path, "process.exit(0)");
+		await expect(runMeetingSupervisor(input, { signal: new AbortController().signal })).rejects.toMatchObject({ code: "unsafe_input" });
+	});
+});

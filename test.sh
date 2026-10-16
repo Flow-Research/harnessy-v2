@@ -1,28 +1,41 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-AUTH_FILE="$HOME/.pi/agent/auth.json"
-AUTH_BACKUP="$HOME/.pi/agent/auth.json.bak"
+repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+temporary_base=${TMPDIR:-/tmp}
+test_home=$(mktemp -d "${temporary_base%/}/harnessy-test-home.XXXXXX")
 
-# Restore auth.json on exit (success or failure)
 cleanup() {
-    if [[ -f "$AUTH_BACKUP" ]]; then
-        mv "$AUTH_BACKUP" "$AUTH_FILE"
-        echo "Restored auth.json"
-    fi
+    rm -rf -- "$test_home"
 }
 trap cleanup EXIT
 
-# Move auth.json out of the way
-if [[ -f "$AUTH_FILE" ]]; then
-    mv "$AUTH_FILE" "$AUTH_BACKUP"
-    echo "Moved auth.json to backup"
-fi
+required_build_artifacts=(
+    "packages/tui/dist/index.js"
+    "packages/ai/dist/index.js"
+    "packages/agent/dist/index.js"
+    "packages/coding-agent/dist/index.js"
+    "packages/orchestrator/dist/index.js"
+    "packages/harnessy-core/dist/index.js"
+    "packages/harnessy-engine/dist/index.js"
+)
 
-# Skip local LLM tests (ollama, lmstudio)
+for artifact in "${required_build_artifacts[@]}"; do
+    if [[ ! -f "$repository_root/$artifact" ]]; then
+        echo "Build artifact $artifact is missing; building the workspace first."
+        npm --prefix "$repository_root" run build
+        break
+    fi
+done
+
+# Tests must not discover credentials or user-global Harnessy state.
+export HOME="$test_home"
+export XDG_CONFIG_HOME="$test_home/.config"
+export XDG_DATA_HOME="$test_home/.local/share"
+export XDG_STATE_HOME="$test_home/.local/state"
 export PI_NO_LOCAL_LLM=1
 
-# Unset API keys (see packages/ai/src/stream.ts getEnvApiKey)
+# See packages/ai/src/stream.ts getEnvApiKey.
 unset ANTHROPIC_API_KEY
 unset ANTHROPIC_OAUTH_TOKEN
 unset ANT_LING_API_KEY
@@ -74,5 +87,5 @@ unset AWS_CONTAINER_CREDENTIALS_FULL_URI
 unset AWS_WEB_IDENTITY_TOKEN_FILE
 unset BEDROCK_EXTENSIVE_MODEL_TEST
 
-echo "Running tests without API keys..."
-npm test
+echo "Running workspace tests in an isolated home without API keys."
+npm --prefix "$repository_root" run test --workspaces --if-present

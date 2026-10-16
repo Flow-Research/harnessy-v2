@@ -1,11 +1,11 @@
 name: tmux-agent-launcher
 type: opencode
-version: 0.1.4
+version: 0.1.6
 install_scope: global
 owner: julian
 status: experimental
 blast_radius: medium
-description: "Launch Claude, OpenCode, or Codex in a named tmux session from the command line or a skill wrapper."
+description: "Launch Claude, OpenCode, Codex, or Harnessy (`hsy`) in a named tmux session from the command line or a skill wrapper."
 permissions: [execute]
 data_categories: [none]
 egress: [none]

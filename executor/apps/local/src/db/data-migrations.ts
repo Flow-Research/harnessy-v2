@@ -22,7 +22,7 @@ import { googleOpenApiOwnershipDataMigration } from "@executor-js/plugin-openapi
 
 import { providerServiceSplitDataMigration } from "@executor-js/plugin-provider-service-split";
 import { authConfigTransforms } from "./auth-config-migration";
-import { LOCAL_V1_V2_LEDGER_NAME } from "./v1-v2-migration";
+import { LOCAL_V1_V2_LEDGER_NAME } from "./local-migration-name";
 
 export const localDataMigrations: readonly SqliteDataMigration[] = [
   // The v1→v2 gate itself runs BEFORE the executor (and this registry) can

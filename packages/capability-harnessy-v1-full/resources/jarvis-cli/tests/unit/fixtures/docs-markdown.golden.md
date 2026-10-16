@@ -127,6 +127,19 @@ Examples:
   jarvis config fathom-setup
   jarvis config fathom-setup --shell-profile ~/.zshrc
 
+#### `jarvis config whatsapp-setup`
+
+Interactively configure WhatsApp accounts, env vars, and shell activation
+
+Options:
+  --env-file: Managed env file path to write
+  --shell-profile: Shell profile to source the env file from
+  --no-shell-profile: Do not modify a shell profile
+
+Examples:
+  jarvis config whatsapp-setup
+  jarvis config whatsapp-setup --shell-profile ~/.zshrc
+
 ### `jarvis init`
 
 Initialize Jarvis context directories
@@ -241,6 +254,77 @@ Examples:
   jarvis j "Meeting notes" --title "Team Sync"
   jarvis j --file ./design.md
 
+### `jarvis community`
+
+Prepare and deliver public-safe community updates
+
+#### `jarvis community briefing setup`
+
+Configure the private weekly evidence root, draft directory, and dedicated Discord channel
+
+Options:
+  --discord-channel-id: Dedicated Discord text-channel numeric ID
+  --source-path: Private contributor context root override
+  --draft-path: Owner-only weekly artifact directory override
+  --enable / --disable: Enable only after a channel is configured
+
+Examples:
+  jarvis community briefing setup --discord-channel-id 123456789012345678
+
+#### `jarvis community briefing generate`
+
+Generate the latest due Sunday draft with reboot catch-up and no implicit overwrite
+
+Options:
+  --week-start: Explicit Monday in YYYY-MM-DD format
+  --regenerate: Back up and replace an existing draft
+  --dry-run: Classify and validate without writing artifacts
+  --json: Emit content-free counters as JSON
+
+Examples:
+  jarvis community briefing generate --dry-run
+  jarvis community briefing generate
+
+#### `jarvis community briefing status`
+
+Show content-free weekly briefing queue and readiness
+
+Options:
+  --json: Emit the result as JSON
+
+Examples:
+  jarvis community briefing status
+
+#### `jarvis community briefing preflight`
+
+Fail closed until collection, local review, schedules, Google, and Discord are ready
+
+Options:
+  --no-runtime: Skip launchd health checks
+  --no-providers: Skip live Google and Discord checks
+  --json: Emit safe readiness checks as JSON
+
+Examples:
+  jarvis community briefing preflight
+
+#### `jarvis community briefing worker`
+
+Publish approved weekly artifacts only
+
+Options:
+  --max-items: Maximum approved items per run
+  --json: Emit content-free counters as JSON
+
+Examples:
+  jarvis community briefing worker
+
+#### `jarvis community briefing review open`
+
+Open the shared authenticated local publication inbox
+
+Examples:
+  jarvis community briefing review open
+
 ### `jarvis meeting`
 
 Ingest meeting transcripts and summaries into Jarvis destinations
@@ -254,7 +338,7 @@ Options:
   --resolver: Override source resolution (anytype, notion, file, url, stdin)
   --backend: Backend override for object-based resolvers
   --title: Override the inferred meeting title
-  --project: Attach a project slug or label
+  --project: Attach a project slug or label; configured aliases are canonicalized
   --auto-route / --no-auto-route: Infer project from private meeting route rules when --project is omitted
   --tag: Tags to attach (repeatable)
   --dest: Destination(s): private-context, wiki, journal, memory
@@ -266,6 +350,122 @@ Examples:
   jarvis meeting ingest ./meeting.md
   cat transcript.txt | jarvis meeting ingest - --resolver stdin --dest private-context
   jarvis meeting ingest ./fathom-export.md --dest wiki --wiki-domain accelerate-africa
+
+#### `jarvis meeting publish setup`
+
+Configure approval-gated Flow meeting publication to Google Docs and a configurable Discord text channel
+
+Options:
+  --discord-channel-id: Discord text-channel numeric ID
+  --discord-token-env-var: Environment variable containing the Discord bot token
+  --google-owner-email: Required active Google owner email
+  --source-path: Canonical Flow meeting-note directory override
+  --authorize-google: Open least-privilege Google OAuth
+  --install-review / --no-install-review: Install the localhost review inbox as a launchd service
+  --enable / --disable: Enable or disable worker activity
+
+Examples:
+  jarvis meeting publish setup --discord-channel-id 123456789012345678 --authorize-google --install-review
+
+#### `jarvis meeting publish scan`
+
+Discover recent canonical Flow notes; queue writes require --enqueue
+
+Options:
+  --since-days: Rolling eligibility window
+  --enqueue / --dry-run: Write metadata-only queue rows or preview
+  --json: Emit content-free counters as JSON
+
+Examples:
+  jarvis meeting publish scan --since-days 30 --dry-run
+  jarvis meeting publish scan --since-days 30 --enqueue
+
+#### `jarvis meeting publish status`
+
+Show safe queue, review, Google, and Discord readiness
+
+Options:
+  --json: Emit the result as JSON
+
+Examples:
+  jarvis meeting publish status
+
+#### `jarvis meeting publish cutover`
+
+Set a hard launch date and archive older unpublished meetings
+
+Options:
+  --date: Earliest meeting date allowed into publication
+  --apply / --dry-run: Persist the floor and archive older queue rows, or preview
+  --json: Emit content-free counters as JSON
+
+Examples:
+  jarvis meeting publish cutover --date 2026-08-28 --dry-run
+  jarvis meeting publish cutover --date 2026-08-28 --apply
+
+#### `jarvis meeting publish preflight`
+
+Fail closed unless local runtime, Google, and Discord are ready
+
+Options:
+  --no-runtime: Skip launchd and loopback health checks
+  --no-providers: Skip live Google and Discord access checks
+  --json: Emit safe readiness checks as JSON
+
+Examples:
+  jarvis meeting publish preflight
+
+#### `jarvis meeting publish approve`
+
+Approve one meeting's exact current source hash
+
+Options:
+  ITEM_ID: Stable local queue ID
+
+Examples:
+  jarvis meeting publish approve abc123
+
+#### `jarvis meeting publish reject`
+
+Reject one meeting's current source version
+
+Options:
+  ITEM_ID: Stable local queue ID
+
+Examples:
+  jarvis meeting publish reject abc123
+
+#### `jarvis meeting publish worker`
+
+Scan and publish approved items with content-free scheduler output
+
+Options:
+  --max-items: Maximum approved items per run
+  --json: Emit content-free counters as JSON
+
+Examples:
+  jarvis meeting publish worker
+
+#### `jarvis meeting publish review serve`
+
+Serve the authenticated inbox with editable canonical meeting notes
+
+Examples:
+  jarvis meeting publish review serve
+
+#### `jarvis meeting publish review open`
+
+Open the authenticated canonical-note review inbox
+
+Examples:
+  jarvis meeting publish review open
+
+#### `jarvis meeting publish review install`
+
+Install and start the launchd review service
+
+Examples:
+  jarvis meeting publish review install
 
 #### `jarvis meeting fathom list`
 
@@ -288,7 +488,7 @@ Fetch a Fathom meeting by recording ID and ingest it into destinations
 Options:
   RECORDING_ID: Fathom recording ID from `jarvis meeting fathom list`
   --account: Named Fathom account from config
-  --project: Attach a project slug or label
+  --project: Attach a project slug or label; configured aliases are canonicalized
   --auto-route / --no-auto-route: Infer project from private meeting route rules when --project is omitted
   --tag: Tags to attach (repeatable)
   --dest: Destination(s): private-context, wiki, journal, memory
@@ -312,7 +512,7 @@ Options:
   --all-unpulled: Scan Fathom pages without a date cutoff and ingest recordings not yet present in private context
   --limit: Meetings to fetch per Fathom page
   --max-pages: Maximum Fathom result pages to scan
-  --project: Attach a project slug or label
+  --project: Attach a project slug or label; configured aliases are canonicalized
   --auto-route / --no-auto-route: Infer project from private meeting route rules when --project is omitted
   --tag: Tags to attach (repeatable)
   --dest: Destination(s): private-context, wiki, journal, memory
@@ -336,7 +536,7 @@ Options:
   --overlap-hours: Safety overlap subtracted from the previous successful poll watermark
   --limit: Meetings to fetch per Fathom page
   --max-pages: Maximum Fathom result pages to scan per account
-  --project: Attach a project slug or label
+  --project: Attach a project slug or label; configured aliases are canonicalized
   --auto-route / --no-auto-route: Infer project from private meeting route rules when --project is omitted
   --tag: Tags to attach (repeatable)
   --dest: Destination(s): private-context, wiki, journal, memory
@@ -406,7 +606,7 @@ Options:
   --verify-signatures / --no-verify-signatures: Verify webhook signatures before accepting payloads
   --tolerance-seconds: Maximum allowed webhook timestamp skew
   --auto-ingest / --no-auto-ingest: Automatically ingest verified payloads into destinations
-  --project: Attach a project slug or label during auto-ingest
+  --project: Attach a project slug or label during auto-ingest; configured aliases are canonicalized
   --auto-route / --no-auto-route: Infer project from private meeting route rules when --project is omitted
   --tag: Tags to attach during auto-ingest
   --dest: Destination for auto-ingest: private-context, wiki, journal, memory
@@ -443,7 +643,7 @@ Ingest archived webhook payloads from the local Fathom inbox
 
 Options:
   --account: Named Fathom account from config
-  --project: Attach a project slug or label
+  --project: Attach a project slug or label; configured aliases are canonicalized
   --auto-route / --no-auto-route: Infer project from private meeting route rules when --project is omitted
   --tag: Tags to attach (repeatable)
   --dest: Destination(s): private-context, wiki, journal, memory
@@ -472,6 +672,28 @@ Options:
 Examples:
   jarvis whatsapp setup --account personal
   jarvis whatsapp setup --account personal --json
+
+#### `jarvis whatsapp start`
+
+Launch the WhatsApp webhook receiver and Cloudflare tunnel in tmux
+
+Options:
+  --account: Named WhatsApp account from config
+  --port: Local port to bind
+  --auto-ingest / --no-auto-ingest: Automatically ingest verified payloads
+  --dest: Destination for auto-ingest: team-inbox, private-context, journal, memory
+  --backend: Backend override when auto-ingesting to journal
+  --layout: Tmux layout: windows or panes
+  --verify-signatures / --no-verify-signatures: Verify X-Hub-Signature-256 before accepting payloads
+  --session-name: Tmux session name to create
+  --tunnel-name: Cloudflare named tunnel to run instead of a quick URL
+  --attach / --no-attach: Attach to the tmux session after launch
+  --dry-run: Print the launch plan without creating sessions
+  --json: Emit the launch plan as JSON
+
+Examples:
+  jarvis whatsapp start --account personal --dry-run --json
+  jarvis whatsapp start --account personal --auto-ingest --dest team-inbox --no-attach
 
 #### `jarvis whatsapp webhook serve`
 
@@ -978,6 +1200,7 @@ Merge: Folder overrides global. Use {{global}} placeholder to include global con
 - JARVIS_FATHOM_API_KEY: Fallback env var for a single Fathom account
 - FATHOM_WEBHOOK_SECRET: Required for verifying a single-account Fathom webhook
 - JARVIS_FATHOM_WEBHOOK_SECRET: Fallback env var for a single-account Fathom webhook secret
+- JARVIS_DISCORD_BOT_TOKEN: Discord bot token for approval-gated meeting and weekly briefing publication
 - JARVIS_WHATSAPP_META_TOKEN: Fallback Meta WhatsApp Cloud API access token
 - JARVIS_WHATSAPP_META_APP_SECRET: Fallback Meta app secret for WhatsApp webhook signatures
 - JARVIS_WHATSAPP_VERIFY_TOKEN: Fallback Meta webhook verification token for WhatsApp

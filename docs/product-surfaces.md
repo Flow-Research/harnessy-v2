@@ -69,6 +69,30 @@ Environment:
   `packages/coding-agent/vitest.config.ts` so upstream tool-list fixtures stay
   exact; `builtin-harnessy-engine.test.ts` re-enables and covers it)
 
+### Built-in Claude Code provider
+
+`hsy` also registers `claude-bridge` as a native model provider. It vendors the
+well-used `pi-claude-bridge` transport but adapts only its host boundary:
+Harnessy configuration, diagnostics, and global instructions resolve through
+the active `~/.hsy/agent` directory. It never loads another agent host's state.
+
+Authentication remains owned by Claude Code:
+
+```bash
+claude auth login
+hsy
+```
+
+Use `/claude-auth` for status and `/model` to select a `claude-bridge` model.
+The provider routes Claude's tool calls back through hsy's native tool loop, so
+Harnessy keeps tool rendering and execution control. `AskClaude` remains
+opt-in through `~/.hsy/agent/claude-bridge.json`; the built-in contributes only
+the provider by default. `HARNESSY_CLAUDE_CODE_BIN` overrides the executable.
+
+The vendoring record and MIT notice are in
+`packages/harnessy-core/CLAUDE_BRIDGE_VENDOR.md` and
+`packages/harnessy-core/THIRD_PARTY_LICENSES/pi-claude-bridge.txt`.
+
 ### Fresh-user sandbox
 
 `./hsy-fresh.sh` (or `npm run hsy:fresh`) launches the agent under a throwaway
@@ -135,20 +159,22 @@ POST /api/openapi/specs
   }] }
 ```
 
-The richer nine-tool `harnessy-anytype` plugin lives in `@harnessy/sdk` for
-SDK consumers; it is not loaded into the cockpit process because that process
-runs the vendored bun world and loading root-graph Effect code into it would
-split the runtime.
+The richer nine-tool `harnessy-anytype` plugin is bundled behind
+`@harnessy/sdk/node`; it is not a public plugin export and is not loaded into
+the cockpit process. The cockpit runs the vendored bun world, and loading
+root-graph Effect code into it would split the runtime.
 
 ## SDK surface (`@harnessy/sdk`)
 
-The engine boundary for programmatic consumers — a full 1:1 projection of the
-vendored engine SDK plus Harnessy's semantic knowledge contracts:
+The narrow engine boundary for programmatic consumers. The stable package root
+contains Harnessy-owned semantic contracts; it deliberately does not project or
+re-export the vendored Executor SDK:
 
-- `makeHarnessyEngine` — scoped in-process engine (openapi, mcp,
-  harnessy-anytype, file-secrets plugins).
-- `harnessyEngineHandle` / `engineToolAddress` — structural boundary over a
-  running executor.
+- `@harnessy/sdk/node` → `makeHarnessyEngine` — scoped Node in-process engine
+  (openapi, mcp, harnessy-anytype, file-secrets plugins) returning a structural
+  `HarnessyEngineHandle` rather than the Executor instance.
+- `HarnessyEngineHandle` / `engineToolAddress` — the portable structural
+  contract over an engine.
 - `engineKnowledgeLayer(handle, binding)` — the same Knowledge services
   (`KnowledgeSpaces`, `KnowledgeObjects`, ...) served through the engine's
   invoke pipeline; parity with the native transport is asserted by
@@ -159,6 +185,13 @@ vendored engine SDK plus Harnessy's semantic knowledge contracts:
 - Mutations across all knowledge contracts fail with
   `ConnectorMutationDisabledError { blockedByIssue: 48 }` until policy
   projection lands (issue #48).
+
+The packed-consumer fixture now validates the declared package boundary. The
+package stays private pending authoritative license/artifact evidence,
+publication approval, and a separately scoped real Garden or Jarvis adoption
+decision. See
+[`ADR-0005`](adr/0005-promote-harnessy-sdk-as-a-narrow-programmatic-boundary.md)
+and [`sdk-consumer-contract.md`](sdk-consumer-contract.md).
 
 ## One-runtime guards
 

@@ -1,3 +1,4 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -5,7 +6,7 @@ import { describe, expect, expectTypeOf, it } from "@effect/vitest";
 import type { OpenApiPluginOptions } from "@executor-js/plugin-openapi";
 import { Effect } from "@executor-js/sdk/core";
 
-import { makeHarnessyEngine, makeHarnessyPlugins } from "../src/engine.ts";
+import { acquireHarnessyEngineResource, makeHarnessyEngine, makeHarnessyPlugins } from "../src/engine.ts";
 import { HARNESSY_PRESETS } from "../src/presets.ts";
 
 type OpenApiPreset = NonNullable<OpenApiPluginOptions["presets"]>[number];
@@ -104,8 +105,62 @@ describe("Harnessy OpenAPI presets", () => {
 					onElicitation: "accept-all",
 					credentialDirectory,
 				});
-				expect(engine.openapi).toBeDefined();
+				expect(engine.execute).toBeTypeOf("function");
 			}),
 		),
+	);
+
+	it.effect("bounds credential state to a host-owned directory across the engine scope", () =>
+		Effect.scoped(
+			Effect.gen(function* () {
+				const credentialDirectory = yield* Effect.acquireRelease(
+					Effect.sync(() => mkdtempSync(join(tmpdir(), "harnessy-sdk-scope-"))),
+					(directory) => Effect.sync(() => rmSync(directory, { recursive: true, force: true })),
+				);
+				yield* Effect.scoped(
+					Effect.gen(function* () {
+						const engine = yield* makeHarnessyEngine({
+							tenant: "scope-test",
+							onElicitation: "accept-all",
+							credentialDirectory,
+						});
+						yield* engine.connections.create({
+							owner: "org",
+							integration: "anytype",
+							name: "main",
+							template: "anytype",
+							values: {
+								apiKey: "fixture-only",
+								baseUrl: "http://127.0.0.1:31009",
+								allowRemote: "false",
+							},
+						});
+					}),
+				);
+				expect(existsSync(join(credentialDirectory, "auth.json"))).toBe(true);
+				yield* Effect.sync(() => rmSync(credentialDirectory, { recursive: true, force: true }));
+				expect(existsSync(credentialDirectory)).toBe(false);
+			}),
+		),
+	);
+
+	it.effect("releases the underlying engine resource when its Effect scope closes", () =>
+		Effect.gen(function* () {
+			let closed = false;
+			yield* Effect.scoped(
+				Effect.gen(function* () {
+					yield* acquireHarnessyEngineResource(
+						Effect.succeed({
+							close: () =>
+								Effect.sync(() => {
+									closed = true;
+								}),
+						}),
+					);
+					expect(closed).toBe(false);
+				}),
+			);
+			expect(closed).toBe(true);
+		}),
 	);
 });

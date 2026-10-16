@@ -48,13 +48,14 @@ try {
     manifest.replace("file:HARNESSY_ENGINE_TARBALL", `file:../artifacts/${filename}`),
   );
 
-  await run(fixtureRoot, "pnpm", ["install", "--ignore-scripts", "--no-frozen-lockfile"]);
+  await run(fixtureRoot, "npm", ["install", "--ignore-scripts"]);
+  await run(fixtureRoot, "npm", ["audit", "--audit-level=moderate"]);
   const installedPackageRoot = await realpath(join(fixtureRoot, "node_modules/@harnessy/engine"));
   if (installedPackageRoot.startsWith(packageRoot)) {
     throw new Error(`Fixture resolved @harnessy/engine to monorepo source: ${installedPackageRoot}`);
   }
-  await run(fixtureRoot, "pnpm", ["run", "typecheck"]);
-  await run(fixtureRoot, "pnpm", ["run", "dry-run"]);
+  await run(fixtureRoot, "npm", ["run", "typecheck"]);
+  await run(fixtureRoot, "npm", ["run", "dry-run"]);
 
   const outputRoot = join(fixtureRoot, ".wrangler-output");
   const outputFiles = await readdir(outputRoot, { recursive: true });

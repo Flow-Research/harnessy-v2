@@ -22,7 +22,7 @@ Whenever Jarvis CLI commands are added, changed, or removed, update all of the f
 3. `tools/flow-install/skills/jarvis/commands/jarvis.md` so the Jarvis skill stays current
 4. The installed artifacts on the local machine when the change is important:
    - re-register skills: `pnpm skills:register`
-   - reinstall CLI: `uv tool install --force ./jarvis-cli`
+   - reinstall CLI: `uv tool install --force --refresh-package jarvis-scheduler ./jarvis-cli`
 
 Do not treat source updates as complete until the installed CLI and installed skill are refreshed when the change materially affects command behavior.
 
@@ -32,7 +32,7 @@ Do not treat source updates as complete until the installed CLI and installed sk
 
 ```bash
 # Local workspace install
-uv tool install --force ./jarvis-cli
+uv tool install --force --refresh-package jarvis-scheduler ./jarvis-cli
 
 # GitHub install (after publishing harnessy)
 uv tool install --force "git+https://github.com/Flow-Research/harnessy.git#subdirectory=jarvis-cli"
@@ -69,6 +69,15 @@ uv run python -m jarvis <command>
 | `jarvis meeting ingest <source>` | Normalize a meeting transcript and write it to configured destinations |
 | `jarvis meeting fathom list` | List recent Fathom meetings and recording IDs |
 | `jarvis meeting fathom ingest <recording_id>` | Pull a Fathom meeting directly into Jarvis destinations |
+| `jarvis meeting publish scan` | Preview or enqueue recent Flow notes for local review |
+| `jarvis meeting publish cutover` | Set a launch floor and archive older unpublished notes |
+| `jarvis meeting publish preflight` | Verify local runtime plus live Google and Discord access |
+| `jarvis meeting publish review open` | Open the authenticated localhost approval inbox |
+| `jarvis meeting publish worker` | Publish approved notes to Google Docs and configured Discord channel |
+| `jarvis community briefing generate` | Prepare the latest due public-safe weekly draft for review |
+| `jarvis community briefing preflight` | Verify weekly collection, review, schedules, Google, and Discord |
+| `jarvis community briefing review open` | Review and edit the briefing plus short Discord copy locally |
+| `jarvis community briefing worker` | Publish only an approved weekly draft to Google Docs and Discord |
 | `jarvis meeting fathom start` | Launch the webhook receiver and cloudflared tunnel in tmux |
 | `jarvis meeting fathom webhook serve` | Run a local Fathom webhook receiver |
 | `jarvis meeting fathom webhook ingest-inbox` | Ingest archived Fathom webhook payloads |
@@ -232,7 +241,9 @@ jarvis text-hygiene clean README.md \
 Personal patterns are loaded from
 `.jarvis/context/private/${FLOW_USER:-${USER}}/style/ai-speak-patterns.yaml`
 when present. The cleaner skips YAML frontmatter, fenced code blocks, and inline
-code.
+code. Rules default to `action: clean`; set `action: flag` for patterns that
+should fail/report during hygiene checks but must be rewritten by a human rather
+than removed automatically.
 
 ### Journal Commands
 
@@ -285,13 +296,88 @@ jarvis meeting fathom webhook serve --account work --port 8765 --auto-ingest --d
 
 # Ingest archived webhook payloads after they arrive
 jarvis meeting fathom webhook ingest-inbox --account work
+
+# Preview then stage the last 30 days of Flow notes for individual review
+jarvis meeting publish scan --since-days 30 --dry-run
+jarvis meeting publish scan --since-days 30 --enqueue
+
+# Establish a safe launch floor, then verify every runtime/provider dependency
+jarvis meeting publish cutover --date 2026-08-28 --dry-run
+jarvis meeting publish cutover --date 2026-08-28 --apply
+jarvis meeting publish preflight
+
+# Configure a Discord text channel (numeric ID), then open the local inbox
+jarvis meeting publish setup --discord-channel-id 123456789012345678
+jarvis meeting publish review open
 ```
+
+Project aliases are configured in
+`.jarvis/context/private/<user>/meeting-routes.yaml`. For example,
+`project_aliases: {garden: flow}` canonicalizes inferred routes and explicit
+`--project garden` values to `flow`, combines both projects' route scores, and
+retains `garden` once in the meeting tags.
+
+Scheduled Fathom polls must omit `--json`: that form includes transcript and raw
+markdown in captured cron output. Use the normal count/state output, and keep
+`~/.agents/cron/` directories at `0700` with log/state files at `0600`.
+
+Meeting publication is separate from AnyType sync. It stores note paths, hashes,
+states, and remote IDs in an owner-only SQLite queue, never copied canonical note
+content. The review inbox has an **Update meeting note** action that validates
+and atomically writes the actual canonical Markdown file while leaving it
+pending review. Any prior approval and Discord override are invalidated when the
+source changes. Only individually approved Flow notes can become formatted
+Google Docs and one-sentence Discord posts linking to them. The default sentence
+comes from the note's `Meeting Purpose` section. The Discord channel is configured with
+`meeting_publication.discord_channel_id`; changing it affects new messages,
+while updates continue editing each meeting's stored original channel/message.
+Notes without a non-empty Executive Summary, and notes containing any transcript
+section, are excluded and reported by scan/preflight. A configured cutover date is
+a hard floor; older unpublished rows remain auditable in the `archived` state.
+
+### Community Briefing Commands
+
+```bash
+# Configure only after creating the dedicated Discord channel
+jarvis community briefing setup --discord-channel-id 123456789012345678
+
+# Preview a completed week without writing artifacts, then create the stable draft
+jarvis community briefing generate --week-start 2026-08-24 --dry-run
+jarvis community briefing generate --week-start 2026-08-24
+
+# Inspect/edit both artifacts in the shared authenticated localhost inbox
+jarvis community briefing review open
+
+# Verify runtime readiness and process only explicitly approved drafts
+jarvis community briefing preflight
+jarvis community briefing worker
+```
+
+The weekly boundary is Monday 00:00 through Sunday 23:00 in `Africa/Lagos`.
+The scheduled generator runs Sunday at 23:00 and catches up after reboot. It
+does not overwrite an existing weekly draft. `--regenerate` first backs up all
+three private artifacts and clears approval. The classifier sees sanitized,
+bounded excerpts; the writer sees only public-safe fact cards. The private
+`provenance.json` records paths, hashes, inclusion decisions, and provider use,
+while public output contains neither source paths nor meeting metadata.
+
+Approval binds the exact `briefing.md` and `discord.txt` pair. Google Docs are
+stored under `Flow Research/Weekly Briefings/YYYY` and become anyone-with-link
+readable only during approved publication. Discord receives at most three short
+sentences plus the Google Doc link. A quiet week produces a shorter honest draft
+instead of recycling old updates.
 
 ### WhatsApp Commands
 
 ```bash
 # Show the Meta Cloud API config shape and setup checklist
 jarvis whatsapp setup --account personal
+
+# Configure local account metadata, env vars, and shell activation
+jarvis config whatsapp-setup
+
+# Launch the receiver and Cloudflare tunnel in a tmux stack
+jarvis whatsapp start --account personal --dry-run --json
 
 # Run a local receiver behind an HTTPS tunnel
 jarvis whatsapp webhook serve --account personal --port 8787

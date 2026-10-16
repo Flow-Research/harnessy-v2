@@ -1,0 +1,526 @@
+#!/usr/bin/env python3
+"""Run one bounded founder-learning web research session.
+
+The steering file supplies an ordered topic list. Selection is deterministic
+and rotates across scheduled runs; web discovery and source judgment are left
+to the Jarvis Wiki research agent. Failure is isolated from the daily brief.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime
+import email.utils
+import html
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+
+def detect_project_root() -> Path:
+    configured = os.environ.get("FLOW_PROJECT_ROOT")
+    if configured:
+        return Path(configured)
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return Path(result.stdout.strip())
+    return Path.cwd()
+
+
+PROJECT_ROOT = detect_project_root()
+USERNAME = os.environ.get("FLOW_USER", os.environ.get("USER", "default"))
+DEFAULT_STEERING = (
+    PROJECT_ROOT
+    / ".jarvis"
+    / "context"
+    / "private"
+    / USERNAME
+    / "learning-research.md"
+)
+AGENTS_LIFE_DIR = Path(
+    os.path.expanduser(os.environ.get("AGENTS_LIFE_DIR", "~/.agents/life"))
+)
+RESEARCH_STATE_DIR = AGENTS_LIFE_DIR / "learning-research"
+
+
+def canonicalize_url(value: str) -> str | None:
+    """Return a stable HTTP(S) URL for cross-source deduplication."""
+    try:
+        parsed = urllib.parse.urlsplit(value.strip())
+    except ValueError:
+        return None
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        return None
+    hostname = parsed.hostname.lower()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    netloc = hostname
+    if port and not (
+        (parsed.scheme.lower() == "http" and port == 80)
+        or (parsed.scheme.lower() == "https" and port == 443)
+    ):
+        netloc = f"{hostname}:{port}"
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/")
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    query = [
+        (key, item)
+        for key, item in query
+        if not key.lower().startswith("utm_")
+        and key.lower() not in {"fbclid", "gclid", "mc_cid", "mc_eid"}
+    ]
+    return urllib.parse.urlunsplit(
+        (parsed.scheme.lower(), netloc, path, urllib.parse.urlencode(query), "")
+    )
+
+
+def life_config() -> dict[str, object]:
+    path = AGENTS_LIFE_DIR / "config.json"
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def configured(name: str, env_name: str, default: object) -> object:
+    if env_name in os.environ:
+        return os.environ[env_name]
+    reading = life_config().get("reading")
+    if isinstance(reading, dict) and name in reading:
+        return reading[name]
+    return default
+
+
+def research_status_path(today: datetime.date) -> Path:
+    return RESEARCH_STATE_DIR / f"{today.isoformat()}.json"
+
+
+def write_status(today: datetime.date, **values: object) -> None:
+    """Persist a small machine-readable handoff for the daily brief."""
+    path = research_status_path(today)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    current: dict[str, object] = {}
+    if path.is_file():
+        try:
+            current = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = {}
+    current.update(values)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def article_urls(raw_dir: Path) -> set[str]:
+    urls: set[str] = set()
+    if not raw_dir.is_dir():
+        return urls
+    for path in raw_dir.glob("*.md"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")[:4000]
+        except OSError:
+            continue
+        match = re.search(r"^source_url:\s*[\"']?([^\s\"']+)", text, re.MULTILINE)
+        if match:
+            canonical = canonicalize_url(match.group(1).rstrip(".,;"))
+            if canonical:
+                urls.add(canonical)
+    return urls
+
+
+def watched_feed_sources() -> list[dict[str, object]]:
+    """Read enabled RSS/Atom sources from the private Life configuration."""
+    reading = life_config().get("reading")
+    if not isinstance(reading, dict):
+        return []
+    sources = reading.get("sources")
+    if not isinstance(sources, list):
+        return []
+    accepted: list[dict[str, object]] = []
+    for value in sources:
+        if not isinstance(value, dict) or value.get("enabled", True) is False:
+            continue
+        url = str(value.get("url") or "").strip()
+        if not canonicalize_url(url):
+            continue
+        source = dict(value)
+        source["url"] = url
+        source["name"] = str(value.get("name") or urllib.parse.urlsplit(url).hostname)
+        source["tier"] = str(value.get("tier") or "secondary")
+        source["max_per_brief"] = max(1, int(value.get("max_per_brief") or 1))
+        source["max_items_per_poll"] = max(1, min(int(value.get("max_items_per_poll") or 5), 20))
+        source["evergreen_enabled"] = value.get("evergreen_enabled", False) is True
+        source["max_evergreen_per_poll"] = max(
+            1, min(int(value.get("max_evergreen_per_poll") or 1), 5)
+        )
+        source["evergreen_min_score"] = max(0, int(value.get("evergreen_min_score") or 1))
+        keywords = value.get("evergreen_keywords")
+        source["evergreen_keywords"] = (
+            [str(item).strip().lower() for item in keywords if str(item).strip()]
+            if isinstance(keywords, list)
+            else []
+        )
+        accepted.append(source)
+    return accepted
+
+
+def _parse_feed_datetime(value: str | None) -> datetime.datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        try:
+            parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed.astimezone(datetime.timezone.utc)
+
+
+def _element_text(element: ET.Element | None) -> str:
+    if element is None:
+        return ""
+    return "".join(element.itertext()).strip()
+
+
+def parse_feed(xml_bytes: bytes) -> list[dict[str, object]]:
+    """Parse RSS 2.0 or Atom into a small source-owned metadata record."""
+    root = ET.fromstring(xml_bytes)
+    entries: list[dict[str, object]] = []
+    if root.tag.lower().endswith("rss"):
+        elements = root.findall("./channel/item")
+        for item in elements:
+            entries.append(
+                {
+                    "title": _element_text(item.find("title")),
+                    "url": _element_text(item.find("link")) or _element_text(item.find("guid")),
+                    "published_at": _parse_feed_datetime(
+                        _element_text(item.find("pubDate")) or _element_text(item.find("date"))
+                    ),
+                    "description": _element_text(item.find("description")),
+                }
+            )
+        return entries
+
+    namespace = "{http://www.w3.org/2005/Atom}"
+    for item in root.findall(f"{namespace}entry"):
+        link = item.find(f"{namespace}link")
+        entries.append(
+            {
+                "title": _element_text(item.find(f"{namespace}title")),
+                "url": (link.attrib.get("href") if link is not None else "") or "",
+                "published_at": _parse_feed_datetime(
+                    _element_text(item.find(f"{namespace}published"))
+                    or _element_text(item.find(f"{namespace}updated"))
+                ),
+                "description": _element_text(item.find(f"{namespace}summary")),
+            }
+        )
+    return entries
+
+
+def fetch_feed(url: str, timeout_seconds: int = 20) -> bytes:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Harnessy-Life-Orchestrator/1.0 (+RSS reader)"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        return response.read(2_000_000)
+
+
+def _slug(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return normalized[:80] or "article"
+
+
+def evergreen_relevance(entry: dict[str, object], source: dict[str, object]) -> int:
+    """Score an older feed item against the source's human-selected vocabulary."""
+    keywords = source.get("evergreen_keywords") or []
+    if not isinstance(keywords, list):
+        return 0
+    title = str(entry.get("title") or "").lower()
+    description = re.sub(r"<[^>]+>", " ", str(entry.get("description") or "")).lower()
+    score = 0
+    for keyword in keywords:
+        term = str(keyword).strip().lower()
+        if not term:
+            continue
+        if term in title:
+            score += 3
+        elif term in description:
+            score += 1
+    return score
+
+
+def ingest_watched_feeds(
+    raw_dir: Path,
+    today: datetime.date,
+    fetcher=fetch_feed,
+) -> tuple[int, list[str]]:
+    """Write recent and bounded evergreen feed records without fetching pages."""
+    sources = watched_feed_sources()
+    if not sources:
+        return 0, []
+    lookback_days = max(1, int(configured("lookback_days", "LIFE_READING_LOOKBACK_DAYS", 21)))
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=lookback_days)
+    existing = article_urls(raw_dir)
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    created = 0
+    errors: list[str] = []
+    fetched_at = datetime.datetime.now(datetime.timezone.utc)
+
+    for source in sources:
+        source_name = str(source["name"])
+        try:
+            entries = parse_feed(fetcher(str(source["url"])))
+        except (OSError, ET.ParseError, ValueError) as exc:
+            errors.append(f"{source_name}: {type(exc).__name__}: {exc}")
+            continue
+        eligible: list[tuple[dict[str, object], str, int]] = []
+        for entry in entries:
+            published_at = entry.get("published_at")
+            canonical = canonicalize_url(str(entry.get("url") or ""))
+            if not canonical or not isinstance(published_at, datetime.datetime):
+                continue
+            if canonical in existing:
+                continue
+            if published_at >= cutoff:
+                eligible.append((entry, "recent", 0))
+                continue
+            if source.get("evergreen_enabled"):
+                score = evergreen_relevance(entry, source)
+                if score >= int(source["evergreen_min_score"]):
+                    eligible.append((entry, "evergreen", score))
+
+        recent = sorted(
+            (item for item in eligible if item[1] == "recent"),
+            key=lambda item: item[0]["published_at"],
+            reverse=True,
+        )[: int(source["max_items_per_poll"])]
+        evergreen = sorted(
+            (item for item in eligible if item[1] == "evergreen"),
+            key=lambda item: (item[2], item[0]["published_at"]),
+            reverse=True,
+        )[: int(source["max_evergreen_per_poll"])]
+
+        for entry, selection_lane, evergreen_score in recent + evergreen:
+            published_at = entry["published_at"]
+            canonical = canonicalize_url(str(entry.get("url") or ""))
+            if not canonical or not isinstance(published_at, datetime.datetime):
+                continue
+            title = str(entry.get("title") or canonical).strip()
+            description = html.unescape(
+                re.sub(r"<[^>]+>", " ", str(entry.get("description") or ""))
+            )
+            description = re.sub(r"\s+", " ", description).strip()
+            topic = str(source.get("topic") or "").strip()
+            filename = (
+                f"{published_at.date().isoformat()}-feed-{_slug(source_name)}-{_slug(title)}.md"
+            )
+            path = raw_dir / filename
+            body = (
+                "---\n"
+                f"source_url: {canonical}\n"
+                f"source_title: {json.dumps(title, ensure_ascii=False)}\n"
+                f"published_at: {published_at.isoformat()}\n"
+                f"fetched_at: {fetched_at.isoformat()}\n"
+                f"selected_at: {fetched_at.isoformat()}\n"
+                f"selection_lane: {selection_lane}\n"
+                f"evergreen_score: {evergreen_score}\n"
+                f"research_session: feed-{today.isoformat()}\n"
+                "triggered_by: watched-feed\n"
+                f"topic: {json.dumps(topic, ensure_ascii=False)}\n"
+                f"source_name: {json.dumps(source_name, ensure_ascii=False)}\n"
+                f"source_tier: {source['tier']}\n"
+                "content_mode: rss\n"
+                f"source_max_per_brief: {source['max_per_brief']}\n"
+                "---\n\n"
+                f"# {title}\n\n"
+                f"{description}\n\n"
+                f"Source: {canonical}\n"
+            )
+            path.write_text(body, encoding="utf-8")
+            existing.add(canonical)
+            created += 1
+    return created, errors
+
+
+def read_topics(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(r"^## Current Topics\s*$([\s\S]*?)(?=^## |\Z)", text, re.MULTILINE)
+    if not match:
+        return []
+    topics = []
+    for line in match.group(1).splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("- ", "* ")):
+            topic = stripped[2:].strip()
+            if topic:
+                topics.append(topic)
+    return topics
+
+
+def choose_topic(topics: list[str], today: datetime.date) -> str:
+    """Rotate predictably across the topic list on daily research runs."""
+    slot = today.toordinal()
+    return topics[slot % len(topics)]
+
+
+def _clock_seconds(value: str) -> int:
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", value.strip())
+    if not match:
+        raise ValueError(f"invalid HH:MM clock value: {value}")
+    hour, minute = (int(part) for part in match.groups())
+    if hour > 23 or minute > 59:
+        raise ValueError(f"invalid HH:MM clock value: {value}")
+    return hour * 3600 + minute * 60
+
+
+def maximum_research_cutoff_seconds() -> int:
+    """Keep research inside the brief's schedule plus its bounded wait."""
+    research_start = _clock_seconds(str(configured("research_start", "LIFE_RESEARCH_START", "04:15")))
+    brief_start = _clock_seconds(str(configured("daily_brief_start", "LIFE_DAILY_BRIEF_START", "05:30")))
+    if brief_start < research_start:
+        brief_start += 24 * 3600
+    brief_wait = max(0, int(configured("wait_seconds", "LIFE_READING_WAIT_SECONDS", 1800)))
+    safety_margin = max(
+        0,
+        int(configured("safety_margin_seconds", "LIFE_RESEARCH_SAFETY_MARGIN_SECONDS", 300)),
+    )
+    return max(60, brief_start - research_start + brief_wait - safety_margin)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run bounded founder-learning research")
+    parser.add_argument("--steering", type=Path, default=DEFAULT_STEERING)
+    parser.add_argument(
+        "--domain",
+        default=os.environ.get("LIFE_LEARNING_RESEARCH_DOMAIN", "founder-learning"),
+    )
+    parser.add_argument("--max-sources", type=int, default=3)
+    parser.add_argument("--max-turns", type=int, default=12)
+    parser.add_argument(
+        "--cutoff-seconds",
+        type=int,
+        default=int(configured("research_cutoff_seconds", "LIFE_RESEARCH_CUTOFF_SECONDS", 5400)),
+        help="Hard research cutoff. Default: 5400 seconds (90 minutes).",
+    )
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--date", help="Override date for deterministic tests (YYYY-MM-DD)")
+    args = parser.parse_args()
+
+    if not args.steering.is_file():
+        print(f"Learning research skipped: steering file missing: {args.steering}", file=sys.stderr)
+        return 0
+    topics = read_topics(args.steering)
+    if not topics:
+        print("Learning research skipped: no topics under '## Current Topics'", file=sys.stderr)
+        return 0
+
+    today = datetime.date.fromisoformat(args.date) if args.date else datetime.date.today()
+    topic = choose_topic(topics, today)
+    cutoff_seconds = max(60, args.cutoff_seconds)
+    maximum_cutoff = maximum_research_cutoff_seconds()
+    if cutoff_seconds > maximum_cutoff:
+        print(
+            "Learning research configuration error: cutoff "
+            f"({cutoff_seconds}s) exceeds the daily-brief schedule and wait budget "
+            f"({maximum_cutoff}s after safety margin). Adjust LIFE_RESEARCH_CUTOFF_SECONDS, "
+            "LIFE_READING_WAIT_SECONDS, or the schedule clocks together.",
+            file=sys.stderr,
+        )
+        return 2
+    raw_dir = Path.home() / ".jarvis" / "wikis" / args.domain / "raw" / "articles"
+    before_urls = article_urls(raw_dir)
+    feed_created = 0
+    feed_errors: list[str] = []
+    if not args.dry_run:
+        feed_created, feed_errors = ingest_watched_feeds(raw_dir, today)
+    started_at = datetime.datetime.now(datetime.timezone.utc)
+    write_status(
+        today,
+        date=today.isoformat(),
+        status="running",
+        topic=topic,
+        started_at=started_at.isoformat(),
+        cutoff_seconds=cutoff_seconds,
+        deadline_at=(started_at + datetime.timedelta(seconds=cutoff_seconds)).isoformat(),
+        candidates_created=feed_created,
+        feed_candidates_created=feed_created,
+        feed_errors=feed_errors,
+    )
+    command = [
+        "jarvis",
+        "wiki",
+        "research",
+        "--domain",
+        args.domain,
+        "--topic",
+        topic,
+        "--max-sources",
+        str(max(1, min(args.max_sources, 5))),
+        "--max-turns",
+        str(max(5, min(args.max_turns, 30))),
+        "--no-auto-compile",
+    ]
+    if args.dry_run:
+        command.append("--dry-run")
+
+    print(f"Learning research topic: {topic}")
+    started = time.monotonic()
+    try:
+        result = subprocess.run(command, cwd=PROJECT_ROOT, timeout=cutoff_seconds)
+        return_code = result.returncode
+        status = "complete" if return_code == 0 else "failed"
+        error = None if return_code == 0 else f"jarvis exited with status {return_code}"
+    except subprocess.TimeoutExpired:
+        return_code = 124
+        status = "timed_out"
+        error = f"research exceeded the configured {cutoff_seconds}-second cutoff"
+
+    after_urls = article_urls(raw_dir)
+    created = len(after_urls - before_urls)
+    # Some research backends can write valid source files and then fail while
+    # producing their final JSON envelope. Preserve that useful result, but do
+    # not call the agent run clean.
+    if status != "complete" and created >= 2:
+        status = "complete_with_agent_error"
+        return_code = 0
+
+    write_status(
+        today,
+        status=status,
+        finished_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        duration_seconds=round(time.monotonic() - started, 1),
+        candidates_created=created,
+        feed_candidates_created=feed_created,
+        feed_errors=feed_errors,
+        error=error,
+    )
+    if return_code != 0:
+        print(f"Learning research failed: {error}", file=sys.stderr)
+    return return_code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

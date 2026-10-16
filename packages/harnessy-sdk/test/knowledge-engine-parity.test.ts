@@ -1,11 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
-	AuthTemplateSlug,
-	ConnectionName,
 	type CredentialProvider,
 	createExecutor,
 	Effect,
-	IntegrationSlug,
 	ProviderItemId,
 	ProviderKey,
 	Tenant,
@@ -14,7 +11,7 @@ import { AnytypeConfig, anytypeKnowledgeLayer } from "@harnessy/core/connectors/
 import { KnowledgeObjects, KnowledgeSpaces } from "@harnessy/core/connectors/knowledge";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
-import { harnessyEngineHandle } from "../src/engine/compose.ts";
+import { harnessyEngineHandle } from "../src/engine/adapter.ts";
 import { engineKnowledgeLayer } from "../src/engine/knowledge.ts";
 import { harnessyAnytypePlugin } from "../src/plugins/anytype.ts";
 
@@ -107,14 +104,16 @@ describe("knowledge contracts: native binding vs engine binding", () => {
 					(executor) => executor.close().pipe(Effect.orDie),
 				);
 				yield* executor["harnessy-anytype"].register();
-				yield* executor.connections.create({
+				const handle = harnessyEngineHandle(executor);
+				const connection = yield* handle.connections.create({
 					owner: "org",
-					name: ConnectionName.make("main"),
-					integration: IntegrationSlug.make("anytype"),
-					template: AuthTemplateSlug.make("anytype"),
+					name: "main",
+					integration: "anytype",
+					template: "anytype",
 					values: { apiKey: "k", baseUrl: "http://127.0.0.1:31009", allowRemote: "false" },
 				});
-				const engineLayer = engineKnowledgeLayer(harnessyEngineHandle(executor), {
+				expect(connection).toMatchObject({ owner: "org", integration: "anytype", name: "main" });
+				const engineLayer = engineKnowledgeLayer(handle, {
 					integration: "anytype",
 					owner: "org",
 					connection: "main",

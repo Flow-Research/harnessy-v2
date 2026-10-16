@@ -3,6 +3,7 @@
 import os
 import shlex
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -13,6 +14,7 @@ from .defaults import (
 )
 from .fathom_setup import default_env_file_path
 from .schema import JarvisConfig, WhatsAppAccountConfig, get_config_path
+from .whatsapp_setup import default_whatsapp_env_file_path
 
 
 class ConfigError(Exception):
@@ -55,7 +57,7 @@ def load_config(config_path: Path | None = None, reload: bool = False) -> Jarvis
     path = config_path or get_config_path()
 
     # Load YAML if exists
-    config_data: dict = {}
+    config_data: dict[str, Any] = {}
     if path.exists():
         with open(path) as f:
             loaded = yaml.safe_load(f)
@@ -204,6 +206,29 @@ def get_fathom_webhook_secret(account: str | None = None) -> str:
     )
 
 
+def default_meeting_publication_env_file_path() -> Path:
+    """Return the owner-local Discord credential file used by the worker."""
+
+    return Path.home() / ".jarvis" / "env" / "meeting-publication.zsh"
+
+
+def get_meeting_publication_discord_token(name: str) -> str:
+    """Resolve the Discord bot token from the process or managed runtime file."""
+
+    token = os.environ.get(name)
+    if not token:
+        token = _load_managed_env_var_from_file(
+            name,
+            default_meeting_publication_env_file_path(),
+        )
+    if token:
+        return token
+    raise ConfigError(
+        f"Discord bot token not found. Set {name} in ~/.jarvis/env/meeting-publication.zsh.",
+        backend="meeting-publication",
+    )
+
+
 def get_whatsapp_account_config(account: str | None = None) -> WhatsAppAccountConfig:
     """Resolve a WhatsApp account configuration, using generic fallbacks when unnamed."""
 
@@ -226,6 +251,8 @@ def get_whatsapp_access_token(account: str | None = None) -> str:
 
     acct = get_whatsapp_account_config(account)
     token = os.environ.get(acct.access_token_env_var)
+    if not token:
+        token = _load_managed_whatsapp_env_var(acct.access_token_env_var)
     if token:
         return token
     target_account = account or get_config().whatsapp.default_account
@@ -255,6 +282,8 @@ def get_whatsapp_app_secret(account: str | None = None) -> str:
 
     acct = get_whatsapp_account_config(account)
     secret = os.environ.get(acct.app_secret_env_var)
+    if not secret:
+        secret = _load_managed_whatsapp_env_var(acct.app_secret_env_var)
     if secret:
         return secret
     target_account = account or get_config().whatsapp.default_account
@@ -282,6 +311,8 @@ def get_whatsapp_verify_token(account: str | None = None) -> str:
 
     acct = get_whatsapp_account_config(account)
     token = os.environ.get(acct.verify_token_env_var)
+    if not token:
+        token = _load_managed_whatsapp_env_var(acct.verify_token_env_var)
     if token:
         return token
     target_account = account or get_config().whatsapp.default_account
@@ -327,9 +358,20 @@ def get_whatsapp_phone_number_id(account: str | None = None) -> str:
 def _load_managed_env_var(name: str) -> str | None:
     """Read a single exported variable from the managed Fathom env file."""
 
+    return _load_managed_env_var_from_file(name, default_env_file_path())
+
+
+def _load_managed_whatsapp_env_var(name: str) -> str | None:
+    """Read a single exported variable from the managed WhatsApp env file."""
+
+    return _load_managed_env_var_from_file(name, default_whatsapp_env_file_path())
+
+
+def _load_managed_env_var_from_file(name: str, env_file: Path) -> str | None:
+    """Read a single exported variable from a managed shell env file."""
+
     if not name:
         return None
-    env_file = default_env_file_path()
     if not env_file.exists():
         return None
     for raw_line in env_file.read_text(encoding="utf-8").splitlines():

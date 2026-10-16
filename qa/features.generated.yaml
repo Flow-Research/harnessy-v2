@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "npm run qa:catalog",
+  "features": [
+    {
+      "slug": "capability-portability",
+      "name": "Capability portability",
+      "id_prefix": "CAP",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/canonical-cutover.md"
+      ],
+      "scenario_count": 1
+    },
+    {
+      "slug": "meeting-publication-migration",
+      "name": "Meeting publication migration",
+      "id_prefix": "MEET",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/meeting-publication.md"
+      ],
+      "scenario_count": 1
+    },
+    {
+      "slug": "packaging-release-contracts",
+      "name": "Packaging and release contracts",
+      "id_prefix": "PKG",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/canonical-cutover.md"
+      ],
+      "scenario_count": 2
+    },
+    {
+      "slug": "v1-reconciliation",
+      "name": "V1 reconciliation",
+      "id_prefix": "RECON",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/canonical-cutover.md"
+      ],
+      "scenario_count": 1
+    },
+    {
+      "slug": "private-sdk-consumer",
+      "name": "Private SDK consumer",
+      "id_prefix": "SDK",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/canonical-cutover.md"
+      ],
+      "scenario_count": 2
+    },
+    {
+      "slug": "security-invariants",
+      "name": "Security invariants",
+      "id_prefix": "SEC",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "security"
+      ],
+      "specs": [
+        "qa/security/scripts/security-invariants.md"
+      ],
+      "scenario_count": 1
+    }
+  ]
+}

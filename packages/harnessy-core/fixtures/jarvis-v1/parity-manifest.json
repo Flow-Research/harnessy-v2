@@ -6,13 +6,17 @@
       "id": "channel:fathom",
       "surface": "channel",
       "legacyReference": "meetings/fathom",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "V2 Fathom poll and inbox/checkpoint boundary",
+      "rationale": "Native bounded polling and ingestion are implemented with isolated V2 state; live scheduler activation and production handover remain separately gated."
     },
     {
       "id": "channel:meetings",
       "surface": "channel",
       "legacyReference": "meetings",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationReviewServer",
+      "rationale": "Native lifecycle, secure loopback review, checkpointing, and production-shaped provider adapters exist locally; CLI/host integration, live credentials, and activation remain pending."
     },
     {
       "id": "channel:whatsapp",
@@ -91,6 +95,76 @@
       "status": "missing"
     },
     {
+      "id": "command:jarvis:community",
+      "surface": "command",
+      "legacyReference": "jarvis community",
+      "status": "partial",
+      "replacement": "V2 community inspection commands",
+      "rationale": "The native namespace exists for read-only status and offline preflight; generation, review and publication remain on the preserved implementation."
+    },
+    {
+      "id": "command:jarvis:community:briefing",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing",
+      "status": "partial",
+      "replacement": "V2 community briefing inspection boundary",
+      "rationale": "Status and offline preflight are native; mutation and review are intentionally still delegated to the preserved workflow."
+    },
+    {
+      "id": "command:jarvis:community:briefing:generate",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing generate",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community:briefing:preflight",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing preflight",
+      "status": "compatible",
+      "replacement": "jarvis community briefing preflight",
+      "rationale": "Native offline validation checks configuration, source/draft paths, queue schema and delivery configuration without providers or mutation."
+    },
+    {
+      "id": "command:jarvis:community:briefing:review",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing review",
+      "status": "partial",
+      "replacement": "Preserved compatibility workflow: jarvis community briefing review open",
+      "rationale": "Core intentionally does not launch the preserved writer; review remains in the compatibility/local-host boundary until a V2-owned review consumer exists."
+    },
+    {
+      "id": "command:jarvis:community:briefing:review:open",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing review open",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community:briefing:review:serve",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing review serve",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community:briefing:setup",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing setup",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:community:briefing:status",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing status",
+      "status": "compatible",
+      "replacement": "jarvis community briefing status",
+      "rationale": "Native read-only queue and configuration inspection reports the existing V2 bindings without creating state or contacting providers."
+    },
+    {
+      "id": "command:jarvis:community:briefing:worker",
+      "surface": "command",
+      "legacyReference": "jarvis community briefing worker",
+      "status": "missing"
+    },
+    {
       "id": "command:jarvis:config",
       "surface": "command",
       "legacyReference": "jarvis config",
@@ -130,6 +204,12 @@
       "id": "command:jarvis:config:show",
       "surface": "command",
       "legacyReference": "jarvis config show",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:config:whatsapp-setup",
+      "surface": "command",
+      "legacyReference": "jarvis config whatsapp-setup",
       "status": "missing"
     },
     {
@@ -278,13 +358,17 @@
       "id": "command:jarvis:meeting",
       "surface": "command",
       "legacyReference": "jarvis meeting",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "V2 meeting capability inspections",
+      "rationale": "Native meeting publication and Fathom status boundaries exist; remaining ingest and publication workflow commands are tracked separately."
     },
     {
       "id": "command:jarvis:meeting:fathom",
       "surface": "command",
       "legacyReference": "jarvis meeting fathom",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "jarvis meeting fathom status",
+      "rationale": "Native read-only account, poll-state and inbox discovery exists; provider polling and ingestion remain on the preserved implementation."
     },
     {
       "id": "command:jarvis:meeting:fathom:ingest",
@@ -302,13 +386,17 @@
       "id": "command:jarvis:meeting:fathom:list",
       "surface": "command",
       "legacyReference": "jarvis meeting fathom list",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "jarvis meeting fathom list",
+      "rationale": "Native bounded local inbox metadata listing exists; remote Fathom listing and import remain on the preserved implementation."
     },
     {
       "id": "command:jarvis:meeting:fathom:poll",
       "surface": "command",
       "legacyReference": "jarvis meeting fathom poll",
-      "status": "missing"
+      "status": "partial",
+      "replacement": "jarvis meeting fathom poll",
+      "rationale": "Native bounded polling and ingestion use the V2 inbox/checkpoint store for the configured account; live scheduler activation remains separately gated."
     },
     {
       "id": "command:jarvis:meeting:fathom:start",
@@ -361,6 +449,104 @@
       "surface": "command",
       "legacyReference": "jarvis meeting ingest",
       "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:approve",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish approve",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:cutover",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish cutover",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:preflight",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish preflight",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:reject",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish reject",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review:install",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review install",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review:open",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review open",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review:serve",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review serve",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:review:uninstall",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish review uninstall",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:scan",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish scan",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:setup",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish setup",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:meeting:publish:status",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish status",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
+    },
+    {
+      "id": "command:jarvis:meeting:publish:worker",
+      "surface": "command",
+      "legacyReference": "jarvis meeting publish worker",
+      "status": "partial",
+      "replacement": "MeetingPublicationService/MeetingPublicationStore",
+      "rationale": "Native domain and local production-shaped provider behavior exist, but CLI/host wiring and activation remain pending."
     },
     {
       "id": "command:jarvis:n",
@@ -724,6 +910,12 @@
       "id": "command:jarvis:whatsapp:setup",
       "surface": "command",
       "legacyReference": "jarvis whatsapp setup",
+      "status": "missing"
+    },
+    {
+      "id": "command:jarvis:whatsapp:start",
+      "surface": "command",
+      "legacyReference": "jarvis whatsapp start",
       "status": "missing"
     },
     {

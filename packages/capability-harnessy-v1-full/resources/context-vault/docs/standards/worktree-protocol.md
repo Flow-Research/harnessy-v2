@@ -58,6 +58,27 @@ If a project does not yet have a `dev` branch on the remote, the project must be
 migrated intentionally. Temporary fallbacks may exist during migration, but the
 target standard remains `dev`.
 
+## Onboarding A New Managed Project
+
+When adding a new active repository to the tracked project set:
+
+1. Create the project container at `projects/<project-name>/`.
+2. Create or confirm a remote `dev` branch for integration.
+3. Preserve any special source branch, snapshot branch, or vendor-import branch
+   as a named base branch instead of using it as the long-term working branch.
+4. Clone the repository into `projects/<project-name>/dev/`.
+5. Create `projects/<project-name>/worktrees/` before starting branch-local
+   work.
+6. Add the project to `.jarvis/context/projects.md` with repository, branch
+   model, local layout, and access notes.
+7. Add private contributor status under
+   `.jarvis/context/private/<user>/<project>/` only when personal priority or
+   operating context is needed.
+
+If the connected GitHub app cannot access the repository but `gh` can, record
+that access gap in project tracking and use `gh` as the temporary fallback until
+the app is authorized.
+
 ## Naming Rules
 
 ### Project container

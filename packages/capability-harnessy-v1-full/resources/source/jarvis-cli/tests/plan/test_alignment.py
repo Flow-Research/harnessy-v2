@@ -1,6 +1,6 @@
 """Tests for alignment scoring functionality."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from jarvis.models import Priority, Task
 from jarvis.models.plan import (
@@ -155,7 +155,7 @@ class TestBuildTaskReality:
     def test_tasks_grouped_by_day(self):
         """Tasks should be grouped by scheduled date."""
         today = date.today()
-        tomorrow = date(today.year, today.month, today.day + 1) if today.day < 28 else today
+        tomorrow = today + timedelta(days=1)
 
         tasks = [
             make_task("Task 1", task_id="1", scheduled_date=today),

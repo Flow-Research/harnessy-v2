@@ -26,6 +26,13 @@ export const HSY_HELP_EPILOGUE = `Harnessy Engine (built into every session):
     HARNESSY_EXECUTOR_BIN      - packaged Executor binary override
     HARNESSY_ENGINE=0          - disable the built-in engine tools
 
+Claude Code bridge (built into hsy):
+  Reuses Claude Code's own authenticated session; no API key copying.
+    claude auth login                  Authenticate in the Claude Code CLI
+    /claude-auth                       Show authentication status in hsy
+    /model                             Select a model under claude-bridge
+    HARNESSY_CLAUDE_CODE_BIN           Optional Claude Code executable override
+
 Harnessy CLI (the \`harnessy\` binary, same package):
   harnessy web                          Start/attach the engine and open the cockpit
   harnessy mcp install                  Install bundled Executor into another MCP agent

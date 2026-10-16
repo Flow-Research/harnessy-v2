@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 import { NodeServices } from "@effect/platform-node";
@@ -10,6 +11,7 @@ import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
 import { HarnessProject } from "../src/operations.ts";
 import { HarnessBootstrap } from "../src/runtime/bootstrap.ts";
+import { correctJarvisCommunitySource } from "../src/runtime/jarvis-community-source-correction.ts";
 import { type FakeSpawner, makeFakeSpawner } from "./lib/fake-spawner.ts";
 
 /** Provide the live Harnessy project service plus Node platform services. */
@@ -46,8 +48,14 @@ describe("Harnessy bootstrap", () => {
 				expect(result.bootstrap.actions.map((action) => action.kind)).toContain("source-cache");
 				expect(result.bootstrap.actions.map((action) => action.kind)).toContain("jarvis-tool-install");
 				expect(result.bootstrap.actions.map((action) => action.kind)).toContain("framework-install");
+				expect(result.bootstrap.actions.find((action) => action.kind === "jarvis-anytype-correction")?.status).toBe(
+					"planned",
+				);
 				expect(yield* fs.exists(`${targetDir}/.harnessy`)).toBe(false);
 				expect(yield* fs.exists(`${cacheDir}/install.sh`)).toBe(false);
+				expect(
+					result.bootstrap.actions.find((action) => action.kind === "jarvis-community-correction")?.status,
+				).toBe("planned");
 			}),
 		),
 	);
@@ -59,7 +67,7 @@ describe("Harnessy bootstrap", () => {
 				const project = yield* HarnessProject;
 				const targetDir = yield* fs.makeTempDirectoryScoped();
 				const globalRoot = yield* fs.makeTempDirectoryScoped();
-				const cacheDir = `${globalRoot}/.cache/harnessy`;
+				const cacheDir = `${globalRoot}/.cache/harnessy's $literal source`;
 
 				const result = yield* project.bootstrap({
 					mode: "in-place",
@@ -77,9 +85,53 @@ describe("Harnessy bootstrap", () => {
 				expect(result.dryRun).toBe(false);
 				expect(yield* fs.exists(`${cacheDir}/install.sh`)).toBe(true);
 				expect(yield* fs.exists(`${cacheDir}/jarvis-cli/pyproject.toml`)).toBe(true);
+				const collectorSource = result.bootstrap.actions.find(
+					(action) => action.kind === "source-cache",
+				)?.sourcePath;
+				expect(collectorSource).toBeDefined();
+				const collectorOriginal = yield* fs.readFileString(
+					`${collectorSource}/jarvis-cli/src/jarvis/community_briefing/collector.py`,
+				);
+				expect(yield* fs.readFileString(`${cacheDir}/jarvis-cli/src/jarvis/community_briefing/collector.py`)).toBe(
+					correctJarvisCommunitySource(collectorOriginal),
+				);
+				expect(
+					result.bootstrap.actions.find((action) => action.kind === "jarvis-community-correction")?.status,
+				).toBe("written");
+				const planner = yield* fs.readFileString(`${cacheDir}/jarvis-cli/src/jarvis/services/planning_service.py`);
+				expect(planner).toContain("b.start < day_end and b.end > day_start");
+				expect(planner).toContain("free_slots.sort(key=lambda slot: slot[0])");
+				const anytype = yield* fs.readFileString(`${cacheDir}/jarvis-cli/src/jarvis/anytype_client.py`);
+				expect(anytype.split("if not self._add_to_collection(space_id, parent_id, created.id):")).toHaveLength(3);
+				expect(result.bootstrap.actions.find((action) => action.kind === "jarvis-anytype-correction")?.status).toBe(
+					"written",
+				);
+				expect(
+					result.bootstrap.actions.find((action) => action.kind === "jarvis-planning-correction")?.status,
+				).toBe("written");
 				expect(yield* fs.exists(`${targetDir}/.harnessy/harnessy.lock.json`)).toBe(true);
 				expect(yield* fs.exists(`${targetDir}/scripts/harnessy/verify-harness.mjs`)).toBe(true);
 				expect(yield* fs.exists(`${globalRoot}/bin/jarvis`)).toBe(true);
+				// Invoke the actual generated shell script with only a recording uv:
+				// no dependency installation, provider access or production home use.
+				const recorder = `${globalRoot}/recording-bin`;
+				yield* fs.makeDirectory(recorder);
+				yield* fs.writeFileString(`${recorder}/uv`, '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+				const invocation = yield* Effect.sync(() =>
+					spawnSync("/bin/bash", [`${globalRoot}/bin/jarvis`, "journal", "list"], {
+						encoding: "utf8",
+						env: { PATH: `${recorder}:/usr/bin:/bin`, HOME: globalRoot },
+					}),
+				);
+				expect(invocation.status, invocation.stderr).toBe(0);
+				expect(invocation.stdout.trim().split("\n")).toEqual([
+					"run",
+					"--project",
+					`${cacheDir}/jarvis-cli`,
+					"jarvis",
+					"journal",
+					"list",
+				]);
 				expect(yield* fs.exists(`${globalRoot}/skills/goal-agent/SKILL.md`)).toBe(true);
 				expect(result.install.runtimeAssets?.globalApplied).toBe(true);
 			}),
@@ -153,7 +205,7 @@ describe("Harnessy bootstrap", () => {
 				// no git pull against the copied preserved-source snapshot.
 				const recorded = fake.calls.map((call) => [call.executable, ...call.args].join(" "));
 				expect(recorded).not.toContain(`git -C ${cacheDir} pull --ff-only`);
-				expect(recorded).toContain(`uv tool install --force ${cacheDir}/jarvis-cli`);
+				expect(recorded).toContain(`uv tool install --python >=3.11 --force ${cacheDir}/jarvis-cli`);
 				expect(result.bootstrap.issues).toHaveLength(0);
 			}),
 		);
@@ -203,18 +255,21 @@ describe("Harnessy bootstrap", () => {
 					const globalRoot = yield* fs.makeTempDirectoryScoped();
 					const run = Command.runWith(rootCommand, { version: HARNESSY_VERSION });
 
-					yield* run([
-						"bootstrap",
-						"--target",
-						targetDir,
-						"--yes",
-						"--apply-bootstrap",
-						"--run-external",
-						"--global-root",
-						globalRoot,
-						"--cache-dir",
-						`${globalRoot}/.cache/harnessy`,
-					]);
+					const exit = yield* Effect.exit(
+						run([
+							"bootstrap",
+							"--target",
+							targetDir,
+							"--yes",
+							"--apply-bootstrap",
+							"--run-external",
+							"--global-root",
+							globalRoot,
+							"--cache-dir",
+							`${globalRoot}/.cache/harnessy`,
+						]),
+					);
+					expect(exit._tag).toBe("Failure");
 
 					const logs = yield* TestConsole.logLines;
 					expect(logs).toContain("Failed external bootstrap actions: 1");

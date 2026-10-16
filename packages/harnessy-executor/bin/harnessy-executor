@@ -1,0 +1,84 @@
+#!/usr/bin/env node
+
+const childProcess = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+const { resolveHarnessyExecutorPlatform } = require("./platform.cjs");
+
+const spawnAndExit = (target) => {
+	const child = childProcess.spawn(target, process.argv.slice(2), { stdio: "inherit" });
+	child.on("error", (error) => {
+		console.error(error.message);
+		process.exit(1);
+	});
+	const forward = (signal) => {
+		if (child.killed) return;
+		try {
+			child.kill(signal);
+		} catch {
+			// The child may already have exited between the check and signal.
+		}
+	};
+	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+		process.on(signal, () => forward(signal));
+	}
+	child.on("exit", (code, signal) => {
+		if (signal) process.kill(process.pid, signal);
+		else process.exit(typeof code === "number" ? code : 1);
+	});
+};
+
+const override = process.env.HARNESSY_EXECUTOR_BIN?.trim();
+if (override) {
+	spawnAndExit(override);
+	return;
+}
+
+let runtime;
+try {
+	runtime = resolveHarnessyExecutorPlatform(os.platform(), os.arch());
+} catch (error) {
+	console.error(`harnessy-executor: ${error.message}`);
+	process.exit(1);
+}
+const { arch, binary, platform } = runtime;
+const isMusl = (() => {
+	if (platform !== "linux") return false;
+	try {
+		if (fs.existsSync("/etc/alpine-release")) return true;
+	} catch {
+		// Continue with the ldd probe.
+	}
+	try {
+		const result = childProcess.spawnSync("ldd", ["--version"], { encoding: "utf8" });
+		return `${result.stdout ?? ""}${result.stderr ?? ""}`.toLowerCase().includes("musl");
+	} catch {
+		return false;
+	}
+})();
+const base = `@harnessy/executor-${platform}-${arch}`;
+const candidates = platform === "linux" ? (isMusl ? [`${base}-musl`, base] : [base, `${base}-musl`]) : [base];
+
+for (const name of candidates) {
+	try {
+		const manifestPath = require.resolve(`${name}/package.json`);
+		const candidate = path.join(path.dirname(manifestPath), "bin", binary);
+		if (fs.existsSync(candidate)) {
+			spawnAndExit(candidate);
+			return;
+		}
+	} catch {
+		// Try the next ABI-compatible platform alias.
+	}
+}
+
+console.error(
+	[
+		`harnessy-executor: no packaged runtime is installed for ${os.platform()}-${os.arch()}.`,
+		`Tried: ${candidates.join(", ")}`,
+		"Reinstall @harnessy/executor with optional dependencies enabled.",
+	].join("\n"),
+);
+process.exit(1);

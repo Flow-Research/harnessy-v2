@@ -133,43 +133,29 @@ Attribution:
 
 ## Releasing
 
-**Lockstep versioning**: all packages share one version; every release updates all together. `patch` = fixes + additions, `minor` = breaking changes. No major releases.
+Harnessy-authored packages use one `0.x` release cohort. Inherited Pi packages
+retain their upstream-compatible version cohort. Do not use `npm version -ws` or
+the legacy `sync-versions.js` path for a Harnessy release.
 
-1. **Update CHANGELOGs**: ask the user whether they ran the `/cl` prompt on the latest commit on `main`. If not, they must run `/cl` first to audit and update each package's `[Unreleased]` section before releasing.
-
-2. **Local smoke test**: build an unpublished release and smoke test from outside the repo (so it can't resolve workspace files):
-   ```bash
-   npm run release:local -- --out /tmp/pi-local-release --force
-   cd /tmp
-
-   # Node package install smoke tests
-   /tmp/pi-local-release/node/pi --help
-   /tmp/pi-local-release/node/pi --version
-   /tmp/pi-local-release/node/pi --list-models
-   /tmp/pi-local-release/node/pi -p "Say exactly: ok"
-   /tmp/pi-local-release/node/pi
-
-   # Bun binary smoke tests
-   /tmp/pi-local-release/bun/pi --help
-   /tmp/pi-local-release/bun/pi --version
-   /tmp/pi-local-release/bun/pi --list-models
-   /tmp/pi-local-release/bun/pi -p "Say exactly: ok"
-   /tmp/pi-local-release/bun/pi
-   ```
-   Verify both Node and Bun startup, model/account listing, interactive startup, and at least one real prompt with the intended default provider. The bare commands `/tmp/pi-local-release/node/pi` and `/tmp/pi-local-release/bun/pi` start interactive mode; run each in tmux, submit a prompt, and wait for the model reply before considering the interactive smoke test passed. Failures are release blockers unless the user explicitly accepts the risk.
-
-3. **Run the release script**:
-   ```bash
-   PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:patch    # fixes + additions
-   PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:minor    # breaking changes
-   ```
-   Use `npm_config_min_release_age=0` only for the release command. The repo's normal npm age gate can otherwise block the release lockfile refresh when the current workspace package version was published recently. Review any lockfile or shrinkwrap diffs the release creates before push.
-
-   The release script bumps all package versions, updates changelogs, regenerates release artifacts, runs `npm run check`, commits `Release vX.Y.Z`, tags `vX.Y.Z`, adds fresh `## [Unreleased]` changelog sections, commits `Add [Unreleased] section for next cycle`, then pushes `main` and the tag. Do not rerun the release script after a tag was pushed.
-
-4. **CI publishes npm packages**: pushing the `vX.Y.Z` tag triggers `.github/workflows/build-binaries.yml`. The `publish-npm` job uses npm trusted publishing through GitHub Actions OIDC with environment `npm-publish`; no local `npm publish`, `npm whoami`, OTP, or WebAuthn flow is required.
-
-5. **If CI publish fails**: inspect the failed `publish-npm` job. The publish helper is idempotent and skips package versions already present on npm, so rerun the tag workflow after fixing CI or transient npm issues. Do not rerun `npm run release:patch` or `npm run release:minor` for the same version.
+1. Resolve every blocker reported by `node scripts/publish.mjs --dry-run`. In
+   particular, do not publish until the Harnessy license is approved and every
+   public Harnessy tarball includes its matching `LICENSE`.
+2. Run `npm run release:local -- --out <absolute-temp-path> --force` and verify
+   the isolated `harnessy`, `hsy`, capability, and packaged cockpit surfaces.
+3. From a clean worktree, run `npm run release:patch` (or `release:minor`). The
+   command advances the requested Harnessy cohort and the inherited Pi patch
+   cohort, refreshes both Pi lock artifacts, and runs the root, security,
+   compatibility, Engine, Executor, packed-artifact, and publication-contract
+   gates. It intentionally does not commit, tag, push, or publish.
+4. Review the complete version and lockfile diff, then commit through the normal
+   protected-branch review process. Create `vX.Y.Z` only from the reviewed
+   canonical branch.
+5. The tag workflow repeats the release-critical gates, compiles all eight
+   scoped Executor platform packages, and publishes through npm trusted
+   publishing. Executor variants are published before the wrapper; the
+   Harnessy packages follow their dependency order.
+6. If publication fails, inspect the failed `publish-npm` job. Never rerun the
+   version-preparation command for an already-created version.
 
 ## User Override
 

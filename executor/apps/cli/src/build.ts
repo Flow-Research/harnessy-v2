@@ -1,5 +1,5 @@
 import { cp, mkdir, rm, writeFile, chmod } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -11,7 +11,6 @@ const cliRoot = resolve(repoRoot, "apps/cli");
 const webRoot = resolve(repoRoot, "apps/local");
 const distDir = resolve(cliRoot, "dist");
 const ONEPASSWORD_CORE_WASM_FILENAME = "onepassword-core_bg.wasm";
-const WORKERD_VERSION = "1.20260708.1";
 const WORKER_BUNDLER_DIRNAME = "worker-bundler";
 
 const resolveQuickJsWasmPath = (): string => {
@@ -101,7 +100,6 @@ const ALL_TARGETS: Target[] = [
   { os: "darwin", arch: "x64" },
   { os: "darwin", arch: "arm64" },
   { os: "win32", arch: "x64" },
-  { os: "win32", arch: "arm64" },
 ];
 
 const platformName = (t: Target) => (t.os === "win32" ? "windows" : t.os);
@@ -123,7 +121,6 @@ const bunTargetKeys = [
   "darwin-x64",
   "darwin-arm64",
   "win32-x64",
-  "win32-arm64",
 ] as const;
 type BunTargetKey = (typeof bunTargetKeys)[number];
 
@@ -135,7 +132,6 @@ const bunTargets = {
   "darwin-x64": "bun-darwin-x64",
   "darwin-arm64": "bun-darwin-arm64",
   "win32-x64": "bun-windows-x64",
-  "win32-arm64": "bun-windows-arm64",
 } satisfies Record<BunTargetKey, Bun.Build.CompileTarget>;
 
 const isBunTargetKey = (key: string): key is BunTargetKey =>
@@ -248,32 +244,53 @@ const resolveWorkerdBinary = (t: Target): string | null => {
     "darwin-x64": "@cloudflare/workerd-darwin-64",
     "linux-arm64": "@cloudflare/workerd-linux-arm64",
     "linux-x64": "@cloudflare/workerd-linux-64",
+    "linux-arm64-musl": "@cloudflare/workerd-linux-arm64",
+    "linux-x64-musl": "@cloudflare/workerd-linux-64",
     "win32-x64": "@cloudflare/workerd-windows-64",
   };
   const key = [t.os, t.arch, t.abi].filter(Boolean).join("-");
   const pkg = platformMap[key];
   if (!pkg) return null;
   const binary = workerdBinaryName(t);
+  const findBinary = (packageRoot: string): string | null => {
+    for (const candidate of [join(packageRoot, "bin", binary), join(packageRoot, binary)]) {
+      if (existsSync(candidate)) return candidate;
+    }
+    return null;
+  };
   try {
     const req = createRequire(
       join(repoRoot, "packages/kernel/runtime-workerd-subprocess/package.json"),
     );
     const pkgJson = req.resolve(`${pkg}/package.json`);
-    for (const candidate of [
-      join(dirname(pkgJson), "bin", binary),
-      join(dirname(pkgJson), binary),
-    ]) {
-      if (existsSync(candidate)) return candidate;
-    }
-  } catch {
-    const packageRoot = join(
-      repoRoot,
-      `node_modules/.bun/${pkg.replace("/", "+")}@${WORKERD_VERSION}/node_modules/${pkg}`,
-    );
-    for (const candidate of [join(packageRoot, "bin", binary), join(packageRoot, binary)]) {
-      if (existsSync(candidate)) return candidate;
-    }
+    const resolved = findBinary(dirname(pkgJson));
+    if (resolved !== null) return resolved;
+  } catch {}
+  const storeRoot = join(repoRoot, "node_modules/.bun");
+  const sharedStoreBinary = findBinary(join(storeRoot, "node_modules", pkg));
+  if (sharedStoreBinary !== null) return sharedStoreBinary;
+  // Bun may materialize optional dependencies either as a direct store entry
+  // or beneath the parent `workerd@...` entry. Check each store entry so both
+  // layouts produce the same artifact.
+  for (const entry of readdirSync(storeRoot)) {
+    const resolved = findBinary(join(storeRoot, entry, "node_modules", pkg));
+    if (resolved !== null) return resolved;
   }
+  // Keep a bounded fallback for future Bun store layouts. This still resolves
+  // only the exact scoped package and binary required by the target.
+  const findNested = (root: string, depth: number): string | null => {
+    if (depth > 6) return null;
+    const direct = findBinary(join(root, pkg));
+    if (direct !== null) return direct;
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const nested = findNested(join(root, entry.name), depth + 1);
+      if (nested !== null) return nested;
+    }
+    return null;
+  };
+  const nested = findNested(storeRoot, 0);
+  if (nested !== null) return nested;
   return null;
 };
 

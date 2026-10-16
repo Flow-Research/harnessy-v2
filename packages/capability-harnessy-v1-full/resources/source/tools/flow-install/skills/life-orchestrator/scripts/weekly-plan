@@ -4,9 +4,10 @@
 # Called by launchd (com.flow-harness.project.weekly-plan). Can also be run
 # manually: `bash tools/flow-install/skills/life-orchestrator/scripts/weekly-plan`
 #
-# Pattern: read inputs into variables, build a prompt, pipe to ai_runner.py via
-# stdin, capture stdout, write to output file. This avoids needing claude to
-# have filesystem read/write permissions outside the project root.
+# Pattern: keep raw state and the bounded prompt in temporary files, pass the
+# prompt to ai_runner.py via stdin, and capture its output in an artifact
+# candidate. File-backed input plus deterministic compaction prevents provider
+# adapters from hitting the OS argument-size limit.
 #
 # Exit codes:
 #   0 = success
@@ -23,9 +24,17 @@ else
     PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fi
 
-YEAR=$(date +%Y)
-MONTH=$(date +%b)
-WEEK=$(date +%V)
+DATE_PARTS=$(python3 - <<'PY'
+import datetime
+import os
+
+raw = os.environ.get("LIFE_ORCHESTRATOR_TODAY")
+today = datetime.date.fromisoformat(raw) if raw else datetime.date.today()
+target = today + datetime.timedelta(days=1) if today.weekday() == 6 else today
+print(target.strftime("%Y %b %V"))
+PY
+) || { echo "ERROR: cannot resolve weekly planning date" >&2; exit 2; }
+IFS=' ' read -r YEAR MONTH WEEK <<< "$DATE_PARTS"
 
 OUTPUT_DIR="$HOME/.agents/life/$YEAR/$MONTH"
 OUTPUT_FILE="$OUTPUT_DIR/week-$WEEK-plan.md"
@@ -45,6 +54,7 @@ if [ -z "$FLOW_CONTEXT_USER" ]; then
     FLOW_CONTEXT_USER="default"
 fi
 PRIVATE_PRIORITIES_FILE="$PROJECT_ROOT/.jarvis/context/private/$FLOW_CONTEXT_USER/priorities.md"
+PRIVATE_COMPETENCE_PRIORITIES_FILE="$PROJECT_ROOT/.jarvis/context/private/$FLOW_CONTEXT_USER/competence-priorities.md"
 LEGACY_PRIORITIES_FILE="$HOME/.agents/life/priorities.md"
 if [ -n "${LIFE_PRIORITIES_FILE:-}" ]; then
     PRIORITIES_FILE="$LIFE_PRIORITIES_FILE"
@@ -52,6 +62,11 @@ elif [ -f "$PRIVATE_PRIORITIES_FILE" ]; then
     PRIORITIES_FILE="$PRIVATE_PRIORITIES_FILE"
 else
     PRIORITIES_FILE="$LEGACY_PRIORITIES_FILE"
+fi
+if [ -n "${LIFE_COMPETENCE_PRIORITIES_FILE:-}" ]; then
+    COMPETENCE_PRIORITIES_FILE="$LIFE_COMPETENCE_PRIORITIES_FILE"
+else
+    COMPETENCE_PRIORITIES_FILE="$PRIVATE_COMPETENCE_PRIORITIES_FILE"
 fi
 
 MONTHLY_REVIEW_FILE="$OUTPUT_DIR/monthly-review.md"
@@ -61,79 +76,73 @@ mkdir -p "$OUTPUT_DIR"
 
 cd "$PROJECT_ROOT" || { echo "ERROR: cannot cd to $PROJECT_ROOT" >&2; exit 2; }
 
+STATE_FILE=""
+STATE_ERR=""
+PROMPT_FILE=""
+RUNNER_ERR=""
+PLAN_TMP=""
+JOURNAL_BODY_FILE=""
+
+cleanup() {
+    [ -z "$STATE_FILE" ] || rm -f "$STATE_FILE"
+    [ -z "$STATE_ERR" ] || rm -f "$STATE_ERR"
+    [ -z "$PROMPT_FILE" ] || rm -f "$PROMPT_FILE"
+    [ -z "$RUNNER_ERR" ] || rm -f "$RUNNER_ERR"
+    [ -z "$PLAN_TMP" ] || rm -f "$PLAN_TMP"
+    [ -z "$JOURNAL_BODY_FILE" ] || rm -f "$JOURNAL_BODY_FILE"
+}
+trap cleanup EXIT
+
 # Step 1: collect state
 echo "Collecting state..." >&2
-STATE_JSON=$(python3 "$SCRIPTS_DIR/collect-state" 2>&1)
-if [ $? -ne 0 ]; then
+STATE_FILE=$(mktemp -t weekly-plan-state.XXXXXX) || { echo "ERROR: cannot create state file" >&2; exit 2; }
+STATE_ERR=$(mktemp -t weekly-plan-state-error.XXXXXX) || { echo "ERROR: cannot create state error file" >&2; exit 2; }
+python3 "$SCRIPTS_DIR/collect-state" >"$STATE_FILE" 2>"$STATE_ERR"
+STATE_EXIT=$?
+if [ $STATE_EXIT -ne 0 ]; then
     echo "ERROR: collect-state failed" >&2
-    echo "$STATE_JSON" >&2
+    sed 's/^/  /' "$STATE_ERR" >&2
     exit 2
 fi
-echo "State collected: $(echo "$STATE_JSON" | wc -c) bytes" >&2
-
-# Step 2: read inputs (gracefully handle missing files)
-read_or_warn() {
-    local label="$1"
-    local path="$2"
-    if [ -f "$path" ]; then
-        cat "$path"
-    else
-        echo "WARN: $label not found at $path" >&2
-        echo "(no $label available)"
-    fi
-}
-
-PRIORITIES=$(read_or_warn "priorities" "$PRIORITIES_FILE")
-STATUS=$(read_or_warn "status" "$STATUS_FILE")
-ROADMAP=$(read_or_warn "roadmap" "$ROADMAP_FILE")
-MONTHLY_REVIEW=$(read_or_warn "monthly review" "$MONTHLY_REVIEW_FILE")
+if [ ! -s "$STATE_FILE" ]; then
+    echo "ERROR: collect-state produced empty output" >&2
+    exit 2
+fi
+echo "State collected: $(wc -c < "$STATE_FILE" | tr -d ' ') bytes" >&2
 
 if [ ! -f "$TEMPLATE_FILE" ]; then
     echo "ERROR: weekly-plan template missing at $TEMPLATE_FILE" >&2
     exit 2
 fi
-TEMPLATE=$(cat "$TEMPLATE_FILE")
 
-# Step 3: build prompt
-IFS= read -r -d '' PROMPT <<EOF
-You are writing the user's weekly planning note. Output ONLY the plan in markdown - no preamble, no commentary, no questions.
+# Step 2: build a bounded prompt from file-backed inputs. The shared runner's
+# OpenCode adapter forwards its prompt as one argument, so the fixed 64 KB cap
+# is part of this job's reliability contract.
+PROMPT_BUILDER="$SCRIPTS_DIR/prepare-weekly-prompt"
+if [ ! -f "$PROMPT_BUILDER" ]; then
+    echo "ERROR: weekly prompt builder missing at $PROMPT_BUILDER" >&2
+    exit 2
+fi
+PROMPT_FILE=$(mktemp -t weekly-plan-prompt.XXXXXX) || { echo "ERROR: cannot create prompt file" >&2; exit 2; }
+python3 "$PROMPT_BUILDER" \
+    --state-file "$STATE_FILE" \
+    --priorities "$PRIORITIES_FILE" \
+    --competence-priorities "$COMPETENCE_PRIORITIES_FILE" \
+    --status "$STATUS_FILE" \
+    --roadmap "$ROADMAP_FILE" \
+    --monthly-review "$MONTHLY_REVIEW_FILE" \
+    --template "$TEMPLATE_FILE" \
+    --week "$WEEK" \
+    --year "$YEAR" \
+    --month "$MONTH" \
+    --output "$PROMPT_FILE"
+PROMPT_EXIT=$?
+if [ $PROMPT_EXIT -ne 0 ] || [ ! -s "$PROMPT_FILE" ]; then
+    echo "ERROR: weekly prompt preparation failed" >&2
+    exit 2
+fi
 
-Voice and style:
-- Write like a sharp teammate who knows the work, not like an AI report or strategy memo.
-- Use plain human language, short paragraphs, and concrete verbs.
-- Be specific about names, projects, dates, blockers, and decisions.
-- Avoid grand framing and consultant phrases such as "center of gravity", "proof loop", "unlock",
-  "operating leverage", "surfaced", "material", "front-line execution", "decision gate",
-  "low-friction", "at scale", and "lane-based".
-- If a sentence sounds like a memo headline, rewrite it as the direct fact.
-- Do not scold the user for having many active projects. Treat the portfolio as intentional and
-  focus on owners, cadence, decisions, and follow-through.
-
-# Priorities
-$PRIORITIES
-
-# Status
-$STATUS
-
-# Roadmap
-$ROADMAP
-
-# Monthly Review
-$MONTHLY_REVIEW
-
-# Weekly Plan Template (follow this structure)
-$TEMPLATE
-
-# Current Project State (JSON)
-\`\`\`json
-$STATE_JSON
-\`\`\`
-
-Produce the weekly plan for Week $WEEK of $YEAR ($MONTH). Use the template structure, but keep
-the language direct and natural. Output the markdown plan only.
-EOF
-
-# Step 4: invoke the provider-agnostic AI runner
+# Step 3: invoke the provider-agnostic AI runner
 AI_RUNNER="$SKILL_DIR/../_shared/ai_runner.py"
 if [ ! -f "$AI_RUNNER" ]; then
     echo "ERROR: Harnessy AI runner missing at $AI_RUNNER" >&2
@@ -142,34 +151,39 @@ fi
 
 echo "Invoking Harnessy AI runner..." >&2
 RUNNER_ERR=$(mktemp -t weekly-plan-ai-runner.XXXXXX)
-PLAN=$(printf '%s' "$PROMPT" | python3 "$AI_RUNNER" \
+PLAN_TMP_BASE=$(mktemp "$OUTPUT_DIR/.week-$WEEK-plan.XXXXXX") || { echo "ERROR: cannot create plan artifact candidate" >&2; exit 2; }
+PLAN_TMP="${PLAN_TMP_BASE}.md"
+if ! mv "$PLAN_TMP_BASE" "$PLAN_TMP"; then
+    echo "ERROR: cannot prepare markdown plan artifact candidate" >&2
+    exit 2
+fi
+python3 "$AI_RUNNER" \
     --provider "${HARNESSY_AI_PROVIDER:-auto}" \
     --model "${HARNESSY_AI_MODEL:-sonnet}" \
     --fallback-model "${HARNESSY_AI_FALLBACK_MODEL:-haiku}" \
     --budget-usd "${HARNESSY_AI_BUDGET_USD:-0.75}" \
     --timeout "${HARNESSY_AI_TIMEOUT:-540}" \
-    --cwd "$PROJECT_ROOT" 2>"$RUNNER_ERR")
+    --cwd "$PROJECT_ROOT" <"$PROMPT_FILE" >"$PLAN_TMP" 2>"$RUNNER_ERR"
 RUNNER_EXIT=$?
 
 if [ $RUNNER_EXIT -ne 0 ]; then
     echo "ERROR: Harnessy AI runner exited $RUNNER_EXIT" >&2
     sed 's/^/  /' "$RUNNER_ERR" >&2
-    rm -f "$RUNNER_ERR"
     exit 1
 fi
 sed 's/^/  /' "$RUNNER_ERR" >&2
-rm -f "$RUNNER_ERR"
 
-if [ -z "$PLAN" ]; then
+if [ ! -s "$PLAN_TMP" ]; then
     echo "ERROR: Harnessy AI runner produced empty output" >&2
     exit 1
 fi
 
-# Step 5: write the plan
-echo "$PLAN" > "$OUTPUT_FILE"
+# Step 4: post-process and validate the candidate before publishing it. A stale
+# file from a prior run never counts as new success, and a failed cleanup cannot
+# replace the last known-good plan with an empty file.
 if command -v jarvis >/dev/null 2>&1; then
     echo "Running text hygiene cleanup..." >&2
-    HYGIENE_OUTPUT=$(jarvis text-hygiene clean "$OUTPUT_FILE" --report 2>&1)
+    HYGIENE_OUTPUT=$(jarvis text-hygiene clean "$PLAN_TMP" --report 2>&1)
     HYGIENE_EXIT=$?
     echo "$HYGIENE_OUTPUT" | sed 's/^/  /' >&2
     if [ $HYGIENE_EXIT -ne 0 ]; then
@@ -179,9 +193,18 @@ if command -v jarvis >/dev/null 2>&1; then
 else
     echo "WARN: jarvis CLI not on PATH — skipping text hygiene cleanup" >&2
 fi
+if [ ! -s "$PLAN_TMP" ]; then
+    echo "ERROR: weekly plan artifact candidate missing or empty" >&2
+    exit 1
+fi
+if ! mv "$PLAN_TMP" "$OUTPUT_FILE"; then
+    echo "ERROR: could not publish weekly plan to $OUTPUT_FILE" >&2
+    exit 1
+fi
+PLAN_TMP=""
 echo "Weekly plan written to $OUTPUT_FILE ($(wc -c < "$OUTPUT_FILE") bytes)" >&2
 
-# Step 6: push to Jarvis journal (Anytype). Logs failures explicitly so they're
+# Step 5: push to Jarvis journal (Anytype). Logs failures explicitly so they're
 # visible in cron logs, but does not fail the run if Jarvis is unavailable —
 # the local file is still written.
 #
@@ -190,7 +213,6 @@ echo "Weekly plan written to $OUTPUT_FILE ($(wc -c < "$OUTPUT_FILE") bytes)" >&2
 # duplicate. The local file keeps the H1 (useful when reading directly).
 JOURNAL_TITLE="Weekly Plan — Week $WEEK, $YEAR"
 JOURNAL_BODY_FILE=$(mktemp -t weekly-plan-journal.XXXXXX)
-trap 'rm -f "$JOURNAL_BODY_FILE"' EXIT
 # Skip the first H1 line and any blank lines that follow it
 awk '
     NR==1 && /^# / { skipping=1; next }
@@ -200,10 +222,34 @@ awk '
 
 echo "Writing to Jarvis journal: $JOURNAL_TITLE" >&2
 if command -v jarvis >/dev/null 2>&1; then
-    JOURNAL_OUTPUT=$(jarvis journal write \
-        --file "$JOURNAL_BODY_FILE" \
-        --title "$JOURNAL_TITLE" \
-        --no-deep-dive 2>&1)
+    JOURNAL_COMMAND=(
+        jarvis journal write
+        --file "$JOURNAL_BODY_FILE"
+        --title "$JOURNAL_TITLE"
+        --no-deep-dive
+    )
+    WEEKLY_JOURNAL_SPACE=$(python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+space = os.environ.get("LIFE_ORCHESTRATOR_WEEKLY_JOURNAL_SPACE", "").strip()
+if not space:
+    life_dir = Path(os.path.expanduser(os.environ.get("AGENTS_LIFE_DIR", "~/.agents/life")))
+    try:
+        config = json.loads((life_dir / "config.json").read_text(encoding="utf-8"))
+        space = str((config.get("journal_spaces") or {}).get("weekly") or "").strip()
+    except (OSError, ValueError, AttributeError):
+        pass
+if not space:
+    space = os.environ.get("LIFE_ORCHESTRATOR_JOURNAL_SPACE", "").strip()
+print(space)
+PY
+)
+    if [ -n "$WEEKLY_JOURNAL_SPACE" ]; then
+        JOURNAL_COMMAND+=(--space "$WEEKLY_JOURNAL_SPACE")
+    fi
+    JOURNAL_OUTPUT=$("${JOURNAL_COMMAND[@]}" 2>&1)
     JOURNAL_EXIT=$?
     if [ $JOURNAL_EXIT -eq 0 ]; then
         echo "Jarvis journal write: success" >&2
@@ -213,6 +259,11 @@ if command -v jarvis >/dev/null 2>&1; then
     fi
 else
     echo "WARN: jarvis CLI not on PATH — skipping journal write" >&2
+fi
+
+if [ ! -s "$OUTPUT_FILE" ]; then
+    echo "ERROR: weekly plan artifact missing or empty at $OUTPUT_FILE" >&2
+    exit 1
 fi
 
 exit 0

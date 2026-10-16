@@ -18,6 +18,11 @@ export default defineConfig({
 			"@effect/vitest",
 		],
 		alias: [
+			{ find: /^@harnessy\/core$/, replacement: harnessyCoreSource("index.ts") },
+			{ find: /^@harnessy\/core\/community-briefing$/, replacement: harnessyCoreSource("community-briefing.ts") },
+			{ find: /^@executor-js\/plugin-graphql$/, replacement: executorSource("packages/plugins/graphql/src/sdk/index.ts") },
+			{ find: /^@executor-js\/plugin-provider-service-split$/, replacement: executorSource("packages/plugins/provider-service-split/src/index.ts") },
+			{ find: /^@executor-js\/plugin-openapi\/providers\/google$/, replacement: executorSource("packages/plugins/openapi/src/providers/google/index.ts") },
 			{
 				find: /^@harnessy\/core\/connectors\/anytype$/,
 				replacement: harnessyCoreSource("connectors/anytype.ts"),
@@ -29,6 +34,10 @@ export default defineConfig({
 			{
 				find: /^@harnessy\/core\/connectors\/loopback$/,
 				replacement: harnessyCoreSource("connectors/loopback.ts"),
+			},
+			{
+				find: /^@harnessy\/core\/meeting-publication$/,
+				replacement: harnessyCoreSource("meeting-publication.ts"),
 			},
 			{ find: /^@executor-js\/fumadb$/, replacement: executorSource("packages/core/fumadb/src/index.ts") },
 			{
@@ -62,6 +71,10 @@ export default defineConfig({
 			{ find: /^@executor-js\/sdk$/, replacement: executorSource("packages/core/sdk/src/index.ts") },
 			{ find: /^@executor-js\/sdk\/core$/, replacement: executorSource("packages/core/sdk/src/index.ts") },
 			{
+				find: /^@executor-js\/sdk\/host-internal$/,
+				replacement: executorSource("packages/core/sdk/src/host-internal.ts"),
+			},
+			{
 				find: /^@executor-js\/sdk\/http-auth$/,
 				replacement: executorSource("packages/core/sdk/src/http-auth/index.ts"),
 			},
@@ -71,5 +84,17 @@ export default defineConfig({
 			},
 		],
 	},
-	test: { testTimeout: 30_000, hookTimeout: 30_000 },
+	test: {
+		include: ["test/**/*.test.ts"],
+		testTimeout: 30_000,
+		hookTimeout: 30_000,
+		coverage: {
+			provider: "v8",
+			include: ["src/**/*.ts"],
+			exclude: ["src/**/*.d.ts"],
+			reporter: ["text"],
+			reportsDirectory: "coverage",
+			thresholds: { statements: 56, branches: 58, functions: 35, lines: 56 },
+		},
+	},
 });

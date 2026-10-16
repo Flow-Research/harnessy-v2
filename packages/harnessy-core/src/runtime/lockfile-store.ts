@@ -56,11 +56,44 @@ export class LockfileStore extends Context.Service<
 				return yield* parseLockfile(raw, paths.lockfile);
 			});
 
-			const write = Effect.fn("LockfileStore.write")((paths: HarnessPaths, lockfile: HarnessLockfile) =>
+			const remove = (filePath: string) =>
 				fs
-					.writeFileString(paths.lockfile, formatLockfile(lockfile))
-					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not write ${paths.lockfile}`, cause))),
-			);
+					.remove(filePath, { force: true })
+					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not remove ${filePath}`, cause)));
+
+			const write = Effect.fn("LockfileStore.write")(function* (paths: HarnessPaths, lockfile: HarnessLockfile) {
+				const temporary = yield* fs
+					.makeTempFile({ directory: paths.harnessDir, prefix: ".harnessy-lock-", suffix: ".json" })
+					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not stage ${paths.lockfile}`, cause)));
+				return yield* Effect.gen(function* () {
+					yield* fs
+						.writeFileString(temporary, formatLockfile(lockfile))
+						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not write ${temporary}`, cause)));
+					if (!(yield* exists(paths))) {
+						yield* fs
+							.rename(temporary, paths.lockfile)
+							.pipe(Effect.mapError((cause) => mapPlatformError(`Could not install ${paths.lockfile}`, cause)));
+						return;
+					}
+					const backup = yield* fs
+						.makeTempFile({ directory: paths.harnessDir, prefix: ".harnessy-lock-backup-", suffix: ".json" })
+						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not back up ${paths.lockfile}`, cause)));
+					yield* remove(backup);
+					yield* fs
+						.rename(paths.lockfile, backup)
+						.pipe(Effect.mapError((cause) => mapPlatformError(`Could not back up ${paths.lockfile}`, cause)));
+					yield* fs.rename(temporary, paths.lockfile).pipe(
+						Effect.mapError((cause) => mapPlatformError(`Could not install ${paths.lockfile}`, cause)),
+						Effect.catch((error) =>
+							fs.rename(backup, paths.lockfile).pipe(
+								Effect.mapError((cause) => mapPlatformError(`Could not restore ${paths.lockfile}`, cause)),
+								Effect.andThen(Effect.fail(error)),
+							),
+						),
+					);
+					yield* remove(backup).pipe(Effect.ignore);
+				}).pipe(Effect.ensuring(remove(temporary).pipe(Effect.ignore)));
+			});
 
 			const initialize = Effect.fn("LockfileStore.initialize")(function* (
 				paths: HarnessPaths,

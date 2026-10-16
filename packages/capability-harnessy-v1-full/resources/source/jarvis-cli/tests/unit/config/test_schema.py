@@ -1,5 +1,6 @@
 """Tests for configuration schema models."""
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,11 @@ from jarvis.config.schema import (
     AnalyticsConfig,
     AnyTypeConfig,
     BackendsConfig,
+    CommunityBriefingConfig,
     FathomAccountConfig,
     FathomConfig,
     JarvisConfig,
+    MeetingPublicationConfig,
     NotionConfig,
     WhatsAppAccountConfig,
     WhatsAppConfig,
@@ -79,6 +82,28 @@ class TestAnyTypeConfig:
         """Test AnyType config with pre-selected space."""
         config = AnyTypeConfig(default_space_id="space-123")
         assert config.default_space_id == "space-123"
+
+
+class TestCommunityBriefingConfig:
+    """Weekly briefing configuration remains safe and opt-in."""
+
+    def test_defaults_are_disabled_and_share_the_local_review_inbox(self) -> None:
+        """A fresh install cannot publish before destination setup."""
+
+        config = CommunityBriefingConfig()
+
+        assert config.enabled is False
+        assert config.discord_channel_id is None
+        assert config.timezone == "Africa/Lagos"
+        assert config.review_port == 8770
+
+    def test_rejects_non_local_review_host_and_invalid_channel(self) -> None:
+        """Approval and destination boundaries fail closed."""
+
+        with pytest.raises(ValidationError):
+            CommunityBriefingConfig(review_host="0.0.0.0")
+        with pytest.raises(ValidationError):
+            CommunityBriefingConfig(discord_channel_id="community-updates")
 
 
 class TestBackendsConfig:
@@ -163,6 +188,8 @@ class TestJarvisConfig:
         assert config.analytics.enabled is False
         assert config.fathom.accounts == {}
         assert config.whatsapp.accounts == {}
+        assert config.meeting_publication.enabled is False
+        assert config.meeting_publication.discord_channel_id is None
 
     def test_create_config_with_notion_backend(self) -> None:
         """Test config with Notion as active backend."""
@@ -230,6 +257,34 @@ class TestJarvisConfig:
         monkeypatch.setenv("JARVIS_ACTIVE_BACKEND", "anytype")
         config = JarvisConfig()
         assert config.active_backend == "anytype"
+
+
+class TestMeetingPublicationConfig:
+    """Test local review and destination configuration."""
+
+    def test_discord_channel_is_configurable(self) -> None:
+        """A numeric Discord text-channel ID is stored as non-secret config."""
+
+        config = MeetingPublicationConfig(discord_channel_id="123456789012345678")
+        assert config.discord_channel_id == "123456789012345678"
+
+    def test_discord_channel_rejects_names(self) -> None:
+        """Channel names are ambiguous and must not pass validation."""
+
+        with pytest.raises(ValidationError, match="numeric channel ID"):
+            MeetingPublicationConfig(discord_channel_id="meeting-notes")
+
+    def test_review_host_is_loopback_only(self) -> None:
+        """The approval inbox cannot bind to a remote interface."""
+
+        with pytest.raises(ValidationError, match="must be localhost"):
+            MeetingPublicationConfig(review_host="0.0.0.0")
+
+    def test_cutover_date_parses_from_iso_config(self) -> None:
+        """YAML-style ISO dates become a strict publication floor."""
+
+        config = MeetingPublicationConfig(cutover_date="2026-08-28")  # type: ignore[arg-type]
+        assert config.cutover_date == date(2026, 8, 28)
 
 
 class TestConfigPaths:

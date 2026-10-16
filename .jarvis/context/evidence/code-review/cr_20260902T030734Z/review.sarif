@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Harnessy Code Review",
+          "informationUri": "https://github.com/flow-research/harnessy-v2",
+          "version": "0.3.0",
+          "rules": []
+        }
+      },
+      "results": []
+    }
+  ]
+}

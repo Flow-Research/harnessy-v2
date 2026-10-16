@@ -1,6 +1,12 @@
 # Harnessy Direction
 
-Status: draft north-star. This is the stable reference that the v1 → v2 work targets. It records the **technical and product direction** only. Commercial, legal, and org-structure decisions are intentionally out of scope here (sensitive; tracked elsewhere).
+Status: accepted technical north-star. This V2 repository is canonical for all
+future Harnessy capability and runtime work. The original repository is a
+migration source and compatibility oracle, while Garden is a hosted consumer.
+The 2026-09-04 implementation is an uncommitted local checkpoint; see
+`.jarvis/context/status.md` before inferring remote, release, or operational
+readiness. See `docs/adr/0004-harnessy-v2-is-canonical.md`. Commercial, legal,
+and org-structure decisions remain out of scope here.
 
 Sources this is grounded in: the Pi monorepo (`README.md`, `packages/agent`, `packages/coding-agent`, `packages/ai`), the v1 snapshot under `packages/capability-harnessy-v1-full/resources/source/` and `harnessy-v1/`, the existing `PORT_MAP.md` / `HARNESSY_V1_FEATURES.md` / `HARNESSY_REMAINING_MIGRATION_POINTS.md`, `packages/capability-org-knowledge/context/garden-boundary.md`, and internal direction-setting meetings.
 
@@ -17,11 +23,10 @@ v2 is not a line-by-line port. It is a **re-platforming**: rebuild Harnessy as a
 | **Pi** (`pie-harness`) | The agent runtime/engine: self-aware (reads its own source), extensible (sub-agents, memory extensions, skills), provider-agnostic LLM. | Open source | `packages/agent`, `packages/coding-agent`, `packages/ai`, `packages/tui` |
 | **Harnessy** | The agent-first **universal context engine**: standardizes skills, memory, configs, and connectors so they are portable across agent platforms (Claude Code, Codex, …). Local-first. The open-source adoption wedge. Built on Pi. | Open source | `packages/harnessy-core`, capability packs |
 | **Jarvis** | The agentic/orchestrator layer (scheduling, journaling, wiki, knowledge ops). Its first **open-source implementation is built in this repo**, then consumed by closed products. Being **redone on Pi**, not ported from the v1 Python. | Open core | future native package(s) + capability packs |
-| **Guardian** | Proprietary human-AI collaboration workspace (Notion/Linear-style: chat, issues, automations, agent/skill management). Houses business workflows. | Closed | separate product |
 | **Garden** | Hosted enterprise SaaS — zero-effort, scalable workspace for enterprise agent workflows. The hosted enterprise surface. | Closed | separate product |
 | **Hinesi** | Open-source public-infrastructure core that can be forked and integrated with Pi; a source of shared capabilities (e.g. connectors). | Open source | separate / shared |
 
-Boundary rule (from `garden-boundary.md`): Harnessy owns portable metadata, agent context, prompts/templates, and deterministic checks. The hosted layers own managed connectors, storage, auth/ACLs, approvals, and UI. Agents may *prepare* artifacts; they must not claim a write occurred without explicit evidence.
+Boundary rule: Harnessy owns portable metadata, agent context, workflow semantics, prompts/templates, deterministic checks, and local-first product surfaces. Executor owns connector mechanics, credentials, policy, approvals, and audit behind the engine boundary. Garden owns hosted tenancy, managed operations, storage, and UI while consuming Harnessy contracts. Agents may *prepare* artifacts; they must not claim a write occurred without explicit evidence.
 
 ## The shift
 
@@ -58,6 +63,11 @@ Done (native Effect services in `packages/harnessy-core`):
 - `CommandRunner` (gated, argv-only external execution; git source refresh, clone, uv tool install).
 - Skill lifecycle start: `skill validate`, `skill list`, `skill create`.
 - Connector/runtime cleanup: AnyType list/search pagination, deterministic Claude marketplace registration, and safer manifest parsing for global skill installs.
+- Capability portability: local create/add/activate/deactivate/refresh/verify/
+  export/reinstall with integrity and path-safety enforcement.
+- A narrow private `@harnessy/sdk` programmatic boundary with packed-consumer
+  and loopback AnyType contract evidence; publication is still a separate
+  license/artifact decision.
 
 Next (toward the direction, not more installer plumbing):
 - Re-home v1 connectors (AnyType/Notion/GitHub/meetings) as Harnessy connector capabilities with a reviewed execution boundary.

@@ -1,6 +1,13 @@
 # Harnessy
 
-**Harnessy gives an agent a portable project context — and a governed engine
+> **Canonical repository:** this V2 codebase is the source of truth for all new Harnessy runtime, CLI, capability, workflow, connector-contract, test, packaging, and release work. The original Harnessy repository is being frozen into a provenance-verified compatibility pack. See [ADR 0004](docs/adr/0004-harnessy-v2-is-canonical.md) and the [cutover plan](docs/migrations/v1-to-v2-canonical-cutover.md).
+
+The current work is an uncommitted local migration checkpoint, not evidence of
+a push, release, hosted CI result, or operational cutover. Start with the
+[context vault](.jarvis/context/README.md) for exact status, evidence levels,
+blockers, and continuation order.
+
+**Harnessy gives an agent a portable context; a governed engine
 for everything it connects to.**
 
 Capabilities, skills, memory, connectors, and checks live with the repo instead
@@ -23,6 +30,8 @@ other agents ──> MCP endpoint ─┘    (OAuth, API keys, OpenAPI, MCP serve
 
 The full surface map lives in [`docs/product-surfaces.md`](docs/product-surfaces.md).
 
+Garden consumes these reusable capabilities as a hosted product; reusable Harnessy implementation work lands here. Executor remains the integration boundary for credentials, policy, approvals, and audit.
+
 ---
 
 ## Getting started
@@ -42,8 +51,9 @@ npm --workspace @harnessy/core link
 ```
 
 The source checkout needs Bun to build the vendored Executor cockpit into
-`executor/apps/local/dist`. Published npm installs only need Node 22.19 or
-newer: Executor's platform binary is bundled and already contains the cockpit.
+`executor/apps/local/dist`. Published npm installs require Node 22.22.2 (or
+24.15.0 and newer). The scoped `@harnessy/executor` package selects a platform
+binary compiled from the vendored source, including the Harnessy-branded cockpit.
 
 Verify both binaries landed:
 
@@ -54,16 +64,27 @@ hsy --help
 
 ### 2. Sign in to a model provider
 
-`hsy` is the agent shell — it needs a model. Either export an API key before
-launching:
+`hsy` is the agent shell — it needs a model. Claude Code users can reuse their
+existing Claude Pro/Max session through Harnessy's built-in bridge:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY, GEMINI_API_KEY, ...
+claude auth login
 hsy
 ```
 
-or launch and sign in with a subscription (Claude Pro/Max, ChatGPT Plus/Pro,
-GitHub Copilot):
+Then use `/claude-auth` to verify the session and `/model` to select a model
+under `claude-bridge`. Harnessy delegates authentication to Claude Code; it
+does not copy OAuth tokens or require an Anthropic API key. Set
+`HARNESSY_CLAUDE_CODE_BIN` only when `claude` is not on `PATH`.
+
+Other providers can use an API key before launch:
+
+```bash
+export OPENAI_API_KEY=sk-...   # or GEMINI_API_KEY, OPENROUTER_API_KEY, ...
+hsy
+```
+
+or the host's subscription login flow:
 
 ```text
 hsy
@@ -71,8 +92,9 @@ hsy
 /model    # pick a model (Ctrl+L)
 ```
 
-Auth and settings live in `~/.hsy/agent` — your existing `~/.pi/agent` state is
-never touched.
+Harnessy auth and settings live in `~/.hsy/agent`; Claude Code continues to own
+its credentials in its own user configuration. Existing Pi state is never
+touched.
 
 ### 3. Use the built-in engine
 
@@ -287,5 +309,7 @@ npm run hsy:fresh
 
 ## License
 
-See [LICENSE](LICENSE). The vendored Pi runtime and Executor engine keep their
-original MIT notices.
+The root [LICENSE](LICENSE) is the inherited Pi MIT notice, and the vendored
+Executor runtime retains its MIT notice. Publication of Harnessy-authored
+packages is blocked until their project license is approved and a matching
+package-level `LICENSE` is included in every tarball.

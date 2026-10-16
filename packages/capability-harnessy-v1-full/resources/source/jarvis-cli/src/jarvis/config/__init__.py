@@ -23,10 +23,12 @@ from .fathom_setup import (
 from .loader import (
     ConfigError,
     clear_config_cache,
+    default_meeting_publication_env_file_path,
     get_backend_token,
     get_config,
     get_fathom_api_key,
     get_fathom_webhook_secret,
+    get_meeting_publication_discord_token,
     get_whatsapp_access_token,
     get_whatsapp_account_config,
     get_whatsapp_app_secret,
@@ -43,20 +45,32 @@ from .schema import (
     AnalyticsConfig,
     AnyTypeConfig,
     BackendsConfig,
+    CommunityBriefingConfig,
     ContentConfig,
     FathomAccountConfig,
     FathomConfig,
     JarvisConfig,
+    MeetingPublicationConfig,
     NotionConfig,
     WhatsAppAccountConfig,
     WhatsAppConfig,
     get_config_dir,
     get_config_path,
 )
+from .whatsapp_setup import (
+    WhatsAppSetupAccount,
+    default_whatsapp_env_file_path,
+    ensure_default_whatsapp_accounts,
+    generate_whatsapp_verify_token,
+    normalize_whatsapp_accounts,
+    render_whatsapp_env_file,
+)
 
 __all__ = [
     # Schema
     "JarvisConfig",
+    "CommunityBriefingConfig",
+    "MeetingPublicationConfig",
     "NotionConfig",
     "AnyTypeConfig",
     "BackendsConfig",
@@ -75,6 +89,8 @@ __all__ = [
     "get_backend_token",
     "get_fathom_api_key",
     "get_fathom_webhook_secret",
+    "get_meeting_publication_discord_token",
+    "default_meeting_publication_env_file_path",
     "get_whatsapp_account_config",
     "get_whatsapp_access_token",
     "get_whatsapp_app_secret",
@@ -101,4 +117,11 @@ __all__ = [
     "default_env_file_path",
     "default_shell_profile_path",
     "ensure_shell_profile_sources_env",
+    # WhatsApp setup helpers
+    "WhatsAppSetupAccount",
+    "normalize_whatsapp_accounts",
+    "ensure_default_whatsapp_accounts",
+    "render_whatsapp_env_file",
+    "default_whatsapp_env_file_path",
+    "generate_whatsapp_verify_token",
 ]

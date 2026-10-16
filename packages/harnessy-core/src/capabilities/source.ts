@@ -94,6 +94,18 @@ export class CapabilityFingerprintMetadata extends Schema.Class<CapabilityFinger
 	issues: Schema.Array(Schema.String),
 }) {}
 
+/** Integrity metadata for the installed self-contained capability artifact. */
+export class CapabilityArtifactMetadata extends Schema.Class<CapabilityArtifactMetadata>("CapabilityArtifactMetadata")({
+	/** Target-relative path to the installed artifact directory. */
+	path: Schema.String,
+	/** Stable SHA-256 digest for the complete package and projection views. */
+	sha256: Schema.String,
+	/** Sum of installed artifact file byte lengths. */
+	bytes: Schema.Number,
+	/** Count of installed artifact files. */
+	fileCount: Schema.Number,
+}) {}
+
 /** A lockfile entry for one installed or recorded capability. */
 export class CapabilityEntry extends Schema.Class<CapabilityEntry>("CapabilityEntry")({
 	/** Stable lockfile identifier, namespaced by source type. */
@@ -104,6 +116,8 @@ export class CapabilityEntry extends Schema.Class<CapabilityEntry>("CapabilityEn
 	resolvedSource: Schema.optional(CapabilityResolutionPlan),
 	/** Local content fingerprint metadata recorded for local capability sources. */
 	fingerprint: Schema.optional(CapabilityFingerprintMetadata),
+	/** Installed self-contained artifact integrity metadata. */
+	artifact: Schema.optional(CapabilityArtifactMetadata),
 	/** ISO timestamp for when the capability was recorded. */
 	addedAt: Schema.String,
 	/** Optional metadata read from a capability-owned manifest file. */

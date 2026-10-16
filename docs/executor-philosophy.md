@@ -4,7 +4,10 @@
 
 ## The idea
 
-Harnessy is an SDK. It answers one question for any agent, in any environment: *what can this agent do here, is the environment ready for it, and how does it act safely?*
+Harnessy is the open runtime and capability layer, with a narrow SDK as one
+supported programmatic boundary. It answers one question for any agent, in any
+environment: *what can this agent do here, is the environment ready for it, and
+how does it act safely?*
 
 That question has three parts, and they map directly to what the SDK provides:
 
@@ -14,13 +17,20 @@ That question has three parts, and they map directly to what the SDK provides:
 
 A concrete failure the SDK exists to fix: an agent on a laptop is asked to "find my meeting transcripts in AnyType." Today it can't discover the backend, can't tell whether it's running, has no way to obtain or locate credentials, and has no typed read path. With the SDK, that's `discover() → evidence → KnowledgeObjects.search()`.
 
-Two standing commitments from the June direction meetings carry into this shape: the SDK is **local-first** (user sovereignty; the platform never siphons data, on-prem works), and its first proving ground is the **connector port out of Guardian/Garden into Harnessy** — Harnessy is the agentic backend those products consume, not a feature inside them.
+Two standing commitments from the June direction meetings carry into this
+shape: Harnessy is **local-first** (user sovereignty; the platform never
+siphons data, on-prem works), and any Garden integration must be proven through
+a bounded consumer contract before runtime migration. Garden consumes Harnessy
+contracts; it is not an upstream capability source.
 
 ## Environments
 
 The SDK targets more than one runtime and more than one consumer:
 
-- **Node and Cloudflare Workers.** Guardian runs on Workers, so the SDK core must not depend on Node-only APIs. Platform specifics (filesystem, processes, local sockets) live in adapters, the way the AnyType transport already sits behind Effect's HttpClient.
+- **Node and Cloudflare Workers.** Garden runs on Workers, so the SDK core must
+  not depend on Node-only APIs. Platform specifics (filesystem, processes,
+  local sockets) live in adapters, the way the AnyType transport already sits
+  behind Effect's HttpClient.
 - **The CLI is one surface, not the product.** The same capabilities must be reachable by other agents and other environments — Claude Code, Codex, Pi, MCP hosts — through packs and the SDK. `hsy` is how a human drives it; the SDK is how everything else does.
 - **Readiness is environment-dependent, and the evidence should say so.** A local-only backend like AnyType is reachable from a laptop but not from a Worker; `discover()` returns that as evidence instead of failing opaquely.
 
@@ -38,7 +48,7 @@ The division of labor:
 
 ## How the other products fit
 
-**Garden** keeps its product identity: tenancy, users, approval UX, audit presentation, final writes. It consumes capabilities through the SDK. Its current connector layer (registry, OAuth, risk tables, MCP proxy) is the strongest evidence for this direction — it hand-rolled a subset of the engine because the engine wasn't adoptable yet, and it can retire that layer piece by piece as the engine proves out.
+**Garden** keeps its product identity: tenancy, users, approval UX, audit presentation, final writes. It is the first candidate consumer of the SDK's semantic contracts, but it is not migrated yet. Its current connector layer (registry, OAuth, risk tables, MCP proxy) is the strongest evidence for this direction — it hand-rolled a subset of the engine because the engine wasn't adoptable yet. A bounded consumer spike must prove value and runtime compatibility before Garden retires that layer piece by piece.
 
 **Workstream** stays a peer product reached over MCP, which is the shape Executor already speaks natively.
 
@@ -46,14 +56,19 @@ The division of labor:
 
 ## Decisions taken
 
-- Harnessy is an SDK — not an agent runtime, not an integration engine.
+- Harnessy owns the open runtime, CLI, portable capability and workflow
+  semantics. Its SDK is a narrow programmatic boundary, not the whole product;
+  Executor remains the integration engine.
 - AnyType is the reference backend and stays. Notion is scrapped for now; the knowledge contract it validated stays (the seam was extracted from two real adapters, per ADR-0002).
-- One policy engine. Garden's risk/trust tables and Harnessy's mutation gating both project onto Executor-style policy rather than each keeping their own.
+- One execution-mechanics policy seam. Garden retains workspace authorization,
+  reviewer routing, durable product records, audit presentation, and final-write
+  authority; Executor enforces connector and run mechanics beneath that host
+  boundary. An adapter must not create a second grant system or bypass Garden.
 
 ## What remains open
 
 - **The skills boundary with Executor.** Executor's vision claims skills (company knowledge as code, served over MCP). Portable skills are also Harnessy's core mission. Proposed line: Harnessy owns the portable format and cross-agent lifecycle; Executor is one surface that serves them. Needs explicit agreement with Rhys — this is the biggest open question.
-- ~~Consume Executor as packages vs. contribute upstream vs. isolate.~~ **Decided (2026-07-13): vendor Executor into Harnessy** (MIT; same treatment as the vendored Pi packages). Programmatic Harnessy consumers use `@harnessy/sdk`; agent hosts use Executor's standard MCP surface directly. `hsy` includes that MCP surface as a built-in, while Claude Code, Codex, and other MCP agents can install the same bundled entrypoint. Engine-level improvements are still contributed upstream where they fit.
+- ~~Consume Executor as packages vs. contribute upstream vs. isolate.~~ **Decided (2026-07-13): vendor Executor into Harnessy** (MIT; same treatment as the vendored Pi packages). Programmatic Harnessy consumers use the narrow Harnessy-owned contracts in `@harnessy/sdk`; the package does not re-export Executor. Agent hosts use Executor's standard MCP surface directly. `hsy` includes that MCP surface as a built-in, while Claude Code, Codex, and other MCP agents can install the same bundled entrypoint. Engine-level improvements are still contributed upstream where they fit.
 - Which Garden connector is extracted first, and when Garden's proxy starts retiring.
 - Terminology: "capability" currently means three different things across the repos (Harnessy pack, Garden permission rows, Executor's capability membrane). One glossary line each, before any cross-team review.
 

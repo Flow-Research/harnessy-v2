@@ -68,4 +68,22 @@ describe("capability manifest schema", () => {
 			expect(error.message).toContain("contains");
 		}),
 	);
+
+	it.effect("rejects empty metadata and dot path segments", () =>
+		Effect.gen(function* () {
+			for (const raw of [
+				JSON.stringify({ id: "", name: "Missing Id" }),
+				JSON.stringify({ id: "local:missing-name", name: "" }),
+				JSON.stringify({
+					id: "local:dot-path",
+					name: "Dot Path",
+					resources: [{ kind: "context", path: "docs/./README.md" }],
+				}),
+			]) {
+				const error = yield* Effect.flip(parseCapabilityManifest(raw, "invalid.json"));
+				expect(error._tag).toBe("HarnessError");
+				expect(error.message).toContain("Invalid Harnessy capability manifest");
+			}
+		}),
+	);
 });

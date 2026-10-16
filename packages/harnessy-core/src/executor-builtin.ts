@@ -17,10 +17,10 @@ const VENDORED_EXECUTOR_ENTRYPOINT = fileURLToPath(new URL("../../../executor/ap
 
 export const resolvePackagedExecutor = (): ExecutorBuiltinLaunch => {
 	const require = createRequire(import.meta.url);
-	const packageJson = require.resolve("executor/package.json");
+	const packageJson = require.resolve("@harnessy/executor/package.json");
 	return {
 		command: process.execPath,
-		args: [join(dirname(packageJson), "bin", "executor")],
+		args: [join(dirname(packageJson), "bin", "harnessy-executor")],
 	};
 };
 
