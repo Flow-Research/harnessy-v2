@@ -9,6 +9,8 @@ export const fixtureEnvironment = (source = process.env) => {
 		...Object.fromEntries(allowed.flatMap((key) => source[key] === undefined ? [] : [[key, source[key]]])),
 		NODE_OPTIONS: `--import=${JSON.stringify(guardPath)}`,
 		NODE_NO_WARNINGS: "1",
+		// Fixture credentials stay plaintext and never touch the owner's OS keychain.
+		PI_AUTH_ENCRYPTION: "off",
 		npm_config_update_notifier: "false",
 		npm_config_offline: "true",
 	};
