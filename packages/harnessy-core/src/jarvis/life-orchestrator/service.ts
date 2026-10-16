@@ -7,6 +7,7 @@ import * as Result from "effect/Result";
 
 import type { HarnessError } from "../../errors.ts";
 import { CommandRunner, type CommandRunResult, type ExternalCommand } from "../../runtime/command-runner.ts";
+import { prepareWorkspaceLifeCommand } from "../../workspace-life.ts";
 import { replaceWorthReadingSection, validateWorthReadingSection } from "./artifact.ts";
 import type { LifeOrchestratorSettings } from "./config.ts";
 import type { LifeDraftProvider, LifeDraftReceipt } from "./draft-provider.ts";
@@ -132,7 +133,14 @@ type CompatibilityRunner = {
 };
 
 const runCompatibilityCommand = (runner: CompatibilityRunner, command: ExternalCommand) =>
-	runner.run(command).pipe(
+	Effect.acquireUseRelease(
+		Effect.try(() => prepareWorkspaceLifeCommand(command)),
+		(prepared) => runner.run(prepared.command),
+		(prepared) =>
+			Effect.sync(() => {
+				if (prepared.snapshotPath !== null && existsSync(prepared.snapshotPath)) unlinkSync(prepared.snapshotPath);
+			}),
+	).pipe(
 		Effect.mapError(
 			(cause) =>
 				new LifeOrchestratorError({
@@ -776,9 +784,9 @@ export const prepareLifeWeeklyPrompt = (
 				"--competence-priorities",
 				process.env.LIFE_COMPETENCE_PRIORITIES_FILE ?? join(privateContext, "competence-priorities.md"),
 				"--status",
-				join(settings.paths.projectRoot, ".jarvis", "context", "status.md"),
+				join(settings.paths.contextRoot ?? join(settings.paths.projectRoot, ".jarvis", "context"), "status.md"),
 				"--roadmap",
-				join(settings.paths.projectRoot, ".jarvis", "context", "roadmap.md"),
+				join(settings.paths.contextRoot ?? join(settings.paths.projectRoot, ".jarvis", "context"), "roadmap.md"),
 				"--monthly-review",
 				join(settings.paths.lifeDirectory, period.calendarYear, period.month, "monthly-review.md"),
 				"--template",
