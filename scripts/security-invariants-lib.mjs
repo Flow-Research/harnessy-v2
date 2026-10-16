@@ -122,7 +122,7 @@ export const checkSecurityContract = (files) => {
 
 	const securityWorkflow = files.get(".github/workflows/qa-security-sweep.yml") ?? "";
 	for (const required of [
-		"npm audit --audit-level=moderate",
+		"node scripts/audit-root.mjs --json",
 		"node scripts/audit-executor.mjs --json",
 		"if-no-files-found: error",
 	]) {
