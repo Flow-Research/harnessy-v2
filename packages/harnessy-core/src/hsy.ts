@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { runPiCli } from "@earendil-works/pi-coding-agent";
 import { harnessyClaudeBridgeExtension } from "./claude-bridge/index.ts";
 import { resolveExecutorBuiltin } from "./executor-builtin.ts";
@@ -41,7 +42,14 @@ process.env.HARNESSY_EXECUTOR_ARGS = JSON.stringify([
 	"model",
 ]);
 
-void runPiCli(normalizeHsyArgs(process.argv.slice(2)), {
+const args = normalizeHsyArgs(process.argv.slice(2));
+// Package and config parsers reject agent flags, so only agent invocations receive the bundled skill.
+const agentArgs =
+	args[0] !== undefined && PACKAGE_COMMANDS.has(args[0])
+		? args
+		: [...args, "--skill", fileURLToPath(new URL("../resources/skills/personal-knowledge", import.meta.url))];
+
+void runPiCli(agentArgs, {
 	appIdentity: {
 		name: HSY_APP_NAME,
 		title: HSY_APP_TITLE,

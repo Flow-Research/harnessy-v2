@@ -226,7 +226,7 @@ test("installed launchers pin Node and preserve arguments outside PATH", { skip:
 	const installed = installReleaseLaunchers(target);
 	assert.deepEqual(readFileSync(installed.node), readFileSync(process.execPath));
 	const args = ["space value", "'quoted'", "$not_expanded", "--option"];
-	assert.equal(commands.length, 11);
+	assert.equal(commands.length, 12);
 	for (const name of commands) {
 		const result = spawnSync(join(installed.commands, name), args, {
 			cwd: root, env: { PATH: "/nonexistent" }, encoding: "utf8", timeout: 10_000,

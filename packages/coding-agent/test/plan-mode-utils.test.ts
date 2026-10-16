@@ -6,7 +6,7 @@ import {
 	isSafeCommand,
 	markCompletedSteps,
 	type TodoItem,
-} from "../examples/extensions/plan-mode/utils.ts";
+} from "../src/core/extensions/builtin/plan-mode-utils.ts";
 
 describe("isSafeCommand", () => {
 	describe("safe commands", () => {
@@ -23,13 +23,13 @@ describe("isSafeCommand", () => {
 			expect(isSafeCommand("git status")).toBe(true);
 			expect(isSafeCommand("git log --oneline")).toBe(true);
 			expect(isSafeCommand("git diff")).toBe(true);
-			expect(isSafeCommand("git branch")).toBe(true);
+			expect(isSafeCommand("git branch --list -a")).toBe(true);
+			expect(isSafeCommand("git remote -v")).toBe(true);
 		});
 
-		it("allows npm/yarn read commands", () => {
-			expect(isSafeCommand("npm list")).toBe(true);
-			expect(isSafeCommand("npm outdated")).toBe(true);
-			expect(isSafeCommand("yarn info react")).toBe(true);
+		it("allows interpreter version probes", () => {
+			expect(isSafeCommand("node --version")).toBe(true);
+			expect(isSafeCommand("python3 -V")).toBe(true);
 		});
 
 		it("allows other safe commands", () => {
@@ -57,13 +57,17 @@ describe("isSafeCommand", () => {
 			expect(isSafeCommand("git push")).toBe(false);
 			expect(isSafeCommand("git checkout main")).toBe(false);
 			expect(isSafeCommand("git reset --hard")).toBe(false);
+			expect(isSafeCommand("git branch feature")).toBe(false);
+			expect(isSafeCommand("git remote add origin example.com/repo.git")).toBe(false);
+			expect(isSafeCommand("git diff --output=changes.patch")).toBe(false);
 		});
 
-		it("blocks package manager installs", () => {
+		it("blocks package manager installs and repair writes", () => {
 			expect(isSafeCommand("npm install lodash")).toBe(false);
 			expect(isSafeCommand("yarn add react")).toBe(false);
 			expect(isSafeCommand("pip install requests")).toBe(false);
 			expect(isSafeCommand("brew install node")).toBe(false);
+			expect(isSafeCommand("npm audit --fix")).toBe(false);
 		});
 
 		it("blocks redirects", () => {
@@ -76,6 +80,91 @@ describe("isSafeCommand", () => {
 			expect(isSafeCommand("sudo rm -rf /")).toBe(false);
 			expect(isSafeCommand("kill -9 1234")).toBe(false);
 			expect(isSafeCommand("reboot")).toBe(false);
+			expect(isSafeCommand("find . -delete")).toBe(false);
+			expect(isSafeCommand("sed -n -i '1p' file.txt")).toBe(false);
+			expect(isSafeCommand("curl -X POST https://example.com")).toBe(false);
+		});
+
+		it("blocks write-capable options and command launchers", () => {
+			expect(isSafeCommand("env node mutate.js")).toBe(false);
+			expect(isSafeCommand("uniq input output")).toBe(false);
+			expect(isSafeCommand("less -o output input")).toBe(false);
+			expect(isSafeCommand("find . -fprintf output text")).toBe(false);
+			expect(isSafeCommand("sed -n --in-place '1p' file.txt")).toBe(false);
+			expect(isSafeCommand("sort -ooutput input")).toBe(false);
+			expect(isSafeCommand("diff --output=patch a b")).toBe(false);
+			expect(isSafeCommand("tree -o output")).toBe(false);
+			expect(isSafeCommand("rg --pre mutate.js pattern")).toBe(false);
+			expect(isSafeCommand("fd --exec mutate.js")).toBe(false);
+			expect(isSafeCommand("fd -Hx 'touch /tmp/pwn'")).toBe(false);
+			expect(isSafeCommand("tree -ao/tmp/output .")).toBe(false);
+			expect(isSafeCommand("date -us2026-01-01")).toBe(false);
+			expect(isSafeCommand("date 0717143026")).toBe(false);
+			expect(isSafeCommand("date -u 0717143026")).toBe(false);
+			expect(isSafeCommand("date -f %Y%m%d 20260717")).toBe(false);
+		});
+
+		it("allows display-only date invocations", () => {
+			expect(isSafeCommand("date")).toBe(true);
+			expect(isSafeCommand("date -u +%Y-%m-%d")).toBe(true);
+			expect(isSafeCommand("date -r 1700000000")).toBe(true);
+			expect(isSafeCommand('date -d "yesterday" +%F')).toBe(true);
+			expect(isSafeCommand("date -j 0717143026")).toBe(true);
+		});
+
+		it("blocks command composition and substitution", () => {
+			expect(isSafeCommand("ls $(rm -rf build)")).toBe(false);
+			expect(isSafeCommand("ls `rm -rf build`")).toBe(false);
+			expect(isSafeCommand("ls; rm -rf build")).toBe(false);
+			expect(isSafeCommand("ls && rm -rf build")).toBe(false);
+			expect(isSafeCommand("ls || rm -rf build")).toBe(false);
+			expect(isSafeCommand("ls | sh")).toBe(false);
+			expect(isSafeCommand("ls & rm -rf build")).toBe(false);
+			expect(isSafeCommand("ls\nrm -rf build")).toBe(false);
+			expect(isSafeCommand("ls\rrm -rf build")).toBe(false);
+			expect(isSafeCommand('echo "$(rm -rf build)"')).toBe(false);
+		});
+
+		it("blocks redirections and here-docs", () => {
+			expect(isSafeCommand("cat < secrets")).toBe(false);
+			expect(isSafeCommand("cat <<EOF")).toBe(false);
+			expect(isSafeCommand("cat <<<data")).toBe(false);
+			expect(isSafeCommand("echo hi 2>err.log")).toBe(false);
+		});
+
+		it("blocks subshells, brace groups, and process substitution", () => {
+			expect(isSafeCommand("(rm -rf build)")).toBe(false);
+			expect(isSafeCommand("ls (rm)")).toBe(false);
+			expect(isSafeCommand("{ rm -rf build; }")).toBe(false);
+			expect(isSafeCommand("cat <(rm -rf build)")).toBe(false);
+			expect(isSafeCommand("diff >(sh) a")).toBe(false);
+		});
+
+		it("blocks env-prefix assignments and expansion in the command name", () => {
+			expect(isSafeCommand("PATH=/tmp/evil ls")).toBe(false);
+			expect(isSafeCommand("GIT_EXTERNAL_DIFF=sh git diff")).toBe(false);
+			expect(isSafeCommand("$CMD file")).toBe(false);
+			expect(isSafeCommand(`\${CMD} file`)).toBe(false);
+			expect(isSafeCommand("l* file")).toBe(false);
+			expect(isSafeCommand("/bin/l? file")).toBe(false);
+			expect(isSafeCommand("~/bin/ls")).toBe(false);
+		});
+
+		it("resolves quoting and escapes the same way the shell does", () => {
+			expect(isSafeCommand("'rm' -rf build")).toBe(false);
+			expect(isSafeCommand('"r"m -rf build')).toBe(false);
+			expect(isSafeCommand("r\\m -rf build")).toBe(false);
+			expect(isSafeCommand("'ls")).toBe(false);
+			expect(isSafeCommand("ls\\")).toBe(false);
+			expect(isSafeCommand("'l''s' -la")).toBe(true);
+		});
+
+		it("blocks control characters and non-ASCII whitespace", () => {
+			expect(isSafeCommand("ls\u0000rm")).toBe(false);
+			expect(isSafeCommand("ls\u000bfile")).toBe(false);
+			expect(isSafeCommand("ls\u00a0-la")).toBe(false);
+			expect(isSafeCommand("ls\u2028rm")).toBe(false);
+			expect(isSafeCommand("ls\t-la")).toBe(true);
 		});
 
 		it("blocks editors", () => {
@@ -89,6 +178,16 @@ describe("isSafeCommand", () => {
 		it("requires command to be in safe list (not just non-destructive)", () => {
 			expect(isSafeCommand("unknown-command")).toBe(false);
 			expect(isSafeCommand("my-script.sh")).toBe(false);
+		});
+
+		it("blocks shell composition and expansion", () => {
+			expect(isSafeCommand("cat script.sh | bash")).toBe(false);
+			expect(isSafeCommand("ls && node mutate.js")).toBe(false);
+			expect(isSafeCommand("ls; node mutate.js")).toBe(false);
+			expect(isSafeCommand("echo $(node mutate.js)")).toBe(false);
+			expect(isSafeCommand("echo `node mutate.js`")).toBe(false);
+			expect(isSafeCommand("tree *")).toBe(false);
+			expect(isSafeCommand("cat $HOME/file")).toBe(false);
 		});
 
 		it("handles commands with leading whitespace", () => {

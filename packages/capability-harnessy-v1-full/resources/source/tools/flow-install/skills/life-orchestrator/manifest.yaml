@@ -1,6 +1,6 @@
 name: life-orchestrator
 type: opencode
-version: 0.1.18
+version: 0.1.19
 owner: julian
 status: experimental
 blast_radius: medium
@@ -49,6 +49,7 @@ schedule:
     type: shell
     command: 'bash "${AGENTS_SKILLS_ROOT:-$HOME/.agents/skills}/life-orchestrator/scripts/weekly-plan"'
     description: "Weekly plan, Sundays 18:00 (anchors next week's briefs)"
+    timeout: 2400
     enabled: false
   - name: monthly-review
     cron: "0 9 1 * *"
