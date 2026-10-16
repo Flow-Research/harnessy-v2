@@ -12,6 +12,7 @@ import {
 	sha256MeetingPublicationSmokeBytes,
 } from "../meeting-publication/operational-input.ts";
 import { MeetingPublicationSmokeRuntimeSystemReference } from "../meeting-publication/operational-runtime.ts";
+import { invokesCommand, launchedPrograms } from "../process-invocation.ts";
 import type { CommunityBriefingWriteGrant } from "./authority.ts";
 import { CommunityBriefingGrantHost } from "./grant-host.ts";
 import {
@@ -148,6 +149,25 @@ export const parseCommunityProcessConfirmation = (output: string): RegExpExecArr
 	return communityProcessLinePattern.exec(record) ?? undefined;
 };
 
+const COMMUNITY_COMPATIBILITY_WRITER_COMMANDS = [
+	["jarvis", "meeting", "publish", "review", "serve"],
+	["jarvis", "meeting", "review", "serve"],
+	...["jarvis", "harnessy", "hsy"].flatMap((program) => [
+		[program, "community", "briefing"],
+		[program, "community-briefing"],
+	]),
+] as const;
+
+/** @internal A process running a meeting/community writer command or a launched
+ * community briefing script. Text naming those commands inside another command's
+ * arguments (shells, search tools, agents, inline programs) is not a writer.
+ */
+export const isCommunityCompatibilityWriterCommand = (commandLine: string): boolean =>
+	COMMUNITY_COMPATIBILITY_WRITER_COMMANDS.some((words) => invokesCommand(commandLine, words)) ||
+	launchedPrograms(commandLine).some((program) =>
+		/(?:jarvis|harnessy|hsy).*\/community-briefing\/|briefing[-_](?:review|worker)/u.test(program),
+	);
+
 /** Bounded known-process evidence, not protection from arbitrary same-UID code. */
 const proveCompatibilityAbsent = () => {
 	const uid = process.geteuid?.();
@@ -160,13 +180,7 @@ const proveCompatibilityAbsent = () => {
 		const match = communityProcessLinePattern.exec(line);
 		if (!match) throw new Error("probe_failed");
 		if (Number(match[1]) !== uid || Number(match[2]) === process.pid) continue;
-		if (
-			match[3].includes("jarvis meeting publish review serve") ||
-			match[3].includes("jarvis meeting review serve") ||
-			/(?:jarvis|harnessy|hsy)(?:\s+|.*\/)(?:community\s+briefing|community-briefing)|briefing[-_]review|briefing[-_]worker/u.test(
-				match[3],
-			)
-		) {
+		if (isCommunityCompatibilityWriterCommand(match[3])) {
 			const launchExecutable = command("/bin/ps", ["-p", match[2], "-o", "comm="]);
 			const processExecutable =
 				process.platform === "linux"
@@ -232,8 +246,14 @@ export class CommunityOperationError extends Schema.TaggedErrorClass<CommunityOp
 			"publication_uncertain",
 			"reconciliation_required",
 		]),
+		/** Diagnostic identifier of the runtime check that rejected the operation. */
+		reason: Schema.optional(Schema.String),
 	},
 ) {}
+
+/** Only fixed internal identifiers, never free-form error text, become diagnostics. */
+const rejectionReason = (cause: unknown): string | undefined =>
+	cause instanceof Error && /^[a-z][a-z_]{0,63}$/u.test(cause.message) ? cause.message : undefined;
 
 export interface CommunityOperationConsumer {
 	readonly artifactAnchors: { readonly host: string; readonly sdk: string; readonly dependencies: string };
@@ -410,7 +430,13 @@ export const runAuthorizedCommunityBriefing = (
 						assertTime();
 						system.proveCompatibilityAbsent();
 					},
-					catch: () => new Error("community_runtime_rejected"),
+					catch: (cause) => {
+						const reason = rejectionReason(cause);
+						return new CommunityOperationError({
+							code: "runtime_rejected",
+							...(reason === undefined ? {} : { reason }),
+						});
+					},
 				});
 			yield* check();
 			const host = yield* Effect.acquireRelease(
