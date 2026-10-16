@@ -112,6 +112,61 @@ describe("isSafeCommand", () => {
 			expect(isSafeCommand("date -j 0717143026")).toBe(true);
 		});
 
+		it("blocks command composition and substitution", () => {
+			expect(isSafeCommand("ls $(rm -rf build)")).toBe(false);
+			expect(isSafeCommand("ls `rm -rf build`")).toBe(false);
+			expect(isSafeCommand("ls; rm -rf build")).toBe(false);
+			expect(isSafeCommand("ls && rm -rf build")).toBe(false);
+			expect(isSafeCommand("ls || rm -rf build")).toBe(false);
+			expect(isSafeCommand("ls | sh")).toBe(false);
+			expect(isSafeCommand("ls & rm -rf build")).toBe(false);
+			expect(isSafeCommand("ls\nrm -rf build")).toBe(false);
+			expect(isSafeCommand("ls\rrm -rf build")).toBe(false);
+			expect(isSafeCommand('echo "$(rm -rf build)"')).toBe(false);
+		});
+
+		it("blocks redirections and here-docs", () => {
+			expect(isSafeCommand("cat < secrets")).toBe(false);
+			expect(isSafeCommand("cat <<EOF")).toBe(false);
+			expect(isSafeCommand("cat <<<data")).toBe(false);
+			expect(isSafeCommand("echo hi 2>err.log")).toBe(false);
+		});
+
+		it("blocks subshells, brace groups, and process substitution", () => {
+			expect(isSafeCommand("(rm -rf build)")).toBe(false);
+			expect(isSafeCommand("ls (rm)")).toBe(false);
+			expect(isSafeCommand("{ rm -rf build; }")).toBe(false);
+			expect(isSafeCommand("cat <(rm -rf build)")).toBe(false);
+			expect(isSafeCommand("diff >(sh) a")).toBe(false);
+		});
+
+		it("blocks env-prefix assignments and expansion in the command name", () => {
+			expect(isSafeCommand("PATH=/tmp/evil ls")).toBe(false);
+			expect(isSafeCommand("GIT_EXTERNAL_DIFF=sh git diff")).toBe(false);
+			expect(isSafeCommand("$CMD file")).toBe(false);
+			expect(isSafeCommand(`\${CMD} file`)).toBe(false);
+			expect(isSafeCommand("l* file")).toBe(false);
+			expect(isSafeCommand("/bin/l? file")).toBe(false);
+			expect(isSafeCommand("~/bin/ls")).toBe(false);
+		});
+
+		it("resolves quoting and escapes the same way the shell does", () => {
+			expect(isSafeCommand("'rm' -rf build")).toBe(false);
+			expect(isSafeCommand('"r"m -rf build')).toBe(false);
+			expect(isSafeCommand("r\\m -rf build")).toBe(false);
+			expect(isSafeCommand("'ls")).toBe(false);
+			expect(isSafeCommand("ls\\")).toBe(false);
+			expect(isSafeCommand("'l''s' -la")).toBe(true);
+		});
+
+		it("blocks control characters and non-ASCII whitespace", () => {
+			expect(isSafeCommand("ls\u0000rm")).toBe(false);
+			expect(isSafeCommand("ls\u000bfile")).toBe(false);
+			expect(isSafeCommand("ls\u00a0-la")).toBe(false);
+			expect(isSafeCommand("ls\u2028rm")).toBe(false);
+			expect(isSafeCommand("ls\t-la")).toBe(true);
+		});
+
 		it("blocks editors", () => {
 			expect(isSafeCommand("vim file.txt")).toBe(false);
 			expect(isSafeCommand("nano file.txt")).toBe(false);

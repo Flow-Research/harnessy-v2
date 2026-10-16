@@ -3,9 +3,14 @@
  * Extracted for testability.
  */
 
-// Composition, redirection, and expansion make a command allowlist
-// ambiguous. Reject them instead of trying to validate a shell program.
-const UNSAFE_SHELL_SYNTAX_PATTERN = /[\r\n;&|`<>$]/;
+// Composition, redirection, subshells, and expansion make a command allowlist
+// ambiguous. This is not a shell parser, so it fails closed: any shell
+// metacharacter, even inside quotes, rejects the whole command.
+const UNSAFE_SHELL_SYNTAX_PATTERN = /[;&|`<>$()]/;
+// Control characters (except tab) and non-ASCII whitespace are rejected because
+// bash and this splitter would disagree on where words end.
+const AMBIGUOUS_CHARACTER_PATTERN =
+	/[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u00a0\u1680\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]/;
 
 const ALWAYS_READ_ONLY_COMMANDS = new Set([
 	"cal",
@@ -68,7 +73,7 @@ function splitShellWords(command: string): string[] | undefined {
 			else current += character;
 			continue;
 		}
-		if (/\s/.test(character) && quote === undefined) {
+		if ((character === " " || character === "\t") && quote === undefined) {
 			if (current) words.push(current);
 			current = "";
 			continue;
@@ -138,7 +143,7 @@ function isSafeDateCommand(args: string[]): boolean {
 }
 
 export function isSafeCommand(command: string): boolean {
-	if (UNSAFE_SHELL_SYNTAX_PATTERN.test(command)) return false;
+	if (UNSAFE_SHELL_SYNTAX_PATTERN.test(command) || AMBIGUOUS_CHARACTER_PATTERN.test(command)) return false;
 	const words = splitShellWords(command);
 	if (!words || words.length === 0) return false;
 
