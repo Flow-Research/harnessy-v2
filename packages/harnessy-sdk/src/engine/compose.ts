@@ -7,6 +7,7 @@ export class EngineConnection extends Schema.Class<EngineConnection>("EngineConn
 	owner: EngineOwner,
 	integration: Schema.String,
 	name: Schema.String,
+	template: Schema.optional(Schema.String),
 }) {}
 
 export class EngineTool extends Schema.Class<EngineTool>("EngineTool")({
@@ -58,9 +59,42 @@ export interface EngineConnectionCreateInput extends EngineConnectionRef {
 	readonly description?: string | null;
 }
 
+export class EngineMeetingReconnectError extends Schema.TaggedErrorClass<EngineMeetingReconnectError>()(
+	"EngineMeetingReconnectError",
+	{
+		code: Schema.Literals([
+			"invalid_input",
+			"missing_connection",
+			"unsupported_connection",
+			"invalid_grant",
+			"invalid_session",
+			"consent_failed",
+			"identity_mismatch",
+			"provider_unavailable",
+		]),
+	},
+) {}
+
+/** Bound to one existing connection and Executor; never contains credential material. */
+export interface EngineMeetingReconnectSession {
+	readonly state: string;
+	readonly authorizationUrl: string;
+	readonly complete: (
+		code: string,
+		guard: Effect.Effect<void, unknown>,
+	) => Effect.Effect<void, EngineMeetingReconnectError>;
+	readonly cancel: (guard: Effect.Effect<void, unknown>) => Effect.Effect<void, EngineMeetingReconnectError>;
+}
+
 /** Harnessy-owned structural boundary. No vendored engine type crosses this interface. */
 export interface HarnessyEngineHandle {
 	readonly execute: (address: string, args: unknown) => Effect.Effect<unknown, unknown>;
+	/** Per-call approval scoped exclusively to a reviewed community briefing tool. */
+	readonly executeApprovedCommunityMutation: (
+		address: string,
+		args: unknown,
+		approval: { readonly briefingId: string; readonly sourceHash: string },
+	) => Effect.Effect<unknown, unknown>;
 	/** Per-call, in-memory approval for one Core-approved meeting mutation. */
 	readonly executeApprovedMeetingMutation: (
 		address: string,
@@ -68,12 +102,23 @@ export interface HarnessyEngineHandle {
 		approval: { readonly itemId: string; readonly sourceHash: string },
 	) => Effect.Effect<unknown, unknown>;
 	readonly connections: {
+		readonly startGoogleMeetingReconnect: (
+			input: {
+				readonly owner: EngineOwner;
+				readonly name: string;
+				readonly expectedOwnerEmail: string;
+				readonly redirectUri: string;
+			},
+			guard: Effect.Effect<void, unknown>,
+		) => Effect.Effect<EngineMeetingReconnectSession, EngineMeetingReconnectError>;
 		readonly create: (input: EngineConnectionCreateInput) => Effect.Effect<EngineConnection, unknown>;
 		readonly list: (filter?: {
 			readonly integration?: string;
 			readonly owner?: EngineOwner;
 		}) => Effect.Effect<ReadonlyArray<EngineConnection>, unknown>;
 		readonly checkHealth: (ref: EngineConnectionRef) => Effect.Effect<EngineHealth, unknown>;
+		/** Explicit catalog maintenance; never implied by publication. */
+		readonly refresh: (ref: EngineConnectionRef) => Effect.Effect<ReadonlyArray<EngineTool>, unknown>;
 	};
 	readonly tools: {
 		readonly list: (filter?: {

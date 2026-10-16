@@ -174,17 +174,15 @@ const readBoundedText = (
 	Effect.gen(function* () {
 		const declared = response.headers["content-length"];
 		if (declared !== undefined && /^\d+$/u.test(declared) && Number(declared) > maxBytes) {
-			return yield* failure("response_too_large", {
-				retryable: true,
-				retryAfterSeconds: 60,
-			});
+			// A fixed response limit cannot recover by repeating the same request.
+			return yield* failure("response_too_large");
 		}
 		const chunks: Array<Uint8Array> = [];
 		let byteLength = 0;
 		yield* response.stream.pipe(
 			Stream.runForEach((chunk) => {
 				if (byteLength + chunk.byteLength > maxBytes) {
-					return Effect.fail(failure("response_too_large", { retryable: true, retryAfterSeconds: 60 }));
+					return Effect.fail(failure("response_too_large"));
 				}
 				return Effect.sync(() => {
 					chunks.push(chunk);
@@ -279,6 +277,19 @@ export const executeMeetingJson = <S extends Schema.Top & { readonly DecodingSer
 			Option.getOrElse(Cause.findErrorOption(cause), () =>
 				failure("network_error", { retryable: true, retryAfterSeconds: 60 }),
 			),
+		),
+		Effect.mapError((error) =>
+			input.method !== "GET" &&
+			[
+				"network_error",
+				"timeout",
+				"request_timeout",
+				"provider_unavailable",
+				"invalid_response",
+				"response_too_large",
+			].includes(error.code)
+				? failure("delivery_uncertain")
+				: error,
 		),
 	);
 };

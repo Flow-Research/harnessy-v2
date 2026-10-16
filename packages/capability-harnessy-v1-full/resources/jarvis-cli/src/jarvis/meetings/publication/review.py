@@ -52,8 +52,18 @@ def serve_review(
         server.server_close()
 
 
+def create_briefing_review_server(service: CommunityBriefingService) -> ThreadingHTTPServer:
+    """Serve only briefing review without constructing a meeting service or queue."""
+
+    token = review_token(service.state_root)
+    return ThreadingHTTPServer(
+        (service.config.review_host, service.config.review_port),
+        _handler_class(None, token, service),
+    )
+
+
 def _handler_class(
-    service: PublicationService,
+    service: PublicationService | None,
     token: str,
     briefing_service: CommunityBriefingService | None,
 ) -> type[BaseHTTPRequestHandler]:
@@ -92,7 +102,7 @@ def _handler_class(
                     headers=headers,
                 )
                 return
-            if parsed.path.startswith("/item/"):
+            if parsed.path.startswith("/item/") and service is not None:
                 item_id = parsed.path.removeprefix("/item/").strip("/")
                 self._write(HTTPStatus.OK, _item_page(service, item_id, token), headers=headers)
                 return
@@ -133,7 +143,7 @@ def _handler_class(
                     self.send_header("Location", f"/briefing/{destination}")
                     self.end_headers()
                     return
-                if path.startswith("/update-note/"):
+                if path.startswith("/update-note/") and service is not None:
                     destination = path.removeprefix("/update-note/").strip("/")
                     service.update_note(
                         destination,
@@ -141,6 +151,26 @@ def _handler_class(
                     )
                     self.send_response(HTTPStatus.SEE_OTHER)
                     self.send_header("Location", f"/item/{destination}")
+                    self.end_headers()
+                    return
+                if path.startswith("/briefing/regenerate/") and briefing_service is not None:
+                    destination = path.removeprefix("/briefing/regenerate/").strip("/")
+                    briefing_service.start_regeneration(destination)
+                    self.send_response(HTTPStatus.SEE_OTHER)
+                    self.send_header("Location", f"/briefing/{destination}")
+                    self.end_headers()
+                    return
+                if path.startswith("/briefing/revise/") and briefing_service is not None:
+                    destination = path.removeprefix("/briefing/revise/").strip("/")
+                    briefing_service.start_revision(
+                        destination,
+                        instruction=form.get("revise_instruction", [""])[0],
+                        markdown=form.get("briefing_markdown", [""])[0],
+                        discord_summary=form.get("discord_summary", [""])[0],
+                        provider=form.get("revise_provider", ["auto"])[0],
+                    )
+                    self.send_response(HTTPStatus.SEE_OTHER)
+                    self.send_header("Location", f"/briefing/{destination}")
                     self.end_headers()
                     return
                 if path.startswith("/briefing/approve/") and briefing_service is not None:
@@ -151,7 +181,7 @@ def _handler_class(
                     )
                 elif path.startswith("/briefing/reject/") and briefing_service is not None:
                     briefing_service.reject(path.removeprefix("/briefing/reject/").strip("/"))
-                elif path.startswith("/approve/"):
+                elif path.startswith("/approve/") and service is not None:
                     reviewed_summary = form.get("discord_summary")
                     meeting_markdown = form.get("meeting_markdown")
                     service.approve(
@@ -159,7 +189,7 @@ def _handler_class(
                         meeting_markdown=(meeting_markdown[0] if meeting_markdown else None),
                         discord_summary=reviewed_summary[0] if reviewed_summary else None,
                     )
-                elif path.startswith("/reject/"):
+                elif path.startswith("/reject/") and service is not None:
                     service.reject(path.removeprefix("/reject/").strip("/"))
                 else:
                     self._write(
@@ -209,19 +239,29 @@ def _handler_class(
 
 
 def _inbox_page(
-    service: PublicationService,
+    service: PublicationService | None,
     token: str,
     briefing_service: CommunityBriefingService | None = None,
 ) -> str:
-    pending = service.store.list_items(PublicationStatus.PENDING_REVIEW)
-    blocked = service.store.list_items(PublicationStatus.BLOCKED)
-    counts = service.store.counts()
+    pending = service.store.list_items(PublicationStatus.PENDING_REVIEW) if service else []
+    blocked = service.store.list_items(PublicationStatus.BLOCKED) if service else []
+    counts = service.store.counts() if service else {}
     briefing_pending = (
         briefing_service.store.list_items(PublicationStatus.PENDING_REVIEW)
         if briefing_service is not None
         else []
     )
-    if pending:
+    if service is None:
+        body = """
+        <header class="page-intro">
+          <p class="eyebrow">Flow Research · Weekly briefings</p>
+          <h1>Weekly briefing review</h1>
+          <p class="lede">Review weekly drafts before publication.</p>
+        </header>
+        """
+        if not briefing_pending:
+            body += '<section class="card empty-card"><h2>No weekly drafts waiting</h2></section>'
+    elif pending:
         item = pending[0]
         body = f"""
         <header class="page-intro">
@@ -344,7 +384,10 @@ def _briefing_page(
     except (OSError, UnicodeError) as exc:
         return _message_page("Cannot read briefing", html.escape(str(exc)))
     csrf = _csrf(token)
-    editable = item.status == PublicationStatus.PENDING_REVIEW
+    revision = service.revision_status(item)
+    reconciliation = revision is not None and revision.get("reconciliation_required") == "true"
+    editable = item.status == PublicationStatus.PENDING_REVIEW and not reconciliation
+    refresh: int | None = None
     item_range = f"{item.week_start.isoformat()} to {item.week_end.isoformat()}"
     item_status = _status_label(item.status)
     if editable:
@@ -378,6 +421,71 @@ def _briefing_page(
           spellcheck="true">{html.escape(discord_summary)}</textarea>
         <p class="discord-editor-help">Use no more than three concise sentences.</p>
         """
+        history = service.revision_log(item)
+        history_html = ""
+        if history:
+            rows = "".join(
+                '<li><span class="revision-meta">'
+                + html.escape(entry["ts"][:16].replace("T", " "))
+                + (" · " + html.escape(entry["provider"]) if entry["provider"] else "")
+                + "</span><br>"
+                + html.escape(entry["instruction"])
+                + "</li>"
+                for entry in reversed(history)
+            )
+            history_html = (
+                '<p class="section-label">Recent AI revisions</p>'
+                f'<ul class="revision-log">{rows}</ul>'
+            )
+        revision_notice = ""
+        if revision is not None and revision["state"] == "running":
+            refresh = 8
+            started = revision["ts"][:16].replace("T", " ")
+            revise_form = f"""
+          <p>Revision in progress since {html.escape(started)} UTC. This page refreshes
+          automatically until the updated draft arrives — usually within a couple of
+          minutes.</p>
+          <p class="privacy-note">Instruction: {html.escape(revision["instruction"])}</p>
+            """
+        else:
+            if revision is not None and revision["state"] == "failed":
+                revision_notice = (
+                    '<p class="revision-error">The last revision failed: '
+                    + html.escape(revision["error"] or "unknown error")
+                    + " You can try again.</p>"
+                )
+            revise_form = f"""
+          <p>The assistant rewrites the draft from your instruction, the text shown here, and
+          the week's accepted sources. Nothing publishes until you approve.</p>
+          <textarea class="revise-instruction" name="revise_instruction" form="briefing-approve"
+            maxlength="2000" spellcheck="true"
+            placeholder="e.g. Lead with the platform progress and make the Discord copy warmer."
+            ></textarea>
+          <label class="meeting-editor-label" for="revise-provider">Provider</label>
+          <select class="revise-provider" id="revise-provider" name="revise_provider"
+            form="briefing-approve">
+            <option value="auto">Auto</option>
+            <option value="claude">Claude</option>
+            <option value="codex">Codex</option>
+            <option value="opencode">OpenCode</option>
+          </select>
+          <button class="save-draft" type="submit" form="briefing-approve"
+            formaction="/briefing/revise/{item.briefing_id}">Revise draft</button>
+          <button class="regenerate" type="submit" form="briefing-approve"
+            formaction="/briefing/regenerate/{item.briefing_id}">Regenerate from sources</button>
+          <p class="privacy-note">Both run in the background; this page shows their progress and
+          reloads with the updated draft. Regenerate rebuilds the whole briefing from the week's
+          meeting notes and context (the current draft is backed up first).</p>
+            """
+        revise_card = f"""
+        <section class="card action-card">
+          <p class="section-label">Revise with AI</p>
+          <h2>Ask for changes</h2>
+          {revision_notice}
+          {revise_form}
+          {history_html}
+        </section>
+        """
     else:
         actions = f"""
         <section class="card action-card"><p class="section-label">Decision</p>
@@ -385,6 +493,7 @@ def _briefing_page(
         <p>This briefing is no longer awaiting review.</p></section>
         """
         editors = ""
+        revise_card = ""
     body = f"""
       <a class="back-link" href="/"><span aria-hidden="true">←</span> Review inbox</a>
       <header class="meeting-header">
@@ -412,10 +521,19 @@ def _briefing_page(
             <div class="discord-doc-link">↗ Read the weekly briefing</div></div></div>
           </section>
           {actions}
+          {revise_card}
         </aside>
       </div>
     """
-    return _page("Weekly community briefing review", body)
+    if reconciliation:
+        body = (
+            '<section class="card attention-card"><h2>Operator reconciliation required</h2><p>'
+            + html.escape(revision["error"])
+            + " Do not retry or publish until the artifacts and queue "
+            "have been reconciled.</p></section>"
+            + body
+        )
+    return _page("Weekly community briefing review", body, refresh=refresh)
 
 
 def _item_page(service: PublicationService, item_id: str, token: str) -> str:
@@ -612,10 +730,13 @@ def _message_page(title: str, message: str) -> str:
     )
 
 
-def _page(title: str, body: str) -> str:
+def _page(title: str, body: str, *, refresh: int | None = None) -> str:
+    refresh_meta = (
+        f'<meta http-equiv="refresh" content="{int(refresh)}">' if refresh is not None else ""
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>{html.escape(title)}</title><style>
+{refresh_meta}<title>{html.escape(title)}</title><style>
 :root {{ color-scheme:light; --canvas:#f3f6f4; --surface:#fff; --ink:#15201a;
 --muted:#647068; --line:#dce4df; --accent:#167449; --accent-dark:#105b39;
 --danger:#a33b3b; --discord:#313338; }}
@@ -751,6 +872,23 @@ button:focus-visible,.button:focus-visible,a:focus-visible,summary:focus-visible
 outline:3px solid #6db88d; outline-offset:3px; }}
 .privacy-note {{ border-top:1px solid var(--line); color:var(--muted); font-size:.76rem;
 margin:1rem 0 0; padding-top:.9rem; }}
+.revise-instruction {{ background:#fbfcfb; border:1px solid var(--line); border-radius:9px;
+color:var(--ink); display:block; font:inherit; line-height:1.5; margin-top:.6rem;
+min-height:6.5rem; padding:.65rem; resize:vertical; width:100%; }}
+.revise-instruction:focus {{ border-color:var(--accent); outline:2px solid #6db88d;
+outline-offset:1px; }}
+.revise-provider {{ background:#fff; border:1px solid var(--line); border-radius:9px;
+color:var(--ink); display:block; font:inherit; margin-top:.4rem; padding:.5rem .65rem;
+width:100%; }}
+.revision-log {{ color:var(--muted); font-size:.78rem; list-style:none; margin:.5rem 0 0;
+padding:0; }}
+.revision-log li {{ border-top:1px solid var(--line); padding:.55rem 0; }}
+.revision-meta {{ color:var(--muted); font-size:.7rem; font-weight:700; }}
+.revision-error {{ background:#fff4f3; border:1px solid #e3c0bd; border-radius:9px;
+color:var(--danger); font-size:.8rem; margin-top:.6rem; padding:.6rem .7rem; }}
+.regenerate {{ background:#fff; border:1px solid var(--line); color:var(--ink);
+margin-top:.6rem; width:100%; }}
+.regenerate:hover {{ background:#f3f6f4; }}
 .message-card {{ margin-top:4rem; }}
 @media (max-width:880px) {{ .review-grid {{ grid-template-columns:1fr; }}
 .review-sidebar {{ position:static; }} .preview-card {{ order:1; }} .action-card {{ order:2; }} }}

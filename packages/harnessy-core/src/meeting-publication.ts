@@ -15,7 +15,10 @@ export {
 	MeetingPublicationInspectorError,
 	MeetingPublicationStateInspection,
 } from "./jarvis/meeting-publication/inspector.ts";
-export { MeetingPublicationProviderError } from "./jarvis/meeting-publication/models.ts";
+export {
+	type MeetingPublicationFailureStage,
+	MeetingPublicationProviderError,
+} from "./jarvis/meeting-publication/models.ts";
 export type {
 	MeetingPublicationFullReviewRuntimeInput,
 	MeetingPublicationReviewArtifactAnchors,
@@ -28,23 +31,33 @@ export type {
 	MeetingPublicationWorkerRuntimeInput,
 } from "./jarvis/meeting-publication/operational-input.ts";
 export {
+	encodeMeetingPublicationServiceEnrollmentRequest,
 	MeetingPublicationSmokeRuntimeError,
 	MeetingPublicationSmokeRuntimeErrorCode,
+	meetingPublicationDirectoryChain,
+	prepareMeetingPublicationServiceRequest,
+	readStableMeetingPublicationSmokeFile,
 } from "./jarvis/meeting-publication/operational-input.ts";
 export type {
 	MeetingPublicationReviewRuntimeHost,
+	MeetingPublicationServiceRevocation,
+	MeetingPublicationServiceStatus,
 	MeetingPublicationSmokeProviderFactory,
 	MeetingPublicationWorkerProviderFactory,
 } from "./jarvis/meeting-publication/operational-runtime.ts";
 export {
+	inspectMeetingPublicationService,
+	revokeStoppedMeetingPublicationService,
 	runAuthorizedMeetingPublicationFullReview,
 	runAuthorizedMeetingPublicationReview,
 	runAuthorizedMeetingPublicationSmoke,
 	runAuthorizedMeetingPublicationWorker,
 } from "./jarvis/meeting-publication/operational-runtime.ts";
+export type { MeetingProviderHealth } from "./jarvis/meeting-publication/provider-health.ts";
 export { meetingPublicationReviewRendezvousFileName } from "./jarvis/meeting-publication/review.ts";
 export type {
 	MeetingPublicationDiscordRequest,
+	MeetingPublicationGoogleReconnect,
 	MeetingPublicationGoogleRequest,
 } from "./jarvis/meeting-publication/service.ts";
 export {
@@ -54,6 +67,9 @@ export {
 	MeetingPublicationGoogleCheckpoint,
 	MeetingPublicationNotifier,
 } from "./jarvis/meeting-publication/service.ts";
+export { provisionMeetingPublicationService } from "./jarvis/meeting-publication/service-setup.ts";
+export { assertMeetingPublicationRollbackDatabaseFile } from "./jarvis/meeting-publication/store-file-safety.ts";
+export { validateMeetingPublicationStoreSchema } from "./jarvis/meeting-publication/store-schema.ts";
 export type {
 	MeetingPublicationImportInput,
 	MeetingPublicationImportResult,

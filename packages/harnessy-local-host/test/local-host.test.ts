@@ -330,11 +330,13 @@ it("keeps the private planning surface separate from the guarded runtime export"
 		effect: "4.0.0-beta.85",
 	});
 	expect(manifest.bin).toEqual({
+		"harnessy-community-publication": "dist/community-publication-cli.js",
 		"harnessy-local-host": "dist/cli.js",
 		"harnessy-meeting-full-review": "dist/meeting-full-review-cli.js",
 		"harnessy-meeting-import": "dist/meeting-import-cli.js",
 		"harnessy-meeting-review": "dist/meeting-review-cli.js",
 		"harnessy-meeting-review-open": "dist/meeting-review-open-cli.js",
+		"harnessy-meeting-setup": "dist/meeting-setup-cli.js",
 		"harnessy-meeting-smoke": "dist/meeting-smoke-cli.js",
 		"harnessy-meeting-worker": "dist/meeting-worker-cli.js",
 	});
@@ -353,9 +355,12 @@ it("keeps the private planning surface separate from the guarded runtime export"
 			(name) =>
 				name.endsWith(".ts") &&
 				![
+					"community-publication-command.ts",
+					"community-publication-cli.ts",
 					"meeting-command-input.ts",
 					"meeting-full-review-command.ts",
 					"meeting-full-review-cli.ts",
+					"meeting-full-review-stop-notification.ts",
 					"meeting-import-runtime.ts",
 					"meeting-import-command.ts",
 					"meeting-import-cli.ts",
@@ -364,6 +369,11 @@ it("keeps the private planning surface separate from the guarded runtime export"
 					"meeting-review-cli.ts",
 					"meeting-review-open-cli.ts",
 					"meeting-runtime.ts",
+					"meeting-service-enrollment.ts",
+					"meeting-service-recovery.ts",
+					"meeting-setup-cli.ts",
+					"meeting-setup-consent.ts",
+					"meeting-setup-input.ts",
 					"meeting-smoke-command.ts",
 					"meeting-smoke-cli.ts",
 					"meeting-worker-command.ts",

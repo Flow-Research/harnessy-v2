@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { stageLocalServiceRuntime } from "../../../scripts/stage-local-service-runtime.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "../..");
@@ -28,6 +29,9 @@ const tarballRoot = join(fixtureRoot, "tarballs");
 const consumerRoot = join(fixtureRoot, "consumer");
 const protectedRoot = join(fixtureRoot, "read-only-inputs");
 const cacheRoot = join(fixtureRoot, "npm-cache");
+const fixtureNode = join(fixtureRoot, "node");
+const installedModules = process.argv[2];
+if (process.argv.length > 3) throw new Error("Expected at most one installed node_modules directory");
 
 const assert = (condition, message) => {
 	if (!condition) throw new Error(message);
@@ -55,7 +59,7 @@ const withTemporaryMode = (path, mode, operation) => {
 };
 
 const run = (command, args, cwd, expectedStatus = 0) => {
-	const result = spawnSync(command, args, {
+	const result = spawnSync(command === process.execPath ? fixtureNode : command, args, {
 		cwd,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
@@ -150,6 +154,14 @@ const exactHostInventory = [
 	"dist/application.js",
 	"dist/cli.d.ts",
 	"dist/cli.js",
+	"dist/community-background.d.ts",
+	"dist/community-background.js",
+	"dist/community-publication-cli.d.ts",
+	"dist/community-publication-cli.js",
+	"dist/community-publication-command.d.ts",
+	"dist/community-publication-command.js",
+	"dist/community-service-enrollment.d.ts",
+	"dist/community-service-enrollment.js",
 	"dist/index.d.ts",
 	"dist/index.js",
 	"dist/input.d.ts",
@@ -160,6 +172,8 @@ const exactHostInventory = [
 	"dist/meeting-full-review-cli.js",
 	"dist/meeting-full-review-command.d.ts",
 	"dist/meeting-full-review-command.js",
+	"dist/meeting-full-review-stop-notification.d.ts",
+	"dist/meeting-full-review-stop-notification.js",
 	"dist/meeting-import-cli.d.ts",
 	"dist/meeting-import-cli.js",
 	"dist/meeting-import-command.d.ts",
@@ -176,6 +190,16 @@ const exactHostInventory = [
 	"dist/meeting-review-runtime.js",
 	"dist/meeting-runtime.d.ts",
 	"dist/meeting-runtime.js",
+	"dist/meeting-service-enrollment.d.ts",
+	"dist/meeting-service-enrollment.js",
+	"dist/meeting-service-recovery.d.ts",
+	"dist/meeting-service-recovery.js",
+	"dist/meeting-setup-cli.d.ts",
+	"dist/meeting-setup-cli.js",
+	"dist/meeting-setup-consent.d.ts",
+	"dist/meeting-setup-consent.js",
+	"dist/meeting-setup-input.d.ts",
+	"dist/meeting-setup-input.js",
 	"dist/meeting-smoke-cli.d.ts",
 	"dist/meeting-smoke-cli.js",
 	"dist/meeting-smoke-command.d.ts",
@@ -184,12 +208,20 @@ const exactHostInventory = [
 	"dist/meeting-worker-cli.js",
 	"dist/meeting-worker-command.d.ts",
 	"dist/meeting-worker-command.js",
+	"dist/owner-service-signing.d.ts",
+	"dist/owner-service-signing.js",
 	"dist/schema.d.ts",
 	"dist/schema.js",
 	"package.json",
 ].sort();
 
+let completed = false;
 try {
+	// Signed runtime validation rejects group-writable executable ancestors (for example Homebrew's Cellar).
+	// Use the same Node bytes in our private fixture root without changing machine permissions or weakening validation.
+	cpSync(realpathSync(process.execPath), fixtureNode);
+	chmodSync(fixtureNode, 0o500);
+	assert(sha256(fixtureNode) === sha256(process.execPath), "Fixture Node bytes differ from the invoking runtime");
 	makePrivateDirectory(tarballRoot);
 	makePrivateDirectory(protectedRoot);
 	makePrivateDirectory(join(protectedRoot, "notes"));
@@ -251,6 +283,7 @@ try {
 	const manifest = JSON.parse(readFileSync(join(installedHostRoot, "package.json"), "utf8"));
 	assert(manifest.private === true, "Packed local host must remain private");
 	assert(manifest.bin?.["harnessy-local-host"] === "dist/cli.js", "Packed local-host bin target drifted");
+	assert(manifest.bin?.["harnessy-community-publication"] === "dist/community-publication-cli.js", "Packed community bin target drifted");
 	assert(
 		manifest.bin?.["harnessy-meeting-full-review"] === "dist/meeting-full-review-cli.js",
 		"Packed full-review bin target drifted",
@@ -259,6 +292,7 @@ try {
 	assert(manifest.bin?.["harnessy-meeting-smoke"] === "dist/meeting-smoke-cli.js", "Packed smoke bin target drifted");
 	assert(manifest.bin?.["harnessy-meeting-worker"] === "dist/meeting-worker-cli.js", "Packed worker bin target drifted");
 	assert(manifest.bin?.["harnessy-meeting-review"] === "dist/meeting-review-cli.js", "Packed review bin target drifted");
+	assert(manifest.bin?.["harnessy-meeting-setup"] === "dist/meeting-setup-cli.js", "Packed setup bin target drifted");
 	assert(
 		manifest.bin?.["harnessy-meeting-review-open"] === "dist/meeting-review-open-cli.js",
 		"Packed review-open bin target drifted",
@@ -560,6 +594,19 @@ try {
 	extract(sdkPack.tarball, join(consumerRoot, "node_modules", "@harnessy", "sdk"));
 	copyRuntimePackage("@libsql/client");
 	copyRuntimePackage("drizzle-orm");
+	const communityCliPath = join(installedHostRoot, manifest.bin["harnessy-community-publication"]);
+	assert((statSync(communityCliPath).mode & 0o777) === 0o755, "Packed community CLI is not executable");
+	for (const args of [[], ["--token", "must-not-leak"], ["--authorization", "relative.json"], ["--approve", "true"]]) {
+		const rejected = run(process.execPath, [communityCliPath, ...args], consumerRoot, 1);
+		assert(rejected.stdout === "" && rejected.stderr === '{"error":"community_publication_failed","code":"invalid_arguments"}\n', `Community argv rejection was not content-free: ${JSON.stringify({ args, stdout: rejected.stdout, stderr: rejected.stderr })}`);
+	}
+	const setupCliPath = join(installedHostRoot, manifest.bin["harnessy-meeting-setup"]);
+	assert((statSync(setupCliPath).mode & 0o777) === 0o755, "Packed setup CLI is not executable");
+	for (const args of [[], ["--token", "must-not-leak"], ["--input", "relative.json"], ["--resume-google"], ["--resume-google", "--input", "relative.json"], ["--resume-google", "--token", "must-not-leak"]]) {
+		const result = run(process.execPath, [setupCliPath, ...args], consumerRoot, 1);
+		assert(result.stdout === "", "Rejected setup input wrote stdout");
+		assert(result.stderr === '{"error":"meeting_setup_failed","next":"Inspect preserved setup state before retrying; no activation occurred."}\n', "Setup input rejection was not content-free");
+	}
 	const smokeCliPath = join(installedHostRoot, manifest.bin["harnessy-meeting-smoke"]);
 	assert((statSync(smokeCliPath).mode & 0o777) === 0o755, "Packed smoke CLI is not executable");
 	const workerCliPath = join(installedHostRoot, manifest.bin["harnessy-meeting-worker"]);
@@ -581,7 +628,7 @@ try {
 		assert(result.stdout === "", "Rejected worker arguments wrote stdout");
 		assert(result.stderr === '{"error":"meeting_worker_failed","code":"invalid_arguments"}\n', "Worker argv rejection was not content-free");
 	}
-	for (const args of [[], ["--receipt", "must-not-leak"], smokeArgs.slice(0, -2), [...smokeArgs, "--activate", "true"], [...smokeArgs.slice(0, 9), "must-not-leak"]]) {
+	for (const args of [[], ["--receipt", "must-not-leak"], smokeArgs.slice(0, -2), [...smokeArgs, "--activate", "true"], [...smokeArgs.slice(0, 9), "must-not-leak"], ["--notify-on-stop"], ["--notify-on-stop", "--notify-on-stop", ...smokeArgs], [...smokeArgs, "--notify-on-stop"]]) {
 		const result = run(process.execPath, [fullReviewCliPath, ...args], consumerRoot, 1);
 		assert(result.stdout === "", "Rejected full-review arguments wrote stdout");
 		assert(
@@ -603,22 +650,54 @@ console.log(JSON.stringify({ denied: true }));
 	const denied = parseSingleJson(run(process.execPath, [runtimeProbe], consumerRoot), "runtime-missing-authorization");
 	assert(denied.denied === true, "Packed runtime did not reject absent authorization");
 	assert(JSON.stringify(treeSnapshot(protectedRoot)) === JSON.stringify(before), "Denied runtime changed inputs");
+	const operationalRoot = installedModules === undefined ? consumerRoot
+		: stageLocalServiceRuntime(installedModules, join(fixtureRoot, "service")).root;
+	if (installedModules !== undefined) {
+		// Verify every staged byte against the actual combined release installation.
+		for (const [path, metadata] of treeSnapshot(join(operationalRoot, "node_modules"))) {
+			if (!metadata.startsWith("file:")) continue;
+			assert(sha256(join(installedModules, path)) === sha256(join(operationalRoot, "node_modules", path)),
+				`Staged service package bytes differ from the combined installation: ${path}`);
+		}
+	}
+	const serviceBefore = treeSnapshot(join(operationalRoot, "node_modules"));
 	const positive = parseSingleJson(
 		run(process.execPath, [
 			join(packageRoot, "test", "support", "packed-meeting-runtime-smoke.mjs"),
-			consumerRoot,
+			operationalRoot,
 			join(fixtureRoot, "authorized-fixture-inputs"),
-		], consumerRoot),
+		], operationalRoot),
 		"runtime-authorized-loopback",
 	);
 	assert(positive.published === true && positive.providerRequests > 0, "Packed runtime did not publish through loopback providers");
+	assert(
+		positive.community?.published === true && positive.community.installedCommand === true &&
+			positive.community.combinedMeetingOwner === true &&
+			positive.community.combinedRevocation === true &&
+			positive.community.combinedDrain === true &&
+			positive.community.servicePreparation === true && positive.community.serviceEnrollment === true &&
+			positive.community.serviceRevocation === true &&
+			positive.community.replayRejected === true && positive.community.receiptsPreserved === true &&
+			positive.community.providerRequests > 0,
+		"Packed community command did not preserve exact authority, receipts and single-use publication",
+	);
+	assert(
+		positive.reconnect?.installedSdk === true && positive.reconnect.freshSetup === true && positive.reconnect.googleSetupContinuation === true && positive.reconnect.googleSetupCliContinuation === true && positive.reconnect.nativeConsent === true &&
+			positive.reconnect.revokedBeforeCommit === true && positive.reconnect.exactConnection === true &&
+			positive.reconnect.wrongIdentityRejected === true && positive.reconnect.replayRejected === true &&
+			positive.reconnect.reopened === true && positive.reconnect.publicationWrites === 0,
+		"Packed SDK native reconnect did not preserve its authority and ownership boundaries",
+	);
 	assert(
 		positive.worker?.published === 1 &&
 			positive.worker.remainingAfterFirst === 1 &&
 			positive.worker.failed === 1 &&
 			positive.worker.retryCheckpoint === true &&
+			positive.worker.notificationReviewOpen === true &&
+			positive.worker.uncertainDeliveryStopped === true &&
+			positive.worker.freshOwnerStopped === true &&
 			positive.worker.providerRequests > 0,
-		"Packed worker did not preserve its signed batch and retry checkpoint",
+		"Packed worker did not preserve its signed batch, safe retry and uncertainty stop",
 	);
 	assert(
 		positive.fullReview?.edited === true &&
@@ -627,15 +706,24 @@ console.log(JSON.stringify({ denied: true }));
 			positive.fullReview.purposeBound === true &&
 			positive.fullReview.boundedDispatches === 2 &&
 			positive.fullReview.providerRequests > 0 &&
-			positive.fullReview.leaseReleased === true,
+			positive.fullReview.leaseReleased === true &&
+			positive.fullReview.serviceCleanRestarts === 2 &&
+			positive.fullReview.serviceRevocationRejected === true &&
+			positive.fullReview.installedOwnerEnrollment === true &&
+			positive.fullReview.serviceReceiptsPreserved === true,
 		"Packed full review did not edit, approve, and dispatch through its installed session",
 	);
 	assert(JSON.stringify(treeSnapshot(protectedRoot)) === JSON.stringify(before), "Smoke runtime changed planning inputs");
+	assert(JSON.stringify(treeSnapshot(join(operationalRoot, "node_modules"))) === JSON.stringify(serviceBefore),
+		"Operational fixture changed its delivered service artifact");
 
 	console.log(
-		`Harnessy local-host packed fixture passed (${packedPaths.length} files; six read-only commands; offline import; isolated review; guarded loopback publication, bounded worker, and full review dispatch).`,
+		`Harnessy local-host packed fixture passed (${packedPaths.length} files; six read-only commands; offline import; isolated review; guarded loopback publication, bounded worker, and full review dispatch; service layout: ${installedModules === undefined ? "fixture" : "combined release"}).`,
 	);
+	completed = true;
 } finally {
 	if (process.platform !== "win32" && existsSync(fixtureRoot)) chmodSync(fixtureRoot, 0o700);
-	rmSync(fixtureRoot, { recursive: true, force: true });
+	// A failed OS-owned fixture may still need its executable for safe cleanup.
+	if (completed || process.env.HARNESSY_TEST_LAUNCHD !== "1") rmSync(fixtureRoot, { recursive: true, force: true });
+	else console.error(`Preserved isolated launchd fixture for inspection: ${fixtureRoot}`);
 }

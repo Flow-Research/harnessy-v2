@@ -175,11 +175,13 @@ async function exchangeAuthorizationCode(
 	return readTokenResponse(response, "exchange");
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<OAuthToken> {
+async function refreshAccessToken(refreshToken: string, signal?: AbortSignal): Promise<OAuthToken> {
 	let response: Response;
 	try {
 		response = await fetch(TOKEN_URL, {
 			method: "POST",
+			redirect: "error",
+			signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 			body: new URLSearchParams({
 				grant_type: "refresh_token",
@@ -558,8 +560,8 @@ export async function loginOpenAICodex(options: {
 /**
  * Refresh OpenAI Codex OAuth token
  */
-export async function refreshOpenAICodexToken(refreshToken: string): Promise<OAuthCredentials> {
-	return credentialsFromToken(await refreshAccessToken(refreshToken));
+export async function refreshOpenAICodexToken(refreshToken: string, signal?: AbortSignal): Promise<OAuthCredentials> {
+	return credentialsFromToken(await refreshAccessToken(refreshToken, signal));
 }
 
 export const openaiCodexOAuth: OAuthAuth = {

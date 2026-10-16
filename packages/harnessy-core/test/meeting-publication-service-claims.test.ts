@@ -316,7 +316,7 @@ describe("MeetingPublicationService claim lifetime", () => {
 		});
 	}
 
-	it("rejects a returning old worker after another claim takes ownership", async () => {
+	it("refuses automatic reclaim and rejects the returning expired worker", async () => {
 		const { state, run } = fixture();
 		const result = await run(
 			Effect.gen(function* () {
@@ -325,7 +325,8 @@ describe("MeetingPublicationService claim lifetime", () => {
 				const approved = yield* approve;
 				state.google = Effect.gen(function* () {
 					state.now += 60_000;
-					yield* store.claim(iso(state.now), iso(state.now + 60_000)).pipe(Effect.orDie);
+					const reclaim = yield* store.claim(iso(state.now), iso(state.now + 60_000)).pipe(Effect.result);
+					expect(reclaim).toMatchObject({ _tag: "Failure", failure: { code: "write_failed" } });
 				});
 				const worker = yield* service.worker(1).pipe(Effect.result);
 				return { worker, item: yield* store.get(approved.itemId) };
@@ -334,10 +335,10 @@ describe("MeetingPublicationService claim lifetime", () => {
 		expect(result.worker).toMatchObject({ _tag: "Failure", failure: { event: "claim" } });
 		expect(result.item).toMatchObject({
 			status: "publishing",
-			attempts: 2,
+			attempts: 1,
 			googleDocId: null,
 			discordMessageId: null,
-			leaseUntil: iso(start + 120_000),
+			leaseUntil: iso(start + 60_000),
 		});
 		expect(state.discordCalls).toBe(0);
 	});
@@ -406,7 +407,7 @@ describe("MeetingPublicationService claim lifetime", () => {
 			}),
 		);
 		expect(result.worker).toMatchObject({ failed: 1, published: 0 });
-		expect(result.beforeScan).toMatchObject({ status: "publishing", attempts: 1 });
+		expect(result.beforeScan).toMatchObject({ status: "blocked", failureStage: "source", attempts: 1 });
 		expect(result.afterScan).toMatchObject({ status: "pending_review", approvedHash: null, leaseUntil: null });
 		expect(state.googleCalls).toBe(0);
 		expect(state.discordCalls).toBe(0);

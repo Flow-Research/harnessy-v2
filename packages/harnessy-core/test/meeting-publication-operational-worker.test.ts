@@ -400,7 +400,7 @@ describe("meeting publication operational worker runtime", () => {
 		expect(replayState(missingSdk.authorization.replayPath)).toEqual({ consumed: 0, leases: 0 });
 	});
 
-	it("recovers an expired exact checkpoint without repeating Google", async () => {
+	it("retains an expired exact checkpoint for reconciliation without calling either provider", async () => {
 		const fixture = await setup();
 		const database = new DatabaseSync(join(fixture.config.statePath ?? "", "meeting-publication.sqlite3"), {
 			allowExtension: false,
@@ -422,11 +422,19 @@ describe("meeting publication operational worker runtime", () => {
 		}
 		fixture.authorization.rebindStateDatabaseAndResign();
 		const provider = providers(fixture);
-		const result = await run(fixture, provider.factory);
+		const beforeBytes = readFileSync(join(fixture.config.statePath ?? "", "meeting-publication.sqlite3"));
+		const result = await Effect.runPromise(
+			fixture.authorization
+				.withSystem(runAuthorizedMeetingPublicationWorker(fixture.authorization.input, provider.factory))
+				.pipe(Effect.result),
+		);
 
-		expect(result).toMatchObject({ scanned: 1, published: 1, failed: 0, pendingReview: 0 });
+		expect(result).toMatchObject({ _tag: "Failure", failure: { code: "worker_failed" } });
 		expect(provider.calls.google).toEqual([]);
-		expect(provider.calls.discord).toHaveLength(1);
+		expect(provider.calls.discord).toEqual([]);
+		expect(provider.calls.notifications).toEqual([]);
+		expect(readFileSync(join(fixture.config.statePath ?? "", "meeting-publication.sqlite3"))).toEqual(beforeBytes);
+		expect(replayState(fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
 		const state = new DatabaseSync(join(fixture.config.statePath ?? "", "meeting-publication.sqlite3"), {
 			readOnly: true,
 			allowExtension: false,
@@ -434,7 +442,7 @@ describe("meeting publication operational worker runtime", () => {
 		try {
 			expect(
 				state.prepare("SELECT status,attempts FROM publication_items WHERE item_id=?").get(fixture.item.itemId),
-			).toMatchObject({ status: "published", attempts: 2 });
+			).toMatchObject({ status: "publishing", attempts: 1 });
 		} finally {
 			state.close();
 		}

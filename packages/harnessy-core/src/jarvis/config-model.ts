@@ -64,6 +64,7 @@ export class JarvisFathomAccountConfig extends Schema.Class<JarvisFathomAccountC
 
 export class JarvisFathomConfig extends Schema.Class<JarvisFathomConfig>("JarvisFathomConfig")({
 	defaultAccount: Schema.NullOr(Schema.String),
+	pollAccounts: Schema.optional(Schema.Array(Schema.String)),
 	accounts: Schema.Record(Schema.String, JarvisFathomAccountConfig),
 }) {}
 
@@ -216,6 +217,7 @@ export const JarvisLegacyConfig = Schema.Struct({
 	fathom: Schema.optional(
 		Schema.Struct({
 			default_account: Schema.optional(NullableString),
+			poll_accounts: Schema.optional(Schema.Array(Schema.String)),
 			accounts: Schema.optional(Schema.Record(Schema.String, LegacyFathomAccountConfig)),
 		}),
 	),
@@ -346,6 +348,7 @@ export const resolveJarvisConfig = Effect.fn("JarvisConfig.resolve")((config: Ja
 			}),
 			fathom: new JarvisFathomConfig({
 				defaultAccount: config.fathom?.default_account ?? null,
+				...(config.fathom?.poll_accounts === undefined ? {} : { pollAccounts: config.fathom.poll_accounts }),
 				accounts: Object.fromEntries(
 					Object.entries(config.fathom?.accounts ?? {}).map(([name, account]) => [
 						name,

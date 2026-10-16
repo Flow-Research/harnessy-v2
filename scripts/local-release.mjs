@@ -5,10 +5,13 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { currentExecutorPlatformTag, packedReleasePackages } from "./harnessy-release-contract.mjs";
+import { currentExecutorPlatformTag, localReleasePackages } from "./harnessy-release-contract.mjs";
 import { stageV1Compatibility } from "./v1-compatibility-lib.mjs";
+import { installLocalJarvisRuntime } from "./install-local-jarvis-runtime.mjs";
+import { stageLocalServiceRuntime } from "./stage-local-service-runtime.mjs";
+import { prepareReleaseInstaller } from "./prepare-release-installer.mjs";
 
-const packages = packedReleasePackages([currentExecutorPlatformTag()]).map((pkg) => ({
+const packages = localReleasePackages([currentExecutorPlatformTag()]).map((pkg) => ({
 	...pkg,
 	build:
 		pkg.directory.startsWith("executor/") || pkg.directory.startsWith("packages/capability-")
@@ -21,7 +24,8 @@ function printUsage() {
 	console.log(`Usage: node scripts/local-release.mjs [options]
 
 Builds and packs the Harnessy and inherited Pi packages, then installs the tarballs into an
-isolated directory outside the repository for local release testing.
+isolated directory outside the repository for local release testing. Includes the private
+SDK and operational host; does not publish packages, configure accounts or activate services.
 
 Options:
   --out <dir>          Output directory. Defaults to a new directory under ${tmpdir()}
@@ -178,6 +182,9 @@ function packPackage(pkg, tarballDirectory) {
 	if (packageJson.name !== pkg.name) {
 		throw new Error(`${pkg.directory}/package.json has name ${packageJson.name}, expected ${pkg.name}`);
 	}
+	if (pkg.expectedLicense !== undefined && packageJson.license !== pkg.expectedLicense) {
+		throw new Error(`${pkg.name} license differs from the local release contract`);
+	}
 	for (const [path, expectedText] of Object.entries(pkg.requiredText ?? {})) {
 		const content = readFileSync(join(pkg.directory, path), "utf8");
 		if (!content.includes(expectedText)) throw new Error(`${pkg.name} build output ${path} is stale or missing ${expectedText}`);
@@ -227,8 +234,11 @@ for (const pkg of packages) {
 	const tarball = packPackage(pkg, tarballDirectory);
 	tarballs.set(pkg.key ?? pkg.name, tarball);
 }
+prepareReleaseInstaller(outDir, packages, tarballs);
 
 let binaryPlatform;
+let jarvisPython;
+let serviceRuntime;
 if (!options.skipInstall) {
 	binaryPlatform = buildBunBinaryRelease(binaryDirectory, outDir);
 
@@ -241,9 +251,14 @@ if (!options.skipInstall) {
 
 	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: nodeInstallDirectory });
 	run("npm", ["audit", "--omit=dev", "--audit-level=moderate"], { cwd: nodeInstallDirectory });
+	serviceRuntime = stageLocalServiceRuntime(join(nodeInstallDirectory, "node_modules"), join(outDir, "service"));
 	await stageV1Compatibility(
 		join(nodeInstallDirectory, "node_modules/@harnessy/capability-harnessy-v1-full"),
 		join(outDir, "reused-source"),
+	);
+	jarvisPython = installLocalJarvisRuntime(
+		join(outDir, "reused-source/resources/jarvis-cli"),
+		join(outDir, "jarvis-runtime"),
 	);
 	createPiShim(nodeInstallDirectory);
 
@@ -263,6 +278,10 @@ if (!options.skipInstall) {
 
 console.log("\nLocal release artifacts created:");
 console.log(`  ${outDir}`);
+console.log("\nCheckout-free installation (keep install.mjs, release.json and tarballs together):");
+console.log(`  node ${join(outDir, "install.mjs")} --check`);
+console.log(`  node ${join(outDir, "install.mjs")} --target /absolute/new/installation`);
+console.log("Requires npm, uv and Python 3.11. Does not activate services or modify global commands.");
 console.log("\nTarballs:");
 for (const tarball of tarballs.values()) {
 	console.log(`  ${tarball}`);
@@ -277,8 +296,12 @@ if (!options.skipInstall) {
 
 	console.log("\nIsolated npm install:");
 	console.log(`  ${nodeInstallDirectory}`);
-	console.log("\nVerified inert workflow source (not activated; Python dependencies are not installed):");
+	console.log("\nInert operational service artifact (requires enrollment; not the interactive CLI):");
+	console.log(`  ${serviceRuntime.root}`);
+	console.log("\nVerified workflow source (not activated):");
 	console.log(`  ${join(outDir, "reused-source/resources/source")}`);
+	console.log("\nIsolated locked Jarvis interpreter (use for community_briefing.python_path):");
+	console.log(`  ${jarvisPython}`);
 	console.log("\nRun the locally packed npm CLI from outside the repository:");
 	console.log(`  ${join(nodeInstallDirectory, process.platform === "win32" ? "pi.cmd" : "pi")} --help`);
 	console.log(`  ${join(nodeInstallDirectory, "node_modules", ".bin", process.platform === "win32" ? "harnessy.cmd" : "harnessy")} --help`);

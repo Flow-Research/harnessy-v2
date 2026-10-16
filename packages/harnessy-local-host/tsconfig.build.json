@@ -5,6 +5,7 @@
 		"outDir": "./dist",
 		"rootDir": "./src",
 		"paths": {
+			"@harnessy/core/community-briefing": ["../harnessy-core/dist/community-briefing.d.ts"],
 			"@harnessy/core/meeting-publication": ["../harnessy-core/dist/meeting-publication.d.ts"],
 			"@harnessy/core/meeting-publication-inspector": [
 				"../harnessy-core/dist/meeting-publication-inspector.d.ts"

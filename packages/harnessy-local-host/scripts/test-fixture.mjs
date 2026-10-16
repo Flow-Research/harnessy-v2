@@ -1,13 +1,16 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fixtureEnvironment } from "../test/support/fixture-environment.mjs";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(packageRoot, "../..");
 const coreSourceRoot = join(repoRoot, "packages", "harnessy-core", "src");
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const installedModules = process.argv[2];
+if (process.argv.length > 3) throw new Error("Expected at most one installed node_modules directory");
 
 const run = (command, args, options = {}) => {
 	const result = spawnSync(command, args, {
@@ -15,6 +18,7 @@ const run = (command, args, options = {}) => {
 		encoding: options.encoding ?? "utf8",
 		stdio: options.capture ? ["ignore", "pipe", "pipe"] : "inherit",
 		maxBuffer: 64 * 1024 * 1024,
+		env: fixtureEnvironment(),
 	});
 	if (result.status !== 0) {
 		const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -31,6 +35,12 @@ const snapshot = () => ({
 	status: run("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
 		capture: true,
 	}),
+	untracked: digest(JSON.stringify(run("git", ["ls-files", "--others", "--exclude-standard", "-z"], { capture: true })
+		.split("\0").filter(Boolean).sort().map((path) => {
+			const absolute = join(repoRoot, path);
+			const stat = lstatSync(absolute);
+			return [path, stat.mode, digest(stat.isSymbolicLink() ? readlinkSync(absolute) : readFileSync(absolute))];
+		}))),
 });
 
 const emittedCoreSourceArtifacts = () => {
@@ -57,16 +67,19 @@ const before = snapshot();
 assertNoCoreSourceEmit();
 let executionError;
 try {
-	run(npmCommand, ["exec", "--", "tsgo", "-p", "packages/harnessy-core/tsconfig.build.json"]);
-	run(npmCommand, ["run", "build", "--workspace", "@harnessy/sdk"]);
-	run(npmCommand, ["run", "build"], { cwd: packageRoot });
-	run(process.execPath, [join(packageRoot, "scripts", "fixture-smoke.mjs")], { cwd: packageRoot });
+	run(process.execPath, ["--test", join(packageRoot, "test", "fixture-isolation-check.mjs")]);
+	if (installedModules === undefined) {
+		run(npmCommand, ["exec", "--", "tsgo", "-p", "packages/harnessy-core/tsconfig.build.json"]);
+		run(npmCommand, ["run", "build", "--workspace", "@harnessy/sdk"]);
+		run(npmCommand, ["run", "build"], { cwd: packageRoot });
+	}
+	run(process.execPath, [join(packageRoot, "scripts", "fixture-smoke.mjs"), ...(installedModules === undefined ? [] : [resolve(installedModules)])], { cwd: packageRoot });
 } catch (cause) {
 	executionError = cause;
 }
 const after = snapshot();
 assertNoCoreSourceEmit();
-if (before.tracked !== after.tracked || before.staged !== after.staged || before.status !== after.status) {
+if (before.tracked !== after.tracked || before.staged !== after.staged || before.status !== after.status || before.untracked !== after.untracked) {
 	throw new Error("The local-host fixture changed tracked or untracked worktree state");
 }
 if (executionError !== undefined) throw executionError;

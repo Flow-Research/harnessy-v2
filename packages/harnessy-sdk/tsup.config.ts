@@ -1,8 +1,11 @@
 import { builtinModules } from "node:module";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { Plugin } from "esbuild";
 import { defineConfig } from "tsup";
+import { bundleNotices } from "./scripts/bundle-notices.mjs";
 
 const fromPackage = (relativePath: string): string => fileURLToPath(new URL(relativePath, import.meta.url));
 const executorSource = (relativePath: string): string => fromPackage(`../../executor/${relativePath}`);
@@ -14,6 +17,9 @@ const executorSourceAliases = {
 	"@executor-js/fumadb/schema": executorSource("packages/core/fumadb/src/schema/index.ts"),
 	"@executor-js/fumadb": executorSource("packages/core/fumadb/src/index.ts"),
 	"@executor-js/plugin-file-secrets": executorSource("packages/plugins/file-secrets/src/index.ts"),
+	"@executor-js/plugin-graphql": executorSource("packages/plugins/graphql/src/sdk/index.ts"),
+	"@executor-js/plugin-provider-service-split": executorSource("packages/plugins/provider-service-split/src/index.ts"),
+	"@executor-js/plugin-openapi/providers/google": executorSource("packages/plugins/openapi/src/providers/google/index.ts"),
 	"@executor-js/plugin-mcp": executorSource("packages/plugins/mcp/src/sdk/index.ts"),
 	"@executor-js/plugin-openapi": executorSource("packages/plugins/openapi/src/sdk/index.ts"),
 	"@executor-js/sdk/http-auth": executorSource("packages/core/sdk/src/http-auth/index.ts"),
@@ -27,6 +33,13 @@ const nodeBuiltins = new Set(builtinModules.map((name) => name.replace(/^node:/,
 const sourceAliasPlugin: Plugin = {
 	name: "harnessy-sdk-source-aliases",
 	setup(build) {
+		build.onEnd((result) => {
+			if (result.errors.length) return;
+			if (!result.metafile || !build.initialOptions.outdir) throw new Error("SDK build lacks attribution inputs");
+			mkdirSync(build.initialOptions.outdir, { recursive: true });
+			writeFileSync(join(build.initialOptions.outdir, "THIRD_PARTY_NOTICES.txt"),
+				bundleNotices(result.metafile, fromPackage(".")));
+		});
 		build.onResolve({ filter: /^@executor-js\// }, (args) => {
 			const replacement = executorSourceAliases[args.path as keyof typeof executorSourceAliases];
 			return replacement === undefined ? undefined : { path: replacement };

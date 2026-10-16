@@ -1,4 +1,4 @@
-import { Clock, Result, Schema } from "effect";
+import { Clock, Deferred, Result, Schema, Semaphore } from "effect";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,11 +13,12 @@ import {
 import { authorizeMeetingPublicationWrite } from "./authority-check.ts";
 import {
 	MeetingPublicationConfigError,
+	type MeetingPublicationFailureStage,
 	type MeetingPublicationItem,
 	type MeetingPublicationNote,
 	MeetingPublicationPreflightCheck,
 	MeetingPublicationPreflightResult,
-	type MeetingPublicationProviderError,
+	MeetingPublicationProviderError,
 	MeetingPublicationReviewError,
 	MeetingPublicationScanResult,
 	type MeetingPublicationSourceError,
@@ -26,7 +27,12 @@ import {
 	transitionMeetingPublication,
 } from "./models.ts";
 import { MeetingPublicationSource } from "./notes.ts";
-import { MeetingPublicationStore, type MeetingPublicationStoreFailure } from "./store.ts";
+import { classifyMeetingProviderFailure, type MeetingProviderHealth } from "./provider-health.ts";
+import {
+	MEETING_PUBLICATION_DELIVERY_UNCERTAIN,
+	MeetingPublicationStore,
+	type MeetingPublicationStoreFailure,
+} from "./store.ts";
 
 export class MeetingPublicationClock extends Context.Service<
 	MeetingPublicationClock,
@@ -82,10 +88,33 @@ export type MeetingPublicationPublishOneResult =
 			readonly sourceHash: string;
 	  };
 
+export interface MeetingPublicationGoogleReconnect {
+	readonly state: string;
+	readonly authorizationUrl: string;
+	readonly complete: (
+		code: string,
+		grant: MeetingPublicationWriteGrant,
+	) => Effect.Effect<void, MeetingPublicationProviderError>;
+	readonly cancel: (grant: MeetingPublicationWriteGrant) => Effect.Effect<void, MeetingPublicationProviderError>;
+}
+
+export interface MeetingPublicationReconnect {
+	readonly state: string;
+	readonly authorizationUrl: string;
+	readonly complete: (
+		code: string,
+	) => Effect.Effect<void, MeetingPublicationProviderError | MeetingPublicationStoreFailure>;
+	readonly cancel: () => Effect.Effect<void, MeetingPublicationProviderError | MeetingPublicationStoreFailure>;
+}
+
 export class MeetingPublicationGoogle extends Context.Service<
 	MeetingPublicationGoogle,
 	{
 		readonly preflight: Effect.Effect<boolean, MeetingPublicationProviderError>;
+		readonly startReconnect?: (
+			redirectUri: string,
+			grant: MeetingPublicationWriteGrant,
+		) => Effect.Effect<MeetingPublicationGoogleReconnect, MeetingPublicationProviderError>;
 		readonly upsert: (
 			request: MeetingPublicationGoogleRequest,
 			grant: MeetingPublicationWriteGrant,
@@ -113,6 +142,8 @@ export class MeetingPublicationNotifier extends Context.Service<
 			kind: "review" | "error",
 			count: number,
 			grant: MeetingPublicationWriteGrant,
+			health?: MeetingProviderHealth,
+			failureStages?: ReadonlyArray<MeetingPublicationFailureStage>,
 		) => Effect.Effect<boolean, MeetingPublicationProviderError>;
 		readonly close: Effect.Effect<void>;
 	}
@@ -204,6 +235,11 @@ export const normalizeMeetingPublicationPurpose = Effect.fn("MeetingPublication.
 export class MeetingPublicationService extends Context.Service<
 	MeetingPublicationService,
 	{
+		/** Fatal owner stop on uncertain delivery or a failed claimed-outcome write. */
+		readonly deliveryUncertain: Effect.Effect<never, MeetingPublicationProviderError>;
+		readonly reconnectGoogle?: (
+			redirectUri: string,
+		) => Effect.Effect<MeetingPublicationReconnect, MeetingPublicationProviderError | MeetingPublicationStoreFailure>;
 		readonly scan: (options?: {
 			readonly sinceDays?: number;
 			readonly dryRun?: boolean;
@@ -269,7 +305,23 @@ export class MeetingPublicationService extends Context.Service<
 				const clock = yield* MeetingPublicationClock;
 				const notifier = yield* MeetingPublicationNotifier;
 				const google = yield* MeetingPublicationGoogle;
+				const startReconnect = google.startReconnect;
 				const discord = yield* MeetingPublicationDiscord;
+				const workerLock = yield* Semaphore.make(1);
+				const uncertain = yield* Deferred.make<MeetingPublicationProviderError>();
+				const requireCertainDelivery = Effect.gen(function* () {
+					const pending = (yield* store.list()).find(
+						(item) => item.failureCode === MEETING_PUBLICATION_DELIVERY_UNCERTAIN || item.status === "publishing",
+					);
+					if (pending !== undefined) {
+						return yield* new MeetingPublicationProviderError({
+							stage: pending.failureStage === "discord" ? "discord" : "google",
+							code: "delivery_uncertain",
+							retryable: false,
+							retryAfterSeconds: null,
+						});
+					}
+				});
 				yield* Effect.addFinalizer(() =>
 					Effect.all([notifier.close, google.close, discord.close], { discard: true }),
 				);
@@ -336,118 +388,316 @@ export class MeetingPublicationService extends Context.Service<
 				const notifyDue = Effect.fn("MeetingPublicationService.notifyDue")(function* () {
 					const now = yield* clock.now;
 					const due = yield* store.dueNotifications(minusSeconds(now, config.reminderSeconds));
+					const health = yield* store.providerHealth();
 					for (const kind of ["review", "error"] as const) {
-						const items = due.filter((item) => (item.status === "pending_review") === (kind === "review"));
+						const items = due.filter(
+							(item) =>
+								(item.status === "pending_review") === (kind === "review") &&
+								!health.some(
+									(provider) => provider.provider === item.failureStage && provider.failure !== null,
+								),
+						);
 						if (items.length === 0) continue;
 						const grant = yield* authorizeMeetingPublicationWrite(authority, "provider_notification", binding);
-						if (yield* notifier.notify(kind, items.length, grant)) {
+						const failureStages =
+							kind === "error"
+								? [...new Set(items.flatMap((item) => (item.failureStage === null ? [] : [item.failureStage])))]
+								: undefined;
+						if (yield* notifier.notify(kind, items.length, grant, undefined, failureStages)) {
 							yield* store.markNotified(items, iso(yield* clock.now));
 						}
 					}
 				});
 
-				const publishClaimed = Effect.fn("MeetingPublicationService.publishClaimed")(function* (
-					item: MeetingPublicationItem,
+				const checkProviderHealth = Effect.fn("MeetingPublicationService.checkProviderHealth")(function* (
+					force = false,
+					resume = true,
 				) {
-					const noteResult = yield* source.read(item.notePath).pipe(Effect.result);
-					if (Result.isFailure(noteResult)) {
-						yield* store.markFailure(item, "source", noteResult.failure.code, null, iso(yield* clock.now));
-						return "recorded_failure" as const;
+					const now = yield* clock.now;
+					const previous = yield* store.providerHealth();
+					let ready = true;
+					for (const [provider, account, preflight] of [
+						["google", config.googleOwnerEmail ?? "", google.preflight],
+						["discord", config.discordChannelId ?? "", discord.preflight],
+					] as const) {
+						const prior = previous.find((row) => row.provider === provider && row.account === account);
+						let health: MeetingProviderHealth;
+						if (!force && prior !== undefined && now - Date.parse(prior.checkedAt) < 60_000) health = prior;
+						else {
+							const result = yield* preflight.pipe(Effect.result);
+							const failure = Result.isFailure(result)
+								? classifyMeetingProviderFailure(result.failure.code)
+								: result.success
+									? null
+									: "other";
+							health = {
+								provider,
+								account,
+								failure,
+								checkedAt: iso(now),
+								lastSuccessAt: failure === null ? iso(now) : (prior?.lastSuccessAt ?? null),
+								incidentAt: failure === null ? null : (prior?.incidentAt ?? iso(now)),
+								notifiedAt: prior?.failure === failure ? (prior?.notifiedAt ?? null) : null,
+								recoveryPending:
+									failure === null && (prior?.failure != null || prior?.recoveryPending === true),
+							};
+							yield* store.recordProviderHealth(health);
+						}
+						if (health.failure !== null) ready = false;
+						if (resume && health.failure === null) {
+							for (const item of yield* store.list("blocked")) {
+								if (item.failureStage !== provider || item.approvedHash === null) continue;
+								const note = yield* source.read(item.notePath).pipe(Effect.result);
+								if (Result.isFailure(note)) continue;
+								if (note.success.sourceHash !== item.approvedHash) {
+									yield* store.upsert(note.success, iso(now));
+									continue;
+								}
+								yield* store.resumeAuthBlocked(item, iso(now));
+							}
+						}
+						if (
+							(health.failure !== null || health.recoveryPending) &&
+							(health.notifiedAt === null ||
+								now - Date.parse(health.notifiedAt) >= config.reminderSeconds * 1000)
+						) {
+							const count = (yield* store.list()).filter(
+								(item) => item.status === "approved" || item.status === "blocked",
+							).length;
+							const grant = yield* authorizeMeetingPublicationWrite(authority, "provider_notification", binding);
+							const notified = yield* notifier.notify("error", count, grant, health).pipe(Effect.result);
+							if (Result.isSuccess(notified) && notified.success)
+								yield* store.recordProviderHealth({ ...health, notifiedAt: iso(now), recoveryPending: false });
+						}
 					}
-					const note = noteResult.success;
-					if (item.approvedHash === null || note.sourceHash !== item.approvedHash) {
-						// Reconciliation belongs to the next scan, not a possibly stale claimant.
-						return "stale" as const;
-					}
-					const itemBinding = new MeetingPublicationWriteBinding({
-						...binding,
-						item: { itemId: item.itemId, sourceHash: note.sourceHash },
-					});
-					let googleCheckpoint: MeetingPublicationGoogleCheckpoint;
+					return ready;
+				});
+				const recordAuthFailure = Effect.fn("MeetingPublicationService.recordAuthFailure")(function* (
+					error: MeetingPublicationProviderError,
+					now: number,
+				) {
+					const failure = classifyMeetingProviderFailure(error.code);
 					if (
-						item.googleDocId !== null &&
-						item.googleDocUrl !== null &&
-						item.googleSourceHash === note.sourceHash
-					) {
-						googleCheckpoint = new MeetingPublicationGoogleCheckpoint({
-							docId: item.googleDocId,
-							docUrl: item.googleDocUrl,
+						!["authentication", "identity", "credential_store"].includes(failure) ||
+						error.stage === "notification"
+					)
+						return;
+					const account =
+						error.stage === "google" ? (config.googleOwnerEmail ?? "") : (config.discordChannelId ?? "");
+					const prior = (yield* store.providerHealth()).find(
+						(row) => row.provider === error.stage && row.account === account,
+					);
+					yield* store.recordProviderHealth({
+						provider: error.stage,
+						account,
+						failure,
+						checkedAt: iso(now),
+						lastSuccessAt: prior?.lastSuccessAt ?? null,
+						incidentAt: prior?.incidentAt ?? iso(now),
+						notifiedAt: prior?.failure === failure ? prior.notifiedAt : null,
+						recoveryPending: false,
+					});
+				});
+
+				const publishClaimed = Effect.fn("MeetingPublicationService.publishClaimed")(
+					function* (item: MeetingPublicationItem, monitorHealth = false) {
+						const noteResult = yield* source.read(item.notePath).pipe(Effect.result);
+						if (Result.isFailure(noteResult)) {
+							yield* store.markFailure(item, "source", noteResult.failure.code, null, iso(yield* clock.now));
+							return "recorded_failure" as const;
+						}
+						const note = noteResult.success;
+						if (item.approvedHash === null || note.sourceHash !== item.approvedHash) {
+							// No provider has been called. Record that known outcome with the exact
+							// live claim before allowing a later scan to reconcile changed source.
+							yield* store.markFailure(item, "source", "source_changed", null, iso(yield* clock.now));
+							return "stale" as const;
+						}
+						const itemBinding = new MeetingPublicationWriteBinding({
+							...binding,
+							item: { itemId: item.itemId, sourceHash: note.sourceHash },
 						});
-					} else {
-						const googleGrant = yield* authorizeMeetingPublicationWrite(
+						let googleCheckpoint: MeetingPublicationGoogleCheckpoint;
+						if (
+							item.googleDocId !== null &&
+							item.googleDocUrl !== null &&
+							item.googleSourceHash === note.sourceHash
+						) {
+							googleCheckpoint = new MeetingPublicationGoogleCheckpoint({
+								docId: item.googleDocId,
+								docUrl: item.googleDocUrl,
+							});
+						} else {
+							const googleGrant = yield* authorizeMeetingPublicationWrite(
+								authority,
+								"provider_google",
+								itemBinding,
+							);
+							yield* store.getClaim(item, iso(yield* clock.now));
+							const googleResult = yield* google
+								.upsert(
+									{
+										itemId: item.itemId,
+										title: note.title,
+										meetingDate: note.meetingDate,
+										sourceHash: note.sourceHash,
+										markdown: note.markdown,
+										existingDocId: item.googleDocId,
+									},
+									googleGrant,
+								)
+								.pipe(Effect.result);
+							const completedAt = yield* clock.now;
+							if (Result.isFailure(googleResult)) {
+								const error = googleResult.failure;
+								if (error.code === "delivery_uncertain") {
+									yield* store
+										.markFailure(item, "google", error.code, null, iso(completedAt))
+										.pipe(Effect.ensuring(Deferred.succeed(uncertain, error)), Effect.uninterruptible);
+									return yield* error;
+								}
+								yield* store.markFailure(
+									item,
+									"google",
+									error.code,
+									providerRetryAt(completedAt, error),
+									iso(completedAt),
+								);
+								if (monitorHealth) yield* recordAuthFailure(error, completedAt);
+								return "recorded_failure" as const;
+							}
+							googleCheckpoint = googleResult.success;
+							yield* store.recordGoogle(item, googleCheckpoint.docId, googleCheckpoint.docUrl, iso(completedAt));
+						}
+						const discordGrant = yield* authorizeMeetingPublicationWrite(
 							authority,
-							"provider_google",
+							"provider_discord",
 							itemBinding,
 						);
-						yield* store.getClaim(item, iso(yield* clock.now));
-						const googleResult = yield* google
+						const checkpointed = yield* store.getClaim(item, iso(yield* clock.now));
+						const discordResult = yield* discord
 							.upsert(
 								{
 									itemId: item.itemId,
+									sourceHash: note.sourceHash,
 									title: note.title,
 									meetingDate: note.meetingDate,
-									sourceHash: note.sourceHash,
-									markdown: note.markdown,
-									existingDocId: item.googleDocId,
+									googleDocUrl: googleCheckpoint.docUrl,
+									purpose: checkpointed.discordPurposeOverride ?? meetingPublicationDefaultPurpose(note),
+									existingChannelId: checkpointed.discordChannelId,
+									existingMessageId: checkpointed.discordMessageId,
 								},
-								googleGrant,
+								discordGrant,
 							)
 							.pipe(Effect.result);
 						const completedAt = yield* clock.now;
-						if (Result.isFailure(googleResult)) {
-							const error = googleResult.failure;
+						if (Result.isFailure(discordResult)) {
+							const error = discordResult.failure;
+							if (error.code === "delivery_uncertain") {
+								yield* store
+									.markFailure(item, "discord", error.code, null, iso(completedAt))
+									.pipe(Effect.ensuring(Deferred.succeed(uncertain, error)), Effect.uninterruptible);
+								return yield* error;
+							}
 							yield* store.markFailure(
 								item,
-								"google",
+								"discord",
 								error.code,
 								providerRetryAt(completedAt, error),
 								iso(completedAt),
 							);
+							if (monitorHealth) yield* recordAuthFailure(error, completedAt);
 							return "recorded_failure" as const;
 						}
-						googleCheckpoint = googleResult.success;
-						yield* store.recordGoogle(item, googleCheckpoint.docId, googleCheckpoint.docUrl, iso(completedAt));
-					}
-					const discordGrant = yield* authorizeMeetingPublicationWrite(authority, "provider_discord", itemBinding);
-					const checkpointed = yield* store.getClaim(item, iso(yield* clock.now));
-					const discordResult = yield* discord
-						.upsert(
-							{
-								itemId: item.itemId,
-								sourceHash: note.sourceHash,
-								title: note.title,
-								meetingDate: note.meetingDate,
-								googleDocUrl: googleCheckpoint.docUrl,
-								purpose: checkpointed.discordPurposeOverride ?? meetingPublicationDefaultPurpose(note),
-								existingChannelId: checkpointed.discordChannelId,
-								existingMessageId: checkpointed.discordMessageId,
-							},
-							discordGrant,
-						)
-						.pipe(Effect.result);
-					const completedAt = yield* clock.now;
-					if (Result.isFailure(discordResult)) {
-						const error = discordResult.failure;
-						yield* store.markFailure(
+						yield* store.recordDiscord(
 							item,
-							"discord",
-							error.code,
-							providerRetryAt(completedAt, error),
+							discordResult.success.channelId,
+							discordResult.success.messageId,
 							iso(completedAt),
 						);
-						return "recorded_failure" as const;
-					}
-					yield* store.recordDiscord(
-						item,
-						discordResult.success.channelId,
-						discordResult.success.messageId,
-						iso(completedAt),
-					);
-					yield* store.markPublished(item, iso(yield* clock.now));
-					return "published" as const;
-				});
+						yield* store.markPublished(item, iso(yield* clock.now));
+						return "published" as const;
+					},
+					Effect.onError(() =>
+						// A failed checkpoint must stop manual dispatch's owner immediately too.
+						// Retained publishing state prevents a fresh owner from retrying even
+						// when persisting a separate uncertainty marker is impossible.
+						Deferred.succeed(
+							uncertain,
+							new MeetingPublicationProviderError({
+								stage: "google",
+								code: "delivery_uncertain",
+								retryable: false,
+								retryAfterSeconds: null,
+							}),
+						),
+					),
+				);
 
 				return MeetingPublicationService.of({
+					deliveryUncertain: Deferred.await(uncertain).pipe(Effect.flatMap(Effect.fail)),
+					...(startReconnect === undefined
+						? {}
+						: {
+								reconnectGoogle: Effect.fn("MeetingPublicationService.reconnectGoogle")(function* (
+									redirectUri: string,
+								) {
+									const grant = yield* authorizeMeetingPublicationWrite(
+										authority,
+										"provider_google_reconnect",
+										binding,
+									);
+									const flow = yield* startReconnect(redirectUri, grant);
+									let consumed = false;
+									const take = () =>
+										Effect.sync(() => {
+											if (consumed) return false;
+											consumed = true;
+											return true;
+										});
+									return {
+										state: flow.state,
+										authorizationUrl: flow.authorizationUrl,
+										complete: Effect.fn("MeetingPublicationService.completeReconnect")(function* (
+											code: string,
+										) {
+											if (!(yield* take()))
+												return yield* new MeetingPublicationProviderError({
+													stage: "google",
+													code: "reconnect_consumed",
+													retryable: false,
+													retryAfterSeconds: null,
+												});
+											const fresh = yield* authorizeMeetingPublicationWrite(
+												authority,
+												"provider_google_reconnect",
+												binding,
+											);
+											const completed = yield* flow.complete(code, fresh).pipe(Effect.result);
+											yield* authorizeMeetingPublicationWrite(
+												authority,
+												"provider_google_reconnect",
+												binding,
+											);
+											// Refresh health, but leave approval recovery/publication to a later worker pass.
+											if (Result.isFailure(completed)) {
+												yield* checkProviderHealth(true, false).pipe(Effect.result);
+												return yield* completed.failure;
+											}
+											yield* checkProviderHealth(true, false);
+										}, workerLock.withPermits(1)),
+										cancel: Effect.fn("MeetingPublicationService.cancelReconnect")(function* () {
+											if (!(yield* take())) return;
+											const fresh = yield* authorizeMeetingPublicationWrite(
+												authority,
+												"provider_google_reconnect",
+												binding,
+											);
+											yield* flow.cancel(fresh);
+										}, workerLock.withPermits(1)),
+									};
+								}, workerLock.withPermits(1)),
+							}),
 					scan,
 					preflight: Effect.fn("MeetingPublicationService.preflight")(function* () {
 						const checks = configurationChecks(config);
@@ -485,7 +735,7 @@ export class MeetingPublicationService extends Context.Service<
 							ready: checks.every((check) => !check.required || check.passed),
 							checks,
 						});
-					}),
+					}, workerLock.withPermits(1)),
 					approve: Effect.fn("MeetingPublicationService.approve")(function* (
 						itemId: string,
 						reviewedHash: string,
@@ -539,6 +789,7 @@ export class MeetingPublicationService extends Context.Service<
 						itemId: string,
 						sourceHash: string,
 					) {
+						yield* requireCertainDelivery;
 						const itemBinding = new MeetingPublicationWriteBinding({
 							...binding,
 							item: { itemId, sourceHash },
@@ -569,8 +820,9 @@ export class MeetingPublicationService extends Context.Service<
 						return (yield* publishClaimed(item)) === "published"
 							? ({ status: "published", itemId, sourceHash } as const)
 							: ({ status: "not_published", itemId, sourceHash } as const);
-					}),
+					}, workerLock.withPermits(1)),
 					worker: Effect.fn("MeetingPublicationService.worker")(function* (maxItems = 10) {
+						yield* requireCertainDelivery;
 						yield* authorizeMeetingPublicationWrite(authority, "service_worker", binding);
 						if (!config.enabled) {
 							const counts = yield* store.counts();
@@ -583,18 +835,23 @@ export class MeetingPublicationService extends Context.Service<
 						}
 						yield* requireEnabledConfig(config);
 						const scanned = yield* scan();
+						const providersReady = yield* checkProviderHealth();
 						yield* notifyDue();
 						let published = 0;
 						let failed = 0;
-						for (let index = 0; index < maxItems; index += 1) {
+						for (let index = 0; providersReady && index < maxItems; index += 1) {
 							const now = yield* clock.now;
 							const item = yield* store.claim(iso(now), plusSeconds(now, config.leaseSeconds));
 							if (item === null) break;
-							const outcome = yield* publishClaimed(item);
+							const outcome = yield* publishClaimed(item, true);
 							if (outcome === "published") published += 1;
 							else {
 								failed += 1;
-								if (outcome === "recorded_failure") yield* notifyDue();
+								if (outcome === "recorded_failure") {
+									const stillReady = yield* checkProviderHealth();
+									yield* notifyDue();
+									if (!stillReady) break;
+								}
 							}
 						}
 						const counts = yield* store.counts();
@@ -604,7 +861,7 @@ export class MeetingPublicationService extends Context.Service<
 							failed,
 							pendingReview: counts.pending_review ?? 0,
 						});
-					}),
+					}, workerLock.withPermits(1)),
 				});
 			}),
 		);

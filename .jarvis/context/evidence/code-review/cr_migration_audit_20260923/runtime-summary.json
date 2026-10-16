@@ -1,0 +1,192 @@
+{
+  "observedAt": "2026-09-23T09:50:42.519801+00:00",
+  "commands": {
+    "harnessy": {
+      "found": true,
+      "candidate": "dev-3ebf8569-persistent",
+      "launcherSha256": "c62095a9503cd77ff987d34fffcb94c16a5674dcd7c08c293230af30f98c8517",
+      "routesCalendarToV2": null
+    },
+    "hsy": {
+      "found": true,
+      "candidate": "dev-3ebf8569-persistent",
+      "launcherSha256": "1d20fcac35a670eddf251c1d7736dbe8511f2f4812ea2553d83d16c89478101b",
+      "routesCalendarToV2": null
+    },
+    "jarvis": {
+      "found": true,
+      "candidate": "dev-3ebf8569-persistent",
+      "launcherSha256": "758bb22f4301ef700cf2a3e36e6e260db2a020c2e64a95660b4d5a4809d87dbc",
+      "routesCalendarToV2": false
+    }
+  },
+  "launchAgents": [
+    {
+      "label": "com.flow-harness.community-review-v2",
+      "loaded": true,
+      "candidateKinds": [
+        "dev-3ebf8569-community-final"
+      ],
+      "configuredRunAtLoad": true,
+      "configuredKeepAlive": null,
+      "loadedStatus": {
+        "processRunning": true,
+        "lastExit": "0"
+      }
+    },
+    {
+      "label": "com.flow-harness.life-orchestrator.daily-brief",
+      "loaded": false,
+      "candidateKinds": [
+        "other",
+        "v2-source-worktree"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.life-orchestrator.learning-research",
+      "loaded": false,
+      "candidateKinds": [
+        "other",
+        "v2-source-worktree"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.life-orchestrator.weekly-plan",
+      "loaded": false,
+      "candidateKinds": [
+        "other",
+        "v2-source-worktree"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.meeting-fathom-poll",
+      "loaded": true,
+      "candidateKinds": [
+        "dev-3ebf8569-persistent",
+        "v2-source-worktree"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": {
+        "processRunning": false,
+        "lastExit": "0"
+      }
+    },
+    {
+      "label": "com.flow-harness.project.daily-fathom-safety-poll",
+      "loaded": false,
+      "candidateKinds": [
+        "other"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.project.flow-meeting-publication-worker",
+      "loaded": false,
+      "candidateKinds": [
+        "other"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.project.weekly-community-briefing-generate",
+      "loaded": false,
+      "candidateKinds": [
+        "other"
+      ],
+      "configuredRunAtLoad": true,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.project.weekly-community-briefing-worker",
+      "loaded": false,
+      "candidateKinds": [
+        "other"
+      ],
+      "configuredRunAtLoad": true,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.project.weekly-content",
+      "loaded": false,
+      "candidateKinds": [
+        "other"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.project.weekly-jarvis-apply",
+      "loaded": false,
+      "candidateKinds": [
+        "other"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.project.weekly-jarvis-plan",
+      "loaded": false,
+      "candidateKinds": [
+        "other"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    },
+    {
+      "label": "com.flow-harness.project.weekly-jarvis-suggest",
+      "loaded": false,
+      "candidateKinds": [
+        "other"
+      ],
+      "configuredRunAtLoad": false,
+      "configuredKeepAlive": null,
+      "loadedStatus": null
+    }
+  ],
+  "listeners": {
+    "8770": {
+      "listening": false,
+      "processCount": 0
+    },
+    "8872": {
+      "listening": true,
+      "processCount": 1
+    }
+  },
+  "matchingRuntimeProcesses": {
+    "meeting-full-review-cli.js": 0,
+    "community-publication-cli.js": 0,
+    "life-orchestrator/scripts/daily-brief": 0
+  },
+  "agentLifeSkill": {
+    "directCompatibilityDailyInvocation": true,
+    "usesNativeDraftCommand": false,
+    "monthlyGoalAgentInstructions": true
+  },
+  "todayCanonicalBriefExists": false,
+  "todayJournalMarkerExists": false,
+  "limitations": [
+    "Loaded/listening does not prove provider health or successful dispatch.",
+    "Unloaded plist existence does not prove a scheduled job is active.",
+    "No provider requests, state DB opens, scheduler mutations or content reads were performed."
+  ]
+}

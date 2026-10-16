@@ -19,7 +19,9 @@ from jarvis.config import (
     save_config,
 )
 from jarvis.config.schema import CommunityBriefingConfig
-from jarvis.meetings.publication.launchd import review_plist_path
+from jarvis.meetings.publication.launchd import briefing_review_service_installed
+from jarvis.meetings.publication.notify import build_review_url, review_token
+from jarvis.meetings.publication.review import create_briefing_review_server
 
 from .collector import resolve_draft_root, resolve_source_root
 from .service import CommunityBriefingService
@@ -150,7 +152,7 @@ def status_command(as_json: bool) -> None:
             "draft_path": str(resolve_draft_root(config)),
             "state_path": str(service.state_root),
             "review_url": f"http://{config.review_host}:{config.review_port}/",
-            "review_service_installed": review_plist_path().exists(),
+            "review_service_installed": briefing_review_service_installed(),
             "discord_channel_id": config.discord_channel_id,
             "discord_token_available": _discord_token_available(config.discord_bot_token_env_var),
             "google_owner_email": config.google_owner_email,
@@ -247,16 +249,52 @@ def worker_command(max_items: int, as_json: bool) -> None:
 
 @briefing_group.group(name="review")
 def review_group() -> None:
-    """Open the shared authenticated publication inbox."""
+    """Review weekly briefings locally."""
+
+
+@review_group.command(name="serve")
+@click.option(
+    "--port",
+    type=click.IntRange(1, 65535),
+    required=True,
+    help="Separate loopback port for briefing-only review",
+)
+def review_serve_command(port: int) -> None:
+    """Serve only briefing review; no meeting queue or publication worker is opened."""
+
+    config = load_config(reload=True).community_briefing.model_copy(
+        update={"review_host": "127.0.0.1", "review_port": port}
+    )
+    service = CommunityBriefingService(config)
+    try:
+        server = create_briefing_review_server(service)
+        try:
+            console.print(f"Weekly briefing review: http://127.0.0.1:{port}/")
+            server.serve_forever()
+        finally:
+            server.server_close()
+    finally:
+        service.close()
 
 
 @review_group.command(name="open")
-def review_open_command() -> None:
+@click.option(
+    "--port",
+    type=click.IntRange(1, 65535),
+    default=None,
+    help="Open a separate briefing-only loopback listener",
+)
+def review_open_command(port: int | None) -> None:
     """Open the authenticated local review inbox."""
 
     service = _service()
     try:
-        opened = webbrowser.open(service.review_url)
+        url = (
+            build_review_url("127.0.0.1", port, review_token(service.state_root))
+            if port is not None
+            else service.review_url
+        )
+        opened = webbrowser.open(url)
     finally:
         service.close()
     if not opened:

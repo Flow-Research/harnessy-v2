@@ -4,6 +4,7 @@
 		"noEmit": true,
 		"paths": {
 			"@harnessy/core": ["./packages/harnessy-core/src/index.ts"],
+			"@harnessy/core/community-briefing": ["./packages/harnessy-core/src/community-briefing.ts"],
 			"@harnessy/core/connectors/anytype": ["./packages/harnessy-core/src/connectors/anytype.ts"],
 			"@harnessy/core/connectors/knowledge": ["./packages/harnessy-core/src/connectors/knowledge.ts"],
 			"@harnessy/core/connectors/loopback": ["./packages/harnessy-core/src/connectors/loopback.ts"],

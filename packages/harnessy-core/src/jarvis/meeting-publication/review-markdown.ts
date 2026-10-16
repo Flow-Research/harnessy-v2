@@ -27,7 +27,7 @@ const reviewMarkdown = new Marked({
 				return label;
 			}
 			const titleAttribute = title === null || title === undefined ? "" : ` title="${escapeHtml(title)}"`;
-			return `<a href="${escapeHtml(destination.href)}"${titleAttribute} rel="noreferrer">${label}</a>`;
+			return `<a href="${escapeHtml(destination.href)}"${titleAttribute} target="_blank" rel="noopener noreferrer">${label}</a>`;
 		},
 		image({ text }) {
 			return escapeHtml(text.length === 0 ? "[Image]" : `[Image: ${text}]`);

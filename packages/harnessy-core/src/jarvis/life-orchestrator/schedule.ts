@@ -43,10 +43,30 @@ const xml = (value: string) =>
 
 const scheduleFor = (
 	label: LifeLaunchAgentLabel,
-): { readonly hour: number; readonly minute: number; readonly weekday: number | null; readonly command: string } => {
-	if (label.endsWith("learning-research")) return { hour: 4, minute: 15, weekday: null, command: "research" };
-	if (label.endsWith("daily-brief")) return { hour: 5, minute: 30, weekday: null, command: "daily" };
-	return { hour: 18, minute: 0, weekday: 0, command: "weekly" };
+): {
+	readonly hour: number;
+	readonly minute: number;
+	readonly weekday: number | null;
+	readonly arguments: ReadonlyArray<string>;
+} => {
+	if (label.endsWith("learning-research")) return { hour: 4, minute: 15, weekday: null, arguments: ["research"] };
+	// Daily delivery is an established owner-configured automation: it writes the
+	// canonical brief and its Anytype journal entry. Weekly synthesis remains a
+	// private review artifact because it has no automated publication contract.
+	if (label.endsWith("daily-brief")) {
+		return {
+			hour: 5,
+			minute: 30,
+			weekday: null,
+			arguments: ["daily", "--max-output-bytes", "1048576"],
+		};
+	}
+	return {
+		hour: 18,
+		minute: 0,
+		weekday: 0,
+		arguments: ["draft", "--kind", "weekly", "--timeout-seconds", "600", "--max-output-bytes", "1048576"],
+	};
 };
 
 const renderPlist = (
@@ -61,7 +81,7 @@ const renderPlist = (
 		options.cliPath,
 		"jarvis",
 		"life",
-		schedule.command,
+		...schedule.arguments,
 		"--target",
 		settings.paths.projectRoot,
 		"--home-root",

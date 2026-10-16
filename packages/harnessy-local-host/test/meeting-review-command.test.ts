@@ -1,6 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	lstatSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +17,7 @@ import * as Effect from "effect/Effect";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MeetingPublicationSmokeRuntimeSystemReference } from "../../harnessy-core/src/jarvis/meeting-publication/operational-runtime.ts";
-import { runMeetingFullReviewCommand } from "../src/meeting-full-review-command.ts";
+import { parseMeetingFullReviewCommandInput, runMeetingFullReviewCommand } from "../src/meeting-full-review-command.ts";
 import { runMeetingReviewCommand } from "../src/meeting-review-command.ts";
 import type { LocalHostMeetingReviewReady } from "../src/meeting-review-runtime.ts";
 
@@ -43,6 +52,81 @@ describe.each(commands)("bounded $name command", ({ name, error, run }) => {
 		];
 	});
 	afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+	it("selects service enrollment explicitly without relaxing required trust inputs", async () => {
+		const service = await Effect.runPromise(parseMeetingFullReviewCommandInput(["--service", ...args]));
+		expect(service.mode).toBe("service");
+		expect(service.authorizationPath).toBe(args[1]);
+		expect(service.trustedKeyring.sha256).toBe(args[9]);
+		expect(await Effect.runPromise(parseMeetingFullReviewCommandInput(["--service-revoke", ...args]))).toEqual(
+			service,
+		);
+		expect(await Effect.runPromise(parseMeetingFullReviewCommandInput(["--service-status", ...args]))).toEqual(
+			service,
+		);
+		for (const values of [
+			["--service"],
+			["--service-status"],
+			["--service-revoke"],
+			["--service-revoke", "--service-status", ...args],
+			["--service-status", "--service", ...args],
+			["--service", "--service", ...args],
+			[...args, "--service"],
+		]) {
+			expect(await Effect.runPromise(parseMeetingFullReviewCommandInput(values).pipe(Effect.result))).toMatchObject({
+				_tag: "Failure",
+				failure: "invalid_arguments",
+			});
+		}
+		expect((await Effect.runPromise(parseMeetingFullReviewCommandInput(args))).mode).toBeUndefined();
+	});
+
+	it("loads saved service bindings without inferring trust or accepting extra overrides", async () => {
+		const path = join(root, "service.json");
+		const input = await Effect.runPromise(parseMeetingFullReviewCommandInput(["--service", ...args]));
+		writeFileSync(
+			path,
+			JSON.stringify({
+				kind: "harnessy.meeting-publication.service-config.v1",
+				authorizationPath: input.authorizationPath,
+				trustedKeyring: input.trustedKeyring,
+			}),
+			{ mode: 0o600 },
+		);
+		for (const action of ["--service", "--service-status", "--service-revoke"])
+			expect(await Effect.runPromise(parseMeetingFullReviewCommandInput([action, "--input", path]))).toEqual(input);
+		for (const values of [
+			["--input", path],
+			["--service", "--input", path, ...args],
+		])
+			expect(await Effect.runPromise(parseMeetingFullReviewCommandInput(values).pipe(Effect.result))).toMatchObject({
+				_tag: "Failure",
+				failure: "invalid_arguments",
+			});
+		chmodSync(path, 0o644);
+		expect(
+			await Effect.runPromise(
+				parseMeetingFullReviewCommandInput(["--service", "--input", path]).pipe(Effect.result),
+			),
+		).toMatchObject({ _tag: "Failure", failure: "invalid_arguments" });
+		chmodSync(path, 0o600);
+		for (const value of [
+			"SECRET_CANARY",
+			JSON.stringify({
+				kind: "harnessy.meeting-publication.service-config.v1",
+				authorizationPath: input.authorizationPath,
+				trustedKeyring: input.trustedKeyring,
+				secret: "CANARY",
+			}),
+		]) {
+			writeFileSync(path, value);
+			expect(
+				await Effect.runPromise(
+					parseMeetingFullReviewCommandInput(["--service", "--input", path]).pipe(Effect.result),
+				),
+			).toMatchObject({ _tag: "Failure", failure: "invalid_arguments" });
+		}
+	});
 
 	it.each([
 		["missing", (values: Array<string>) => values.slice(0, -2)],

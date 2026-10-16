@@ -220,7 +220,7 @@ describe("MeetingPublicationStore source metadata refresh", () => {
 		expect(result.second).toEqual(stored.second);
 	});
 
-	it("fences a claim snapshot whose source metadata was refreshed", async () => {
+	it("refuses relocation and automatic reclaim of an unresolved publishing claim", async () => {
 		const root = makeRoot();
 		const notes = join(root, "notes");
 		mkdirSync(notes);
@@ -251,39 +251,21 @@ describe("MeetingPublicationStore source metadata refresh", () => {
 			config,
 			Effect.gen(function* () {
 				const store = yield* MeetingPublicationStore;
-				yield* store.upsert(relocated, "2026-09-04T12:03:00.000Z");
-				const staleCheckpoint = yield* Effect.result(
-					store.recordGoogle(
-						claim,
-						"stale-doc",
-						"https://docs.google.com/document/d/stale-doc/view",
-						"2026-09-04T12:04:00.000Z",
+				const refresh = yield* Effect.result(store.upsert(relocated, "2026-09-04T12:03:00.000Z"));
+				const reclaim = yield* Effect.result(
+					store.claimExact(
+						original.itemId,
+						original.sourceHash,
+						"2026-09-04T12:12:00.001Z",
+						"2026-09-04T12:22:00.001Z",
 					),
 				);
-				const staleFailure = yield* Effect.result(
-					store.markFailure(claim, "source", "stale path", null, "2026-09-04T12:05:00.000Z"),
-				);
-				const afterStale = yield* store.get(original.itemId);
-				const reclaimed = yield* store.claimExact(
-					original.itemId,
-					original.sourceHash,
-					"2026-09-04T12:12:00.001Z",
-					"2026-09-04T12:22:00.001Z",
-				);
-				return { staleCheckpoint, staleFailure, afterStale, reclaimed };
+				return { refresh, reclaim, after: yield* store.get(original.itemId) };
 			}),
 		);
 
-		expect(result.staleCheckpoint._tag).toBe("Failure");
-		expect(result.staleFailure._tag).toBe("Failure");
-		expect(result.afterStale).toMatchObject({
-			notePath: relocatedPath,
-			status: "publishing",
-			attempts: 1,
-			googleDocId: null,
-			failureStage: null,
-			leaseUntil: "2026-09-04T12:12:00.000Z",
-		});
-		expect(result.reclaimed).toMatchObject({ notePath: relocatedPath, status: "publishing", attempts: 2 });
+		expect(result.refresh).toMatchObject({ _tag: "Failure", failure: { code: "write_failed" } });
+		expect(result.reclaim).toMatchObject({ _tag: "Failure", failure: { code: "write_failed" } });
+		expect(result.after).toEqual(claim);
 	});
 });

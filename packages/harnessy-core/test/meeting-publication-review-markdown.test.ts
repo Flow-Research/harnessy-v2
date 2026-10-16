@@ -131,9 +131,11 @@ Inline \`<svg onload="alert(2)">\`.
 `);
 
 		expect(rendered).toContain(
-			'<a href="https://example.test/a?one=1&amp;two=2" title="title &quot;quoted&quot; &amp; more" rel="noreferrer">HTTPS &lt;safe&gt;</a>',
+			'<a href="https://example.test/a?one=1&amp;two=2" title="title &quot;quoted&quot; &amp; more" target="_blank" rel="noopener noreferrer">HTTPS &lt;safe&gt;</a>',
 		);
-		expect(rendered).toContain('<a href="http://example.test/path" rel="noreferrer">HTTP</a>');
+		expect(rendered).toContain(
+			'<a href="http://example.test/path" target="_blank" rel="noopener noreferrer">HTTP</a>',
+		);
 		expect(rendered.match(/<a /gu)).toHaveLength(2);
 		for (const label of ["mail", "relative", "fragment", "protocol relative", "javascript", "data"]) {
 			expect(rendered).toContain(label);

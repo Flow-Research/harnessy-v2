@@ -256,7 +256,7 @@ describe("meeting publication offline V1 import preparation", () => {
 		expect(mode(targetPath)).toBe(0o600);
 		const target = new DatabaseSync(targetPath, { readOnly: true, allowExtension: false });
 		try {
-			expect(validateMeetingPublicationStoreSchema(target).version).toBe(3);
+			expect(validateMeetingPublicationStoreSchema(target).version).toBe(4);
 			const rows = target
 				.prepare(
 					"SELECT item_id,note_path,source_hash,status,google_source_hash,failure_code FROM publication_items ORDER BY item_id",
@@ -422,7 +422,7 @@ describe("meeting publication offline V1 import preparation", () => {
 		const candidateHash = hashFile(targetPath);
 		const target = new DatabaseSync(targetPath, { readOnly: true, allowExtension: false });
 		try {
-			expect(validateMeetingPublicationStoreSchema(target).version).toBe(3);
+			expect(validateMeetingPublicationStoreSchema(target).version).toBe(4);
 			expect(target.prepare("SELECT COUNT(*) AS count FROM publication_items").get()?.count).toBe(0);
 		} finally {
 			target.close();
@@ -525,7 +525,7 @@ describe("meeting publication offline V1 import preparation", () => {
 		const target = new DatabaseSync(targetPath, { readOnly: true, allowExtension: false });
 		try {
 			expect(result).toMatchObject({ items: 0, operationalEvidence: false });
-			expect(validateMeetingPublicationStoreSchema(target).version).toBe(3);
+			expect(validateMeetingPublicationStoreSchema(target).version).toBe(4);
 			expect(target.prepare("SELECT COUNT(*) AS count FROM publication_items").get()?.count).toBe(0);
 		} finally {
 			target.close();

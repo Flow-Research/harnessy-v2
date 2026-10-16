@@ -73,7 +73,7 @@ describe("Jarvis compatibility kernel", () => {
 			const summary = yield* summarizeJarvisParity(parityManifest);
 			const paths = commandManifest.commands.map((entry) => entry.path.join(" "));
 
-			expect(commandManifest.commands).toHaveLength(156);
+			expect(commandManifest.commands).toHaveLength(157);
 			expect(JSON.stringify(commandManifest)).not.toContain("Sentinel.UNSET");
 			expect(commandManifest.source.pythonSourceSha256).toMatch(/^[a-f0-9]{64}$/);
 			const sourceRoot = resolve("../capability-harnessy-v1-full/resources/jarvis-cli/src");
@@ -101,9 +101,9 @@ describe("Jarvis compatibility kernel", () => {
 			);
 			expect(stateManifest.stores.map((store) => store.id)).toContain("whatsapp-thread-json-v1");
 			expect(stateManifest.stores.map((store) => store.id)).toContain("whatsapp-thread-markdown-v1");
-			expect(parityManifest.entries).toHaveLength(202);
-			expect(summary.counts.total).toBe(202);
-			expect(summary.surfaces.find((surface) => surface.surface === "command")?.counts.total).toBe(156);
+			expect(parityManifest.entries).toHaveLength(203);
+			expect(summary.counts.total).toBe(203);
+			expect(summary.surfaces.find((surface) => surface.surface === "command")?.counts.total).toBe(157);
 			expect(summary.surfaces.find((surface) => surface.surface === "state")?.counts.total).toBe(20);
 			expect(
 				parityManifest.entries
@@ -605,7 +605,7 @@ describe("Jarvis compatibility kernel", () => {
 		).pipe(Effect.provide(NodeServices.layer), Effect.provide(TestConsole.layer)),
 	);
 
-	it.live("reports the validated parity dashboard through the read-only CLI", () =>
+	it.live("distinguishes the static parity ledger from operational readiness in JSON and text", () =>
 		Effect.gen(function* () {
 			const run = Command.runWith(rootCommand, { version: HARNESSY_VERSION });
 			yield* run(["jarvis", "parity", "--json"]).pipe(
@@ -620,11 +620,27 @@ describe("Jarvis compatibility kernel", () => {
 			if (jsonLog === undefined) throw new Error("jarvis parity --json did not emit structured output");
 			const output = JSON.parse(jsonLog) as {
 				readonly ok: boolean;
-				readonly summary: { readonly counts: { readonly total: number; readonly compatible: number } };
+				readonly evidenceKind: string;
+				readonly operationalReadiness: string;
+				readonly summary: {
+					readonly counts: { readonly total: number; readonly compatible: number; readonly missing: number };
+				};
 			};
 			expect(output.ok).toBe(true);
-			expect(output.summary.counts.total).toBe(202);
+			expect(output.evidenceKind).toBe("static_compatibility_ledger");
+			expect(output.operationalReadiness).toBe("not_assessed");
+			expect(output.summary.counts.total).toBe(203);
 			expect(output.summary.counts.compatible).toBeGreaterThan(0);
+			expect(output.summary.counts.missing).toBeGreaterThan(0);
+			yield* run(["jarvis", "parity"]).pipe(
+				Effect.provide(HarnessProject.layer),
+				Effect.provide(JarvisDiagnostic.liveLayer),
+				Effect.provide(JarvisParityReporter.layer),
+				Effect.provide(JarvisRuntimeRoots.testLayer("/unused-home")),
+			);
+			expect(yield* TestConsole.logLines).toContain(
+				"Static compatibility ledger only; operational readiness is not assessed.",
+			);
 		}).pipe(Effect.provide(NodeServices.layer), Effect.provide(TestConsole.layer)),
 	);
 

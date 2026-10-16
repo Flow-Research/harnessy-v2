@@ -1,7 +1,7 @@
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 
 import { FileSystem, Path, Schema } from "effect";
 import * as Context from "effect/Context";
@@ -11,11 +11,14 @@ import { causeMessage, HarnessError } from "../errors.ts";
 import { CommandLookup } from "./command-lookup.ts";
 import { CommandRunner, CommandRunResult, displayCommand } from "./command-runner.ts";
 import { RuntimeEnvironment } from "./environment.ts";
+import { correctJarvisAnytypeSource } from "./jarvis-anytype-correction.ts";
+import { correctJarvisCommunitySource } from "./jarvis-community-source-correction.ts";
+import { correctJarvisPlanningSource } from "./jarvis-planning-correction.ts";
 
-const srcDir = dirname(fileURLToPath(import.meta.url));
-// This module lives in src/runtime/ (and dist/runtime/), two levels under the
-// package root, so reach the sibling v1 pack with three `..` segments.
-const preservedV1SourceRoot = resolve(srcDir, "../../../capability-harnessy-v1-full/resources/source");
+const preservedV1SourceRoot = join(
+	dirname(createRequire(import.meta.url).resolve("@harnessy/capability-harnessy-v1-full/package.json")),
+	"resources/source",
+);
 
 /** Native bootstrap mode corresponding to v1 install.sh modes. */
 export const HarnessBootstrapMode = Schema.Literals(["bootstrap", "in-place"]);
@@ -30,6 +33,9 @@ export class HarnessBootstrapAction extends Schema.Class<HarnessBootstrapAction>
 		"source-clone",
 		"source-refresh",
 		"jarvis-tool-install",
+		"jarvis-planning-correction",
+		"jarvis-anytype-correction",
+		"jarvis-community-correction",
 		"framework-install",
 		"subprojects",
 		"path-warning",
@@ -399,12 +405,87 @@ export class HarnessBootstrap extends Context.Service<
 				}
 
 				const jarvisCliPath = path.join(flowRoot, "jarvis-cli");
+				if (!wantsClone) {
+					const collectorPath = path.join(jarvisCliPath, "src/jarvis/community_briefing/collector.py");
+					if (!dryRun) {
+						const source = yield* fs
+							.readFileString(collectorPath)
+							.pipe(Effect.mapError((cause) => mapPlatformError("Read copied community collector", cause)));
+						const corrected = yield* Effect.try({
+							try: () => correctJarvisCommunitySource(source),
+							catch: (cause) => mapPlatformError("Correct copied community collector", cause),
+						});
+						yield* fs
+							.writeFileString(collectorPath, corrected)
+							.pipe(Effect.mapError((cause) => mapPlatformError("Write copied community collector", cause)));
+						written.push(collectorPath);
+					}
+					actions.push(
+						makeAction({
+							kind: "jarvis-community-correction",
+							label: "Bound community source traversal and exclude generated dependency trees",
+							status: dryRun ? "planned" : "written",
+							unsafeExternal: false,
+							targetPath: collectorPath,
+							reason: "The packaged oracle remains unchanged; collection and validation share the same limits.",
+						}),
+					);
+					const anytypePath = path.join(jarvisCliPath, "src/jarvis/anytype_client.py");
+					if (!dryRun) {
+						const source = yield* fs
+							.readFileString(anytypePath)
+							.pipe(Effect.mapError((cause) => mapPlatformError("Read copied Jarvis AnyType client", cause)));
+						const corrected = yield* Effect.try({
+							try: () => correctJarvisAnytypeSource(source),
+							catch: (cause) => mapPlatformError("Correct copied Jarvis AnyType client", cause),
+						});
+						yield* fs
+							.writeFileString(anytypePath, corrected)
+							.pipe(Effect.mapError((cause) => mapPlatformError("Write copied Jarvis AnyType client", cause)));
+						written.push(anytypePath);
+					}
+					actions.push(
+						makeAction({
+							kind: "jarvis-anytype-correction",
+							label: "Reject unconfirmed AnyType attachment outcomes in the copied Jarvis client",
+							status: dryRun ? "planned" : "written",
+							unsafeExternal: false,
+							targetPath: anytypePath,
+							reason: "The packaged oracle remains unchanged; V2 preserves drafts on declined attachment.",
+						}),
+					);
+					const planningPath = path.join(jarvisCliPath, "src/jarvis/services/planning_service.py");
+					if (!dryRun) {
+						const source = yield* fs
+							.readFileString(planningPath)
+							.pipe(Effect.mapError((cause) => mapPlatformError("Read copied Jarvis planner", cause)));
+						const corrected = yield* Effect.try({
+							try: () => correctJarvisPlanningSource(source),
+							catch: (cause) => mapPlatformError("Correct copied Jarvis planner", cause),
+						});
+						yield* fs
+							.writeFileString(planningPath, corrected)
+							.pipe(Effect.mapError((cause) => mapPlatformError("Write copied Jarvis planner", cause)));
+						written.push(planningPath);
+					}
+					actions.push(
+						makeAction({
+							kind: "jarvis-planning-correction",
+							label: "Apply V2 busy-interval and free-slot corrections to the copied Jarvis planner",
+							status: dryRun ? "planned" : "written",
+							unsafeExternal: false,
+							targetPath: planningPath,
+							reason:
+								"The packaged V1 oracle remains unchanged; the installed V2 reuse receives two source-bound fixes.",
+						}),
+					);
+				}
 				actions.push(
 					yield* externalAction({
 						kind: "jarvis-tool-install",
 						label: "Install Jarvis CLI into PATH",
 						executable: "uv",
-						args: ["tool", "install", "--force", jarvisCliPath],
+						args: ["tool", "install", "--python", ">=3.11", "--force", jarvisCliPath],
 						targetPath: jarvisCliPath,
 						reason:
 							"The native runtime-assets step installs a jarvis shim; uv tool install runs only with --run-external.",

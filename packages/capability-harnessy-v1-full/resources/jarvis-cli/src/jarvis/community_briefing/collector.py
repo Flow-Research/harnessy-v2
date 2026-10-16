@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import stat
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -112,7 +113,7 @@ def collect_sources(
         return result
     timezone = ZoneInfo(config.timezone)
     candidates: list[BriefingSource] = []
-    for path in sorted(root.rglob("*.md")):
+    for path in sorted(path for path in iter_content_files(root) if path.suffix == ".md"):
         result.files_seen += 1
         if path.is_symlink() or not path.is_file():
             result.skipped["path_boundary"] += 1
@@ -203,3 +204,41 @@ def _extract_useful_text(markdown: str) -> str:
         line for line in markdown.splitlines() if not line.strip().lower().startswith("- date:")
     ]
     return "\n".join(lines[:120])
+
+
+def iter_content_files(root: Path, *, source: bool = True):
+    """Bound source traversal before descent; never inspect generated environments."""
+    generated = {
+        ".git",
+        ".goal-agent",
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".turbo",
+        "coverage",
+    }
+    pending = [root] if root.exists() else []
+    seen = total = 0
+    while pending:
+        directory = pending.pop()
+        if len(directory.relative_to(root).parts) > 64:
+            raise ValueError("directory depth limit exceeded")
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                seen += 1
+                if seen > 10000:
+                    raise ValueError("directory entry limit exceeded")
+                if source and entry.name.lower() in generated:
+                    continue
+                info = entry.stat(follow_symlinks=False)
+                if stat.S_ISDIR(info.st_mode):
+                    pending.append(Path(entry.path))
+                elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise ValueError("linked or special content refused")
+                else:
+                    if source and entry.name.endswith(".md"):
+                        total += info.st_size
+                        if info.st_size > 1048576 or total > 33554432:
+                            raise ValueError("source byte limit exceeded")
+                    yield Path(entry.path)

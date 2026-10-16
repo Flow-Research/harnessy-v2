@@ -1,0 +1,30 @@
+{
+  "validate-output.py": {
+    "exitCode": 0,
+    "result": {
+      "ok": true,
+      "errors": []
+    }
+  },
+  "validate-evidence.py": {
+    "exitCode": 0,
+    "result": {
+      "ok": true,
+      "errors": []
+    }
+  },
+  "sourceCitations": [
+    {
+      "id": "CR-001",
+      "fileExists": true,
+      "lineValid": true
+    },
+    {
+      "id": "CR-002",
+      "fileExists": true,
+      "lineValid": true
+    }
+  ],
+  "missingLocalLinks": [],
+  "ok": true
+}

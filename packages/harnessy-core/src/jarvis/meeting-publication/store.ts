@@ -38,6 +38,7 @@ import {
 	MeetingPublicationTransitionError,
 	transitionMeetingPublicationSync,
 } from "./models.ts";
+import { MEETING_AUTH_RECOVERY_ATTEMPT_LIMIT, type MeetingProviderHealth } from "./provider-health.ts";
 import {
 	assertMeetingPublicationDatabasePathStable,
 	assertMeetingPublicationRollbackDatabaseFile,
@@ -45,6 +46,7 @@ import {
 	meetingPublicationModeOf,
 } from "./store-file-safety.ts";
 import {
+	MEETING_PUBLICATION_HEALTH_TABLE_SQL,
 	MEETING_PUBLICATION_STORE_SCHEMA_COLUMNS,
 	MEETING_PUBLICATION_STORE_SCHEMA_SQL,
 	MEETING_PUBLICATION_STORE_SCHEMA_VERSION,
@@ -97,6 +99,9 @@ const securePath = (path: string, mode: number) => {
 
 const safeFailureCode = (code: string) => `sha256:${createHash("sha256").update(code).digest("hex").slice(0, 24)}`;
 
+/** Existing content-free failure column doubles as the durable reconciliation stop. */
+export const MEETING_PUBLICATION_DELIVERY_UNCERTAIN = safeFailureCode("delivery_uncertain");
+
 const canonicalInstant = (value: string) => {
 	const milliseconds = Date.parse(value);
 	return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value ? milliseconds : null;
@@ -118,8 +123,11 @@ ${MEETING_PUBLICATION_STORE_TABLE_SQL};
 INSERT INTO publication_items (${legacyColumns.join(",")}) SELECT ${legacyColumns.join(",")} FROM publication_items_legacy;
 DROP TABLE publication_items_legacy;
 ${MEETING_PUBLICATION_STORE_STATUS_INDEX_SQL};
+${MEETING_PUBLICATION_HEALTH_TABLE_SQL};
 PRAGMA user_version = ${MEETING_PUBLICATION_STORE_SCHEMA_VERSION};
 COMMIT;`);
+	} else if (version === 3) {
+		database.exec(`BEGIN IMMEDIATE; ${MEETING_PUBLICATION_HEALTH_TABLE_SQL}; PRAGMA user_version = 4; COMMIT;`);
 	}
 	validateMeetingPublicationStoreSchema(database);
 };
@@ -166,6 +174,17 @@ export class MeetingPublicationStore extends Context.Service<
 	MeetingPublicationStore,
 	{
 		readonly dbPath: string;
+		readonly providerHealth: () => Effect.Effect<
+			ReadonlyArray<MeetingProviderHealth>,
+			MeetingPublicationStoreFailure
+		>;
+		readonly recordProviderHealth: (
+			health: MeetingProviderHealth,
+		) => Effect.Effect<void, MeetingPublicationStoreFailure>;
+		readonly resumeAuthBlocked: (
+			item: MeetingPublicationItem,
+			now: string,
+		) => Effect.Effect<boolean, MeetingPublicationStoreFailure>;
 		readonly get: (itemId: string) => Effect.Effect<MeetingPublicationItem | null, MeetingPublicationStoreFailure>;
 		readonly list: (
 			status?: MeetingPublicationStatus,
@@ -403,7 +422,32 @@ export class MeetingPublicationStore extends Context.Service<
 							Effect.flatMap(() =>
 								Effect.acquireUseRelease(
 									run("write", () => database.exec("BEGIN IMMEDIATE")),
-									() => run("write", operation),
+									() =>
+										run("write", () => {
+											// Neither ordinary approval, source refresh nor another worker may erase
+											// uncertain external delivery. Only explicit receipt reconciliation can.
+											if (
+												database
+													.prepare("SELECT 1 FROM publication_items WHERE failure_code=? LIMIT 1")
+													.get(MEETING_PUBLICATION_DELIVERY_UNCERTAIN) !== undefined
+											) {
+												throw new MeetingPublicationStoreError({ code: "write_failed" });
+											}
+											// Publishing is also crash evidence when a receipt/failure write fails.
+											// Only the still-valid exact claimant may finish recording its outcome;
+											// elapsed time, review and scan cannot establish remote non-delivery.
+											if (
+												writeOperation !== "store_checkpoint" &&
+												writeOperation !== "store_failure" &&
+												writeOperation !== "store_publish" &&
+												database
+													.prepare("SELECT 1 FROM publication_items WHERE status='publishing' LIMIT 1")
+													.get() !== undefined
+											) {
+												throw new MeetingPublicationStoreError({ code: "write_failed" });
+											}
+											return operation();
+										}),
 									(_, exit) => run("write", () => database.exec(Exit.isFailure(exit) ? "ROLLBACK" : "COMMIT")),
 								),
 							),
@@ -467,14 +511,14 @@ export class MeetingPublicationStore extends Context.Service<
 									target === null
 										? database
 												.prepare(
-													"SELECT * FROM publication_items WHERE (status='approved' OR (status='publishing' AND lease_until<=?)) AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY meeting_date,item_id LIMIT 1",
+													"SELECT * FROM publication_items WHERE status='approved' AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY meeting_date,item_id LIMIT 1",
 												)
-												.get(now, now)
+												.get(now)
 										: database
 												.prepare(
-													"SELECT * FROM publication_items WHERE item_id=? AND source_hash=? AND approved_hash=? AND source_hash=approved_hash AND (status='approved' OR (status='publishing' AND lease_until<=?)) AND (next_attempt_at IS NULL OR next_attempt_at<=?) LIMIT 1",
+													"SELECT * FROM publication_items WHERE item_id=? AND source_hash=? AND approved_hash=? AND source_hash=approved_hash AND status='approved' AND (next_attempt_at IS NULL OR next_attempt_at<=?) LIMIT 1",
 												)
-												.get(target.itemId, target.sourceHash, target.sourceHash, now, now)
+												.get(target.itemId, target.sourceHash, target.sourceHash, now)
 								) as Row | undefined;
 								if (row === undefined) return null;
 								const item = fromRow(row);
@@ -485,8 +529,7 @@ export class MeetingPublicationStore extends Context.Service<
 								) {
 									throw new MeetingPublicationStoreError({ code: "write_failed" });
 								}
-								const base = item.status === "publishing" ? "approved" : item.status;
-								const next = transitionMeetingPublicationSync(base, "claim");
+								const next = transitionMeetingPublicationSync(item.status, "claim");
 								database
 									.prepare(
 										"UPDATE publication_items SET status=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE item_id=?",
@@ -498,6 +541,108 @@ export class MeetingPublicationStore extends Context.Service<
 						);
 					return MeetingPublicationStore.of({
 						dbPath,
+						providerHealth: () =>
+							run("read", () =>
+								(database.prepare("SELECT * FROM provider_health ORDER BY provider").all() as Array<Row>).map(
+									(row) => ({
+										provider: text(row, "provider") as "google" | "discord",
+										account: text(row, "account"),
+										failure: nullable(row, "failure") as MeetingProviderHealth["failure"],
+										checkedAt: text(row, "checked_at"),
+										lastSuccessAt: nullable(row, "last_success_at"),
+										incidentAt: nullable(row, "incident_at"),
+										notifiedAt: nullable(row, "notified_at"),
+										recoveryPending: row.recovery_pending === 1,
+									}),
+								),
+							),
+						recordProviderHealth: (health) =>
+							transact("store_notification", () => {
+								if (
+									canonicalInstant(health.checkedAt) === null ||
+									[health.lastSuccessAt, health.incidentAt, health.notifiedAt].some(
+										(value) => value !== null && canonicalInstant(value) === null,
+									) ||
+									health.account !==
+										(health.provider === "google" ? config.googleOwnerEmail : config.discordChannelId) ||
+									health.account.length > 320 ||
+									Array.from(health.account).some((character) => {
+										const code = character.codePointAt(0) ?? 0;
+										return code <= 31 || code === 127;
+									})
+								)
+									throw new MeetingPublicationStoreError({ code: "write_failed" });
+								database
+									.prepare(
+										"INSERT INTO provider_health (provider,account,failure,checked_at,last_success_at,incident_at,notified_at,recovery_pending) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET account=excluded.account,failure=excluded.failure,checked_at=excluded.checked_at,last_success_at=excluded.last_success_at,incident_at=excluded.incident_at,notified_at=excluded.notified_at,recovery_pending=excluded.recovery_pending",
+									)
+									.run(
+										health.provider,
+										health.account,
+										health.failure,
+										health.checkedAt,
+										health.lastSuccessAt,
+										health.incidentAt,
+										health.notifiedAt,
+										health.recoveryPending ? 1 : 0,
+									);
+							}),
+						resumeAuthBlocked: (item, now) =>
+							transact(
+								"store_auth_resume",
+								() => {
+									const current = requireRow(item.itemId);
+									const authCodes = [
+										"authentication_failed",
+										"reauth_required",
+										"invalid_rapt",
+										"refresh_token_revoked",
+										"identity_mismatch",
+										"missing_credential",
+										"credential_store_failed",
+									].map(safeFailureCode);
+									if (
+										canonicalInstant(now) === null ||
+										current.status !== "blocked" ||
+										current.sourceHash !== item.sourceHash ||
+										current.approvedHash !== item.approvedHash ||
+										current.approvedHash !== current.sourceHash ||
+										current.approvedHash === null ||
+										current.attempts !== item.attempts ||
+										current.attempts >= MEETING_AUTH_RECOVERY_ATTEMPT_LIMIT ||
+										current.failureCode !== item.failureCode ||
+										current.failureStage !== item.failureStage ||
+										!authCodes.includes(current.failureCode ?? "") ||
+										(current.failureStage !== "google" && current.failureStage !== "discord")
+									)
+										return false;
+									const health = database
+										.prepare(
+											"SELECT account,failure,checked_at,last_success_at FROM provider_health WHERE provider=?",
+										)
+										.get(current.failureStage);
+									const checkedAt =
+										typeof health?.checked_at === "string" ? canonicalInstant(health.checked_at) : null;
+									const expectedAccount =
+										current.failureStage === "google" ? config.googleOwnerEmail : config.discordChannelId;
+									if (
+										health?.failure !== null ||
+										health.account !== expectedAccount ||
+										checkedAt === null ||
+										health.last_success_at !== health.checked_at ||
+										Date.parse(now) < checkedAt ||
+										Date.parse(now) - checkedAt > 60_000
+									)
+										return false;
+									database
+										.prepare(
+											"UPDATE publication_items SET status='approved',failure_stage=NULL,failure_code=NULL,next_attempt_at=NULL,lease_until=NULL,last_notified_at=NULL,updated_at=? WHERE item_id=?",
+										)
+										.run(now, item.itemId);
+									return true;
+								},
+								bindItem(item.itemId, item.sourceHash),
+							),
 						get: (itemId) =>
 							run("read", () => {
 								const row = rowFor(itemId);

@@ -4,8 +4,14 @@
 
 ### Fixed
 
+- Preserved macOS notification click commands through Foundation argument parsing
+  and quoted review-helper paths literally for the callback shell.
 - Scoped meeting-provider HTTP requests so rejected and oversized responses are
   cancelled on completion without waiting for garbage collection.
+- Bounded existing Google document updates to the required end-index projection
+  and validated that read before changing retained receipt metadata.
+- Stopped automatic retries for oversized provider reads while preserving
+  delivery-uncertainty handling for oversized mutation responses.
 
 ### Changed
 

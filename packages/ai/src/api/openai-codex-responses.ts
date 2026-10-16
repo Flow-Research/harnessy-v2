@@ -80,6 +80,8 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 // ============================================================================
 
 export interface OpenAICodexResponsesOptions extends StreamOptions {
+	/** SSE fetch redirect policy. Omitted preserves fetch's existing default. */
+	redirect?: "error" | "follow" | "manual";
 	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 	reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
@@ -361,6 +363,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					try {
 						response = await fetch(resolveCodexUrl(model.baseUrl), {
 							method: "POST",
+							redirect: options?.redirect,
 							headers: sseHeaders,
 							body: sseBody,
 							signal: combinedSignal.signal,

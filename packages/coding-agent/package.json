@@ -18,6 +18,10 @@
 		},
 		"./rpc-entry": {
 			"import": "./dist/rpc-entry.js"
+		},
+		"./auth-storage": {
+			"types": "./dist/core/auth-storage.d.ts",
+			"import": "./dist/core/auth-storage.js"
 		}
 	},
 	"files": [

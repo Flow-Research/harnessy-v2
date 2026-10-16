@@ -1,14 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import * as Result from "effect/Result";
+import { resolveWorkspace, resolveWorkspacePath } from "../../workspace.ts";
 
 import { findLifeReadingCurriculum, type LifeCurriculumSelection } from "./curriculum.ts";
 import type { LifeFeedSource } from "./research.ts";
 
 export interface LifeOrchestratorPaths {
 	readonly projectRoot: string;
+	readonly contextRoot?: string;
 	readonly homeRoot: string;
 	readonly lifeDirectory: string;
 	readonly stateDirectory: string;
@@ -34,6 +37,7 @@ export interface ResolveLifeSettingsOptions {
 	readonly homeRoot?: string;
 	readonly compatibilityRoot?: string;
 	readonly user?: string;
+	readonly workspaceRoot?: string;
 }
 
 const record = (value: unknown): Record<string, unknown> | null =>
@@ -110,7 +114,12 @@ const readingCurricula = (reading: Record<string, unknown>): ReadonlyArray<LifeC
 
 /** Resolve V2-owned state alongside explicit, pinned V1 compatibility adapters. */
 export const resolveLifeOrchestratorSettings = (options: ResolveLifeSettingsOptions = {}): LifeOrchestratorSettings => {
-	const projectRoot = resolve(options.projectRoot ?? process.cwd());
+	const target = resolve(options.projectRoot ?? process.cwd());
+	const workspace = resolveWorkspace({ cwd: target, workspaceRoot: options.workspaceRoot });
+	const projectRoot = workspace?.root ?? target;
+	const contextRoot = workspace
+		? resolveWorkspacePath(workspace.root, workspace.manifest.contextDir)
+		: join(projectRoot, ".jarvis", "context");
 	const homeRoot = resolve(options.homeRoot ?? homedir());
 	const user = options.user ?? process.env.FLOW_USER ?? process.env.USER ?? "default";
 	const lifeDirectory = join(homeRoot, ".agents", "life");
@@ -121,19 +130,14 @@ export const resolveLifeOrchestratorSettings = (options: ResolveLifeSettingsOpti
 		options.compatibilityRoot ??
 			process.env.HARNESSY_LIFE_V1_SCRIPTS ??
 			join(
-				projectRoot,
-				"packages",
-				"capability-harnessy-v1-full",
-				"resources",
-				"flow-install",
-				"skills",
-				"life-orchestrator",
-				"scripts",
+				dirname(createRequire(import.meta.url).resolve("@harnessy/capability-harnessy-v1-full/package.json")),
+				"resources/flow-install/skills/life-orchestrator/scripts",
 			),
 	);
 	return {
 		paths: {
 			projectRoot,
+			contextRoot,
 			homeRoot,
 			lifeDirectory,
 			stateDirectory,
@@ -141,7 +145,7 @@ export const resolveLifeOrchestratorSettings = (options: ResolveLifeSettingsOpti
 			reviewDirectory: join(stateDirectory, "reviews"),
 			researchStatusDirectory: join(stateDirectory, "research"),
 			rawArticlesDirectory: join(homeRoot, ".jarvis", "wikis", "founder-learning", "raw", "articles"),
-			steeringPath: join(projectRoot, ".jarvis", "context", "private", user, "learning-research.md"),
+			steeringPath: join(contextRoot, "private", user, "learning-research.md"),
 			compatibilityScriptsDirectory,
 		},
 		lookbackDays: intValue(reading.lookback_days, 21, 1, 3_650),

@@ -1,7 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
@@ -93,5 +92,38 @@ describe("Life Orchestrator schedule cutover", () => {
 			expect(readFileSync(join(result.backupDirectory ?? "", `${label}.plist`), "utf8")).toBe(`old:${label}`);
 		}
 		expect(readFileSync(join(launchAgents, "com.example.unrelated.plist"), "utf8")).toBe("untouched");
+		const daily = result.files.find((file) => file.label.endsWith("daily-brief"));
+		const weekly = result.files.find((file) => file.label.endsWith("weekly-plan"));
+		expect(daily).toBeDefined();
+		expect(weekly).toBeDefined();
+		const dailyArgumentsXml = readFileSync(daily!.path, "utf8").split("<array>")[1]!.split("</array>")[0]!;
+		const dailyArgv = [...dailyArgumentsXml.matchAll(/<string>(.*?)<\/string>/g)].map((match) => match[1]!);
+		const argumentsXml = readFileSync(weekly!.path, "utf8").split("<array>")[1]!.split("</array>")[0]!;
+		const argv = [...argumentsXml.matchAll(/<string>(.*?)<\/string>/g)].map((match) => match[1]!);
+		expect(dailyArgv.slice(0, 8)).toEqual([
+			node,
+			cli,
+			"jarvis",
+			"life",
+			"daily",
+			"--max-output-bytes",
+			"1048576",
+			"--target",
+		]);
+		expect(dailyArgv).not.toContain("draft");
+		expect(argv.slice(0, 12)).toEqual([
+			node,
+			cli,
+			"jarvis",
+			"life",
+			"draft",
+			"--kind",
+			"weekly",
+			"--timeout-seconds",
+			"600",
+			"--max-output-bytes",
+			"1048576",
+			"--target",
+		]);
 	});
 });

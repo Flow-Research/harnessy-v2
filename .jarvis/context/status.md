@@ -1,8 +1,107 @@
 # Harnessy V2 status
 
-Status date: 2026-09-06
+Status date: 2026-09-20
 
-## Current checkpoint
+## Reconciled current checkpoint
+
+The agreed migration to V2 canonical ownership and supervised usage is complete.
+Merged `dev` is `3ebf8569`; all eight required post-merge checks pass. Verified
+installation/runtime bindings, meeting and native Fathom ownership, native
+community publication ownership, real daily/weekly draft operation, private-vault
+placement and recovery evidence are complete for that scope. This is not an
+unattended-operation milestone or permission to delete retained V1 rollback data.
+
+The older sections below are historical evidence, not the live service inventory.
+Use `docs/migrations/meeting-dispatch-execution-plan.md` for the current ordered
+cutover gates and their evidence; do not restart completed transfers from older
+paragraphs here.
+
+V2 owns meeting ingestion/state/review/dispatch and the private context placement.
+There is currently no meeting-review listener; a new finite authorized session is
+needed to serve it. The V2 community reviewer and five-minute Fathom poll are the
+only loaded Harnessy labels. V1 writers and the Life schedules remain unloaded;
+supervised draft-only Life operation is intentional, not a missing automation task.
+
+The native community host and Life daily composition pass isolated installed-byte
+checks. Receipt-preserving rollback passes through the actual packed compatibility
+and native queue readers. The live Executor catalog upgrade added two community
+tools under exclusive ownership, preserving credentials, connections, existing
+meeting tools and policies with zero network calls and consistent backups. These
+results do not constitute a live community publication receipt.
+
+PR #83 is merged into `dev` at `03031c91`. The installed `harnessy` and `hsy`
+commands now select that verified merged candidate. `jarvis`, community review
+and Fathom retain their unchanged verified V2 installations; they were not
+silently rebuilt or restarted. Prior installation bindings and excluded local
+edits remain preserved. Consistent service-handover backups include the native
+Fathom checkpoint, notes and inbox. Ordinary Fathom polling exits successfully.
+
+Native Life daily generation now also passes with the real separate V2 Codex
+login: one finite signed grant, a receipt-bound local draft, three selected
+readings and no publication or journal write. The grant is consumed and the
+reading reservation released; schedules remain disabled. A real native weekly
+draft also passes through the merged installed candidate with matching provider
+receipts, a consumed finite grant and unchanged credentials. It remains a local
+review draft, not an approved canonical plan or published content. A fresh
+post-operation backup preserves its draft, receipts and replay evidence.
+
+The owner explicitly approved one existing key for distinct scoped workflow grants;
+no additional workflow key was generated. Unattended renewal,
+automatic recovery and Life schedules remain outside this supervised milestone.
+Garden and preserved rollback data remain untouched.
+
+Community update: the existing Python publication worker is disabled by its
+configuration flag, with all other settings byte-preserved and privately backed
+up. Decision-only review stays available and the three drafts remain unapproved.
+The bounded native publication host is retained byte-for-byte in the installation;
+missing-authority startup rejects safely. Native publication owns the guarded
+mutation path; retained compatibility review is decision-only. No live signed
+community publication or new external delivery receipt is claimed.
+
+The community public trust binding now reuses the existing owner key. A brief
+reviewer freeze allowed fresh state/artifact snapshots; isolated Python/native
+reopen preserved every field of all three real pending rows and neither could
+claim them. Zero attempts/receipts/leases require no external receipt resolution
+at this checkpoint. The reviewer was restarted with one listener; Fathom was
+unchanged. No live restore, publication or new grant occurred. Real-item runtime
+bindings remain an operation-time requirement; no artificial delivery is needed.
+
+The owner-approved recovery amendment replaces mandatory live V1 restart with a
+fresh isolated backup, restore, receipt/replay reconciliation and V2 recovery
+rehearsal plus reversible V2 installation bindings. That bounded gate passes,
+including native-only checkpoints. Fresh filtered private-vault and post-weekly
+backups close the final audit's identified recoverability gaps. No production
+restore or live rollback was performed; actual recovery still requires writer
+exclusion and reconciliation of intervening changes. V1 writers remain disabled.
+
+PR #84 at `6cd16f04` contains exactly two files: the diagnostic-only Executor
+test change and the owner-approved ADR 0006 recovery amendment. All eight
+required checks pass; CI run `35516470978` completed at `2026-09-20T14:54:56Z`
+and Security run `35516471019` passes. The earlier merge-run child-exit failure
+remains causally undiagnosed, not declared fixed by a green rerun. The owner
+authorized a scoped review exception; PR #84 merged at `3ebf8569`, and local
+`dev` is safely aligned with inherited edits preserved. The temporary bypass
+was removed and original branch protections independently verified restored.
+Installed runtime bytes are unchanged because the two-file PR changes only
+ADR/test files. Post-merge CI `35536192648`, including aggregate clean-worktree
+validation, and Security `35536192565` pass: all eight required checks are green.
+
+Operational revalidation found a transient gap: ordinary Fathom
+polling failed with retryable provider errors for both configured accounts,
+without advancing checkpoints or importing records. The failure predates this
+merge; available diagnostics do not identify its cause. The next ordinary
+scheduled poll recovered: exit zero, both accounts successful and checkpoints
+advanced, four duplicate records and no new notes. A separate guarded read-only
+provider probe also succeeded with unchanged credentials. No forced poll, code
+fix or service restart was needed; the earlier cause remains unknown.
+Community review remains available, and meeting review still requires a fresh
+finite session. No provider call or publication was performed by this audit.
+Unattended renewal/restart/recovery and automatic Life schedules remain deferred;
+future deliveries still need valid authority and exact-item approval. No required
+gate remains open within the agreed supervised migration scope. Other operational
+documentation and inherited edits remain local, uncommitted and preserved.
+
+## Historical implementation checkpoint
 
 Harnessy V2 is canonical by accepted ADR for all new Harnessy development. The
 implementation checkpoint is the uncommitted `migration/v2-canonical-cutover`
@@ -29,10 +128,10 @@ unfinished. See the feature inventory in `docs/meeting-publication-state-contrac
 See the final checkpoint below; earlier sections retain historical evidence and
 do not describe the latest package inventory or runtime implementation.
 
-The original V1 checkout remains the compatibility oracle and sole owner of
-existing live Jarvis/scheduler writers. It must remain writable and running
-until an authorized operational cutover proves backup integrity, one writer,
-workflow smoke, rollback, and a clean roll-forward to V2.
+The original V1 checkout remains preserved as the compatibility oracle and
+rollback source. The current live scheduler set has been reconciled separately
+below; no historical paragraph here authorizes reloading a V1 writer or
+declares the final V2 cutover complete.
 
 ## Accepted local implementation evidence
 
@@ -1108,3 +1207,353 @@ embedded source after the current migration projection changed. The packaged
 compatibility verifier now reports `ok: true` with 706 files, and the focused
 V1-pack plus Jarvis-parity suites pass 16/16. Generated Python cache files were
 removed; no private state or live V1 files were touched.
+
+### Native provider progress — 2026-09-18
+
+The signed Life-draft contract now has a narrow Codex adapter. It builds an
+explicit ephemeral/read-only `codex exec` argv and fails closed on non-zero or
+empty output; the host still owns timeout, cancellation, output limits and
+temporary-file cleanup. Three adapter tests plus the 22 contract tests pass.
+This does not activate Life scheduling or perform live generation. V1 remains
+the live owner pending the installed gate and supervised handover.
+
+### Installed meeting gate revalidated — 2026-09-18
+
+The canonical packed local-host fixture now passes from a fresh Node 22.22.2
+build: 51 files, six read-only commands, offline import, isolated review,
+guarded loopback publication, bounded worker, and full-review dispatch. The
+full-review adapter preserves interruption instead of converting an operator
+stop into a normal result. The artifact inventory still performs complete
+enumeration, content hashes, identity checks, and final checks before every
+grant; only redundant path sorting was removed in favor of exact set equality.
+Focused review tests pass 38/38, the SDK packed fixture passes, root checks and
+CI-contract/QA checks pass, and no credentials, provider calls, scheduler
+reload, publication, or live authorization occurred. V1 remains the live
+meeting owner; native Life/community scheduling and provider execution remain
+separate migration gates.
+
+The V2 Fathom boundary now also has a single LaunchAgent plan/install surface
+for the owner-approved five-minute poll interval. It pins the V2 CLI and Node
+paths, limits the job to the existing approved account defaults, writes one
+owner-only rollback backup, and never loads or starts launchd. Its two focused
+schedule tests pass; no plist was installed or changed on this machine.
+
+The generated parity source now correctly records the native Fathom poll and
+ingestion boundary as partial rather than missing, while retaining explicit
+scheduler-activation and production-handover gates. Generator and focused
+compatibility/parity checks pass 18/18.
+
+The ownership audit found the V2 community review server running with three
+pending-review rows and no approved/publishing rows. Matching V1/V1-
+compatibility LaunchAgent labels are not loaded, but their preserved plist
+files remain on disk; they were not deleted or rewritten. The V2 Fathom schedule
+is still plan-only. Final backup/import, one-writer handover, and
+rollback/receipt reconciliation therefore remain the operational boundary.
+
+The reviewed V2 Fathom LaunchAgent is now installed with owner-only mode and a
+rollback backup, but remains unloaded. `plutil` passes and `launchctl` confirms
+no V2 Fathom process is active; no poll or credential access occurred. Loading
+it remains part of the supervised one-writer gate.
+
+A bounded native V2 poll then succeeded for the approved personal and Flow
+Research accounts: 10 fetched/imported records per account, both checkpoints
+advanced, no duplicates or failures. V2 now has 20 pending envelopes per
+approved account, two previously processed personal envelopes, and zero
+invalid envelopes. No publication or scheduler load occurred.
+
+The V2 Life service now explicitly binds preserved synthesis subprocesses to
+the approved Codex provider and supported `gpt-6-astra` default. A normal V2
+daily preview succeeds with three readings and no publication; Life
+service/provider suites pass 58/58. No scheduler was loaded.
+The service regression test also asserts that the subprocess receives the
+explicit Codex/model binding.
+
+The V2 Fathom LaunchAgent was then loaded and supervised through one kickstart
+run. Both approved accounts imported 10 records with advanced checkpoints and
+no failures; V2 now has 30 pending envelopes per approved account, two
+previously processed personal envelopes, and zero invalid. The preserved V1
+Fathom label is not loaded; meeting publication and other schedulers remain
+stopped.
+
+The three V2 Life LaunchAgent labels were then unloaded to honor the agreed
+supervised-draft policy. Their reviewed definitions remain available for a
+separately authorized activation; only the V2 Fathom poll is currently loaded.
+
+The loaded Fathom plist was corrected to the verified Node 22.22.2 executable
+and launchd was reloaded. A second supervised kickstart succeeded for both
+approved accounts; the prior plist is preserved in an owner-only rollback
+backup.
+
+The supervised meeting ownership milestone is now enabled. V2 is canonical for
+meeting source ingestion, queue state, review, and dispatch logic. The V1
+meeting worker and review labels are disabled, no V1 meeting writer process is
+running, and V1 source/data/rollback artifacts remain preserved for read-only
+rollback. V2 Fathom is the only loaded meeting scheduler; a fresh owner key
+and finite two-hour signed authorization protect the V2 review/dispatch owner.
+The queue currently has no pending or approved meeting, so the external
+Google/Discord dispatch receipt is explicitly deferred until the next eligible
+meeting. No dummy or historical delivery will be used, and this deferred
+receipt does not reactivate V1.
+
+On 2026-09-19 the V2 private context tree was reconciled against the preserved
+V1 tree by content checksum. V2 already contained the complete tree; 21 newer
+substantive files were copied to their matching V2 paths and verified with
+matching hashes. Generated `.coverage` and `.DS_Store` files were excluded.
+No V1 source, state, scheduler definition, or rollback artifact was deleted.
+
+The guarded isolated rollback rehearsal was rerun on 2026-09-19 with the
+pinned V1-compatible interpreter and external-network denial preload. It passed
+five synthetic rows, six historical-candidate cases, ten rejected unsafe cases,
+exact receipt matching, retained partial delivery, zero provider calls, and
+zero publications. This is fixture evidence only; it did not alter live V1 or
+V2 state and does not claim a live rollback.
+
+The supervised live workflow check on 2026-09-19 also revalidated the V2
+community boundary and Life draft path without waiting for a meeting. Community
+status and offline preflight passed: three existing briefings are pending local
+review, no row is approved or publishing, the configured source/draft/queue and
+Discord destination are present, and preflight confirms no provider calls. The
+preserved compatibility reviewer remains the sole community review writer; no
+native community scheduler or competing writer was introduced. A V2 Life daily
+preview completed through the explicit Codex/gpt-6-astra binding and wrote only
+a supervised review draft (`2026-09-19-0cb2771a.md`); Life delivery counts did
+not change and no external publication occurred. Life schedules remain
+unloaded. This is progress on the local workflows, not evidence of community
+delivery or unattended operation.
+
+Fathom recovery was completed on 2026-09-19. The V2 poll was previously
+advancing a deep historical cursor without the V1 `created_after` window, so
+successful five-minute runs were consuming old pages instead of current calls.
+V2 now uses a bounded 72-hour rolling window, restarts from its newest page,
+and keeps recording-ID idempotency. The poll also promotes verified recent
+inbox envelopes into the canonical V2 meeting-note source using atomic,
+idempotent writes without transcript publication or external delivery. Focused
+Fathom tests pass 15/15 and the core build passes. A live bounded run promoted
+12 recent notes (two already existed), including meetings from September
+17–18. A fresh review session is required to display the newly sourced notes.
+
+### V2 canonical local ownership enabled — 2026-09-19
+
+The V2 LaunchAgents for the meeting Fathom poll and Life research, daily, and
+weekly workflows are loaded and verified with the V2 executable and working
+directory. V1 meeting, Fathom, briefing, and Life labels remain unloaded;
+their source, state, and rollback artifacts are retained. Fathom owns the
+bounded five-minute rolling ingest and recent-note promotion. Life owns its
+local ledger and schedules while retaining the documented compatibility
+provider inside the V2 service. Community review is V2-launched over its
+preserved compatibility boundary; native community mutation/publication is
+still an explicit provider gap, not silently represented as native.
+
+This enables V2 canonical orchestration and local ownership. It does not by
+itself prove a fresh external meeting receipt, native community publication,
+or permanent deletion of V1 rollback material.
+
+The V2 CLI now exposes the supervised `community briefing review serve` route.
+The reviewer is running under the V2-owned launchd label
+`com.flow-harness.community-review-v2` on loopback port 8872 and delegates only
+the existing review UI to the preserved briefing compatibility implementation.
+This keeps the existing review feature available without pretending that
+native community mutation is complete. A fresh browser session still requires
+the normal local review token.
+
+The label is now persisted as a V2 LaunchAgent at
+`~/Library/LaunchAgents/com.flow-harness.community-review-v2.plist`, with
+owner-local rollback-free startup and no provider or publication operation at
+launch. `launchctl print` shows it running and an unauthenticated probe returns
+401 as expected.
+
+The LaunchAgent now points to the V2-packaged compatibility capability under
+`packages/capability-harnessy-v1-full`, executed by a machine-local virtual
+environment at `~/.harnessy/jarvis/v2-compat-venv`; its missing briefing-only
+`review serve` entrypoint was restored and compile-checked. The original
+checkout's installed `jarvis` executable is no longer used by this V2 reviewer,
+and the virtual environment is kept outside the provenance artifact.
+
+The loaded V2 Fathom job was kickstarted and completed with exit code 0 on
+2026-09-19. It fetched the bounded personal/flowresearch scope, found no
+invalid records, and confirmed 14 recent notes already present in the V2
+source; no duplicate note writes or publication calls occurred.
+
+### Installed boundary and provenance revalidation — 2026-09-19
+
+The packaged V1 compatibility projection was corrected after the supervised
+review opener was added: the source and projected trees now agree at 706 files,
+the provenance verifier passes, and generated Python caches are absent. The
+review LaunchAgent uses the V2-packaged source with a machine-local virtual
+environment at `~/.harnessy/jarvis/v2-compat-venv`; the environment is outside
+the shipped artifact and `PYTHONDONTWRITEBYTECODE=1` prevents runtime cache
+drift. The listener survives a LaunchAgent restart on `127.0.0.1:8872` and an
+unauthenticated probe returns 401 as designed.
+
+With pinned Node `22.22.2`, the full Core suite passes 84 files/675 tests, SDK
+passes 14 files/156 tests, local-host passes 10 files/205 tests, the packed
+local-host fixture passes its 51-file gate, and the root check is green. The
+only remaining root-check notices are the four pre-existing Claude-bridge
+informational lint suggestions. V1 meeting writers remain unloaded; the V2
+Fathom interval remains loaded and exits successfully between five-minute runs.
+
+The native-provider audit deliberately left two areas unchanged. Community
+publication still needs one coordinated vertical slice: a finite one-use
+authority, exact approved-revision claim, community-scoped Executor mutations,
+fenced receipts, and uncertainty stop. The preserved compatibility worker can
+reclaim expired publishing rows and can rewrite artifacts without pinning an
+earlier receipt, so adding a native claim method beside it would create a
+cross-writer race. Life has a real Codex draft adapter and passing contract
+tests, but its production daily/weekly consumers still obtain context and
+prompts through the compatibility scripts and have no durable host-issued
+draft grant. These are implementation gaps, not provider-selection gaps; no
+stub or unreachable adapter was added.
+
+### Runtime reconciliation after listener check — 2026-09-19
+
+The current machine state supersedes older schedule notes: the three V2 Life
+LaunchAgents are loaded, but they still invoke the V2 CLI's preserved
+compatibility provider scripts. Their recent logs show daily/weekly output was
+published through that adapter; this is not native Life provider execution and
+must not be described as full canonical ownership. The V2 meeting Fathom label
+is loaded on its five-minute interval and exits successfully, but the latest
+bounded pass found no new Flow Research records and only duplicates in the
+personal account. The V2 community reviewer is listening on 127.0.0.1:8872;
+the old 8770 endpoint is intentionally absent.
+
+The Life boundary now has a real, separate grant-consumption host. It verifies
+an owner-signed, domain-separated Ed25519 grant, consumes it atomically in an
+owner-only SQLite store before provider execution, persists consumption across
+reopen, and supports permanent revocation. Nine isolated tests cover replay,
+uncertain-provider handling, revocation, forgery, independent connections, and
+path/mode checks. The host is exported as a contract boundary but is not yet
+  connected to the daily CLI; no self-issued authority or compatibility-provider
+  replacement was introduced.
+
+### Native Life preview consumer checkpoint — 2026-09-19
+
+The supervised native Life path is now wired as an explicit two-step,
+preview-only CLI flow. Prompt preparation produces a bounded artifact without
+AI, journal, notification, or publication writes. Execution requires an
+owner-signed finite grant, the exact request artifact, and the trusted public
+key. The grant is consumed once before a bounded Codex call; text hygiene and
+Worth Reading validation remain in the path, and the final review artifact is
+owner-only and content-hashed.
+
+Focused native Life tests pass 46/46; the complete Core suite passes 86 files
+and 689 tests; the root check, V1 provenance verifier, parity check, and
+`git diff --check` pass. No scheduler, provider publication, or external call
+was made. Life schedules remain held for supervised operation. Native community
+mutation remains deferred until the preserved compatibility writer and a native
+writer share a safe claim/receipt barrier.
+
+### Meeting review listener reconciliation — 2026-09-19
+
+The community briefing listener on `127.0.0.1:8872` is healthy, but it is not
+the meeting queue. No V2 meeting-review listener is currently running. The last
+meeting full-review authorization in the preserved control directory expired
+on 2026-09-17, so starting the guarded meeting listener from that artifact
+would be rejected. The old `8770` URL is therefore correctly refused rather
+than silently serving an unauthorized meeting queue. A fresh finite meeting
+authorization is required before opening the V2 meeting review interface; no
+new authorization was fabricated or activated in this checkpoint.
+
+### Briefing notification route correction — 2026-09-19
+
+Community briefing notifications previously reused the generic meeting opener,
+which could send an operator to the retired `8770` endpoint. The compatibility
+notification now accepts a briefing-specific opener and the community service
+passes `community briefing review open --port 8872`; meeting notifications keep
+their separate meeting opener. The source/projection provenance verifier and
+root check pass, and a synthetic notification assertion confirms the command
+route without exposing the review token.
+
+The installed community status command also recognizes the V2 LaunchAgent label
+(`com.flow-harness.community-review-v2`) instead of the retired V1 plist name.
+It now reports `review_service_installed: true` and three pending briefing
+drafts.
+
+Read-only runtime reconciliation now reports the V2 meeting publication store
+at 118 archived, 38 published, and 14 rejected rows with no active meeting
+listener; the preserved oracle queue remains separate at 118 archived, 32
+published, 12 rejected, and 7 pending-review rows. The V2 Fathom LaunchAgent
+has completed 69 five-minute runs with exit code 0. The briefing listener
+continues to return 401 without a token as designed.
+
+The installed community preflight was rerun in offline/no-provider mode: all
+configuration, source, AI-runner, owner-only-state, and V2 review-listener
+checks passed. The generation and publication schedules remain intentionally
+held under the supervised policy, so a full runtime preflight reports those
+two gates as not loaded rather than treating them as active automation.
+
+### Supervised V2 meeting session — 2026-09-19
+
+The owner-authorized session was issued against the current V2 bindings, but
+startup now stops on the retained singleton replay lease from a failed prior
+attempt. PID 70487 is absent, the meeting listener is absent, both known V1
+meeting writer labels remain absent, and the failed attempt reached neither
+readiness nor a provider owner. A mode-600 reconciliation evidence file records
+the lease, process and listener observations without deleting or changing the
+replay row. The next implementation step is the explicit verified stale-lease
+retirement operation described in the renewal design; a generic SQL clear would
+weaken the rollback and uncertainty safeguards.
+
+The lease was then reconciled without provider access: an owner-only replay
+backup was preserved, PID 70487 was rechecked absent, the meeting queue had
+zero `publishing` rows, and the consumed authorization was retained with
+`reconciled_no_delivery`. A targeted retirement receipt records the exact
+lease identity and proof; no generic clear operation was used. A new finite
+authorization is now running in a persistent supervised V2 session on
+`127.0.0.1:8770`. No meeting has been approved or published.
+
+### Compatibility schedule freeze — 2026-09-19
+
+The three Life LaunchAgents that still invoked compatibility scripts were
+unloaded under the approved supervised-draft policy. Their owner-only plist
+files and state remain preserved; no data was deleted. Native Life preparation
+and signed preview remain available for explicit runs. Community review remains
+running because its native mutation writer has not yet passed parity and
+claim/receipt safety checks; disabling it now would remove an existing feature.
+
+The native SDK now exposes a bounded community publication operation that
+reuses the Executor-backed Google/Discord provider primitives. It binds both
+writes to the same briefing ID and artifact hash, checkpoints Google before
+Discord, and performs no implicit retry after an uncertain provider result.
+Isolated ordering/binding and Google-failure stop tests pass; durable queue
+claims/receipts and live activation remain unwired until their consumer is
+complete.
+
+### Native community queue/worker checkpoint — 2026-09-19
+
+The native SDK now contains the minimal durable community consumer over the
+existing `community_briefings` schema. It claims one approved row under
+SQLite `BEGIN IMMEDIATE`, requires the exact approved revision hash, persists
+the Google receipt before attempting Discord, and marks provider or checkpoint
+failure blocked for manual reconciliation. It never retries an uncertain
+delivery and does not create a scheduler or a second writer. Queue,
+provider-boundary, and worker tests pass (6 tests); SDK type-check passes.
+The worker is a reusable Executor consumer, not live publication activation.
+
+The community mutation boundary no longer reuses meeting authority. V2 now
+has a distinct community-scoped grant brand, queue/state binding, exact
+briefing revision check, and revocation recheck; the Executor provider layers
+validate that grant before either mutation. The owner-signed community grant
+host now verifies an Ed25519 envelope, exact queue/state/item binding and
+expiry, consumes one grant atomically before provider execution, revalidates it
+through the run, and supports permanent revocation. Its isolated authority and
+grant-host tests pass. Only wiring this host into the selected review command
+remains; no scheduler or publication was activated by this change.
+
+Current machine state supersedes older listener wording: the community
+reviewer remains on `127.0.0.1:8872`; no meeting listener is running on
+`8770`, no meeting replay lease is active, Fathom polling remains loaded, and
+the three Life LaunchAgents remain unloaded under supervised-draft policy.
+
+The SDK package build, bundle audit, full SDK suite (17 files/162 tests), and
+isolated packed-consumer fixture pass. The command/state source hashes and
+generated meeting parity evidence were reconciled against the current
+preserved compatibility tree; the focused compatibility/parity check now
+passes 18/18. A broader installed-runtime run was also attempted under the
+machine's Node 24 default and produced unrelated runtime-input failures; the
+final installed gate must use the pinned Node 22.22.2 toolchain and coordinated
+artifact setup.
+
+After the authority separation, the pinned Node 22 SDK suite remains green
+(17 files, 162 tests), the SDK bundle audit and installed packed-consumer
+fixture remain green, and the focused Core compatibility/parity/authority run
+passes 20/20.

@@ -1,5 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +17,7 @@ import { NodeServices } from "@effect/platform-node";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
+import { HarnessError } from "../src/errors.ts";
 import { resolveLifeOrchestratorSettings } from "../src/jarvis/life-orchestrator/config.ts";
 import { canonicalLifeBriefPath, scanDeliveredLifeBriefs } from "../src/jarvis/life-orchestrator/history.ts";
 import { runLifeDaily } from "../src/jarvis/life-orchestrator/service.ts";
@@ -40,6 +50,10 @@ canonical = life / today.strftime("%Y") / today.strftime("%b") / today.strftime(
 if "--preview-output" in args:
     path = pathlib.Path(args[args.index("--preview-output") + 1])
     path.parent.mkdir(parents=True, exist_ok=True)
+    (path.parent / ".provider-env.json").write_text(json.dumps({
+        "provider": os.environ.get("HARNESSY_AI_PROVIDER"),
+        "model": os.environ.get("HARNESSY_AI_CODEX_DEFAULT_MODEL"),
+    }))
     path.write_text("# Daily Brief\\n\\n## Worth Reading\\n\\n- [Old](https://example.test/repeated)\\n\\n## Reflection\\n\\nKeep going.\\n")
     raise SystemExit(0)
 if "--publish-preview" in args:
@@ -123,6 +137,10 @@ describe("Life Orchestrator daily service", () => {
 		);
 		const canonical = canonicalLifeBriefPath(settings.paths.lifeDirectory, now);
 		const markdown = readFileSync(canonical, "utf8");
+		expect(JSON.parse(readFileSync(join(settings.paths.reviewDirectory, ".provider-env.json"), "utf8"))).toEqual({
+			provider: "codex",
+			model: "gpt-6-astra",
+		});
 		expect(result).toMatchObject({ published: true, selected: 1, shortage: true, briefPath: canonical });
 		expect(markdown).toContain("[Brand new paper](<https://doi.org/10.1000/unlocking-ai>)");
 		expect(readFileSync(join(settings.paths.lifeDirectory, "delivered.md"), "utf8")).toBe(markdown);
@@ -245,6 +263,74 @@ describe("Life Orchestrator daily service", () => {
 		expect(readFileSync(canonical, "utf8")).toContain(
 			"[Forced refresh paper](<https://doi.org/10.1000/forced-refresh>)",
 		);
+	});
+
+	it("rejects oversized compatibility output before saving a review preview", async () => {
+		const root = makeRoot();
+		const project = join(root, "project");
+		const scripts = join(root, "compatibility");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(scripts, { recursive: true });
+		writeFileSync(join(scripts, "daily-brief"), dailyFixture);
+		const settings = resolveLifeOrchestratorSettings({
+			projectRoot: project,
+			homeRoot: root,
+			compatibilityRoot: scripts,
+			user: "test",
+		});
+		const now = new Date("2026-09-08T04:30:00.000Z");
+
+		await expect(
+			Effect.runPromise(
+				runLifeDaily(settings, { now, maximumOutputBytes: 32 }).pipe(
+					Effect.provide(CommandRunner.layer),
+					Effect.provide(NodeServices.layer),
+				),
+			),
+		).rejects.toThrow("32-byte limit");
+		expect(existsSync(canonicalLifeBriefPath(settings.paths.lifeDirectory, now))).toBe(false);
+		expect(
+			existsSync(settings.paths.reviewDirectory)
+				? readdirSync(settings.paths.reviewDirectory).filter((entry) => entry.endsWith(".md"))
+				: [],
+		).toEqual([]);
+
+		const ledger = await Effect.runPromise(LifeReadingLedger.open(settings.paths.databasePath));
+		try {
+			expect(await Effect.runPromise(ledger.counts())).toMatchObject({ reserved: 0 });
+		} finally {
+			ledger.close();
+		}
+	});
+
+	it("removes the reserved output file when compatibility preview execution fails", async () => {
+		const root = makeRoot();
+		const project = join(root, "project");
+		const scripts = join(root, "compatibility");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(scripts, { recursive: true });
+		writeFileSync(join(scripts, "daily-brief"), "raise SystemExit(0)\n");
+		const settings = resolveLifeOrchestratorSettings({
+			projectRoot: project,
+			homeRoot: root,
+			compatibilityRoot: scripts,
+			user: "test",
+		});
+
+		await expect(
+			Effect.runPromise(
+				runLifeDaily(settings, { now: new Date("2026-09-08T04:30:00.000Z") }).pipe(
+					Effect.provideService(CommandRunner, {
+						run: () => Effect.fail(new HarnessError({ message: "synthetic runner failure" })),
+					}),
+				),
+			),
+		).rejects.toThrow("Unable to start Daily brief preview");
+		expect(
+			existsSync(settings.paths.reviewDirectory)
+				? readdirSync(settings.paths.reviewDirectory).filter((entry) => entry.endsWith(".generated.md"))
+				: [],
+		).toEqual([]);
 	});
 
 	it.each(["active", "incomplete", "recovery"])(

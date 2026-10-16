@@ -11,6 +11,7 @@ import {
 	executorPlatformTags,
 	executorReleasePackages,
 	intentionallyUnpublishedPackages,
+	localReleasePackages,
 	packedReleasePackages,
 	validateReleaseManifest,
 } from "./harnessy-release-contract.mjs";
@@ -26,12 +27,40 @@ test("canonical packed release includes Harnessy packages and a platform runtime
 			"@earendil-works/pi-coding-agent",
 			"@harnessy/executor#linux-x64",
 			"@harnessy/executor",
+			"@harnessy/capability-harnessy-v1-full",
 			"@harnessy/core",
 			"@harnessy/engine",
-			"@harnessy/capability-harnessy-v1-full",
 			"@harnessy/capability-org-knowledge",
 		],
 	);
+});
+
+test("Core declares its preserved Life resources and releases them before its consumer", () => {
+	const manifest = JSON.parse(readFileSync(new URL("../packages/harnessy-core/package.json", import.meta.url), "utf8"));
+	const dependency = JSON.parse(readFileSync(new URL("../packages/capability-harnessy-v1-full/package.json", import.meta.url), "utf8"));
+	assert.equal(manifest.dependencies[dependency.name], dependency.version);
+	const names = packedReleasePackages(["linux-x64"]).map((pkg) => pkg.name);
+	assert(names.indexOf(dependency.name) >= 0 && names.indexOf(dependency.name) < names.indexOf(manifest.name));
+});
+
+test("local candidates include operational consumers without changing registry publication", () => {
+	const packages = localReleasePackages(["darwin-arm64"]);
+	const names = packages.map((pkg) => pkg.installName ?? pkg.name);
+	assert.equal(new Set(names).size, names.length);
+	assert.deepEqual(packages.slice(-2).map((pkg) => pkg.name), ["@harnessy/sdk", "@harnessy/local-host"]);
+	for (const pkg of packages.slice(-2)) {
+		const manifest = JSON.parse(readFileSync(new URL(`../${pkg.directory}/package.json`, import.meta.url), "utf8"));
+		assert.equal(manifest.private, true);
+		assert.equal(manifest.license, pkg.expectedLicense);
+		assert(pkg.requiredFiles.includes("LICENSE"));
+		for (const dependency of Object.keys(manifest.dependencies).filter((name) => name.startsWith("@harnessy/"))) {
+			assert(names.indexOf(dependency) >= 0 && names.indexOf(dependency) < names.indexOf(pkg.name));
+		}
+		assert.equal(packedReleasePackages(["darwin-arm64"]).some((item) => item.name === pkg.name), false);
+	}
+	const script = readFileSync(new URL("./local-release.mjs", import.meta.url), "utf8");
+	assert.match(script, /const packages = localReleasePackages\(/u);
+	assert.doesNotMatch(script, /\["publish"/u);
 });
 
 test("publication retains every declared Executor target and orders variants before the wrapper", () => {
@@ -97,7 +126,7 @@ test("Pi and Harnessy release cohorts must each stay lockstep versioned", () => 
 	);
 });
 
-test("non-canonical workspaces are excluded intentionally", () => {
+test("private and experimental workspaces remain excluded from registry publication", () => {
 	assert.deepEqual(
 		intentionallyUnpublishedPackages.map((pkg) => pkg.name),
 		["@earendil-works/pi-orchestrator", "@harnessy/sdk", "@harnessy/local-host"],
@@ -108,8 +137,9 @@ test("non-canonical workspaces are excluded intentionally", () => {
 	assert.match(sdk?.reason ?? "", /authoritative license\/artifact evidence/);
 	assert.equal(packedReleasePackages(["linux-x64"]).some((pkg) => pkg.name === "@harnessy/sdk"), false);
 	const localHost = intentionallyUnpublishedPackages.find((pkg) => pkg.name === "@harnessy/local-host");
-	assert.match(localHost?.reason ?? "", /local-only migration scaffold/);
-	assert.match(localHost?.reason ?? "", /inactive/);
+	assert.match(localHost?.reason ?? "", /verified local release candidates/);
+	assert.match(localHost?.reason ?? "", /registry publication remains excluded/);
+	assert.match(localHost?.reason ?? "", /does not authorize service activation/);
 	assert.equal(packedReleasePackages(["linux-x64"]).some((pkg) => pkg.name === "@harnessy/local-host"), false);
 });
 

@@ -13,6 +13,10 @@ packages/*/dist-firefox/
 # Environment
 .env
 
+# Owner-private context and machine bindings; never part of public source.
+/.jarvis/context/private/
+/.jarvis/context/local.md
+
 # Editor files
 .vscode/
 .zed/
