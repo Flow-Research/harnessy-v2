@@ -14,9 +14,15 @@ const run = (file, pattern, expected) => {
 	const result = spawnSync(
 		process.execPath,
 		[resolve(repositoryRoot, "node_modules/vitest/dist/cli.js"), "--run", file, "--testNamePattern", pattern],
-		{ cwd: resolve(repositoryRoot, "packages/harnessy-core"), encoding: "utf8", env: { ...process.env, PI_OFFLINE: "1" }, timeout: 180_000 },
+		{
+			cwd: resolve(repositoryRoot, "packages/harnessy-core"),
+			encoding: "utf8",
+			env: { ...process.env, PI_OFFLINE: "1", NO_COLOR: "1" },
+			timeout: 180_000,
+		},
 	);
-	const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+	// CI and non-agent terminals may still colorize the summary; never parse escape codes.
+	const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.replace(/\u001b\[[0-9;]*m/gu, "");
 	assert.equal(result.status, 0, output);
 	const passed = /Tests\s+(\d+) passed/u.exec(output)?.[1];
 	assert.equal(Number(passed), expected, `expected ${expected} executed cases matching ${pattern} in ${file}\n${output}`);
