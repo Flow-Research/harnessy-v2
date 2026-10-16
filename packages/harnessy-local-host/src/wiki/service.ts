@@ -272,8 +272,10 @@ export async function syncWiki(
 						if (!cited) {
 							// Retry a source whose claims were all dropped; give up after three batches so
 							// one unverifiable source cannot occupy a compile slot forever.
-							const attempts = Number(store.meta(`synthesisAttempts:${source.id}`) ?? 0) + 1;
-							store.setMeta(`synthesisAttempts:${source.id}`, String(attempts));
+							// Count per version, so changed content gets its own three attempts.
+							const key = `synthesisAttempts:${source.id}:${source.currentVersion}`;
+							const attempts = Number(store.meta(key) ?? 0) + 1;
+							store.setMeta(key, String(attempts));
 							if (attempts < 3) {
 								omitted.push(`${source.id}: no verified claims; will retry`);
 								continue;

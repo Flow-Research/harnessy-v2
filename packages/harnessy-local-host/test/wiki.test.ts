@@ -344,6 +344,10 @@ describe("personal learning library", () => {
 		expect(third.synthesisPending).toBe(0);
 		expect(calls).toBe(3);
 		expect(String((third.dropped as string[]).join("\n"))).toContain("after 3 attempts");
+		writeFileSync(uncited, "Changed uncited evidence gets its own retry budget.");
+		const changed = await syncWiki(store, onlyCited, options);
+		expect(changed.synthesisPending).toBe(1);
+		expect(String((changed.dropped as string[]).join("\n"))).toContain("will retry");
 	});
 
 	it("preserves personal notes and intervening generated-page edits", async () => {
