@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { formatNpmAuditReport, runNpmAudit } from "./npm-audit-lib.mjs";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -250,7 +251,9 @@ if (!options.skipInstall) {
 	writeFileSync(join(nodeInstallDirectory, "package.json"), installPackageJson);
 
 	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: nodeInstallDirectory });
-	run("npm", ["audit", "--omit=dev", "--audit-level=moderate"], { cwd: nodeInstallDirectory });
+	const audit = runNpmAudit({ cwd: nodeInstallDirectory, omitDev: true });
+	console.log(formatNpmAuditReport(audit));
+	if (!audit.ok) throw new Error("Release audit found unexcepted advisories");
 	serviceRuntime = stageLocalServiceRuntime(join(nodeInstallDirectory, "node_modules"), join(outDir, "service"));
 	await stageV1Compatibility(
 		join(nodeInstallDirectory, "node_modules/@harnessy/capability-harnessy-v1-full"),
