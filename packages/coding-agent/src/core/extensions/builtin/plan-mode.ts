@@ -72,15 +72,11 @@ export function planModeExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	function getPlanModeTools(activeToolNames: string[]): string[] {
-		return activeToolNames.filter((name) => !PLAN_MODE_DISABLED_TOOLS.has(name));
-	}
-
 	function enablePlanModeTools(): void {
 		if (toolsBeforePlanMode === undefined) {
 			toolsBeforePlanMode = pi.getActiveTools();
 		}
-		pi.setActiveTools(getPlanModeTools(toolsBeforePlanMode));
+		pi.setActiveTools(toolsBeforePlanMode.filter((name) => !PLAN_MODE_DISABLED_TOOLS.has(name)));
 	}
 
 	function restoreNormalModeTools(): void {
