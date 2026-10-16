@@ -99,6 +99,17 @@ describe("isSafeCommand", () => {
 			expect(isSafeCommand("fd -Hx 'touch /tmp/pwn'")).toBe(false);
 			expect(isSafeCommand("tree -ao/tmp/output .")).toBe(false);
 			expect(isSafeCommand("date -us2026-01-01")).toBe(false);
+			expect(isSafeCommand("date 0717143026")).toBe(false);
+			expect(isSafeCommand("date -u 0717143026")).toBe(false);
+			expect(isSafeCommand("date -f %Y%m%d 20260717")).toBe(false);
+		});
+
+		it("allows display-only date invocations", () => {
+			expect(isSafeCommand("date")).toBe(true);
+			expect(isSafeCommand("date -u +%Y-%m-%d")).toBe(true);
+			expect(isSafeCommand("date -r 1700000000")).toBe(true);
+			expect(isSafeCommand('date -d "yesterday" +%F')).toBe(true);
+			expect(isSafeCommand("date -j 0717143026")).toBe(true);
 		});
 
 		it("blocks editors", () => {

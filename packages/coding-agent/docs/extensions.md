@@ -2662,7 +2662,7 @@ Use `ctx.mode === "tui"` before TUI-specific features (`custom()`, component fac
 
 ## Examples Reference
 
-All examples in [examples/extensions/](../examples/extensions/).
+Examples live in [examples/extensions/](../examples/extensions/). Rows that link to `src/` point to built-in extensions that use the same APIs.
 
 | Example | Description | Key APIs |
 |---------|-------------|----------|

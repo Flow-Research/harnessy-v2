@@ -119,6 +119,24 @@ function isSafeGitCommand(words: string[]): boolean {
 	return subcommand === "ls-files" || subcommand === "ls-tree";
 }
 
+const DATE_OPTIONS_WITH_VALUE = new Set(["-d", "--date", "-r", "--reference", "-v", "-z"]);
+
+// A non-option date operand sets the system clock (GNU and BSD), unless BSD -j is present.
+function isSafeDateCommand(args: string[]): boolean {
+	if (hasOption(args, "--set", "-s") || hasOption(args, "--file", "-f")) return false;
+	const operandsAreDisplayOnly = args.includes("-j");
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg.startsWith("+")) continue;
+		if (arg.startsWith("-")) {
+			if (DATE_OPTIONS_WITH_VALUE.has(arg)) i++;
+			continue;
+		}
+		if (!operandsAreDisplayOnly) return false;
+	}
+	return true;
+}
+
 export function isSafeCommand(command: string): boolean {
 	if (UNSAFE_SHELL_SYNTAX_PATTERN.test(command)) return false;
 	const words = splitShellWords(command);
@@ -129,7 +147,7 @@ export function isSafeCommand(command: string): boolean {
 	if (ALWAYS_READ_ONLY_COMMANDS.has(executable)) return true;
 	if (executable === "git") return isSafeGitCommand(words);
 	if (executable === "find") return !args.some((arg) => FIND_WRITE_ACTIONS.has(arg.toLowerCase()));
-	if (executable === "date") return !hasOption(args, "--set", "-s");
+	if (executable === "date") return isSafeDateCommand(args);
 	if (executable === "tree") return !hasOption(args, "--output", "-o");
 	if (executable === "rg") {
 		return !hasOption(args, "--pre") && !hasOption(args, "--hostname-bin");

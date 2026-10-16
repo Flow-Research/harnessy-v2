@@ -197,6 +197,7 @@ export function planModeExtension(pi: ExtensionAPI): void {
 			messages: event.messages.filter((m) => {
 				const msg = m as AgentMessage & { customType?: string };
 				if (msg.customType === "plan-mode-context") return false;
+				if (msg.customType === "plan-execution-context" && !executionMode) return false;
 				if (msg.role !== "user") return true;
 
 				const content = msg.content;

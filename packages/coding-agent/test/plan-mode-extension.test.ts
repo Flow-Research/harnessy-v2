@@ -21,6 +21,10 @@ type SessionShutdownHandler = (
 	event: { type: "session_shutdown"; reason: "quit" },
 	ctx: ExtensionContext,
 ) => Promise<void> | void;
+type ContextHandler = (event: {
+	type: "context";
+	messages: AgentMessage[];
+}) => Promise<{ messages: AgentMessage[] } | undefined>;
 type RegisteredTool = {
 	name: string;
 	description: string;
@@ -70,6 +74,7 @@ function setup(
 	let toolCallHandler: ToolCallHandler | undefined;
 	let sessionStartHandler: SessionStartHandler | undefined;
 	let sessionShutdownHandler: SessionShutdownHandler | undefined;
+	let contextHandler: ContextHandler | undefined;
 
 	const sendMessage = vi.fn<ExtensionAPI["sendMessage"]>();
 	const sendUserMessage = vi.fn<ExtensionAPI["sendUserMessage"]>();
@@ -92,6 +97,7 @@ function setup(
 			if (event === "tool_call") toolCallHandler = handler as ToolCallHandler;
 			if (event === "session_start") sessionStartHandler = handler as SessionStartHandler;
 			if (event === "session_shutdown") sessionShutdownHandler = handler as SessionShutdownHandler;
+			if (event === "context") contextHandler = handler as ContextHandler;
 		},
 		getFlag: vi.fn(() => options.planFlag ?? false),
 		getActiveTools: vi.fn(() => [...activeTools]),
@@ -155,6 +161,11 @@ function setup(
 		await sessionShutdownHandler({ type: "session_shutdown", reason: "quit" }, ctx);
 	}
 
+	async function triggerContext(messages: AgentMessage[]) {
+		if (!contextHandler) throw new Error("Missing context handler");
+		return contextHandler({ type: "context", messages });
+	}
+
 	return {
 		activeTools: () => activeTools,
 		appendEntry,
@@ -169,6 +180,7 @@ function setup(
 		setWidget,
 		triggerAgentEnd,
 		triggerBash,
+		triggerContext,
 		triggerSessionShutdown,
 		triggerSessionStart,
 	};
@@ -352,5 +364,65 @@ describe("built-in plan mode", () => {
 			"Plan progress:\n1. [ ] Inspect the current implementation\n2. [ ] A regression test",
 			"info",
 		);
+	});
+	it("drops stale plan execution context once execution has ended", async () => {
+		const { triggerContext } = setup();
+		const executionContext = {
+			role: "custom",
+			customType: "plan-execution-context",
+			content: "[EXECUTING PLAN - Full tool access enabled]",
+			display: false,
+			timestamp: Date.now(),
+		} as unknown as AgentMessage;
+		const userMessage = { role: "user", content: "Next task", timestamp: Date.now() } as AgentMessage;
+
+		const result = await triggerContext([executionContext, userMessage]);
+
+		expect(result?.messages).toEqual([userMessage]);
+	});
+
+	it("keeps plan execution context while a plan is executing", async () => {
+		const { runCommand, triggerAgentEnd, triggerContext } = setup({
+			selectChoice: "Execute the plan (track progress)",
+		});
+		await runCommand("plan");
+		await triggerAgentEnd("Plan:\n1. Inspect the current implementation\n2. Add a regression test");
+		const executionContext = {
+			role: "custom",
+			customType: "plan-execution-context",
+			content: "[EXECUTING PLAN - Full tool access enabled]",
+			display: false,
+			timestamp: Date.now(),
+		} as unknown as AgentMessage;
+
+		const result = await triggerContext([executionContext]);
+
+		expect(result?.messages).toEqual([executionContext]);
+	});
+
+	it("ignores completion tags from before the persisted execute marker on resume", async () => {
+		const { setStatus, triggerSessionStart } = setup({
+			entries: [
+				{ type: "message", message: createAssistantMessage("Earlier plan [DONE:1]") },
+				{
+					type: "custom",
+					customType: "plan-mode",
+					data: {
+						enabled: false,
+						executing: true,
+						todos: [
+							{ step: 1, text: "Inspect the current implementation", completed: false },
+							{ step: 2, text: "A regression test", completed: false },
+						],
+					},
+				},
+				{ type: "custom_message", customType: "plan-mode-execute", content: "Execute the plan.", display: true },
+				{ type: "message", message: createAssistantMessage("Added the test [DONE:2]") },
+			],
+		});
+
+		await triggerSessionStart();
+
+		expect(setStatus).toHaveBeenLastCalledWith("plan-mode", "plan 1/2");
 	});
 });

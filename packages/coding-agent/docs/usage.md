@@ -314,6 +314,6 @@ pi --exclude-tools ask_question
 
 Pi keeps the core small and pushes workflow-specific behavior into extensions, skills, prompt templates, and packages.
 
-It includes a focused plan mode but intentionally leaves MCP, sub-agents, permission popups, to-dos, and background bash to extensions, packages, or external tools such as containers and tmux.
+It includes a focused plan mode, with its own plan progress tracking, but intentionally leaves MCP, sub-agents, permission popups, general-purpose to-do management, and background bash to extensions, packages, or external tools such as containers and tmux.
 
 For the full rationale, read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/).
