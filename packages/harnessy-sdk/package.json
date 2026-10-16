@@ -39,7 +39,7 @@
 		"@effect/platform-node": "4.0.0-beta.85",
 		"@effect/vitest": "4.0.0-beta.85",
 		"@types/node": "22.19.19",
-		"tsup": "8.5.0",
+		"tsup": "9.0.0",
 		"typescript": "5.9.3",
 		"vitest": "4.1.11"
 	},
