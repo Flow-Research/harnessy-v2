@@ -7,6 +7,8 @@ description: Bring the user back up to speed after they switch back into this ag
 
 The user has been working in other agent tabs and is switching back into this one. Give them back the context in a single read.
 
+- Template paths are resolved from `${AGENTS_SKILLS_ROOT}/catchup/`.
+
 ## Produce the brief
 
 Write exactly one short paragraph in plain words. Cover these points in this order, and leave out any point that has nothing to say:

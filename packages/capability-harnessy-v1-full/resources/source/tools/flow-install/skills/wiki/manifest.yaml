@@ -10,5 +10,10 @@ data_categories: [personal-knowledge]
 egress: []
 invoke: "/wiki"
 location: tools/flow-install/skills/wiki
+dependencies:
+  - tool: learning
+    description: "Machine-local preview command for the Harnessy personal learning library (PR #99); manages the OpenWiki launchd service"
+    check: "command -v learning"
+    required: true
 traces:
   enabled: false
