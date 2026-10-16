@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	existsSync,
@@ -7,8 +7,10 @@ import {
 	readdirSync,
 	readFileSync,
 	realpathSync,
+	renameSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -118,6 +120,17 @@ function fixture() {
 	const runDirectory = (runId: string) => join(settings.paths.reviewDirectory, `weekly-${period}-${hash(runId)}`);
 	return { root, settings, request, provider, run, grantRows, runDirectory };
 }
+
+const raceChild = fileURLToPath(new URL("./lib/life-weekly-race-child.ts", import.meta.url));
+
+const reservationFor = (root: string, runId: string) => ({
+	runId,
+	periodId: period,
+	grantId: `local:${hash(runId)}`,
+	authority: "local" as const,
+	requestPath: join(root, "request.json"),
+	promptHash: hash("prompt"),
+});
 
 const runCli = (root: string, args: readonly string[]) =>
 	spawnSync(
@@ -346,7 +359,7 @@ describe("weekly consumed-grant reconciliation", () => {
 		});
 		const lock = join(f.settings.paths.stateDirectory, `weekly-${period}.lock`);
 		mkdirSync(f.settings.paths.stateDirectory, { recursive: true, mode: 0o700 });
-		writeFileSync(lock, JSON.stringify({ pid: process.pid }), { mode: 0o600 });
+		writeFileSync(lock, JSON.stringify({ pid: process.pid, token: "live-owner" }), { mode: 0o600 });
 		expect(() =>
 			reserveLifeWeeklyRun(
 				f.settings.paths.stateDirectory,
@@ -357,14 +370,14 @@ describe("weekly consumed-grant reconciliation", () => {
 		).toThrow(`another process (${process.pid})`);
 		const exited = spawnSync(process.execPath, ["-e", ""]);
 		expect(exited.status).toBe(0);
-		writeFileSync(lock, JSON.stringify({ pid: exited.pid }), { mode: 0o600 });
+		writeFileSync(lock, JSON.stringify({ pid: exited.pid, token: "dead-owner" }), { mode: 0o600 });
 		const directory = reserveLifeWeeklyRun(
 			f.settings.paths.stateDirectory,
 			f.settings.paths.reviewDirectory,
 			reservation("weekly:2031-W01:a"),
 			now,
 		);
-		expect(existsSync(lock)).toBe(false);
+		expect(readdirSync(f.settings.paths.stateDirectory).filter((name) => name.includes(".lock"))).toEqual([]);
 		expect(JSON.parse(readFileSync(join(directory, "run.json"), "utf8"))).toMatchObject({
 			runId: "weekly:2031-W01:a",
 			pid: process.pid,
@@ -372,8 +385,17 @@ describe("weekly consumed-grant reconciliation", () => {
 		});
 		// This process is the recorded owner and still running: reconciliation must wait.
 		expect(() => Effect.runSync(reconcileLifeWeekly(f.settings, "weekly:2031-W01:a", "premature", now))).toThrow(
-			"may still be active",
+			/may still be active \(process \d+\).*ps -p \d+.*--confirm-inactive/s,
 		);
+		expect(existsSync(join(directory, "reconciliation.json"))).toBe(false);
+		// The owner confirmed the recorded PID is not this run (for example reused after a reboot).
+		const confirmed = Effect.runSync(
+			reconcileLifeWeekly(f.settings, "weekly:2031-W01:a", "PID reused after reboot", now, {
+				confirmInactive: true,
+			}),
+		);
+		expect(confirmed).toMatchObject({ decision: "abandoned", priorState: "unrecorded", grant: null });
+		expect(JSON.parse(readFileSync(confirmed.path, "utf8"))).toMatchObject({ confirmedInactive: true });
 	});
 
 	it.each([
@@ -421,7 +443,7 @@ describe("weekly consumed-grant reconciliation", () => {
 		expect(status.status, status.stderr).toBe(0);
 		expect(JSON.parse(status.stdout).weeklyRuns).toHaveLength(periods.length);
 		const text = runCli(f.root, ["status"]);
-		expect(text.stdout).toContain(`need reconciliation before their period runs again`);
+		expect(text.stdout).toContain(`Weekly runs: ${periods.length} reserved | ${periods.length} block their period`);
 
 		const target = `weekly:${periods[0]}:stale`;
 		const reconciled = runCli(f.root, ["weekly-reconcile", "--run", target, "--reason", "CLI fixture", "--json"]);
@@ -436,5 +458,255 @@ describe("weekly consumed-grant reconciliation", () => {
 		const repeated = runCli(f.root, ["weekly-reconcile", "--run", target, "--reason", "CLI fixture"]);
 		expect(repeated.status).toBe(1);
 		expect(repeated.stderr).toContain("already reconciled");
+	});
+
+	it("treats an empty or unreadable lock as held instead of reclaiming a live reservation", () => {
+		const f = fixture();
+		const lock = join(f.settings.paths.stateDirectory, `weekly-${period}.lock`);
+		mkdirSync(f.settings.paths.stateDirectory, { recursive: true, mode: 0o700 });
+		const reserve = () =>
+			reserveLifeWeeklyRun(
+				f.settings.paths.stateDirectory,
+				f.settings.paths.reviewDirectory,
+				reservationFor(f.root, "weekly:2031-W01:a"),
+				now,
+			);
+		for (const content of ["", '{"pid":', JSON.stringify({ pid: 0, token: "x" })]) {
+			// A writer that created the file but has not finished its owner record looks exactly like this.
+			writeFileSync(lock, content, { mode: 0o600 });
+			expect(reserve).toThrow(/locked by an unreadable record .*treated as held/);
+			expect(readFileSync(lock, "utf8")).toBe(content);
+		}
+		expect(listLifeWeeklyRuns(f.settings.paths.reviewDirectory)).toEqual([]);
+	});
+
+	it("reclaims a dead owner's lock only under the recovery lock and never deletes a replacement", () => {
+		const f = fixture();
+		const lock = join(f.settings.paths.stateDirectory, `weekly-${period}.lock`);
+		mkdirSync(f.settings.paths.stateDirectory, { recursive: true, mode: 0o700 });
+		const dead = spawnSync(process.execPath, ["-e", ""]).pid!;
+		writeFileSync(lock, JSON.stringify({ pid: dead, token: "dead-owner" }), { mode: 0o600 });
+		// Another process is already reclaiming this stale lock.
+		writeFileSync(`${lock}.reclaim`, JSON.stringify({ pid: process.pid, token: "recovering" }), { mode: 0o600 });
+		expect(() =>
+			reserveLifeWeeklyRun(
+				f.settings.paths.stateDirectory,
+				f.settings.paths.reviewDirectory,
+				reservationFor(f.root, "weekly:2031-W01:a"),
+				now,
+			),
+		).toThrow(`is being recovered by process ${process.pid}`);
+		expect(JSON.parse(readFileSync(lock, "utf8"))).toEqual({ pid: dead, token: "dead-owner" });
+		expect(JSON.parse(readFileSync(`${lock}.reclaim`, "utf8"))).toMatchObject({ token: "recovering" });
+		expect(listLifeWeeklyRuns(f.settings.paths.reviewDirectory)).toEqual([]);
+	});
+
+	it.each([
+		["no lock", false],
+		["a dead owner's stale lock", true],
+	])(
+		"lets exactly one of several concurrent processes reserve and generate a period (%s)",
+		async (_label, staleLock) => {
+			const f = fixture();
+			const lock = join(f.settings.paths.stateDirectory, `weekly-${period}.lock`);
+			mkdirSync(f.settings.paths.stateDirectory, { recursive: true, mode: 0o700 });
+			if (staleLock)
+				writeFileSync(lock, JSON.stringify({ pid: spawnSync(process.execPath, ["-e", ""]).pid, token: "dead" }), {
+					mode: 0o600,
+				});
+			const requests = Array.from({ length: 8 }, () => f.request());
+			const children = requests.map((request) =>
+				spawn(
+					process.execPath,
+					[
+						"--experimental-strip-types",
+						"--no-warnings",
+						raceChild,
+						f.root,
+						request.requestPath,
+						now.toISOString(),
+					],
+					{ env: { PATH: process.env.PATH, HOME: f.root }, stdio: ["pipe", "pipe", "inherit"] },
+				),
+			);
+			const lines = children.map((child) => {
+				let buffer = "";
+				const ready = new Promise<void>((resolve) => {
+					child.stdout.on("data", (chunk: Buffer) => {
+						buffer += chunk.toString("utf8");
+						if (buffer.startsWith("ready\n")) resolve();
+					});
+				});
+				const done = new Promise<{ ok: boolean; error?: string; generated: number }>((resolve, reject) => {
+					child.on("error", reject);
+					child.on("close", () => resolve(JSON.parse(buffer.slice("ready\n".length))));
+				});
+				return { child, ready, done };
+			});
+			// Barrier: every competitor is loaded and waiting before any is released.
+			await Promise.all(lines.map((line) => line.ready));
+			for (const { child } of lines) child.stdin.end("go\n");
+			const results = await Promise.all(lines.map((line) => line.done));
+
+			// The safety property first: one generation, one consumed grant, one run directory.
+			expect(results.reduce((total, result) => total + result.generated, 0)).toBe(1);
+			expect(f.grantRows()).toHaveLength(1);
+			const runs = listLifeWeeklyRuns(f.settings.paths.reviewDirectory);
+			expect(runs.map((run) => run.state)).toEqual(["drafted"]);
+			expect(results.filter((result) => result.ok)).toHaveLength(1);
+			// Every other competitor was refused with an attributable reservation message.
+			for (const result of results.filter((candidate) => !candidate.ok))
+				expect(result.error).toMatch(/^Weekly run reserv(ed for|ation for) 2031-W01/);
+			expect(readdirSync(f.settings.paths.stateDirectory).filter((name) => name.includes(".lock"))).toEqual([]);
+		},
+		60_000,
+	);
+
+	it("ignores an incomplete reconciliation record, keeps it as evidence and blocks until a valid decision", async () => {
+		const f = fixture();
+		const first = f.request();
+		f.provider.generate.mockRejectedValueOnce(new Error("synthetic provider outage"));
+		await expect(f.run(first.requestPath)).rejects.toThrow();
+		const path = join(f.runDirectory(first.runId), "reconciliation.json");
+		for (const partial of [
+			"",
+			'{"decision":"aban',
+			JSON.stringify({ decision: "abandoned", reason: "x", periodId: "2031-W02" }),
+		]) {
+			// For example, a reconcile that ran out of disk after creating the file.
+			writeFileSync(path, partial, { mode: 0o600 });
+			await expect(f.run(f.request().requestPath)).rejects.toThrow(`Weekly run reserved for ${period}`);
+			await expect(f.run(f.request().requestPath)).rejects.toThrow(
+				/is failed \(its reconciliation.json is incomplete and was not counted\)/,
+			);
+			expect(listLifeWeeklyRuns(f.settings.paths.reviewDirectory)).toEqual([
+				expect.objectContaining({ state: "failed", incompleteReconciliation: true }),
+			]);
+		}
+		expect(f.provider.generate).toHaveBeenCalledTimes(1);
+		expect(f.grantRows()).toHaveLength(1);
+
+		const reconciled = await Effect.runPromise(
+			reconcileLifeWeekly(f.settings, first.runId, "Outage; replanned.", now),
+		);
+		expect(reconciled.priorState).toBe("failed");
+		expect(reconciled.incompleteRecordKeptAt).toMatch(/reconciliation\.incomplete-.*\.json$/);
+		expect(readFileSync(reconciled.incompleteRecordKeptAt!, "utf8")).toContain('"periodId":"2031-W02"');
+		expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ decision: "abandoned", periodId: period });
+		expect(readdirSync(f.runDirectory(first.runId)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+		await expect(f.run(f.request().requestPath)).resolves.toMatchObject({ published: false });
+	});
+
+	it("records a defect thrown by the command boundary after the grant is consumed", async () => {
+		const f = fixture();
+		const first = f.request();
+		const failure = await f
+			.run(first.requestPath, {
+				run: () => {
+					throw new Error("runner crashed synchronously");
+				},
+			})
+			.then(
+				() => undefined,
+				(error: unknown) => error as Error,
+			);
+		const outcomePath = join(f.runDirectory(first.runId), "outcome.json");
+		expect(failure?.message).toContain("Weekly run failed unexpectedly during text-hygiene");
+		expect(failure?.message).toContain(first.runId);
+		expect(failure?.message).toContain(first.grantId);
+		expect(failure?.message).toContain(`failure recorded at ${outcomePath}`);
+		const outcome = JSON.parse(readFileSync(outcomePath, "utf8"));
+		expect(outcome).toMatchObject({
+			status: "failed",
+			phase: "text-hygiene",
+			rawDraftPreserved: true,
+			grant: { grantId: first.grantId, revoked: false },
+		});
+		expect(outcome.errors).toContain("runner crashed synchronously");
+		await expect(f.run(f.request().requestPath)).rejects.toThrow("is failed");
+	});
+
+	it("records the save and preserve phases, and an unreadable grant ledger, without altering the grant", async () => {
+		const f = fixture();
+		// Hygiene leaves an empty draft: the reviewed draft cannot be saved.
+		const empty = f.request();
+		await expect(
+			f.run(empty.requestPath, {
+				run: (command: ExternalCommand) =>
+					Effect.sync(() => {
+						writeFileSync(command.args[2]!, "  \n");
+						return commandResult(command);
+					}),
+			}),
+		).rejects.toThrow(/Unable to save reviewed weekly draft.*failure recorded at/s);
+		expect(JSON.parse(readFileSync(join(f.runDirectory(empty.runId), "outcome.json"), "utf8"))).toMatchObject({
+			phase: "save-reviewed-draft",
+			rawDraftPreserved: true,
+			errors: expect.arrayContaining(["Cleaned weekly draft is empty."]),
+		});
+		await Effect.runPromise(reconcileLifeWeekly(f.settings, empty.runId, "empty draft", now));
+
+		// The raw draft path is already taken: the generated text cannot be preserved.
+		const taken = f.request();
+		f.provider.generate.mockImplementationOnce(async () => {
+			writeFileSync(join(f.runDirectory(taken.runId), "draft.md.generated.md"), "squatter", { mode: 0o600 });
+			return { markdown: "# Weekly plan\n", provider: "codex", model: "synthetic-model", receiptId: "r" };
+		});
+		await expect(f.run(taken.requestPath)).rejects.toThrow("Unable to preserve generated weekly draft");
+		expect(JSON.parse(readFileSync(join(f.runDirectory(taken.runId), "outcome.json"), "utf8"))).toMatchObject({
+			phase: "preserve-raw-draft",
+		});
+		await Effect.runPromise(reconcileLifeWeekly(f.settings, taken.runId, "path taken", now));
+
+		// The grant ledger becomes unreadable after consumption: the record says so instead of guessing.
+		const unreadable = f.request();
+		const ledger = join(f.settings.paths.stateDirectory, "draft-grants.sqlite3");
+		f.provider.generate.mockImplementationOnce(async () => {
+			renameSync(ledger, `${ledger}.kept`);
+			writeFileSync(ledger, "not a database", { mode: 0o600 });
+			throw new Error("synthetic provider outage");
+		});
+		await expect(f.run(unreadable.requestPath)).rejects.toThrow("failure recorded at");
+		expect(JSON.parse(readFileSync(join(f.runDirectory(unreadable.runId), "outcome.json"), "utf8"))).toMatchObject({
+			phase: "generation",
+			grant: { unreadable: true },
+		});
+		expect(readFileSync(ledger, "utf8")).toBe("not a database");
+	});
+
+	it("lists only real run directories in a live-shaped review directory and supersedes a drafted run", async () => {
+		const f = fixture();
+		const drafted = f.request();
+		await f.run(drafted.requestPath);
+		const reviews = f.settings.paths.reviewDirectory;
+		// The live directory mixes daily briefs, prepared weekly prompts and other files with run directories.
+		writeFileSync(join(reviews, "2031-01-01-daily.md"), "daily", { mode: 0o600 });
+		mkdirSync(join(reviews, "weekly-prompt-T6yaB3"), { mode: 0o700 });
+		writeFileSync(join(reviews, `weekly-${period}-${hash("a regular file")}`), "", { mode: 0o600 });
+		const elsewhere = realpathSync(mkdtempSync(join(tmpdir(), "life-weekly-elsewhere-")));
+		roots.push(elsewhere);
+		symlinkSync(elsewhere, join(reviews, `weekly-${period}-${hash("a symlink")}`));
+		expect(listLifeWeeklyRuns(reviews)).toEqual([
+			expect.objectContaining({ name: `weekly-${period}-${hash(drafted.runId)}`, state: "drafted" }),
+		]);
+		expect(listLifeWeeklyRuns(reviews, "2031-W02")).toEqual([]);
+
+		const status = runCli(f.root, ["status"]);
+		expect(status.status, status.stderr).toBe(0);
+		expect(status.stdout).toContain("Weekly runs: 1 reserved | 1 block their period until reconciled");
+		expect(status.stdout).toContain(
+			`${period} drafted ${hash(drafted.runId)} (reviewed draft exists; reconcile as superseded to draft again)`,
+		);
+
+		const superseded = await Effect.runPromise(
+			reconcileLifeWeekly(f.settings, `weekly-${period}-${hash(drafted.runId)}`, "Owner wants a fresh plan.", now),
+		);
+		expect(superseded).toMatchObject({ decision: "superseded", priorState: "drafted", grant: { revoked: false } });
+		expect(readFileSync(join(f.runDirectory(drafted.runId), "draft.md"), "utf8")).toBe(
+			"# Weekly plan\nClean draft\n",
+		);
+		const after = runCli(f.root, ["status"]);
+		expect(after.stdout).toContain("Weekly runs: 1 reserved | 0 block their period until reconciled");
+		await expect(f.run(f.request().requestPath)).resolves.toMatchObject({ published: false });
 	});
 });

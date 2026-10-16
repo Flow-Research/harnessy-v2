@@ -92,6 +92,7 @@ export {
 } from "./jarvis/life-orchestrator/service.ts";
 export { LifeReadingLedger } from "./jarvis/life-orchestrator/store.ts";
 export type {
+	LifeWeeklyReconcileOptions,
 	LifeWeeklyReconciliation,
 	LifeWeeklyRunState,
 	LifeWeeklyRunSummary,

@@ -2,7 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 
 import type { HarnessError } from "../../errors.ts";
@@ -38,6 +40,7 @@ import { chooseLifeResearchTopic, discoverLifeReadings, parseLifeResearchTopics 
 import { LifeReadingLedger } from "./store.ts";
 import {
 	assertLifeWeeklyPeriodOpen,
+	type LifeWeeklyReconcileOptions,
 	type LifeWeeklyReconciliation,
 	type LifeWeeklyRunSummary,
 	listLifeWeeklyRuns,
@@ -924,7 +927,7 @@ export const runLifeWeekly = (
 					new LifeOrchestratorError({
 						code: "artifact_invalid",
 						message:
-							cause instanceof Error && cause.message.startsWith("Weekly run reserved")
+							cause instanceof Error && cause.message.startsWith("Weekly run reserv")
 								? cause.message
 								: "Weekly run reserved or unavailable; operator reconciliation of grant status and artifacts required before retrying.",
 						cause,
@@ -984,35 +987,49 @@ export const runLifeWeekly = (
 				});
 				return { runId: request.runId, briefPath, published: false } as const;
 			});
-			// Every failure after reservation leaves one attributable record naming the run,
-			// grant state and failing phase, so reconciliation never depends on terminal output.
-			const record = (status: "failed" | "interrupted", error: unknown) =>
-				Result.try(() =>
-					recordLifeWeeklyFailure(
-						directory,
-						settings.paths.stateDirectory,
-						reservation,
-						{ status, phase, error, rawDraftPreserved: existsSync(`${hygienePath}.json`) },
-						new Date(),
-					),
-				);
+			// Every failure, defect or interruption after reservation leaves one attributable record
+			// naming the run, grant state and failing phase, so reconciliation never depends on
+			// terminal output. The record is written from an exit finalizer, which also runs on interrupt.
+			let recorded: Result.Result<string, unknown> | undefined;
 			return yield* draft.pipe(
-				Effect.onInterrupt(() =>
+				Effect.onExit((exit) =>
 					Effect.sync(() => {
-						record("interrupted", new Error("Weekly run interrupted."));
+						if (Exit.isSuccess(exit)) return;
+						const interrupted = Cause.hasInterruptsOnly(exit.cause);
+						recorded = Result.try(() =>
+							recordLifeWeeklyFailure(
+								directory,
+								settings.paths.stateDirectory,
+								reservation,
+								{
+									status: interrupted ? "interrupted" : "failed",
+									phase,
+									error: interrupted ? new Error("Weekly run interrupted.") : Cause.squash(exit.cause),
+									rawDraftPreserved: existsSync(`${hygienePath}.json`),
+								},
+								new Date(),
+							),
+						);
 					}),
 				),
-				Effect.mapError((error) => {
-					const recorded = record("failed", error);
-					return new LifeOrchestratorError({
-						code: error.code,
-						message: `${error.message} Run ${request.runId} (grant ${reservation.grantId}); ${
-							Result.isSuccess(recorded)
-								? `failure recorded at ${recorded.success}`
-								: `failure record could not be written in ${directory}`
-						}.`,
-						cause: error,
-					});
+				Effect.catchCause((cause) => {
+					if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
+					const error = Cause.squash(cause);
+					const known = error instanceof LifeOrchestratorError;
+					const reason = known
+						? error.message
+						: `Weekly run failed unexpectedly during ${phase}: ${error instanceof Error ? error.message : String(error)}.`;
+					return Effect.fail(
+						new LifeOrchestratorError({
+							code: known ? error.code : "artifact_invalid",
+							message: `${reason} Run ${request.runId} (grant ${reservation.grantId}); ${
+								recorded && Result.isSuccess(recorded)
+									? `failure recorded at ${recorded.success}`
+									: `failure record could not be written in ${directory}`
+							}.`,
+							cause: error,
+						}),
+					);
 				}),
 			);
 		}
@@ -1053,10 +1070,18 @@ export const reconcileLifeWeekly = (
 	run: string,
 	reason: string,
 	now: Date = new Date(),
+	options: LifeWeeklyReconcileOptions = {},
 ): Effect.Effect<LifeWeeklyReconciliation, LifeOrchestratorError> =>
 	Effect.try({
 		try: () =>
-			reconcileLifeWeeklyRun(settings.paths.stateDirectory, settings.paths.reviewDirectory, run, reason, now),
+			reconcileLifeWeeklyRun(
+				settings.paths.stateDirectory,
+				settings.paths.reviewDirectory,
+				run,
+				reason,
+				now,
+				options,
+			),
 		catch: (cause) =>
 			new LifeOrchestratorError({
 				code: "artifact_invalid",
