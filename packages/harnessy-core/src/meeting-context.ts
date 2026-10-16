@@ -180,11 +180,6 @@ export interface ContextArtifactBytes {
 	readonly sha256: string;
 }
 
-/**
- * Walk a context-root-relative path one component at a time with lstat. Any
- * symbolic link, including one pointing back inside the root, is rejected.
- * Returns the final entry's stat, or null when a component does not exist.
- */
 /** A normalized context-root-relative reference, or a typed `path_rejected` error. */
 export const contextRef = (ref: string): string => {
 	const result = Result.try(() => workspaceRelativePath(ref));
@@ -192,6 +187,11 @@ export const contextRef = (ref: string): string => {
 	return result.success;
 };
 
+/**
+ * Walk a context-root-relative path one component at a time with lstat. Any
+ * symbolic link, including one pointing back inside the root, is rejected.
+ * Returns the final entry's stat, or null when a component does not exist.
+ */
 export const lstatContextPath = (contextRoot: string, ref: string): Stats | null => {
 	const path = contextRef(ref);
 	const root = realpathSync(contextRoot);
@@ -209,11 +209,19 @@ export const lstatContextPath = (contextRoot: string, ref: string): Stats | null
 	return stat as Stats;
 };
 
+/** A byte bound must be a non-negative safe integer; NaN or Infinity would disable it. */
+export const validateByteLimit = (maxBytes: number): number => {
+	if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+		invalid(`Byte limit must be a non-negative safe integer, not ${String(maxBytes)}`);
+	return maxBytes;
+};
+
 export const readContextArtifact = (
 	contextRoot: string,
 	ref: string,
 	maxBytes: number = MAX_CONTEXT_ARTIFACT_BYTES,
 ): ContextArtifactBytes => {
+	validateByteLimit(maxBytes);
 	const stat = lstatContextPath(contextRoot, ref);
 	if (stat === null) throw new MeetingContextError("not_found", `Artifact not found: ${ref}`);
 	if (!stat.isFile()) throw new MeetingContextError("not_a_file", `Artifact is not a regular file: ${ref}`);
@@ -243,7 +251,7 @@ export interface IndexedSource {
 	readonly scope: string;
 	readonly objectId: string;
 	readonly accountLabel: string;
-	/** Context-root-relative reference to the retained source bytes. */
+	/** Context-root-relative reference to the source bytes observed by this inventory. */
 	readonly ref: string;
 	readonly sha256: string;
 	readonly transcript: {
@@ -265,8 +273,12 @@ export interface ArtifactRevision {
 	readonly artifactId: string;
 	readonly kind: ArtifactKind;
 	readonly sourceRevision: number;
+	/** Last known location of bytes holding this revision's content; a refresh moves it when the source moves. */
 	readonly ref: string;
-	/** Hash of the actual retained bytes at `ref`. */
+	/**
+	 * Hash of the bytes at `ref` when that location was recorded. Observation-only byte
+	 * changes do not update it; retrieval verifies `contentSha256`, not this hash.
+	 */
 	readonly sha256: string;
 	readonly state: TranscriptState;
 	/** Content identity: normalized transcript, summary text or attachment bytes. Revisions follow it. */
@@ -300,7 +312,10 @@ export interface MeetingRecord {
 	/** Legacy note references retained as evidence only; they confer no identity. */
 	readonly legacyRefs: ReadonlyArray<string>;
 	readonly sourceRevision: number;
-	/** Every artifact revision is retained. */
+	/**
+	 * Metadata for every artifact revision is retained. Source bytes are not copied:
+	 * a revision is served only while its source still holds the same content.
+	 */
 	readonly artifacts: ReadonlyArray<ArtifactRevision>;
 	readonly annotation: Annotation;
 }
@@ -657,11 +672,18 @@ export const revokeArtifactAccess = (
 // ---------------------------------------------------------------------------
 // Revisions: source refresh and annotations stay separate
 
+/** Two revisions hold the same content when their content hash and transcript state agree. */
+const sameContent = (a: ArtifactRevision, b: ArtifactRevision): boolean =>
+	a.contentSha256 === b.contentSha256 && a.state === b.state;
+
 /**
  * Apply re-inventoried sources. Unchanged content produces no revision, even
  * when only observation metadata in the retained bytes changed.
- * Changed artifacts are appended at the next source revision; annotations,
- * citations and grants keep their original revisions.
+ * When a source moves (for example from `pending/` to `processed/`), every
+ * retained revision whose content the moved bytes still hold follows it to the
+ * new location without a new revision. Changed artifacts are appended at the
+ * next source revision; annotations, citations and grants keep their original
+ * revisions.
  */
 export const refreshMeetingSources = (catalog: MeetingCatalog, inventory: InventoryForCatalog): MeetingCatalog => {
 	const sources = indexedSources(inventory);
@@ -669,21 +691,24 @@ export const refreshMeetingSources = (catalog: MeetingCatalog, inventory: Invent
 		...catalog,
 		meetings: catalog.meetings.map((meeting) => {
 			const next = meeting.sourceRevision + 1;
-			const changed = meeting.sourceKeys.flatMap((key) => {
+			const observed = meeting.sourceKeys.flatMap((key) => {
 				const source = sources.get(key);
-				if (source === undefined) return [];
-				return sourceArtifacts(source, next).filter((artifact) => {
-					const latest = latestArtifact(meeting, artifact.artifactId);
-					return (
-						latest === undefined ||
-						latest.contentSha256 !== artifact.contentSha256 ||
-						latest.state !== artifact.state
-					);
-				});
+				return source === undefined ? [] : sourceArtifacts(source, next);
 			});
-			return changed.length === 0
-				? meeting
-				: { ...meeting, sourceRevision: next, artifacts: [...meeting.artifacts, ...changed] };
+			let relocated = false;
+			const retained = meeting.artifacts.map((artifact) => {
+				const current = observed.find((entry) => entry.artifactId === artifact.artifactId);
+				if (current === undefined || current.ref === artifact.ref || !sameContent(current, artifact))
+					return artifact;
+				relocated = true;
+				return { ...artifact, ref: current.ref, sha256: current.sha256 };
+			});
+			const changed = observed.filter((artifact) => {
+				const latest = latestArtifact(meeting, artifact.artifactId);
+				return latest === undefined || !sameContent(latest, artifact);
+			});
+			if (changed.length === 0) return relocated ? { ...meeting, artifacts: retained } : meeting;
+			return { ...meeting, sourceRevision: next, artifacts: [...retained, ...changed] };
 		}),
 	};
 };
@@ -785,6 +810,11 @@ export interface PacketMeeting {
 
 export interface MeetingContextPacket {
 	readonly schemaVersion: typeof MEETING_CONTEXT_SCHEMA_VERSION;
+	/**
+	 * Generation of what this principal can see: the whole catalog for the owner;
+	 * for anyone else only the meetings, titles, relationships, artifacts and
+	 * decisions visible to them, so edits to hidden meetings do not change it.
+	 */
 	readonly catalogGeneration: string;
 	readonly policyRevision: number;
 	readonly membershipRevision: number;
@@ -805,14 +835,12 @@ export const queryMeetingContext = (
 	if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PACKET_LIMIT)
 		invalid(`Packet limit must be an integer from 1 to ${MAX_PACKET_LIMIT}`);
 	const selected = [...new Set(input.projects ?? [])].sort();
-	const visible: PacketMeeting[] = [];
+	const all: PacketMeeting[] = [];
 	for (const meeting of input.catalog.meetings) {
 		const view = viewMeeting(input, meeting);
 		if (view === null) continue;
-		// Match only on relationships this principal may see; one entry per meeting.
-		if (selected.length > 0 && !view.projects.some((project) => selected.includes(project))) continue;
 		const grantedIds = new Set(view.granted.map((artifact) => `${artifact.artifactId}@${artifact.sourceRevision}`));
-		visible.push({
+		all.push({
 			meetingId: meeting.meetingId,
 			title: meeting.annotation.title,
 			projects: view.projects,
@@ -829,11 +857,20 @@ export const queryMeetingContext = (
 			),
 		});
 	}
+	// Match only on relationships this principal may see; one entry per meeting.
+	const visible =
+		selected.length === 0
+			? all
+			: all.filter((meeting) => meeting.projects.some((project) => selected.includes(project)));
+	const generation =
+		input.principal.id === input.catalog.owner
+			? catalogGeneration(input.catalog)
+			: `gen_${sha256Hex(canonicalJson({ schemaVersion: input.catalog.schemaVersion, workspaceId: input.catalog.workspaceId, meetings: all }))}`;
 	return {
 		ok: true,
 		packet: {
 			schemaVersion: MEETING_CONTEXT_SCHEMA_VERSION,
-			catalogGeneration: catalogGeneration(input.catalog),
+			catalogGeneration: generation,
 			policyRevision: input.policy.revision,
 			membershipRevision: input.membership.revision,
 			principal: input.principal.id,

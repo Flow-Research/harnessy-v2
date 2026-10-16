@@ -35,12 +35,12 @@ test("MCTX-001 account-scoped identity is deterministic and never guessed", () =
 });
 
 test("MCTX-002 inventory is exhaustive with explicit incomplete, interrupted and error states", () => {
-	run("test/meeting-context-inventory.test.ts", "meeting inventory completeness", 5);
+	run("test/meeting-context-inventory.test.ts", "meeting inventory completeness", 7);
 });
 
 test("MCTX-003 traversal and symbolic links are rejected and source bytes stay unchanged", () => {
 	run("test/meeting-context-inventory.test.ts", "meeting inventory containment", 5);
-	run("test/meeting-context.test.ts", "context artifact reader", 1);
+	run("test/meeting-context.test.ts", "context artifact reader", 2);
 });
 
 test("MCTX-004 authorized teams retrieve the complete permitted transcript", () => {
@@ -53,11 +53,19 @@ test("MCTX-004 authorized teams retrieve the complete permitted transcript", () 
 });
 
 test("MCTX-005 denied access leaks no metadata and revocation applies to future requests", () => {
-	run("test/meeting-context-integration.test.ts", "leaks no title|revokes future access", 2);
+	run(
+		"test/meeting-context-integration.test.ts",
+		"leaks no title|revokes future access|hidden meetings|owned by someone else",
+		4,
+	);
 	run("test/meeting-context.test.ts", "owner-controlled access policy|trusted synthetic membership|query bounds", 3);
 });
 
 test("MCTX-006 source, annotation and policy revisions stay separate", () => {
-	run("test/meeting-context-integration.test.ts", "revisions separate|recorded summary or attachment", 2);
+	run(
+		"test/meeting-context-integration.test.ts",
+		"revisions separate|recorded summary or attachment|moved from pending|transcript state change",
+		4,
+	);
 	run("test/meeting-context.test.ts", "annotations|catalog construction", 4);
 });

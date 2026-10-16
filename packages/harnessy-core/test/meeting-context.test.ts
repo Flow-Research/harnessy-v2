@@ -173,6 +173,15 @@ describe("context artifact reader", () => {
 		expectCode(() => readContextArtifact(root, "private/none.txt"), "not_found");
 		expectCode(() => readContextArtifact(root, "private"), "not_a_file");
 		expectCode(() => readContextArtifact(root, ref, 4), "too_large");
+		expect(readContextArtifact(root, ref, 5).bytes.toString()).toBe("alpha");
+		expect(readContextArtifact(root, writeFile(root, "private/empty.txt", ""), 0).bytes).toHaveLength(0);
+	});
+
+	it("refuses byte limits that would disable the bound", () => {
+		const root = createContextRoot();
+		const ref = writeFile(root, "private/a.txt", "x".repeat(100));
+		for (const limit of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])
+			expectCode(() => readContextArtifact(root, ref, limit), "invalid_input");
 	});
 });
 
@@ -509,6 +518,8 @@ describe("query bounds", () => {
 		expect(one.ok && one.packet.bounds).toEqual({ limit: 1, returned: 1, truncated: true });
 		const all = queryMeetingContext({ catalog, policy, membership, principal: owner });
 		expect(all.ok && all.packet.bounds).toEqual({ limit: 20, returned: 2, truncated: false });
+		const exact = queryMeetingContext({ catalog, policy, membership, principal: owner, limit: 2 });
+		expect(exact.ok && exact.packet.bounds).toEqual({ limit: 2, returned: 2, truncated: false });
 		for (const limit of [0, 201, 1.5])
 			expectCode(
 				() => queryMeetingContext({ catalog, policy, membership, principal: owner, limit }),

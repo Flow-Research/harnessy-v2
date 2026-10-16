@@ -185,6 +185,84 @@ describe("meeting inventory completeness", () => {
 		);
 	});
 
+	it("refuses byte limits that would make the reader unbounded", () => {
+		const root = createContextRoot();
+		populate(root, 2);
+		for (const maxArtifactBytes of [Number.NaN, -1, 1.5, Number.POSITIVE_INFINITY])
+			expectCode(() => collectMeetingInventory(options(root, { maxArtifactBytes })), "invalid_input");
+		const bounded = collectMeetingInventory(options(root, { maxArtifactBytes: 0 }));
+		expect(bounded.status).toBe("complete");
+		expect(bounded.entries.map((entry) => entry.disposition)).toEqual(["oversize", "oversize"]);
+	});
+
+	it("reports an error instead of a silent gap when the tree changes between pages", () => {
+		const root = createContextRoot();
+		const refs = populate(root, 6);
+		const first = inventoryMeetingSources(options(root, { pageSize: 3 }));
+		expect(first).toMatchObject({ status: "incomplete", enumerated: 6 });
+		const changedSet = {
+			status: "error",
+			cursor: first.nextCursor,
+			nextCursor: null,
+			entries: [],
+			diagnostics: [{ ref: INBOX, code: "enumeration_changed" }],
+		};
+
+		// A file added before the cursor position would otherwise never be seen.
+		const added = writeEnvelope(root, "late", {
+			filename: "-added.json",
+			transcript: fathomTranscript(segments("late", 1)),
+		});
+		expect(added < (refs[2] as string)).toBe(true);
+		expect(inventoryMeetingSources(options(root, { pageSize: 3, cursor: first.nextCursor }))).toMatchObject({
+			...changedSet,
+			enumerated: 7,
+		});
+		rmSync(join(root, added));
+		// The original set is valid again, so the cursor continues.
+		expect(
+			inventoryMeetingSources(options(root, { pageSize: 3, cursor: first.nextCursor })).entries.map((e) => e.ref),
+		).toEqual(refs.slice(3));
+
+		// A file renamed between pages keeps the count but is still a changed set.
+		const renamed = writeEnvelope(root, "late", { filename: "-renamed.json", transcript: [] });
+		rmSync(join(root, refs[5] as string));
+		expect(inventoryMeetingSources(options(root, { pageSize: 3, cursor: first.nextCursor }))).toMatchObject({
+			...changedSet,
+			enumerated: 6,
+		});
+		// A file removed between pages is also a changed set.
+		rmSync(join(root, renamed));
+		expect(inventoryMeetingSources(options(root, { pageSize: 3, cursor: first.nextCursor }))).toMatchObject({
+			...changedSet,
+			enumerated: 5,
+		});
+
+		// The merged inventory keeps the pages it read and reports the change instead of "complete".
+		const merged = collectMeetingInventory(
+			options(root, {
+				pageSize: 2,
+				onEntry: (entry) => {
+					if (entry.ref === refs[0]) writeEnvelope(root, "late", { filename: "-added.json", transcript: [] });
+				},
+			}),
+		);
+		expect(merged).toMatchObject({ status: "error", nextCursor: null });
+		expect(merged.entries.map((entry) => entry.ref)).toEqual(refs.slice(0, 2));
+		expect(merged.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(["enumeration_changed"]);
+		expectCode(() => legacyNoteCandidates(merged), "incomplete_inventory");
+
+		// Content changes within an unchanged set do not invalidate the cursor; each entry carries its own hash.
+		const stable = createContextRoot();
+		const stableRefs = populate(stable, 4);
+		const page = inventoryMeetingSources(options(stable, { pageSize: 2 }));
+		writeEnvelope(stable, "rec-00000", { transcript: fathomTranscript(segments("edited", 2)) });
+		expect(inventoryMeetingSources(options(stable, { pageSize: 2, cursor: page.nextCursor }))).toMatchObject({
+			status: "complete",
+			entries: [{ ref: stableRefs[2] }, { ref: stableRefs[3] }],
+		});
+	});
+
 	it("reports interruption with a resumable cursor", () => {
 		const root = createContextRoot();
 		const refs = populate(root, 20);
@@ -444,6 +522,17 @@ describe("meeting inventory containment", () => {
 				),
 			"invalid_input",
 		);
+		const roots = JSON.parse(Buffer.from(page.nextCursor as string, "base64url").toString("utf8")).roots;
+		for (const set of [undefined, 7])
+			expectCode(
+				() =>
+					inventoryMeetingSources(
+						options(root, {
+							cursor: Buffer.from(JSON.stringify({ v: 1, roots, set, after: "" })).toString("base64url"),
+						}),
+					),
+				"invalid_input",
+			);
 	});
 
 	it("leaves every source byte, mode and timestamp unchanged", () => {

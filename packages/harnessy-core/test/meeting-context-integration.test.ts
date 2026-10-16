@@ -3,8 +3,8 @@
  * real temporary files: read-only inventory -> explicit reviewed identity,
  * project and policy input -> scoped packet -> full-transcript retrieval.
  */
-import { rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, renameSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -256,7 +256,7 @@ describe("meeting context synthetic slice", () => {
 		const packet = packetFor(s, s.gina, [GARDEN]);
 		expect(packet).toMatchObject({
 			schemaVersion: 1,
-			catalogGeneration: catalogGeneration(s.catalog),
+			catalogGeneration: expect.stringMatching(/^gen_[0-9a-f]{64}$/u),
 			policyRevision: s.policy.revision,
 			membershipRevision: 1,
 			principal: GINA,
@@ -277,6 +277,12 @@ describe("meeting context synthetic slice", () => {
 			["provider-summary", "available", 0],
 		]);
 		expect(garden.artifacts[0]?.preview).toMatch(/^garden segment 0\./u);
+		// Only the owner's generation covers the whole private catalog.
+		expect(packet.catalogGeneration).not.toBe(catalogGeneration(s.catalog));
+		expect(packetFor(s, s.owner).catalogGeneration).toBe(catalogGeneration(s.catalog));
+		// A non-owner's generation describes their whole view, not the project filter.
+		expect(packetFor(s, s.gina).catalogGeneration).toBe(packet.catalogGeneration);
+		expect(packetFor(s, s.walt, [GARDEN]).catalogGeneration).toBe(packetFor(s, s.walt).catalogGeneration);
 
 		const full = retrieve(s, s.gina, "mtg_garden", transcriptId("r-garden"));
 		expect(full.ok && full.segments.map((segment) => segment.text)).toEqual(
@@ -584,5 +590,136 @@ describe("meeting context synthetic slice", () => {
 			legacyNoteCandidates(collectMeetingInventory({ contextRoot: s.root, roots: ROOTS, accountScopes: SCOPES }));
 			expect(snapshotTree(s.root)).toEqual(s.before);
 		}
+	});
+	it("does not reveal edits to hidden meetings through the packet generation", () => {
+		const s = scenario();
+		const annotate = (catalog: MeetingCatalog, meetingId: string, title: string) =>
+			annotateMeeting({
+				catalog,
+				membership: s.membership,
+				principal: s.owner,
+				workspace: WORKSPACE,
+				change: { meetingId, baseRevision: 1, title },
+			});
+		const hiddenEdit = annotate(s.catalog, "mtg_private", "Renamed private meeting");
+		const generation = (catalog: MeetingCatalog, principal: MeetingPrincipal) =>
+			packetFor(s, principal, undefined, { catalog }).catalogGeneration;
+		for (const principal of [s.gina, s.walt])
+			expect(generation(hiddenEdit, principal)).toBe(generation(s.catalog, principal));
+		expect(generation(hiddenEdit, s.owner)).not.toBe(generation(s.catalog, s.owner));
+		// An edit to a meeting both teams can see changes both views; a Garden-only edit changes only Gina's.
+		const visibleEdit = annotate(s.catalog, "mtg_shared", "Renamed shared meeting");
+		expect(generation(visibleEdit, s.walt)).not.toBe(generation(s.catalog, s.walt));
+		expect(generation(visibleEdit, s.gina)).not.toBe(generation(s.catalog, s.gina));
+		const gardenOnlyEdit = annotate(s.catalog, "mtg_garden", "Renamed garden meeting");
+		expect(generation(gardenOnlyEdit, s.walt)).toBe(generation(s.catalog, s.walt));
+		expect(generation(gardenOnlyEdit, s.gina)).not.toBe(generation(s.catalog, s.gina));
+	});
+
+	it("follows a source moved from pending to processed without a new revision", () => {
+		const s = scenario();
+		const reinventory = () => collectMeetingInventory({ contextRoot: s.root, roots: ROOTS, accountScopes: SCOPES });
+		const move = (objectId: string) => {
+			const from = join(s.root, envelopeRef(objectId));
+			const to = join(s.root, envelopeRef(objectId, { bucket: "processed" }));
+			mkdirSync(dirname(to), { recursive: true });
+			renameSync(from, to);
+		};
+		const record = (catalog: MeetingCatalog, meetingId: string) =>
+			catalog.meetings.find((meeting) => meeting.meetingId === meetingId)!;
+		move("r-garden");
+		const moved = refreshMeetingSources(s.catalog, reinventory());
+		const garden = record(moved, "mtg_garden");
+		expect(garden.sourceRevision).toBe(1);
+		expect(garden.annotation).toEqual(record(s.catalog, "mtg_garden").annotation);
+		expect(garden.artifacts.map((artifact) => [artifact.artifactId, artifact.sourceRevision, artifact.ref])).toEqual([
+			[transcriptId("r-garden"), 1, envelopeRef("r-garden", { bucket: "processed" })],
+			[summaryId("r-garden"), 1, envelopeRef("r-garden", { bucket: "processed" })],
+		]);
+		expect(moved.meetings.filter((meeting) => meeting.meetingId !== "mtg_garden")).toEqual(
+			s.catalog.meetings.filter((meeting) => meeting.meetingId !== "mtg_garden"),
+		);
+		const view = { catalog: moved };
+		const full = retrieve(s, s.gina, "mtg_garden", transcriptId("r-garden"), 1, view);
+		expect(full.ok && full.segments).toHaveLength(40);
+		expect(retrieve(s, s.gina, "mtg_garden", summaryId("r-garden"), 1, view)).toMatchObject({
+			ok: true,
+			text: "Garden summary.",
+		});
+		// The stale catalog cannot find the moved bytes; it reports that instead of guessing.
+		expect(retrieve(s, s.gina, "mtg_garden", transcriptId("r-garden"))).toEqual({
+			ok: false,
+			reason: "source_unavailable",
+		});
+		// A second refresh over the same tree is a no-op.
+		expect(refreshMeetingSources(moved, reinventory())).toEqual(moved);
+
+		// Moved and changed: the retained revision keeps its last location; the new one is appended.
+		rmSync(join(s.root, envelopeRef("r-shared")));
+		writeEnvelope(s.root, "r-shared", { bucket: "processed", transcript: fathomTranscript(segments("shared", 13)) });
+		const changed = record(refreshMeetingSources(moved, reinventory()), "mtg_shared");
+		expect(changed.sourceRevision).toBe(2);
+		expect(
+			changed.artifacts
+				.filter((artifact) => artifact.kind === "transcript")
+				.map((artifact) => [artifact.sourceRevision, artifact.ref, artifact.segmentCount]),
+		).toEqual([
+			[1, envelopeRef("r-shared"), 12],
+			[2, envelopeRef("r-shared", { bucket: "processed" }), 13],
+		]);
+	});
+
+	it("records a transcript state change as a new revision and refuses a retained state that no longer holds", () => {
+		const s = scenario();
+		const reinventory = () => collectMeetingInventory({ contextRoot: s.root, roots: ROOTS, accountScopes: SCOPES });
+		// missing -> unsupported: both have no readable content, so only the state differs.
+		writeFile(
+			s.root,
+			envelopeRef("r-missing"),
+			`${JSON.stringify({
+				version: 1,
+				verified: true,
+				account: "work",
+				source: "fathom-api",
+				fetchedAt: "2026-10-01T12:00:00Z",
+				payload: {
+					recording_id: "r-missing",
+					transcript: "not a segment list",
+					default_summary: { markdown_formatted: "Only a provider summary exists." },
+				},
+			})}\n`,
+		);
+		const refreshed = refreshMeetingSources(s.catalog, reinventory());
+		const missing = refreshed.meetings.find((meeting) => meeting.meetingId === "mtg_missing")!;
+		expect(missing.sourceRevision).toBe(2);
+		expect(missing.artifacts.map((artifact) => [artifact.kind, artifact.sourceRevision, artifact.state])).toEqual([
+			["transcript", 1, "missing"],
+			["provider-summary", 1, "available"],
+			["transcript", 2, "unsupported"],
+		]);
+		expect(retrieve(s, s.gina, "mtg_missing", transcriptId("r-missing"))).toEqual({
+			ok: false,
+			reason: "source_changed",
+		});
+
+		// available -> partial with identical readable segments: same content hash, different state.
+		writeEnvelope(s.root, "r-garden", {
+			transcript: [...fathomTranscript(segments("garden", 40)), { speaker: { display_name: "Ada" } }],
+			summary: "Garden summary.",
+		});
+		expect(retrieve(s, s.gina, "mtg_garden", transcriptId("r-garden"))).toEqual({
+			ok: false,
+			reason: "source_changed",
+		});
+		expect(retrieve(s, s.gina, "mtg_garden", summaryId("r-garden")).ok).toBe(true);
+	});
+
+	it("treats a membership table owned by someone else as stale authorization", () => {
+		const s = scenario();
+		const foreign = new TrustedSyntheticMembership({ ...TABLE, owner: "intruder@example.test" }, WORKSPACE);
+		const gina = foreign.authenticate(GINA)!;
+		const denied = { ok: false, reason: "stale_authorization" };
+		expect(queryMeetingContext({ ...s, membership: foreign, principal: gina })).toEqual(denied);
+		expect(retrieve(s, gina, "mtg_garden", transcriptId("r-garden"), 1, { membership: foreign })).toEqual(denied);
 	});
 });

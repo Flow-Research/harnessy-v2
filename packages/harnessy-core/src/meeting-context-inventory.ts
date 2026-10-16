@@ -23,6 +23,7 @@ import {
 	readContextArtifact,
 	sha256Hex,
 	transcriptPreview,
+	validateByteLimit,
 	validateSourceScope,
 } from "./meeting-context.ts";
 
@@ -77,7 +78,7 @@ export interface InventoryEntry {
 
 export interface InventoryDiagnostic {
 	readonly ref: string;
-	readonly code: "root_missing" | "root_rejected" | "enumeration_failed";
+	readonly code: "root_missing" | "root_rejected" | "enumeration_failed" | "enumeration_changed";
 	readonly message: string;
 }
 
@@ -89,12 +90,14 @@ export interface InventoryReport {
 	 * `complete`: every enumerated entry was processed without enumeration errors.
 	 * `incomplete`: a page bound was reached; continue from `nextCursor`.
 	 * `interrupted`: the signal aborted the run; resume from `nextCursor`.
-	 * `error`: a root or directory could not be enumerated; absent entries are unknown, not deleted.
+	 * `error`: a root or directory could not be enumerated, or the candidate set changed
+	 * after the cursor was issued; absent entries are unknown, not deleted. A changed
+	 * set returns no entries and no cursor: restart the inventory from the beginning.
 	 */
 	readonly status: InventoryStatus;
 	readonly cursor: string | null;
 	readonly nextCursor: string | null;
-	/** Entries enumerated across all selected roots for this pass. */
+	/** Entries enumerated across all selected roots for this page; every page of one pass sees the same set. */
 	readonly enumerated: number;
 	readonly entries: ReadonlyArray<InventoryEntry>;
 	readonly diagnostics: ReadonlyArray<InventoryDiagnostic>;
@@ -159,16 +162,26 @@ export const validateAccountScopes = (
 const rootsFingerprint = (roots: ReadonlyArray<InventoryRoot>): string =>
 	sha256Hex(JSON.stringify(roots.map((root) => [root.kind, root.path]))).slice(0, 16);
 
-const encodeCursor = (roots: string, after: string): string =>
-	Buffer.from(JSON.stringify({ v: 1, roots, after })).toString("base64url");
+/** Fingerprint of the enumerated candidate set; a cursor is valid only while the set is unchanged. */
+const candidateSetFingerprint = (candidates: ReadonlyArray<Candidate>): string =>
+	sha256Hex(JSON.stringify(candidates.map((candidate) => [candidate.ref, candidate.type]))).slice(0, 32);
 
-const decodeCursor = (cursor: string, roots: string): string => {
+interface DecodedCursor {
+	readonly set: string;
+	readonly after: string;
+}
+
+const encodeCursor = (roots: string, set: string, after: string): string =>
+	Buffer.from(JSON.stringify({ v: 1, roots, set, after })).toString("base64url");
+
+const decodeCursor = (cursor: string, roots: string): DecodedCursor => {
 	const parsed = Result.try((): unknown => JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")));
 	if (Result.isFailure(parsed)) return invalid("Invalid inventory cursor");
-	const record = parsed.success as { v?: unknown; roots?: unknown; after?: unknown } | null;
-	if (record?.v !== 1 || typeof record.after !== "string") return invalid("Invalid inventory cursor");
+	const record = parsed.success as { v?: unknown; roots?: unknown; set?: unknown; after?: unknown } | null;
+	if (record?.v !== 1 || typeof record.after !== "string" || typeof record.set !== "string")
+		return invalid("Invalid inventory cursor");
 	if (record.roots !== roots) return invalid("Inventory cursor belongs to a different root selection");
-	return record.after;
+	return { set: record.set, after: record.after };
 };
 
 const enumerate = (
@@ -350,12 +363,31 @@ export const inventoryMeetingSources = (options: InventoryOptions): InventoryRep
 	const pageSize = options.pageSize ?? DEFAULT_INVENTORY_PAGE_SIZE;
 	if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > MAX_INVENTORY_PAGE_SIZE)
 		invalid(`Inventory page size must be an integer from 1 to ${MAX_INVENTORY_PAGE_SIZE}`);
-	const maxBytes = options.maxArtifactBytes ?? MAX_CONTEXT_ARTIFACT_BYTES;
+	const maxBytes = validateByteLimit(options.maxArtifactBytes ?? MAX_CONTEXT_ARTIFACT_BYTES);
 	const fingerprint = rootsFingerprint(roots);
 	const cursor = options.cursor ?? null;
-	const after = cursor === null ? null : decodeCursor(cursor, fingerprint);
+	const decoded = cursor === null ? null : decodeCursor(cursor, fingerprint);
 	const diagnostics: InventoryDiagnostic[] = [];
 	const candidates = enumerate(options.contextRoot, roots, diagnostics);
+	const set = candidateSetFingerprint(candidates);
+	if (decoded !== null && decoded.set !== set)
+		return {
+			schemaVersion: MEETING_CONTEXT_SCHEMA_VERSION,
+			status: "error",
+			cursor,
+			nextCursor: null,
+			enumerated: candidates.length,
+			entries: [],
+			diagnostics: [
+				...diagnostics,
+				{
+					ref: (roots[0] as InventoryRoot).path,
+					code: "enumeration_changed" as const,
+					message: "Selected roots changed after this cursor was issued; restart the inventory",
+				},
+			].sort(byRef),
+		};
+	const after = decoded?.after ?? null;
 	const pending =
 		after === null ? candidates : candidates.filter((candidate) => compareRefs(candidate.ref, after) > 0);
 	const entries: InventoryEntry[] = [];
@@ -376,7 +408,7 @@ export const inventoryMeetingSources = (options: InventoryOptions): InventoryRep
 		schemaVersion: MEETING_CONTEXT_SCHEMA_VERSION,
 		status: interrupted ? "interrupted" : diagnostics.length > 0 ? "error" : remaining ? "incomplete" : "complete",
 		cursor,
-		nextCursor: remaining ? encodeCursor(fingerprint, last ?? "") : null,
+		nextCursor: remaining ? encodeCursor(fingerprint, set, last ?? "") : null,
 		enumerated: candidates.length,
 		entries,
 		diagnostics: diagnostics.sort(byRef),

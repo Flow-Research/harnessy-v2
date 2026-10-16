@@ -16,7 +16,7 @@ Layer: api
 Status: implemented
 Test File: qa/tests/meeting-context.api.test.mjs
 Linked Refs: packages/harnessy-core/test/meeting-context-inventory.test.ts, packages/harnessy-core/src/jarvis/fathom/status.ts
-Expected: More than 500 inputs are paged with an explicit continuation cursor and no silent cap; an aborted run reports `interrupted` with a resumable cursor; missing, rejected or unreadable roots and directories report `error` with diagnostics instead of an empty result; every artifact receives an explicit disposition.
+Expected: More than 500 inputs are paged with an explicit continuation cursor and no silent cap; an aborted run reports `interrupted` with a resumable cursor; missing, rejected or unreadable roots and directories report `error` with diagnostics instead of an empty result; a candidate set that changes between pages (a file added, removed or renamed) reports `error` with an `enumeration_changed` diagnostic instead of a silent gap; byte limits that are not non-negative safe integers are refused; every artifact receives an explicit disposition.
 
 - Execute the completeness inventory cases with 1,201 synthetic envelopes.
 
@@ -25,7 +25,7 @@ Layer: api
 Status: implemented
 Test File: qa/tests/meeting-context.api.test.mjs
 Linked Refs: packages/harnessy-core/test/meeting-context-inventory.test.ts, packages/harnessy-core/test/meeting-context.test.ts, packages/harnessy-core/src/workspace.ts
-Expected: Root selections and artifact references reuse the workspace relative-path contract; traversal, absolute and malformed paths are rejected; symbolic links are never followed, including links pointing inside the root and files swapped for links after enumeration; every source file's bytes, mode and timestamp are identical before and after inventory.
+Expected: Root selections and artifact references reuse the workspace relative-path contract; traversal, absolute and malformed paths are rejected; symbolic links are never followed, including links pointing inside the root and files swapped for links after enumeration; every source file's bytes, mode and timestamp are identical before and after inventory; the reader refuses NaN, negative, fractional and infinite byte limits instead of reading unbounded.
 
 - Execute the containment inventory cases and the context artifact reader case.
 
@@ -43,7 +43,7 @@ Layer: api
 Status: implemented
 Test File: qa/tests/meeting-context.api.test.mjs
 Linked Refs: packages/harnessy-core/test/meeting-context-integration.test.ts, packages/harnessy-core/test/meeting-context.test.ts
-Expected: Project relevance alone grants nothing; packets for unauthorized principals omit titles, snippets, citations, relationships and attachments that were not granted; forbidden and nonexistent artifacts are indistinguishable; membership revision invalidates earlier principals; policy revocation removes access; only the current owner may change policy.
+Expected: Project relevance alone grants nothing; packets for unauthorized principals omit titles, snippets, citations, relationships and attachments that were not granted; forbidden and nonexistent artifacts are indistinguishable; membership revision invalidates earlier principals; a membership table owned by someone other than the catalog owner is stale authorization; policy revocation removes access; only the current owner may change policy; a non-owner packet generation covers only that principal's view, so edits to hidden meetings do not change it; a packet whose limit equals the visible count is not truncated.
 
 - Execute the leakage and revocation integration cases and the owner-policy, membership and query-bound contract cases.
 
@@ -52,6 +52,6 @@ Layer: api
 Status: implemented
 Test File: qa/tests/meeting-context.api.test.mjs
 Linked Refs: packages/harnessy-core/test/meeting-context-integration.test.ts, packages/harnessy-core/test/meeting-context.test.ts
-Expected: Annotation edits advance only the annotation revision and reject divergent bases; unchanged or observation-time-only source bytes create no revision; changed source content appends a new source revision while human annotations and citations keep their revisions; grants name exact artifact revisions, so a new revision is denied until granted; a source absent from a later inventory is retained.
+Expected: Annotation edits advance only the annotation revision and reject divergent bases; unchanged or observation-time-only source bytes create no revision; changed source content appends a new source revision while human annotations and citations keep their revisions; grants name exact artifact revisions, so a new revision is denied until granted; a source absent from a later inventory is retained; a source moved from `pending/` to `processed/` with unchanged content is followed without a new revision and stays retrievable; a transcript state change with an unchanged content hash appends a new revision, and retrieval refuses a retained revision whose state no longer holds.
 
 - Execute the revision integration and annotation contract cases.
