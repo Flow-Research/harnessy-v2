@@ -28,7 +28,7 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Audit root dependencies
-        run: npm audit --audit-level=moderate
+        run: npm run audit:root
 
       - name: Verify registry signatures
         run: npm audit signatures
