@@ -379,6 +379,74 @@ describe("personal learning library", () => {
 		expect(store.pages()[0]?.path).toBe("reviews/2026-W37.md");
 	});
 
+	it("runs the wiki command surface and keeps the weekly Life companion link-only", async () => {
+		const { root } = fixture();
+		const vault = join(root, "cli-vault");
+		const base = ["--home-root", root, "--vault", vault];
+		expect(await runWikiCommand([])).toHaveProperty("usage");
+		expect(await runWikiCommand(["status", "--help"])).toHaveProperty("usage");
+		await expect(runWikiCommand(["publish"])).rejects.toThrow("Invalid wiki command");
+		await expect(runWikiCommand(["status", "extra", "more"])).rejects.toThrow("Invalid wiki command");
+		await expect(runWikiCommand(["search", ...base])).rejects.toThrow("Expected exactly one");
+		await expect(runWikiCommand(["status", "unexpected", ...base])).rejects.toThrow("Expected exactly one");
+		expect(await runWikiCommand(["status", ...base])).toMatchObject({ evidenceGap: true });
+
+		const note = join(root, "note.md");
+		writeFileSync(note, "# Cache notes\n\nKey-value caches trade memory for latency.\n");
+		const ingested = (await runWikiCommand(["ingest", note, "--topic", "Inference", "--note", "keep", ...base])) as {
+			source: { uri: string };
+		};
+		expect(ingested.source.uri).toBe(note);
+		expect(await runWikiCommand(["status", ...base])).not.toHaveProperty("evidenceGap");
+		await runWikiCommand(["search", "cache", ...base]);
+		await runWikiCommand(["ask", "What about caches?", "--context", ...base]);
+		expect(await runWikiCommand(["sync", "--capture-only", "--target", root, ...base])).toHaveProperty("scanned");
+
+		const review = ["review", "--week", "2026-W37", "--life-companion", ...base];
+		const first = (await runWikiCommand(review)) as { companion: string };
+		const companion = readFileSync(first.companion, "utf8");
+		expect(companion).toMatch(
+			/^# Learning review 2026-W37\n\n\[Read the dated learning review\]\(.*reviews\/2026-W37\.md\)\n$/,
+		);
+		expect(((await runWikiCommand(review)) as { companion: string }).companion).toBe(first.companion);
+		expect(await runWikiCommand(["review", "--week", "2026-W37", ...base])).not.toHaveProperty("companion");
+		writeFileSync(first.companion, `${companion}\nPersonal edit\n`);
+		await expect(runWikiCommand(review)).rejects.toThrow("Personal edit conflict");
+		expect(readFileSync(first.companion, "utf8")).toBe(`${companion}\nPersonal edit\n`);
+	});
+
+	it("fills a never-fetched public source from the Life archive but never replaces a current version", async () => {
+		const { root, store, options } = fixture();
+		const server = createServer();
+		await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+		const address = server.address();
+		await new Promise<void>((done) => server.close(() => done()));
+		if (!address || typeof address === "string") throw new Error("No port");
+		const origin = `http://127.0.0.1:${address.port}`;
+		const uri = `${origin}/article`;
+		const archive = join(root, ".jarvis", "wikis", "founder-learning", "raw", "articles");
+		mkdirSync(archive, { recursive: true });
+		const body = "Archived cache evidence. ".repeat(20);
+		writeFileSync(join(archive, "article.md"), `---\nsource_url: ${uri}\n---\n# Article\n\n${body}\n`);
+		await store.write(async () =>
+			store.capture({
+				uri,
+				topics: ["Inference"],
+				manual: true,
+				kind: "saved",
+				event: "manual:archive",
+				occurredAt: new Date().toISOString(),
+			}),
+		);
+		await syncWiki(store, execute, { ...options, fixtureOrigin: origin });
+		const archived = store.sources()[0]?.currentVersion;
+		expect(archived).toBeTruthy();
+		writeFileSync(join(archive, "article.md"), `---\nsource_url: ${uri}\n---\n# Article\n\nChanged. ${body}\n`);
+		const refreshed = await syncWiki(store, execute, { ...options, fixtureOrigin: origin, refresh: true });
+		expect(store.sources()[0]?.currentVersion).toBe(archived);
+		expect(JSON.stringify(refreshed)).toContain(store.sources()[0]?.id);
+	});
+
 	it("serializes independent SQLite writers", async () => {
 		const { store } = fixture();
 		const second = new WikiStore(store.root);
