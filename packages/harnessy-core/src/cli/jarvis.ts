@@ -348,12 +348,22 @@ export const jarvisLifeWeeklyCommand = Command.make(
 			yield* Effect.tryPromise({
 				try: () => runWikiHost(["review", "--home-root", settings.paths.homeRoot, "--life-companion", "--json"]),
 				catch: (error) => new Error(String(error)),
-			}).pipe(Effect.catch((error) => Console.error(`Wiki weekly review pending for retry: ${error.message}`)));
+			}).pipe(
+				Effect.catch((error) =>
+					Console.error(
+						`Wiki weekly review not written: ${error.message}. Resolve the cause, then run \`harnessy jarvis wiki review --life-companion\`.`,
+					),
+				),
+			);
 			if (json)
 				return yield* Console.log(JSON.stringify({ command: "jarvis life weekly", ok: true, ...result }, null, 2));
 			yield* Console.log(`Prepared weekly plan: ${result.briefPath}`);
 		}),
-).pipe(Command.withDescription("Prepare a supervised native weekly draft without journaling or publication"));
+).pipe(
+	Command.withDescription(
+		"Prepare a supervised native weekly draft without journaling or publication, then write the local learning-library weekly review",
+	),
+);
 
 export const jarvisLifeDraftCommand = Command.make(
 	"draft",

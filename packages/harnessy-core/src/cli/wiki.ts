@@ -108,8 +108,22 @@ export const wikiCommand = Command.make("wiki").pipe(
 			(value) => invoke(["ask", value.question, ...baseArgs(value), ...(value.context ? ["--context"] : [])]),
 		),
 		Command.make("status", common, (value) => invoke(["status", ...baseArgs(value)])),
-		Command.make("review", { ...common, week: Flag.string("week").pipe(Flag.optional) }, (value) =>
-			invoke(["review", ...(Option.isSome(value.week) ? ["--week", value.week.value] : []), ...baseArgs(value)]),
+		Command.make(
+			"review",
+			{
+				...common,
+				week: Flag.string("week").pipe(Flag.optional),
+				lifeCompanion: Flag.boolean("life-companion").pipe(
+					Flag.withDescription("Also link the review from the weekly Life companion file"),
+				),
+			},
+			(value) =>
+				invoke([
+					"review",
+					...(Option.isSome(value.week) ? ["--week", value.week.value] : []),
+					...(value.lifeCompanion ? ["--life-companion"] : []),
+					...baseArgs(value),
+				]),
 		),
 		Command.make("open", common, (value) => invoke(["open", ...baseArgs(value)])),
 	] as const),
