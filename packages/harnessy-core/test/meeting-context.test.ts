@@ -219,6 +219,7 @@ describe("catalog construction", () => {
 			() => build([one], { inventory: { ...base.inventory, status: "incomplete" } }),
 			"incomplete_inventory",
 		);
+		expectCode(() => build([one], { inventory: { ...base.inventory, cursor: "resumed" } }), "incomplete_inventory");
 		expectCode(() => build([{ ...one, meetingId: "MTG" }]), "invalid_input");
 		expectCode(() => build([one, { ...one, sourceKeys: [key("m2")] }]), "invalid_input");
 		expectCode(() => build([{ ...one, sourceKeys: [] }]), "invalid_input");

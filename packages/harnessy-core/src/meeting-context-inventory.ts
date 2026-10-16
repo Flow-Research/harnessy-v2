@@ -87,7 +87,8 @@ export type InventoryStatus = "complete" | "incomplete" | "interrupted" | "error
 export interface InventoryReport {
 	readonly schemaVersion: typeof MEETING_CONTEXT_SCHEMA_VERSION;
 	/**
-	 * `complete`: every enumerated entry was processed without enumeration errors.
+	 * `complete`: every enumerated entry after `cursor` was processed without enumeration
+	 * errors. Only a complete report whose `cursor` is null covers every entry.
 	 * `incomplete`: a page bound was reached; continue from `nextCursor`.
 	 * `interrupted`: the signal aborted the run; resume from `nextCursor`.
 	 * `error`: a root or directory could not be enumerated, or the candidate set changed
@@ -191,7 +192,13 @@ const enumerate = (
 ): ReadonlyArray<Candidate> => {
 	const candidates: Candidate[] = [];
 	const list = (ref: string): ReadonlyArray<Dirent> | null => {
-		const listed = Result.try(() => readdirSync(join(contextRoot, ref), { withFileTypes: true }));
+		const listed = Result.try(() => {
+			// Re-check immediately before descending: a directory swapped for a link (or removed)
+			// after its parent was listed is never listed through the link.
+			if (lstatContextPath(contextRoot, ref)?.isDirectory() !== true)
+				throw new Error("Directory changed during enumeration");
+			return readdirSync(join(contextRoot, ref), { withFileTypes: true });
+		});
 		if (Result.isSuccess(listed)) return listed.success;
 		diagnostics.push({ ref, code: "enumeration_failed", message: (listed.failure as Error).message });
 		return null;
@@ -452,8 +459,11 @@ export interface LegacyCandidate {
 
 /** Report legacy-note candidates over a complete inventory without assigning identity. */
 export const legacyNoteCandidates = (report: InventoryReport): ReadonlyArray<LegacyCandidate> => {
-	if (report.status !== "complete")
-		throw new MeetingContextError("incomplete_inventory", "Legacy reconciliation requires a complete inventory");
+	if (report.status !== "complete" || report.cursor !== null)
+		throw new MeetingContextError(
+			"incomplete_inventory",
+			"Legacy reconciliation requires a complete inventory that started from the beginning",
+		);
 	const byObject = new Map<string, string[]>();
 	for (const entry of report.entries)
 		if (entry.source !== null)

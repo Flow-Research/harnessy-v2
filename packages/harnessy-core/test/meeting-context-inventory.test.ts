@@ -280,6 +280,11 @@ describe("meeting inventory completeness", () => {
 		expect(interrupted.nextCursor).not.toBeNull();
 		const resumed = collectMeetingInventory(options(root, { cursor: interrupted.nextCursor }));
 		expect(resumed).toMatchObject({ status: "complete", cursor: interrupted.nextCursor });
+		// A resumed report covers only the tail, so it cannot stand in for a full inventory.
+		expectCode(() => legacyNoteCandidates(resumed), "incomplete_inventory");
+		const lastPage = inventoryMeetingSources(options(root, { pageSize: 15, cursor: interrupted.nextCursor }));
+		expect(lastPage).toMatchObject({ status: "complete", nextCursor: null });
+		expectCode(() => legacyNoteCandidates(lastPage), "incomplete_inventory");
 		expect([...interrupted.entries, ...resumed.entries].map((entry) => entry.ref)).toEqual(refs);
 
 		const aborted = new AbortController();

@@ -407,6 +407,8 @@ const sourceArtifacts = (source: IndexedSource, sourceRevision: number): Readonl
 
 export interface InventoryForCatalog {
 	readonly status: string;
+	/** Null only for a report that started from the beginning; a resumed report covers only a tail. */
+	readonly cursor: string | null;
 	readonly entries: ReadonlyArray<{ readonly ref: string; readonly source: IndexedSource | null }>;
 }
 
@@ -415,6 +417,11 @@ const indexedSources = (inventory: InventoryForCatalog): ReadonlyMap<string, Ind
 		throw new MeetingContextError(
 			"incomplete_inventory",
 			`Catalog input requires a complete inventory, not ${JSON.stringify(inventory.status)}`,
+		);
+	if (inventory.cursor !== null)
+		throw new MeetingContextError(
+			"incomplete_inventory",
+			"Catalog input requires an inventory that started from the beginning, not a resumed tail",
 		);
 	const sources = new Map<string, IndexedSource>();
 	for (const entry of inventory.entries) {
