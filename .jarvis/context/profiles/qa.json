@@ -1,6 +1,7 @@
 {
 	"version": 1,
 	"specs": [
+		{ "path": "qa/api/scripts/personal-knowledge.md", "app": "harnessy-v2", "layer": "api" },
 		{
 			"path": "qa/api/scripts/canonical-cutover.md",
 			"app": "harnessy-v2",
@@ -69,6 +70,7 @@
 		"generator": "npm run qa:catalog",
 		"check": "npm run qa:catalog:check",
 		"features": [
+			{ "prefix": "WIKI", "slug": "personal-knowledge", "name": "Personal learning library" },
 			{
 				"prefix": "CAP",
 				"slug": "capability-portability",
