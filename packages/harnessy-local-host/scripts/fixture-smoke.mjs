@@ -162,6 +162,8 @@ const exactHostInventory = [
 	"dist/community-publication-command.js",
 	"dist/community-service-enrollment.d.ts",
 	"dist/community-service-enrollment.js",
+	"dist/community-stop-event.d.ts",
+	"dist/community-stop-event.js",
 	"dist/index.d.ts",
 	"dist/index.js",
 	"dist/input.d.ts",
