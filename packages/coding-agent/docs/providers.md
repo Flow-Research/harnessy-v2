@@ -104,6 +104,20 @@ Store credentials in `~/.pi/agent/auth.json`:
 
 The file is created with `0600` permissions (user read/write only). Auth file credentials take priority over environment variables.
 
+##### Encryption at rest
+
+Saved credentials are encrypted with AES-256-GCM when a key source is available:
+
+- `PI_AUTH_PASSPHRASE` (or `<APP>_AUTH_PASSPHRASE`) derives the key with scrypt. It takes precedence and suits headless machines.
+- Otherwise a random key is stored in the OS keychain: macOS Keychain via `/usr/bin/security`, or the Secret Service via `secret-tool` on Linux. The file references the key by id, so it can be moved.
+- With neither, the file stays plaintext.
+
+`PI_AUTH_ENCRYPTION` (or `<APP>_AUTH_ENCRYPTION`) selects the mode: `auto` (default), `required` (refuse to read or write plaintext), or `off` (decrypt an existing file and write plaintext from then on).
+
+Scheduled or headless processes must reach the same key as the interactive session. A file encrypted with a keychain key cannot be read where the keychain is locked or unavailable, such as a systemd timer without a desktop session. Set `PI_AUTH_PASSPHRASE` for both before the first credential write on such machines.
+
+A plaintext file, including one written by hand, is read as-is and encrypted on the next credential write. To edit an encrypted file by hand, run once with `PI_AUTH_ENCRYPTION=off` and log in or out to rewrite it as plaintext. Losing the keychain entry or passphrase makes the file unreadable; log in again after removing it.
+
 API key credentials can also include provider-scoped environment values. These values are used before process environment variables when resolving the credential key, provider/model headers, and provider configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
 
 ```json

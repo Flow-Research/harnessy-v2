@@ -21,6 +21,7 @@ export interface AppKeybindings {
 	"app.model.select": true;
 	"app.tools.expand": true;
 	"app.thinking.toggle": true;
+	"app.plan.toggle": true;
 	"app.session.toggleNamedFilter": true;
 	"app.editor.external": true;
 	"app.message.followUp": true;
@@ -86,6 +87,10 @@ export const KEYBINDINGS = {
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
 		description: "Toggle thinking blocks",
+	},
+	"app.plan.toggle": {
+		defaultKeys: "ctrl+alt+p",
+		description: "Toggle plan mode",
 	},
 	"app.session.toggleNamedFilter": {
 		defaultKeys: "ctrl+n",

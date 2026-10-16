@@ -53,6 +53,17 @@ describe("Life Orchestrator brief artifact", () => {
 		);
 	});
 
+	it("rejects a candidate whose canonical URL was delivered under another identity", () => {
+		const rewritten = replaceWorthReadingSection(
+			"# Daily Brief\n",
+			[candidate],
+			new Date("2026-09-08T06:00:00.000Z"),
+		);
+		expect(() =>
+			validateWorthReadingSection(rewritten, [candidate], new Set(), new Set([candidate.canonicalUrl])),
+		).toThrow("Previously delivered reading");
+	});
+
 	it("escapes untrusted feed metadata without creating extra Markdown links", () => {
 		const hostile = new LifeReadingCandidate({
 			...candidate,

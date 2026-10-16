@@ -11,6 +11,8 @@
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
+		"./skills/personal-knowledge": "./resources/skills/personal-knowledge/SKILL.md",
+		"./wiki": { "types": "./dist/wiki.d.ts", "import": "./dist/wiki.js" },
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"

@@ -270,6 +270,8 @@ jarvis android run ./builds/demo.apk --avd Medium_Phone_API_36.1 --reinstall
 | Generate or preview weekly community briefing | `jarvis community briefing generate [--dry-run] [--week-start YYYY-MM-DD] [--regenerate]` |
 | Verify weekly briefing readiness | `jarvis community briefing preflight` |
 | Open weekly briefing review | `jarvis community briefing review open` |
+| Serve briefing-only review during V2 meeting migration | `jarvis community briefing review serve --port 8872` |
+| Open the separate briefing listener | `jarvis community briefing review open --port 8872` |
 | Publish approved weekly briefing | `jarvis community briefing worker` |
 | Show WhatsApp Meta Cloud API setup guidance | `jarvis whatsapp setup --account personal` |
 | Configure WhatsApp accounts and env activation | `jarvis config whatsapp-setup` |

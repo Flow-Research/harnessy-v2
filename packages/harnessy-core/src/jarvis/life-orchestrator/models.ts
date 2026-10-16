@@ -3,7 +3,7 @@ import { Schema } from "effect";
 export const LifeReadingStatus = Schema.Literals(["available", "reserved", "delivered"]);
 export type LifeReadingStatus = typeof LifeReadingStatus.Type;
 
-export const LifeReadingSourceKind = Schema.Literals(["rss", "crossref", "agent", "backfill"]);
+export const LifeReadingSourceKind = Schema.Literals(["rss", "crossref", "agent", "backfill", "curated"]);
 export type LifeReadingSourceKind = typeof LifeReadingSourceKind.Type;
 
 /** A normalized reading candidate tracked by the V2 life-orchestrator ledger. */

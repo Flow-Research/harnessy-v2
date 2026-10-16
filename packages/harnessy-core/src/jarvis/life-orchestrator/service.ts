@@ -10,6 +10,7 @@ import { CommandRunner, type CommandRunResult, type ExternalCommand } from "../.
 import { prepareWorkspaceLifeCommand } from "../../workspace-life.ts";
 import { replaceWorthReadingSection, validateWorthReadingSection } from "./artifact.ts";
 import type { LifeOrchestratorSettings } from "./config.ts";
+import { nextLifeCurriculumReadings } from "./curriculum.ts";
 import type { LifeDraftProvider, LifeDraftReceipt } from "./draft-provider.ts";
 import {
 	canonicalLifeBriefPath,
@@ -480,10 +481,23 @@ export const runLifeDaily = (
 				return yield* withLedger(settings, (ledger) =>
 					Effect.gen(function* () {
 						yield* backfillLedger(settings, ledger);
+						const existing = yield* ledger.list();
+						const curriculumReadings = settings.curricula.flatMap((selection) =>
+							nextLifeCurriculumReadings(selection, existing),
+						);
+						if (curriculumReadings.length > 0) {
+							yield* ledger.upsertCandidates(curriculumReadings, now.toISOString());
+						}
 						const runId = nativeRequest?.runId ?? `daily:${date}:${randomUUID()}`;
 						const staleBefore = new Date(now.getTime() - 2 * 60 * 60 * 1_000).toISOString();
 						const sourceMaximums = new Map(
 							settings.sources.map((source) => [source.name, source.maxPerBrief ?? settings.maximumReadings]),
+						);
+						for (const selection of settings.curricula) {
+							sourceMaximums.set(selection.curriculum.name, selection.maxPerBrief);
+						}
+						const activeCurriculumSources = new Set(
+							settings.curricula.map((selection) => selection.curriculum.name),
 						);
 						const selected = yield* ledger.reserve(
 							runId,
@@ -491,6 +505,7 @@ export const runLifeDaily = (
 							settings.maximumReadings,
 							staleBefore,
 							sourceMaximums,
+							activeCurriculumSources,
 						);
 						const execute = Effect.gen(function* () {
 							mkdirSync(settings.paths.reviewDirectory, { recursive: true, mode: 0o700 });
@@ -604,6 +619,7 @@ export const runLifeDaily = (
 								);
 							}
 							const delivered = yield* ledger.deliveredIdentities();
+							const deliveredUrls = yield* ledger.deliveredCanonicalUrls();
 							const reviewed = replaceWorthReadingSection(draft, selected, now);
 							if (Buffer.byteLength(reviewed, "utf8") > maximumOutputBytes)
 								return yield* Effect.fail(
@@ -613,7 +629,7 @@ export const runLifeDaily = (
 									}),
 								);
 							yield* Effect.try({
-								try: () => validateWorthReadingSection(reviewed, selected, delivered),
+								try: () => validateWorthReadingSection(reviewed, selected, delivered, deliveredUrls),
 								catch: (cause) =>
 									cause instanceof LifeOrchestratorError
 										? cause

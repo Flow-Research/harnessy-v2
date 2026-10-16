@@ -2539,26 +2539,26 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "b36c80d72476ff1ddad9e9e9209fd6ab186d9faf8c3b69889e3d95de390cbee1",
-    "fileCount": 708,
-    "byteCount": 4936757
+    "digest": "2d9834df79f86e94cb090ee6b5030d45a6781cd44961ae604dec8f7172ab529f",
+    "fileCount": 712,
+    "byteCount": 4942424
   },
   "projections": [
     {
       "id": "flow-install",
       "source": "tools/flow-install",
       "projection": "flow-install",
-      "digest": "26764f7175a36dfdb787da4d4dc35aa0f5b9602738f817f3bcc90f5833dc69f7",
-      "fileCount": 338,
-      "byteCount": 1867224
+      "digest": "50b8e7d214316c03efe4cda13891faf3432504e65360d8a5e88a23385182d13e",
+      "fileCount": 342,
+      "byteCount": 1871840
     },
     {
       "id": "context-vault",
       "source": ".jarvis/context",
       "projection": "context-vault",
-      "digest": "1e7b07f607affd63c5e64755c58a5af8c37d934c05f2101f381a85fc184985a9",
+      "digest": "f89ec077292e5a63638e0020097905db9b3cf1b79e2cc351d9f3ee18bd609a34",
       "fileCount": 44,
-      "byteCount": 165924
+      "byteCount": 166975
     },
     {
       "id": "jarvis-cli",

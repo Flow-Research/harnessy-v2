@@ -873,6 +873,48 @@ created: 2026-06-05
 updated: 2026-06-05
 ---
 
+---
+name: catchup
+type: opencode
+version: 0.1.0
+install_scope: global
+status: experimental
+owner: julian
+blast_radius: low
+description: "Bring the user back up to speed after switching agent tabs: one-paragraph brief of goal, decisions, state, open questions and next step, then one-paragraph replies."
+location: tools/flow-install/skills/catchup
+invoke: "/catchup"
+permissions: [read]
+data_categories: [none]
+egress: []
+phase: P0
+tags: [context, handoff, session]
+depends_on: []
+created: 2026-10-09
+updated: 2026-10-09
+---
+
+---
+name: wiki
+type: opencode
+version: 0.1.0
+install_scope: global
+status: experimental
+owner: julian
+blast_radius: low
+description: "Open Julian's personal learning wiki viewer (OpenWiki, local-only on http://127.0.0.1:4321) through the persistent launchd service, restarting it if needed."
+location: tools/flow-install/skills/wiki
+invoke: "/wiki"
+permissions: [read, shell]
+data_categories: [personal-knowledge]
+egress: []
+phase: P0
+tags: [learning, wiki, viewer]
+depends_on: []
+created: 2026-10-09
+updated: 2026-10-09
+---
+
 ## Notes
 
 - **Owner is required**. If unowned, default to the project's primary maintainer.
