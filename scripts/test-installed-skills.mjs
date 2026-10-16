@@ -61,7 +61,7 @@ try {
 	assert.match(run(["--help"], 0, null, join(launchers.commands, "hsy")).stdout, /Harnessy agent-first context engine/);
 	const host = join(dirname(modules), "service/node_modules/@harnessy/local-host");
 	const hostCommands = JSON.parse(readFileSync(join(host, "package.json"), "utf8")).bin;
-	assert.equal(Object.keys(hostCommands).length, 9);
+	assert.equal(Object.keys(hostCommands).length, 10);
 	for (const [name, entry] of Object.entries(hostCommands)) {
 		assert(readFileSync(join(launchers.commands, name), "utf8").includes("/service/node_modules/@harnessy/local-host/"), name);
 		const args = ["--fixture-invalid-option"];

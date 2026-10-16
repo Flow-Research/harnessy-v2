@@ -17,7 +17,7 @@ import {
 	type LifeReadingStatus,
 } from "./models.ts";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 type Row = Record<string, string | number | bigint | Uint8Array | null>;
 
 const text = (row: Row, field: string) => String(row[field] ?? "");
@@ -60,7 +60,7 @@ CREATE TABLE reading_candidates (
   published_at TEXT,
   discovered_at TEXT NOT NULL,
   source_name TEXT NOT NULL,
-  source_kind TEXT NOT NULL CHECK(source_kind IN ('rss','crossref','agent','backfill')),
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('rss','crossref','agent','backfill','curated')),
   source_id TEXT,
   status TEXT NOT NULL CHECK(status IN ('available','reserved','delivered')),
   reserved_for TEXT,
@@ -78,6 +78,35 @@ CREATE TABLE life_runs (
   completed_at TEXT,
   detail_json TEXT NOT NULL
 );
+PRAGMA user_version = ${SCHEMA_VERSION};
+COMMIT;`);
+	}
+	if (version === 1) {
+		database.exec(`BEGIN IMMEDIATE;
+DROP INDEX IF EXISTS reading_candidates_status_order;
+ALTER TABLE reading_candidates RENAME TO reading_candidates_v1;
+CREATE TABLE reading_candidates (
+  identity TEXT PRIMARY KEY,
+  canonical_url TEXT NOT NULL,
+  title TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  published_at TEXT,
+  discovered_at TEXT NOT NULL,
+  source_name TEXT NOT NULL,
+  source_kind TEXT NOT NULL CHECK(source_kind IN ('rss','crossref','agent','backfill','curated')),
+  source_id TEXT,
+  status TEXT NOT NULL CHECK(status IN ('available','reserved','delivered')),
+  reserved_for TEXT,
+  reserved_at TEXT,
+  delivered_at TEXT,
+  delivered_brief TEXT
+);
+INSERT INTO reading_candidates
+SELECT identity,canonical_url,title,topic,published_at,discovered_at,source_name,source_kind,source_id,status,
+       reserved_for,reserved_at,delivered_at,delivered_brief
+FROM reading_candidates_v1;
+DROP TABLE reading_candidates_v1;
+CREATE INDEX reading_candidates_status_order ON reading_candidates(status, published_at DESC, discovered_at DESC);
 PRAGMA user_version = ${SCHEMA_VERSION};
 COMMIT;`);
 	}
@@ -244,6 +273,7 @@ delivered_brief=COALESCE(reading_candidates.delivered_brief,excluded.delivered_b
 		maximum = 3,
 		staleBefore = new Date(new Date(now).getTime() - 2 * 60 * 60 * 1_000).toISOString(),
 		sourceMaximums: ReadonlyMap<string, number> = new Map(),
+		activeCurriculumSources: ReadonlySet<string> = new Set(),
 	): Effect.Effect<ReadonlyArray<LifeReadingCandidate>, LifeOrchestratorError> {
 		return this.#transact(() => {
 			this.#database
@@ -256,15 +286,41 @@ delivered_brief=COALESCE(reading_candidates.delivered_brief,excluded.delivered_b
 					"SELECT * FROM reading_candidates WHERE status='available' ORDER BY COALESCE(published_at,discovered_at) DESC,identity",
 				)
 				.all() as Array<Row>;
+			const deliveredUrls = this.#deliveredCanonicalUrlSet();
+			// Rows of a curriculum that is no longer configured stay in the ledger (keeping delivered
+			// progress) but are not reserved until the curriculum is enabled again.
+			const eligible = rows.filter(
+				(row) =>
+					!nullableText(row, "source_id")?.startsWith("curriculum:") ||
+					activeCurriculumSources.has(text(row, "source_name")),
+			);
+			eligible.sort((left, right) => {
+				const preferredOrder =
+					Number(!activeCurriculumSources.has(text(left, "source_name"))) -
+					Number(!activeCurriculumSources.has(text(right, "source_name")));
+				if (preferredOrder !== 0) return preferredOrder;
+				const leftSourceId = nullableText(left, "source_id");
+				const rightSourceId = nullableText(right, "source_id");
+				if (leftSourceId?.startsWith("curriculum:") && rightSourceId?.startsWith("curriculum:")) {
+					return leftSourceId.localeCompare(rightSourceId);
+				}
+				return 0;
+			});
 			const sourceCounts = new Map<string, number>();
 			const selected: Array<Row> = [];
-			for (const row of rows) {
+			const selectedUrls = new Set<string>();
+			for (const row of eligible) {
 				if (selected.length >= maximum) break;
+				// The same canonical URL can exist under several identities (for example a curriculum
+				// entry and an RSS item); never select a delivered URL or the same URL twice.
+				const canonicalUrl = text(row, "canonical_url");
+				if (deliveredUrls.has(canonicalUrl) || selectedUrls.has(canonicalUrl)) continue;
 				const sourceName = text(row, "source_name");
 				const count = sourceCounts.get(sourceName) ?? 0;
 				const sourceMaximum = sourceMaximums.get(sourceName) ?? maximum;
 				if (count >= sourceMaximum) continue;
 				sourceCounts.set(sourceName, count + 1);
+				selectedUrls.add(canonicalUrl);
 				selected.push(row);
 			}
 			const update = this.#database.prepare(
@@ -317,6 +373,17 @@ delivered_brief=COALESCE(reading_candidates.delivered_brief,excluded.delivered_b
 				.all() as Array<Row>;
 			return new Set(rows.map((row) => text(row, "identity")));
 		});
+	}
+
+	deliveredCanonicalUrls(): Effect.Effect<ReadonlySet<string>, LifeOrchestratorError> {
+		return this.#read(() => this.#deliveredCanonicalUrlSet());
+	}
+
+	#deliveredCanonicalUrlSet(): Set<string> {
+		const rows = this.#database
+			.prepare("SELECT canonical_url FROM reading_candidates WHERE status='delivered'")
+			.all() as Array<Row>;
+		return new Set(rows.map((row) => text(row, "canonical_url")));
 	}
 
 	counts(): Effect.Effect<LifeReadingCounts, LifeOrchestratorError> {

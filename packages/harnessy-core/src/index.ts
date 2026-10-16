@@ -314,6 +314,7 @@ export {
 export {
 	backfillLifeReadingLedger,
 	canonicalizeReadingUrl,
+	GITCOIN_FUNDING_MECHANISMS_CURRICULUM,
 	generateNativeLifePreview,
 	inspectLifeStatus,
 	LifeOrchestratorError,
