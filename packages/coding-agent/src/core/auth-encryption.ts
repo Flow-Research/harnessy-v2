@@ -138,9 +138,13 @@ export class AuthFileCipher {
 		}
 		const key = this.resolveKey(envelope.key);
 		try {
-			const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(envelope.iv, "base64"));
+			// Require the full GCM IV and tag; Node otherwise accepts truncated tags.
+			const iv = Buffer.from(envelope.iv, "base64");
+			const tag = Buffer.from(envelope.tag, "base64");
+			if (iv.length !== 12 || tag.length !== 16) throw new Error("invalid IV or authentication tag length");
+			const decipher = createDecipheriv("aes-256-gcm", key, iv, { authTagLength: 16 });
 			decipher.setAAD(additionalData(envelope.key));
-			decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
+			decipher.setAuthTag(tag);
 			const plaintext = Buffer.concat([decipher.update(Buffer.from(envelope.data, "base64")), decipher.final()]);
 			return plaintext.toString("utf-8");
 		} catch {

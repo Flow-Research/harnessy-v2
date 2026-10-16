@@ -127,6 +127,11 @@ describe("auth.json encryption at rest", () => {
 		expect(() => new AuthFileCipher({ keychain }).decode(swapped)).toThrow(AuthDecryptionError);
 
 		expect(() => cipher.decode(JSON.stringify({ ...envelope, alg: "aes-128-cbc" }))).toThrow(AuthDecryptionError);
+
+		const truncatedTag = Buffer.from(envelope.tag, "base64").subarray(0, 4).toString("base64");
+		expect(() => cipher.decode(JSON.stringify({ ...envelope, tag: truncatedTag }))).toThrow(AuthDecryptionError);
+		const shortIv = Buffer.from(envelope.iv, "base64").subarray(0, 8).toString("base64");
+		expect(() => cipher.decode(JSON.stringify({ ...envelope, iv: shortIv }))).toThrow(AuthDecryptionError);
 	});
 
 	it("fails closed when the keychain key is missing", () => {
