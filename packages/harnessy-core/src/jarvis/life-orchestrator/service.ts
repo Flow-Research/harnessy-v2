@@ -29,12 +29,22 @@ import {
 import {
 	generateNativeLifePreview,
 	type NativeLifePreviewOptions,
+	nativeLifeGrantId,
 	readNativeLifeRequest,
 	readPrivateLifeInput,
 	saveNativeLifeReview,
 } from "./native-draft.ts";
 import { chooseLifeResearchTopic, discoverLifeReadings, parseLifeResearchTopics } from "./research.ts";
 import { LifeReadingLedger } from "./store.ts";
+import {
+	assertLifeWeeklyPeriodOpen,
+	type LifeWeeklyReconciliation,
+	type LifeWeeklyRunSummary,
+	listLifeWeeklyRuns,
+	reconcileLifeWeeklyRun,
+	recordLifeWeeklyFailure,
+	reserveLifeWeeklyRun,
+} from "./weekly-runs.ts";
 
 export interface RunLifeResearchOptions {
 	readonly now?: Date;
@@ -74,6 +84,8 @@ export interface LifeStatus {
 	readonly steeringReady: boolean;
 	readonly canonicalBriefs: number;
 	readonly historicalLinks: number;
+	/** Reserved native weekly runs, so scheduled execution and its evidence can be compared. */
+	readonly weeklyRuns: readonly LifeWeeklyRunSummary[];
 }
 
 const withLedger = <A>(
@@ -726,6 +738,9 @@ const weeklyPeriod = (now: Date) => {
 	return { id: `${year}-W${week}`, year, week, month, calendarYear };
 };
 
+/** ISO planning period (`YYYY-Www`) that a weekly run started at `now` prepares. */
+export const lifeWeeklyPeriodId = (now: Date): string => weeklyPeriod(now).id;
+
 /** Prepare the existing bounded weekly prompt without AI, journal or crawl-state writes. */
 export const prepareLifeWeeklyPrompt = (
 	settings: LifeOrchestratorSettings,
@@ -739,6 +754,16 @@ export const prepareLifeWeeklyPrompt = (
 	Effect.gen(function* () {
 		const runner = yield* CommandRunner;
 		const period = weeklyPeriod(now);
+		// Refuse before collecting state: an unreconciled run already owns this period.
+		yield* Effect.try({
+			try: () => assertLifeWeeklyPeriodOpen(settings.paths.reviewDirectory, period.id),
+			catch: (cause) =>
+				new LifeOrchestratorError({
+					code: "artifact_invalid",
+					message: cause instanceof Error ? cause.message : "Weekly period is not open.",
+					cause,
+				}),
+		});
 		const runId = `weekly:${period.id}:${randomUUID()}`;
 		const paths = yield* Effect.try({
 			try: () => {
@@ -857,8 +882,9 @@ export const runLifeWeekly = (
 					}),
 				);
 			const period = weeklyPeriod(options.now ?? new Date());
+			const nativePreview = options.nativePreview;
 			const request = yield* Effect.try({
-				try: () => readNativeLifeRequest(options.nativePreview!, period.id, "weekly"),
+				try: () => readNativeLifeRequest(nativePreview, period.id, "weekly"),
 				catch: (cause) =>
 					new LifeOrchestratorError({
 						code: "artifact_invalid",
@@ -866,75 +892,129 @@ export const runLifeWeekly = (
 						cause,
 					}),
 			});
-			// The grant ledger fences grant IDs, not run IDs. Reserve this run's
-			// artifact namespace exclusively, retaining it after failure/interruption.
-			// A new grant cannot silently replay an uncertain run.
-			const briefPath = yield* Effect.try({
-				try: () => {
-					mkdirSync(settings.paths.reviewDirectory, { recursive: true, mode: 0o700 });
-					const directory = join(
+			const reservation = yield* Effect.try({
+				try: () => ({
+					runId: request.runId,
+					periodId: period.id,
+					grantId: nativeLifeGrantId(nativePreview, request),
+					authority: nativePreview.local ? ("local" as const) : ("signed" as const),
+					requestPath: nativePreview.requestPath,
+					promptHash: createHash("sha256").update(request.prompt).digest("hex"),
+				}),
+				catch: (cause) =>
+					new LifeOrchestratorError({
+						code: "artifact_invalid",
+						message: "Invalid native weekly grant.",
+						cause,
+					}),
+			});
+			// The grant ledger fences grant IDs, not run IDs or periods. Reserve this run's
+			// artifact namespace exclusively, and only when its planning period has no
+			// unreconciled run: a new grant cannot silently replay an uncertain or completed
+			// period. The reservation and its run record are retained after failure.
+			const directory = yield* Effect.try({
+				try: () =>
+					reserveLifeWeeklyRun(
+						settings.paths.stateDirectory,
 						settings.paths.reviewDirectory,
-						`weekly-${period.id}-${createHash("sha256").update(request.runId).digest("hex")}`,
-					);
-					mkdirSync(directory, { mode: 0o700 });
-					return join(directory, "draft.md");
-				},
+						reservation,
+						options.now ?? new Date(),
+					),
 				catch: (cause) =>
 					new LifeOrchestratorError({
 						code: "artifact_invalid",
 						message:
-							"Weekly run reserved or unavailable; operator reconciliation of grant status and artifacts required before retrying.",
+							cause instanceof Error && cause.message.startsWith("Weekly run reserved")
+								? cause.message
+								: "Weekly run reserved or unavailable; operator reconciliation of grant status and artifacts required before retrying.",
 						cause,
 					}),
 			});
-			const generated = yield* Effect.tryPromise({
-				try: (signal) =>
-					generateNativeLifePreview(settings, options.nativePreview!, request, signal, options.draftProvider),
-				catch: (cause) =>
-					new LifeOrchestratorError({
-						code: "artifact_invalid",
-						message: "Native weekly generation failed; reconcile the consumed grant before retrying.",
-						cause,
-					}),
-			});
+			const briefPath = join(directory, "draft.md");
 			const hygienePath = `${briefPath}.generated.md`;
-			yield* Effect.try({
-				try: () => {
-					mkdirSync(settings.paths.reviewDirectory, { recursive: true, mode: 0o700 });
-					saveNativeLifeReview(`${hygienePath}.json`, generated.markdown, generated.receipt);
-					writeFileSync(hygienePath, generated.markdown, { flag: "wx", mode: 0o600, flush: true });
-				},
-				catch: (cause) =>
-					new LifeOrchestratorError({
-						code: "artifact_invalid",
-						message: "Unable to preserve generated weekly draft.",
-						cause,
+			let phase = "generation";
+			const draft = Effect.gen(function* () {
+				const generated = yield* Effect.tryPromise({
+					try: (signal) =>
+						generateNativeLifePreview(settings, nativePreview, request, signal, options.draftProvider),
+					catch: (cause) =>
+						new LifeOrchestratorError({
+							code: "artifact_invalid",
+							message: "Native weekly generation failed; reconcile the consumed grant before retrying.",
+							cause,
+						}),
+				});
+				phase = "preserve-raw-draft";
+				yield* Effect.try({
+					try: () => {
+						saveNativeLifeReview(`${hygienePath}.json`, generated.markdown, generated.receipt);
+						writeFileSync(hygienePath, generated.markdown, { flag: "wx", mode: 0o600, flush: true });
+					},
+					catch: (cause) =>
+						new LifeOrchestratorError({
+							code: "artifact_invalid",
+							message: "Unable to preserve generated weekly draft.",
+							cause,
+						}),
+				});
+				phase = "text-hygiene";
+				const hygiene = yield* runCompatibilityCommand(runner, {
+					id: `${request.runId}:hygiene`,
+					label: "Life draft text hygiene",
+					executable: "jarvis",
+					args: ["text-hygiene", "clean", hygienePath, "--report"],
+					cwd: settings.paths.projectRoot,
+				});
+				if (hygiene.status === "failed")
+					return yield* Effect.fail(commandFailure("Life text hygiene", hygiene.stderr || hygiene.error || ""));
+				phase = "save-reviewed-draft";
+				yield* Effect.try({
+					try: () => {
+						const markdown = readPrivateLifeInput(hygienePath, 2 * 1024 * 1024);
+						if (!markdown.trim()) throw new Error("Cleaned weekly draft is empty.");
+						saveNativeLifeReview(`${briefPath}.review.json`, markdown, generated.receipt);
+						writeFileSync(briefPath, markdown, { flag: "wx", mode: 0o600, flush: true });
+					},
+					catch: (cause) =>
+						new LifeOrchestratorError({
+							code: "artifact_invalid",
+							message: "Unable to save reviewed weekly draft.",
+							cause,
+						}),
+				});
+				return { runId: request.runId, briefPath, published: false } as const;
+			});
+			// Every failure after reservation leaves one attributable record naming the run,
+			// grant state and failing phase, so reconciliation never depends on terminal output.
+			const record = (status: "failed" | "interrupted", error: unknown) =>
+				Result.try(() =>
+					recordLifeWeeklyFailure(
+						directory,
+						settings.paths.stateDirectory,
+						reservation,
+						{ status, phase, error, rawDraftPreserved: existsSync(`${hygienePath}.json`) },
+						new Date(),
+					),
+				);
+			return yield* draft.pipe(
+				Effect.onInterrupt(() =>
+					Effect.sync(() => {
+						record("interrupted", new Error("Weekly run interrupted."));
 					}),
-			});
-			const hygiene = yield* runCompatibilityCommand(runner, {
-				id: `${request.runId}:hygiene`,
-				label: "Life draft text hygiene",
-				executable: "jarvis",
-				args: ["text-hygiene", "clean", hygienePath, "--report"],
-				cwd: settings.paths.projectRoot,
-			});
-			if (hygiene.status === "failed")
-				return yield* Effect.fail(commandFailure("Life text hygiene", hygiene.stderr || hygiene.error || ""));
-			yield* Effect.try({
-				try: () => {
-					const markdown = readPrivateLifeInput(hygienePath, 2 * 1024 * 1024);
-					if (!markdown.trim()) throw new Error("Cleaned weekly draft is empty.");
-					saveNativeLifeReview(`${briefPath}.review.json`, markdown, generated.receipt);
-					writeFileSync(briefPath, markdown, { flag: "wx", mode: 0o600, flush: true });
-				},
-				catch: (cause) =>
-					new LifeOrchestratorError({
-						code: "artifact_invalid",
-						message: "Unable to save reviewed weekly draft.",
-						cause,
-					}),
-			});
-			return { runId: request.runId, briefPath, published: false };
+				),
+				Effect.mapError((error) => {
+					const recorded = record("failed", error);
+					return new LifeOrchestratorError({
+						code: error.code,
+						message: `${error.message} Run ${request.runId} (grant ${reservation.grantId}); ${
+							Result.isSuccess(recorded)
+								? `failure recorded at ${recorded.success}`
+								: `failure record could not be written in ${directory}`
+						}.`,
+						cause: error,
+					});
+				}),
+			);
 		}
 		if (options.publish === false)
 			return yield* Effect.fail(
@@ -964,6 +1044,27 @@ export const runLifeWeekly = (
 			return yield* Effect.fail(commandFailure("Weekly plan", result.stderr || result.error || ""));
 	});
 
+/**
+ * Record the owner's decision on one reserved weekly run so its period may run again.
+ * Writes one reconciliation record; never resets grants, calls a provider or delivers.
+ */
+export const reconcileLifeWeekly = (
+	settings: LifeOrchestratorSettings,
+	run: string,
+	reason: string,
+	now: Date = new Date(),
+): Effect.Effect<LifeWeeklyReconciliation, LifeOrchestratorError> =>
+	Effect.try({
+		try: () =>
+			reconcileLifeWeeklyRun(settings.paths.stateDirectory, settings.paths.reviewDirectory, run, reason, now),
+		catch: (cause) =>
+			new LifeOrchestratorError({
+				code: "artifact_invalid",
+				message: cause instanceof Error ? cause.message : "Unable to reconcile the weekly run.",
+				cause,
+			}),
+	});
+
 export const inspectLifeStatus = (
 	settings: LifeOrchestratorSettings,
 ): Effect.Effect<LifeStatus, LifeOrchestratorError> =>
@@ -988,6 +1089,15 @@ export const inspectLifeStatus = (
 				steeringReady: existsSync(settings.paths.steeringPath),
 				canonicalBriefs: history.result.briefsScanned,
 				historicalLinks: history.result.linksFound,
+				weeklyRuns: yield* Effect.try({
+					try: () => listLifeWeeklyRuns(settings.paths.reviewDirectory),
+					catch: (cause) =>
+						new LifeOrchestratorError({
+							code: "store_read_failed",
+							message: "Unable to inspect weekly run evidence.",
+							cause,
+						}),
+				}),
 			};
 		}),
 	);

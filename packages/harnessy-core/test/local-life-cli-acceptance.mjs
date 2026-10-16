@@ -65,8 +65,8 @@ assert(address && typeof address === "object");
 const seam = join(root, "loopback.mjs");
 const guard = fileURLToPath(new URL("../../harnessy-local-host/test/support/fixture-network-guard.mjs", import.meta.url));
 writeFileSync(seam, `import ${JSON.stringify(guard)};\nconst guarded = globalThis.fetch;\nglobalThis.fetch = (input, init) => { const url = new URL(input instanceof Request ? input.url : input); const refresh = url.href === 'https://auth.openai.com/oauth/token'; if (!refresh && (url.origin !== 'https://chatgpt.com' || !url.pathname.endsWith('/codex/responses'))) throw new Error('Unexpected provider destination'); if (init.redirect !== 'error') throw new Error('Missing redirect protection'); if (refresh && !init.signal) throw new Error('Missing refresh deadline'); return guarded('http://127.0.0.1:${address.port}/' + (refresh ? 'token' : 'responses'), init); };\n`);
-const run = (args, kind = "weekly") => new Promise((resolve, reject) => {
-	const child = spawn(process.execPath, ["--experimental-strip-types", "--import", seam, cli, "jarvis", "life", "draft", "--kind", kind, "--target", root, "--home-root", root, "--timeout-seconds", "30", "--json", ...args], {
+const life = args => new Promise((resolve, reject) => {
+	const child = spawn(process.execPath, ["--experimental-strip-types", "--import", seam, cli, "jarvis", "life", ...args, "--target", root, "--home-root", root], {
 		cwd: root, env: { ...fixtureEnvironment(), PATH: `${bin}:/usr/bin:/bin`, USER: "fixture", FLOW_USER: "fixture", HSY_CODING_AGENT_DIR: root },
 		stdio: ["ignore", "pipe", "pipe"],
 	});
@@ -77,6 +77,27 @@ const run = (args, kind = "weekly") => new Promise((resolve, reject) => {
 	child.once("error", error => { clearTimeout(timer); reject(error); });
 	child.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal, stdout, stderr }); });
 });
+const run = (args, kind = "weekly") => life(["draft", "--kind", kind, "--timeout-seconds", "30", "--json", ...args]);
+// A weekly period with an unreconciled run refuses a fresh grant before any provider call.
+const openRuns = async () => {
+	const status = await life(["status", "--json"]);
+	assert.equal(status.code, 0, JSON.stringify(status));
+	return JSON.parse(status.stdout).weeklyRuns.filter(entry => entry.state !== "reconciled");
+};
+const reconcileOpenRun = async expectedState => {
+	const runs = await openRuns();
+	assert.equal(runs.length, 1, JSON.stringify(runs));
+	assert.equal(runs[0].state, expectedState);
+	const before = requests;
+	const refused = await run([]);
+	assert.notEqual(refused.code, 0);
+	assert(refused.stderr.includes("No new grant was consumed"), refused.stderr);
+	assert.equal(requests, before, "An unreconciled period must not reach the provider");
+	const reconciled = await life(["weekly-reconcile", "--run", runs[0].runHash, "--reason", "acceptance fixture", "--json"]);
+	assert.equal(reconciled.code, 0, JSON.stringify(reconciled));
+	assert.equal(JSON.parse(reconciled.stdout).priorState, expectedState);
+	return runs[0];
+};
 try {
 	const generated = await run([]);
 	assert.equal(generated.code, 0, JSON.stringify(generated));
@@ -110,6 +131,7 @@ try {
 	assert.equal(dailyReview.receipt.kind, "daily");
 	assert.equal(dailyReview.artifactHash, createHash("sha256").update(readFileSync(daily.briefPath)).digest("hex"));
 	const beforeFailure = new Set(readdirSync(reviewRoot));
+	await reconcileOpenRun("drafted");
 	rejectCredential = true;
 	const rejected = await run([]);
 	assert.notEqual(rejected.code, 0);
@@ -121,6 +143,11 @@ try {
 	const failedReplay = await run(["--native-request", join(reviewRoot, failedPrompt, "request.json")]);
 	assert.notEqual(failedReplay.code, 0);
 	assert.equal(requests, 3);
+	const rejectedRun = await reconcileOpenRun("failed");
+	const rejectedOutcome = readFileSync(join(reviewRoot, rejectedRun.name, "outcome.json"), "utf8");
+	assert.equal(JSON.parse(rejectedOutcome).phase, "generation");
+	assert(JSON.parse(rejectedOutcome).grant.consumedAt, "The failure record names the consumed grant");
+	assert(!rejectedOutcome.includes("PRIVATE_PROVIDER_ERROR_SENTINEL") && !rejectedOutcome.includes(token));
 	assert.deepEqual(readFileSync(authPath), authBefore);
 	const expired = JSON.parse(authBefore.toString());
 	expired["openai-codex"].expires = 0;
@@ -131,6 +158,7 @@ try {
 	assert.equal(requests, 3, "Expired access-only credentials cannot reach generation");
 	assert.deepEqual(readFileSync(authPath), expiredBefore);
 	assert.equal(refreshRequests, 0);
+	await reconcileOpenRun("failed");
 	expired["openai-codex"].refresh = "synthetic-refresh";
 	writeFileSync(authPath, JSON.stringify(expired), { mode: 0o600 });
 	rejectCredential = false;
@@ -143,7 +171,7 @@ try {
 	assert.equal(renewedCredential.refresh, "synthetic-rotated");
 	assert.equal(JSON.parse(renewedRun.stdout).published, false);
 	assert(!existsSync(join(root, ".agents/life/crawl-state.json")));
-	console.log(JSON.stringify({ passed: true, root, cli, requests, refreshRequests, weeklyArtifact: result.briefPath, dailyArtifact: daily.briefPath, replayRejected: true, credentialRejectionNoRetry: true, expiredCredentialNoCall: true, sameAccountRefresh: true, publication: false }));
+	console.log(JSON.stringify({ passed: true, root, cli, requests, refreshRequests, weeklyArtifact: result.briefPath, dailyArtifact: daily.briefPath, replayRejected: true, unreconciledPeriodRefused: true, credentialRejectionNoRetry: true, expiredCredentialNoCall: true, sameAccountRefresh: true, publication: false }));
 } finally {
 	await new Promise(resolve => server.close(resolve));
 }

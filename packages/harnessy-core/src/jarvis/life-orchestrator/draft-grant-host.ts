@@ -32,6 +32,32 @@ export const lifeDraftGrantPayload = (issuer: string, input: LifeDraftAuthority)
 	]);
 };
 
+export interface LifeDraftGrantState {
+	readonly grantId: string;
+	readonly consumedAt: string | null;
+	readonly revoked: boolean;
+}
+
+/** Read-only reconciliation view of the consumption ledger. It never creates,
+ * consumes, revokes or resets a grant; an absent ledger or row returns undefined.
+ */
+export const readLifeDraftGrantState = (stateDirectory: string, grantId: string): LifeDraftGrantState | undefined => {
+	const path = join(resolve(stateDirectory), "draft-grants.sqlite3");
+	if (!existsSync(path)) return undefined;
+	const database = new DatabaseSync(path, { readOnly: true, timeout: 10_000 });
+	try {
+		const row = database.prepare("SELECT consumed_at,revoked FROM life_draft_grants WHERE grant_id=?").get(grantId);
+		if (!row) return undefined;
+		return {
+			grantId,
+			consumedAt: typeof row.consumed_at === "string" ? row.consumed_at : null,
+			revoked: row.revoked !== 0,
+		};
+	} finally {
+		database.close();
+	}
+};
+
 /** POSIX, cooperative same-owner local host. Not a defence against a malicious same-UID process.
  * Owns only consumption/revocation evidence; never stores private keys or mints authority.
  * Keep this store when reconciling a crash: replacing it from stale backup permits replay.

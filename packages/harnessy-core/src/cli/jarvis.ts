@@ -22,6 +22,7 @@ import {
 	inspectLifeStatus,
 	prepareLifeDailyPrompt,
 	prepareLifeWeeklyPrompt,
+	reconcileLifeWeekly,
 	runLifeDaily,
 	runLifeResearch,
 	runLifeWeekly,
@@ -166,6 +167,11 @@ export const jarvisLifeStatusCommand = Command.make(
 				`Reading queue: ${result.counts.available} unseen | ${result.counts.delivered} delivered | ${result.counts.reserved} reserved`,
 			);
 			yield* Console.log(`Historical briefs: ${result.canonicalBriefs} (${result.historicalLinks} reading links)`);
+			const open = result.weeklyRuns.filter((run) => run.state !== "drafted" && run.state !== "reconciled");
+			yield* Console.log(
+				`Weekly runs: ${result.weeklyRuns.length} reserved | ${open.length} need reconciliation before their period runs again`,
+			);
+			for (const run of open) yield* Console.log(`  ${run.periodId} ${run.state} ${run.runHash}`);
 			yield* Console.log(`State: ${result.databasePath}`);
 		}),
 ).pipe(Command.withDescription("Inspect the V2 Life scheduler and permanent reading ledger"));
@@ -365,6 +371,38 @@ export const jarvisLifeWeeklyCommand = Command.make(
 	),
 );
 
+export const jarvisLifeWeeklyReconcileCommand = Command.make(
+	"weekly-reconcile",
+	{
+		...lifeOptions,
+		run: Options.string("run").pipe(
+			Options.withDescription("Reserved weekly run: its directory name, run hash, or weekly:<period>:<id> run ID."),
+		),
+		reason: Options.string("reason").pipe(
+			Options.withDescription("Why this run is abandoned or superseded; stored with the decision."),
+		),
+	},
+	({ target, homeRoot, compatibilityRoot, run, reason, json }) =>
+		Effect.gen(function* () {
+			const result = yield* reconcileLifeWeekly(lifeSettings(target, homeRoot, compatibilityRoot), run, reason);
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis life weekly-reconcile", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(`Recorded ${result.decision} weekly run ${result.name} (was ${result.priorState}).`);
+			yield* Console.log(
+				result.grant
+					? `Grant ${result.grant.grantId} stays ${result.grant.revoked ? "revoked" : "consumed"}${result.grant.consumedAt ? ` (consumed ${result.grant.consumedAt})` : ""}.`
+					: "No grant record was found for this run.",
+			);
+			yield* Console.log(`Decision: ${result.path}`);
+		}),
+).pipe(
+	Command.withDescription(
+		"Record the owner's decision on a failed, unrecorded or drafted weekly run so its period may run again; never resets grants, calls a provider or delivers",
+	),
+);
+
 export const jarvisLifeDraftCommand = Command.make(
 	"draft",
 	{
@@ -463,6 +501,7 @@ export const jarvisLifeCommand = Command.make("life").pipe(
 		jarvisLifeResearchCommand,
 		jarvisLifeDailyCommand,
 		jarvisLifeWeeklyCommand,
+		jarvisLifeWeeklyReconcileCommand,
 		jarvisLifeDraftCommand,
 		jarvisLifeScheduleCommand,
 	] as const),
