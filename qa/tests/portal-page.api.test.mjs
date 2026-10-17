@@ -39,7 +39,7 @@ test("PRTP-002 the page renders API data as text and links only to loopback serv
 
 test("PRTP-003 the page signs in with a one-time code and renders seeded data end to end", () => {
 	run("harnessy-local-host", "test/portal-page-server.test.ts", "renders seeded|already spent", 2);
-	run("harnessy-local-host", "test/portal-page.test.ts", "clears the code|drops a slower|malformed, refused|storage is blocked|expired or malformed|forgets a session|without its main element|from a browser window", 8);
+	run("harnessy-local-host", "test/portal-page.test.ts", "clears the code|new code opened|drops a slower|malformed, refused|storage is blocked|expired or malformed|forgets a session|without its main element|from a browser window", 9);
 });
 
 test("PRTP-004 the page adds no writer", () => {
