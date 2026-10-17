@@ -4,7 +4,9 @@
  * It is a known non-writer. It reads through the Core read model, spawns
  * nothing but the injected launchd probe, sets and reads no cookies, sends no
  * CORS headers and never logs request headers, URLs or secrets. Every data
- * response is checked against its schema before it is sent or cached.
+ * response is checked against its schema before it is sent or cached. With
+ * `page`, it also serves the local page's static files under the same headers
+ * and CSP; those files hold no secret and need no credential.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -18,6 +20,7 @@ import {
 
 import { bearerSecret, PortalSessions } from "./auth.ts";
 import { buildPortalOpenApi } from "./openapi.ts";
+import type { PortalPageAssets } from "./page-assets.ts";
 import { PORTAL_ROUTES, type PortalRoute } from "./routes.ts";
 import type { PortalSources } from "./sources.ts";
 
@@ -55,6 +58,8 @@ export interface PortalServerOptions {
 	readonly clock?: () => number;
 	readonly cacheTtlMs?: number;
 	readonly log?: (entry: PortalLogEntry) => void;
+	/** The page's static files (`/`, `/app.css`, `/*.js`). Without them only the API is served. */
+	readonly page?: PortalPageAssets;
 }
 
 export interface PortalServer {
@@ -215,6 +220,22 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		if (request.method === "OPTIONS") throw new RequestRefused(405, "method_not_allowed");
 		if (!url.startsWith("/")) throw new RequestRefused(400, "invalid_target");
 		const path = url.split("?", 1)[0]!;
+		const asset = options.page?.get(path);
+		if (asset !== undefined) {
+			onRoute(path);
+			if (request.method !== "GET") {
+				respond(response, 405, { error: "method_not_allowed" }, { Allow: "GET" });
+				return;
+			}
+			// A static file is the same for every visitor and carries no secret; it needs no credential.
+			response.writeHead(200, {
+				...SECURITY_HEADERS,
+				"Content-Type": asset.contentType,
+				"Content-Length": String(asset.body.byteLength),
+			});
+			response.end(asset.body);
+			return;
+		}
 		const route = PORTAL_ROUTES.find((candidate) => candidate.path === path);
 		if (route === undefined) throw new RequestRefused(404, "not_found");
 		onRoute(route.path);

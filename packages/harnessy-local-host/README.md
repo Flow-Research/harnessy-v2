@@ -106,6 +106,12 @@ harnessy-portal service-plan [--port 8790] [--state-dir DIR]
   or bootstrap file. It starts only `/bin/launchctl print gui/<uid>/<label>`
   for the fixed Harnessy labels.
 - **Service.** `service-plan` prints the LaunchAgent and installs nothing.
+- **Page.** `serve` also serves a small read-only page at `/` (Today, Health
+  and Connections). `open` signs it in with a one-time code in the URL
+  fragment. The page and its scripts are sent with the same strict CSP; they
+  contain no secret and need no credential, and every data request still needs
+  the page token. See [`docs/portal.md`](../../docs/portal.md) for how to run
+  it.
 
 ## Guarded programmatic smoke runtime
 
