@@ -225,6 +225,13 @@ describe("meeting publication read model", () => {
 		expect(readMeetingSummary(makeConfig(empty), { now: NOW }).queue).toMatchObject({ state: "missing" });
 		mkdirSync(join(empty, "state"), { mode: 0o700 });
 		expect(readMeetingSummary(makeConfig(empty), { now: NOW }).providers).toMatchObject({ state: "missing" });
+		if (process.getuid?.() !== 0) {
+			// An unreadable state directory degrades the tiles instead of throwing.
+			chmodSync(join(empty, "state"), 0o000);
+			const unreadable = readMeetingSummary(makeConfig(empty), { now: NOW });
+			chmodSync(join(empty, "state"), 0o700);
+			expect(unreadable.queue).toMatchObject({ state: "error", reason: "read_failed" });
+		}
 		chmodSync(join(empty, "state"), 0o755);
 		expect(readMeetingSummary(makeConfig(empty), { now: NOW }).queue).toMatchObject({
 			state: "unsafe",

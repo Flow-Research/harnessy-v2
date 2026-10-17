@@ -8,7 +8,7 @@
 import { spawnSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import * as Result from "effect/Result";
 
@@ -100,16 +100,23 @@ export const redactLogLine = (line: string): string =>
 		.replace(/(\S)\?(?!\[redacted\])\S+/gu, "$1?[redacted]")
 		.replace(/\bBearer\s+\S+/giu, "Bearer [redacted]")
 		.replace(
-			/\b([A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|authorization|cookie))(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)/giu,
+			/\b([A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|authorization|cookie))("?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)/giu,
 			"$1$2[redacted]",
 		)
 		.trim()
 		.slice(0, MAX_LOG_LINE);
 
+/**
+ * The last line of a log inside `homeRoot` (already canonical). The parent directory is
+ * resolved through `realpath`, so a symlinked directory cannot lead outside the home
+ * directory; the file itself must not be a symlink.
+ */
 const lastLine = (path: string, homeRoot: string) => {
 	const resolved = resolve(path);
-	if (!resolved.startsWith(`${homeRoot}${sep}`)) return null;
-	const file = readBoundedFile(resolved, LOG_TAIL_BYTES, true);
+	const canonical = join(realpathSync(dirname(resolved)), basename(resolved));
+	const fromHome = relative(homeRoot, canonical);
+	if (fromHome === "" || fromHome.startsWith("..") || isAbsolute(fromHome)) return null;
+	const file = readBoundedFile(canonical, LOG_TAIL_BYTES, true);
 	const lines = file.bytes.toString("utf8").split("\n");
 	// In a truncated tail the first line is cut; drop it unless it is the only line.
 	if (file.truncated && lines.length > 1) lines.shift();
@@ -148,7 +155,9 @@ export const readServiceHealth = (
 	options: ServiceHealthReadOptions = {},
 ): Readonly<Record<string, TileResult<ServiceHealthData>>> => {
 	const now = readClock(options);
-	const homeRoot = resolve(options.homeRoot ?? homedir());
+	const requestedHome = resolve(options.homeRoot ?? homedir());
+	const canonicalHome = Result.try(() => realpathSync(requestedHome));
+	const homeRoot = Result.isSuccess(canonicalHome) ? canonicalHome.success : requestedHome;
 	const tiles: Record<string, TileResult<ServiceHealthData>> = {};
 	for (const label of labels) {
 		tiles[label] = guardTile(now, () => {

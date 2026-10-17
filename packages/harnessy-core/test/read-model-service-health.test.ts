@@ -110,6 +110,9 @@ describe("launchctl parsing", () => {
 			"POST /exchange?[redacted] Bearer [redacted]",
 		);
 		expect(redactLogLine("is it ready? yes")).toBe("is it ready? yes");
+		expect(redactLogLine(`{"access_token":"${SECRET}","password": "${SECRET}","ok":true}`)).toBe(
+			'{"access_token":[redacted],"password": [redacted],"ok":true}',
+		);
 		expect(redactLogLine("x".repeat(400))).toHaveLength(300);
 	});
 });
@@ -187,6 +190,11 @@ describe("service health", () => {
 			readServiceHealth([label], () => ({ status: 0, stdout: `x = {\n\tstate = waiting\n}\n`, stderr: "" }), {
 				homeRoot: home,
 			})[label]?.data?.lastLogLine,
+		).toBeNull();
+		// A directory symlink inside home that points outside it does not widen the boundary.
+		symlinkSync(outside, join(home, "linked-dir"));
+		expect(
+			read(join(home, "linked-dir", "out.log"), join(home, "absent-dir", "err.log"))?.data?.lastLogLine,
 		).toBeNull();
 		writeFileSync(join(home, "empty.log"), "\n\n");
 		writeFileSync(join(home, "long.log"), `${"a".repeat(5_000)}\n${"b".repeat(500)}\n`);

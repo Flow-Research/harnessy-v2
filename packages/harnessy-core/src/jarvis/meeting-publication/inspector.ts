@@ -357,8 +357,9 @@ export const inspectMeetingPublicationQueue = (
 ): MeetingPublicationQueueInspection => {
 	if (config.statePath !== null && config.statePath.trim().length > 0) {
 		const journal = `${resolve(config.statePath, "meeting-publication.sqlite3")}-journal`;
-		if (lstatSync(journal, { throwIfNoEntry: false }) !== undefined)
-			return { state: "busy", reason: "journal_present" };
+		const probe = Result.try(() => lstatSync(journal, { throwIfNoEntry: false }));
+		if (Result.isFailure(probe)) return { state: "error", reason: "read_failed" };
+		if (probe.success !== undefined) return { state: "busy", reason: "journal_present" };
 	}
 	const limit = Math.max(1, Math.min(Math.trunc(options.pendingLimit ?? 20), 100));
 	const read = Result.try(() =>
