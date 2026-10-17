@@ -195,6 +195,10 @@ const proveCompatibilityAbsentWith = (run: ProcessProbeRunner, platform: NodeJS.
 		if (Number(match[1]) !== uid || Number(match[2]) === process.pid) continue;
 		if (isCommunityCompatibilityWriterCommand(match[3])) {
 			const launchExecutable = command("ps", "/bin/ps", ["-p", match[2], "-o", "comm="]);
+			// A PID-scoped probe that exits non-zero (e.g. the process ended between scans)
+			// answers nothing about a writer; the next full scan decides.
+			if (launchExecutable.status !== 0)
+				throw new WriterCheckInconclusiveError("ps", "exit_status", launchExecutable.status ?? undefined);
 			const processExecutable =
 				platform === "linux"
 					? `/proc/${match[2]}/exe`
@@ -204,6 +208,8 @@ const proveCompatibilityAbsentWith = (run: ProcessProbeRunner, platform: NodeJS.
 								throw new Error("unsupported_platform");
 							})();
 			const confirmed = command("ps", "/bin/ps", ["-p", match[2], "-o", "uid=,pid=,command="]);
+			if (confirmed.status !== 0)
+				throw new WriterCheckInconclusiveError("ps", "exit_status", confirmed.status ?? undefined);
 			const confirmedMatch = parseCommunityProcessConfirmation(confirmed.stdout);
 			if (
 				launchExecutable.status === 0 &&

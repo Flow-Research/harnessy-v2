@@ -258,9 +258,13 @@ const readLinuxBootId = () => {
 	}
 };
 
-const readDarwinBootId = () => {
-	const result = runWriterCheckProbe(liveProbeRunner, "sysctl", "/usr/sbin/sysctl", ["-n", "kern.boottime"]);
-	if (result.status !== 0) fail("unsupported_platform");
+/**
+ * @internal Boot identity from `sysctl`. A probe that does not complete or exits non-zero is
+ * inconclusive (retried by a running service); malformed successful output is unsupported.
+ */
+export const readMeetingPublicationDarwinBootId = (run: ProcessProbeRunner = liveProbeRunner) => {
+	const result = runWriterCheckProbe(run, "sysctl", "/usr/sbin/sysctl", ["-n", "kern.boottime"]);
+	if (result.status !== 0) throw new WriterCheckInconclusiveError("sysctl", "exit_status", result.status ?? undefined);
 	const value = result.stdout.trim();
 	if (!/^\{ sec = \d+, usec = \d+ \} .+$/u.test(value)) fail("unsupported_platform");
 	return value;
@@ -272,7 +276,7 @@ const liveObservation = (): MeetingPublicationSmokeRuntimeObservation => {
 		platform === "darwin" ? "darwin" : platform === "linux" ? "linux" : fail("unsupported_platform");
 	const uid = process.geteuid?.() ?? fail("unsupported_platform");
 	if (!Number.isSafeInteger(uid) || uid < 0) fail("unsupported_platform");
-	const bootId = supportedPlatform === "darwin" ? readDarwinBootId() : readLinuxBootId();
+	const bootId = supportedPlatform === "darwin" ? readMeetingPublicationDarwinBootId() : readLinuxBootId();
 	const executablePath = realpathSync(process.execPath);
 	return {
 		now: Date.now(),
@@ -636,7 +640,8 @@ const assertCurrentFullReviewItem = (
 	assertMeetingPublicationRollbackDatabaseFile(dbPath, before);
 };
 
-class MeetingRuntimeSession {
+/** @internal Exported for owner-session tests; not part of the package API. */
+export class MeetingRuntimeSession {
 	readonly leaseId = randomUUID();
 	readonly database: DatabaseSync;
 	readonly verified: VerifiedMeetingPublicationRuntimeInput;
@@ -1020,7 +1025,14 @@ class MeetingRuntimeSession {
 					await assertMeetingPublicationArtifactInventoryCurrentAsync(this.verified, started, signal);
 					// No grant or replay transaction spans the cooperative scan. A close,
 					// cancellation, or competing validation may have run while it yielded.
-					if (signal.aborted || !this.active || !this.bindingAllowed(operation, binding)) return false;
+					// A keep-alive may also have paused this session on an unanswered probe meanwhile.
+					if (
+						signal.aborted ||
+						!this.active ||
+						this.writerCheckPending !== undefined ||
+						!this.bindingAllowed(operation, binding)
+					)
+						return false;
 					const validation = Result.try({
 						try: () => {
 							const timeCurrent = (observation: MeetingPublicationSmokeRuntimeObservation) => {

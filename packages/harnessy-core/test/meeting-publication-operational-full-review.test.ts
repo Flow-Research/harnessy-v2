@@ -27,6 +27,7 @@ import { TestClock } from "effect/testing";
 
 import { JarvisMeetingPublicationConfig } from "../src/jarvis/config-model.ts";
 import {
+	MeetingPublicationWriteBinding,
 	type MeetingPublicationWriteGrant,
 	validateMeetingPublicationWriteGrant,
 } from "../src/jarvis/meeting-publication/authority.ts";
@@ -40,7 +41,9 @@ import {
 import {
 	inspectMeetingPublicationService,
 	type MeetingPublicationFullReviewRuntimeHost,
+	MeetingPublicationSmokeRuntimeSystemReference,
 	type MeetingPublicationWorkerProviderFactory,
+	MeetingRuntimeSession,
 	makeMeetingPublicationWriterProof,
 	revokeStoppedMeetingPublicationService,
 	runAuthorizedMeetingPublicationFullReview,
@@ -1771,6 +1774,47 @@ describe("meeting publication authorized full-review runtime", () => {
 				expect(replayState(result.fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
 			}),
 		);
+
+		it("denies a grant whose validation was suspended while a keep-alive paused the session", async () => {
+			const fixture = await setup({ approved: true, reviewPort: 18_795 });
+			const base = Effect.runSync(fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference));
+			let session: MeetingRuntimeSession | undefined;
+			let failObservation = false;
+			let pauseDuringNextObservation = false;
+			let paused = false;
+			const system = {
+				...base,
+				observe: () => {
+					if (failObservation) throw new WriterCheckInconclusiveError("sysctl", "timeout");
+					if (pauseDuringNextObservation && session !== undefined) {
+						// This is the validation's pre-scan observation: it already passed the pause
+						// check. A keep-alive now observes an unanswered probe before the scan resumes.
+						pauseDuringNextObservation = false;
+						failObservation = true;
+						expect(() => session?.assertReviewAlive()).toThrow(WriterCheckInconclusiveError);
+						failObservation = false;
+						paused = session.writerCheckPaused;
+					}
+					return base.observe();
+				},
+				proveNoKnownV1Writers: () => undefined,
+			};
+			const verified = verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe());
+			session = new MeetingRuntimeSession(verified, system);
+			try {
+				const binding = new MeetingPublicationWriteBinding({
+					sourcePath: fixture.config.sourcePath as string,
+					statePath: fixture.config.statePath as string,
+				});
+				expect(await Effect.runPromise(session.validator.validate("service_worker", binding))).toBe(true);
+				pauseDuringNextObservation = true;
+				expect(await Effect.runPromise(session.validator.validate("service_worker", binding))).toBe(false);
+				expect(paused).toBe(true);
+				expect(session.writerCheckPaused).toBe(true);
+			} finally {
+				session.close();
+			}
+		});
 
 		it.effect("stops at the first observed writer without a retry window", () =>
 			Effect.gen(function* () {

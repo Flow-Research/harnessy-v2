@@ -6,7 +6,10 @@ import * as Fiber from "effect/Fiber";
 import { TestClock } from "effect/testing";
 
 import { makeCommunityCompatibilityProof } from "../src/jarvis/community-briefing/operational-runtime.ts";
-import { makeMeetingPublicationWriterProof } from "../src/jarvis/meeting-publication/operational-runtime.ts";
+import {
+	makeMeetingPublicationWriterProof,
+	readMeetingPublicationDarwinBootId,
+} from "../src/jarvis/meeting-publication/operational-runtime.ts";
 import {
 	isWriterCheckInconclusiveReason,
 	type ProcessProbeResult,
@@ -246,6 +249,27 @@ describe("meeting writer proof over an injected runner", () => {
 	});
 });
 
+describe("meeting boot identity probe", () => {
+	it("treats an unanswered or failing sysctl as inconclusive and malformed output as unsupported", () => {
+		expect(inconclusive(() => readMeetingPublicationDarwinBootId(() => answer({ status: 1 })))).toEqual({
+			reason: "sysctl_exit_status",
+			exitStatus: 1,
+		});
+		expect(
+			inconclusive(() =>
+				readMeetingPublicationDarwinBootId(() =>
+					answer({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } }),
+				),
+			),
+		).toEqual({ reason: "sysctl_timeout", exitStatus: undefined });
+		expect(() => readMeetingPublicationDarwinBootId(() => answer({ stdout: "garbage\n" }))).toThrowError(
+			expect.objectContaining({ code: "unsupported_platform" }),
+		);
+		const boot = "{ sec = 1760000000, usec = 1 } Thu Oct  9 00:00:00 2025";
+		expect(readMeetingPublicationDarwinBootId(() => answer({ stdout: `${boot}\n` }))).toBe(boot);
+	});
+});
+
 describe("community compatibility proof over an injected runner", () => {
 	it("passes when no compatibility writer exists on macOS and Linux", () => {
 		expect(() => makeCommunityCompatibilityProof(makeScriptedProbeRunner().run, "darwin")()).not.toThrow();
@@ -296,6 +320,28 @@ describe("community compatibility proof over an injected runner", () => {
 		const lsofGarbage = (command: string, args: ReadonlyArray<string>) =>
 			command === "/usr/sbin/lsof" ? answer({ stdout: "garbage" }) : run(command, args);
 		expect(() => makeCommunityCompatibilityProof(lsofGarbage, "darwin")()).toThrow("probe_failed");
+	});
+
+	it("reports a failing PID-scoped ps probe for a writer-shaped process as inconclusive", () => {
+		const uid = process.geteuid?.() ?? 0;
+		const scan = answer({
+			stdout: `${uid} 77 jarvis community briefing review serve --token ${SCRIPTED_WRITER_ARGV_SECRET}\n`,
+		});
+		const runner =
+			(failing: "comm" | "confirm") =>
+			(command: string, args: ReadonlyArray<string>): ProcessProbeResult => {
+				if (command === "/bin/ps" && args[0] === "-axo") return scan;
+				if (command === "/bin/ps" && args.at(-1) === "comm=")
+					return failing === "comm" ? answer({ status: 1 }) : answer({ stdout: "node\n" });
+				if (command === "/bin/ps") return answer({ status: 1 });
+				if (command === "/usr/sbin/lsof") return answer({ stdout: "p77\0\nftxt\0n/usr/bin/node\0\n" });
+				throw new Error("unexpected OS command");
+			};
+		for (const failing of ["comm", "confirm"] as const)
+			expect(inconclusive(makeCommunityCompatibilityProof(runner(failing), "darwin"))).toEqual({
+				reason: "ps_exit_status",
+				exitStatus: 1,
+			});
 	});
 
 	it("reports crontab failures and observed crontab writers on Linux", () => {
