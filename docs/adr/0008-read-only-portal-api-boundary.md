@@ -29,7 +29,11 @@ Build the contract first and a page later.
    `127.0.0.1` only, checks the exact `Host` and `Origin`, sends no CORS
    headers, sets and reads no cookies, and has its own install token and
    short-lived page tokens. It never reuses the Executor token or another
-   service's token.
+   service's token. The install token never crosses the wire: the CLI asks
+   for a single-use challenge, checks the server's HMAC proof that it holds
+   the token for this exact origin, and only then sends a single-use HMAC
+   proof for one method and path. Another process that holds the port learns
+   nothing reusable.
 3. **Known non-writer.** The portal reads through bounded, read-only snapshots.
    It never opens SQLite for writing, never calls `LifeReadingLedger.open`,
    never publishes, approves, consumes grants or signs, and never reads another

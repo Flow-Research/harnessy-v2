@@ -4,10 +4,12 @@ import type { PortalApiSchemaName } from "@harnessy/core/read-model";
 import type { PortalSources } from "./sources.ts";
 
 /**
- * `none`: open. `install`: the install token from `portal.token`.
- * `code`: a one-time code and the exact portal Origin. `read`: a page token or the install token.
+ * `none`: open. `challenge`: open; returns a single-use challenge and the server's proof.
+ * `install`: a client proof made with the install token from `portal.token` (the token itself
+ * is never sent). `code`: a one-time code and the exact portal Origin.
+ * `read`: a page token or a client proof.
  */
-export type PortalRouteAuth = "none" | "install" | "code" | "read";
+export type PortalRouteAuth = "none" | "challenge" | "install" | "code" | "read";
 
 export interface PortalRoute {
 	readonly method: "GET" | "POST";
@@ -40,9 +42,17 @@ export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [
 	},
 	{
 		method: "POST",
+		path: "/v1/session/challenge",
+		operationId: "createSessionChallenge",
+		summary: "Get a single-use challenge (60 s) and the server's proof that it holds the install token",
+		auth: "challenge",
+		schema: "SessionChallenge",
+	},
+	{
+		method: "POST",
 		path: "/v1/session/code",
 		operationId: "createSessionCode",
-		summary: "Mint a one-time code (60 s, single use) with the install token",
+		summary: "Mint a one-time code (60 s, single use) with an install-token proof",
 		auth: "install",
 		schema: "SessionCode",
 	},

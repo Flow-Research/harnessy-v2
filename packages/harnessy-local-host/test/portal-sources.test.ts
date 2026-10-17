@@ -10,7 +10,12 @@ import { DatabaseSync } from "node:sqlite";
 import { checkPortalValue, PortalApiSchemas } from "@harnessy/core/read-model";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MAX_GWS_PROFILES, MEETING_RECONNECT_NOTE, meetingConnections } from "../src/portal/connections.ts";
+import {
+	MAX_CONNECTIONS,
+	MAX_GWS_PROFILES,
+	MEETING_RECONNECT_NOTE,
+	meetingConnections,
+} from "../src/portal/connections.ts";
 import { PORTAL_ROUTES } from "../src/portal/routes.ts";
 import { type PortalServer, startPortalServer } from "../src/portal/server.ts";
 import { createPortalSources } from "../src/portal/sources.ts";
@@ -24,7 +29,7 @@ import {
 	tempDir,
 	treeListing,
 } from "./support/portal-fixture.ts";
-import { bearer, rawRequest } from "./support/portal-http.ts";
+import { installProof, rawRequest } from "./support/portal-http.ts";
 
 const servers: PortalServer[] = [];
 afterEach(async () => {
@@ -56,7 +61,10 @@ describe("portal sources", () => {
 		const routes = PORTAL_ROUTES.filter((route) => route.data !== undefined);
 		for (let read = 0; read < 50; read += 1)
 			for (const route of routes) {
-				const response = await rawRequest(server.port, { path: route.path, headers: bearer(token) });
+				const response = await rawRequest(server.port, {
+					path: route.path,
+					headers: await installProof(server.port, token, "GET", route.path),
+				});
 				expect(response.status).toBe(200);
 			}
 		expect(databases.map(fileFingerprint)).toEqual(before);
@@ -239,6 +247,36 @@ describe("portal sources", () => {
 		const gws = connections.googleWorkspace!.data as { connections: unknown[]; omitted: number };
 		expect([gws.connections.length, gws.omitted]).toEqual([MAX_GWS_PROFILES, 5]);
 		expect(connections.codex).toMatchObject({ state: "unsafe", reason: "file_not_regular" });
+	});
+
+	it("caps Fathom connection rows at the schema limit and counts the rest", async () => {
+		const fixture = await buildPortalHome("fathom-many");
+		const names = Array.from(
+			{ length: MAX_CONNECTIONS + 6 },
+			(_, index) => `account${String(index).padStart(2, "0")}`,
+		);
+		writeFileSync(
+			fixture.configPath,
+			`fathom:\n  default_account: account00\n  accounts:\n${names.map((name) => `    ${name}: {}`).join("\n")}\n`,
+		);
+		const sources = sourcesFor(fixture.home);
+		const fathom = (sources.connections() as Tiles).fathom!.data as { connections: unknown[]; omitted: number };
+		expect([fathom.connections.length, fathom.omitted]).toEqual([MAX_CONNECTIONS, 6]);
+		const value = {
+			schema: "harnessy.portal.connections.v1",
+			generatedAt: FIXTURE_NOW.toISOString(),
+			tiles: sources.connections(),
+		};
+		expect(checkPortalValue(PortalApiSchemas.Connections, value)).toBe(true);
+	});
+
+	it("degrades the Life tiles when the Life config path cannot be checked", () => {
+		const home = tempDir("life-loop");
+		mkdirSync(join(home, ".agents", "life"), { recursive: true });
+		symlinkSync("config.json", join(home, ".agents", "life", "config.json"));
+		const today = sourcesFor(home).today() as Tiles;
+		expect(today.readings).toMatchObject({ state: "unsafe", reason: "life_config_unreadable" });
+		expect(today.waiting).toMatchObject({ state: "ok" });
 	});
 
 	it("degrades the gws tile past the directory scan limit", () => {

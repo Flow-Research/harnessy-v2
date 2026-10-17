@@ -115,6 +115,14 @@ export const SessionCodeResponseSchema = Type.Object(
 	{ code: Type.String({ minLength: 43, maxLength: 43 }), expiresAt: instant },
 	strict,
 );
+export const SessionChallengeResponseSchema = Type.Object(
+	{
+		challenge: Type.String({ minLength: 43, maxLength: 43 }),
+		proof: Type.String({ minLength: 43, maxLength: 43 }),
+		expiresAt: instant,
+	},
+	strict,
+);
 export const SessionExchangeResponseSchema = Type.Object(
 	{
 		token: Type.String({ minLength: 43, maxLength: 43 }),
@@ -172,6 +180,7 @@ export const WorkspaceResponseSchema = envelope("workspace", {
 /** Every portal API response schema, keyed by name. */
 export const PortalApiSchemas = {
 	Healthz: HealthzResponseSchema,
+	SessionChallenge: SessionChallengeResponseSchema,
 	SessionCode: SessionCodeResponseSchema,
 	SessionExchange: SessionExchangeResponseSchema,
 	Error: ErrorResponseSchema,

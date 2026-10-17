@@ -158,12 +158,12 @@ describe("harnessy-portal commands", () => {
 		const port = served.server.port;
 		const otherState = join(tempDir("other"), "portal");
 		const other = io(home);
-		// A second state directory has its own token, which this portal does not accept.
+		// A second state directory has its own token: this portal cannot prove it holds it, so nothing is sent.
 		const second = await runPortalCommand(["serve", "--port", "0", "--state-dir", otherState], other.io);
 		if (second.kind === "serving") servers.push(second.server);
 		expect(
 			await failure(runPortalCommand(["status", "--port", String(port), "--state-dir", otherState], other.io)),
-		).toBe("portal_unauthorized");
+		).toBe("portal_unverified");
 		await served.server.close();
 		servers.splice(servers.indexOf(served.server), 1);
 		expect(
@@ -173,6 +173,47 @@ describe("harnessy-portal commands", () => {
 });
 
 describe("harnessy-portal client errors", () => {
+	it("never sends the install token to a listener that cannot prove it holds the token", async () => {
+		const home = tempDir("impostor");
+		const stateDir = preparePortalStateDir(join(tempDir("state"), "portal"), { create: true });
+		const token = readOrCreatePortalInstallToken(stateDir);
+		const seen: string[] = [];
+		const responses: ReadonlyArray<unknown> = [
+			{ challenge: "c".repeat(43), proof: "p".repeat(43), expiresAt: "2026-10-17T08:01:00.000Z" },
+			null,
+			{ challenge: 7, proof: "p".repeat(43) },
+			{ challenge: "c".repeat(43), proof: 7 },
+		];
+		for (const body of responses) {
+			// Another process on the port: it records everything it receives.
+			const impostor = createServer((request, response) => {
+				let text = "";
+				request.on("data", (chunk: Buffer) => {
+					text += String(chunk);
+				});
+				request.on("end", () => {
+					seen.push(JSON.stringify(request.headers), text);
+					response.writeHead(200).end(JSON.stringify(body));
+				});
+			});
+			await new Promise<void>((ready) => impostor.listen({ host: "127.0.0.1", port: 0 }, ready));
+			const port = String((impostor.address() as { port: number }).port);
+			const { io: commandIo, opened } = io(home);
+			try {
+				for (const command of [["status"], ["open"]])
+					expect(
+						await failure(runPortalCommand([...command, "--port", port, "--state-dir", stateDir], commandIo)),
+					).toBe("portal_unverified");
+			} finally {
+				impostor.closeAllConnections();
+				await new Promise<void>((closed) => impostor.close(() => closed()));
+			}
+			expect(opened).toEqual([]);
+		}
+		expect(seen.length).toBeGreaterThan(0);
+		expect(seen.join("\n")).not.toContain(token);
+	});
+
 	const listen = async (handler: Parameters<typeof createServer>[1]): Promise<Server> => {
 		const server = createServer(handler);
 		await new Promise<void>((ready) => server.listen({ host: "127.0.0.1", port: 0 }, ready));

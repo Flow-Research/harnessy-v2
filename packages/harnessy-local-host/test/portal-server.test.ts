@@ -8,7 +8,12 @@ import { connect, createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { checkPortalValue, type PortalApiSchemaName, PortalApiSchemas } from "@harnessy/core/read-model";
 import { afterEach, describe, expect, it } from "vitest";
-import { PORTAL_CODE_TTL_MS, PORTAL_PAGE_TOKEN_TTL_MS } from "../src/portal/auth.ts";
+import {
+	isPortalServerProof,
+	PORTAL_CODE_TTL_MS,
+	PORTAL_PAGE_TOKEN_TTL_MS,
+	portalClientProofHeader,
+} from "../src/portal/auth.ts";
 import { PORTAL_ROUTES } from "../src/portal/routes.ts";
 import {
 	PORTAL_CSP,
@@ -20,7 +25,7 @@ import {
 import { createPortalSources, type PortalSources } from "../src/portal/sources.ts";
 import { newPortalSecret } from "../src/portal/token-store.ts";
 import { buildPortalHome, CANARY, cleanupPortalFixtures, FIXTURE_NOW, tempDir } from "./support/portal-fixture.ts";
-import { bearer, type RawResponse, rawRequest } from "./support/portal-http.ts";
+import { bearer, installProof, type RawResponse, rawRequest } from "./support/portal-http.ts";
 
 const servers: PortalServer[] = [];
 const children: ChildProcess[] = [];
@@ -66,7 +71,7 @@ const exchange = async (harness: Harness): Promise<string> => {
 	const minted = await rawRequest(harness.port, {
 		method: "POST",
 		path: "/v1/session/code",
-		headers: bearer(harness.token),
+		headers: await installProof(harness.port, harness.token, "POST", "/v1/session/code"),
 	});
 	expect(minted.status).toBe(200);
 	const code = (minted.json as { code: string }).code;
@@ -181,7 +186,8 @@ describe("portal API request checks", () => {
 		);
 		expect(documented.sort()).toEqual(PORTAL_ROUTES.map((route) => `${route.method} ${route.path}`).sort());
 		expect(Object.keys(document.components.schemas).sort()).toEqual(Object.keys(PortalApiSchemas).sort());
-		expect(document.paths["/v1/today"]?.get?.security).toEqual([{ bearer: [] }]);
+		expect(document.paths["/v1/today"]?.get?.security).toEqual([{ bearer: [] }, { installProof: [] }]);
+		expect(document.paths["/v1/session/code"]?.post?.security).toEqual([{ installProof: [] }]);
 		expect(document.paths["/v1/healthz"]?.get?.security).toBeUndefined();
 	});
 });
@@ -195,6 +201,8 @@ describe("portal API sessions", () => {
 			{ Authorization: "Bearer short" },
 			{ Authorization: `Basic ${harness.token}` },
 			bearer(newPortalSecret()),
+			// The install token itself is never a credential on the wire.
+			bearer(harness.token),
 			{ Cookie: reviewCookie },
 		]) {
 			const response = await rawRequest(harness.port, { path: "/v1/today", headers });
@@ -204,7 +212,10 @@ describe("portal API sessions", () => {
 		}
 		const withCookie = await rawRequest(harness.port, {
 			path: "/v1/today",
-			headers: { ...bearer(harness.token), Cookie: reviewCookie },
+			headers: {
+				...(await installProof(harness.port, harness.token, "GET", "/v1/today")),
+				Cookie: reviewCookie,
+			},
 		});
 		expect(withCookie.status).toBe(200);
 		expect(withCookie.text).not.toContain(CANARY);
@@ -215,8 +226,13 @@ describe("portal API sessions", () => {
 		const harness = await start(homeSources(tempDir("codes")));
 		const origin = `http://127.0.0.1:${harness.port}`;
 		const mint = async () =>
-			(await rawRequest(harness.port, { method: "POST", path: "/v1/session/code", headers: bearer(harness.token) }))
-				.json as { code: string; expiresAt: string };
+			(
+				await rawRequest(harness.port, {
+					method: "POST",
+					path: "/v1/session/code",
+					headers: await installProof(harness.port, harness.token, "POST", "/v1/session/code"),
+				})
+			).json as { code: string; expiresAt: string };
 		const spend = (
 			code: string,
 			headers: Record<string, string> = { Origin: origin, "Content-Type": "application/json" },
@@ -274,6 +290,50 @@ describe("portal API sessions", () => {
 		expect(JSON.stringify(harness.logs)).not.toContain(first.code);
 	});
 
+	it("issues origin-bound challenges and accepts each install proof once, for its own route", async () => {
+		const harness = await start(homeSources(tempDir("proofs")));
+		const challenge = (body: string, type = "application/json") =>
+			rawRequest(harness.port, {
+				method: "POST",
+				path: "/v1/session/challenge",
+				headers: { "Content-Type": type },
+				body,
+			});
+		expect((await challenge(JSON.stringify({ nonce: "short" }))).json).toEqual({ error: "invalid_nonce" });
+		expect((await challenge(JSON.stringify({ nonce: "n".repeat(43) }), "text/plain")).status).toBe(415);
+		const issued = (await challenge(JSON.stringify({ nonce: "n".repeat(43) }))).json as {
+			challenge: string;
+			proof: string;
+		};
+		expect(
+			checkPortalValue(PortalApiSchemas.SessionChallenge, { ...issued, expiresAt: FIXTURE_NOW.toISOString() }),
+		).toBe(true);
+		expect(
+			isPortalServerProof(
+				harness.token,
+				"n".repeat(43),
+				issued.challenge,
+				`http://127.0.0.1:${harness.port}`,
+				issued.proof,
+			),
+		).toBe(true);
+		const header = {
+			Authorization: portalClientProofHeader(
+				harness.token,
+				issued.challenge,
+				`http://127.0.0.1:${harness.port}`,
+				"GET",
+				"/v1/today",
+			),
+		};
+		expect((await rawRequest(harness.port, { path: "/v1/today", headers: header })).status).toBe(200);
+		// Replayed: the challenge is spent.
+		expect((await rawRequest(harness.port, { path: "/v1/today", headers: header })).status).toBe(401);
+		// A proof for one route does not open another.
+		const other = await installProof(harness.port, harness.token, "GET", "/v1/today");
+		expect((await rawRequest(harness.port, { path: "/v1/health", headers: other })).status).toBe(401);
+	});
+
 	it("keeps at most 16 outstanding codes, dropping the oldest", async () => {
 		const harness = await start(homeSources(tempDir("limits")));
 		const codes: string[] = [];
@@ -281,7 +341,7 @@ describe("portal API sessions", () => {
 			const response = await rawRequest(harness.port, {
 				method: "POST",
 				path: "/v1/session/code",
-				headers: bearer(harness.token),
+				headers: await installProof(harness.port, harness.token, "POST", "/v1/session/code"),
 			});
 			codes.push((response.json as { code: string }).code);
 		}
@@ -311,7 +371,10 @@ describe("portal API data routes", () => {
 			expect(response.text).not.toContain("owner@example.test");
 			expectSecurityHeaders(response);
 		}
-		const today = await rawRequest(harness.port, { path: "/v1/today", headers: bearer(harness.token) });
+		const today = await rawRequest(harness.port, {
+			path: "/v1/today",
+			headers: await installProof(harness.port, harness.token, "GET", "/v1/today"),
+		});
 		expect((today.json as { tiles: { waiting: unknown } }).tiles.waiting).toEqual({
 			state: "ok",
 			data: { meetingsPendingReview: 2, communityPendingReview: 1, fathomPendingInbox: 1, weeklyRunsDrafted: 1 },
@@ -340,7 +403,10 @@ describe("portal API data routes", () => {
 		});
 		const harness = await start(homeSources(fixture.home));
 		const started = performance.now();
-		const response = await rawRequest(harness.port, { path: "/v1/today", headers: bearer(harness.token) });
+		const response = await rawRequest(harness.port, {
+			path: "/v1/today",
+			headers: await installProof(harness.port, harness.token, "GET", "/v1/today"),
+		});
 		expect(performance.now() - started).toBeLessThan(1_000);
 		expect(response.status).toBe(200);
 		expect(checkPortalValue(PortalApiSchemas.Today, response.json)).toBe(true);
@@ -363,7 +429,11 @@ describe("portal API data routes", () => {
 			]),
 		) as unknown as PortalSources;
 		const harness = await start(counted, { cacheTtlMs: 5_000 });
-		const get = () => rawRequest(harness.port, { path: "/v1/workspace/summary", headers: bearer(harness.token) });
+		const get = async () =>
+			rawRequest(harness.port, {
+				path: "/v1/workspace/summary",
+				headers: await installProof(harness.port, harness.token, "GET", "/v1/workspace/summary"),
+			});
 		const first = await get();
 		await Promise.all([get(), get(), get()]);
 		expect(calls).toEqual(["workspace"]);
@@ -387,10 +457,13 @@ describe("portal API data routes", () => {
 		const harness = await start(leaking);
 		const invalid = await rawRequest(harness.port, {
 			path: `/v1/community/summary?token=${CANARY}`,
-			headers: bearer(harness.token),
+			headers: await installProof(harness.port, harness.token, "GET", "/v1/community/summary"),
 		});
 		expect([invalid.status, invalid.json]).toEqual([500, { error: "response_invalid" }]);
-		const thrown = await rawRequest(harness.port, { path: "/v1/learning/summary", headers: bearer(harness.token) });
+		const thrown = await rawRequest(harness.port, {
+			path: "/v1/learning/summary",
+			headers: await installProof(harness.port, harness.token, "GET", "/v1/learning/summary"),
+		});
 		expect([thrown.status, thrown.json]).toEqual([500, { error: "internal_error" }]);
 		expect(harness.logs).toEqual([
 			{ kind: "ready", port: harness.port },

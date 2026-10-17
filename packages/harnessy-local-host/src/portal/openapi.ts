@@ -14,7 +14,13 @@ const errorResponse = (description: string) => ({
 export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: string): Record<string, unknown> => {
 	const paths: Record<string, Record<string, unknown>> = {};
 	for (const route of routes) {
-		const secured = route.auth === "install" || route.auth === "read";
+		const security =
+			route.auth === "install"
+				? [{ installProof: [] }]
+				: route.auth === "read"
+					? [{ bearer: [] }, { installProof: [] }]
+					: undefined;
+		const field = route.auth === "code" ? "code" : route.auth === "challenge" ? "nonce" : undefined;
 		const responses: Record<string, unknown> = {
 			"200": {
 				description: route.summary,
@@ -27,14 +33,15 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 			"400": errorResponse("Wrong Host header or request shape"),
 			"403": errorResponse("Cross-origin request"),
 		};
-		if (route.auth !== "none") responses["401"] = errorResponse("Missing or invalid credential");
+		if (security !== undefined || route.auth === "code")
+			responses["401"] = errorResponse("Missing or invalid credential");
 		paths[route.path] = {
 			...paths[route.path],
 			[route.method.toLowerCase()]: {
 				operationId: route.operationId,
 				summary: route.summary,
-				...(secured ? { security: [{ bearer: [] }] } : {}),
-				...(route.auth === "code"
+				...(security === undefined ? {} : { security }),
+				...(field !== undefined
 					? {
 							requestBody: {
 								required: true,
@@ -42,8 +49,8 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 									"application/json": {
 										schema: {
 											type: "object",
-											properties: { code: { type: "string", minLength: 43, maxLength: 43 } },
-											required: ["code"],
+											properties: { [field]: { type: "string", minLength: 43, maxLength: 43 } },
+											required: [field],
 											additionalProperties: false,
 										},
 									},
@@ -67,7 +74,17 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 		servers: [{ url: "http://127.0.0.1:{port}", variables: { port: { default: "8790" } } }],
 		paths,
 		components: {
-			securitySchemes: { bearer: { type: "http", scheme: "bearer" } },
+			securitySchemes: {
+				bearer: { type: "http", scheme: "bearer", description: "A read-only page token from /v1/session/exchange" },
+				installProof: {
+					type: "apiKey",
+					in: "header",
+					name: "Authorization",
+					description:
+						"HarnessyProof <challenge>.<HMAC-SHA256(install token, client-proof label, challenge, origin, method, path)>; " +
+						"the install token itself is never sent",
+				},
+			},
 			schemas: Object.fromEntries(
 				Object.entries(PortalApiSchemas).map(([name, schema]) => [name, jsonSchema(schema)]),
 			),

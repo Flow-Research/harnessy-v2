@@ -22,6 +22,8 @@ import {
 } from "@harnessy/core/read-model";
 
 export const MAX_GWS_PROFILES = 32;
+/** The most rows one connection tile carries (`ConnectionListSchema` allows 64); the rest are counted in `omitted`. */
+export const MAX_CONNECTIONS = 64;
 const GWS_PROFILE = /^gws-([A-Za-z0-9][A-Za-z0-9._-]{0,47})$/u;
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost"]);
 
@@ -77,8 +79,9 @@ export const meetingConnections = (summary: MeetingSummary, now: Date): Connecti
 
 export const fathomConnections = (summary: FathomSummary, now: Date): ConnectionTile => {
 	if (summary.checkpoint.state !== "ok") return passState(summary.checkpoint, now);
+	const accounts = summary.checkpoint.data!.accounts;
 	return list(
-		summary.checkpoint.data!.accounts.map((account) => ({
+		accounts.slice(0, MAX_CONNECTIONS).map((account) => ({
 			id: `fathom.${account.account}`.slice(0, 96),
 			label: `Fathom: ${account.account}`.slice(0, 96),
 			owner: "fathom-poll",
@@ -88,6 +91,7 @@ export const fathomConnections = (summary: FathomSummary, now: Date): Connection
 			action: { kind: "command", value: "harnessy jarvis meeting fathom status", note: null },
 		})),
 		now,
+		accounts.length - Math.min(accounts.length, MAX_CONNECTIONS),
 	);
 };
 

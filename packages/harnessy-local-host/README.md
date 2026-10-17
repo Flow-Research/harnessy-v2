@@ -90,7 +90,12 @@ harnessy-portal service-plan [--port 8790] [--state-dir DIR]
   first `serve` creates `portal.token` (mode `0600`, never through a symlink).
   The default `~/.harnessy/portal` is never created implicitly: name it with
   `--state-dir` or `HARNESSY_PORTAL_STATE_DIR`.
-- **Sign-in.** `POST /v1/session/code` with the install token returns a
+- **Install proof.** The install token is never sent. A client posts a nonce
+  to `POST /v1/session/challenge` and gets a single-use challenge (60 s) plus
+  the server's HMAC proof, bound to the portal origin. The client checks that
+  proof, then sends `Authorization: HarnessyProof <challenge>.<hmac>` over the
+  challenge, origin, method and path. `status` and `open` do this for you.
+- **Sign-in.** `POST /v1/session/code` with an install proof returns a
   one-time code (60 s). `POST /v1/session/exchange` with that code and the
   exact portal `Origin` returns a read-only page token (8 h, in memory only).
 - **Requests.** The exact `Host` is required. A foreign `Origin` or a

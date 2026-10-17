@@ -24,7 +24,7 @@ import {
 import { renderPortalLaunchAgent } from "../src/portal/launchd-plan.ts";
 import { PORTAL_TOKEN_FILE } from "../src/portal/token-store.ts";
 import { buildPortalHome, CANARY, cleanupPortalFixtures, tempDir } from "./support/portal-fixture.ts";
-import { bearer, rawRequest } from "./support/portal-http.ts";
+import { installProof, rawRequest } from "./support/portal-http.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const recorder = fileURLToPath(new URL("./support/portal-recorder.mjs", import.meta.url));
@@ -141,13 +141,22 @@ describe("portal non-writer regression", () => {
 							headers: { Origin: `http://127.0.0.1:${port}`, "Content-Type": "application/json" },
 							body: JSON.stringify({ code }),
 						})
-					: await rawRequest(port, { method, path, headers: bearer(token) });
+					: await rawRequest(port, {
+							method,
+							path,
+							...(path === "/v1/session/challenge"
+								? {
+										headers: { "Content-Type": "application/json" },
+										body: JSON.stringify({ nonce: "n".repeat(43) }),
+									}
+								: { headers: await installProof(port, token, method, path) }),
+						});
 			expect([method, path, response.status]).toEqual([method, path, 200]);
 			expect(response.text).not.toContain(CANARY);
 			if (path === "/v1/session/code") code = (response.json as { code: string }).code;
 			called.push(`${method} ${path}`);
 		}
-		expect(called).toHaveLength(11);
+		expect(called).toHaveLength(12);
 
 		const ps = spawnSync("/bin/ps", ["-p", String(child.pid), "-o", "command="], { encoding: "utf8" });
 		expect(ps.status).toBe(0);
