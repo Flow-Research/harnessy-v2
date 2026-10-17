@@ -1,11 +1,15 @@
 /** Only bounded, content-free classifications cross into persisted health state. */
-export type MeetingProviderFailureKind =
-	| "authentication"
-	| "identity"
-	| "credential_store"
-	| "permission"
-	| "transient"
-	| "other";
+/** Every persisted failure classification, in the order of the store's CHECK constraint. */
+export const MEETING_PROVIDER_FAILURE_KINDS = [
+	"authentication",
+	"identity",
+	"credential_store",
+	"permission",
+	"transient",
+	"other",
+] as const;
+
+export type MeetingProviderFailureKind = (typeof MEETING_PROVIDER_FAILURE_KINDS)[number];
 
 export const classifyMeetingProviderFailure = (code: string): MeetingProviderFailureKind => {
 	if (["authentication_failed", "reauth_required", "invalid_rapt", "refresh_token_revoked"].includes(code))

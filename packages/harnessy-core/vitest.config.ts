@@ -83,6 +83,8 @@ export default defineConfig({
 				lines: 64,
 				// H-06 meeting-context contract and read-only inventory.
 				"src/meeting-context*.ts": { statements: 99, branches: 99, functions: 100, lines: 99 },
+				// H-10 portal read model: bounded read-only readers and their schemas.
+				"src/read-model/*.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 			},
 		},
 	},

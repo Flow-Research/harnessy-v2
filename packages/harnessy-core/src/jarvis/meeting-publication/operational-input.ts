@@ -76,7 +76,8 @@ export const MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS = [
 	"review_serve",
 ] as const;
 
-const V1_DARWIN_SCHEDULER_LABELS = [
+/** @internal The V1 launchd labels whose loaded job blocks meeting publication. */
+export const MEETING_V1_LABELS = [
 	"tech.flowresearch.jarvis.meeting-review",
 	"com.flow-harness.project.flow-meeting-publication-worker",
 ] as const;
@@ -804,7 +805,7 @@ const validateProviderPayload = (
 		!absolutePath(payload.runtime.executablePath) ||
 		!/^\d+$/u.test(payload.runtime.uid) ||
 		(payload.runtime.bootId !== null && !safeText(payload.runtime.bootId, 512)) ||
-		!exactValues(payload.oneWriter.darwinSchedulerLabels, V1_DARWIN_SCHEDULER_LABELS) ||
+		!exactValues(payload.oneWriter.darwinSchedulerLabels, MEETING_V1_LABELS) ||
 		!exactValues(payload.oneWriter.linuxCrontabMarkers, V1_LINUX_CRONTAB_MARKERS) ||
 		!exactValues(payload.oneWriter.processMarkers, MEETING_PUBLICATION_V1_PROCESS_MARKERS)
 	)
@@ -1710,7 +1711,7 @@ export const prepareMeetingPublicationServiceRequest = (
 		rollbackPlan: evidence(input.rollbackPlanPath),
 		oneWriter: {
 			kind: "known-v1-writers-v1",
-			darwinSchedulerLabels: V1_DARWIN_SCHEDULER_LABELS,
+			darwinSchedulerLabels: MEETING_V1_LABELS,
 			linuxCrontabMarkers: V1_LINUX_CRONTAB_MARKERS,
 			processMarkers: MEETING_PUBLICATION_V1_PROCESS_MARKERS,
 		},

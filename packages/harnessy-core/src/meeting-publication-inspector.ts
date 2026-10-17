@@ -2,9 +2,12 @@
 
 export { JarvisMeetingPublicationConfig } from "./jarvis/config-model.ts";
 export {
+	inspectMeetingPublicationQueue,
 	MeetingPublicationAuthorityInspection,
 	MeetingPublicationInspector,
 	MeetingPublicationInspectorError,
+	type MeetingPublicationQueueInspection,
+	type MeetingPublicationQueueOptions,
 	MeetingPublicationStateInspection,
 } from "./jarvis/meeting-publication/inspector.ts";
 export {

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { Effect } from "effect";
+import * as Result from "effect/Result";
 import { parseDocument } from "yaml";
 
 export type CommunityBriefingStatusCounts = Readonly<Record<string, number>>;
@@ -25,7 +25,25 @@ export interface CommunityBriefingStatus {
 export interface CommunityBriefingStatusOptions {
 	readonly configPath?: string;
 	readonly stateRoot?: string;
+	/** SQLite busy timeout for the read-only queue read. Defaults to 10 000 ms. */
+	readonly timeoutMs?: number;
 }
+
+/** The resolved community briefing configuration, before the queue database is read. */
+export interface CommunityBriefingConfigResolution {
+	readonly configPath: string;
+	readonly configPresent: boolean;
+	readonly stateRoot: string;
+	readonly databasePath: string;
+	readonly sourcePath: string | null;
+	readonly draftPath: string | null;
+	readonly reviewHost: string | null;
+	readonly reviewPort: number | null;
+	readonly discordChannelConfigured: boolean;
+	readonly issues: ReadonlyArray<string>;
+}
+
+const DEFAULT_QUEUE_TIMEOUT_MS = 10_000;
 
 export interface CommunityBriefingPreflight {
 	readonly ready: boolean;
@@ -74,7 +92,8 @@ const emptyCounts = (): Record<string, number> => ({
 	archived: 0,
 });
 
-const REQUIRED_QUEUE_COLUMNS = [
+/** @internal Columns every reader of the queue needs. */
+export const REQUIRED_QUEUE_COLUMNS = [
 	"briefing_id",
 	"week_start",
 	"week_end",
@@ -91,29 +110,24 @@ const REQUIRED_QUEUE_COLUMNS = [
 	"updated_at",
 ] as const;
 
-/** Inspect the preserved briefing queue without creating state or contacting providers. */
-export const inspectCommunityBriefingStatus = (
+/** Resolve configuration and paths without opening the queue database. */
+export const resolveCommunityBriefingConfig = (
 	options: CommunityBriefingStatusOptions = {},
-): CommunityBriefingStatus => {
+): CommunityBriefingConfigResolution => {
 	const configPath = resolve(options.configPath ?? join(homedir(), ".jarvis", "config.yaml"));
 	const base = dirname(configPath);
 	const issues: Array<string> = [];
 	let config: Record<string, unknown> = {};
-	if (!existsSync(configPath)) {
+	const configPresent = existsSync(configPath);
+	if (!configPresent) {
 		issues.push(`configuration is missing: ${configPath}`);
 	} else {
-		const result = Effect.runSync(
-			Effect.try({
-				try: () => {
-					const document = parseDocument(readFileSync(configPath, "utf8"));
-					if (document.errors.length > 0) issues.push("configuration has invalid YAML");
-					else config = recordValue(document.toJS()) ?? {};
-					return true;
-				},
-				catch: () => false,
-			}),
-		);
-		if (!result) {
+		const result = Result.try(() => {
+			const document = parseDocument(readFileSync(configPath, "utf8"));
+			if (document.errors.length > 0) issues.push("configuration has invalid YAML");
+			else config = recordValue(document.toJS()) ?? {};
+		});
+		if (Result.isFailure(result)) {
 			issues.push("configuration could not be read");
 		}
 	}
@@ -122,69 +136,87 @@ export const inspectCommunityBriefingStatus = (
 	const configuredStateRoot = stringValue(options.stateRoot) ?? stringValue(briefing.state_path);
 	const stateRoot =
 		configuredStateRoot === null ? join(base, "state", "meeting-publication") : expand(configuredStateRoot, base);
-	const databasePath = join(stateRoot, "weekly-briefings.sqlite3");
 	const sourcePath = stringValue(briefing.source_path);
 	const draftPath = stringValue(briefing.draft_path);
-	const reviewHost = stringValue(briefing.review_host);
-	const reviewPort = integerValue(briefing.review_port);
-	const discordChannelConfigured = stringValue(briefing.discord_channel_id) !== null;
+	return {
+		configPath,
+		configPresent,
+		stateRoot,
+		databasePath: join(stateRoot, "weekly-briefings.sqlite3"),
+		sourcePath: sourcePath === null ? null : expand(sourcePath, base),
+		draftPath: draftPath === null ? null : expand(draftPath, base),
+		reviewHost: stringValue(briefing.review_host),
+		reviewPort: integerValue(briefing.review_port),
+		discordChannelConfigured: stringValue(briefing.discord_channel_id) !== null,
+		issues,
+	};
+};
+
+/** Inspect the preserved briefing queue without creating state or contacting providers. */
+export const inspectCommunityBriefingStatus = (
+	options: CommunityBriefingStatusOptions = {},
+): CommunityBriefingStatus => {
+	const resolved = resolveCommunityBriefingConfig(options);
+	const { databasePath } = resolved;
+	const issues = [...resolved.issues];
 	const counts = emptyCounts();
 
 	if (!existsSync(databasePath)) {
 		issues.push(`briefing database is missing: ${databasePath}`);
 	} else {
-		const result = Effect.runSync(
-			Effect.try({
-				try: () => {
-					const database = new DatabaseSync(databasePath, {
-						readOnly: true,
-						allowExtension: false,
-						timeout: 10_000,
-					});
-					const table = database
-						.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'community_briefings'")
-						.get() as { name?: unknown } | undefined;
-					if (table?.name !== "community_briefings") {
-						issues.push("briefing database schema is missing community_briefings");
+		const result = Result.try(() => {
+			const database = new DatabaseSync(databasePath, {
+				readOnly: true,
+				allowExtension: false,
+				timeout: options.timeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS,
+			});
+			try {
+				const table = database
+					.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'community_briefings'")
+					.get() as { name?: unknown } | undefined;
+				if (table?.name !== "community_briefings") {
+					issues.push("briefing database schema is missing community_briefings");
+				} else {
+					const columns = new Set(
+						(database.prepare("PRAGMA table_info(community_briefings)").all() as Array<{ name?: unknown }>)
+							.filter((column) => typeof column.name === "string")
+							.map((column) => column.name as string),
+					);
+					const missingColumns = REQUIRED_QUEUE_COLUMNS.filter((column) => !columns.has(column));
+					if (missingColumns.length > 0) {
+						issues.push(`briefing database schema is missing columns: ${missingColumns.join(", ")}`);
 					} else {
-						const columns = new Set(
-							(database.prepare("PRAGMA table_info(community_briefings)").all() as Array<{ name?: unknown }>)
-								.filter((column) => typeof column.name === "string")
-								.map((column) => column.name as string),
-						);
-						const missingColumns = REQUIRED_QUEUE_COLUMNS.filter((column) => !columns.has(column));
-						if (missingColumns.length > 0) {
-							issues.push(`briefing database schema is missing columns: ${missingColumns.join(", ")}`);
-						} else {
-							for (const row of database
-								.prepare("SELECT status, COUNT(*) AS count FROM community_briefings GROUP BY status")
-								.all() as Array<{ status?: unknown; count?: unknown }>) {
-								if (typeof row.status === "string" && typeof row.count === "number" && row.count >= 0)
-									counts[row.status] = row.count;
-							}
+						for (const row of database
+							.prepare("SELECT status, COUNT(*) AS count FROM community_briefings GROUP BY status")
+							.all() as Array<{ status?: unknown; count?: unknown }>) {
+							if (typeof row.status === "string" && typeof row.count === "number" && row.count >= 0)
+								counts[row.status] = row.count;
 						}
 					}
-					database.close();
-					return true;
-				},
-				catch: () => false,
-			}),
-		);
-		if (!result) {
+				}
+			} finally {
+				database.close();
+			}
+		});
+		if (Result.isFailure(result)) {
 			issues.push("briefing database could not be inspected read-only");
 		}
 	}
 
 	return {
-		ready: issues.length === 0 && discordChannelConfigured && sourcePath !== null && draftPath !== null,
-		configPath,
-		stateRoot,
+		ready:
+			issues.length === 0 &&
+			resolved.discordChannelConfigured &&
+			resolved.sourcePath !== null &&
+			resolved.draftPath !== null,
+		configPath: resolved.configPath,
+		stateRoot: resolved.stateRoot,
 		databasePath,
-		sourcePath: sourcePath === null ? null : expand(sourcePath, base),
-		draftPath: draftPath === null ? null : expand(draftPath, base),
-		reviewHost,
-		reviewPort,
-		discordChannelConfigured,
+		sourcePath: resolved.sourcePath,
+		draftPath: resolved.draftPath,
+		reviewHost: resolved.reviewHost,
+		reviewPort: resolved.reviewPort,
+		discordChannelConfigured: resolved.discordChannelConfigured,
 		counts,
 		issues,
 	};
@@ -240,7 +272,7 @@ export const listCommunityBriefings = (
 	const database = new DatabaseSync(status.databasePath, {
 		readOnly: true,
 		allowExtension: false,
-		timeout: 10_000,
+		timeout: options.timeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS,
 	});
 	try {
 		return (
