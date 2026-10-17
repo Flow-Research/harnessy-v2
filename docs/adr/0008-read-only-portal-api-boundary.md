@@ -55,9 +55,27 @@ Build the contract first and a page later.
   and registering the OpenAPI document with the cockpit are Phase 2 decisions
   for Julian.
 - `node:sqlite` is synchronous. Short busy timeouts (250 ms) and a 5 s response
-  cache bound how long a busy database can stall the server. A busy or
-  recovering database is a degraded tile in a `200` response, not an error.
+  cache bound how long a busy database can stall the server. A busy, recovering
+  or unreadable database is a degraded tile in a `200` response, not an error.
+  A tile whose value fails its own schema becomes an `error` / `tile_invalid`
+  tile; only a broken envelope is a `500`.
+- Responses are not counts only. They carry free text from local config:
+  absolute paths (`/v1/workspace/summary` `root` and `projects[].path`),
+  Fathom account names (connection ids and labels, and `fathomConfig`) and
+  `gws` profile slugs. They never carry transcript text, emails, credentials or
+  log text. A page must escape these strings, and before Garden consumes the
+  contract the paths should become relative to the workspace root.
 - The portal ships in the host artifact, so each release changes the meeting
   service's host digest, as any local-host change already does.
 - Same-user code can read `portal.token`. The guards remain bounded
   known-process evidence; the portal adds no isolation and claims none.
+- Accepted residual risks on a single-user Mac:
+  - `POST /v1/session/challenge` needs no credential, and the server keeps at
+    most 16 challenges, dropping the oldest. A local process that floods it
+    can make one `harnessy portal status` or `open` fail with
+    `portal_unauthorized`; a retry works once the flood stops. It cannot gain
+    access this way.
+  - `harnessy portal open` without `--print` passes the page URL, including
+    the one-time code, to `/usr/bin/open` in argv. Another local user can see
+    it in `ps` for at most the code's 60 s life and could race to exchange it.
+    Use `--print` on a shared machine.

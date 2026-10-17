@@ -25,7 +25,7 @@ Layer: api
 Status: implemented
 Test File: qa/tests/portal-api.api.test.mjs
 Linked Refs: packages/harnessy-local-host/test/portal-server.test.ts, packages/harnessy-core/test/read-model-api.test.ts, packages/harnessy-core/src/read-model/api-schemas.ts, packages/harnessy-local-host/src/portal/openapi.ts
-Expected: The OpenAPI 3.1 paths equal the route table and its components equal `PortalApiSchemas`; each data route returns `harnessy.portal.<name>.v1` that validates against its closed schema with no private text or account names; a response that fails its schema is refused with 500 and only a fixed code is logged, with no secret or URL in the log.
+Expected: The OpenAPI 3.1 paths equal the route table and its components equal `PortalApiSchemas`; each data route returns `harnessy.portal.<name>.v1` that validates against its closed schema with no private text or account email; a tile that fails its own schema becomes an `error` / `tile_invalid` tile in a 200 response, an envelope that fails is refused with 500, and only a fixed code and the route-table path are logged, with no secret or URL in the log.
 
 - Execute the contract and schema cases.
 
@@ -52,6 +52,6 @@ Layer: api
 Status: implemented
 Test File: qa/tests/portal-api.api.test.mjs
 Linked Refs: packages/harnessy-local-host/test/portal-sources.test.ts, packages/harnessy-local-host/src/portal/connections.ts
-Expected: Meeting Google and Discord health maps to connected or attention with a link to the loopback review page only; Fathom accounts report checkpoint freshness; community, cockpit, `gws-<slug>` profiles and Codex report presence only, with a command to copy; no account name, credential or file content appears.
+Expected: Meeting Google and Discord health maps to connected or attention with a link to the loopback review page only; Fathom accounts report checkpoint freshness; community, cockpit, `gws-<slug>` profiles and Codex report presence only, with a command to copy; Fathom account names and `gws` slugs appear as labels, but no account email, credential or file content appears; one oversized timestamp makes that row's `checkedAt` null instead of failing the route.
 
 - Execute the connection mapping cases.

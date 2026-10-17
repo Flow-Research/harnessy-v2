@@ -1,13 +1,19 @@
 /** The portal API contract (response schemas) and the read-only meeting configuration loader. */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { NodeServices } from "@effect/platform-node";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
+import { Command } from "effect/unstable/cli";
+import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { portalHostArgs } from "../src/cli/portal.ts";
+import { portalCommand, portalHostArgs, runPortalHost } from "../src/cli/portal.ts";
 import { rootCommand } from "../src/commands.ts";
 import * as core from "../src/index.ts";
 import {
@@ -15,6 +21,7 @@ import {
 	PortalApiSchemas,
 	portalResponseSchemaId,
 	readMeetingPublicationConfig,
+	repairPortalTiles,
 } from "../src/read-model.ts";
 import { cleanupReadModelFixtures, tempHome, treeListing } from "./support/read-model-fixture.ts";
 
@@ -101,6 +108,72 @@ describe("portal API schemas", () => {
 	});
 });
 
+describe("portal tile repair", () => {
+	const connections = (meeting: unknown) => ({
+		schema: portalResponseSchemaId("connections"),
+		generatedAt: at,
+		tiles: {
+			meeting,
+			fathom: { state: "missing", reason: "file_missing", readAt: at },
+			community: { state: "missing", reason: "config_missing", readAt: at },
+			cockpit: { state: "ok", data: { connections: [], omitted: 0 }, readAt: at },
+			googleWorkspace: { state: "ok", data: { connections: [], omitted: 0 }, readAt: at },
+			codex: { state: "ok", data: { connections: [], omitted: 0 }, readAt: at },
+		},
+	});
+	const row = (checkedAt: string) => ({
+		id: "meeting.google",
+		label: "Meeting publication: Google",
+		owner: "meeting-publication",
+		status: "connected",
+		detail: null,
+		checkedAt,
+		action: null,
+	});
+
+	it("keeps a valid response as it is", () => {
+		const value = connections({ state: "ok", data: { connections: [row(at)], omitted: 0 }, readAt: at });
+		expect(repairPortalTiles(PortalApiSchemas.Connections, value)).toEqual({ value, replaced: [] });
+	});
+
+	it("degrades only the tile that fails its own schema", () => {
+		const value = connections({ state: "ok", data: { connections: [row("x".repeat(41))], omitted: 0 }, readAt: at });
+		expect(checkPortalValue(PortalApiSchemas.Connections, value)).toBe(false);
+		const repaired = repairPortalTiles(PortalApiSchemas.Connections, value);
+		expect(repaired?.replaced).toEqual(["meeting"]);
+		expect(repaired?.value).toEqual({
+			...value,
+			tiles: { ...value.tiles, meeting: { state: "error", reason: "tile_invalid", readAt: at } },
+		});
+		expect(checkPortalValue(PortalApiSchemas.Connections, repaired?.value)).toBe(true);
+	});
+
+	it("degrades one service in the health record", () => {
+		const health = {
+			schema: portalResponseSchemaId("health"),
+			generatedAt: at,
+			tiles: {
+				good: { state: "missing", reason: "not_loaded", readAt: at },
+				bad: { state: "ok", data: { unexpected: true }, readAt: at },
+			},
+		};
+		const repaired = repairPortalTiles(PortalApiSchemas.Health, health);
+		expect(repaired?.replaced).toEqual(["bad"]);
+		expect(checkPortalValue(PortalApiSchemas.Health, repaired?.value)).toBe(true);
+	});
+
+	it("gives up when the envelope itself is wrong or the schema has no tiles", () => {
+		const value = connections({ state: "missing", reason: "config_missing", readAt: at });
+		expect(repairPortalTiles(PortalApiSchemas.Connections, { ...value, schema: "other" })).toBeUndefined();
+		expect(
+			repairPortalTiles(PortalApiSchemas.Connections, { ...value, tiles: { ...value.tiles, leaked: {} } }),
+		).toBeUndefined();
+		expect(repairPortalTiles(PortalApiSchemas.Healthz, value)).toBeUndefined();
+		const open = Type.Object({ schema: Type.String(), generatedAt: Type.String(), tiles: Type.Number() });
+		expect(repairPortalTiles(open, value)).toBeUndefined();
+	});
+});
+
 describe("meeting publication configuration", () => {
 	const write = (home: string, text: string) => {
 		mkdirSync(join(home, ".jarvis"), { recursive: true });
@@ -131,6 +204,18 @@ describe("meeting publication configuration", () => {
 			enabled: false,
 			statePath: null,
 		});
+	});
+
+	it("defaults to the configuration under the home directory", () => {
+		const home = tempHome("meeting-config-home");
+		write(home, "meeting_publication:\n  enabled: true\n");
+		const previous = process.env.HOME;
+		process.env.HOME = home;
+		try {
+			expect(readMeetingPublicationConfig({ now: NOW }).data?.enabled).toBe(true);
+		} finally {
+			process.env.HOME = previous;
+		}
 	});
 
 	it("reports a missing, invalid or unsafe configuration as a tile with a fixed reason", () => {
@@ -187,5 +272,75 @@ describe("harnessy portal", () => {
 		).toEqual(["serve", "--port", "8791", "--home-root", "/home/owner"]);
 		expect(portalHostArgs("open", { print: true, port: Option.none() })).toEqual(["open", "--print"]);
 		expect(portalHostArgs("open", { print: false })).toEqual(["open"]);
+	});
+});
+
+describe("portal host forwarding", () => {
+	const hostScript = (name: string, body: string) => {
+		const home = tempHome(name);
+		const script = join(home, "host.mjs");
+		writeFileSync(script, body);
+		return { home, script };
+	};
+
+	it("runs the host as a child with the forwarded argv and returns its exit code", async () => {
+		const { home, script } = hostScript(
+			"portal-forward",
+			`import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(join("HOME_DIR", "argv.json"))}.replace("HOME_DIR", process.argv[3]), JSON.stringify(process.argv.slice(2)));\nprocess.exit(3);\n`,
+		);
+		const signals = new EventEmitter();
+		const code = await runPortalHost(["service-plan", home], { resolveHost: () => script, signals });
+		expect(code).toBe(3);
+		expect(JSON.parse(readFileSync(join(home, "argv.json"), "utf8"))).toEqual(["service-plan", home]);
+		expect([signals.listenerCount("SIGINT"), signals.listenerCount("SIGTERM")]).toEqual([0, 0]);
+	});
+
+	it("stops the host on SIGTERM and reports a signal exit as 1", async () => {
+		const { script } = hostScript("portal-forward-signal", "setInterval(() => undefined, 1000);\n");
+		const signals = new EventEmitter();
+		const running = runPortalHost(["serve"], { resolveHost: () => script, signals });
+		signals.emit("SIGTERM");
+		await expect(running).resolves.toBe(1);
+		expect(signals.listenerCount("SIGINT")).toBe(0);
+	});
+
+	it("refuses to run when the host package is not installed", async () => {
+		await expect(
+			runPortalHost(["status"], {
+				resolveHost: () => {
+					throw new Error("Cannot find module '@harnessy/local-host/portal-cli'");
+				},
+			}),
+		).rejects.toThrow("requires the V2 @harnessy/local-host package");
+	});
+});
+
+describe("harnessy portal through the installed host", () => {
+	// The workspace links `@harnessy/local-host`; CI builds its `dist/portal-cli.js` before the tests run.
+	const run = (args: ReadonlyArray<string>) =>
+		Effect.runPromiseExit(
+			Command.runWith(portalCommand, { version: "0.0.0-test" })(args).pipe(Effect.provide(NodeServices.layer)),
+		);
+
+	it("prints the LaunchAgent plan through the real host and installs nothing", async () => {
+		const home = tempHome("portal-plan");
+		const tree = treeListing(home);
+		const exit = await run(["service-plan", "--state-dir", join(home, "state"), "--port", "8799"]);
+		expect(Exit.isSuccess(exit)).toBe(true);
+		expect(treeListing(home)).toEqual(tree);
+	});
+
+	it("fails when the host exits with an error, for every subcommand", async () => {
+		const state = join(tempHome("portal-bad-port"), "state");
+		for (const args of [
+			["service-plan", "--port", "not-a-port"],
+			["serve", "--port", "not-a-port", "--state-dir", state, "--home-root", state, "--workspace-root", state],
+			["status", "--port", "not-a-port", "--state-dir", state],
+			["open", "--print", "--port", "not-a-port", "--state-dir", state],
+		]) {
+			const exit = await run(args);
+			expect([args[0], Exit.isFailure(exit)]).toEqual([args[0], true]);
+			expect(String(Exit.isFailure(exit) ? exit.cause : "")).toContain("Portal host exited");
+		}
 	});
 });

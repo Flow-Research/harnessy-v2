@@ -299,6 +299,8 @@ export const buildPortalHome = async (prefix: string): Promise<PortalHome> => {
 	const wiki = await populateWiki(home);
 	for (const slug of ["flow", "personal"]) mkdirSync(join(home, ".config", `gws-${slug}`), { recursive: true });
 	mkdirSync(join(home, ".config", "unrelated"), { recursive: true });
+	// A plain file with a profile-shaped name is not a gws profile.
+	writeFileSync(join(home, ".config", "gws-notaprofile"), "");
 	const canaries = [
 		plant(join(home, "meeting-state", "meeting-publication-v2-review.token")),
 		plant(join(home, "meeting-state", meetingPublicationReviewRendezvousFileName)),

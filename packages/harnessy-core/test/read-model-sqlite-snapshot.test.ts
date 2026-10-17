@@ -248,4 +248,36 @@ describe("read-only SQLite snapshot", () => {
 			}),
 		).toEqual({ state: "unsafe", reason: "database_replaced" });
 	});
+
+	// Root ignores file modes, so these checks only hold for an ordinary user (local runs and hosted CI).
+	it.skipIf(process.getuid?.() === 0)(
+		"reports a database or a directory it may not open as a degraded state instead of throwing",
+		() => {
+			const home = tempHome("snapshot-unreadable");
+			const path = join(home, "state.sqlite3");
+			createDatabase(path);
+			chmodSync(path, 0o000);
+			try {
+				expect(readSqliteSnapshot(path, {}, countItems)).toEqual({
+					state: "error",
+					reason: "database_unreadable",
+				});
+			} finally {
+				chmodSync(path, 0o600);
+			}
+			const locked = join(home, "locked");
+			mkdirSync(locked);
+			createDatabase(join(locked, "state.sqlite3"));
+			chmodSync(locked, 0o000);
+			try {
+				expect(readSqliteSnapshot(join(locked, "state.sqlite3"), {}, countItems)).toEqual({
+					state: "error",
+					reason: "database_unreadable",
+				});
+			} finally {
+				chmodSync(locked, 0o700);
+			}
+			expect(readSqliteSnapshot(path, {}, countItems)).toEqual({ state: "ok", value: 3 });
+		},
+	);
 });

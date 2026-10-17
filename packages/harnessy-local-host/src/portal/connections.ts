@@ -32,6 +32,15 @@ export const MEETING_RECONNECT_NOTE =
 
 type ConnectionTile = TileResult<ConnectionListData>;
 
+/** The longest `checkedAt` a connection row carries (`ConnectionSchema`). */
+export const MAX_CHECKED_AT_LENGTH = 40;
+
+/** A source timestamp, or `null` when it is too long or not a date. One bad value never fails the route. */
+export const checkedAtOf = (value: string | null | undefined): string | null =>
+	typeof value === "string" && value.length <= MAX_CHECKED_AT_LENGTH && !Number.isNaN(Date.parse(value))
+		? value
+		: null;
+
 const list = (connections: ReadonlyArray<ConnectionData>, now: Date, omitted = 0): ConnectionTile =>
 	okTile({ connections: [...connections], omitted }, now);
 
@@ -61,7 +70,7 @@ export const meetingConnections = (summary: MeetingSummary, now: Date): Connecti
 				owner: "meeting-publication",
 				status: health === undefined ? "unknown" : health.failure === null ? "connected" : "attention",
 				detail: health === undefined ? "not_checked" : health.failure,
-				checkedAt: health?.checkedAt ?? null,
+				checkedAt: checkedAtOf(health?.checkedAt),
 				action:
 					href === null
 						? null
@@ -87,7 +96,7 @@ export const fathomConnections = (summary: FathomSummary, now: Date): Connection
 			owner: "fathom-poll",
 			status: account.stale ? "attention" : "connected",
 			detail: account.updatedAt === null ? "never_polled" : account.stale ? "checkpoint_stale" : null,
-			checkedAt: account.updatedAt,
+			checkedAt: checkedAtOf(account.updatedAt),
 			action: { kind: "command", value: "harnessy jarvis meeting fathom status", note: null },
 		})),
 		now,

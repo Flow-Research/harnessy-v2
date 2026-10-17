@@ -8,6 +8,7 @@
 import { join } from "node:path";
 
 import {
+	guardTile,
 	type LearningCatalogData,
 	okTile,
 	ReadModelStateError,
@@ -27,7 +28,10 @@ export interface LearningReadOptions {
 	readonly timeoutMs: number;
 }
 
-export const readLearningSummary = (options: LearningReadOptions): TileResult<LearningCatalogData> => {
+export const readLearningSummary = (options: LearningReadOptions): TileResult<LearningCatalogData> =>
+	guardTile(options.now, () => readCatalog(options));
+
+const readCatalog = (options: LearningReadOptions): TileResult<LearningCatalogData> => {
 	const snapshot = readSqliteSnapshot(
 		join(options.root, "catalog.sqlite3"),
 		{ timeoutMs: options.timeoutMs },
