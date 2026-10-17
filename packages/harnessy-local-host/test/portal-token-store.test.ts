@@ -13,7 +13,13 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { bearerSecret, PortalSessions } from "../src/portal/auth.ts";
+import {
+	bearerSecret,
+	isPortalServerProof,
+	PORTAL_CHALLENGE_TTL_MS,
+	PortalSessions,
+	portalClientProofHeader,
+} from "../src/portal/auth.ts";
 import {
 	PORTAL_TOKEN_FILE,
 	PortalStateError,
@@ -142,7 +148,6 @@ describe("portal sessions", () => {
 		expect(() => new PortalSessions("short")).toThrow("invalid_install_token");
 		const clock = { now: 0 };
 		const sessions = new PortalSessions("c".repeat(43), () => clock.now);
-		expect(sessions.isInstallToken(undefined)).toBe(false);
 		expect(sessions.isPageToken(undefined)).toBe(false);
 		expect(sessions.exchange("bad")).toBeUndefined();
 		const pages = Array.from({ length: 65 }, () => sessions.exchange(sessions.mintCode().secret)!.secret);
@@ -154,5 +159,53 @@ describe("portal sessions", () => {
 		const code = sessions.mintCode().secret;
 		expect(sessions.exchange(code)).toBeDefined();
 		expect(sessions.isPageToken(pages[64])).toBe(false);
+	});
+
+	it("accepts a client proof once, only for its origin, method and path, and before it expires", () => {
+		const token = "d".repeat(43);
+		const origin = "http://127.0.0.1:8790";
+		const clock = { now: 0 };
+		const sessions = new PortalSessions(token, () => clock.now);
+		const nonce = "n".repeat(43);
+		expect(sessions.issueChallenge("short", origin)).toBeUndefined();
+		const issued = sessions.issueChallenge(nonce, origin)!;
+		// The server proves it holds the token, for this nonce and origin only.
+		expect(isPortalServerProof(token, nonce, issued.challenge, origin, issued.proof)).toBe(true);
+		expect(isPortalServerProof(token, nonce, issued.challenge, "http://127.0.0.1:8791", issued.proof)).toBe(false);
+		expect(isPortalServerProof("e".repeat(43), nonce, issued.challenge, origin, issued.proof)).toBe(false);
+		const header = portalClientProofHeader(token, issued.challenge, origin, "GET", "/v1/today");
+		expect(header).not.toContain(token);
+		expect(sessions.isInstallProof(header, origin, "GET", "/v1/health")).toBe(false);
+		// A failed attempt spends the challenge too.
+		expect(sessions.isInstallProof(header, origin, "GET", "/v1/today")).toBe(false);
+
+		const next = sessions.issueChallenge(nonce, origin)!;
+		const good = portalClientProofHeader(token, next.challenge, origin, "GET", "/v1/today");
+		expect(sessions.isInstallProof(good, "http://127.0.0.1:8791", "GET", "/v1/today")).toBe(false);
+		const third = sessions.issueChallenge(nonce, origin)!;
+		const valid = portalClientProofHeader(token, third.challenge, origin, "GET", "/v1/today");
+		expect(sessions.isInstallProof(valid, origin, "GET", "/v1/today")).toBe(true);
+		expect(sessions.isInstallProof(valid, origin, "GET", "/v1/today")).toBe(false);
+		const forged = portalClientProofHeader(
+			"e".repeat(43),
+			sessions.issueChallenge(nonce, origin)!.challenge,
+			origin,
+			"GET",
+			"/v1/today",
+		);
+		expect(sessions.isInstallProof(forged, origin, "GET", "/v1/today")).toBe(false);
+
+		const late = sessions.issueChallenge(nonce, origin)!;
+		clock.now += PORTAL_CHALLENGE_TTL_MS;
+		expect(
+			sessions.isInstallProof(
+				portalClientProofHeader(token, late.challenge, origin, "GET", "/v1/today"),
+				origin,
+				"GET",
+				"/v1/today",
+			),
+		).toBe(false);
+		expect(sessions.isInstallProof(undefined, origin, "GET", "/v1/today")).toBe(false);
+		expect(sessions.isInstallProof(`Bearer ${token}`, origin, "GET", "/v1/today")).toBe(false);
 	});
 });

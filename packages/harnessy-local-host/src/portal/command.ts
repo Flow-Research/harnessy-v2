@@ -11,10 +11,12 @@ import { parseArgs } from "node:util";
 import { DEFAULT_READ_TIMEOUT_MS, type LaunchdProbe } from "@harnessy/core/read-model";
 import * as Result from "effect/Result";
 
+import { isPortalServerProof, portalClientProofHeader } from "./auth.ts";
 import { renderPortalLaunchAgent } from "./launchd-plan.ts";
 import { PORTAL_DEFAULT_PORT, PORTAL_HOST, type PortalServer, startPortalServer } from "./server.ts";
 import { createPortalSources } from "./sources.ts";
 import {
+	newPortalSecret,
 	PortalStateError,
 	preparePortalStateDir,
 	readOrCreatePortalInstallToken,
@@ -76,12 +78,13 @@ interface ClientResponse {
 	readonly body: unknown;
 }
 
-/** One request to the local portal. The body is at most 1 MiB. */
-const call = (
+/** One request to the local portal. The response body is read up to 1 MiB. */
+const send = (
 	port: number,
 	method: "GET" | "POST",
 	path: string,
-	token: string,
+	headers: Readonly<Record<string, string>>,
+	body: string,
 	timeoutMs: number,
 ): Promise<ClientResponse> =>
 	new Promise((resolveCall, rejectCall) => {
@@ -92,7 +95,7 @@ const call = (
 				method,
 				path,
 				timeout: timeoutMs,
-				headers: { Host: `${PORTAL_HOST}:${port}`, Authorization: `Bearer ${token}`, "Content-Length": "0" },
+				headers: { ...headers, Host: `${PORTAL_HOST}:${port}`, "Content-Length": String(Buffer.byteLength(body)) },
 			},
 			(incoming) => {
 				const chunks: Buffer[] = [];
@@ -115,12 +118,49 @@ const call = (
 		);
 		outgoing.on("timeout", () => outgoing.destroy());
 		outgoing.on("error", () => rejectCall(new PortalStateError("portal_unreachable")));
-		outgoing.end();
+		outgoing.end(body);
 	});
 
 const expectOk = (response: ClientResponse): unknown => {
 	if (response.status !== 200) fail(response.status === 401 ? "portal_unauthorized" : "portal_request_failed");
 	return response.body;
+};
+
+/**
+ * One request made with the install token, which is never sent. The listener must first prove,
+ * for a fresh nonce and this exact origin, that it holds the token; only then does the client send
+ * a single-use proof for this method and path. A process that merely holds the port learns nothing reusable.
+ */
+const callWithInstallProof = async (
+	port: number,
+	token: string,
+	method: "GET" | "POST",
+	path: string,
+	timeoutMs: number,
+): Promise<unknown> => {
+	const origin = `http://${PORTAL_HOST}:${port}`;
+	const nonce = newPortalSecret();
+	const issued = expectOk(
+		await send(
+			port,
+			"POST",
+			"/v1/session/challenge",
+			{ "Content-Type": "application/json" },
+			JSON.stringify({ nonce }),
+			timeoutMs,
+		),
+	) as { readonly challenge?: unknown; readonly proof?: unknown } | null;
+	const challenge = issued?.challenge;
+	const proof = issued?.proof;
+	if (
+		typeof challenge !== "string" ||
+		!/^[A-Za-z0-9_-]{43}$/u.test(challenge) ||
+		typeof proof !== "string" ||
+		!isPortalServerProof(token, nonce, challenge, origin, proof)
+	)
+		fail("portal_unverified");
+	const header = portalClientProofHeader(token, challenge as string, origin, method, path);
+	return expectOk(await send(port, method, path, { Authorization: header }, "", timeoutMs));
 };
 
 export const runPortalCommand = async (
@@ -170,8 +210,8 @@ export const runPortalCommand = async (
 			only(["port", "state-dir"]);
 			const port = parsePort(values.port, false);
 			const token = readPortalInstallToken(stateDir);
-			const healthz = expectOk(await call(port, "GET", "/v1/healthz", token, timeoutMs));
-			const health = expectOk(await call(port, "GET", "/v1/health", token, timeoutMs));
+			const healthz = expectOk(await send(port, "GET", "/v1/healthz", {}, "", timeoutMs));
+			const health = await callWithInstallProof(port, token, "GET", "/v1/health", timeoutMs);
 			io.write(`${JSON.stringify({ ok: true, port, healthz, health }, null, 2)}\n`);
 			return { kind: "done" };
 		}
@@ -179,7 +219,7 @@ export const runPortalCommand = async (
 			only(["port", "state-dir", "print"]);
 			const port = parsePort(values.port, false);
 			const token = readPortalInstallToken(stateDir);
-			const body = expectOk(await call(port, "POST", "/v1/session/code", token, timeoutMs)) as {
+			const body = (await callWithInstallProof(port, token, "POST", "/v1/session/code", timeoutMs)) as {
 				readonly code: string;
 			};
 			// A fragment never reaches a server or a log.

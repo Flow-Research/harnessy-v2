@@ -1,6 +1,9 @@
 /** Raw loopback HTTP for portal tests: every header, including Host, is under the test's control. */
 import { request } from "node:http";
 
+import { portalClientProofHeader } from "../../src/portal/auth.ts";
+import { newPortalSecret } from "../../src/portal/token-store.ts";
+
 export interface RawResponse {
 	readonly status: number;
 	readonly headers: Readonly<Record<string, string | string[] | undefined>>;
@@ -59,3 +62,23 @@ export const rawRequest = (port: number, options: RawRequest): Promise<RawRespon
 	});
 
 export const bearer = (token: string): Record<string, string> => ({ Authorization: `Bearer ${token}` });
+
+/**
+ * An install-token proof header for one request, made the way the CLI makes it:
+ * a fresh challenge from the server, then an HMAC over challenge, origin, method and path.
+ */
+export const installProof = async (
+	port: number,
+	token: string,
+	method: string,
+	path: string,
+): Promise<Record<string, string>> => {
+	const issued = await rawRequest(port, {
+		method: "POST",
+		path: "/v1/session/challenge",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ nonce: newPortalSecret() }),
+	});
+	const { challenge } = issued.json as { challenge: string };
+	return { Authorization: portalClientProofHeader(token, challenge, `http://127.0.0.1:${port}`, method, path) };
+};

@@ -34,8 +34,9 @@ test("PRTA-001 the API answers only exact-Host, same-origin loopback requests", 
 });
 
 test("PRTA-002 sessions use the portal's own tokens and expire", () => {
-	run("harnessy-local-host", "test/portal-server.test.ts", "requires the install token|single-use codes|at most 16 outstanding", 3);
-	run("harnessy-local-host", "test/portal-token-store.test.ts", "0700 state|group-readable, symlinked or non-directory|created once|symlinked, group-readable|cannot be created", 5);
+	run("harnessy-local-host", "test/portal-server.test.ts", "requires the install token|single-use codes|at most 16 outstanding|origin-bound challenges", 4);
+	run("harnessy-local-host", "test/portal-token-store.test.ts", "0700 state|group-readable, symlinked or non-directory|created once|symlinked, group-readable|cannot be created|client proof once", 6);
+	run("harnessy-local-host", "test/portal-command.test.ts", "never sends the install token", 1);
 });
 
 test("PRTA-003 every response follows the versioned contract", () => {

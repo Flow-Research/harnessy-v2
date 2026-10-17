@@ -15,8 +15,8 @@ Expected: A wrong or missing `Host` gets 400; a foreign or `null` `Origin` and a
 Layer: api
 Status: implemented
 Test File: qa/tests/portal-api.api.test.mjs
-Linked Refs: packages/harnessy-local-host/test/portal-server.test.ts, packages/harnessy-local-host/test/portal-token-store.test.ts, packages/harnessy-local-host/src/portal/auth.ts, packages/harnessy-local-host/src/portal/token-store.ts
-Expected: Data routes refuse a missing, malformed or unknown bearer and a review cookie alone with 401, and never echo the cookie; a one-time code needs the install token, works once and expires after 60 s; the exchange needs the exact `Origin` and JSON; a page token is read-only and expires after 8 h; the state directory must be a private, non-symlinked directory; the install token file is created once with mode 0600 and a symlinked, shared, hard-linked, oversize or malformed token file is refused.
+Linked Refs: packages/harnessy-local-host/test/portal-server.test.ts, packages/harnessy-local-host/test/portal-token-store.test.ts, packages/harnessy-local-host/test/portal-command.test.ts, packages/harnessy-local-host/src/portal/auth.ts, packages/harnessy-local-host/src/portal/token-store.ts
+Expected: Data routes refuse a missing, malformed or unknown bearer, the raw install token and a review cookie alone with 401, and never echo the cookie; the install token never crosses the wire: the server proves it holds the token for the client's nonce and its own origin, and each client proof works once, for one origin, method and path, within 60 s; the CLI sends nothing reusable to a listener that cannot prove it holds the token; a one-time code needs an install proof, works once and expires after 60 s; the exchange needs the exact `Origin` and JSON; a page token is read-only and expires after 8 h; the state directory must be a private, non-symlinked directory; the install token file is created once with mode 0600 and a symlinked, shared, hard-linked, oversize or malformed token file is refused.
 
 - Execute the session and token-store cases.
 

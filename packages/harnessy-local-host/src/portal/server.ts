@@ -96,13 +96,13 @@ const readBody = (request: IncomingMessage): Promise<Buffer> =>
 		request.on("error", () => rejectBody(new RequestRefused(400, "body_unreadable")));
 	});
 
-const parseCode = (body: Buffer): string | undefined => {
+/** The one string field of a `{ "<name>": "..." }` JSON body. */
+const parseField = (body: Buffer, name: "code" | "nonce"): string | undefined => {
 	try {
 		const value = JSON.parse(body.toString("utf8")) as unknown;
 		if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-		const keys = Object.keys(value);
-		const code = (value as { code?: unknown }).code;
-		return keys.length === 1 && typeof code === "string" ? code : undefined;
+		const field = (value as Record<string, unknown>)[name];
+		return Object.keys(value).length === 1 && typeof field === "string" ? field : undefined;
 	} catch {
 		return undefined;
 	}
@@ -153,30 +153,42 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		return value;
 	};
 
+	const requireJson = (request: IncomingMessage) => {
+		if (!/^application\/json(?:;|$)/u.test(request.headers["content-type"] ?? ""))
+			throw new RequestRefused(415, "unsupported_media_type");
+	};
+
 	/** Check the route's credential and build its response value. */
 	const authorize = (route: PortalRoute, request: IncomingMessage, body: Buffer): unknown => {
-		const bearer = bearerSecret(request.headers.authorization);
+		const authorization = request.headers.authorization;
+		const installProof = () => sessions.isInstallProof(authorization, origin, route.method, route.path);
 		switch (route.auth) {
 			case "none":
 				return route.schema === null
 					? openApi
 					: { ok: true, version: options.version, schemaVersion: PORTAL_SCHEMA_VERSION };
+			case "challenge": {
+				requireJson(request);
+				const nonce = parseField(body, "nonce");
+				const challenge = nonce === undefined ? undefined : sessions.issueChallenge(nonce, origin);
+				if (challenge === undefined) throw new RequestRefused(400, "invalid_nonce");
+				return { ...challenge, expiresAt: challenge.expiresAt.toISOString() };
+			}
 			case "install": {
-				if (!sessions.isInstallToken(bearer)) throw new RequestRefused(401, "unauthorized");
+				if (!installProof()) throw new RequestRefused(401, "unauthorized");
 				const grant = sessions.mintCode();
 				return { code: grant.secret, expiresAt: grant.expiresAt.toISOString() };
 			}
 			case "code": {
 				if (request.headers.origin === undefined) throw new RequestRefused(403, "origin_required");
-				if (!/^application\/json(?:;|$)/u.test(request.headers["content-type"] ?? ""))
-					throw new RequestRefused(415, "unsupported_media_type");
-				const code = parseCode(body);
+				requireJson(request);
+				const code = parseField(body, "code");
 				const grant = code === undefined ? undefined : sessions.exchange(code);
 				if (grant === undefined) throw new RequestRefused(401, "invalid_code");
 				return { token: grant.secret, scope: "read", expiresAt: grant.expiresAt.toISOString() };
 			}
 			case "read":
-				if (!sessions.isPageToken(bearer) && !sessions.isInstallToken(bearer))
+				if (!sessions.isPageToken(bearerSecret(authorization)) && !installProof())
 					throw new RequestRefused(401, "unauthorized");
 				return dataValue(route, route.data!);
 		}

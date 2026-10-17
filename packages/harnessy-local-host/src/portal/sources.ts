@@ -67,11 +67,15 @@ const MAX_LIFE_CONFIG_BYTES = 1024 * 1024;
 
 const lifeTiles = (options: PortalSourceOptions, homeRoot: string, now: Date): LifeSummary => {
 	// `resolveLifeOrchestratorSettings` reads the Life config whole; refuse a FIFO or an oversize file first.
-	const config = statSync(join(homeRoot, ".agents", "life", "config.json"), { throwIfNoEntry: false });
-	const refused =
-		config !== undefined && (!config.isFile() || config.size > MAX_LIFE_CONFIG_BYTES)
-			? "life_config_unsafe"
-			: undefined;
+	// A path that cannot be checked (a symlink loop, an unreadable directory) is refused like an unsafe one.
+	let refused: string | undefined;
+	try {
+		const config = statSync(join(homeRoot, ".agents", "life", "config.json"), { throwIfNoEntry: false });
+		if (config !== undefined && (!config.isFile() || config.size > MAX_LIFE_CONFIG_BYTES))
+			refused = "life_config_unsafe";
+	} catch {
+		refused = "life_config_unreadable";
+	}
 	const user = options.env.FLOW_USER ?? options.env.USER;
 	let settings: ReturnType<typeof resolveLifeOrchestratorSettings> | undefined;
 	if (refused === undefined) {
