@@ -64,7 +64,10 @@ Build the contract first and a page later.
   Fathom account names (connection ids and labels, and `fathomConfig`) and
   `gws` profile slugs. They never carry transcript text, emails, credentials or
   log text. A page must escape these strings, and before Garden consumes the
-  contract the paths should become relative to the workspace root.
+  contract the paths should become relative to the workspace root. The local
+  page sets every such string with `textContent` only and renders a link only
+  when it is `http://127.0.0.1:<port>/` or `http://localhost:<port>/` with no
+  query or fragment.
 - The portal ships in the host artifact, so each release changes the meeting
   service's host digest, as any local-host change already does.
 - Same-user code can read `portal.token`. The guards remain bounded

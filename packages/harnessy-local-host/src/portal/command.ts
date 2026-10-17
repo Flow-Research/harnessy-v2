@@ -13,6 +13,7 @@ import * as Result from "effect/Result";
 
 import { isPortalServerProof, portalClientProofHeader } from "./auth.ts";
 import { renderPortalLaunchAgent } from "./launchd-plan.ts";
+import { loadPortalPageAssets } from "./page-assets.ts";
 import { PORTAL_DEFAULT_PORT, PORTAL_HOST, type PortalServer, startPortalServer } from "./server.ts";
 import { createPortalSources } from "./sources.ts";
 import {
@@ -202,6 +203,7 @@ export const runPortalCommand = async (
 				sources,
 				version: io.version,
 				port,
+				page: loadPortalPageAssets(),
 				log: (entry) => io.write(`${JSON.stringify(entry)}\n`),
 			});
 			return { kind: "serving", server };

@@ -22,6 +22,7 @@ import {
 	MEETING_V1_LABELS,
 } from "../../harnessy-core/src/jarvis/meeting-publication/operational-input.ts";
 import { renderPortalLaunchAgent } from "../src/portal/launchd-plan.ts";
+import { PORTAL_PAGE_SCRIPTS } from "../src/portal/page-assets.ts";
 import { PORTAL_TOKEN_FILE } from "../src/portal/token-store.ts";
 import { buildPortalHome, CANARY, cleanupPortalFixtures, tempDir } from "./support/portal-fixture.ts";
 import { installProof, rawRequest } from "./support/portal-http.ts";
@@ -35,6 +36,8 @@ afterEach(() => {
 	for (const child of children.splice(0)) child.kill("SIGKILL");
 	cleanupPortalFixtures();
 });
+
+const PORTAL_PAGE_PATHS = ["/", "/app.css", ...PORTAL_PAGE_SCRIPTS.map((name) => `/${name}.js`)];
 
 type RecordEntry = { kind: "spawn"; file: string; args: string[] } | { kind: "open"; path: string };
 
@@ -119,7 +122,7 @@ const startChild = async (home: string, stateDir: string, log: string) => {
 };
 
 describe("portal non-writer regression", () => {
-	it("spawns only allow-listed launchd reads and opens no secret file across every documented route", async () => {
+	it("spawns only allow-listed launchd reads and opens no secret file across every documented route and page file", async () => {
 		const fixture = await buildPortalHome("non-writer");
 		const stateDir = join(tempDir("state"), "portal");
 		const log = join(tempDir("recorder"), "records.jsonl");
@@ -159,6 +162,12 @@ describe("portal non-writer regression", () => {
 			called.push(`${method} ${path}`);
 		}
 		expect(called).toHaveLength(12);
+		// The page files are served from memory: they spawn nothing and open nothing per request.
+		for (const path of PORTAL_PAGE_PATHS) {
+			const response = await rawRequest(port, { path });
+			expect([path, response.status]).toEqual([path, 200]);
+			expect(response.text).not.toContain(CANARY);
+		}
 		const health = await rawRequest(port, {
 			path: "/v1/health",
 			headers: await installProof(port, token, "GET", "/v1/health"),

@@ -47,6 +47,11 @@ export default defineConfig({
 				"src/portal/launchd-plan.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/learning.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/openapi.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				// H-10 portal page: static files, view model, DOM mount and page script.
+				"src/portal/page-assets.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/page/app.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/page/mount.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/page/view-model.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/routes.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/server.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/sources.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
