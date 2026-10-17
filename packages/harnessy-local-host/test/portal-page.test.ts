@@ -533,6 +533,46 @@ describe("portal page script", () => {
 		expect(page.calls).toHaveLength(3);
 	});
 
+	it("drops an old session's render that finishes while a new code is being exchanged", async () => {
+		const NEW_TOKEN = "n".repeat(43);
+		const gates = new Map<string, () => void>();
+		const page = pageEnv({
+			hash: "#/today",
+			answer: (call) =>
+				new Promise((resolveCall) => {
+					if (call.path === "/v1/session/exchange")
+						gates.set("exchange", () =>
+							resolveCall(
+								response(200, { token: NEW_TOKEN, scope: "read", expiresAt: "2026-10-17T16:00:00.000Z" }),
+							),
+						);
+					else if (call.init.headers.Authorization === `Bearer ${TOKEN}`)
+						gates.set("old", () => resolveCall(response(500, null)));
+					else resolveCall(response(200, today));
+				}),
+		});
+		page.storage!.setItem(TOKEN_KEY, storedSession());
+		const started = startPortalPage(page.env);
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		// The old session's render is still waiting when a new sign-in link opens in this tab.
+		expect(page.calls.map((call) => call.path)).toEqual(["/v1/today"]);
+		page.state.hash = `#code=${CODE}`;
+		page.listeners[0]!();
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		expect(page.calls.map((call) => call.path)).toEqual(["/v1/today", "/v1/session/exchange"]);
+		// The old render finishes during the exchange: its result must never be shown.
+		gates.get("old")!();
+		await started;
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		expect(page.main!.textContent).not.toContain("answered 500");
+		gates.get("exchange")!();
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		expect(page.calls.at(-1)!.init.headers).toEqual({ Authorization: `Bearer ${NEW_TOKEN}` });
+		expect(page.main!.textContent).toContain("Meetings to review2");
+		expect(page.main!.textContent).not.toContain("answered 500");
+	});
+
 	it("stays signed out when the code is malformed, refused or answered with a bad token", async () => {
 		const malformed = pageEnv({ hash: "#code=<script>" });
 		await startPortalPage(malformed.env);

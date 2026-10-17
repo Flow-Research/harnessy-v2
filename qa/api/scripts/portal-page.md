@@ -7,7 +7,7 @@ Layer: api
 Status: implemented
 Test File: qa/tests/portal-page.api.test.mjs
 Linked Refs: packages/harnessy-local-host/test/portal-page-server.test.ts, packages/harnessy-local-host/src/portal/page-assets.ts, packages/harnessy-local-host/src/portal/server.ts
-Expected: `/`, `/app.css` and each page script return 200 with the exact CSP, `no-store`, `nosniff`, `no-referrer`, `DENY`, the right content type, no `Set-Cookie` and no `Access-Control-*` header; no file contains the install token, a page token, a code or any 43-character secret; a script may import only another page script; a page file refuses a non-GET method, a wrong `Host`, a foreign `Origin` and a `cross-site` or `same-site` fetch; nothing else is served; without page files the server serves only the API.
+Expected: `/`, `/app.css` and each page script return 200 with the exact CSP, `no-store`, `nosniff`, `no-referrer`, `DENY`, the right content type, no `Set-Cookie` and no `Access-Control-*` header; no file contains the install token, a page token, a code or any 43-character secret; a script may statically import only another page script and may not use a dynamic `import(...)`; a page file refuses a non-GET method, a wrong `Host`, a foreign `Origin` and a `cross-site` or `same-site` fetch; nothing else is served; without page files the server serves only the API.
 
 - Execute the page-file and loader cases against a real server.
 

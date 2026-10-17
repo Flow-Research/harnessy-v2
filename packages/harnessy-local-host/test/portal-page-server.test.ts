@@ -174,7 +174,7 @@ describe("portal page loader", () => {
 		expect([...fromSource.keys()].sort()).toEqual([...PAGE_FILES].sort());
 	});
 
-	it("refuses a script that imports anything but another page script, and a missing script", () => {
+	it("refuses a script that imports anything but another page script, any dynamic import, and a missing script", () => {
 		const bare = tempDir("bare-import");
 		for (const name of PORTAL_PAGE_SCRIPTS) writeFileSync(join(bare, `${name}.js`), "export {};\n");
 		writeFileSync(join(bare, "mount.js"), 'import { readFileSync } from "node:fs";\nexport { readFileSync };\n');
@@ -183,6 +183,15 @@ describe("portal page loader", () => {
 		for (const name of PORTAL_PAGE_SCRIPTS) writeFileSync(join(remote, `${name}.js`), "export {};\n");
 		writeFileSync(join(remote, "app.js"), 'import "https://cdn.example/x.js";\n');
 		expect(() => loadPortalPageAssets(remote)).toThrow("portal_page_import_refused: app");
+		for (const dynamic of [
+			'await import("./mount.js");\n',
+			"export const load = () => import ('https://cdn.example/x.js');\n",
+		]) {
+			const dir = tempDir("dynamic-import");
+			for (const name of PORTAL_PAGE_SCRIPTS) writeFileSync(join(dir, `${name}.js`), "export {};\n");
+			writeFileSync(join(dir, "view-model.js"), dynamic);
+			expect(() => loadPortalPageAssets(dir)).toThrow("portal_page_import_refused: view-model");
+		}
 		expect(() => loadPortalPageAssets(tempDir("empty"))).toThrow(/ENOENT/u);
 	});
 });

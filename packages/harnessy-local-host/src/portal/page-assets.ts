@@ -9,8 +9,9 @@
  * In a build, the scripts are the compiled `dist/portal/page/*.js`. When the
  * package runs from source (tests, `node src/portal-cli.ts`), the `.ts` files are
  * type-stripped with Node's own stripper and their relative `.ts` imports point
- * at the served `.js` names. Either way each script may import only another
- * page script; anything else is refused at load.
+ * at the served `.js` names. Either way each script may statically import only
+ * another page script; any other import, and any dynamic `import(...)`, is
+ * refused at load.
  */
 import { lstatSync, readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
@@ -94,6 +95,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: 
 
 const RELATIVE_TS_IMPORT = /(\bfrom\s+["']\.\/[a-z-]+)\.ts(["'])/gu;
 const IMPORT_SPECIFIER = /\b(?:from|import)\s*["']([^"']+)["']/gu;
+/** A dynamic `import(...)` could load any module, so a page script may not contain one. */
+const DYNAMIC_IMPORT = /\bimport\s*\(/u;
 
 /** The default page directory: `page/` next to this module, in `src/` or `dist/`. */
 export const defaultPortalPageDir = (): string => fileURLToPath(new URL("./page/", import.meta.url));
@@ -110,6 +113,7 @@ const loadScript = (pageDir: string, name: string): Buffer => {
 				"$1.js$2",
 			);
 	const allowed = new Set(PORTAL_PAGE_SCRIPTS.map((script) => `./${script}.js`));
+	if (DYNAMIC_IMPORT.test(source)) throw new Error(`portal_page_import_refused: ${name}`);
 	for (const match of source.matchAll(IMPORT_SPECIFIER))
 		if (!allowed.has(match[1]!)) throw new Error(`portal_page_import_refused: ${name}`);
 	return Buffer.from(source, "utf8");
