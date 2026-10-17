@@ -63,6 +63,21 @@
       "scenario_count": 2
     },
     {
+      "slug": "portal-read-model",
+      "name": "Portal read model",
+      "id_prefix": "PRTL",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/portal-read-model.md"
+      ],
+      "scenario_count": 5
+    },
+    {
       "slug": "v1-reconciliation",
       "name": "V1 reconciliation",
       "id_prefix": "RECON",

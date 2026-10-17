@@ -136,6 +136,13 @@ export {
 } from "./connectors/notion.ts";
 export { HARNESSY_VERSION } from "./constants.ts";
 export { HarnessError } from "./errors.ts";
+export {
+	type CommunityBriefingQueueItem,
+	type CommunityBriefingStatus,
+	type CommunityBriefingStatusOptions,
+	inspectCommunityBriefingStatus,
+	listCommunityBriefings,
+} from "./jarvis/community-briefing/status.ts";
 export { JarvisConfigInspection, JarvisConfigReader, JarvisConfigStatus } from "./jarvis/config.ts";
 export {
 	JarvisAnalyticsConfig,
@@ -191,6 +198,11 @@ export {
 	installFathomSchedule,
 	planFathomSchedule,
 } from "./jarvis/fathom/schedule.ts";
+export {
+	type FathomStatus,
+	type FathomStatusOptions,
+	inspectFathomStatus,
+} from "./jarvis/fathom/status.ts";
 export type { CodexLifeDraftProviderOptions } from "./jarvis/life-orchestrator/codex-provider.ts";
 export { createCodexLifeDraftProvider } from "./jarvis/life-orchestrator/codex-provider.ts";
 export {
@@ -213,9 +225,14 @@ export {
 	validateMeetingPublicationWriteGrant,
 } from "./jarvis/meeting-publication/authority.ts";
 export {
+	inspectMeetingPublicationQueue,
 	MeetingPublicationAuthorityInspection,
 	MeetingPublicationInspector,
 	MeetingPublicationInspectorError,
+	type MeetingPublicationProviderHealthInspection,
+	type MeetingPublicationQueueInspection,
+	type MeetingPublicationQueueOptions,
+	type MeetingPublicationQueueSnapshot,
 	MeetingPublicationStateInspection,
 } from "./jarvis/meeting-publication/inspector.ts";
 export {
@@ -346,6 +363,7 @@ export type {
 export { HarnessProject } from "./operations.ts";
 export type { HarnessPaths } from "./paths.ts";
 export { pathsForTarget, resolveTargetDir, resolveTargetPaths, toTargetRelative } from "./paths.ts";
+export * from "./read-model.ts";
 export type { HarnessRuntimeAssetSyncOptions } from "./runtime/assets.ts";
 export { HarnessRuntimeAssetAction, HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime/assets.ts";
 export type { HarnessBootstrapPrepareOptions, HarnessBootstrapPrepareResult } from "./runtime/bootstrap.ts";
@@ -434,7 +452,6 @@ export {
 	renderVerifyJson,
 	verifyJsonOutput,
 } from "./structured-output.ts";
-
 export {
 	initializeWorkspace,
 	inspectWorkspace,
@@ -450,7 +467,6 @@ export {
 	type WorkspaceProject,
 	workspaceAgentContext,
 } from "./workspace.ts";
-
 export {
 	executeWorkspaceRelocation,
 	planWorkspaceRelocation,

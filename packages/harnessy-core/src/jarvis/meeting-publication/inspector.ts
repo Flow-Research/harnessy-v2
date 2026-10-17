@@ -27,6 +27,7 @@ import {
 	assertMeetingPublicationSqliteSidecarsAbsent,
 	MeetingPublicationStoreFileSafetyError,
 	meetingPublicationModeOf,
+	meetingPublicationSqliteSidecarPaths,
 } from "./store-file-safety.ts";
 import {
 	MEETING_PUBLICATION_STORE_SCHEMA_VERSION,
@@ -120,121 +121,178 @@ const configurationInspectionChecks = (config: JarvisMeetingPublicationConfig) =
 	);
 };
 
+/** A content change seen after a read: a writer committed meanwhile. Identity is unchanged. */
+class MeetingStateChangedError extends Error {
+	constructor() {
+		super("Meeting publication state changed during inspection");
+		this.name = "MeetingStateChangedError";
+	}
+}
+
+interface MeetingStateDatabaseRead<A> {
+	readonly stateDirectoryMode: number | null;
+	readonly databaseMode: number | null;
+	readonly version: number;
+	readonly value: A;
+}
+
+type MeetingStateDatabaseResult<A> =
+	| { readonly exists: false; readonly stateDirectoryMode: number | null }
+	| ({ readonly exists: true } & MeetingStateDatabaseRead<A>);
+
+/**
+ * Validate the state directory and database file, open the database read-only,
+ * validate its schema and run `read` in one read transaction. Throws
+ * {@link MeetingPublicationInspectorError}, file-safety and schema-contract errors,
+ * {@link MeetingStateChangedError} or the raw SQLite error.
+ */
+const readMeetingStateDatabase = <A>(
+	config: JarvisMeetingPublicationConfig,
+	options: MeetingPublicationInspectorOptions & { readonly timeoutMs?: number },
+	read: (database: DatabaseSync, version: number) => A,
+): MeetingStateDatabaseResult<A> => {
+	if (config.statePath === null || config.statePath.trim().length === 0)
+		return { exists: false, stateDirectoryMode: null };
+	const requestedRoot = resolve(config.statePath);
+	let existingAncestor = requestedRoot;
+	while (!existsSync(existingAncestor) && dirname(existingAncestor) !== existingAncestor) {
+		existingAncestor = dirname(existingAncestor);
+	}
+	if (lstatSync(existingAncestor).isSymbolicLink() || realpathSync(existingAncestor) !== existingAncestor) {
+		throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
+	}
+	if (!existsSync(requestedRoot)) return { exists: false, stateDirectoryMode: null };
+	const rootStat = lstatSync(requestedRoot, { bigint: true });
+	if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || realpathSync(requestedRoot) !== requestedRoot) {
+		throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
+	}
+	const stateDirectoryMode = meetingPublicationModeOf(Number(rootStat.mode));
+	if (stateDirectoryMode !== null && stateDirectoryMode !== 0o700) {
+		throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
+	}
+	const dbPath = resolve(requestedRoot, "meeting-publication.sqlite3");
+	const fromRoot = relative(requestedRoot, dbPath);
+	if (fromRoot === ".." || fromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
+		throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
+	}
+	assertMeetingPublicationSqliteSidecarsAbsent(dbPath);
+	if (!existsSync(dbPath)) return { exists: false, stateDirectoryMode };
+	const dbStat = assertMeetingPublicationRollbackDatabaseFile(dbPath);
+	const databaseMode = meetingPublicationModeOf(Number(dbStat.mode));
+	options.beforeDatabaseOpen?.(dbPath);
+	assertMeetingPublicationRollbackDatabaseFile(dbPath, dbStat);
+	const database = new DatabaseSync(dbPath, {
+		readOnly: true,
+		allowExtension: false,
+		timeout: options.timeoutMs ?? 1_000,
+	});
+	try {
+		assertMeetingPublicationRollbackDatabaseFile(dbPath, dbStat);
+		database.exec("BEGIN");
+		// Take the shared lock before validation, so a writer holding the database
+		// surfaces as SQLITE_BUSY instead of being reported as an invalid schema.
+		database.prepare("SELECT COUNT(*) AS count FROM sqlite_schema").get();
+		let version: number;
+		let value: A;
+		try {
+			version = validateMeetingPublicationStoreSchema(database).version;
+			value = read(database, version);
+		} finally {
+			if (database.isTransaction) database.exec("COMMIT");
+		}
+		// A sidecar that appeared during the read means a writer started: the state changed.
+		if (
+			meetingPublicationSqliteSidecarPaths(dbPath).some(
+				(path) => lstatSync(path, { throwIfNoEntry: false }) !== undefined,
+			)
+		) {
+			throw new MeetingStateChangedError();
+		}
+		const finalRootStat = lstatSync(requestedRoot, { bigint: true });
+		const finalPathStat = assertMeetingPublicationRollbackDatabaseFile(dbPath);
+		if (
+			!finalRootStat.isDirectory() ||
+			finalRootStat.isSymbolicLink() ||
+			realpathSync(requestedRoot) !== requestedRoot ||
+			finalRootStat.dev !== rootStat.dev ||
+			finalRootStat.ino !== rootStat.ino ||
+			meetingPublicationModeOf(Number(finalRootStat.mode)) !== stateDirectoryMode ||
+			finalPathStat.dev !== dbStat.dev ||
+			finalPathStat.ino !== dbStat.ino
+		) {
+			throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
+		}
+		if (
+			finalRootStat.nlink !== rootStat.nlink ||
+			finalRootStat.size !== rootStat.size ||
+			finalRootStat.mtimeNs !== rootStat.mtimeNs ||
+			finalRootStat.ctimeNs !== rootStat.ctimeNs ||
+			finalPathStat.size !== dbStat.size ||
+			finalPathStat.mtimeNs !== dbStat.mtimeNs ||
+			finalPathStat.ctimeNs !== dbStat.ctimeNs
+		) {
+			throw new MeetingStateChangedError();
+		}
+		return { exists: true, stateDirectoryMode, databaseMode, version, value };
+	} finally {
+		database.close();
+	}
+};
+
+const countMeetingState = (database: DatabaseSync) => {
+	const statusCounts: Record<string, number> = {};
+	for (const row of database
+		.prepare("SELECT status, COUNT(*) AS count FROM publication_items GROUP BY status")
+		.all()) {
+		const status = String(row.status ?? "");
+		if (!(MeetingPublicationStatus.literals as ReadonlyArray<string>).includes(status)) {
+			throw new MeetingPublicationInspectorError({ code: "schema_invalid" });
+		}
+		statusCounts[status] = safeCount(row.count);
+	}
+	const failureCounts: Record<string, number> = {};
+	for (const row of database
+		.prepare(
+			"SELECT failure_stage, COUNT(*) AS count FROM publication_items WHERE failure_stage IS NOT NULL GROUP BY failure_stage",
+		)
+		.all()) {
+		const stage = String(row.failure_stage ?? "");
+		if (!(MeetingPublicationFailureStage.literals as ReadonlyArray<string>).includes(stage)) {
+			throw new MeetingPublicationInspectorError({ code: "schema_invalid" });
+		}
+		failureCounts[stage] = safeCount(row.count);
+	}
+	const totalItems = safeCount(database.prepare("SELECT COUNT(*) AS count FROM publication_items").get()?.count);
+	return { statusCounts, failureCounts, totalItems };
+};
+
 const inspectState = (
 	config: JarvisMeetingPublicationConfig,
 	options: MeetingPublicationInspectorOptions,
 ): Effect.Effect<MeetingPublicationStateInspection, MeetingPublicationInspectorError> =>
 	Effect.try({
 		try: () => {
-			if (config.statePath === null || config.statePath.trim().length === 0) return missingState();
-			const requestedRoot = resolve(config.statePath);
-			let existingAncestor = requestedRoot;
-			while (!existsSync(existingAncestor) && dirname(existingAncestor) !== existingAncestor) {
-				existingAncestor = dirname(existingAncestor);
-			}
-			if (lstatSync(existingAncestor).isSymbolicLink() || realpathSync(existingAncestor) !== existingAncestor) {
-				throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
-			}
-			if (!existsSync(requestedRoot)) return missingState();
-			const rootStat = lstatSync(requestedRoot, { bigint: true });
-			if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || realpathSync(requestedRoot) !== requestedRoot) {
-				throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
-			}
-			const stateDirectoryMode = meetingPublicationModeOf(Number(rootStat.mode));
-			if (stateDirectoryMode !== null && stateDirectoryMode !== 0o700) {
-				throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
-			}
-			const dbPath = resolve(requestedRoot, "meeting-publication.sqlite3");
-			const fromRoot = relative(requestedRoot, dbPath);
-			if (fromRoot === ".." || fromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)) {
-				throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
-			}
-			assertMeetingPublicationSqliteSidecarsAbsent(dbPath);
-			if (!existsSync(dbPath)) {
+			const result = readMeetingStateDatabase(config, options, countMeetingState);
+			if (!result.exists) {
 				return new MeetingPublicationStateInspection({
 					...missingState(),
-					stateDirectoryMode,
+					stateDirectoryMode: result.stateDirectoryMode,
 				});
 			}
-			const dbStat = assertMeetingPublicationRollbackDatabaseFile(dbPath);
-			const databaseMode = meetingPublicationModeOf(Number(dbStat.mode));
-			options.beforeDatabaseOpen?.(dbPath);
-			assertMeetingPublicationRollbackDatabaseFile(dbPath, dbStat);
-			const database = new DatabaseSync(dbPath, {
-				readOnly: true,
-				allowExtension: false,
-				timeout: 1_000,
+			return new MeetingPublicationStateInspection({
+				exists: true,
+				schemaState: result.version === MEETING_PUBLICATION_STORE_SCHEMA_VERSION ? "current" : "migration_required",
+				schemaVersion: result.version,
+				stateDirectoryMode: result.stateDirectoryMode,
+				databaseMode: result.databaseMode,
+				...result.value,
 			});
-			try {
-				assertMeetingPublicationRollbackDatabaseFile(dbPath, dbStat);
-				const { version } = validateMeetingPublicationStoreSchema(database);
-				const statusCounts: Record<string, number> = {};
-				for (const row of database
-					.prepare("SELECT status, COUNT(*) AS count FROM publication_items GROUP BY status")
-					.all()) {
-					const status = String(row.status ?? "");
-					if (!(MeetingPublicationStatus.literals as ReadonlyArray<string>).includes(status)) {
-						throw new MeetingPublicationInspectorError({ code: "schema_invalid" });
-					}
-					statusCounts[status] = safeCount(row.count);
-				}
-				const failureCounts: Record<string, number> = {};
-				for (const row of database
-					.prepare(
-						"SELECT failure_stage, COUNT(*) AS count FROM publication_items WHERE failure_stage IS NOT NULL GROUP BY failure_stage",
-					)
-					.all()) {
-					const stage = String(row.failure_stage ?? "");
-					if (!(MeetingPublicationFailureStage.literals as ReadonlyArray<string>).includes(stage)) {
-						throw new MeetingPublicationInspectorError({ code: "schema_invalid" });
-					}
-					failureCounts[stage] = safeCount(row.count);
-				}
-				const totalItems = safeCount(
-					database.prepare("SELECT COUNT(*) AS count FROM publication_items").get()?.count,
-				);
-				const finalRootStat = lstatSync(requestedRoot, { bigint: true });
-				const finalPathStat = assertMeetingPublicationRollbackDatabaseFile(dbPath, dbStat);
-				if (
-					!finalRootStat.isDirectory() ||
-					finalRootStat.isSymbolicLink() ||
-					realpathSync(requestedRoot) !== requestedRoot ||
-					finalRootStat.dev !== rootStat.dev ||
-					finalRootStat.ino !== rootStat.ino ||
-					finalRootStat.nlink !== rootStat.nlink ||
-					finalRootStat.size !== rootStat.size ||
-					finalRootStat.mtimeNs !== rootStat.mtimeNs ||
-					finalRootStat.ctimeNs !== rootStat.ctimeNs ||
-					meetingPublicationModeOf(Number(finalRootStat.mode)) !== stateDirectoryMode ||
-					!finalPathStat.isFile() ||
-					finalPathStat.isSymbolicLink() ||
-					finalPathStat.nlink !== 1n ||
-					realpathSync(dbPath) !== dbPath ||
-					finalPathStat.dev !== dbStat.dev ||
-					finalPathStat.ino !== dbStat.ino ||
-					meetingPublicationModeOf(Number(finalPathStat.mode)) !== databaseMode ||
-					finalPathStat.size !== dbStat.size ||
-					finalPathStat.mtimeNs !== dbStat.mtimeNs ||
-					finalPathStat.ctimeNs !== dbStat.ctimeNs
-				) {
-					throw new MeetingPublicationInspectorError({ code: "unsafe_state" });
-				}
-				return new MeetingPublicationStateInspection({
-					exists: true,
-					schemaState: version === MEETING_PUBLICATION_STORE_SCHEMA_VERSION ? "current" : "migration_required",
-					schemaVersion: version,
-					stateDirectoryMode,
-					databaseMode,
-					totalItems,
-					statusCounts,
-					failureCounts,
-				});
-			} finally {
-				database.close();
-			}
 		},
 		catch: (cause) => {
 			if (cause instanceof MeetingPublicationInspectorError) return cause;
+			if (cause instanceof MeetingStateChangedError) {
+				return new MeetingPublicationInspectorError({ code: "unsafe_state" });
+			}
 			if (cause instanceof MeetingPublicationStoreFileSafetyError) {
 				return new MeetingPublicationInspectorError({ code: cause.code });
 			}
@@ -244,6 +302,135 @@ const inspectState = (
 			return new MeetingPublicationInspectorError({ code: "read_failed" });
 		},
 	});
+
+export interface MeetingPublicationQueueOptions extends MeetingPublicationInspectorOptions {
+	/** SQLite busy timeout in milliseconds (default 1 000). */
+	readonly timeoutMs?: number;
+	/** Pending-review items to return, newest meeting first (1–100, default 20). */
+	readonly pendingLimit?: number;
+}
+
+export interface MeetingPublicationProviderHealthInspection {
+	readonly provider: "google" | "discord";
+	readonly failure: string | null;
+	readonly checkedAt: string;
+	readonly lastSuccessAt: string | null;
+	readonly recoveryPending: boolean;
+}
+
+export interface MeetingPublicationQueueSnapshot {
+	readonly state: "ok";
+	readonly schemaVersion: number;
+	readonly schemaState: "current" | "migration_required";
+	readonly totalItems: number;
+	readonly statusCounts: Readonly<Record<string, number>>;
+	readonly failureCounts: Readonly<Record<string, number>>;
+	readonly pendingReview: ReadonlyArray<{
+		readonly itemId: string;
+		readonly meetingDate: string;
+		readonly updatedAt: string;
+	}>;
+	readonly pendingReviewTruncated: boolean;
+	/** `null` before schema 4, which added provider health. The provider account is never returned. */
+	readonly providerHealth: ReadonlyArray<MeetingPublicationProviderHealthInspection> | null;
+}
+
+export type MeetingPublicationQueueInspection =
+	| MeetingPublicationQueueSnapshot
+	| {
+			readonly state: "missing" | "busy" | "unsafe" | "unsupported" | "error";
+			readonly reason: string;
+	  };
+
+const SQLITE_BUSY_CODES = new Set([5, 6]);
+const PROVIDERS = new Set(["google", "discord"]);
+
+/**
+ * Read the publication queue and provider health without opening the store for writing.
+ * Uses the same path and file-safety checks as `inspectState`. A `-journal` file
+ * (a writer mid-transaction or a hot journal) is reported as `busy` and the database
+ * is not opened; nothing is created, rolled back or repaired.
+ */
+export const inspectMeetingPublicationQueue = (
+	config: JarvisMeetingPublicationConfig,
+	options: MeetingPublicationQueueOptions = {},
+): MeetingPublicationQueueInspection => {
+	if (config.statePath !== null && config.statePath.trim().length > 0) {
+		const journal = `${resolve(config.statePath, "meeting-publication.sqlite3")}-journal`;
+		if (lstatSync(journal, { throwIfNoEntry: false }) !== undefined)
+			return { state: "busy", reason: "journal_present" };
+	}
+	const limit = Math.max(1, Math.min(Math.trunc(options.pendingLimit ?? 20), 100));
+	const read = Result.try(() =>
+		readMeetingStateDatabase(config, options, (database, version) => {
+			const counts = countMeetingState(database);
+			const pending = database
+				.prepare(
+					"SELECT item_id, meeting_date, updated_at FROM publication_items WHERE status = 'pending_review' ORDER BY meeting_date DESC, item_id LIMIT ?",
+				)
+				.all(limit + 1)
+				.map((row) => ({
+					itemId: String(row.item_id),
+					meetingDate: String(row.meeting_date),
+					updatedAt: String(row.updated_at),
+				}));
+			const providerHealth =
+				version >= 4
+					? database
+							.prepare(
+								"SELECT provider, failure, checked_at, last_success_at, recovery_pending FROM provider_health ORDER BY provider",
+							)
+							.all()
+							.map((row) => {
+								const provider = String(row.provider);
+								if (!PROVIDERS.has(provider))
+									throw new MeetingPublicationInspectorError({ code: "schema_invalid" });
+								return {
+									provider: provider as "google" | "discord",
+									failure: row.failure === null ? null : String(row.failure),
+									checkedAt: String(row.checked_at),
+									lastSuccessAt: row.last_success_at === null ? null : String(row.last_success_at),
+									recoveryPending: row.recovery_pending === 1,
+								};
+							})
+					: null;
+			return { counts, pending, providerHealth };
+		}),
+	);
+	if (Result.isSuccess(read)) {
+		const result = read.success;
+		if (!result.exists) return { state: "missing", reason: "database_missing" };
+		return {
+			state: "ok",
+			schemaVersion: result.version,
+			schemaState: result.version === MEETING_PUBLICATION_STORE_SCHEMA_VERSION ? "current" : "migration_required",
+			...result.value.counts,
+			pendingReview: result.value.pending.slice(0, limit),
+			pendingReviewTruncated: result.value.pending.length > limit,
+			providerHealth: result.value.providerHealth,
+		};
+	}
+	const cause = read.failure;
+	if (cause instanceof MeetingStateChangedError) return { state: "busy", reason: "database_changed" };
+	if (
+		cause instanceof MeetingPublicationInspectorError ||
+		cause instanceof MeetingPublicationStoreFileSafetyError ||
+		cause instanceof MeetingPublicationStoreSchemaContractError
+	) {
+		return cause.code === "unsafe_state"
+			? { state: "unsafe", reason: "unsafe_state" }
+			: cause.code === "read_failed"
+				? { state: "error", reason: "read_failed" }
+				: { state: "unsupported", reason: cause.code };
+	}
+	const code =
+		typeof cause === "object" && cause !== null && "errcode" in cause && typeof cause.errcode === "number"
+			? cause.errcode
+			: null;
+	return code !== null && SQLITE_BUSY_CODES.has(code)
+		? { state: "busy", reason: "database_busy" }
+		: { state: "error", reason: "read_failed" };
+};
 
 /** Read-only inspection boundary that never constructs writer, review, or provider services. */
 export class MeetingPublicationInspector extends Context.Service<

@@ -80,3 +80,28 @@ value and schema; only declared path columns can change. Approvals, receipts,
 retries, timestamps and provenance bytes remain intact. Signed grants are not
 rewritten; create fresh service enrollments through the existing owner workflow.
 Smoke-test services and observe scheduled delivery before retiring recovery data.
+
+## Read-only portal read model
+
+`@harnessy/core/read-model` exports read-only readers for the planned Harnessy
+portal. Each reader reports one source as a tile: `ok`, `missing`, `busy`,
+`recovering`, `unsupported`, `unsafe` or `error`, with a fixed reason code. A
+busy or damaged source degrades its own tile; it does not fail the whole read.
+
+- `readLifeSummary` and `readLifeBrief` read the Life ledger, today's brief,
+  the newest preview and the weekly runs. They never call
+  `LifeReadingLedger.open`, so they never create or migrate the ledger.
+- `readFathomSummary` reads configured accounts, inbox counts and the V2 poll
+  checkpoint (`~/.harnessy/jarvis/state/fathom/poll-state-v2.json`).
+- `readCommunitySummary` and `readMeetingSummary` read queue counts, recent
+  items and meeting provider health. They never return briefing text, error
+  messages or provider accounts.
+- `readWorkspaceSummary`, `readSkillsSummary` and `readServiceHealth` read the
+  workspace registry, the skill count and `launchctl print` state with a
+  redacted last log line.
+
+SQLite reads go through `readSqliteSnapshot`. It opens the file read-only with a
+short busy timeout (250 ms by default) and holds one read transaction. It
+refuses to open a database while a `-journal` file exists, refuses WAL
+databases, and never creates a file or rolls back a journal.
+`PortalSchemas` holds the TypeBox (JSON Schema) shape of every result.

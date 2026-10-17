@@ -1,0 +1,209 @@
+/**
+ * Read-only Life Orchestrator summary.
+ *
+ * `inspectLifeStatus` opens the ledger through `LifeReadingLedger.open`, which
+ * can create the state directory and database and run schema migrations. This
+ * reader never calls it: it reads the ledger through a bounded read-only
+ * snapshot and reads briefs, previews and weekly runs from the file system.
+ */
+import { existsSync } from "node:fs";
+import { join, relative } from "node:path";
+
+import type { LifeOrchestratorSettings } from "../jarvis/life-orchestrator/config.ts";
+import { canonicalLifeBriefPath, compatibilityScriptPath } from "../jarvis/life-orchestrator/history.ts";
+import { listLifeWeeklyRuns } from "../jarvis/life-orchestrator/weekly-runs.ts";
+import { readBoundedDirectory, readBoundedFile } from "./files.ts";
+import type {
+	LifeBriefStatusData,
+	LifeBriefTextData,
+	LifePreviewData,
+	LifeReadingCountsData,
+	LifeSetupData,
+	LifeWeeklyRunsData,
+} from "./schemas.ts";
+import { readSqliteSnapshot } from "./sqlite-snapshot.ts";
+import {
+	guardTile,
+	MAX_TEXT_BYTES,
+	okTile,
+	type ReadModelOptions,
+	ReadModelStateError,
+	readClock,
+	readTimeout,
+	stateTile,
+	type TileResult,
+} from "./tile.ts";
+
+/** The newest ledger schema this reader understands (`life-orchestrator/store.ts`). */
+export const LIFE_LEDGER_SUPPORTED_SCHEMA = 2;
+const PREVIEW_NAME = /^(\d{4}-\d{2}-\d{2})-[A-Za-z0-9]+\.md$/u;
+const MAX_PREVIEW_SCAN = 1_000;
+const MAX_WEEKLY_RUNS = 8;
+const READING_STATUSES = ["available", "reserved", "delivered"] as const;
+
+export interface LifeReadOptions extends ReadModelOptions {
+	/** The newest weekly runs to return. */
+	readonly weeklyRunLimit?: number;
+}
+
+export interface LifeSummary {
+	readonly readings: TileResult<LifeReadingCountsData>;
+	readonly brief: TileResult<LifeBriefStatusData>;
+	readonly latestPreview: TileResult<LifePreviewData>;
+	readonly weeklyRuns: TileResult<LifeWeeklyRunsData>;
+	readonly setup: TileResult<LifeSetupData>;
+}
+
+const lagosDate = (date: Date): string =>
+	new Intl.DateTimeFormat("en-CA", {
+		timeZone: "Africa/Lagos",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	}).format(date);
+
+const readReadingCounts = (
+	settings: LifeOrchestratorSettings,
+	options: LifeReadOptions,
+	now: Date,
+): TileResult<LifeReadingCountsData> =>
+	guardTile(now, () => {
+		const snapshot = readSqliteSnapshot(
+			settings.paths.databasePath,
+			{ timeoutMs: readTimeout(options) },
+			(database) => {
+				// `PRAGMA user_version` always returns one row.
+				const schemaVersion = Number(database.prepare("PRAGMA user_version").get()!.user_version);
+				if (schemaVersion === 0) throw new ReadModelStateError("missing", "ledger_uninitialized");
+				if (schemaVersion > LIFE_LEDGER_SUPPORTED_SCHEMA)
+					throw new ReadModelStateError("unsupported", "schema_newer");
+				const counts = { available: 0, reserved: 0, delivered: 0 };
+				for (const row of database
+					.prepare("SELECT status, COUNT(*) AS count FROM reading_candidates GROUP BY status")
+					.all()) {
+					const status = String(row.status);
+					if (!(READING_STATUSES as ReadonlyArray<string>).includes(status))
+						throw new ReadModelStateError("unsupported", "schema_invalid");
+					counts[status as keyof typeof counts] = Number(row.count);
+				}
+				return {
+					schemaVersion,
+					...counts,
+					total: counts.available + counts.reserved + counts.delivered,
+				};
+			},
+		);
+		return snapshot.state === "ok" ? okTile(snapshot.value, now) : stateTile(snapshot.state, snapshot.reason, now);
+	});
+
+const readBriefStatus = (settings: LifeOrchestratorSettings, now: Date): TileResult<LifeBriefStatusData> =>
+	guardTile(now, () => {
+		const path = canonicalLifeBriefPath(settings.paths.lifeDirectory, now);
+		const file = readBoundedFile(path, 0);
+		return okTile(
+			{
+				date: lagosDate(now),
+				relativePath: relative(settings.paths.lifeDirectory, path),
+				journaled: existsSync(`${path}.journaled`),
+				bytes: file.size,
+				modifiedAt: file.modifiedAt.toISOString(),
+			},
+			now,
+		);
+	});
+
+const readLatestPreview = (settings: LifeOrchestratorSettings, now: Date): TileResult<LifePreviewData> =>
+	guardTile(now, () => {
+		const listing = readBoundedDirectory(settings.paths.reviewDirectory, MAX_PREVIEW_SCAN);
+		let newest: { readonly name: string; readonly date: string } | undefined;
+		for (const entry of listing.entries) {
+			const match = PREVIEW_NAME.exec(entry.name);
+			if (match === null || !entry.isFile()) continue;
+			if (newest === undefined || entry.name > newest.name) newest = { name: entry.name, date: match[1]! };
+		}
+		if (newest === undefined) return stateTile("missing", "no_preview", now);
+		const file = readBoundedFile(join(settings.paths.reviewDirectory, newest.name), 0);
+		return okTile(
+			{
+				name: newest.name,
+				date: newest.date,
+				bytes: file.size,
+				modifiedAt: file.modifiedAt.toISOString(),
+				scanLimitReached: listing.truncated,
+			},
+			now,
+		);
+	});
+
+const readWeeklyRuns = (
+	settings: LifeOrchestratorSettings,
+	options: LifeReadOptions,
+	now: Date,
+): TileResult<LifeWeeklyRunsData> =>
+	guardTile(now, () => {
+		if (!existsSync(settings.paths.reviewDirectory)) return stateTile("missing", "directory_missing", now);
+		const runs = listLifeWeeklyRuns(settings.paths.reviewDirectory);
+		const counts: Record<string, number> = {};
+		for (const run of runs) counts[run.state] = (counts[run.state] ?? 0) + 1;
+		const limit = Math.max(1, Math.min(options.weeklyRunLimit ?? MAX_WEEKLY_RUNS, 52));
+		return okTile(
+			{
+				runs: runs.slice(0, limit).map((run) => ({
+					periodId: run.periodId,
+					runHash: run.runHash,
+					state: run.state,
+					incompleteReconciliation: run.incompleteReconciliation,
+				})),
+				counts,
+				total: runs.length,
+			},
+			now,
+		);
+	});
+
+const readSetup = (settings: LifeOrchestratorSettings, now: Date): TileResult<LifeSetupData> =>
+	guardTile(now, () =>
+		okTile(
+			{
+				steeringReady: existsSync(settings.paths.steeringPath),
+				compatibilityReady: ["daily-brief", "learning-research", "weekly-plan"].every((name) =>
+					existsSync(compatibilityScriptPath(settings.paths.compatibilityScriptsDirectory, name)),
+				),
+			},
+			now,
+		),
+	);
+
+/** Today's Life state as tiles. Never opens the ledger for writing and never creates a file. */
+export const readLifeSummary = (settings: LifeOrchestratorSettings, options: LifeReadOptions = {}): LifeSummary => {
+	const now = readClock(options);
+	return {
+		readings: readReadingCounts(settings, options, now),
+		brief: readBriefStatus(settings, now),
+		latestPreview: readLatestPreview(settings, now),
+		weeklyRuns: readWeeklyRuns(settings, options, now),
+		setup: readSetup(settings, now),
+	};
+};
+
+/** The text of the canonical daily brief for `date`, up to 64 KiB, to be rendered as plain text. */
+export const readLifeBrief = (
+	settings: LifeOrchestratorSettings,
+	date: Date,
+	options: ReadModelOptions = {},
+): TileResult<LifeBriefTextData> => {
+	const now = readClock(options);
+	return guardTile(now, () => {
+		const path = canonicalLifeBriefPath(settings.paths.lifeDirectory, date);
+		const file = readBoundedFile(path, MAX_TEXT_BYTES);
+		return okTile(
+			{
+				date: lagosDate(date),
+				journaled: existsSync(`${path}.journaled`),
+				text: new TextDecoder("utf-8", { fatal: false }).decode(file.bytes),
+				truncated: file.truncated,
+			},
+			now,
+		);
+	});
+};

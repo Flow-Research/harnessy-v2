@@ -20,14 +20,16 @@ import type { FathomImportEnvelope, FathomIngestCheckpoint, FathomIngestStore } 
 
 const STATE_FILE = "poll-state-v2.json";
 
-interface PersistedState {
+export interface FathomPersistedPollState {
 	readonly version: 1;
 	readonly accounts: Readonly<Record<string, FathomIngestCheckpoint>>;
 }
 
 const emptyCheckpoint = (): FathomIngestCheckpoint => ({ cursor: null, seen: {}, updatedAt: null });
 
-const accountKey = (account: string): string => createHash("sha256").update(account).digest("hex").slice(0, 24);
+/** The state-file key of one account label: the label itself is never stored. */
+export const fathomAccountKey = (account: string): string =>
+	createHash("sha256").update(account).digest("hex").slice(0, 24);
 const recordingKey = (recordingId: string): string => createHash("sha256").update(recordingId).digest("hex");
 
 const validateCheckpoint = (value: FathomIngestCheckpoint): void => {
@@ -49,8 +51,9 @@ const validateCheckpoint = (value: FathomIngestCheckpoint): void => {
 		throw new Error("invalid V2 Fathom checkpoint");
 };
 
-const parseState = (raw: string): PersistedState => {
-	const value = JSON.parse(raw) as Partial<PersistedState>;
+/** Parse and validate the V2 poll state file; throws on any invalid content. */
+export const parseFathomFileStoreState = (raw: string): FathomPersistedPollState => {
+	const value = JSON.parse(raw) as Partial<FathomPersistedPollState>;
 	if (
 		!value ||
 		value.version !== 1 ||
@@ -76,9 +79,10 @@ export class FathomFileStore implements FathomIngestStore {
 
 	async loadCheckpoint(account: string): Promise<FathomIngestCheckpoint> {
 		const checkpoint = existsSync(this.#statePath)
-			? (parseState(readFileSync(this.#statePath, "utf8")).accounts[accountKey(account)] ?? emptyCheckpoint())
+			? (parseFathomFileStoreState(readFileSync(this.#statePath, "utf8")).accounts[fathomAccountKey(account)] ??
+				emptyCheckpoint())
 			: emptyCheckpoint();
-		this.#loaded.set(accountKey(account), JSON.stringify(checkpoint));
+		this.#loaded.set(fathomAccountKey(account), JSON.stringify(checkpoint));
 		return checkpoint;
 	}
 
@@ -122,15 +126,15 @@ export class FathomFileStore implements FathomIngestStore {
 		const temporary = `${this.#statePath}.${randomUUID()}.tmp`;
 		try {
 			const current = existsSync(this.#statePath)
-				? parseState(readFileSync(this.#statePath, "utf8"))
+				? parseFathomFileStoreState(readFileSync(this.#statePath, "utf8"))
 				: { version: 1 as const, accounts: {} };
-			const key = accountKey(account);
+			const key = fathomAccountKey(account);
 			const expected = this.#loaded.get(key);
 			if (expected !== undefined && expected !== JSON.stringify(current.accounts[key] ?? emptyCheckpoint()))
 				throw new Error("Fathom checkpoint changed; reload before retrying");
-			const next: PersistedState = {
+			const next: FathomPersistedPollState = {
 				version: 1,
-				accounts: { ...current.accounts, [accountKey(account)]: checkpoint },
+				accounts: { ...current.accounts, [fathomAccountKey(account)]: checkpoint },
 			};
 			const fd = openSync(temporary, "wx", 0o600);
 			try {

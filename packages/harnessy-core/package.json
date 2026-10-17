@@ -44,6 +44,10 @@
 		"./life-orchestrator": {
 			"types": "./dist/life-orchestrator.d.ts",
 			"import": "./dist/life-orchestrator.js"
+		},
+		"./read-model": {
+			"types": "./dist/read-model.d.ts",
+			"import": "./dist/read-model.js"
 		}
 	},
 	"files": [

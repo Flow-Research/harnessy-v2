@@ -21,13 +21,14 @@ import {
 	readCommunityServiceEnrollment,
 } from "./operational-input.ts";
 
-const labels = [
+/** @internal The launchd labels whose loaded job blocks community publication. */
+export const COMMUNITY_GUARD_LABELS = [
 	"tech.flowresearch.jarvis.meeting-review",
 	"tech.flowresearch.jarvis.briefing-review",
 	"com.flow-harness.community-review-v2",
 	"com.flow-harness.project.weekly-community-briefing-generate",
 	"com.flow-harness.project.weekly-community-briefing-worker",
-];
+] as const;
 const command = (path: string, args: ReadonlyArray<string>) => {
 	const executable = realpathSync(path),
 		stat = lstatSync(executable);
@@ -214,7 +215,7 @@ const proveCompatibilityAbsent = () => {
 		}
 	}
 	if (process.platform === "darwin") {
-		for (const label of labels) {
+		for (const label of COMMUNITY_GUARD_LABELS) {
 			const result = command("/bin/launchctl", ["print", `gui/${uid}/${label}`]);
 			if (result.status === 0 && isNativeCommunityReviewLaunchAgent(label, result.stdout, nativeReviewProcesses))
 				continue;
