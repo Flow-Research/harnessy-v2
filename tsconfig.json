@@ -11,6 +11,7 @@
 			"@harnessy/core/connectors/loopback": ["./packages/harnessy-core/src/connectors/loopback.ts"],
 			"@harnessy/core/meeting-publication-inspector": ["./packages/harnessy-core/src/meeting-publication-inspector.ts"],
 			"@harnessy/core/meeting-publication": ["./packages/harnessy-core/src/meeting-publication.ts"],
+			"@harnessy/core/read-model": ["./packages/harnessy-core/src/read-model.ts"],
 			"*": [
 				"./*"
 			],

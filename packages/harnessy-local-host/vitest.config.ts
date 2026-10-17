@@ -14,6 +14,10 @@ export default defineConfig({
 				replacement: fileURLToPath(new URL("../harnessy-core/src/meeting-publication.ts", import.meta.url)),
 			},
 			{
+				find: /^@harnessy\/core\/read-model$/,
+				replacement: fileURLToPath(new URL("../harnessy-core/src/read-model.ts", import.meta.url)),
+			},
+			{
 				find: /^@harnessy\/core\/meeting-publication-inspector$/,
 				replacement: coreSource,
 			},
@@ -30,7 +34,14 @@ export default defineConfig({
 			exclude: ["src/cli.ts", "src/**/*-cli.ts", "src/**/*.d.ts"],
 			reporter: ["text"],
 			reportsDirectory: "coverage",
-			thresholds: { statements: 80, branches: 75, functions: 80, lines: 80 },
+			thresholds: {
+				statements: 80,
+				branches: 75,
+				functions: 80,
+				lines: 80,
+				// H-10 portal API: loopback server, sessions, sources and connection status.
+				"src/portal/**/*.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+			},
 		},
 	},
 });

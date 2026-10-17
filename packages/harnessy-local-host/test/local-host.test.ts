@@ -339,16 +339,19 @@ it("keeps the private planning surface separate from the guarded runtime export"
 		"harnessy-meeting-setup": "dist/meeting-setup-cli.js",
 		"harnessy-meeting-smoke": "dist/meeting-smoke-cli.js",
 		"harnessy-meeting-worker": "dist/meeting-worker-cli.js",
+		"harnessy-portal": "dist/portal-cli.js",
 		"harnessy-wiki": "dist/wiki-cli.js",
 	});
 	expect(Object.keys(manifest.exports ?? {})).toEqual([
 		"./wiki-cli",
+		"./portal-cli",
 		".",
 		"./meeting-runtime",
 		"./meeting-review-runtime",
 		"./meeting-import-runtime",
 	]);
 	expect(manifest.exports?.["./wiki-cli"]).toBe("./dist/wiki-cli.js");
+	expect(manifest.exports?.["./portal-cli"]).toBe("./dist/portal-cli.js");
 	expect(manifest.exports?.["."]?.import).toBe("./dist/index.js");
 	expect(manifest.exports?.["./meeting-runtime"]?.import).toBe("./dist/meeting-runtime.js");
 	expect(manifest.exports?.["./meeting-review-runtime"]?.import).toBe("./dist/meeting-review-runtime.js");
@@ -381,6 +384,7 @@ it("keeps the private planning surface separate from the guarded runtime export"
 					"meeting-smoke-cli.ts",
 					"meeting-worker-command.ts",
 					"meeting-worker-cli.ts",
+					"portal-cli.ts",
 					"wiki-cli.ts",
 					"wiki-command.ts",
 				].includes(name),
