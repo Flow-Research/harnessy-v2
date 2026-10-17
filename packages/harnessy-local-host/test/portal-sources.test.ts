@@ -11,6 +11,7 @@ import { checkPortalValue, PortalApiSchemas } from "@harnessy/core/read-model";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+	checkedAtOf,
 	MAX_CONNECTIONS,
 	MAX_GWS_PROFILES,
 	MEETING_RECONNECT_NOTE,
@@ -127,6 +128,8 @@ describe("portal sources", () => {
 			sources.meetings(),
 			sources.community(),
 			sources.learning(),
+			sources.workspace(),
+			sources.health(),
 		]);
 		expect(serialized).not.toContain(CANARY);
 		expect(serialized).not.toContain("owner@example.test");
@@ -390,5 +393,13 @@ describe("portal sources", () => {
 				["meeting.discord", "attention", "permission"],
 			],
 		);
+	});
+
+	it("keeps only a checked time that is a date of at most 40 characters", () => {
+		expect(checkedAtOf(FIXTURE_NOW.toISOString())).toBe(FIXTURE_NOW.toISOString());
+		expect(checkedAtOf(`2026-10-17T00:00:00.${"0".repeat(30)}Z`)).toBeNull();
+		expect(checkedAtOf("not a date")).toBeNull();
+		expect(checkedAtOf(null)).toBeNull();
+		expect(checkedAtOf(undefined)).toBeNull();
 	});
 });

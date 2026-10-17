@@ -40,7 +40,17 @@ export default defineConfig({
 				functions: 80,
 				lines: 80,
 				// H-10 portal API: loopback server, sessions, sources and connection status.
-				"src/portal/**/*.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				// One entry per file: a glob threshold is an aggregate, so a weak file could hide behind strong ones.
+				"src/portal/auth.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/command.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/connections.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/launchd-plan.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/learning.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/openapi.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/routes.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/server.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/sources.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/token-store.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 			},
 		},
 	},

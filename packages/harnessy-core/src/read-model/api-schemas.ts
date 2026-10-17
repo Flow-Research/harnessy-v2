@@ -205,3 +205,38 @@ export type ConnectionListData = Static<typeof ConnectionListSchema>;
 
 /** Validate a value against a portal schema with the TypeBox version these schemas were built with. */
 export const checkPortalValue = (schema: TSchema, value: unknown): boolean => Value.Check(schema, value);
+
+/** The schema of one tile `key` inside a response envelope's `tiles` object or record. */
+const tileSchemaOf = (tiles: TSchema, key: string): TSchema | undefined => {
+	const shape = tiles as { properties?: Record<string, TSchema>; patternProperties?: Record<string, TSchema> };
+	if (shape.properties !== undefined) return Object.hasOwn(shape.properties, key) ? shape.properties[key] : undefined;
+	const patterns = Object.values(shape.patternProperties ?? {});
+	return patterns.length === 1 ? patterns[0] : undefined;
+};
+
+/**
+ * Check a response envelope tile by tile. Each tile that fails its own schema is
+ * replaced by an `error` / `tile_invalid` tile, so one bad source value degrades
+ * one tile instead of the whole response. Returns the checked value and the keys
+ * it replaced, or `undefined` when the envelope itself is still invalid.
+ */
+export const repairPortalTiles = (
+	schema: TSchema,
+	value: { readonly schema: string; readonly generatedAt: string; readonly tiles: Readonly<Record<string, unknown>> },
+): { readonly value: unknown; readonly replaced: ReadonlyArray<string> } | undefined => {
+	if (checkPortalValue(schema, value)) return { value, replaced: [] };
+	const tilesSchema = (schema as { properties?: { tiles?: TSchema } }).properties?.tiles;
+	if (tilesSchema === undefined) return undefined;
+	const replaced: string[] = [];
+	const tiles: Record<string, unknown> = {};
+	for (const [key, tile] of Object.entries(value.tiles)) {
+		const tileSchema = tileSchemaOf(tilesSchema, key);
+		if (tileSchema === undefined || checkPortalValue(tileSchema, tile)) tiles[key] = tile;
+		else {
+			replaced.push(key);
+			tiles[key] = { state: "error", reason: "tile_invalid", readAt: value.generatedAt };
+		}
+	}
+	const repaired = { ...value, tiles };
+	return checkPortalValue(schema, repaired) ? { value: repaired, replaced } : undefined;
+};

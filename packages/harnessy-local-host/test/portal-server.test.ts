@@ -4,7 +4,9 @@
  * so every header (Host, Origin, Cookie, Sec-Fetch-Site) is under test control.
  */
 import { type ChildProcess, spawn } from "node:child_process";
+import { chmodSync } from "node:fs";
 import { connect, createServer } from "node:net";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { checkPortalValue, type PortalApiSchemaName, PortalApiSchemas } from "@harnessy/core/read-model";
 import { afterEach, describe, expect, it } from "vitest";
@@ -128,6 +130,9 @@ describe("portal API request checks", () => {
 			]);
 			expectSecurityHeaders(response);
 		}
+		// A preflight is refused outright: it never learns which method the route allows.
+		const preflight = await rawRequest(port, { method: "OPTIONS", path: "/v1/today" });
+		expect([preflight.status, preflight.headers.allow]).toEqual([405, undefined]);
 		// Without Host, Node's HTTP/1.1 parser refuses the request before the portal sees it.
 		expect((await rawRequest(port, { path: "/v1/healthz", host: false })).status).toBe(400);
 		const sameOrigin = await rawRequest(port, {
@@ -445,33 +450,92 @@ describe("portal API data routes", () => {
 		expect(calls).toEqual(["workspace", "workspace"]);
 	});
 
-	it("refuses to send a response that fails its schema, and logs only a fixed code and the route", async () => {
+	it("degrades a tile that fails its schema, refuses a broken envelope, and logs only fixed codes and routes", async () => {
 		const base = homeSources(tempDir("invalid"));
 		const leaking = {
 			...base,
 			community: () => ({ ...base.community(), leaked: { state: "ok", readAt: CANARY } }),
+			meetings: () => ({ ...base.meetings(), config: { state: "ok", data: { leaked: CANARY }, readAt: CANARY } }),
 			learning: () => {
 				throw new Error(`boom ${CANARY}`);
 			},
 		} as PortalSources;
 		const harness = await start(leaking);
-		const invalid = await rawRequest(harness.port, {
-			path: `/v1/community/summary?token=${CANARY}`,
-			headers: await installProof(harness.port, harness.token, "GET", "/v1/community/summary"),
-		});
+		const get = async (path: string, query = "") =>
+			rawRequest(harness.port, {
+				path: `${path}${query}`,
+				headers: await installProof(harness.port, harness.token, "GET", path),
+			});
+		const invalid = await get("/v1/community/summary", `?token=${CANARY}`);
 		expect([invalid.status, invalid.json]).toEqual([500, { error: "response_invalid" }]);
-		const thrown = await rawRequest(harness.port, {
-			path: "/v1/learning/summary",
-			headers: await installProof(harness.port, harness.token, "GET", "/v1/learning/summary"),
-		});
+		const degraded = await get("/v1/meetings/summary");
+		expect(degraded.status).toBe(200);
+		expect(checkPortalValue(PortalApiSchemas.Meetings, degraded.json)).toBe(true);
+		const tiles = (degraded.json as { tiles: Record<string, { state: string; reason?: string }> }).tiles;
+		expect(tiles.config).toEqual({ state: "error", reason: "tile_invalid", readAt: FIXTURE_NOW.toISOString() });
+		expect(tiles.queue!.state).not.toBe("error");
+		const thrown = await get("/v1/learning/summary");
 		expect([thrown.status, thrown.json]).toEqual([500, { error: "internal_error" }]);
 		expect(harness.logs).toEqual([
 			{ kind: "ready", port: harness.port },
 			{ kind: "error", code: "response_invalid", route: "/v1/community/summary" },
-			{ kind: "error", code: "internal_error", route: "unmatched" },
+			{ kind: "error", code: "tile_invalid", route: "/v1/meetings/summary" },
+			{ kind: "error", code: "internal_error", route: "/v1/learning/summary" },
 		]);
 		expect(JSON.stringify(harness.logs)).not.toContain(CANARY);
 		expect(JSON.stringify(harness.logs)).not.toContain(harness.token);
+		expect(degraded.text).not.toContain(CANARY);
+	});
+
+	// Root ignores file modes; hosted CI and local runs use an ordinary user.
+	it.skipIf(process.getuid?.() === 0)(
+		"answers 200 with a degraded learning tile when the wiki catalog cannot be opened",
+		async () => {
+			const fixture = await buildPortalHome("catalog-unreadable");
+			const harness = await start(homeSources(fixture.home));
+			chmodSync(fixture.databases.wiki, 0o000);
+			try {
+				const response = await rawRequest(harness.port, {
+					path: "/v1/learning/summary",
+					headers: await installProof(harness.port, harness.token, "GET", "/v1/learning/summary"),
+				});
+				expect(response.status).toBe(200);
+				expect(checkPortalValue(PortalApiSchemas.Learning, response.json)).toBe(true);
+				expect((response.json as { tiles: { catalog: unknown } }).tiles.catalog).toEqual({
+					state: "error",
+					reason: "database_unreadable",
+					readAt: FIXTURE_NOW.toISOString(),
+				});
+			} finally {
+				chmodSync(fixture.databases.wiki, 0o600);
+			}
+			expect(harness.logs.filter((entry) => entry.kind === "error")).toEqual([]);
+		},
+	);
+
+	it("keeps every connection tile when one provider health row has an oversized checked time", async () => {
+		const fixture = await buildPortalHome("long-checked-at");
+		const database = new DatabaseSync(fixture.databases.meeting);
+		database.prepare("UPDATE provider_health SET checked_at = ?").run(`2026-10-17T00:00:00.${"0".repeat(30)}Z`);
+		database.close();
+		const harness = await start(homeSources(fixture.home));
+		const response = await rawRequest(harness.port, {
+			path: "/v1/connections",
+			headers: await installProof(harness.port, harness.token, "GET", "/v1/connections"),
+		});
+		expect(response.status).toBe(200);
+		expect(checkPortalValue(PortalApiSchemas.Connections, response.json)).toBe(true);
+		const meeting = (
+			response.json as {
+				tiles: { meeting: { state: string; data: { connections: Array<{ id: string; checkedAt: unknown }> } } };
+			}
+		).tiles.meeting;
+		expect(meeting.state).toBe("ok");
+		expect(meeting.data.connections.find((row) => row.id === "meeting.google")).toMatchObject({
+			status: "attention",
+			checkedAt: null,
+		});
+		expect(harness.logs.filter((entry) => entry.kind === "error")).toEqual([]);
 	});
 });
 

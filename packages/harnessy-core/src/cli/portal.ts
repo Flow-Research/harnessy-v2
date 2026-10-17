@@ -5,26 +5,36 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { Command, Flag } from "effect/unstable/cli";
 
+/** Where `harnessy portal` finds the host, and which process signals it forwards. Tests pass their own. */
+export interface PortalHostRuntime {
+	/** The host script path. Throws when the host package is not installed. */
+	readonly resolveHost?: () => string;
+	readonly signals?: Pick<NodeJS.EventEmitter, "once" | "removeListener">;
+}
+
+const resolveInstalledHost = (): string => createRequire(import.meta.url).resolve("@harnessy/local-host/portal-cli");
+
 /**
  * Run the read-only portal host (`@harnessy/local-host/portal-cli`). Core never imports the host;
  * it is resolved only when this command runs. The child's argv is
  * `node <portal-cli.js> <subcommand> …`, which matches neither one-writer guard.
  */
-export const runPortalHost = (args: ReadonlyArray<string>): Promise<number> =>
+export const runPortalHost = (args: ReadonlyArray<string>, runtime: PortalHostRuntime = {}): Promise<number> =>
 	new Promise((resolve, reject) => {
-		const resolved = Result.try(() => createRequire(import.meta.url).resolve("@harnessy/local-host/portal-cli"));
+		const resolved = Result.try(runtime.resolveHost ?? resolveInstalledHost);
 		if (Result.isFailure(resolved)) {
 			reject(new Error("The portal requires the V2 @harnessy/local-host package in this installation."));
 			return;
 		}
+		const signals = runtime.signals ?? process;
 		const child = spawn(process.execPath, [resolved.success, ...args], { stdio: "inherit" });
 		const stop = () => child.kill("SIGTERM");
-		process.once("SIGINT", stop);
-		process.once("SIGTERM", stop);
+		signals.once("SIGINT", stop);
+		signals.once("SIGTERM", stop);
 		child.on("error", reject);
 		child.on("close", (code) => {
-			process.removeListener("SIGINT", stop);
-			process.removeListener("SIGTERM", stop);
+			signals.removeListener("SIGINT", stop);
+			signals.removeListener("SIGTERM", stop);
 			resolve(code ?? 1);
 		});
 	});

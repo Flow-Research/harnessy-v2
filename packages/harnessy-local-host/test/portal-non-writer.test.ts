@@ -88,6 +88,8 @@ const startChild = async (home: string, stateDir: string, log: string) => {
 				PATH: process.env.PATH,
 				USER: "owner",
 				PORTAL_RECORDER_LOG: log,
+				// launchctl is answered by the recorder, so no live launchd state is read.
+				PORTAL_RECORDER_STUB_LAUNCHCTL: "1",
 				PORTAL_RECORDER_CORE_SOURCE: coreSource,
 			},
 			stdio: ["ignore", "pipe", "pipe"],
@@ -157,6 +159,15 @@ describe("portal non-writer regression", () => {
 			called.push(`${method} ${path}`);
 		}
 		expect(called).toHaveLength(12);
+		const health = await rawRequest(port, {
+			path: "/v1/health",
+			headers: await installProof(port, token, "GET", "/v1/health"),
+		});
+		// Every probe got the recorder's "not found" answer: the live launchd jobs were never read.
+		const reasons = Object.values((health.json as { tiles: Record<string, { reason?: string }> }).tiles).map(
+			(tile) => tile.reason,
+		);
+		expect(new Set(reasons)).toEqual(new Set([process.platform === "darwin" ? "not_loaded" : "unsupported"]));
 
 		const ps = spawnSync("/bin/ps", ["-p", String(child.pid), "-o", "command="], { encoding: "utf8" });
 		expect(ps.status).toBe(0);
@@ -171,7 +182,8 @@ describe("portal non-writer regression", () => {
 		const canaries = fixture.canaries.map((path) => realpathSync(path));
 		expect(() => assertNonWriterRecords(records, canaries)).not.toThrow();
 		const spawns = records.filter((entry) => entry.kind === "spawn");
-		// The health route probes each fixed label once; elsewhere launchd does not exist and nothing spawns.
+		// The health route probes each fixed label once (answered by the recorder, never run); elsewhere
+		// launchd does not exist and nothing spawns.
 		expect(spawns).toHaveLength(process.platform === "darwin" ? PORTAL_SERVICE_LABELS.length : 0);
 		// The recorder did see file opens, so an empty spawn list is not a recorder failure.
 		expect(records.some((entry) => entry.kind === "open" && entry.path.includes("config.yaml"))).toBe(true);

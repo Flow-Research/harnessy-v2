@@ -10,10 +10,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 
 import {
-	checkPortalValue,
 	PORTAL_SCHEMA_VERSION,
 	PortalApiSchemas,
 	portalResponseSchemaId,
+	repairPortalTiles,
 } from "@harnessy/core/read-model";
 
 import { bearerSecret, PortalSessions } from "./auth.ts";
@@ -140,17 +140,19 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		const cached = cache.get(route.path);
 		const now = clock();
 		if (cached !== undefined && cached.expiresAt > now) return cached.value;
-		const value = {
+		// A tile that fails its own schema becomes an `error` tile; only a broken envelope is a 500.
+		const checked = repairPortalTiles(PortalApiSchemas[route.schema!], {
 			schema: portalResponseSchemaId(data.name),
 			generatedAt: new Date(now).toISOString(),
 			tiles: options.sources[data.source](),
-		};
-		if (!checkPortalValue(PortalApiSchemas[route.schema!], value)) {
+		});
+		if (checked === undefined) {
 			log({ kind: "error", code: "response_invalid", route: route.path });
 			throw new RequestRefused(500, "response_invalid");
 		}
-		cache.set(route.path, { expiresAt: now + ttl, value });
-		return value;
+		if (checked.replaced.length > 0) log({ kind: "error", code: "tile_invalid", route: route.path });
+		cache.set(route.path, { expiresAt: now + ttl, value: checked.value });
+		return checked.value;
 	};
 
 	const requireJson = (request: IncomingMessage) => {
@@ -194,7 +196,11 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		}
 	};
 
-	const handle = async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+	const handle = async (
+		request: IncomingMessage,
+		response: ServerResponse,
+		onRoute: (path: string) => void,
+	): Promise<void> => {
 		const url = request.url ?? "";
 		if (Buffer.byteLength(url) > PORTAL_MAX_URL_BYTES) throw new RequestRefused(414, "uri_too_long");
 		// Exact Host: blocks DNS rebinding. The portal never answers for another name.
@@ -211,6 +217,7 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		const path = url.split("?", 1)[0]!;
 		const route = PORTAL_ROUTES.find((candidate) => candidate.path === path);
 		if (route === undefined) throw new RequestRefused(404, "not_found");
+		onRoute(route.path);
 		if (request.method !== route.method) {
 			respond(response, 405, { error: "method_not_allowed" }, { Allow: route.method });
 			return;
@@ -222,9 +229,13 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 	const server: Server = createServer(
 		{ headersTimeout: 5_000, requestTimeout: 10_000, maxHeaderSize: 8 * 1024 },
 		(request, response) => {
-			handle(request, response).catch((error: unknown) => {
+			// Only a path from the route table is logged, never the request URL.
+			let matched = "unmatched";
+			handle(request, response, (path) => {
+				matched = path;
+			}).catch((error: unknown) => {
 				const refused = error instanceof RequestRefused ? error : new RequestRefused(500, "internal_error");
-				if (!(error instanceof RequestRefused)) log({ kind: "error", code: "internal_error", route: "unmatched" });
+				if (!(error instanceof RequestRefused)) log({ kind: "error", code: "internal_error", route: matched });
 				respond(
 					response,
 					refused.status,

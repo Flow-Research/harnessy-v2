@@ -40,8 +40,16 @@ const sqliteErrorCode = (cause: unknown): number | null =>
 		? cause.errcode
 		: null;
 
-/** Check the path, the sidecars and the header without opening the file through SQLite. */
+/**
+ * Check the path, the sidecars and the header without opening the file through SQLite.
+ * A file-system error (no permission, a symlink loop) is a degraded state, never a throw.
+ */
 const inspectFile = (path: string, maxBytes: number): BigIntStats | SqliteSnapshot<never> => {
+	const checked = Result.try(() => inspectChecked(path, maxBytes));
+	return Result.isSuccess(checked) ? checked.success : degraded("error", "database_unreadable");
+};
+
+const inspectChecked = (path: string, maxBytes: number): BigIntStats | SqliteSnapshot<never> => {
 	const stat = entry(path);
 	if (stat === undefined) return degraded("missing", "database_missing");
 	if (stat.isSymbolicLink()) return degraded("unsafe", "database_symlink");
