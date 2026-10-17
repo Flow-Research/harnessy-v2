@@ -186,6 +186,11 @@ publishes, approves, signs or consumes grants, and it never reads another
 service's token. See
 [`ADR-0008`](adr/0008-read-only-portal-api-boundary.md).
 
+The same server serves a small local page at `/` with Today, Health and
+Connections. Connections links to each credential's owning service, for
+example the meeting review page for Google, and never signs in itself. See
+[Run the Harnessy portal page locally](portal.md).
+
 ## SDK surface (`@harnessy/sdk`)
 
 The narrow engine boundary for programmatic consumers. The stable package root

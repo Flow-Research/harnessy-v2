@@ -31,6 +31,11 @@
 			"path": "qa/api/scripts/portal-api.md",
 			"app": "harnessy-v2",
 			"layer": "api"
+		},
+		{
+			"path": "qa/api/scripts/portal-page.md",
+			"app": "harnessy-v2",
+			"layer": "api"
 		}
 	],
 	"apps": [
@@ -130,6 +135,11 @@
 				"prefix": "PRTA",
 				"slug": "portal-api",
 				"name": "Portal API"
+			},
+			{
+				"prefix": "PRTP",
+				"slug": "portal-page",
+				"name": "Portal page"
 			}
 		]
 	}

@@ -93,6 +93,21 @@
       "scenario_count": 5
     },
     {
+      "slug": "portal-page",
+      "name": "Portal page",
+      "id_prefix": "PRTP",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/portal-page.md"
+      ],
+      "scenario_count": 4
+    },
+    {
       "slug": "v1-reconciliation",
       "name": "V1 reconciliation",
       "id_prefix": "RECON",
