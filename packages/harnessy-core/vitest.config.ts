@@ -76,7 +76,14 @@ export default defineConfig({
 			exclude: ["src/**/*.d.ts"],
 			reporter: ["text"],
 			reportsDirectory: "coverage",
-			thresholds: { statements: 62, branches: 48, functions: 60, lines: 64 },
+			thresholds: {
+				statements: 62,
+				branches: 48,
+				functions: 60,
+				lines: 64,
+				// H-06 meeting-context contract and read-only inventory.
+				"src/meeting-context*.ts": { statements: 99, branches: 99, functions: 100, lines: 99 },
+			},
 		},
 	},
 });
