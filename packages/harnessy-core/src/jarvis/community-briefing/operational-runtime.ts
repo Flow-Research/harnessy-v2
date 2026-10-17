@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -13,6 +12,16 @@ import {
 } from "../meeting-publication/operational-input.ts";
 import { MeetingPublicationSmokeRuntimeSystemReference } from "../meeting-publication/operational-runtime.ts";
 import { invokesCommand, launchedPrograms } from "../process-invocation.ts";
+import {
+	type ProcessProbeRunner,
+	retryWhileWriterCheckInconclusive,
+	runWriterCheckProbe,
+	spawnProcessProbe,
+	stderrWriterCheckReporter,
+	WriterCheckInconclusiveError,
+	type WriterCheckName,
+	type WriterCheckReporter,
+} from "../writer-check.ts";
 import type { CommunityBriefingWriteGrant } from "./authority.ts";
 import { CommunityBriefingGrantHost } from "./grant-host.ts";
 import {
@@ -29,13 +38,12 @@ export const COMMUNITY_GUARD_LABELS = [
 	"com.flow-harness.project.weekly-community-briefing-generate",
 	"com.flow-harness.project.weekly-community-briefing-worker",
 ] as const;
-const command = (path: string, args: ReadonlyArray<string>) => {
+/** Only a root-owned, non-writable executable may answer a writer probe; anything else is tamper evidence. */
+const liveProbeRunner: ProcessProbeRunner = (path, args) => {
 	const executable = realpathSync(path),
 		stat = lstatSync(executable);
 	if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) throw new Error("unsafe_probe");
-	const result = spawnSync(executable, args, { encoding: "utf8", shell: false, timeout: 2000, maxBuffer: 1_000_000 });
-	if (result.error || result.signal) throw new Error("probe_failed");
-	return result;
+	return spawnProcessProbe(executable, args);
 };
 
 /** @internal Recognize only this installed Core's draft-only review entrypoint.
@@ -119,14 +127,6 @@ export const darwinProcessExecutableFromLsof = (output: string, pid: number): st
 	return paths[0];
 };
 
-const darwinProcessExecutable = (pid: number): string => {
-	const result = command("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-F0pfn"]);
-	if (result.status !== 0 || result.stderr !== "") throw new Error("probe_failed");
-	const executable = darwinProcessExecutableFromLsof(result.stdout, pid);
-	if (executable === undefined) throw new Error("probe_failed");
-	return executable;
-};
-
 /** A label alone never exempts a legacy or stopped reviewer. */
 export const isNativeCommunityReviewLaunchAgent = (
 	label: string,
@@ -170,11 +170,23 @@ export const isCommunityCompatibilityWriterCommand = (commandLine: string): bool
 	);
 
 /** Bounded known-process evidence, not protection from arbitrary same-UID code. */
-const proveCompatibilityAbsent = () => {
+const proveCompatibilityAbsentWith = (run: ProcessProbeRunner, platform: NodeJS.Platform) => {
+	const command = (check: WriterCheckName, path: string, args: ReadonlyArray<string>) =>
+		runWriterCheckProbe(run, check, path, args);
+	const darwinProcessExecutable = (pid: number): string => {
+		const result = command("lsof", "/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-F0pfn"]);
+		if (result.status !== 0)
+			throw new WriterCheckInconclusiveError("lsof", "exit_status", result.status ?? undefined);
+		if (result.stderr !== "") throw new Error("probe_failed");
+		const executable = darwinProcessExecutableFromLsof(result.stdout, pid);
+		if (executable === undefined) throw new Error("probe_failed");
+		return executable;
+	};
 	const uid = process.geteuid?.();
 	if (uid === undefined) throw new Error("unsupported_platform");
-	const processes = command("/bin/ps", ["-axo", "uid=,pid=,command="]);
-	if (processes.status !== 0) throw new Error("probe_failed");
+	const processes = command("ps", "/bin/ps", ["-axo", "uid=,pid=,command="]);
+	if (processes.status !== 0)
+		throw new WriterCheckInconclusiveError("ps", "exit_status", processes.status ?? undefined);
 	const nativeReviewProcesses = new Set<number>();
 	for (const line of processes.stdout.split("\n")) {
 		if (!line.trim()) continue;
@@ -182,16 +194,16 @@ const proveCompatibilityAbsent = () => {
 		if (!match) throw new Error("probe_failed");
 		if (Number(match[1]) !== uid || Number(match[2]) === process.pid) continue;
 		if (isCommunityCompatibilityWriterCommand(match[3])) {
-			const launchExecutable = command("/bin/ps", ["-p", match[2], "-o", "comm="]);
+			const launchExecutable = command("ps", "/bin/ps", ["-p", match[2], "-o", "comm="]);
 			const processExecutable =
-				process.platform === "linux"
+				platform === "linux"
 					? `/proc/${match[2]}/exe`
-					: process.platform === "darwin"
+					: platform === "darwin"
 						? darwinProcessExecutable(Number(match[2]))
 						: (() => {
 								throw new Error("unsupported_platform");
 							})();
-			const confirmed = command("/bin/ps", ["-p", match[2], "-o", "uid=,pid=,command="]);
+			const confirmed = command("ps", "/bin/ps", ["-p", match[2], "-o", "uid=,pid=,command="]);
 			const confirmedMatch = parseCommunityProcessConfirmation(confirmed.stdout);
 			if (
 				launchExecutable.status === 0 &&
@@ -214,28 +226,46 @@ const proveCompatibilityAbsent = () => {
 			throw new Error("compatibility_writer_present");
 		}
 	}
-	if (process.platform === "darwin") {
+	if (platform === "darwin") {
 		for (const label of COMMUNITY_GUARD_LABELS) {
-			const result = command("/bin/launchctl", ["print", `gui/${uid}/${label}`]);
+			const result = command("launchctl", "/bin/launchctl", ["print", `gui/${uid}/${label}`]);
 			if (result.status === 0 && isNativeCommunityReviewLaunchAgent(label, result.stdout, nativeReviewProcesses))
 				continue;
-			if (result.status === 0 || !`${result.stdout}\n${result.stderr}`.includes("Could not find service"))
-				throw new Error("compatibility_writer_present");
+			// A loaded job is an observed writer; only "Could not find service" proves absence.
+			if (result.status === 0) throw new Error("compatibility_writer_present");
+			if (!`${result.stdout}\n${result.stderr}`.includes("Could not find service"))
+				throw new WriterCheckInconclusiveError("launchctl", "exit_status", result.status ?? undefined);
 		}
-	} else if (process.platform === "linux") {
-		const result = command("/usr/bin/crontab", ["-l"]);
-		if (result.status !== 0 && !/no crontab for/iu.test(result.stderr)) throw new Error("probe_failed");
+	} else if (platform === "linux") {
+		const result = command("crontab", "/usr/bin/crontab", ["-l"]);
+		if (result.status !== 0 && !/no crontab for/iu.test(result.stderr))
+			throw new WriterCheckInconclusiveError("crontab", "exit_status", result.status ?? undefined);
 		if (/community[- ]briefing|briefing[-_]review/u.test(result.stdout))
 			throw new Error("compatibility_writer_present");
 	} else throw new Error("unsupported_platform");
 };
 
+/**
+ * @internal The production compatibility-writer proof over an injectable process runner.
+ * An observed writer throws `compatibility_writer_present`; an unanswered probe throws
+ * `WriterCheckInconclusiveError`.
+ */
+export const makeCommunityCompatibilityProof =
+	(run: ProcessProbeRunner, platform: NodeJS.Platform = process.platform) =>
+	(): void =>
+		proveCompatibilityAbsentWith(run, platform);
+
 /** Source-private fixture seam; no observer, bypass or signing key is accepted by the CLI. */
 export const CommunityOperationSystemReference = Context.Reference<{
 	readonly proveCompatibilityAbsent: () => void;
 	readonly coreAnchor: string;
+	/** Receives allow-listed writer-check events; defaults to one JSON line on stderr. */
+	readonly reportWriterCheck?: WriterCheckReporter;
 }>("@harnessy/core/CommunityOperationSystem", {
-	defaultValue: () => ({ proveCompatibilityAbsent, coreAnchor: realpathSync(fileURLToPath(import.meta.url)) }),
+	defaultValue: () => ({
+		proveCompatibilityAbsent: makeCommunityCompatibilityProof(liveProbeRunner),
+		coreAnchor: realpathSync(fileURLToPath(import.meta.url)),
+	}),
 });
 
 export class CommunityOperationError extends Schema.TaggedErrorClass<CommunityOperationError>()(
@@ -254,7 +284,11 @@ export class CommunityOperationError extends Schema.TaggedErrorClass<CommunityOp
 
 /** Only fixed internal identifiers, never free-form error text, become diagnostics. */
 const rejectionReason = (cause: unknown): string | undefined =>
-	cause instanceof Error && /^[a-z][a-z_]{0,63}$/u.test(cause.message) ? cause.message : undefined;
+	cause instanceof WriterCheckInconclusiveError
+		? cause.reason
+		: cause instanceof Error && /^[a-z][a-z_]{0,63}$/u.test(cause.message)
+			? cause.message
+			: undefined;
 
 export interface CommunityOperationConsumer {
 	readonly artifactAnchors: { readonly host: string; readonly sdk: string; readonly dependencies: string };
@@ -409,6 +443,8 @@ export const runAuthorizedCommunityBriefing = (
 				verified.assertLedger();
 				verified.assertMutable();
 			};
+			// The last unanswered probe, kept so a retry can log its exact check and exit status.
+			let lastInconclusive: WriterCheckInconclusiveError | undefined;
 			const check = () =>
 				Effect.tryPromise({
 					try: async (signal) => {
@@ -432,6 +468,7 @@ export const runAuthorizedCommunityBriefing = (
 						system.proveCompatibilityAbsent();
 					},
 					catch: (cause) => {
+						lastInconclusive = cause instanceof WriterCheckInconclusiveError ? cause : undefined;
 						const reason = rejectionReason(cause);
 						return new CommunityOperationError({
 							code: "runtime_rejected",
@@ -439,7 +476,27 @@ export const runAuthorizedCommunityBriefing = (
 						});
 					},
 				});
-			yield* check();
+			/**
+			 * Service mode: before any lease exists, an unanswered probe skips publication and is
+			 * retried with bounded backoff; it escalates to the existing rejection after the window.
+			 * An observed writer, and every one-shot run, still fails at once.
+			 */
+			const beforeLease = <A>(effect: Effect.Effect<A, unknown>) =>
+				verified.service
+					? retryWhileWriterCheckInconclusive(effect, {
+							service: "community",
+							inconclusive: (cause) =>
+								cause instanceof CommunityOperationError &&
+								lastInconclusive !== undefined &&
+								cause.reason === lastInconclusive.reason
+									? lastInconclusive
+									: undefined,
+							escalate: (cause) =>
+								new CommunityOperationError({ code: "runtime_rejected", reason: cause.reason }),
+							report: system.reportWriterCheck ?? stderrWriterCheckReporter,
+						})
+					: effect;
+			yield* beforeLease(check());
 			const host = yield* Effect.acquireRelease(
 				Effect.try(
 					() =>
@@ -505,7 +562,7 @@ export const runAuthorizedCommunityBriefing = (
 					? { serviceItem: item, bootId: initial.bootId, deadline: new Date(verified.expiry).toISOString() }
 					: {}),
 			});
-			const grant = yield* binding.authorize();
+			const grant = yield* beforeLease(binding.authorize());
 			const monitor = Effect.forever(
 				Effect.andThen(
 					Effect.sleep("250 millis"),

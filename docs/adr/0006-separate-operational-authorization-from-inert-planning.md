@@ -71,6 +71,21 @@ the platform-specific V1 scheduler and known worker identity, acquire an
 exclusive owner-only capability lease, and immediately recheck. The proof is
 revalidated before every grant and loss revokes the V2 session.
 
+A probe has three outcomes. An observed writer (a running V1 command, a loaded
+scheduler job, a matching crontab entry) or an unsafe or unparseable probe ends
+the session at once with `writer_present` (community: `runtime_rejected`). A
+probe that could not answer (spawn error, timeout, signal, oversized output, or
+a non-zero exit that is not the documented "not found" answer) is inconclusive.
+A running meeting service then denies every grant, skips scheduled cycles and
+retries with backoff of 1, 2, 4, 8, 16 and then 30 seconds; a community service
+run retries before it creates its lease. If probes stay inconclusive for five
+minutes, the guard escalates to the observed-writer stop. Every inconclusive,
+recovered or escalated probe writes one stderr JSON event with an allow-listed
+`<check>_<failure>` reason and, for exits, the exit status. No argv or probe
+output is logged. A grant check that becomes inconclusive after an item's
+provider work has started still denies that item's next write. That item then
+follows the existing uncertain-delivery stop.
+
 The preferred design is an interlock honored by both V1 and V2. Until that
 exists, absence of a known scheduler or process is only bounded evidence and
 cannot silently be presented as a universal one-writer proof. V1 and V2 never

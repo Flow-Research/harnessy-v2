@@ -17,7 +17,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { Effect } from "effect";
+import { Effect, Exit, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { runCommunityDraftProcess } from "../../harnessy-core/src/jarvis/community-briefing/draft-process.ts";
@@ -28,11 +29,17 @@ import {
 import { readCommunityOperation } from "../../harnessy-core/src/jarvis/community-briefing/operational-input.ts";
 import {
 	CommunityOperationSystemReference,
+	makeCommunityCompatibilityProof,
 	runAuthorizedCommunityBriefing,
 } from "../../harnessy-core/src/jarvis/community-briefing/operational-runtime.ts";
 import { runCommunityReviewProcess } from "../../harnessy-core/src/jarvis/community-briefing/review-process.ts";
 import { canonicalMeetingPublicationSmokeJson } from "../../harnessy-core/src/jarvis/meeting-publication/operational-input.ts";
 import { MeetingPublicationSmokeRuntimeSystemReference } from "../../harnessy-core/src/jarvis/meeting-publication/operational-runtime.ts";
+import {
+	WRITER_CHECK_INCONCLUSIVE_WINDOW_MS,
+	type WriterCheckEvent,
+} from "../../harnessy-core/src/jarvis/writer-check.ts";
+import { makeScriptedProbeRunner } from "../../harnessy-core/test/support/scripted-probe-runner.ts";
 import { runCommunityPublicationCommand } from "../../harnessy-local-host/src/community-publication-command.ts";
 import { prepareCommunityService } from "../../harnessy-local-host/src/community-service-enrollment.ts";
 import { runNativeCommunityBriefing } from "../src/community-briefing/runtime.ts";
@@ -209,6 +216,8 @@ const fixture = async (reviewPython?: string, service = false) => {
 	const input = { authorizationPath, trustedKeyring: trust };
 	let compatibilityPresent = false;
 	let onProof: (() => void) | undefined;
+	let proofOverride: (() => void) | undefined;
+	const writerCheckEvents: Array<WriterCheckEvent> = [];
 	const run = (enrollOnly = false) =>
 		runAuthorizedCommunityBriefing(input, {
 			artifactAnchors: { host: paths.host, sdk: paths.sdk, dependencies: paths.dependencies },
@@ -224,7 +233,11 @@ const fixture = async (reviewPython?: string, service = false) => {
 				coreAnchor: paths.core,
 				proveCompatibilityAbsent: () => {
 					onProof?.();
+					if (proofOverride !== undefined) return proofOverride();
 					if (compatibilityPresent) throw new Error("writer");
+				},
+				reportWriterCheck: (event) => {
+					writerCheckEvents.push(event);
 				},
 			}),
 		);
@@ -286,6 +299,11 @@ const fixture = async (reviewPython?: string, service = false) => {
 		setOnProof: (callback: () => void) => {
 			onProof = callback;
 		},
+		/** Replace the inert observer, e.g. with the production proof over a scripted process runner. */
+		setProof: (proof: (() => void) | undefined) => {
+			proofOverride = proof;
+		},
+		writerCheckEvents,
 	};
 };
 
@@ -1258,4 +1276,113 @@ describe("community operational consumer", () => {
 			}
 		},
 	);
+
+	describe("unanswered compatibility probes", () => {
+		/** Fork the run under a test clock and advance it in steps, letting real I/O settle between steps. */
+		const runWithClock = <A, E>(
+			run: Effect.Effect<A, E>,
+			step: (elapsedMs: number) => void,
+			stepMs = 1_000,
+			maxMs = WRITER_CHECK_INCONCLUSIVE_WINDOW_MS + 60_000,
+		) =>
+			Effect.runPromise(
+				Effect.gen(function* () {
+					const fiber = yield* Effect.forkChild(run);
+					let elapsed = 0;
+					while (fiber.pollUnsafe() === undefined && elapsed <= maxMs) {
+						step(elapsed);
+						yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 5)));
+						yield* TestClock.adjust(stepMs);
+						elapsed += stepMs;
+					}
+					return { exit: yield* Fiber.await(fiber), elapsed };
+				}).pipe(Effect.provide(TestClock.layer())),
+			);
+
+		it("pauses a service run on a probe timeout, publishes nothing meanwhile, and publishes after recovery", async () => {
+			const f = await fixture(undefined, true);
+			try {
+				const runner = makeScriptedProbeRunner("timeout");
+				f.setProof(makeCommunityCompatibilityProof(runner.run, "darwin"));
+				let leaseDuringPause = false;
+				const { exit } = await runWithClock(f.run(), (elapsed) => {
+					if (elapsed < 20_000) {
+						if (f.wire.requests.length !== 0) throw new Error("provider called while paused");
+						leaseDuringPause ||=
+							f.rows("SELECT name FROM sqlite_master WHERE name='community_briefing_lease'").length > 0 &&
+							f.rows("SELECT * FROM community_briefing_lease").length > 0;
+					}
+					if (elapsed === 20_000) runner.setMode("clear");
+				});
+				expect(leaseDuringPause).toBe(false);
+				expect(Exit.isSuccess(exit) && exit.value).toMatchObject({ status: "published" });
+				expect(f.wire.messagesByNonce.size).toBe(1);
+				const kinds = f.writerCheckEvents.map((event) => event.event);
+				expect(kinds).toContain("writer_check_inconclusive");
+				expect(kinds.at(-1)).toBe("writer_check_recovered");
+				expect(kinds).not.toContain("writer_check_escalated");
+				expect(f.writerCheckEvents[0]).toMatchObject({ service: "community", reason: "ps_timeout", attempt: 1 });
+				expect(JSON.stringify(f.writerCheckEvents)).not.toMatch(/SECRET|jarvis|\/bin\//u);
+			} finally {
+				await f.cleanup();
+			}
+		});
+
+		it("escalates persistent probe failure to the existing rejection after the window", async () => {
+			const f = await fixture(undefined, true);
+			try {
+				const runner = makeScriptedProbeRunner("launchctl_error");
+				f.setProof(makeCommunityCompatibilityProof(runner.run, "darwin"));
+				const { exit, elapsed } = await runWithClock(f.run(), () => undefined, 5_000);
+				expect(Exit.isFailure(exit)).toBe(true);
+				expect(JSON.stringify(exit)).toContain("runtime_rejected");
+				expect(JSON.stringify(exit)).toContain("launchctl_exit_status");
+				expect(elapsed).toBeGreaterThanOrEqual(WRITER_CHECK_INCONCLUSIVE_WINDOW_MS);
+				const escalated = f.writerCheckEvents.at(-1);
+				expect(escalated).toMatchObject({
+					event: "writer_check_escalated",
+					reason: "launchctl_exit_status",
+					exitStatus: 5,
+				});
+				expect(escalated?.inconclusiveForMs).toBeGreaterThanOrEqual(WRITER_CHECK_INCONCLUSIVE_WINDOW_MS);
+				expect(f.wire.requests).toHaveLength(0);
+				expect(f.rows("SELECT * FROM community_briefing_grants")).toHaveLength(0);
+			} finally {
+				await f.cleanup();
+			}
+		});
+
+		it("stops at once when a writer is observed during the retries", async () => {
+			const f = await fixture(undefined, true);
+			try {
+				const runner = makeScriptedProbeRunner("timeout");
+				f.setProof(makeCommunityCompatibilityProof(runner.run, "darwin"));
+				const { exit, elapsed } = await runWithClock(f.run(), (at) => {
+					if (at === 3_000) runner.setMode("loaded_job");
+				});
+				expect(Exit.isFailure(exit)).toBe(true);
+				expect(JSON.stringify(exit)).toContain("compatibility_writer_present");
+				expect(elapsed).toBeLessThan(30_000);
+				expect(f.writerCheckEvents.map((event) => event.event)).not.toContain("writer_check_escalated");
+				expect(f.wire.requests).toHaveLength(0);
+			} finally {
+				await f.cleanup();
+			}
+		});
+
+		it("keeps one-shot runs fail-fast on an unanswered probe", async () => {
+			const f = await fixture();
+			try {
+				f.setProof(makeCommunityCompatibilityProof(makeScriptedProbeRunner("timeout").run, "darwin"));
+				const { exit, elapsed } = await runWithClock(f.run(), () => undefined);
+				expect(Exit.isFailure(exit)).toBe(true);
+				expect(JSON.stringify(exit)).toContain("ps_timeout");
+				// No backoff sleep: at most the first clock step passes while the real probe I/O settles.
+				expect(elapsed).toBeLessThanOrEqual(1_000);
+				expect(f.writerCheckEvents).toEqual([]);
+			} finally {
+				await f.cleanup();
+			}
+		});
+	});
 });

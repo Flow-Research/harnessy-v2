@@ -41,6 +41,7 @@ import {
 	inspectMeetingPublicationService,
 	type MeetingPublicationFullReviewRuntimeHost,
 	type MeetingPublicationWorkerProviderFactory,
+	makeMeetingPublicationWriterProof,
 	revokeStoppedMeetingPublicationService,
 	runAuthorizedMeetingPublicationFullReview,
 	runAuthorizedMeetingPublicationWorker,
@@ -53,7 +54,9 @@ import {
 	MeetingPublicationNotifier,
 } from "../src/jarvis/meeting-publication/service.ts";
 import { MeetingPublicationStore } from "../src/jarvis/meeting-publication/store.ts";
+import { WRITER_CHECK_INCONCLUSIVE_WINDOW_MS, WriterCheckInconclusiveError } from "../src/jarvis/writer-check.ts";
 import { createMeetingPublicationFullReviewAuthorizationFixture } from "./support/meeting-full-review-runtime-fixture.ts";
+import { makeScriptedProbeRunner, SCRIPTED_WRITER_ARGV_SECRET } from "./support/scripted-probe-runner.ts";
 
 const roots: Array<string> = [];
 const activeFibers: Array<Fiber.Fiber<void, unknown>> = [];
@@ -1601,4 +1604,188 @@ describe("meeting publication authorized full-review runtime", () => {
 			await expect(call(running.address.origin, "/")).rejects.toThrow();
 		});
 	}
+
+	describe("unanswered writer probes in the running service", () => {
+		/**
+		 * Start the enrolled service with the production writer proof over a scripted
+		 * process runner, then advance the test clock in steps. `step` runs before each
+		 * advance; real I/O (cooperative artifact scans, SQLite) settles between steps.
+		 */
+		const runService = (
+			port: number,
+			step: (context: {
+				readonly elapsedMs: number;
+				readonly fixture: Awaited<ReturnType<typeof setup>>;
+				readonly provider: ReturnType<typeof providerFactory>;
+				readonly runner: ReturnType<typeof makeScriptedProbeRunner>;
+			}) => boolean | undefined,
+			options: { readonly stepMs?: number; readonly maxMs?: number } = {},
+		) =>
+			Effect.gen(function* () {
+				yield* TestClock.setTime(Date.now());
+				const fixture = yield* Effect.promise(() => setup({ approved: true, reviewPort: port }));
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const runner = makeScriptedProbeRunner("clear");
+				fixture.authorization.setWriterProof(makeMeetingPublicationWriterProof(runner.run, "darwin"));
+				const provider = providerFactory(fixture);
+				const ready = makeGate();
+				const fiber = yield* fixture.authorization
+					.withSystem(
+						runAuthorizedMeetingPublicationFullReview(fixture.authorization.input, provider.factory, {
+							artifactAnchors: fixture.authorization.providerArtifactAnchors,
+							onReady: () => Effect.sync(() => ready.signalStarted()),
+						}),
+					)
+					.pipe(Effect.forkScoped);
+				yield* Effect.raceFirst(
+					Effect.promise(() => ready.started),
+					Fiber.join(fiber).pipe(Effect.andThen(Effect.die("service exited before readiness"))),
+				);
+				let elapsedMs = 0;
+				const stepMs = options.stepMs ?? 1_000;
+				const maxMs = options.maxMs ?? 120_000;
+				while (fiber.pollUnsafe() === undefined && elapsedMs <= maxMs) {
+					if (step({ elapsedMs, fixture, provider, runner }) === true) break;
+					yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 15)));
+					yield* TestClock.adjust(stepMs);
+					elapsedMs += stepMs;
+				}
+				return { fiber, fixture, provider, elapsedMs, exit: fiber.pollUnsafe() };
+			});
+		const events = (fixture: Awaited<ReturnType<typeof setup>>) =>
+			fixture.authorization.writerCheckEvents.map((event) => event.event);
+
+		it.effect("pauses on a probe timeout without exiting or publishing, then resumes", () =>
+			Effect.gen(function* () {
+				let pausedAt: number | undefined;
+				let resumedAt: number | undefined;
+				const result = yield* runService(
+					18_790,
+					({ elapsedMs, fixture, provider, runner }) => {
+						// The approved item is first eligible at the 60-second scheduler tick.
+						if (elapsedMs === 30_000) runner.setMode("timeout");
+						if (pausedAt === undefined && events(fixture).includes("writer_check_inconclusive"))
+							pausedAt = elapsedMs;
+						if (pausedAt !== undefined && resumedAt === undefined) {
+							expect(provider.calls.google).toEqual([]);
+							expect(stateRow(fixture)?.status).toBe("approved");
+							if (elapsedMs >= pausedAt + 90_000) {
+								runner.setMode("clear");
+								resumedAt = elapsedMs;
+							}
+						}
+						return provider.calls.discord.length === 1;
+					},
+					{ maxMs: 300_000 },
+				);
+				expect(result.exit).toBeUndefined();
+				expect(pausedAt).toBeDefined();
+				expect(resumedAt).toBeDefined();
+				expect(result.provider.calls.google).toHaveLength(1);
+				expect(result.provider.calls.discord).toHaveLength(1);
+				const kinds = events(result.fixture);
+				expect(kinds).toContain("writer_check_recovered");
+				expect(kinds).not.toContain("writer_check_escalated");
+				const first = result.fixture.authorization.writerCheckEvents[0];
+				expect(first).toMatchObject({ service: "meeting", reason: "launchctl_timeout", attempt: 1 });
+				expect(first).not.toHaveProperty("exitStatus");
+				// Bounded backoff: delays double from one second and never exceed 30 seconds.
+				const delays = result.fixture.authorization.writerCheckEvents.flatMap((event) =>
+					event.retryInMs === undefined ? [] : [event.retryInMs],
+				);
+				expect(delays.slice(0, 6)).toEqual([1_000, 2_000, 4_000, 8_000, 16_000, 30_000]);
+				expect(Math.max(...delays)).toBe(30_000);
+				expect(replayState(result.fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 1 });
+				yield* Fiber.interrupt(result.fiber);
+			}),
+		);
+
+		it.effect("recovers from an unanswered sysctl observation without exiting", () =>
+			Effect.gen(function* () {
+				const result = yield* runService(18_791, ({ elapsedMs, fixture }) => {
+					if (elapsedMs === 5_000)
+						fixture.authorization.setObserveFailure(new WriterCheckInconclusiveError("sysctl", "timeout"));
+					if (elapsedMs === 20_000) fixture.authorization.setObserveFailure(undefined);
+					return events(fixture).includes("writer_check_recovered");
+				});
+				expect(result.exit).toBeUndefined();
+				expect(result.fixture.authorization.writerCheckEvents[0]).toMatchObject({
+					event: "writer_check_inconclusive",
+					reason: "sysctl_timeout",
+				});
+				expect(result.provider.calls.google).toEqual([]);
+				yield* Fiber.interrupt(result.fiber);
+			}),
+		);
+
+		it.effect("escalates persistent probe failure to the writer stop after the window", () =>
+			Effect.gen(function* () {
+				const result = yield* runService(
+					18_792,
+					({ elapsedMs, runner }) => {
+						if (elapsedMs === 30_000) runner.setMode("launchctl_error");
+						return undefined;
+					},
+					{ stepMs: 5_000, maxMs: 60_000 + WRITER_CHECK_INCONCLUSIVE_WINDOW_MS + 120_000 },
+				);
+				const exit = yield* Fiber.await(result.fiber);
+				expect(Exit.isFailure(exit)).toBe(true);
+				expect(JSON.stringify(exit)).toContain("writer_present");
+				const reported = result.fixture.authorization.writerCheckEvents;
+				const escalated = reported.at(-1);
+				expect(escalated).toMatchObject({
+					event: "writer_check_escalated",
+					service: "meeting",
+					reason: "launchctl_exit_status",
+					exitStatus: 5,
+				});
+				expect(escalated?.inconclusiveForMs).toBeGreaterThanOrEqual(WRITER_CHECK_INCONCLUSIVE_WINDOW_MS);
+				expect(result.provider.calls.google).toEqual([]);
+				expect(result.provider.calls.discord).toEqual([]);
+				expect(replayState(result.fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
+			}),
+		);
+
+		it.effect("stops at once when a writer is observed during the retries", () =>
+			Effect.gen(function* () {
+				let observedAt: number | undefined;
+				const result = yield* runService(18_793, ({ elapsedMs, fixture, runner }) => {
+					if (elapsedMs === 30_000) runner.setMode("timeout");
+					if (observedAt === undefined && events(fixture).includes("writer_check_inconclusive")) {
+						runner.setMode("writer");
+						observedAt = elapsedMs;
+					}
+					return undefined;
+				});
+				const exit = yield* Fiber.await(result.fiber);
+				expect(Exit.isFailure(exit)).toBe(true);
+				expect(JSON.stringify(exit)).toContain("writer_present");
+				expect(observedAt).toBeDefined();
+				// The next retry (one second later) observes the writer; nothing waits for the window.
+				expect(result.elapsedMs - (observedAt ?? 0)).toBeLessThanOrEqual(5_000);
+				expect(events(result.fixture)).not.toContain("writer_check_escalated");
+				expect(JSON.stringify(result.fixture.authorization.writerCheckEvents)).not.toContain(
+					SCRIPTED_WRITER_ARGV_SECRET,
+				);
+				expect(result.provider.calls.google).toEqual([]);
+				expect(replayState(result.fixture.authorization.replayPath)).toEqual({ consumed: 1, leases: 0 });
+			}),
+		);
+
+		it.effect("stops at the first observed writer without a retry window", () =>
+			Effect.gen(function* () {
+				const result = yield* runService(18_794, ({ elapsedMs, runner }) => {
+					if (elapsedMs === 30_000) runner.setMode("loaded_job");
+					return undefined;
+				});
+				const exit = yield* Fiber.await(result.fiber);
+				expect(Exit.isFailure(exit)).toBe(true);
+				expect(JSON.stringify(exit)).toContain("writer_present");
+				// Detected at the 60-second scheduler tick; stopped by the next one-second keep-alive.
+				expect(result.elapsedMs).toBeLessThanOrEqual(65_000);
+				expect(result.fixture.authorization.writerCheckEvents).toEqual([]);
+				expect(result.provider.calls.google).toEqual([]);
+			}),
+		);
+	});
 });
