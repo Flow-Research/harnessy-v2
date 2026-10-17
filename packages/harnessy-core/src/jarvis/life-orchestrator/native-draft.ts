@@ -65,6 +65,13 @@ export const readNativeLifeRequest = (
 	return request;
 };
 
+/** The grant a native run will consume, named before reservation so failure evidence is attributable. */
+export const nativeLifeGrantId = (options: NativeLifePreviewOptions, request: LifeDraftRequest): string =>
+	options.local
+		? `local:${createHash("sha256").update(request.runId).digest("hex")}`
+		: Schema.decodeUnknownSync(SignedGrant)(JSON.parse(readPrivateLifeInput(options.grantPath, 16384))).authority
+				.grantId;
+
 /** One real signed authorization boundary; injected providers are for isolated host tests. */
 export const generateNativeLifePreview = async (
 	settings: LifeOrchestratorSettings,

@@ -85,8 +85,16 @@ export {
 	inspectLifeStatus,
 	prepareLifeDailyPrompt,
 	prepareLifeWeeklyPrompt,
+	reconcileLifeWeekly,
 	runLifeDaily,
 	runLifeResearch,
 	runLifeWeekly,
 } from "./jarvis/life-orchestrator/service.ts";
 export { LifeReadingLedger } from "./jarvis/life-orchestrator/store.ts";
+export type {
+	LifeWeeklyReconcileOptions,
+	LifeWeeklyReconciliation,
+	LifeWeeklyRunState,
+	LifeWeeklyRunSummary,
+} from "./jarvis/life-orchestrator/weekly-runs.ts";
+export { listLifeWeeklyRuns } from "./jarvis/life-orchestrator/weekly-runs.ts";
