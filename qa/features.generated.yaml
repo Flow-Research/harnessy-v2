@@ -63,6 +63,21 @@
       "scenario_count": 2
     },
     {
+      "slug": "portal-api",
+      "name": "Portal API",
+      "id_prefix": "PRTA",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/portal-api.md"
+      ],
+      "scenario_count": 6
+    },
+    {
       "slug": "portal-read-model",
       "name": "Portal read model",
       "id_prefix": "PRTL",

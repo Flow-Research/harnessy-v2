@@ -26,6 +26,11 @@
 			"path": "qa/api/scripts/portal-read-model.md",
 			"app": "harnessy-v2",
 			"layer": "api"
+		},
+		{
+			"path": "qa/api/scripts/portal-api.md",
+			"app": "harnessy-v2",
+			"layer": "api"
 		}
 	],
 	"apps": [
@@ -120,6 +125,11 @@
 				"prefix": "PRTL",
 				"slug": "portal-read-model",
 				"name": "Portal read model"
+			},
+			{
+				"prefix": "PRTA",
+				"slug": "portal-api",
+				"name": "Portal API"
 			}
 		]
 	}
