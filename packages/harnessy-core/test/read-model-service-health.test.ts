@@ -27,7 +27,7 @@ import { cleanupReadModelFixtures, tempHome } from "./support/read-model-fixture
 afterEach(cleanupReadModelFixtures);
 
 const NOW = new Date("2026-10-17T12:00:00.000Z");
-const SECRET = "sk-live-do-not-leak-0123456789";
+const SECRET = "planted-secret-value-0123456789";
 
 /** The shape of `launchctl print gui/<uid>/<label>` on macOS, including a job environment. */
 const launchctlPrint = (home: string, label: string) => `gui/501/${label} = {
