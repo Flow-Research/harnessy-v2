@@ -188,6 +188,7 @@ for plan in plans:
 		env: { ...process.env, HOME: projectRoot, PYTHONDONTWRITEBYTECODE: "1" },
 	});
 	run(jarvisPython, ["-I", "-B", join(repoRoot, "scripts/test-jarvis-consumer.py"), jarvisSitePackages]);
+	run(jarvisPython, ["-I", "-B", join(repoRoot, "scripts/test-community-collector-pruning.py")]);
 	run(jarvisPython, ["-I", "-B", join(repoRoot, "scripts/test-community-draft-adapter.py")], {
 		env: {
 			...process.env,

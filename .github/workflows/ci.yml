@@ -100,6 +100,7 @@ jobs:
           UV_PROJECT_ENVIRONMENT="$fixture_root/venv" uv sync --project "$fixture_root/source" --frozen --no-dev --no-editable --python 3.11 --no-python-downloads
           echo "HARNESSY_TEST_JARVIS_PYTHON=$fixture_root/venv/bin/python" >> "$GITHUB_ENV"
           "$fixture_root/venv/bin/python" scripts/test-community-draft-adapter.py
+          "$fixture_root/venv/bin/python" -I -B scripts/test-community-collector-pruning.py
           "$fixture_root/venv/bin/python" scripts/test-community-review-consumer.py
 
       - name: Execute canonical-cutover QA scenarios

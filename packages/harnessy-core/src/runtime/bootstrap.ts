@@ -423,11 +423,12 @@ export class HarnessBootstrap extends Context.Service<
 					actions.push(
 						makeAction({
 							kind: "jarvis-community-correction",
-							label: "Bound community source traversal and exclude generated dependency trees",
+							label: "Bound community source traversal to the target week and exclude generated dependency trees",
 							status: dryRun ? "planned" : "written",
 							unsafeExternal: false,
 							targetPath: collectorPath,
-							reason: "The packaged oracle remains unchanged; collection and validation share the same limits.",
+							reason:
+								"The copied collector must match the pinned corrected digest; collection and validation share the same limits.",
 						}),
 					);
 					const anytypePath = path.join(jarvisCliPath, "src/jarvis/anytype_client.py");

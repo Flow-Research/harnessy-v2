@@ -12,7 +12,7 @@ import sys
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from jarvis.community_briefing.ai import AIResponse
@@ -42,7 +42,7 @@ def deny_external(event, _args):
         raise RuntimeError("draft adapter cannot invoke providers or subprocesses")
 
 
-def validate_paths(settings):
+def validate_paths(settings, week_start=None):
     roots = {}
     for name in ("source_path", "draft_path", "state_path"):
         value = settings.get(name)
@@ -74,9 +74,16 @@ def validate_paths(settings):
         path = state / name
         if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_nlink != 1)):
             raise ValueError("unsafe queue file")
-    for root in (source, draft):
-        for _ in iter_content_files(root, source=root == source):
-            pass
+    # Dated source folders accumulate without bound, so never walk the whole
+    # source tree. Validate the requested week as the collector will read it,
+    # or only the undated structure when no week is known yet; the collector
+    # applies the same bounds to each week's dated folders before reading them.
+    scope = {"undated_only": True} if week_start is None else {
+        "window": (week_start, week_start + timedelta(days=6))}
+    for _ in iter_content_files(source, **scope):
+        pass
+    for _ in iter_content_files(draft, source=False):
+        pass
     return {**settings, **{name: str(path) for name, path in roots.items()}}
 
 
@@ -339,7 +346,8 @@ def main():
     settings = request.get("config")
     if not isinstance(settings, dict):
         raise ValueError("explicit configuration required")
-    settings = validate_paths(settings)
+    week_start = None if action == "revise" else date.fromisoformat(request["week_start"])
+    settings = validate_paths(settings, week_start)
     config = CommunityBriefingConfig(**{**settings, "ai_provider": "codex", "enabled": False})
     notices = PendingNotifications(request.get("notifications") is True)
     service = NativeCommunityService(config, notifier=notices)
@@ -356,7 +364,7 @@ def main():
             existing = False
         else:
             result = service.generate(
-                week_start=date.fromisoformat(request["week_start"]),
+                week_start=week_start,
                 regenerate=action == "regenerate",
             )
             item, existing = result.item, result.existing

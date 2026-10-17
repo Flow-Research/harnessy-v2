@@ -195,6 +195,82 @@ class CommunityDraftAdapterTests(unittest.TestCase):
         self.assertNotIn("GENERATED_PRIVATE_SENTINEL", events[0]["prompt"])
         self.assertEqual(events[-1]["provider_calls"], 1)
 
+    def add_dated_history(self):
+        # Generated output in an old dated folder holds more entries than the
+        # traversal limit; a whole-tree walk failed on exactly this shape.
+        history = self.source / "flow/strategy/2026/Aug/13-research/experiments"
+        history.mkdir(parents=True)
+        for index in range(10050):
+            (history / f"{index}.txt").touch()
+
+    def start_review(self):
+        child = subprocess.Popen(
+            [sys.executable, "-I", str(ADAPTER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, cwd=self.root, env={"PATH": os.defpath}, bufsize=0,
+        )
+        self.addCleanup(child.communicate, timeout=5)
+        self.addCleanup(child.kill)
+        child.stdin.write((json.dumps({"action": "review", "config": {**self.config, "review_port": 0}}) + "\n").encode())
+        child.stdin.flush()
+        deadline = time.monotonic() + 10
+        data = bytearray()
+        while not data.endswith(b"\n"):
+            remaining = deadline - time.monotonic()
+            self.assertGreater(remaining, 0, "adapter event timed out")
+            self.assertTrue(select.select([child.stdout], [], [], remaining)[0])
+            chunk = os.read(child.stdout.fileno(), 1)
+            self.assertTrue(chunk, "adapter closed without event")
+            data.extend(chunk)
+        return json.loads(data)
+
+    def test_review_starts_with_dated_history_beyond_the_entry_limit(self):
+        self.add_dated_history()
+        ready = self.start_review()
+        self.assertEqual(ready["type"], "ready")
+        self.assertFalse(ready["publication"])
+
+    def test_review_startup_still_refuses_unsafe_undated_content(self):
+        (self.source / "notes").mkdir()
+        (self.source / "notes/linked.md").symlink_to(self.root / "absent")
+        self.assertEqual(self.start_review(), {"type": "error", "code": "community_draft_failed", "publication": False})
+
+    def test_generation_reads_the_week_despite_dated_history_beyond_the_entry_limit(self):
+        self.add_dated_history()
+        relative = "flow/meetings/2026/Sep/16-update.md"
+        (self.source / relative).parent.mkdir(parents=True)
+        (self.source / relative).write_text(
+            "# Flow Research update\n\n- Date: 2026-09-16\n\n## Key takeaways\n\n"
+            "The team reviewed the community learning materials and documented the next steps.\n"
+        )
+        source_id = hashlib.sha256(relative.encode()).hexdigest()[:16]
+        result, events = self.run_adapter(responses=[{
+            "sequence": 1, "provider": "codex", "data": {"decisions": [{
+                "source_id": source_id, "include": False, "reason": "Not public",
+                "sensitivity": "private", "facts": [],
+            }]},
+        }])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[0]["type"], "generate")
+        self.assertIn(source_id, events[0]["prompt"])
+        self.assertEqual(events[-1]["provider_calls"], 1)
+
+    def test_unsafe_content_in_the_requested_week_fails_before_state(self):
+        folder = self.source / "flow/docs/2026/Sep/15-work"
+        folder.mkdir(parents=True)
+        (folder / "linked.md").symlink_to(self.root / "absent")
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+        self.assertFalse((self.root / "state").exists())
+
+    def test_dated_content_outside_the_requested_week_is_neither_validated_nor_read(self):
+        folder = self.source / "flow/docs/2026/Aug/03-old"
+        folder.mkdir(parents=True)
+        (folder / "linked.md").symlink_to(self.root / "absent")
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[-1]["provider_calls"], 0)
+
     def test_legitimate_entry_limit_is_not_relaxed(self):
         for index in range(10001):
             (self.source / f"{index}.txt").touch()
