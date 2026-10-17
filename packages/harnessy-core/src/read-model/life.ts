@@ -11,8 +11,13 @@ import { join, relative } from "node:path";
 
 import type { LifeOrchestratorSettings } from "../jarvis/life-orchestrator/config.ts";
 import { canonicalLifeBriefPath, compatibilityScriptPath } from "../jarvis/life-orchestrator/history.ts";
-import { listLifeWeeklyRuns } from "../jarvis/life-orchestrator/weekly-runs.ts";
-import { readBoundedDirectory, readBoundedFile } from "./files.ts";
+import {
+	LIFE_WEEKLY_OUTCOME_FILE,
+	LIFE_WEEKLY_RECONCILIATION_FILE,
+	LIFE_WEEKLY_RUN_FILE,
+	listLifeWeeklyRuns,
+} from "../jarvis/life-orchestrator/weekly-runs.ts";
+import { assertDelegatedFileBounded, readBoundedDirectory, readBoundedFile } from "./files.ts";
 import type {
 	LifeBriefStatusData,
 	LifeBriefTextData,
@@ -37,7 +42,9 @@ import {
 /** The newest ledger schema this reader understands (`life-orchestrator/store.ts`). */
 export const LIFE_LEDGER_SUPPORTED_SCHEMA = 2;
 const PREVIEW_NAME = /^(\d{4}-\d{2}-\d{2})-[A-Za-z0-9]+\.md$/u;
-const MAX_PREVIEW_SCAN = 1_000;
+const WEEKLY_RUN_NAME = /^weekly-\d{4}-W\d{2}-[a-f0-9]{64}$/u;
+/** Review directory entries read at most. Past this the newest preview is not certain, so the tile degrades. */
+export const MAX_REVIEW_SCAN = 5_000;
 const MAX_WEEKLY_RUNS = 8;
 const READING_STATUSES = ["available", "reserved", "delivered"] as const;
 
@@ -114,7 +121,9 @@ const readBriefStatus = (settings: LifeOrchestratorSettings, now: Date): TileRes
 
 const readLatestPreview = (settings: LifeOrchestratorSettings, now: Date): TileResult<LifePreviewData> =>
 	guardTile(now, () => {
-		const listing = readBoundedDirectory(settings.paths.reviewDirectory, MAX_PREVIEW_SCAN);
+		const listing = readBoundedDirectory(settings.paths.reviewDirectory, MAX_REVIEW_SCAN);
+		// Directory order is not name order, so a partial scan could miss the newest preview.
+		if (listing.truncated) return stateTile("unsupported", "scan_limit", now);
 		let newest: { readonly name: string; readonly date: string } | undefined;
 		for (const entry of listing.entries) {
 			const match = PREVIEW_NAME.exec(entry.name);
@@ -129,7 +138,6 @@ const readLatestPreview = (settings: LifeOrchestratorSettings, now: Date): TileR
 				date: newest.date,
 				bytes: file.size,
 				modifiedAt: file.modifiedAt.toISOString(),
-				scanLimitReached: listing.truncated,
 			},
 			now,
 		);
@@ -142,6 +150,15 @@ const readWeeklyRuns = (
 ): TileResult<LifeWeeklyRunsData> =>
 	guardTile(now, () => {
 		if (!existsSync(settings.paths.reviewDirectory)) return stateTile("missing", "directory_missing", now);
+		// `listLifeWeeklyRuns` lists the whole directory and reads each run's JSON whole.
+		// Bound the scan and refuse a FIFO or an oversize evidence file before delegating.
+		const listing = readBoundedDirectory(settings.paths.reviewDirectory, MAX_REVIEW_SCAN);
+		if (listing.truncated) return stateTile("unsupported", "scan_limit", now);
+		for (const entry of listing.entries) {
+			if (!entry.isDirectory() || !WEEKLY_RUN_NAME.test(entry.name)) continue;
+			for (const name of [LIFE_WEEKLY_RUN_FILE, LIFE_WEEKLY_OUTCOME_FILE, LIFE_WEEKLY_RECONCILIATION_FILE])
+				assertDelegatedFileBounded(join(settings.paths.reviewDirectory, entry.name, name), MAX_TEXT_BYTES);
+		}
 		const runs = listLifeWeeklyRuns(settings.paths.reviewDirectory);
 		const counts: Record<string, number> = {};
 		for (const run of runs) counts[run.state] = (counts[run.state] ?? 0) + 1;

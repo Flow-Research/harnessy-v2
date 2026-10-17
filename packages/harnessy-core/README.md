@@ -98,7 +98,15 @@ busy or damaged source degrades its own tile; it does not fail the whole read.
   messages or provider accounts.
 - `readWorkspaceSummary`, `readSkillsSummary` and `readServiceHealth` read the
   workspace registry, the skill count and `launchctl print` state with a
-  redacted last log line.
+  redacted last log line. Redaction is a deny-list: it masks query strings,
+  URL user information, whole `Authorization` and `Cookie` values, values of
+  secret-named keys, known token shapes (JWT, GitHub, Slack, AWS, Google,
+  `sk-` keys, PEM keys) and long runs that mix letters and digits. It cannot
+  prove that a free-text line holds no secret, so treat the line as sensitive.
+- A reader that hands a file to an existing whole-file reader (configuration,
+  weekly-run JSON) first checks that the file is a regular file under a size
+  cap, so a FIFO or a huge file degrades the tile instead of blocking. A review
+  directory with more than 5,000 entries reports `unsupported` / `scan_limit`.
 
 SQLite reads go through `readSqliteSnapshot`. It opens the file read-only with a
 short busy timeout (250 ms by default) and holds one read transaction. It

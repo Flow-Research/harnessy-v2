@@ -20,6 +20,7 @@ export {
 	LIFE_LEDGER_SUPPORTED_SCHEMA,
 	type LifeReadOptions,
 	type LifeSummary,
+	MAX_REVIEW_SCAN,
 	readLifeBrief,
 	readLifeSummary,
 } from "./read-model/life.ts";

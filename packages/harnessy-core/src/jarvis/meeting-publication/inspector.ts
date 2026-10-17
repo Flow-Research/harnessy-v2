@@ -22,6 +22,7 @@ import {
 	MeetingPublicationStatus,
 } from "./models.ts";
 import { MeetingPublicationSource } from "./notes.ts";
+import { MEETING_PROVIDER_FAILURE_KINDS, type MeetingProviderFailureKind } from "./provider-health.ts";
 import {
 	assertMeetingPublicationRollbackDatabaseFile,
 	assertMeetingPublicationSqliteSidecarsAbsent,
@@ -312,7 +313,7 @@ export interface MeetingPublicationQueueOptions extends MeetingPublicationInspec
 
 export interface MeetingPublicationProviderHealthInspection {
 	readonly provider: "google" | "discord";
-	readonly failure: string | null;
+	readonly failure: MeetingProviderFailureKind | null;
 	readonly checkedAt: string;
 	readonly lastSuccessAt: string | null;
 	readonly recoveryPending: boolean;
@@ -384,11 +385,17 @@ export const inspectMeetingPublicationQueue = (
 							.all()
 							.map((row) => {
 								const provider = String(row.provider);
-								if (!PROVIDERS.has(provider))
+								const failure = row.failure === null ? null : String(row.failure);
+								// Only the fixed classifications leave the store; free text never does.
+								if (
+									!PROVIDERS.has(provider) ||
+									(failure !== null &&
+										!(MEETING_PROVIDER_FAILURE_KINDS as ReadonlyArray<string>).includes(failure))
+								)
 									throw new MeetingPublicationInspectorError({ code: "schema_invalid" });
 								return {
 									provider: provider as "google" | "discord",
-									failure: row.failure === null ? null : String(row.failure),
+									failure: failure as MeetingProviderFailureKind | null,
 									checkedAt: String(row.checked_at),
 									lastSuccessAt: row.last_success_at === null ? null : String(row.last_success_at),
 									recoveryPending: row.recovery_pending === 1,
@@ -413,6 +420,16 @@ export const inspectMeetingPublicationQueue = (
 	}
 	const cause = read.failure;
 	if (cause instanceof MeetingStateChangedError) return { state: "busy", reason: "database_changed" };
+	// A writer can create its journal after the pre-check above. The file-safety checks then
+	// see a sidecar and fail with `unsafe_state`; a regular journal file means a busy writer.
+	const statePath = config.statePath;
+	if (cause instanceof MeetingPublicationStoreFileSafetyError && statePath !== null) {
+		const journal = Result.try(() =>
+			lstatSync(`${resolve(statePath, "meeting-publication.sqlite3")}-journal`, { throwIfNoEntry: false }),
+		);
+		if (Result.isSuccess(journal) && journal.success?.isFile() === true)
+			return { state: "busy", reason: "journal_present" };
+	}
 	if (
 		cause instanceof MeetingPublicationInspectorError ||
 		cause instanceof MeetingPublicationStoreFileSafetyError ||

@@ -50,7 +50,7 @@ export const LifeBriefTextSchema = Type.Object(
 	strict,
 );
 export const LifePreviewSchema = Type.Object(
-	{ name: Type.String(), date: Type.String(), bytes: count, modifiedAt: instant, scanLimitReached: Type.Boolean() },
+	{ name: Type.String(), date: Type.String(), bytes: count, modifiedAt: instant },
 	strict,
 );
 export const LifeWeeklyRunStateSchema = Type.Union([
@@ -196,7 +196,16 @@ export const MeetingProviderHealthSchema = Type.Object(
 			Type.Object(
 				{
 					provider: Type.Union([Type.Literal("google"), Type.Literal("discord")]),
-					failure: nullable(Type.String()),
+					failure: nullable(
+						Type.Union([
+							Type.Literal("authentication"),
+							Type.Literal("identity"),
+							Type.Literal("credential_store"),
+							Type.Literal("permission"),
+							Type.Literal("transient"),
+							Type.Literal("other"),
+						]),
+					),
 					checkedAt: Type.String(),
 					lastSuccessAt: nullable(Type.String()),
 					recoveryPending: Type.Boolean(),

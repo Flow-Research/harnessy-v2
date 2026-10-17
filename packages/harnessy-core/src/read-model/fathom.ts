@@ -15,7 +15,7 @@ import * as Result from "effect/Result";
 import { fathomAccountKey, fathomFileStoreStateFile, parseFathomFileStoreState } from "../jarvis/fathom/file-store.ts";
 import { FATHOM_POLL_INTERVAL_SECONDS } from "../jarvis/fathom/poll.ts";
 import { inspectFathomStatus } from "../jarvis/fathom/status.ts";
-import { readBoundedFile } from "./files.ts";
+import { assertDelegatedFileBounded, readBoundedFile } from "./files.ts";
 import type { FathomCheckpointData, FathomConfigData, FathomInboxData } from "./schemas.ts";
 import {
 	guardTile,
@@ -81,9 +81,14 @@ export const readFathomSummary = (options: FathomReadOptions = {}): FathomSummar
 	let status: ReturnType<typeof inspectFathomStatus> | undefined;
 	const config = guardTile(now, (): TileResult<FathomConfigData> => {
 		if (!existsSync(configPath)) return stateTile("missing", "config_missing", now);
+		const stateRoot = join(homeRoot, ".harnessy", "jarvis", "state", "fathom");
+		// `inspectFathomStatus` reads these whole; refuse a FIFO or an oversize file first.
+		// Its inbox scan lists directories only and never opens an envelope.
+		assertDelegatedFileBounded(configPath);
+		assertDelegatedFileBounded(join(stateRoot, "poll-state.json"));
 		status = inspectFathomStatus({
 			configPath,
-			stateRoot: join(homeRoot, ".harnessy", "jarvis", "state", "fathom"),
+			stateRoot,
 			...(options.sourceRoot === undefined ? {} : { sourceRoot: options.sourceRoot }),
 		});
 		if (status.issues.includes("configuration has invalid YAML")) return stateTile("error", "config_invalid", now);

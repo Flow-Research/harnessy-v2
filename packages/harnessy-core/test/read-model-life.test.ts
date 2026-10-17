@@ -11,7 +11,7 @@ import type { LifeOrchestratorSettings } from "../src/jarvis/life-orchestrator/c
 import { canonicalLifeBriefPath } from "../src/jarvis/life-orchestrator/history.ts";
 import { inspectLifeStatus } from "../src/jarvis/life-orchestrator/service.ts";
 import { LifeReadingLedger } from "../src/jarvis/life-orchestrator/store.ts";
-import { PortalSchemas, readLifeBrief, readLifeSummary } from "../src/read-model.ts";
+import { MAX_REVIEW_SCAN, PortalSchemas, readLifeBrief, readLifeSummary } from "../src/read-model.ts";
 import {
 	cleanupReadModelFixtures,
 	databaseFingerprint,
@@ -143,7 +143,7 @@ describe("Life read model", () => {
 		});
 		expect(summary.latestPreview).toMatchObject({
 			state: "ok",
-			data: { name: "2026-10-16-bbbb.md", date: "2026-10-16", bytes: 14, scanLimitReached: false },
+			data: { name: "2026-10-16-bbbb.md", date: "2026-10-16", bytes: 14 },
 		});
 		expect(summary.weeklyRuns).toMatchObject({
 			state: "ok",
@@ -267,11 +267,18 @@ describe("Life read model", () => {
 		const home = tempHome("life-limits");
 		const settings = lifeSettings(home);
 		mkdirSync(settings.paths.reviewDirectory, { recursive: true });
-		for (let index = 0; index < 1_001; index += 1)
+		for (let index = 0; index < MAX_REVIEW_SCAN; index += 1)
 			writeFileSync(join(settings.paths.reviewDirectory, `2026-01-01-${String(index).padStart(4, "0")}.md`), "");
+		const atLimit = readLifeSummary(settings, { now: NOW });
+		expect(atLimit.latestPreview).toMatchObject({ state: "ok", data: { name: "2026-01-01-4999.md" } });
+		expect(atLimit.weeklyRuns).toMatchObject({ state: "ok", data: { total: 0, runs: [] } });
+		// Past the limit the scan is partial, and directory order is not name order: the newest
+		// preview is not certain, so both tiles degrade instead of reporting a possibly wrong answer.
+		writeFileSync(join(settings.paths.reviewDirectory, "2026-10-16-zzzz.md"), "");
 		const limited = readLifeSummary(settings, { now: NOW });
-		expect(limited.latestPreview).toMatchObject({ state: "ok", data: { scanLimitReached: true } });
-		expect(limited.weeklyRuns).toMatchObject({ state: "ok", data: { total: 0, runs: [] } });
+		expect(limited.latestPreview).toMatchObject({ state: "unsupported", reason: "scan_limit" });
+		expect(limited.weeklyRuns).toMatchObject({ state: "unsupported", reason: "scan_limit" });
+		expect(Value.Check(PortalSchemas.LifeSummary, limited)).toBe(true);
 
 		const other = tempHome("life-unsafe");
 		const otherSettings = lifeSettings(other);

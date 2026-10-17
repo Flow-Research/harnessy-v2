@@ -103,8 +103,9 @@ describe("launchctl parsing", () => {
 			redactLogLine(
 				`GET http://127.0.0.1:8872/exchange?token=${SECRET}#frag Authorization: Bearer ${SECRET} review_token=${SECRET} api_key: "${SECRET}" password='${SECRET}'\u0007`,
 			),
-		).toBe(
-			"GET http://127.0.0.1:8872/exchange?[redacted] Authorization: [redacted] [redacted] review_token=[redacted] api_key: [redacted] password=[redacted]",
+		).toBe("GET http://127.0.0.1:8872/exchange?[redacted] Authorization: [redacted]");
+		expect(redactLogLine(`review_token=${SECRET} api_key: "${SECRET}" password='${SECRET}'`)).toBe(
+			"review_token=[redacted] api_key: [redacted] password=[redacted]",
 		);
 		expect(redactLogLine(`POST /exchange?code=${SECRET} Bearer ${SECRET}`)).toBe(
 			"POST /exchange?[redacted] Bearer [redacted]",
@@ -114,6 +115,57 @@ describe("launchctl parsing", () => {
 			'{"access_token":[redacted],"password": [redacted],"ok":true}',
 		);
 		expect(redactLogLine("x".repeat(400))).toHaveLength(300);
+	});
+
+	// Token-shaped values are assembled at run time so the repository secret scanner does not match the source.
+	const shaped = (...parts: ReadonlyArray<string>) => parts.join("");
+	const OPAQUE = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+
+	it.each([
+		["a Basic credential after the scheme", "Authorization: Basic dXNlcjpwYXNzd29yZA==", "Authorization: [redacted]"],
+		["a Discord bot credential", `authorization: Bot ${OPAQUE}.abc.def`, "authorization: [redacted]"],
+		["a proxy authorization header", "Proxy-Authorization: Digest username=x", "Proxy-Authorization: [redacted]"],
+		["a bare Basic credential", "sent Basic dXNlcjpwYXNzd29yZA== upstream", "sent Basic [redacted] upstream"],
+		["URL user information", "postgres://admin:hunter2@db.local:5432/x", "postgres://[redacted]@db.local:5432/x"],
+		[
+			"URL user information with a path",
+			"fetch https://user:pa55@example.com/path",
+			"fetch https://[redacted]@example.com/path",
+		],
+		["an Anthropic key", shaped("using key sk", "-ant-api03-", OPAQUE), "using key [redacted]"],
+		["a GitHub token", shaped("gh", "p_", OPAQUE), "[redacted]"],
+		["a fine-grained GitHub token", shaped("github", "_pat_", OPAQUE), "[redacted]"],
+		["a Slack token", shaped("xo", "xb-1234-", OPAQUE), "[redacted]"],
+		["an AWS access key", shaped("AK", "IA", "ABCDEFGHIJKLMNOP"), "[redacted]"],
+		["a Google API key", shaped("AI", "za", OPAQUE), "[redacted]"],
+		["a Google access token", shaped("ya", "29.", OPAQUE), "[redacted]"],
+		["a Google refresh token", shaped("1/", "/0g", OPAQUE), "[redacted]"],
+		["a JWT", "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc123sig", "jwt [redacted]"],
+		["a PEM private key", shaped("-----BEGIN ", "RSA PRIVATE", " KEY-----MIIEow"), "[redacted]"],
+		[
+			"pass, pwd, credential and private_key keys",
+			"pass=hunter2 pwd=hunter3 credential=foo private_key=bar",
+			"pass=[redacted] pwd=[redacted] credential=[redacted] private_key=[redacted]",
+		],
+		["every cookie, not only the first", "Cookie: sid=abc; other=def", "Cookie: [redacted]"],
+		["a Set-Cookie header", "Set-Cookie: a=b; Path=/", "Set-Cookie: [redacted]"],
+		[
+			"an escaped quote inside a JSON value",
+			String.raw`{"password":"p\"q","ok":1}`,
+			'{"password":[redacted],"ok":1}',
+		],
+		["a long opaque hex value", `hash ${"9f86d081884c7d659a2feaa0c55ad015"}a3bf ok`, "hash [redacted] ok"],
+	])("masks %s", (_name, line, expected) => {
+		expect(redactLogLine(line)).toBe(expected);
+	});
+
+	it("keeps ordinary log text, paths, dates and counts", () => {
+		for (const line of [
+			"started worker 12 on /Users/someone/Library/Logs/harnessy/portal.log at 2026-10-17T12:00:00Z",
+			"tests passed: 5, config: ok, status=running",
+			"Basic setup done",
+		])
+			expect(redactLogLine(line)).toBe(line);
 	});
 });
 

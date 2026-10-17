@@ -5,7 +5,11 @@
  * makes this tile `busy` within the timeout instead of blocking for 10 s.
  * Briefing contents, error messages and provider identifiers are never returned.
  */
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
 import { REQUIRED_QUEUE_COLUMNS, resolveCommunityBriefingConfig } from "../jarvis/community-briefing/status.ts";
+import { assertDelegatedFileBounded } from "./files.ts";
 import type { CommunityConfigData, CommunityQueueData } from "./schemas.ts";
 import { readSqliteSnapshot } from "./sqlite-snapshot.ts";
 import {
@@ -39,8 +43,11 @@ export const readCommunitySummary = (options: CommunityReadOptions = {}): Commun
 	const now = readClock(options);
 	let databasePath: string | undefined;
 	const config = guardTile(now, (): TileResult<CommunityConfigData> => {
+		const configPath = resolve(options.configPath ?? join(homedir(), ".jarvis", "config.yaml"));
+		// `resolveCommunityBriefingConfig` reads the whole file; refuse a FIFO or an oversize file first.
+		assertDelegatedFileBounded(configPath);
 		const resolved = resolveCommunityBriefingConfig({
-			...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+			configPath,
 			...(options.stateRoot === undefined ? {} : { stateRoot: options.stateRoot }),
 		});
 		if (!resolved.configPresent) return stateTile("missing", "config_missing", now);

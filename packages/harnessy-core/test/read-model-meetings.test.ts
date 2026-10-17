@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -16,6 +16,7 @@ import {
 } from "../src/jarvis/meeting-publication/inspector.ts";
 import { MeetingPublicationNote } from "../src/jarvis/meeting-publication/models.ts";
 import { MeetingPublicationSource } from "../src/jarvis/meeting-publication/notes.ts";
+import { MEETING_PROVIDER_FAILURE_KINDS } from "../src/jarvis/meeting-publication/provider-health.ts";
 import { MeetingPublicationStore } from "../src/jarvis/meeting-publication/store.ts";
 import { PortalSchemas, readMeetingSummary } from "../src/read-model.ts";
 import {
@@ -214,6 +215,58 @@ describe("meeting publication read model", () => {
 		expect(recovering.queue).toMatchObject({ state: "busy", reason: "journal_present" });
 		expect(Value.Check(PortalSchemas.MeetingSummary, recovering)).toBe(true);
 		expect(databaseFingerprint(dbPath)).toEqual(before);
+	});
+
+	it("reports a journal that a writer creates after the pre-check as busy, not unsafe", async () => {
+		const { root, config, dbPath } = await setup("meetings-race");
+		const journal = `${dbPath}-journal`;
+		const raced = inspectMeetingPublicationQueue(config, { beforeDatabaseOpen: () => writeFileSync(journal, "") });
+		expect(raced).toEqual({ state: "busy", reason: "journal_present" });
+		rmSync(journal);
+		// A sidecar that is not a regular file is still unsafe.
+		const symlinked = inspectMeetingPublicationQueue(config, {
+			beforeDatabaseOpen: () => symlinkSync(join(root, "elsewhere"), journal),
+		});
+		expect(symlinked).toEqual({ state: "unsafe", reason: "unsafe_state" });
+		rmSync(journal);
+		// A sidecar left by a writer on another path is unsafe, as before.
+		const wal = inspectMeetingPublicationQueue(config, {
+			beforeDatabaseOpen: () => writeFileSync(`${dbPath}-wal`, ""),
+		});
+		expect(wal).toEqual({ state: "unsafe", reason: "unsafe_state" });
+	});
+
+	it("never returns provider failure text outside the fixed classifications", async () => {
+		const { config, dbPath } = await setup("meetings-failure-text");
+		const corrupt = new DatabaseSync(dbPath);
+		corrupt.exec("PRAGMA ignore_check_constraints = ON");
+		corrupt
+			.prepare("UPDATE provider_health SET failure = ? WHERE provider = 'google'")
+			.run(`token expired for ${OWNER}`);
+		corrupt.close();
+		const summary = readMeetingSummary(config, { now: NOW });
+		expect(summary.providers).toMatchObject({ state: "unsupported", reason: "schema_invalid" });
+		expect(JSON.stringify(summary)).not.toContain(OWNER);
+		const health = (failure: string | null) => ({
+			providers: [
+				{ provider: "google", failure, checkedAt: NOW.toISOString(), lastSuccessAt: null, recoveryPending: false },
+			],
+		});
+		for (const kind of [...MEETING_PROVIDER_FAILURE_KINDS, null])
+			expect(Value.Check(PortalSchemas.MeetingProviderHealth, health(kind))).toBe(true);
+		expect(
+			Value.Check(PortalSchemas.MeetingProviderHealth, {
+				providers: [
+					{
+						provider: "google",
+						failure: "free text",
+						checkedAt: NOW.toISOString(),
+						lastSuccessAt: null,
+						recoveryPending: false,
+					},
+				],
+			}),
+		).toBe(false);
 	});
 
 	it("reports missing, unsafe and unsupported state as degraded tiles", async () => {

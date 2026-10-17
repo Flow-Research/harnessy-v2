@@ -92,17 +92,50 @@ export const parseLaunchctlPrint = (stdout: string): LaunchctlFields => {
 	return fields;
 };
 
-/** Remove query strings and mask tokens, bearer credentials and secrets in one log line. */
+const REDACTED = "[redacted]";
+/** A quoted value (with escapes) or the rest of an unquoted value. */
+const QUOTED_VALUE = String.raw`"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?`;
+/** Keys whose values are always secret. `authorization` and `cookie` are handled separately. */
+const SECRET_KEY =
+	"[A-Za-z0-9_-]*(?:token|secret|password|passwd|passphrase|pass|pwd|credentials?|api[_-]?key|private[_-]?key|access[_-]?key|client[_-]?secret|session[_-]?id|signature|sig)";
+const SECRET_ASSIGNMENT = new RegExp(String.raw`\b(${SECRET_KEY})("?\s*[=:]\s*)(${QUOTED_VALUE}|[^\s&,;]+)`, "giu");
+/** `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie` hide the whole value, scheme included. */
+const WHOLE_VALUE_HEADER = new RegExp(
+	String.raw`\b((?:proxy-)?authorization|(?:set-)?cookie)("?\s*[=:]\s*)(${QUOTED_VALUE}|.*)`,
+	"giu",
+);
+/** Credential shapes that are secret wherever they appear. */
+const TOKEN_SHAPES: ReadonlyArray<RegExp> = [
+	/-----BEGIN [A-Z ]*PRIVATE KEY-----.*/gu,
+	/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/gu,
+	/\bsk-[A-Za-z0-9_-]{12,}/gu,
+	/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{12,}/gu,
+	/\bxox[a-z]-[A-Za-z0-9-]{8,}/gu,
+	/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/gu,
+	/\bAIza[0-9A-Za-z_-]{20,}/gu,
+	/\bya29\.[0-9A-Za-z_-]{10,}/gu,
+	/\b1\/\/[0-9A-Za-z_-]{20,}/gu,
+];
+/** A long run of token characters with both a letter and a digit: a key, hash or opaque token. */
+const LONG_OPAQUE = /[A-Za-z0-9+/_=-]{32,}/gu;
+
+const maskOpaque = (run: string): string => (/[A-Za-z]/u.test(run) && /\d/u.test(run) ? REDACTED : run);
+
+/**
+ * Mask secrets in one log line. This is a deny-list, so it masks generously: query
+ * strings and URL user information, the whole value of authorization and cookie
+ * headers, values of secret-named keys, known credential shapes (JWT, provider
+ * tokens, PEM keys) and any long opaque run that mixes letters and digits.
+ */
 export const redactLogLine = (line: string): string =>
-	line
-		.replace(/\p{Cc}/gu, " ")
-		.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s?#]*)[?#]\S*/giu, "$1?[redacted]")
-		.replace(/(\S)\?(?!\[redacted\])\S+/gu, "$1?[redacted]")
-		.replace(/\bBearer\s+\S+/giu, "Bearer [redacted]")
-		.replace(
-			/\b([A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|authorization|cookie))("?\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&,;]+)/giu,
-			"$1$2[redacted]",
-		)
+	TOKEN_SHAPES.reduce((text, shape) => text.replace(shape, REDACTED), line.replace(/\p{Cc}/gu, " "))
+		.replace(/\b(Bearer|Basic|Digest|Bot)\s+[A-Za-z0-9._~+/=-]{6,}/gu, `$1 ${REDACTED}`)
+		.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/giu, `$1${REDACTED}@`)
+		.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s?#]*)[?#]\S*/giu, `$1?${REDACTED}`)
+		.replace(/(\S)\?(?!\[redacted\])\S+/gu, `$1?${REDACTED}`)
+		.replace(WHOLE_VALUE_HEADER, `$1$2${REDACTED}`)
+		.replace(SECRET_ASSIGNMENT, `$1$2${REDACTED}`)
+		.replace(LONG_OPAQUE, maskOpaque)
 		.trim()
 		.slice(0, MAX_LOG_LINE);
 

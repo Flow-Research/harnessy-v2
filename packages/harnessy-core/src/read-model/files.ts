@@ -1,5 +1,15 @@
 /** Bounded, no-follow file and directory reads for the portal read model. */
-import { closeSync, constants, type Dirent, fstatSync, lstatSync, opendirSync, openSync, readSync } from "node:fs";
+import {
+	closeSync,
+	constants,
+	type Dirent,
+	fstatSync,
+	lstatSync,
+	opendirSync,
+	openSync,
+	readSync,
+	statSync,
+} from "node:fs";
 
 import { ReadModelStateError } from "./tile.ts";
 
@@ -58,4 +68,21 @@ export const readBoundedDirectory = (path: string, maxEntries: number, followRoo
 	} finally {
 		directory.closeSync();
 	}
+};
+
+/** Configuration and JSON evidence files larger than this are not read. */
+export const MAX_DELEGATED_FILE_BYTES = 1024 * 1024;
+
+/**
+ * Check a file before handing it to an existing reader that reads it whole with `readFileSync`.
+ * An absent file passes, so the reader keeps its own "missing" handling. A symbolic link is
+ * followed (configuration files are often linked), but the target must be a regular file no
+ * larger than `maxBytes`: a FIFO, device or directory is `unsafe`, and so is an oversize file.
+ * The check runs just before the read; a file swapped in between needs same-user write access.
+ */
+export const assertDelegatedFileBounded = (path: string, maxBytes = MAX_DELEGATED_FILE_BYTES): void => {
+	const stat = statSync(path, { throwIfNoEntry: false });
+	if (stat === undefined) return;
+	if (!stat.isFile()) throw new ReadModelStateError("unsafe", "file_not_regular");
+	if (stat.size > maxBytes) throw new ReadModelStateError("unsafe", "file_oversize");
 };

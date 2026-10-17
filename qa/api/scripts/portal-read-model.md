@@ -34,7 +34,7 @@ Layer: api
 Status: implemented
 Test File: qa/tests/portal-read-model.api.test.mjs
 Linked Refs: packages/harnessy-core/test/read-model-service-health.test.ts, packages/harnessy-core/src/read-model/service-health.ts
-Expected: The `launchctl print` parser keeps only the top-level state, pid, last exit code and log paths, so values in environment blocks never appear; the last log line is redacted (query strings, bearer credentials and token, secret, password and key assignments) and bounded to 300 characters; only regular log files inside the home directory are read, and only their last 4 KiB.
+Expected: The `launchctl print` parser keeps only the top-level state, pid, last exit code and log paths, so values in environment blocks never appear; the last log line is redacted (query strings, URL user information, whole authorization and cookie values, secret-named key values, known token shapes and long mixed letter-and-digit runs) and bounded to 300 characters; only regular log files inside the home directory are read, and only their last 4 KiB.
 
 - Execute the launchctl parsing, redaction and log-bound cases.
 
