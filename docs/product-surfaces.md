@@ -171,8 +171,10 @@ weekly runs and what waits for you), Health (launchd state of the Harnessy
 services) and Connections (each credential holder's status and the service
 that owns it). It is served by `harnessy-portal` in `@harnessy/local-host`.
 
-- **`harnessy portal serve [--port 8790] [--state-dir DIR] [--home-root DIR]`**
-  serves the API on `127.0.0.1` only.
+- **`harnessy portal serve --state-dir DIR [--port 8790] [--home-root DIR] [--workspace-root DIR]`**
+  serves the API on `127.0.0.1` only. A named state directory
+  (`--state-dir` or `HARNESSY_PORTAL_STATE_DIR`) is created on the first run.
+  Without one, the default `~/.harnessy/portal` must already exist.
 - **`harnessy portal status`** prints the version and service health.
 - **`harnessy portal open [--print]`** opens the portal with a one-time code
   in the URL fragment.

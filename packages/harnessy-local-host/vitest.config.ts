@@ -52,6 +52,7 @@ export default defineConfig({
 				"src/portal/page/app.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/page/mount.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/page/view-model.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/process.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/routes.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/server.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/sources.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },

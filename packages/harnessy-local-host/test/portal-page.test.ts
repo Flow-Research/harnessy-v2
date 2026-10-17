@@ -573,6 +573,41 @@ describe("portal page script", () => {
 		expect(page.main!.textContent).not.toContain("answered 500");
 	});
 
+	it("keeps a new session when an old session's request is refused after the new sign-in", async () => {
+		const NEW_TOKEN = "n".repeat(43);
+		let refuseOld: (() => void) | undefined;
+		const page = pageEnv({
+			hash: "#/today",
+			answer: (call) =>
+				new Promise((resolveCall) => {
+					if (call.path === "/v1/session/exchange")
+						resolveCall(
+							response(200, { token: NEW_TOKEN, scope: "read", expiresAt: "2026-10-17T16:00:00.000Z" }),
+						);
+					else if (call.init.headers.Authorization === `Bearer ${TOKEN}`)
+						refuseOld = () => resolveCall(response(401, null));
+					else resolveCall(response(200, today));
+				}),
+		});
+		page.storage!.setItem(TOKEN_KEY, storedSession());
+		const started = startPortalPage(page.env);
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		page.state.hash = `#code=${CODE}`;
+		page.listeners[0]!();
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		expect(page.main!.textContent).toContain("Meetings to review2");
+		// The old token's request is refused only now, after the new token is stored.
+		refuseOld!();
+		await started;
+		expect(JSON.parse(page.storage!.getItem(TOKEN_KEY)!)).toMatchObject({ token: NEW_TOKEN });
+		expect(page.main!.textContent).toContain("Meetings to review2");
+		page.state.hash = "#/health";
+		page.listeners[0]!();
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		expect(page.calls.at(-1)!.init.headers).toEqual({ Authorization: `Bearer ${NEW_TOKEN}` });
+	});
+
 	it("stays signed out when the code is malformed, refused or answered with a bad token", async () => {
 		const malformed = pageEnv({ hash: "#code=<script>" });
 		await startPortalPage(malformed.env);

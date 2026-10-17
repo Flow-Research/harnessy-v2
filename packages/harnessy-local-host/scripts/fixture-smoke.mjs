@@ -234,6 +234,8 @@ const exactHostInventory = [
 	"dist/portal/page/mount.js",
 	"dist/portal/page/view-model.d.ts",
 	"dist/portal/page/view-model.js",
+	"dist/portal/process.d.ts",
+	"dist/portal/process.js",
 	"dist/portal/routes.d.ts",
 	"dist/portal/routes.js",
 	"dist/portal/server.d.ts",

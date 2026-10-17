@@ -3,7 +3,6 @@
  * `harnessy-portal`: the read-only local portal API. See `portal/command.ts`.
  * A known non-writer: it never spawns a meeting or community writer command.
  */
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -11,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { createLaunchdProbe } from "@harnessy/core/read-model";
 
 import { PORTAL_USAGE, runPortalCommand } from "./portal/command.ts";
+import { launchOpener, stopOnSignals, systemOpener } from "./portal/process.ts";
 import { PortalStateError } from "./portal/token-store.ts";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
@@ -30,17 +30,20 @@ if (args.length === 0 || args.includes("--help")) {
 		nodePath: process.execPath,
 		probe: createLaunchdProbe(),
 		openUrl: (url) => {
-			const opener = process.platform === "darwin" ? "/usr/bin/open" : "xdg-open";
-			spawn(opener, [url], { shell: false, stdio: "ignore", detached: true }).unref();
+			launchOpener(systemOpener(process.platform), url, () => {
+				process.stderr.write(
+					`${JSON.stringify({ error: "portal_open_failed", hint: "harnessy portal open --print" })}\n`,
+				);
+				process.exitCode = 1;
+			});
 		},
 	}).then(
 		(result) => {
 			if (result.kind !== "serving") return;
-			const stop = () => {
-				result.server.close().then(() => process.exit(0));
-			};
-			process.once("SIGTERM", stop);
-			process.once("SIGINT", stop);
+			stopOnSignals(result.server.close, {
+				once: (signal, listener) => process.once(signal, listener),
+				exit: (code) => process.exit(code),
+			});
 		},
 		(error: unknown) => {
 			const code = error instanceof PortalStateError ? error.code : "portal_failed";

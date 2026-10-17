@@ -150,7 +150,8 @@ export const startPortalPage = async (env: PortalPageEnvironment): Promise<void>
 				redirect: "error",
 			});
 			if (response.status === 401) {
-				forgetSession(env, memory);
+				// Forget only the token this request used: a newer sign-in may have replaced it meanwhile.
+				if (readSession(env, memory)?.token === session.token) forgetSession(env, memory);
 				nodes = signedOutView();
 			} else if (response.status !== 200) nodes = failureView(`The portal answered ${response.status}.`);
 			else nodes = viewOf(route, await response.json());
