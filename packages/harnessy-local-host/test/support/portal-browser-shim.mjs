@@ -10,10 +10,16 @@
 //   {"pages":{"today":…,"health":…,"connections":…},"requests":[…],"hashAfterSignIn":…,"stored":…}
 //
 // PORTAL_ORIGIN is the portal origin; PORTAL_HASH is the starting hash (for example "#code=…").
+// PORTAL_NOW is the browser clock in epoch milliseconds. The harness passes the
+// portal server's clock, so the page judges session expiry by the same time
+// the server issued the session at, whatever the test machine's clock reads.
 import { RecordingDocument } from "./portal-dom.ts";
 
 const origin = process.env.PORTAL_ORIGIN;
 if (!origin) throw new Error("PORTAL_ORIGIN is required");
+const now = Number(process.env.PORTAL_NOW);
+if (!Number.isSafeInteger(now)) throw new Error("PORTAL_NOW is required");
+Date.now = () => now;
 const document = new RecordingDocument();
 const main = document.getElementById("main");
 const location = { hash: process.env.PORTAL_HASH ?? "" };
@@ -45,9 +51,9 @@ globalThis.addEventListener = (type, listener) => {
 };
 
 const settled = async (count) => {
-	const deadline = Date.now() + 10_000;
+	const deadline = performance.now() + 10_000;
 	while (main.replaced < count) {
-		if (Date.now() > deadline) throw new Error(`page did not render ${count} times`);
+		if (performance.now() > deadline) throw new Error(`page did not render ${count} times`);
 		await new Promise((resolveWait) => setTimeout(resolveWait, 10));
 	}
 };
