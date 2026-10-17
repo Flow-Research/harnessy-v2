@@ -167,7 +167,7 @@ describe("portal non-writer regression", () => {
 		const reasons = Object.values((health.json as { tiles: Record<string, { reason?: string }> }).tiles).map(
 			(tile) => tile.reason,
 		);
-		expect(new Set(reasons)).toEqual(new Set([process.platform === "darwin" ? "not_loaded" : "unsupported"]));
+		expect(new Set(reasons)).toEqual(new Set([process.platform === "darwin" ? "not_loaded" : "platform"]));
 
 		const ps = spawnSync("/bin/ps", ["-p", String(child.pid), "-o", "command="], { encoding: "utf8" });
 		expect(ps.status).toBe(0);
