@@ -97,12 +97,11 @@ busy or damaged source degrades its own tile; it does not fail the whole read.
   items and meeting provider health. They never return briefing text, error
   messages or provider accounts.
 - `readWorkspaceSummary`, `readSkillsSummary` and `readServiceHealth` read the
-  workspace registry, the skill count and `launchctl print` state with a
-  redacted last log line. Redaction is a deny-list: it masks query strings,
-  URL user information, whole `Authorization` and `Cookie` values, values of
-  secret-named keys, known token shapes (JWT, GitHub, Slack, AWS, Google,
-  `sk-` keys, PEM keys) and long runs that mix letters and digits. It cannot
-  prove that a free-text line holds no secret, so treat the line as sensitive.
+  workspace registry, the skill count and `launchctl print` state. No log
+  text is returned: the newest service log is reported as its stream, its
+  modified time and, for a JSON line, one `kind`/`error`/`code` value from the
+  fixed `SERVICE_LOG_CODES` allow-list (any other JSON line is `other`; a
+  plain-text line gives no value).
 - A reader that hands a file to an existing whole-file reader (configuration,
   weekly-run JSON) first checks that the file is a regular file under a size
   cap, so a FIFO or a huge file degrades the tile instead of blocking. A review

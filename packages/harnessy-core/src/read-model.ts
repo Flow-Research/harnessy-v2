@@ -28,6 +28,7 @@ export { type MeetingReadOptions, type MeetingSummary, readMeetingSummary } from
 export * from "./read-model/schemas.ts";
 export {
 	COMMUNITY_REVIEW_SERVICE_LABEL,
+	classifyLogLine,
 	createLaunchdProbe,
 	type LaunchctlFields,
 	type LaunchdProbe,
@@ -38,7 +39,6 @@ export {
 	PORTAL_SERVICE_LABELS,
 	parseLaunchctlPrint,
 	readServiceHealth,
-	redactLogLine,
 	type ServiceHealthReadOptions,
 } from "./read-model/service-health.ts";
 export { readSkillsSummary, type SkillsReadOptions } from "./read-model/skills.ts";

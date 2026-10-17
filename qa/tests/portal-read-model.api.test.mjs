@@ -48,7 +48,7 @@ test("PRTL-003 Fathom status sees the V2 poll checkpoint", () => {
 });
 
 test("PRTL-004 service health and summaries return no secrets", () => {
-	run("test/read-model-service-health.test.ts", "five top-level fields|redacts|no raw probe output|last 4 KiB", 4);
+	run("test/read-model-service-health.test.ts", "five top-level fields|allow-listed code only|no log text or probe output|hostile log line|last 4 KiB", 5);
 });
 
 test("PRTL-005 the portal and its probes are known non-writers", () => {

@@ -237,18 +237,76 @@ export const WorkspaceSummarySchema = Type.Object(
 );
 export const SkillsSummarySchema = Type.Object({ count, truncated: Type.Boolean() }, strict);
 
+/**
+ * The only values a service log line can contribute. A JSON log line's `kind`, `error`
+ * or `code` is reported when it is one of these; any other JSON line is `other`.
+ * Log text itself is never returned.
+ */
+export const SERVICE_LOG_CODES = [
+	// Levels and lifecycle.
+	"debug",
+	"info",
+	"warn",
+	"warning",
+	"error",
+	"fatal",
+	"started",
+	"stopped",
+	"ready",
+	"shutdown",
+	"poll_completed",
+	"poll_failed",
+	// Meeting publication failure stages.
+	"configuration",
+	"source",
+	"store",
+	"notification",
+	"google",
+	"discord",
+	// Meeting provider failure classifications and codes.
+	"authentication",
+	"identity",
+	"credential_store",
+	"permission",
+	"transient",
+	"authentication_failed",
+	"reauth_required",
+	"invalid_rapt",
+	"refresh_token_revoked",
+	"identity_mismatch",
+	"missing_credential",
+	"credential_store_failed",
+	"permission_denied",
+	"insufficient_scope",
+	"policy_denied",
+	"network_error",
+	"timeout",
+	"request_timeout",
+	"engine_unavailable",
+	"provider_unavailable",
+	"rate_limited",
+	// SQLite and file states.
+	"database_busy",
+	"journal_present",
+	"read_failed",
+	"unsafe_state",
+	"schema_invalid",
+	"other",
+] as const;
+
 export const ServiceHealthSchema = Type.Object(
 	{
 		label: Type.String(),
 		state: nullable(Type.String({ maxLength: 64 })),
 		pid: nullable(Type.Integer({ minimum: 1 })),
 		lastExitCode: nullable(Type.Integer()),
-		lastLogLine: nullable(
+		lastLog: nullable(
 			Type.Object(
 				{
 					stream: Type.Union([Type.Literal("stdout"), Type.Literal("stderr")]),
-					text: Type.String({ maxLength: 300 }),
 					modifiedAt: instant,
+					/** `null` for a plain-text line; an allow-listed value or `other` for a JSON line. */
+					code: nullable(Type.Enum(SERVICE_LOG_CODES)),
 				},
 				strict,
 			),

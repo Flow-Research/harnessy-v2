@@ -13,6 +13,7 @@ import {
 	MEETING_V1_LABELS,
 } from "../src/jarvis/meeting-publication/operational-input.ts";
 import {
+	classifyLogLine,
 	createLaunchdProbe,
 	type LaunchdProbe,
 	PORTAL_SERVICE_LABEL,
@@ -20,7 +21,7 @@ import {
 	PortalSchemas,
 	parseLaunchctlPrint,
 	readServiceHealth,
-	redactLogLine,
+	SERVICE_LOG_CODES,
 } from "../src/read-model.ts";
 import { cleanupReadModelFixtures, tempHome } from "./support/read-model-fixture.ts";
 
@@ -98,79 +99,26 @@ describe("launchctl parsing", () => {
 		).toBeNull();
 	});
 
-	it("redacts query strings, bearer credentials and secret assignments", () => {
-		expect(
-			redactLogLine(
-				`GET http://127.0.0.1:8872/exchange?token=${SECRET}#frag Authorization: Bearer ${SECRET} review_token=${SECRET} api_key: "${SECRET}" password='${SECRET}'\u0007`,
-			),
-		).toBe("GET http://127.0.0.1:8872/exchange?[redacted] Authorization: [redacted]");
-		expect(redactLogLine(`review_token=${SECRET} api_key: "${SECRET}" password='${SECRET}'`)).toBe(
-			"review_token=[redacted] api_key: [redacted] password=[redacted]",
-		);
-		expect(redactLogLine(`POST /exchange?code=${SECRET} Bearer ${SECRET}`)).toBe(
-			"POST /exchange?[redacted] Bearer [redacted]",
-		);
-		expect(redactLogLine("is it ready? yes")).toBe("is it ready? yes");
-		expect(redactLogLine(`{"access_token":"${SECRET}","password": "${SECRET}","ok":true}`)).toBe(
-			'{"access_token":[redacted],"password": [redacted],"ok":true}',
-		);
-		expect(redactLogLine("x".repeat(400))).toHaveLength(300);
-	});
-
-	// Token-shaped values are assembled at run time so the repository secret scanner does not match the source.
-	const shaped = (...parts: ReadonlyArray<string>) => parts.join("");
-	const OPAQUE = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
-
-	it.each([
-		["a Basic credential after the scheme", "Authorization: Basic dXNlcjpwYXNzd29yZA==", "Authorization: [redacted]"],
-		["a Discord bot credential", `authorization: Bot ${OPAQUE}.abc.def`, "authorization: [redacted]"],
-		["a proxy authorization header", "Proxy-Authorization: Digest username=x", "Proxy-Authorization: [redacted]"],
-		["a bare Basic credential", "sent Basic dXNlcjpwYXNzd29yZA== upstream", "sent Basic [redacted] upstream"],
-		["URL user information", "postgres://admin:hunter2@db.local:5432/x", "postgres://[redacted]@db.local:5432/x"],
-		[
-			"URL user information with a path",
-			"fetch https://user:pa55@example.com/path",
-			"fetch https://[redacted]@example.com/path",
-		],
-		["an Anthropic key", shaped("using key sk", "-ant-api03-", OPAQUE), "using key [redacted]"],
-		["a GitHub token", shaped("gh", "p_", OPAQUE), "[redacted]"],
-		["a fine-grained GitHub token", shaped("github", "_pat_", OPAQUE), "[redacted]"],
-		["a Slack token", shaped("xo", "xb-1234-", OPAQUE), "[redacted]"],
-		["an AWS access key", shaped("AK", "IA", "ABCDEFGHIJKLMNOP"), "[redacted]"],
-		["a Google API key", shaped("AI", "za", OPAQUE), "[redacted]"],
-		["a Google access token", shaped("ya", "29.", OPAQUE), "[redacted]"],
-		["a Google refresh token", shaped("1/", "/0g", OPAQUE), "[redacted]"],
-		["a JWT", "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc123sig", "jwt [redacted]"],
-		["a PEM private key", shaped("-----BEGIN ", "RSA PRIVATE", " KEY-----MIIEow"), "[redacted]"],
-		[
-			"pass, pwd, credential and private_key keys",
-			"pass=hunter2 pwd=hunter3 credential=foo private_key=bar",
-			"pass=[redacted] pwd=[redacted] credential=[redacted] private_key=[redacted]",
-		],
-		["every cookie, not only the first", "Cookie: sid=abc; other=def", "Cookie: [redacted]"],
-		["a Set-Cookie header", "Set-Cookie: a=b; Path=/", "Set-Cookie: [redacted]"],
-		[
-			"an escaped quote inside a JSON value",
-			String.raw`{"password":"p\"q","ok":1}`,
-			'{"password":[redacted],"ok":1}',
-		],
-		["a long opaque hex value", `hash ${"9f86d081884c7d659a2feaa0c55ad015"}a3bf ok`, "hash [redacted] ok"],
-	])("masks %s", (_name, line, expected) => {
-		expect(redactLogLine(line)).toBe(expected);
-	});
-
-	it("keeps ordinary log text, paths, dates and counts", () => {
-		for (const line of [
-			"started worker 12 on /Users/someone/Library/Logs/harnessy/portal.log at 2026-10-17T12:00:00Z",
-			"tests passed: 5, config: ok, status=running",
-			"Basic setup done",
-		])
-			expect(redactLogLine(line)).toBe(line);
+	it("classifies a log line by allow-listed code only", () => {
+		expect(classifyLogLine("started worker 12")).toBeNull();
+		expect(classifyLogLine("42")).toBeNull();
+		expect(classifyLogLine("null")).toBeNull();
+		expect(classifyLogLine('{"kind":"poll_completed","title":"x"}')).toBe("poll_completed");
+		expect(classifyLogLine('{"error":"rate_limited"}')).toBe("rate_limited");
+		expect(classifyLogLine('{"code":"database_busy"}')).toBe("database_busy");
+		// `kind` wins over `error` and `code`; an unknown `kind` falls through to the next key.
+		expect(classifyLogLine('{"kind":"warn","error":"timeout"}')).toBe("warn");
+		expect(classifyLogLine('{"kind":"custom","code":"timeout"}')).toBe("timeout");
+		expect(classifyLogLine('{"error":"Token expired for owner@example.test"}')).toBe("other");
+		expect(classifyLogLine('{"code":503}')).toBe("other");
+		expect(classifyLogLine('{"message":"hello"}')).toBe("other");
+		expect(classifyLogLine('["error"]')).toBe("other");
+		for (const code of SERVICE_LOG_CODES) expect(classifyLogLine(JSON.stringify({ code }))).toBe(code);
 	});
 });
 
 describe("service health", () => {
-	it("reports each label with redacted last log lines and no raw probe output", () => {
+	it("reports each label with the newest log's stream, time and code, and no log text or probe output", () => {
 		const home = tempHome("health");
 		const logs = join(home, "logs");
 		mkdirSync(logs);
@@ -198,11 +146,7 @@ describe("service health", () => {
 				state: "running",
 				pid: 6011,
 				lastExitCode: 78,
-				lastLogLine: {
-					stream: "stderr",
-					text: "warning: Bearer [redacted]",
-					modifiedAt: "2026-10-17T11:00:00.000Z",
-				},
+				lastLog: { stream: "stderr", modifiedAt: "2026-10-17T11:00:00.000Z", code: null },
 			},
 		});
 		expect(tiles["com.flow-harness.meeting-fathom-poll"]).toMatchObject({ state: "missing", reason: "not_loaded" });
@@ -210,11 +154,45 @@ describe("service health", () => {
 		expect(JSON.stringify(tiles)).not.toContain(SECRET);
 
 		utimesSync(join(logs, `${label}.out.log`), new Date("2026-10-17T11:30:00Z"), new Date("2026-10-17T11:30:00Z"));
-		expect(readServiceHealth([label], probe, { homeRoot: home, now: NOW })[label]?.data?.lastLogLine).toEqual({
+		expect(readServiceHealth([label], probe, { homeRoot: home, now: NOW })[label]?.data?.lastLog).toEqual({
 			stream: "stdout",
-			text: "GET /exchange?[redacted]",
 			modifiedAt: "2026-10-17T11:30:00.000Z",
+			code: null,
 		});
+	});
+
+	it("never returns any text from a hostile log line", () => {
+		const home = tempHome("health-hostile");
+		const label = "org.harnessy.portal";
+		const title = "Board meeting: Acme acquisition terms";
+		const path = "/Users/someone/Private/meetings/2026-10-16-acme.md";
+		const email = "founder@example.test";
+		// Token-shaped, assembled at run time so the repository secret scanner does not match the source.
+		const token = ["gh", "p_", "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"].join("");
+		const lines = [
+			`published "${title}" from ${path} for ${email} with ${token}`,
+			JSON.stringify({ kind: title, error: `${email} ${token}`, code: path, title, path, email, token }),
+			JSON.stringify({ error: "authentication", title, path, email, token }),
+		];
+		const expected = [null, "other", "authentication"];
+		const logs = join(home, "logs");
+		mkdirSync(logs);
+		for (const [index, line] of lines.entries()) {
+			writeFileSync(join(logs, `${label}.err.log`), `${line}\n`);
+			const tiles = readServiceHealth(
+				[label],
+				() => ({ status: 0, stdout: launchctlPrint(home, label), stderr: "" }),
+				{
+					homeRoot: home,
+					now: NOW,
+				},
+			);
+			expect(tiles[label]?.data?.lastLog).toMatchObject({ stream: "stderr", code: expected[index] });
+			expect(Value.Check(PortalSchemas.ServiceHealthSummary, tiles)).toBe(true);
+			const serialized = JSON.stringify(tiles);
+			for (const value of [title, "Acme", path, "Private", email, "founder", token, "AbCdEfGh", SECRET])
+				expect(serialized).not.toContain(value);
+		}
 	});
 
 	it("reads only regular log files inside the home directory and only their last 4 KiB", () => {
@@ -236,24 +214,23 @@ describe("service health", () => {
 			state: "waiting",
 			pid: null,
 			lastExitCode: null,
-			lastLogLine: null,
+			lastLog: null,
 		});
 		expect(
 			readServiceHealth([label], () => ({ status: 0, stdout: `x = {\n\tstate = waiting\n}\n`, stderr: "" }), {
 				homeRoot: home,
-			})[label]?.data?.lastLogLine,
+			})[label]?.data?.lastLog,
 		).toBeNull();
 		// A directory symlink inside home that points outside it does not widen the boundary.
 		symlinkSync(outside, join(home, "linked-dir"));
-		expect(
-			read(join(home, "linked-dir", "out.log"), join(home, "absent-dir", "err.log"))?.data?.lastLogLine,
-		).toBeNull();
+		expect(read(join(home, "linked-dir", "out.log"), join(home, "absent-dir", "err.log"))?.data?.lastLog).toBeNull();
 		writeFileSync(join(home, "empty.log"), "\n\n");
-		writeFileSync(join(home, "long.log"), `${"a".repeat(5_000)}\n${"b".repeat(500)}\n`);
-		expect(read(join(home, "empty.log"), join(home, "missing.log"))?.data?.lastLogLine).toBeNull();
-		expect(read(join(home, "long.log"), join(home, "missing.log"))?.data?.lastLogLine?.text).toBe("b".repeat(300));
-		writeFileSync(join(home, "cut.log"), `${"c".repeat(5_000)}`);
-		expect(read(join(home, "cut.log"), join(home, "missing.log"))?.data?.lastLogLine?.text).toBe("c".repeat(300));
+		expect(read(join(home, "empty.log"), join(home, "missing.log"))?.data?.lastLog).toBeNull();
+		writeFileSync(join(home, "long.log"), `${"a".repeat(5_000)}\n{"error":"timeout","pad":"${"b".repeat(500)}"}\n`);
+		expect(read(join(home, "long.log"), join(home, "missing.log"))?.data?.lastLog?.code).toBe("timeout");
+		// A JSON line cut by the 4 KiB tail is not JSON, so it gives no code.
+		writeFileSync(join(home, "cut.log"), `{"error":"timeout","pad":"${"c".repeat(5_000)}"}`);
+		expect(read(join(home, "cut.log"), join(home, "missing.log"))?.data?.lastLog).toMatchObject({ code: null });
 	});
 
 	it("reports unsupported platforms, invalid labels and probe failures as tiles", () => {

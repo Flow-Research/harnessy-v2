@@ -2,8 +2,9 @@
  * Read-only service health from `launchctl print`.
  *
  * Raw `launchctl print` output can contain a job's environment variables, so it
- * is never returned. The parser keeps five top-level fields only, and the last
- * log line is redacted before it leaves this module.
+ * is never returned. The parser keeps five top-level fields only. Log text never
+ * leaves this module: the newest log is reported as its stream, modified time and,
+ * for a JSON line, one allow-listed code.
  */
 import { spawnSync } from "node:child_process";
 import { lstatSync, realpathSync } from "node:fs";
@@ -15,7 +16,7 @@ import * as Result from "effect/Result";
 import { FATHOM_LAUNCH_AGENT_LABEL } from "../jarvis/fathom/schedule.ts";
 import { LIFE_LAUNCH_AGENT_LABELS } from "../jarvis/life-orchestrator/schedule.ts";
 import { readBoundedFile } from "./files.ts";
-import type { ServiceHealthData } from "./schemas.ts";
+import { SERVICE_LOG_CODES, type ServiceHealthData } from "./schemas.ts";
 import {
 	guardTile,
 	okTile,
@@ -59,7 +60,6 @@ export interface LaunchctlFields {
 const LABEL = /^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$/u;
 const FIELD = /^(state|pid|last exit code|stdout path|stderr path) = (.*)$/u;
 const LOG_TAIL_BYTES = 4 * 1024;
-const MAX_LOG_LINE = 300;
 
 /** Keep only the top-level `state`, `pid`, `last exit code`, `stdout path` and `stderr path` fields. */
 export const parseLaunchctlPrint = (stdout: string): LaunchctlFields => {
@@ -92,52 +92,25 @@ export const parseLaunchctlPrint = (stdout: string): LaunchctlFields => {
 	return fields;
 };
 
-const REDACTED = "[redacted]";
-/** A quoted value (with escapes) or the rest of an unquoted value. */
-const QUOTED_VALUE = String.raw`"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?`;
-/** Keys whose values are always secret. `authorization` and `cookie` are handled separately. */
-const SECRET_KEY =
-	"[A-Za-z0-9_-]*(?:token|secret|password|passwd|passphrase|pass|pwd|credentials?|api[_-]?key|private[_-]?key|access[_-]?key|client[_-]?secret|session[_-]?id|signature|sig)";
-const SECRET_ASSIGNMENT = new RegExp(String.raw`\b(${SECRET_KEY})("?\s*[=:]\s*)(${QUOTED_VALUE}|[^\s&,;]+)`, "giu");
-/** `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie` hide the whole value, scheme included. */
-const WHOLE_VALUE_HEADER = new RegExp(
-	String.raw`\b((?:proxy-)?authorization|(?:set-)?cookie)("?\s*[=:]\s*)(${QUOTED_VALUE}|.*)`,
-	"giu",
-);
-/** Credential shapes that are secret wherever they appear. */
-const TOKEN_SHAPES: ReadonlyArray<RegExp> = [
-	/-----BEGIN [A-Z ]*PRIVATE KEY-----.*/gu,
-	/\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*/gu,
-	/\bsk-[A-Za-z0-9_-]{12,}/gu,
-	/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{12,}/gu,
-	/\bxox[a-z]-[A-Za-z0-9-]{8,}/gu,
-	/\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/gu,
-	/\bAIza[0-9A-Za-z_-]{20,}/gu,
-	/\bya29\.[0-9A-Za-z_-]{10,}/gu,
-	/\b1\/\/[0-9A-Za-z_-]{20,}/gu,
-];
-/** A long run of token characters with both a letter and a digit: a key, hash or opaque token. */
-const LONG_OPAQUE = /[A-Za-z0-9+/_=-]{32,}/gu;
-
-const maskOpaque = (run: string): string => (/[A-Za-z]/u.test(run) && /\d/u.test(run) ? REDACTED : run);
+const LOG_CODE_SET: ReadonlySet<string> = new Set(SERVICE_LOG_CODES);
+type ServiceLogCode = (typeof SERVICE_LOG_CODES)[number];
 
 /**
- * Mask secrets in one log line. This is a deny-list, so it masks generously: query
- * strings and URL user information, the whole value of authorization and cookie
- * headers, values of secret-named keys, known credential shapes (JWT, provider
- * tokens, PEM keys) and any long opaque run that mixes letters and digits.
+ * Classify one log line without returning any of its text. A plain-text line gives `null`.
+ * A JSON object line gives its `kind`, `error` or `code` value (in that order) when that
+ * value is on the allow-list, and `other` otherwise. Nothing else from the line is kept.
  */
-export const redactLogLine = (line: string): string =>
-	TOKEN_SHAPES.reduce((text, shape) => text.replace(shape, REDACTED), line.replace(/\p{Cc}/gu, " "))
-		.replace(/\b(Bearer|Basic|Digest|Bot)\s+[A-Za-z0-9._~+/=-]{6,}/gu, `$1 ${REDACTED}`)
-		.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/giu, `$1${REDACTED}@`)
-		.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s?#]*)[?#]\S*/giu, `$1?${REDACTED}`)
-		.replace(/(\S)\?(?!\[redacted\])\S+/gu, `$1?${REDACTED}`)
-		.replace(WHOLE_VALUE_HEADER, `$1$2${REDACTED}`)
-		.replace(SECRET_ASSIGNMENT, `$1$2${REDACTED}`)
-		.replace(LONG_OPAQUE, maskOpaque)
-		.trim()
-		.slice(0, MAX_LOG_LINE);
+export const classifyLogLine = (line: string): ServiceLogCode | null => {
+	const parsed = Result.try(() => JSON.parse(line) as unknown);
+	if (Result.isFailure(parsed) || typeof parsed.success !== "object" || parsed.success === null) return null;
+	if (Array.isArray(parsed.success)) return "other";
+	const record = parsed.success as Record<string, unknown>;
+	for (const key of ["kind", "error", "code"]) {
+		const value = record[key];
+		if (typeof value === "string" && LOG_CODE_SET.has(value)) return value as ServiceLogCode;
+	}
+	return "other";
+};
 
 /**
  * The last line of a log inside `homeRoot` (already canonical). The parent directory is
@@ -157,11 +130,11 @@ const lastLine = (path: string, homeRoot: string) => {
 		.map((value) => value.trim())
 		.reverse()
 		.find((value) => value.length > 0);
-	return text === undefined ? null : { text: redactLogLine(text), modifiedAt: file.modifiedAt };
+	return text === undefined ? null : { code: classifyLogLine(text), modifiedAt: file.modifiedAt };
 };
 
-const newestLogLine = (fields: LaunchctlFields, homeRoot: string): ServiceHealthData["lastLogLine"] => {
-	let newest: ServiceHealthData["lastLogLine"] = null;
+const newestLog = (fields: LaunchctlFields, homeRoot: string): ServiceHealthData["lastLog"] => {
+	let newest: ServiceHealthData["lastLog"] = null;
 	for (const [stream, path] of [
 		["stdout", fields.stdoutPath],
 		["stderr", fields.stderrPath],
@@ -171,7 +144,7 @@ const newestLogLine = (fields: LaunchctlFields, homeRoot: string): ServiceHealth
 		const read = Result.try(() => lastLine(path, homeRoot));
 		const line = Result.isSuccess(read) ? read.success : null;
 		if (line !== null && (newest === null || line.modifiedAt.toISOString() > newest.modifiedAt))
-			newest = { stream, text: line.text, modifiedAt: line.modifiedAt.toISOString() };
+			newest = { stream, modifiedAt: line.modifiedAt.toISOString(), code: line.code };
 	}
 	return newest;
 };
@@ -209,7 +182,7 @@ export const readServiceHealth = (
 					state: fields.state,
 					pid: fields.pid,
 					lastExitCode: fields.lastExitCode,
-					lastLogLine: newestLogLine(fields, homeRoot),
+					lastLog: newestLog(fields, homeRoot),
 				},
 				now,
 			);
