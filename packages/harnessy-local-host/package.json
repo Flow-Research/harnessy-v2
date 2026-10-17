@@ -15,12 +15,14 @@
 		"harnessy-meeting-review": "dist/meeting-review-cli.js",
 		"harnessy-meeting-setup": "dist/meeting-setup-cli.js",
 		"harnessy-meeting-smoke": "dist/meeting-smoke-cli.js",
-		"harnessy-meeting-worker": "dist/meeting-worker-cli.js"
+		"harnessy-meeting-worker": "dist/meeting-worker-cli.js",
+		"harnessy-portal": "dist/portal-cli.js"
 	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
 		"./wiki-cli": "./dist/wiki-cli.js",
+		"./portal-cli": "./dist/portal-cli.js",
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
@@ -45,7 +47,7 @@
 	],
 	"scripts": {
 		"clean": "node ../../scripts/fs-tool.mjs rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json && node ../../scripts/fs-tool.mjs chmod +x dist/community-publication-cli.js dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-setup-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js dist/wiki-cli.js",
+		"build": "tsgo -p tsconfig.build.json && node ../../scripts/fs-tool.mjs chmod +x dist/community-publication-cli.js dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-setup-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js dist/portal-cli.js dist/wiki-cli.js",
 		"typecheck": "tsgo --noEmit -p tsconfig.json",
 		"test": "vitest --run",
 		"test:fixture": "node scripts/test-fixture.mjs"

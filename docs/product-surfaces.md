@@ -164,6 +164,35 @@ The richer nine-tool `harnessy-anytype` plugin is bundled behind
 the cockpit process. The cockpit runs the vendored bun world, and loading
 root-graph Effect code into it would split the runtime.
 
+## Portal API surface (`harnessy portal`)
+
+A read-only local API for a personal portal: Today (Life brief, readings,
+weekly runs and what waits for you), Health (launchd state of the Harnessy
+services) and Connections (each credential holder's status and the service
+that owns it). It is served by `harnessy-portal` in `@harnessy/local-host`.
+
+- **`harnessy portal serve --state-dir DIR [--port 8790] [--home-root DIR] [--workspace-root DIR]`**
+  serves the API on `127.0.0.1` only. A named state directory
+  (`--state-dir` or `HARNESSY_PORTAL_STATE_DIR`) is created on the first run.
+  Without one, the default `~/.harnessy/portal` must already exist.
+- **`harnessy portal status`** prints the version and service health.
+- **`harnessy portal open [--print]`** opens the portal with a one-time code
+  in the URL fragment.
+- **`harnessy portal service-plan`** prints the planned LaunchAgent
+  (`org.harnessy.portal`). It installs nothing.
+
+`GET /v1/openapi.json` describes every route. The response schemas live in
+`@harnessy/core/read-model` (`PortalApiSchemas`), so other consumers, such as
+Garden, can use the same contract. The portal is a known non-writer: it never
+publishes, approves, signs or consumes grants, and it never reads another
+service's token. See
+[`ADR-0008`](adr/0008-read-only-portal-api-boundary.md).
+
+The same server serves a small local page at `/` with Today, Health and
+Connections. Connections links to each credential's owning service, for
+example the meeting review page for Google, and never signs in itself. See
+[Run the Harnessy portal page locally](portal.md).
+
 ## SDK surface (`@harnessy/sdk`)
 
 The narrow engine boundary for programmatic consumers. The stable package root

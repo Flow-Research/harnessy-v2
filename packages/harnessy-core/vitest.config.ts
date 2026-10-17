@@ -84,7 +84,22 @@ export default defineConfig({
 				// H-06 meeting-context contract and read-only inventory.
 				"src/meeting-context*.ts": { statements: 99, branches: 99, functions: 100, lines: 99 },
 				// H-10 portal read model: bounded read-only readers and their schemas.
-				"src/read-model/*.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				// One entry per file: a glob threshold is an aggregate, so a weak file could hide behind strong ones.
+				"src/read-model/api-schemas.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/community.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/fathom.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/files.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/life.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/meeting-config.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/meetings.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/schemas.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/service-health.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/skills.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/sqlite-snapshot.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/tile.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/workspace.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				// H-10 `harnessy portal` forwarder (the uncovered function is the host-missing catch mapper).
+				"src/cli/portal.ts": { statements: 95, branches: 95, functions: 90, lines: 95 },
 			},
 		},
 	},

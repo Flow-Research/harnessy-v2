@@ -72,6 +72,47 @@ under this package's test support. It is not exported or packed, always reports
 Its contract is documented in
 `docs/local-cutover-backup-evidence-contract.md`.
 
+## Read-only portal API
+
+`harnessy-portal` serves the read-only portal API on `127.0.0.1` (default port
+`8790`). It reads the Core read model for one home directory and returns
+versioned tiles: a busy, missing or unsafe source is a degraded tile in a `200`
+response. See [`ADR-0008`](../../docs/adr/0008-read-only-portal-api-boundary.md).
+
+```bash
+harnessy-portal serve --state-dir "$HOME/.harnessy/portal" [--port 8790] [--home-root DIR] [--workspace-root DIR]
+harnessy-portal status [--port 8790] [--state-dir DIR]
+harnessy-portal open [--print] [--port 8790] [--state-dir DIR]
+harnessy-portal service-plan [--port 8790] [--state-dir DIR]
+```
+
+- **State.** The state directory must be a `0700` directory owned by you. The
+  first `serve` creates `portal.token` (mode `0600`, never through a symlink).
+  The default `~/.harnessy/portal` is never created implicitly: name it with
+  `--state-dir` or `HARNESSY_PORTAL_STATE_DIR`.
+- **Install proof.** The install token is never sent. A client posts a nonce
+  to `POST /v1/session/challenge` and gets a single-use challenge (60 s) plus
+  the server's HMAC proof, bound to the portal origin. The client checks that
+  proof, then sends `Authorization: HarnessyProof <challenge>.<hmac>` over the
+  challenge, origin, method and path. `status` and `open` do this for you.
+- **Sign-in.** `POST /v1/session/code` with an install proof returns a
+  one-time code (60 s). `POST /v1/session/exchange` with that code and the
+  exact portal `Origin` returns a read-only page token (8 h, in memory only).
+- **Requests.** The exact `Host` is required. A foreign `Origin` or a
+  cross-site `Sec-Fetch-Site` is refused. There are no CORS headers and no
+  cookies. Bodies are at most 1 KiB and URLs at most 2 KiB.
+- **Non-writer.** The portal never opens SQLite for writing, never publishes,
+  approves, signs or consumes grants, and never reads another service's token
+  or bootstrap file. It starts only `/bin/launchctl print gui/<uid>/<label>`
+  for the fixed Harnessy labels.
+- **Service.** `service-plan` prints the LaunchAgent and installs nothing.
+- **Page.** `serve` also serves a small read-only page at `/` (Today, Health
+  and Connections). `open` signs it in with a one-time code in the URL
+  fragment. The page and its scripts are sent with the same strict CSP; they
+  contain no secret and need no credential, and every data request still needs
+  the page token. See [`docs/portal.md`](../../docs/portal.md) for how to run
+  it.
+
 ## Guarded programmatic smoke runtime
 
 The separate entrypoint exposes one call, `runLocalHostMeetingSmoke(input)`.

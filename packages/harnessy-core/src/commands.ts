@@ -6,6 +6,7 @@ import { depsCommand } from "./cli/deps.ts";
 import { bootstrapCommand, initCommand, installCommand } from "./cli/install.ts";
 import { jarvisCommand } from "./cli/jarvis.ts";
 import { mcpCommand } from "./cli/mcp.ts";
+import { portalCommand } from "./cli/portal.ts";
 import { skillCommand } from "./cli/skill.ts";
 import { doctorCommand, verifyCommand } from "./cli/verify.ts";
 import { webCommand } from "./cli/web.ts";
@@ -24,6 +25,7 @@ export const rootCommand = Command.make("harnessy").pipe(
 		webCommand,
 		mcpCommand,
 		jarvisCommand,
+		portalCommand,
 		depsCommand,
 		aiCommand,
 		workspaceCommand,
