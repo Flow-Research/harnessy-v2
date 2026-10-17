@@ -11,8 +11,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { LaunchdProbe } from "@harnessy/core/read-model";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { PORTAL_PAGE_TOKEN_TTL_MS } from "../src/portal/auth.ts";
 import { TOKEN_KEY } from "../src/portal/page/app.ts";
 import { CONNECT_GOOGLE_NOTE } from "../src/portal/page/view-model.ts";
 import {
@@ -38,6 +39,7 @@ const shim = fileURLToPath(new URL("./support/portal-browser-shim.mjs", import.m
 const servers: PortalServer[] = [];
 
 afterEach(async () => {
+	vi.useRealTimers();
 	await Promise.all(servers.splice(0).map((server) => server.close()));
 	cleanupPortalFixtures();
 });
@@ -54,6 +56,9 @@ const probe: LaunchdProbe = (label) =>
 		? { status: 0, stdout: RUNNING, stderr: "" }
 		: { status: 113, stdout: "", stderr: "Could not find service" };
 
+/** The portal server's clock. `runPage` hands the same time to the page under test. */
+const SERVER_NOW = FIXTURE_NOW.getTime();
+
 const start = async (home: string, page: PortalPageAssets | null = loadPortalPageAssets()) => {
 	const installToken = newPortalSecret();
 	const server = await startPortalServer({
@@ -61,7 +66,7 @@ const start = async (home: string, page: PortalPageAssets | null = loadPortalPag
 		sources: createPortalSources({ homeRoot: home, env: {}, probe, timeoutMs: 250, clock: () => FIXTURE_NOW }),
 		version: "0.0.3",
 		port: 0,
-		clock: () => FIXTURE_NOW.getTime(),
+		clock: () => SERVER_NOW,
 		...(page === null ? {} : { page }),
 	});
 	servers.push(server);
@@ -211,8 +216,11 @@ interface BrowserRun {
 	readonly stored: ReadonlyArray<string>;
 }
 
-/** Download the page scripts from the server and run them in a child Node process with the browser shim. */
-const runPage = async (port: number, hash: string): Promise<BrowserRun> => {
+/**
+ * Download the page scripts from the server and run them in a child Node process with the browser shim.
+ * The page's clock is `now`, which defaults to the server's clock, never the test machine's clock.
+ */
+const runPage = async (port: number, hash: string, now = SERVER_NOW): Promise<BrowserRun> => {
 	const dir = join(tempDir("served-page"), "page");
 	mkdirSync(dir);
 	writeFileSync(join(dir, "package.json"), '{ "type": "module" }\n');
@@ -223,7 +231,13 @@ const runPage = async (port: number, hash: string): Promise<BrowserRun> => {
 	}
 	const home = tempDir("browser-home");
 	const child = spawn(process.execPath, ["--no-warnings", "--import", shim, join(dir, "app.js")], {
-		env: { HOME: home, PATH: process.env.PATH, PORTAL_ORIGIN: `http://127.0.0.1:${port}`, PORTAL_HASH: hash },
+		env: {
+			HOME: home,
+			PATH: process.env.PATH,
+			PORTAL_ORIGIN: `http://127.0.0.1:${port}`,
+			PORTAL_HASH: hash,
+			PORTAL_NOW: String(now),
+		},
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	let stdout = "";
@@ -305,6 +319,40 @@ describe("portal page end to end", () => {
 			for (const attribute of page.attributes) expect(["class", "href", "rel"]).toContain(attribute);
 			for (const link of page.links) expect(link).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/u);
 		}
+	});
+
+	it("signs in when the test machine's clock is past the fixture session's expiry", async () => {
+		// Regression: the page once read the machine's clock while the server used
+		// FIXTURE_NOW, so every fresh session looked expired after 16:00Z each day.
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(SERVER_NOW + PORTAL_PAGE_TOKEN_TTL_MS + 24 * 60 * 60 * 1000);
+		const fixture = await buildPortalHome("page-late-machine");
+		const { port, installToken } = await start(fixture.home);
+		const run = await runPage(port, `#code=${await mintCode(port, installToken)}`);
+		expect(run.stored).toEqual([TOKEN_KEY]);
+		expect(run.requests.map((request) => request.path)).toEqual([
+			"/v1/session/exchange",
+			"/v1/today",
+			"/v1/health",
+			"/v1/connections",
+		]);
+		expect(run.pages.today.text).toContain(`Read at ${FIXTURE_NOW.toISOString()}`);
+	});
+
+	it("judges session expiry by the clock the harness gives the page", async () => {
+		const fixture = await buildPortalHome("page-clock");
+		const { port, installToken } = await start(fixture.home);
+		const expiresAt = SERVER_NOW + PORTAL_PAGE_TOKEN_TTL_MS;
+		const live = await runPage(port, `#code=${await mintCode(port, installToken)}`, expiresAt - 1);
+		expect(live.requests.map((request) => request.path)).toEqual([
+			"/v1/session/exchange",
+			"/v1/today",
+			"/v1/health",
+			"/v1/connections",
+		]);
+		const expired = await runPage(port, `#code=${await mintCode(port, installToken)}`, expiresAt);
+		expect(expired.requests.map((request) => request.path)).toEqual(["/v1/session/exchange"]);
+		for (const page of Object.values(expired.pages)) expect(page.text).toContain("harnessy-portal open");
 	});
 
 	it("shows the sign-in instructions when the code was already spent", async () => {
