@@ -114,21 +114,23 @@ const exchangeCode = async (
 };
 
 /**
- * Start the page: sign in from a `#code=` fragment, render the current route and
- * re-render on every hash change. Resolves after the first render.
+ * Start the page: sign in from a `#code=` fragment, render the current route and,
+ * on every hash change, sign in again from a new code or re-render. Resolves
+ * after the first render.
  */
 export const startPortalPage = async (env: PortalPageEnvironment): Promise<void> => {
 	const main = env.document.getElementById("main");
 	const title = env.document.getElementById("page-title");
 	if (main === null) return;
 	const memory: { session?: StoredSession } = {};
-	const code = CODE_FRAGMENT.exec(env.hash())?.[1];
-	if (code !== undefined || env.hash().startsWith("#code=")) {
+	let sequence = 0;
+	/** Sign in from a `#code=` fragment, on the first load or when a new link is opened in this tab. */
+	const signInFromHash = async (hash: string): Promise<void> => {
 		// Clear the code from the address bar before anything else, even when it is malformed.
 		env.replaceUrl("/#/today");
+		const code = CODE_FRAGMENT.exec(hash)?.[1];
 		if (code !== undefined) await exchangeCode(env, code, memory);
-	}
-	let sequence = 0;
+	};
 	const render = async (): Promise<void> => {
 		const current = ++sequence;
 		const route = routeOf(env.hash());
@@ -158,10 +160,19 @@ export const startPortalPage = async (env: PortalPageEnvironment): Promise<void>
 		// A newer render started while this one waited: drop this result.
 		if (current === sequence) mount(env.document, main, nodes);
 	};
+	const update = async (): Promise<void> => {
+		const hash = env.hash();
+		if (hash.startsWith("#code=")) {
+			// Claim this update's place first, so an older render that finishes during the exchange is dropped.
+			++sequence;
+			await signInFromHash(hash);
+		}
+		await render();
+	};
 	env.onHashChange(() => {
-		void render();
+		void update();
 	});
-	await render();
+	await update();
 };
 
 /** The parts of the browser's global object the page uses. */

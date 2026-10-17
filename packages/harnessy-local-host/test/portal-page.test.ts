@@ -510,6 +510,29 @@ describe("portal page script", () => {
 		expect(page.document.getElementById("page-title")!.textContent).toBe("Connections");
 	});
 
+	it("signs in from a new code opened in an already-loaded tab, and clears it from the address bar", async () => {
+		const page = pageEnv({ answer: exchangeOk });
+		await startPortalPage(page.env);
+		expect(page.main!.textContent).toContain("harnessy-portal open");
+		page.state.hash = `#code=${CODE}`;
+		page.listeners[0]!();
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		expect(page.state.replaced).toEqual(["/#/today"]);
+		expect(page.state.hash).toBe("#/today");
+		expect(page.calls.map((call) => `${call.init.method} ${call.path}`)).toEqual([
+			"POST /v1/session/exchange",
+			"GET /v1/today",
+		]);
+		expect(page.main!.textContent).toContain("Meetings to review2");
+		// A malformed code arriving later is cleared too, and the existing session stays.
+		page.state.hash = "#code=bad";
+		page.listeners[0]!();
+		await new Promise((resolveWait) => setTimeout(resolveWait, 0));
+		expect(page.state.replaced).toEqual(["/#/today", "/#/today"]);
+		expect(page.calls).toHaveLength(3);
+	});
+
 	it("stays signed out when the code is malformed, refused or answered with a bad token", async () => {
 		const malformed = pageEnv({ hash: "#code=<script>" });
 		await startPortalPage(malformed.env);
