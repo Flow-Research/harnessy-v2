@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import appPlugin from "@executor-js/app/vite";
 import { oauthClientIdMetadataDocumentFromRequest } from "@executor-js/api/server";
-import { loadOrMintLocalAuthToken } from "./src/auth";
+import { loadOrMintLocalAuthToken, localAuthTokenPath } from "./src/auth";
 import { consumeOAuthResult } from "./src/oauth-result-store";
 import {
   isUnauthenticatedOAuthClientMetadataPath,
@@ -66,9 +66,8 @@ const oauthClientMetadataResponse = (requestUrl: string, webRequest: Request): R
 function executorApiPlugin(): Plugin {
   let handlers: import("./src/main").ServerHandlers | null = null;
   // The dev server's in-process /api + /mcp require the bearer (same gate as the
-  // production Bun shell). The browser gets the token the SAME way it does in
-  // production — via the one-time `?_token=` URL printed below — so there is no
-  // dev-only token-injection path to drift.
+  // production Bun shell). The token is never printed: the banner names the
+  // owner-only auth.json, and the UI's sign-in gate takes it from there.
   let devToken: string | null = null;
 
   return {
@@ -76,17 +75,17 @@ function executorApiPlugin(): Plugin {
     configureServer(server) {
       devToken ??= loadOrMintLocalAuthToken();
 
-      // Print the bootstrap URL when vite is the front (plain `bun run dev`).
+      // Print where to sign in when vite is the front (plain `bun run dev`).
       // When the CLI daemon spawns vite as a child (EXECUTOR_DEV_VITE_PORT set),
-      // the daemon prints its own `?_token=` URL and the app is loaded from the
-      // daemon port, so we stay quiet to avoid two conflicting URLs.
+      // the app is loaded from the daemon port (`executor open`), so we stay
+      // quiet to avoid two conflicting URLs.
       if (!process.env.EXECUTOR_DEV_VITE_PORT) {
         server.httpServer?.once("listening", () => {
           const address = server.httpServer?.address();
           const port =
             typeof address === "object" && address ? address.port : server.config.server.port;
           server.config.logger.info(
-            `\n  Open with auth:  http://127.0.0.1:${port}/?_token=${devToken}\n`,
+            `\n  Open http://127.0.0.1:${port}/ and paste the token from ${localAuthTokenPath()}\n`,
           );
         });
       }

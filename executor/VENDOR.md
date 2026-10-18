@@ -96,6 +96,75 @@ Known upstream-branded surfaces deliberately NOT patched (deferred):
 - docs links to executor.sh — functional docs for engine features
 - the built-in `Executor` integration (slug `executor`) — functional identity; renaming would change tool addresses
 
+### Local cockpit hardening overlay — 2026-10-18
+
+Security overlay from the H-10 portal analysis and its review, in PR #124
+(commits `f1ea8c1e`, `e3000dc4` and the review-fix commit that adds this
+line). The server, token store and browser bootstrap only exist in these
+vendored files, so the change cannot live in Harnessy-owned code. On an
+upstream sync, reapply it unless upstream ships an equivalent:
+
+- `apps/local/src/auth.ts`, `apps/local/src/index.ts` — `secureLocalStateDir`
+  (exported): the data directory and `server-control/` are created and kept
+  `0700`, `auth.json` and `server.json` `0600`. Each path is lstat'd, opened
+  with `O_NOFOLLOW`, compared by inode, and checked for owner, type and (files)
+  exactly one hard link before being `fchmod`ed through the descriptor; the
+  token is read and written the same way. Looser modes are repaired at
+  startup; a symlink, a hard link, a foreign owner, a wrong file type or a mode
+  that cannot be repaired stops startup. A set-but-blank `EXECUTOR_DATA_DIR`
+  is refused (the CLI refuses it at entry too). POSIX only.
+- `apps/local/src/serve-shared.ts`, `apps/local/src/serve.ts` — credentialed
+  CORS only for the server's own exact loopback origins
+  (`http://{127.0.0.1,localhost,[::1]}:<bound port>`) plus `--allowed-host`
+  entries; upstream allowed every loopback port. `--allowed-host` takes
+  `host`, `host:port`, `[v6]` or `[v6]:port` (trimmed, lowercased, http/https
+  only); a loopback host without a port refuses startup. In-memory single-use
+  60 s sign-in codes (`POST /api/local-auth/code` with the bearer,
+  `POST /api/local-auth/exchange` without it). The exchange caps its body at
+  1 KiB, refuses an `Origin` that is not this server or an allowed host, and
+  deletes the CLI's sign-in page for the spent code. The UI shell is served
+  with a strict Content-Security-Policy (`script-src 'self'`; `style-src` keeps
+  `'unsafe-inline'` for runtime-injected `<style>` elements; `connect-src` is
+  `'self'` plus `--allowed-host` hosts plus `EXECUTOR_WEB_CONNECT_SRC`
+  origins, where `any` opts in to every http(s) origin), a no-referrer policy
+  and `nosniff`. The direct-run banner no longer prints the token.
+- `apps/local/vite.config.ts` — the vite dev banner names `auth.json` instead
+  of printing a `?_token=` URL.
+- `apps/cli/src/main.ts`, `apps/cli/src/sign-in-page.ts`,
+  `apps/cli/src/device-login.ts`, `apps/cli/src/local-server-manifest.ts` —
+  `executor web` / `executor open` send the bearer only to a loopback http
+  origin to mint a code, write an owner-only `server-control/sign-in-<hash>.html`
+  page (named from the code's SHA-256) that redirects to `<origin>/#_code=<code>`,
+  and hand the opener only that page's `file:` path; stdout shows only
+  `<origin>/` and the page path as a manual fallback. Unredeemed pages older
+  than 2 minutes are swept (best effort). `device-login.ts` gains shared
+  `platformOpenCommand`/`launchOpenCommand` helpers (its http(s)-only
+  `browserOpenCommand` is unchanged). The foreground banner points at
+  `executor open` instead of printing a `?_token=` URL.
+- `packages/react/src/api/local-auth.tsx`, `packages/app/src/entry-client.tsx`
+  — the SPA strips and redeems `#_code` before the router mounts, with a 10 s
+  timeout; manual `?_token=` URLs still work.
+- Tests: `apps/local/src/serve.test.ts`, `apps/local/src/serve-shared.test.ts`,
+  `apps/cli/src/sign-in-page.test.ts`, `packages/react/src/api/local-auth.test.ts`.
+
+Known gaps, not fixed by this overlay:
+
+- The foreign-owner refusal is tested by injecting `getuid`, not with a real
+  second user.
+- `server.json` is still written by `writeLocalServerManifest` through the
+  Effect file system, which follows links. It runs after `secureLocalStateDir`
+  has made `server-control/` owner-only, so only the same user could race it.
+- A client that sends an oversized exchange body gets `413` and the connection
+  is closed; reusing that connection can produce a `400`.
+- IPv6 `--allowed-host` entries are not added to `connect-src`: CSP host
+  sources cannot express IPv6 literals.
+- The server selector reaches another Executor only when that origin is in
+  `--allowed-host` or `EXECUTOR_WEB_CONNECT_SRC`; the UI gives no hint when the
+  CSP blocks it.
+- Vite-front dev mode (`bun run dev`) has no sign-in code; paste the token.
+- An operator-supplied `--auth-token` stays visible in the process list.
+- Windows gets no mode, owner or link enforcement.
+
 ### Existing migration deltas — 2026-09-05
 
 These are observed uncommitted changes against the V2 checkout baseline,
@@ -152,9 +221,9 @@ separate preservation boundary above:
   self-contained.
 
 `npm run build` produces `apps/local/dist`; then `npm run hsy:web` starts the
-vendored daemon on `127.0.0.1:4788`, serves those static assets, and opens its
-one-time `?_token=` auth URL. Normal Harnessy usage does not keep a Vite
-development server running.
+vendored daemon on `127.0.0.1:4788`, serves those static assets, and opens the
+browser on a one-time `#_code=` sign-in URL (see the local cockpit hardening
+overlay above). Normal Harnessy usage does not keep a Vite development server running.
 
 ### Runtime-split guard
 

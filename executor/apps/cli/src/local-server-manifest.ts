@@ -23,6 +23,16 @@ import {
 // owner, so the database stays safe.
 // ---------------------------------------------------------------------------
 
+/**
+ * A set-but-blank `EXECUTOR_DATA_DIR` would resolve to the working directory
+ * and scatter the token and database there. Returns the refusal message, or
+ * `null` when the environment is usable.
+ */
+export const blankDataDirRefusal = (env: NodeJS.ProcessEnv = process.env): string | null =>
+  env.EXECUTOR_DATA_DIR !== undefined && env.EXECUTOR_DATA_DIR.trim() === ""
+    ? "EXECUTOR_DATA_DIR is set but empty. Unset it, or point it at a directory."
+    : null;
+
 export const resolveExecutorDataDir = (path: Path.Path): string =>
   resolve(process.env.EXECUTOR_DATA_DIR ?? path.join(homedir(), ".executor"));
 

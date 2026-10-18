@@ -8,22 +8,31 @@
  */
 
 import { resolve, join } from "node:path";
-import { readdirSync } from "node:fs";
+import { readdirSync, unlinkSync } from "node:fs";
 import type { Subprocess } from "bun";
 import { setOAuthCompletionListener } from "@executor-js/api";
 import { oauthClientIdMetadataDocumentFromRequest } from "@executor-js/api/server";
-import { loadOrMintLocalAuthToken } from "./auth";
+import { loadOrMintLocalAuthToken, resolveExecutorDataDir, secureLocalStateDir } from "./auth";
 import { consumeOAuthResult, publishOAuthResult } from "./oauth-result-store";
 import { startIntegrationsRefresh } from "./integrations";
 import { disposeServerHandlers, getServerHandlers } from "./main";
 import {
-  DEFAULT_ALLOWED_HOSTS,
+  allowedHostConnectSources,
+  type AllowedHost,
   hasFileExtension,
   isAllowedOrigin,
+  LOCAL_LOGIN_EXCHANGE_MAX_BYTES,
+  parseAllowedHost,
+  parseWebConnectSources,
+  signInPageName,
   isUnauthenticatedOAuthClientMetadataPath,
   isUnauthenticatedOAuthPath,
+  LOCAL_LOGIN_CODE_PATH,
+  LOCAL_LOGIN_EXCHANGE_PATH,
   makeIsAuthorized,
+  makeLocalLoginCodes,
   normalizeCredential,
+  selfLoopbackOrigins,
 } from "./serve-shared";
 
 // ---------------------------------------------------------------------------
@@ -32,10 +41,89 @@ import {
 
 type StaticHandler = () => Response | Promise<Response>;
 
-const htmlResponse = (file: Bun.BunFile): Response =>
+/**
+ * Content-Security-Policy for the built web UI shell. The production bundle has
+ * no inline script, eval or WebAssembly, so scripts are `'self'` only. Two
+ * deliberate allowances:
+ * - `style-src 'unsafe-inline'`: the chart component and UI primitives inject
+ *   `<style>` elements at runtime. Inline style cannot run script; the script
+ *   policy stays strict.
+ * - `img-src https:`: integration logos come from integrations.sh, svgl.app
+ *   and arbitrary provider hosts. Images cannot run script.
+ * `connect-src` is `'self'` plus the `--allowed-host` hosts and any origins in
+ * `EXECUTOR_WEB_CONNECT_SRC` (`any` opts in to every http(s) origin). The
+ * server selector can only reach another Executor that is listed there.
+ * Google Fonts is the only third-party stylesheet/font origin. Vite dev mode
+ * (proxied, with an inline HMR preamble) does not use this response and gets
+ * no CSP.
+ */
+export const cockpitContentSecurityPolicy = (connectSources: ReadonlyArray<string> = []): string =>
+  [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "img-src 'self' data: blob: https:",
+    ["connect-src 'self'", ...new Set(connectSources)].join(" "),
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+
+/** The policy with no extra connect sources (the default configuration). */
+export const COCKPIT_CONTENT_SECURITY_POLICY = cockpitContentSecurityPolicy();
+
+const htmlResponse = (file: Bun.BunFile, policy: string): Response =>
   new Response(file, {
-    headers: { "content-type": "text/html", "cache-control": "no-store" },
+    headers: {
+      "content-type": "text/html",
+      "cache-control": "no-store",
+      "content-security-policy": policy,
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+    },
   });
+
+const jsonNoStore = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
+
+/** Read at most `limit` bytes of the body; `null` when it is longer. */
+const readCappedBody = async (req: Request, limit: number): Promise<string | null> => {
+  const declared = Number(req.headers.get("content-length") ?? "0");
+  if (!Number.isFinite(declared) || declared > limit) return null;
+  if (req.body === null) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+};
+
+const readLoginCode = (raw: string): string | null => {
+  const match = /^\s*\{\s*"code"\s*:\s*"([A-Za-z0-9_-]{43})"\s*\}\s*$/.exec(raw);
+  return match?.[1] ?? null;
+};
+
+/** Remove the CLI's redirect page for a spent code; absence is fine. */
+const removeSignInPage = (code: string): void => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: the page may already be gone or never have existed (manual sign-in)
+  try {
+    unlinkSync(join(resolveExecutorDataDir(), "server-control", signInPageName(code)));
+  } catch {}
+};
 
 const oauthClientMetadataResponse = (requestUrl: string, webRequest: Request): Response =>
   new Response(
@@ -54,7 +142,11 @@ const oauthClientMetadataResponse = (requestUrl: string, webRequest: Request): R
     },
   );
 
-function collectStaticRoutes(dir: string, prefix = ""): Record<string, StaticHandler> {
+function collectStaticRoutes(
+  dir: string,
+  policy: string,
+  prefix = "",
+): Record<string, StaticHandler> {
   const routes: Record<string, StaticHandler> = {};
   // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: filesystem route discovery is best-effort for optional built assets
   try {
@@ -62,12 +154,12 @@ function collectStaticRoutes(dir: string, prefix = ""): Record<string, StaticHan
       const fullPath = join(dir, entry.name);
       const routePath = `${prefix}/${entry.name}`;
       if (entry.isDirectory()) {
-        Object.assign(routes, collectStaticRoutes(fullPath, routePath));
+        Object.assign(routes, collectStaticRoutes(fullPath, policy, routePath));
       } else {
         const file = Bun.file(fullPath);
         routes[routePath] = () =>
           routePath === "/index.html"
-            ? htmlResponse(file)
+            ? htmlResponse(file, policy)
             : new Response(file, {
                 headers: {
                   "content-type": file.type || "application/octet-stream",
@@ -83,13 +175,16 @@ function collectStaticRoutes(dir: string, prefix = ""): Record<string, StaticHan
  * Convert an embedded web UI map (path → bunfs path) into Bun.serve routes.
  * The embedded map is generated by the CLI build step using `with { type: "file" }`.
  */
-function embeddedToStaticRoutes(embedded: Record<string, string>): Record<string, StaticHandler> {
+function embeddedToStaticRoutes(
+  embedded: Record<string, string>,
+  policy: string,
+): Record<string, StaticHandler> {
   const routes: Record<string, StaticHandler> = {};
   for (const [key, bunfsPath] of Object.entries(embedded)) {
     const file = Bun.file(bunfsPath);
     routes[`/${key}`] = () =>
       key === "index.html"
-        ? htmlResponse(file)
+        ? htmlResponse(file, policy)
         : new Response(file, {
             headers: {
               "content-type": file.type || "application/octet-stream",
@@ -220,10 +315,13 @@ export interface StartServerOptions {
   /** Bind address. Defaults to 127.0.0.1. Use 0.0.0.0 to listen on all interfaces. */
   hostname?: string;
   /**
-   * Extra origins granted credentialed CORS access, on top of localhost/
-   * 127.0.0.1 (any port). There is no Host allowlist — the bearer token is the
-   * security boundary — so reaching the server from another host (e.g. over a
-   * tailnet) needs nothing here; this only widens cross-origin CORS.
+   * Extra hosts granted credentialed CORS access, on top of the server's own
+   * exact loopback origins: `host` (any port), `host:port`, `[v6]` or
+   * `[v6]:port`. A loopback host must name a port. They are also added to the
+   * web UI's CSP `connect-src`. There is no Host allowlist — the
+   * bearer token is the security boundary — so reaching the server from
+   * another host (e.g. over a tailnet) needs nothing here; this only widens
+   * cross-origin CORS.
    */
   allowedHosts?: ReadonlyArray<string>;
   /**
@@ -233,6 +331,12 @@ export interface StartServerOptions {
    * own token to the sidecar child).
    */
   authToken?: string;
+  /**
+   * Extra origins the web UI may connect to (CSP `connect-src`), for the server
+   * selector. Defaults to `EXECUTOR_WEB_CONNECT_SRC`; `any` allows every
+   * http(s) origin.
+   */
+  webConnectSources?: ReadonlyArray<string>;
   /** Test hook for supplying API/MCP handlers without loading the local server graph. */
   handlers?: ServerHandlers;
 }
@@ -240,7 +344,7 @@ export interface StartServerOptions {
 export interface ServerInstance {
   port: number;
   /** The effective bearer token this server validates. Callers publish it in the
-   * manifest, print the `?_token=` bootstrap URL, and hand it to MCP clients. */
+   * owner-only manifest and hand it to MCP clients; it is never printed. */
   authToken: string;
   stop: () => Promise<void>;
 }
@@ -255,17 +359,19 @@ const corsHeaders = {
   "access-control-expose-headers": "*",
 } as const;
 
-const withCorsHeaders = (
-  req: Request,
-  response: Response,
-  allowedHosts: ReadonlySet<string>,
-): Response => {
+interface CorsPolicy {
+  readonly selfOrigins: ReadonlySet<string>;
+  readonly extraHosts: ReadonlyArray<AllowedHost>;
+}
+
+const withCorsHeaders = (req: Request, response: Response, policy: CorsPolicy): Response => {
   const origin = req.headers.get("origin");
-  // Same-origin requests carry no Origin header — nothing to do. Cross-origin
-  // requests only get credentialed CORS if their Origin is an allowed loopback
-  // host; an arbitrary web page (e.g. https://evil.example) gets no ACAO, so
-  // the browser blocks it reading the response even if it knew the token.
-  if (!origin || !isAllowedOrigin(origin, allowedHosts)) return response;
+  // Requests without an Origin header need nothing. Cross-origin requests only
+  // get credentialed CORS if their Origin is this server's own loopback origin
+  // or an operator-added host; any other page (https://evil.example, or another
+  // app on a different localhost port) gets no ACAO, so the browser blocks it
+  // reading the response even if it knew the token.
+  if (!origin || !isAllowedOrigin(origin, policy.selfOrigins, policy.extraHosts)) return response;
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", origin);
   for (const [key, value] of Object.entries(corsHeaders)) headers.set(key, value);
@@ -282,8 +388,8 @@ const withCorsHeaders = (
   });
 };
 
-const corsPreflightResponse = (req: Request, allowedHosts: ReadonlySet<string>): Response =>
-  withCorsHeaders(req, new Response(null, { status: 204 }), allowedHosts);
+const corsPreflightResponse = (req: Request, policy: CorsPolicy): Response =>
+  withCorsHeaders(req, new Response(null, { status: 204 }), policy);
 
 const closeProvidedHandlers = async (handlers: ServerHandlers): Promise<void> => {
   await handlers.mcp.close();
@@ -302,12 +408,24 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   // from auth.json (minted on first run). Auth is unconditionally on — loopback
   // is no longer a free pass, since Executor runs arbitrary code that any local
   // process could otherwise drive.
+  // The data dir holds the token and the database: owner-only before anything
+  // reads or writes it, refusing to start if that cannot be guaranteed.
+  secureLocalStateDir();
   const authToken = normalizeCredential(opts.authToken) ?? loadOrMintLocalAuthToken();
   const isAuthorized = makeIsAuthorized(authToken);
+  const loginCodes = makeLocalLoginCodes();
   // CORS-only origin allowlist (no Host gate — the bearer is the boundary).
-  const corsAllowedHosts = new Set<string>([
-    ...DEFAULT_ALLOWED_HOSTS,
-    ...(opts.allowedHosts ?? []),
+  // `selfOrigins` is filled in once Bun reports the bound port.
+  const extraHosts = (opts.allowedHosts ?? []).map(parseAllowedHost);
+  const corsPolicy: {
+    selfOrigins: ReadonlySet<string>;
+    readonly extraHosts: ReadonlyArray<AllowedHost>;
+  } = { selfOrigins: new Set(), extraHosts };
+  const cspPolicy = cockpitContentSecurityPolicy([
+    ...allowedHostConnectSources(extraHosts),
+    ...parseWebConnectSources(
+      opts.webConnectSources?.join(" ") ?? process.env.EXECUTOR_WEB_CONNECT_SRC,
+    ),
   ]);
   const clientDir = opts.clientDir ?? resolve(import.meta.dirname, "../dist");
 
@@ -348,22 +466,22 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       console.log("[executor] EXECUTOR_DEV=1 — spawning vite dev child for live UI");
       viteChild = await startViteChild();
       // Diagnostic only — this is the internal vite port the daemon proxies to.
-      // It must NOT read as a destination: the URL to open is the `Open:` line the
-      // CLI prints (the daemon port, with ?_token). Hitting the vite port directly
-      // skips that bootstrap and lands on the auth gate.
+      // It must NOT read as a destination: open the daemon port with `executor
+      // open`, which signs the browser in with a one-time code. Hitting the vite
+      // port directly skips the daemon's /api and lands on the auth gate.
       console.log(`[executor] (internal) vite dev child at ${viteChild.url} — don't open this`);
       serveIndex = () =>
         // Unused when viteChild is non-null; defined so the type checker
         // can keep `serveIndex` non-nullable.
         new Response("vite not ready", { status: 503 });
     } else if (opts.embeddedWebUI) {
-      staticRoutes = embeddedToStaticRoutes(opts.embeddedWebUI);
+      staticRoutes = embeddedToStaticRoutes(opts.embeddedWebUI, cspPolicy);
       const indexFile = Bun.file(opts.embeddedWebUI["index.html"] ?? join(clientDir, "index.html"));
-      serveIndex = () => htmlResponse(indexFile);
+      serveIndex = () => htmlResponse(indexFile, cspPolicy);
     } else {
-      staticRoutes = collectStaticRoutes(clientDir);
+      staticRoutes = collectStaticRoutes(clientDir, cspPolicy);
       const indexFile = Bun.file(join(clientDir, "index.html"));
-      serveIndex = () => htmlResponse(indexFile);
+      serveIndex = () => htmlResponse(indexFile, cspPolicy);
     }
 
     const server = Bun.serve({
@@ -375,10 +493,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       routes: { ...staticRoutes },
       async fetch(req) {
         const withCors = (response: Response): Response =>
-          withCorsHeaders(req, response, corsAllowedHosts);
+          withCorsHeaders(req, response, corsPolicy);
 
         if (req.method === "OPTIONS" && req.headers.has("origin")) {
-          return corsPreflightResponse(req, corsAllowedHosts);
+          return corsPreflightResponse(req, corsPolicy);
         }
 
         const url = new URL(req.url);
@@ -387,6 +505,34 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
         // reachability check (which therefore never forwards a credential).
         if (url.pathname === "/api/health" && req.method === "GET") {
           return withCors(new Response("ok", { headers: { "content-type": "text/plain" } }));
+        }
+
+        // One-time sign-in code exchange: the browser has no bearer yet, so the
+        // single-use code is the credential. Unknown, used or expired codes 401.
+        // Only this server's own UI (or an --allowed-host page) may call it, and
+        // the body is capped before it is read.
+        if (url.pathname === LOCAL_LOGIN_EXCHANGE_PATH && req.method === "POST") {
+          const origin = req.headers.get("origin");
+          if (
+            origin !== null &&
+            !isAllowedOrigin(origin, corsPolicy.selfOrigins, corsPolicy.extraHosts)
+          ) {
+            return jsonNoStore({ error: "forbidden_origin" }, 403);
+          }
+          const raw = await readCappedBody(req, LOCAL_LOGIN_EXCHANGE_MAX_BYTES);
+          if (raw === null) {
+            // The unread remainder of the body is still on the socket: close it
+            // so the next request on this connection is not misparsed.
+            const tooLarge = jsonNoStore({ error: "body_too_large" }, 413);
+            tooLarge.headers.set("connection", "close");
+            return withCors(tooLarge);
+          }
+          const code = readLoginCode(raw);
+          if (code === null || !loginCodes.redeem(code)) {
+            return withCors(jsonNoStore({ error: "invalid_code" }, 401));
+          }
+          removeSignInPage(code);
+          return withCors(jsonNoStore({ token: authToken }));
         }
 
         // OAuth callbacks and CIMD documents are reached by the external
@@ -407,6 +553,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
         if (isUnauthenticatedOAuthClientMetadataPath(url.pathname) && req.method === "GET") {
           return withCors(oauthClientMetadataResponse(`${url.pathname}${url.search}`, req));
+        }
+
+        if (url.pathname === LOCAL_LOGIN_CODE_PATH && req.method === "POST") {
+          return withCors(jsonNoStore({ code: loginCodes.mint() }));
         }
 
         if (isMcpPath) {
@@ -473,6 +623,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       },
     });
 
+    corsPolicy.selfOrigins = selfLoopbackOrigins(server.port!);
+
     let stopped = false;
     return {
       port: server.port!,
@@ -493,5 +645,5 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
 if (import.meta.main) {
   const server = await startServer();
-  console.log(`Executor listening on http://localhost:${server.port}/?_token=${server.authToken}`);
+  console.log(`Executor listening on http://localhost:${server.port}`);
 }
