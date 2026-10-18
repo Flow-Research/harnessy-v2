@@ -13,6 +13,7 @@ import {
 	assertNoSecretsInOutput,
 	assertStrictCockpitCsp,
 	signInCodeFromBrowserUrl,
+	signInTargetFromOpenerArg,
 } from "./cockpit-smoke-lib.mjs";
 
 const COMMAND_TIMEOUT_MS = 90_000;
@@ -302,7 +303,12 @@ const verifyCockpit = async ({ manifest, expectedDataDir, commandOutput, browser
 	}
 	const logs = await collectLogs(temporaryRoot);
 	assertNoSecretsInOutput(`${commandOutput}\n${logs}`, [token], "Harnessy wrote the cockpit bearer token to its output or logs.");
-	const code = signInCodeFromBrowserUrl(await readBrowserUrl(browserLog), origin);
+	const openerArg = await readBrowserUrl(browserLog);
+	if (!commandOutput.includes(`If no browser opened, open ${openerArg} within 60 seconds`)) {
+		throw new Error("Harnessy did not print a manual sign-in fallback for headless hosts.");
+	}
+	const signInTarget = signInTargetFromOpenerArg(openerArg, join(expectedDataDir, "server-control"), [token]);
+	const code = signInCodeFromBrowserUrl(signInTarget, origin);
 	assertNoSecretsInOutput(commandOutput, [code], "Harnessy printed the one-time sign-in code.");
 	await verifyStatePermissions(expectedDataDir);
 	await verifySignIn(origin, token, code);
@@ -388,7 +394,7 @@ const main = async () => {
 	const browserStubDir = join(temporaryRoot, "bin");
 	await mkdir(browserStubDir, { recursive: true });
 	const browserStub = join(browserStubDir, "xdg-open");
-	// The stub records the URL the CLI hands the browser; it never reaches stdout.
+	// The stub records the argument the CLI hands the browser opener.
 	const browserLog = join(temporaryRoot, "browser-urls.txt");
 	const stubScript = `#!/bin/sh\nprintf '%s\\n' "$1" >> '${browserLog}'\nexit 0\n`;
 	await writeFile(browserStub, stubScript, { mode: 0o755 });

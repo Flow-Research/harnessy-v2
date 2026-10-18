@@ -5,6 +5,7 @@ import "./native-bindings";
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 // Make sibling binaries and standard GUI-missing CLI install locations
 // discoverable on $PATH so child processes spawned without an absolute path
 // still find them.
@@ -92,6 +93,7 @@ import {
 import {
   decodeAccessTokenClaims,
   discoverCliLogin,
+  launchOpenCommand,
   openBrowser,
   pollForDeviceTokens,
   refreshDeviceTokens,
@@ -101,11 +103,13 @@ import {
   startServer,
   rotateLocalAuthToken,
   localAuthTokenPath,
+  secureLocalStateDir,
   findDataDirOwnershipHeld,
   type ServerInstance,
   type StartServerOptions,
 } from "@executor-js/local";
 import { fetchIntegrations } from "./integrations";
+import { isLoopbackHttpOrigin, signInPageOpenCommand, writeSignInPage } from "./sign-in-page";
 import {
   buildDaemonSpawnSpec,
   chooseDaemonPort,
@@ -3175,17 +3179,43 @@ const openRunningLocalWebApp = (): Effect.Effect<
     const { auth } = manifest.connection;
     const origin = manifest.connection.origin.replace(/\/$/, "");
     const token = auth?.kind === "bearer" ? auth.token : undefined;
-    const code = token ? yield* mintLocalLoginCode(origin, token) : null;
-    // The bearer never goes to stdout, a log, the browser history or the opener's
-    // argv. The single-use code rides in the fragment, which browsers never send
-    // to a server, and is not printed either.
+    // The bearer only ever travels in an Authorization header to this machine's
+    // own loopback server; it is never printed, logged or put in a URL or argv.
+    const code =
+      token && isLoopbackHttpOrigin(origin) ? yield* mintLocalLoginCode(origin, token) : null;
     console.log(`Opening ${origin}/`);
-    if (token && code === null) {
+    if (code !== null) {
+      // The single-use code is not printed and not passed to the opener: it goes
+      // into an owner-only redirect page in server-control/, and the opener only
+      // sees that page's path.
+      const path = yield* PlatformPath.Path;
+      const page = yield* Effect.try({
+        try: () => {
+          secureLocalStateDir(resolveExecutorDataDir(path));
+          return writeSignInPage(
+            path.join(resolveExecutorDataDir(path), "server-control"),
+            `${origin}/#_code=${code}`,
+          );
+        },
+        catch: (cause) => cause,
+      }).pipe(Effect.orElseSucceed(() => undefined));
+      const openCommand = page === undefined ? undefined : signInPageOpenCommand(page);
+      if (page !== undefined && openCommand) {
+        yield* Effect.sync(() => launchOpenCommand(openCommand));
+        // The opener fails silently on headless hosts. The page path is no
+        // secret (an owner-only file in server-control/), so offer it by hand.
+        console.log(
+          `If no browser opened, open ${pathToFileURL(page).href} within 60 seconds, or run \`${cliPrefix} open\` again.`,
+        );
+        return;
+      }
+    }
+    if (token) {
       console.log(
-        "This server did not issue a sign-in code. Restart it to enable sign-in links, or paste the token from server-control/auth.json in the Executor data directory.",
+        "Could not prepare a one-time sign-in link. Paste the token from server-control/auth.json in the Executor data directory when prompted, or restart the server.",
       );
     }
-    yield* openInBrowser(code === null ? `${origin}/` : `${origin}/#_code=${code}`);
+    yield* openInBrowser(`${origin}/`);
   });
 
 /**

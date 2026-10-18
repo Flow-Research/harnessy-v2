@@ -18,7 +18,19 @@
  * during boot without a runtime.
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  constants as fsConstants,
+  fchmodSync,
+  fstatSync,
+  ftruncateSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  type Stats,
+  writeSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -35,66 +47,164 @@ export const localAuthTokenPath = (dataDir: string = resolveExecutorDataDir()): 
 
 const mintToken = (): string => randomBytes(32).toString("base64url");
 
+const PRIVATE_DIR_MODE = 0o700;
+const SECRET_FILE_MODE = 0o600;
+/** Files under `server-control/` that carry the bearer token. */
+const SECRET_FILES = ["auth.json", "server.json"] as const;
+
+// `O_NOFOLLOW` makes open() fail instead of following a symlink planted at the
+// final path component; `O_NONBLOCK` keeps a FIFO swapped in from hanging boot.
+// Windows has neither (and no POSIX modes), so they degrade to 0 there.
+const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
+const O_NONBLOCK = fsConstants.O_NONBLOCK ?? 0;
+const O_DIRECTORY = fsConstants.O_DIRECTORY ?? 0;
+
+const refuseToStart = (message: string): never => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time check outside the Effect graph; refusing to start is the intended outcome
+  throw new Error(`Refusing to start: ${message}`);
+};
+
+const isErrnoCode = (cause: unknown, code: string): boolean =>
+  typeof cause === "object" && cause !== null && "code" in cause && cause.code === code;
+
+/** Fail unless the open descriptor is the expected kind and owned by this user. */
+const assertOwned = (fd: number, path: string, kind: "directory" | "file"): Stats => {
+  const stat = fstatSync(fd);
+  if (kind === "directory" ? !stat.isDirectory() : !stat.isFile()) {
+    refuseToStart(`${path} is not a ${kind === "directory" ? "directory" : "regular file"}.`);
+  }
+  const uid = process.getuid?.();
+  if (uid !== undefined && stat.uid !== uid) {
+    refuseToStart(`${path} is owned by uid ${stat.uid}, not the current user (uid ${uid}).`);
+  }
+  return stat;
+};
+
+/**
+ * Enforce `mode` on `path` without following symlinks and without a
+ * check-then-use race: reject a symlink by lstat, open with `O_NOFOLLOW`,
+ * confirm the descriptor is the same inode lstat saw, check type and owner on
+ * the descriptor, then `fchmod` that descriptor.
+ */
+const enforceMode = (path: string, kind: "directory" | "file", mode: number): void => {
+  const link = lstatSync(path);
+  if (link.isSymbolicLink()) refuseToStart(`${path} is a symbolic link.`);
+  const fd = openSync(
+    path,
+    fsConstants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK | (kind === "directory" ? O_DIRECTORY : 0),
+  );
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: the descriptor must be closed whether or not the check refuses
+  try {
+    const stat = assertOwned(fd, path, kind);
+    if (stat.dev !== link.dev || stat.ino !== link.ino) {
+      refuseToStart(`${path} changed while its permissions were checked.`);
+    }
+    if ((stat.mode & 0o777) === mode) return;
+    fchmodSync(fd, mode);
+    if ((fstatSync(fd).mode & 0o777) !== mode) {
+      refuseToStart(`could not set ${path} to mode ${mode.toString(8)}.`);
+    }
+  } finally {
+    closeSync(fd);
+  }
+};
+
+const lstatSyncOrNull = (path: string): Stats | null => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: absence is an expected state
+  try {
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
+};
+
+/** mkdir only when nothing (not even a dangling symlink) is at `path`. */
+const ensureDirectory = (path: string, recursive: boolean): void => {
+  if (lstatSyncOrNull(path) === null) mkdirSync(path, { recursive, mode: PRIVATE_DIR_MODE });
+};
+
+/**
+ * Create the data directory and `server-control/` owner-only (`0700`) and keep
+ * every token-bearing file owner read/write (`0600`). Existing looser modes are
+ * repaired. Startup is refused when any of these paths is a symlink, is not
+ * the expected kind, is owned by another user, or cannot be repaired, instead
+ * of serving a token other local users could read or redirect.
+ * POSIX only: Windows has no equivalent mode bits.
+ */
+export const secureLocalStateDir = (dataDir: string = resolveExecutorDataDir()): void => {
+  const controlDir = serverControlDir(dataDir);
+  if (process.platform === "win32") {
+    mkdirSync(controlDir, { recursive: true });
+    return;
+  }
+  ensureDirectory(dataDir, true);
+  enforceMode(dataDir, "directory", PRIVATE_DIR_MODE);
+  ensureDirectory(controlDir, false);
+  enforceMode(controlDir, "directory", PRIVATE_DIR_MODE);
+  for (const name of SECRET_FILES) {
+    const path = join(controlDir, name);
+    if (lstatSyncOrNull(path) !== null) enforceMode(path, "file", SECRET_FILE_MODE);
+  }
+};
+
 const readToken = (path: string): string | null => {
-  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: reading an optional on-disk secret file that may be absent or malformed
+  let fd: number;
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: the secret file may be absent; a symlink must refuse rather than fall through to minting over it
+  try {
+    fd = openSync(path, fsConstants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+  } catch (cause) {
+    if (isErrnoCode(cause, "ELOOP")) refuseToStart(`${path} is a symbolic link.`);
+    return null;
+  }
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: the descriptor must be closed whether or not the ownership check refuses
+  try {
+    if (process.platform !== "win32") assertOwned(fd, path, "file");
+    return parseToken(readFileSync(fd, "utf8"));
+  } finally {
+    closeSync(fd);
+  }
+};
+
+const parseToken = (raw: string): string | null => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: a malformed secret file reads as absent
   try {
     // oxlint-disable-next-line executor/no-json-parse -- boundary: the secret file is a tiny {"token"} blob outside the Effect graph (used by the plain Bun/Electron boot path)
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as { readonly token?: unknown };
+    const parsed = JSON.parse(raw) as { readonly token?: unknown };
     return typeof parsed.token === "string" && parsed.token.length > 0 ? parsed.token : null;
   } catch {
     return null;
   }
 };
 
-const PRIVATE_DIR_MODE = 0o700;
-const SECRET_FILE_MODE = 0o600;
-/** Files under `server-control/` that carry the bearer token. */
-const SECRET_FILES = ["auth.json", "server.json"] as const;
-
-const enforceMode = (path: string, mode: number): void => {
-  const uid = process.getuid?.();
-  const before = statSync(path);
-  if (uid !== undefined && before.uid !== uid) {
-    // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time check outside the Effect graph; refusing to start is the intended outcome
-    throw new Error(
-      `Refusing to start: ${path} is owned by uid ${before.uid}, not the current user (uid ${uid}).`,
-    );
-  }
-  if ((before.mode & 0o777) === mode) return;
-  chmodSync(path, mode);
-  if ((statSync(path).mode & 0o777) !== mode) {
-    // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time check outside the Effect graph; refusing to start is the intended outcome
-    throw new Error(`Refusing to start: could not set ${path} to mode ${mode.toString(8)}.`);
-  }
-};
-
-/**
- * Create the data directory and `server-control/` owner-only (`0700`) and keep
- * every token-bearing file owner read/write (`0600`). Existing looser modes are
- * repaired; a path owned by another user, or one whose mode cannot be repaired,
- * stops startup instead of serving a token other local users could read.
- * POSIX only: Windows has no equivalent mode bits.
- */
-export const secureLocalStateDir = (dataDir: string = resolveExecutorDataDir()): void => {
-  const controlDir = serverControlDir(dataDir);
-  mkdirSync(controlDir, { recursive: true, mode: PRIVATE_DIR_MODE });
-  if (process.platform === "win32") return;
-  enforceMode(dataDir, PRIVATE_DIR_MODE);
-  enforceMode(controlDir, PRIVATE_DIR_MODE);
-  for (const name of SECRET_FILES) {
-    const path = join(controlDir, name);
-    if (existsSync(path)) enforceMode(path, SECRET_FILE_MODE);
-  }
-};
-
 const writeToken = (dataDir: string, token: string): string => {
-  const dir = serverControlDir(dataDir);
-  mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
-  const path = join(dir, "auth.json");
-  // `mode` only applies when the file is created; chmod afterwards covers the
-  // case where an older world-readable file already exists.
-  writeFileSync(path, `${JSON.stringify({ token }, null, 2)}\n`, { mode: SECRET_FILE_MODE });
-  chmodSync(path, SECRET_FILE_MODE);
+  secureLocalStateDir(dataDir);
+  const path = join(serverControlDir(dataDir), "auth.json");
+  // Open without following a symlink, check the descriptor, then truncate and
+  // write through it: no window where a swapped path is written or chmod'd.
+  let fd: number;
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: a symlinked token file must refuse with a clear message
+  try {
+    fd = openSync(
+      path,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | O_NOFOLLOW | O_NONBLOCK,
+      SECRET_FILE_MODE,
+    );
+  } catch (cause) {
+    if (isErrnoCode(cause, "ELOOP")) refuseToStart(`${path} is a symbolic link.`);
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: other open failures propagate unchanged
+    throw cause;
+  }
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: the descriptor must be closed whether or not the write succeeds
+  try {
+    if (process.platform !== "win32") {
+      assertOwned(fd, path, "file");
+      fchmodSync(fd, SECRET_FILE_MODE);
+    }
+    ftruncateSync(fd, 0);
+    writeSync(fd, `${JSON.stringify({ token }, null, 2)}\n`);
+  } finally {
+    closeSync(fd);
+  }
   return token;
 };
 

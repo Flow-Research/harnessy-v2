@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, describe, it } from "node:test";
 
 import {
@@ -10,6 +11,7 @@ import {
 	assertStrictCockpitCsp,
 	canonicalFilesystemPath,
 	signInCodeFromBrowserUrl,
+	signInTargetFromOpenerArg,
 } from "./cockpit-smoke-lib.mjs";
 
 describe("cockpit smoke isolation guard", () => {
@@ -79,11 +81,40 @@ describe("cockpit smoke secret and header guards", () => {
 
 	it("requires a strict script policy", () => {
 		const strict =
-			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http: https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 		assert.doesNotThrow(() => assertStrictCockpitCsp(strict));
 		assert.throws(() => assertStrictCockpitCsp(null), /no Content-Security-Policy/);
 		assert.throws(() => assertStrictCockpitCsp(strict.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")), /script-src/);
 		assert.throws(() => assertStrictCockpitCsp(strict.replace("frame-ancestors 'none'", "")), /frame-ancestors/);
 		assert.throws(() => assertStrictCockpitCsp(`${strict}; worker-src 'self' 'wasm-unsafe-eval'`), /eval/);
+	});
+});
+
+describe("cockpit smoke sign-in page guard", () => {
+	const root = mkdtempSync(join(tmpdir(), "harnessy-cockpit-page-"));
+	const control = join(root, "server-control");
+	mkdirSync(control);
+	const target = `http://localhost:4788/#_code=${"c".repeat(43)}`;
+	const page = join(control, `sign-in-${"a".repeat(32)}.html`);
+	writeFileSync(page, `<meta http-equiv="refresh" content="0;url=${target}">`, { mode: 0o600 });
+	chmodSync(page, 0o600);
+
+	after(() => rmSync(root, { recursive: true, force: true }));
+
+	it("reads the redirect target from an owner-only page in server-control", () => {
+		assert.equal(signInTargetFromOpenerArg(pathToFileURL(page).href, control, ["tok"]), target);
+	});
+
+	it("rejects a credential in argv, a page elsewhere, or a readable page", () => {
+		assert.throws(() => signInTargetFromOpenerArg(target, control), /argv/);
+		assert.throws(() => signInTargetFromOpenerArg("http://localhost:4788/?_token=x", control), /argv/);
+		assert.throws(() => signInTargetFromOpenerArg(`${pathToFileURL(page).href}?tok`, control, ["tok"]), /secret/);
+		assert.throws(() => signInTargetFromOpenerArg("http://localhost:4788/", control), /sign-in page/);
+		assert.throws(() => signInTargetFromOpenerArg(pathToFileURL(page).href, root), /outside/);
+		if (process.platform !== "win32") {
+			chmodSync(page, 0o644);
+			assert.throws(() => signInTargetFromOpenerArg(pathToFileURL(page).href, control), /0600/);
+			chmodSync(page, 0o600);
+		}
 	});
 });

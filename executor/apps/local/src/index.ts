@@ -19,4 +19,9 @@ export {
   findDataDirOwnershipHeld,
   type DataDirOwnership,
 } from "./db/data-dir-ownership";
-export { loadOrMintLocalAuthToken, rotateLocalAuthToken, localAuthTokenPath } from "./auth";
+export {
+  loadOrMintLocalAuthToken,
+  rotateLocalAuthToken,
+  localAuthTokenPath,
+  secureLocalStateDir,
+} from "./auth";

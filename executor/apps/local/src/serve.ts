@@ -44,9 +44,12 @@ type StaticHandler = () => Response | Promise<Response>;
  *   policy stays strict.
  * - `img-src https:`: integration logos come from integrations.sh, svgl.app
  *   and arbitrary provider hosts. Images cannot run script.
- * Google Fonts is the only third-party stylesheet/font origin. `connect-src
- * 'self'` keeps API traffic on the serving origin. Vite dev mode (proxied, with
- * an inline HMR preamble) does not use this response and gets no CSP.
+ * - `connect-src http: https:`: the server selector lets the user point the UI
+ *   at any Executor origin they enter, which the server cannot enumerate.
+ *   Script execution stays `'self'`, so this does not widen what can run.
+ * Google Fonts is the only third-party stylesheet/font origin. Vite dev mode
+ * (proxied, with an inline HMR preamble) does not use this response and gets
+ * no CSP.
  */
 export const COCKPIT_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -54,7 +57,7 @@ export const COCKPIT_CONTENT_SECURITY_POLICY = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
   "img-src 'self' data: blob: https:",
-  "connect-src 'self'",
+  "connect-src 'self' http: https:",
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'self'",

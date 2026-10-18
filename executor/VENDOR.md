@@ -103,10 +103,13 @@ browser bootstrap only exist in these vendored files, so the change cannot live
 in Harnessy-owned code. On an upstream sync, reapply it unless upstream ships
 an equivalent:
 
-- `apps/local/src/auth.ts` — `secureLocalStateDir`: the data directory and
-  `server-control/` are created and kept `0700`, `auth.json` and `server.json`
-  `0600`. Looser modes are repaired at startup; a path owned by another user or
-  a mode that cannot be repaired stops startup. POSIX only.
+- `apps/local/src/auth.ts`, `apps/local/src/index.ts` — `secureLocalStateDir`
+  (exported): the data directory and `server-control/` are created and kept
+  `0700`, `auth.json` and `server.json` `0600`. Each path is lstat'd, opened
+  with `O_NOFOLLOW`, compared by inode, owner-checked and `fchmod`ed through the
+  descriptor; the token is read and written the same way. Looser modes are
+  repaired at startup; a symlink, a foreign owner, a wrong file type or a mode
+  that cannot be repaired stops startup. POSIX only.
 - `apps/local/src/serve-shared.ts`, `apps/local/src/serve.ts` — credentialed
   CORS only for the server's own exact loopback origins
   (`http://{127.0.0.1,localhost,[::1]}:<bound port>`) plus `--allowed-host`
@@ -116,14 +119,20 @@ an equivalent:
   strict Content-Security-Policy (`script-src 'self'`; `style-src` keeps
   `'unsafe-inline'` for runtime-injected `<style>` elements), a no-referrer
   policy and `nosniff`. The direct-run banner no longer prints the token.
-- `apps/cli/src/main.ts` — `executor web` / `executor open` open
-  `<origin>/#_code=<code>` and print only `<origin>/`; the foreground banner
-  points at `executor open` instead of printing a `?_token=` URL.
+- `apps/cli/src/main.ts`, `apps/cli/src/sign-in-page.ts`,
+  `apps/cli/src/device-login.ts` — `executor web` / `executor open` send the
+  bearer only to a loopback http origin to mint a code, write an owner-only
+  `server-control/sign-in-<hex>.html` page that redirects to
+  `<origin>/#_code=<code>`, and hand the opener only that page's `file:` path;
+  stdout shows only `<origin>/`. `device-login.ts` gains shared
+  `platformOpenCommand`/`launchOpenCommand` helpers (its http(s)-only
+  `browserOpenCommand` is unchanged). The foreground banner points at
+  `executor open` instead of printing a `?_token=` URL.
 - `packages/react/src/api/local-auth.tsx`, `packages/app/src/entry-client.tsx`
   — the SPA strips and redeems `#_code` before the router mounts; manual
   `?_token=` URLs still work.
-- `apps/local/src/serve.test.ts`, `apps/local/src/serve-shared.test.ts` —
-  coverage for the above.
+- `apps/local/src/serve.test.ts`, `apps/local/src/serve-shared.test.ts`,
+  `apps/cli/src/sign-in-page.test.ts` — coverage for the above.
 
 ### Existing migration deltas — 2026-09-05
 

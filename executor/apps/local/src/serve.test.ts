@@ -6,11 +6,13 @@ import {
   mkdtempSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { loadOrMintLocalAuthToken } from "./auth";
 import { acquireDataDirOwnership } from "./db/data-dir-ownership";
 import { COCKPIT_CONTENT_SECURITY_POLICY, startServer, type ServerInstance } from "./serve";
 
@@ -329,6 +331,66 @@ describe("startServer state directory permissions", () => {
   });
 });
 
+describe("startServer refuses symlinked state", () => {
+  const start = () => startServer({ port: 0, clientDir, handlers: testHandlers() });
+
+  it("refuses a symlinked data directory without touching its target", async () => {
+    const target = join(dataDir, "elsewhere");
+    mkdirSync(target, { mode: 0o755 });
+    const link = join(dataDir, "executor");
+    symlinkSync(target, link, "dir");
+    process.env.EXECUTOR_DATA_DIR = link;
+
+    await expect(start()).rejects.toThrow(/symbolic link/);
+    expect(existsSync(join(target, "server-control"))).toBe(false);
+    expect(modeOf(target)).toBe(0o755);
+  });
+
+  it("refuses a symlinked server-control directory", async () => {
+    const target = join(dataDir, "elsewhere");
+    mkdirSync(target, { mode: 0o755 });
+    symlinkSync(target, join(dataDir, "server-control"), "dir");
+
+    await expect(start()).rejects.toThrow(/symbolic link/);
+    expect(modeOf(target)).toBe(0o755);
+  });
+
+  it("refuses a symlinked token file and leaves the target unchanged", async () => {
+    const control = join(dataDir, "server-control");
+    mkdirSync(control, { recursive: true });
+    const target = join(dataDir, "victim.json");
+    writeFileSync(target, `${JSON.stringify({ token: "victim" })}\n`, { mode: 0o644 });
+    chmodSync(target, 0o644);
+    symlinkSync(target, join(control, "auth.json"));
+
+    await expect(start()).rejects.toThrow(/symbolic link/);
+    expect(modeOf(target)).toBe(0o644);
+    // The direct token loader refuses too, instead of minting through the link.
+    expect(() => loadOrMintLocalAuthToken(dataDir)).toThrow(/symbolic link/);
+  });
+
+  it("refuses a dangling symlinked token file without creating its target", async () => {
+    const control = join(dataDir, "server-control");
+    mkdirSync(control, { recursive: true });
+    const target = join(dataDir, "planted.json");
+    symlinkSync(target, join(control, "auth.json"));
+
+    await expect(start()).rejects.toThrow(/symbolic link/);
+    expect(() => loadOrMintLocalAuthToken(dataDir)).toThrow(/symbolic link/);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it("refuses a symlinked server manifest", async () => {
+    const control = join(dataDir, "server-control");
+    mkdirSync(control, { recursive: true });
+    const target = join(dataDir, "other.json");
+    writeFileSync(target, "{}\n", { mode: 0o644 });
+    symlinkSync(target, join(control, "server.json"));
+
+    await expect(start()).rejects.toThrow(/symbolic link/);
+  });
+});
+
 describe("startServer web UI hardening", () => {
   it("serves the UI shell with a strict Content-Security-Policy", async () => {
     const baseUrl = await startTestServer();
@@ -346,7 +408,8 @@ describe("startServer web UI hardening", () => {
       expect(directives.get("script-src")).toEqual(["'self'"]);
       expect(directives.get("object-src")).toEqual(["'none'"]);
       expect(directives.get("frame-ancestors")).toEqual(["'none'"]);
-      expect(directives.get("connect-src")).toEqual(["'self'"]);
+      expect(directives.get("connect-src")).toEqual(["'self'", "http:", "https:"]);
+      expect(directives.get("default-src")).toEqual(["'self'"]);
       expect(policy).not.toContain("unsafe-eval");
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     }

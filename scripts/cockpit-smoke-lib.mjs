@@ -1,5 +1,6 @@
-import { realpathSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const canonicalFilesystemPath = (path) => {
 	try {
@@ -50,7 +51,6 @@ export const signInCodeFromBrowserUrl = (url, origin) => {
 const REQUIRED_CSP = {
 	"default-src": ["'self'"],
 	"script-src": ["'self'"],
-	"connect-src": ["'self'"],
 	"object-src": ["'none'"],
 	"base-uri": ["'none'"],
 	"frame-ancestors": ["'none'"],
@@ -75,4 +75,29 @@ export const assertStrictCockpitCsp = (policy) => {
 	if (/'unsafe-eval'|'wasm-unsafe-eval'/.test(policy)) {
 		throw new Error("Cockpit Content-Security-Policy must not allow eval.");
 	}
+};
+
+/**
+ * The sign-in target behind the argument the CLI handed the browser opener.
+ * The argument must be a `file:` URL of an owner-only page inside
+ * `server-control/` and must itself carry no secret; the page redirects to the
+ * cockpit with the one-time code.
+ */
+export const signInTargetFromOpenerArg = (arg, controlDir, secrets = []) => {
+	if (arg.includes("_code") || arg.includes("_token")) {
+		throw new Error("Harnessy passed a sign-in credential in the browser opener's argv.");
+	}
+	assertNoSecretsInOutput(arg, secrets, "Harnessy passed a secret in the browser opener's argv.");
+	const url = new URL(arg);
+	if (url.protocol !== "file:") throw new Error("Harnessy did not open the cockpit through a sign-in page.");
+	const page = fileURLToPath(url);
+	if (canonicalFilesystemPath(dirname(page)) !== canonicalFilesystemPath(controlDir)) {
+		throw new Error("The sign-in page is outside the owner-only server-control directory.");
+	}
+	if (process.platform !== "win32" && (statSync(page).mode & 0o777) !== 0o600) {
+		throw new Error("The sign-in page is not owner-only (0600).");
+	}
+	const match = /<meta http-equiv="refresh" content="0;url=([^"]+)">/.exec(readFileSync(page, "utf8"));
+	if (match === null) throw new Error("The sign-in page has no redirect.");
+	return match[1].replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 };
