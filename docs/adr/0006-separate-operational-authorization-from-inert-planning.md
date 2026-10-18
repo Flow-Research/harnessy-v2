@@ -83,11 +83,14 @@ stops at once when a writer-shaped process's native-reviewer exemption check
 answers "not exempt". If that check cannot answer, the result is inconclusive,
 not a writer: for example `lsof` or a per-process `ps` that times out or exits
 non-zero during a dark wake. Inconclusive results pause and retry under the same
-window, and an observed writer elsewhere in the same check still wins. Any other
-unverifiable answer, such as malformed `lsof` output, fails closed unless a
-fresh complete scan no longer lists the process. The native review launch agent
-is exempt only after a completed process scan has verified its process;
-otherwise that label is inconclusive.
+window, and an observed writer elsewhere in the same check still wins. Tamper evidence
+(a probe executable that is not root-owned and non-writable) always stops. Any
+other unverifiable answer, such as malformed `lsof` output, fails closed unless
+a fresh complete scan no longer lists the process. The native review launch
+agent is exempt only while it runs exactly one process and that process has been
+verified. If that process's own check could not answer, or the process listing
+itself could not answer, the label is inconclusive. A loaded agent with no
+process, several processes, or a refuted process is an observed writer.
 
 A running meeting service that sees an inconclusive probe denies every new
 grant, claim and lease, and skips scheduled cycles. It retries with backoff of

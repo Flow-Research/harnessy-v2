@@ -450,13 +450,13 @@ describe("community compatibility proof over an injected runner", () => {
 		["comm_exit", "ps_exit_status", 1],
 		["confirm_exit", "ps_exit_status", 1],
 	] as const)("pauses rather than stops when an exemption check cannot answer (%s)", (failing, reason, exitStatus) => {
-		for (const fresh of ["present", "gone", "timeout"] as const) {
-			scans = 0;
-			expect(inconclusive(makeCommunityCompatibilityProof(unverifiable(failing, fresh), "darwin"))).toEqual({
-				reason,
-				exitStatus,
-			});
-		}
+		// An unanswered exemption check never consults a fresh scan.
+		scans = 0;
+		expect(inconclusive(makeCommunityCompatibilityProof(unverifiable(failing, "present"), "darwin"))).toEqual({
+			reason,
+			exitStatus,
+		});
+		expect(scans).toBe(1);
 	});
 
 	it("lets an observed writer win over an unanswered exemption check", () => {
@@ -477,13 +477,62 @@ describe("community compatibility proof over an injected runner", () => {
 		expect(() => makeCommunityCompatibilityProof(run, "darwin")()).toThrow("compatibility_writer_present");
 	});
 
-	it("keeps malformed lsof answers fail-closed", () => {
-		const run = (command: string, args: ReadonlyArray<string>) =>
-			command === "/usr/sbin/lsof"
-				? answer({ stdout: "garbage" })
-				: unverifiable("lsof_exit", "present")(command, args);
+	it("keeps malformed lsof answers fail-closed unless a fresh scan shows the process ended", () => {
+		const run = (fresh: "present" | "gone") => (command: string, args: ReadonlyArray<string>) =>
+			command === "/usr/sbin/lsof" ? answer({ stdout: "garbage" }) : unverifiable("lsof_exit", fresh)(command, args);
 		scans = 0;
-		expect(() => makeCommunityCompatibilityProof(run, "darwin")()).toThrow("compatibility_writer_present");
+		expect(() => makeCommunityCompatibilityProof(run("present"), "darwin")()).toThrow("compatibility_writer_present");
+		scans = 0;
+		expect(() => makeCommunityCompatibilityProof(run("gone"), "darwin")()).not.toThrow();
+		expect(scans).toBe(2);
+	});
+
+	it("never drops tamper evidence from an exemption probe, even when the process has ended", () => {
+		const run = (command: string, args: ReadonlyArray<string>) => {
+			if (command === "/usr/sbin/lsof") throw new Error("unsafe_probe");
+			return unverifiable("lsof_exit", "gone")(command, args);
+		};
+		scans = 0;
+		expect(() => makeCommunityCompatibilityProof(run, "darwin")()).toThrow("unsafe_probe");
+		const freshScanTampered = (command: string, args: ReadonlyArray<string>) => {
+			if (command === "/usr/sbin/lsof") return answer({ stdout: "garbage" });
+			if (command === "/bin/ps" && args[0] === "-axo" && scans === 1) throw new Error("unsafe_probe");
+			return unverifiable("lsof_exit", "gone")(command, args);
+		};
+		scans = 0;
+		expect(() => makeCommunityCompatibilityProof(freshScanTampered, "darwin")()).toThrow("unsafe_probe");
+	});
+
+	it("downgrades the loaded native agent only when its single process is pending verification", () => {
+		const agent = (stdout: string, listing: "ok" | "timeout") => (command: string, args: ReadonlyArray<string>) => {
+			if (command === "/bin/launchctl")
+				return String(args[1]).endsWith("com.flow-harness.community-review-v2")
+					? answer({ stdout })
+					: answer({ status: 113, stderr: "Could not find service" });
+			if (listing === "timeout" && command === "/bin/ps")
+				return answer({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } });
+			return unverifiable("lsof_timeout", "present")(command, args);
+		};
+		// PID 77's exemption check timed out: only an agent running exactly PID 77 is pending.
+		scans = 0;
+		expect(inconclusive(makeCommunityCompatibilityProof(agent("pid = 77\n", "ok"), "darwin"))).toEqual({
+			reason: "lsof_timeout",
+			exitStatus: undefined,
+		});
+		for (const stdout of ["state = waiting\n", "pid = 99\n", "pid = 77\npid = 78\n"]) {
+			scans = 0;
+			expect(() => makeCommunityCompatibilityProof(agent(stdout, "ok"), "darwin")(), stdout).toThrow(
+				"compatibility_writer_present",
+			);
+		}
+		// With no process listing at all, a running agent is pending; a loaded agent with no process is not.
+		expect(inconclusive(makeCommunityCompatibilityProof(agent("pid = 99\n", "timeout"), "darwin"))).toEqual({
+			reason: "ps_timeout",
+			exitStatus: undefined,
+		});
+		expect(() => makeCommunityCompatibilityProof(agent("state = waiting\n", "timeout"), "darwin")()).toThrow(
+			"compatibility_writer_present",
+		);
 	});
 
 	it("lets an observed community writer win over an unanswered probe", () => {

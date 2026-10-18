@@ -170,6 +170,9 @@ export const isCommunityCompatibilityWriterCommand = (commandLine: string): bool
 		/(?:jarvis|harnessy|hsy).*\/community-briefing\/|briefing[-_](?:review|worker)/u.test(program),
 	);
 
+/** A probe executable that failed the root-owned, non-writable check. */
+const isTamperEvidence = (cause: unknown) => cause instanceof Error && cause.message === "unsafe_probe";
+
 /** Bounded known-process evidence, not protection from arbitrary same-UID code. */
 const proveCompatibilityAbsentWith = (
 	run: ProcessProbeRunner,
@@ -216,6 +219,7 @@ const proveCompatibilityAbsentWith = (
 	/** A fresh complete scan that no longer lists the PID with the same command proves it ended. */
 	const hasEnded = (pid: string, commandLine: string) => {
 		const fresh = Result.try({ try: scanProcesses, catch: (cause) => cause });
+		if (Result.isFailure(fresh) && isTamperEvidence(fresh.failure)) throw fresh.failure;
 		if (Result.isFailure(fresh) || fresh.success.status !== 0) return false;
 		let ended = true;
 		for (const line of fresh.success.stdout.split("\n")) {
@@ -227,10 +231,17 @@ const proveCompatibilityAbsentWith = (
 		return ended;
 	};
 	const nativeReviewProcesses = new Set<number>();
-	let processScan: WriterCheckInconclusiveError | undefined;
+	/** Writer-shaped PIDs whose exemption check could not answer. */
+	const unverifiedExemptions = new Map<number, WriterCheckInconclusiveError>();
+	/** Set when the process listing itself could not answer, so no PID could be checked. */
+	let processListing: WriterCheckInconclusiveError | undefined;
 	const proveProcessesAbsent = () => {
-		const processes = scanProcesses();
-		let unverifiedExemption: WriterCheckInconclusiveError | undefined;
+		const listed = Result.try({ try: scanProcesses, catch: (cause) => cause });
+		if (Result.isFailure(listed)) {
+			if (listed.failure instanceof WriterCheckInconclusiveError) processListing = listed.failure;
+			throw listed.failure;
+		}
+		const processes = listed.success;
 		for (const line of processes.stdout.split("\n")) {
 			if (!line.trim()) continue;
 			const match = communityProcessLinePattern.exec(line);
@@ -247,16 +258,22 @@ const proveCompatibilityAbsentWith = (
 			// An exemption probe that could not answer (e.g. lsof timing out in a dark wake)
 			// pauses rather than stops; keep scanning so an observed writer still wins.
 			if (native.failure instanceof WriterCheckInconclusiveError) {
-				unverifiedExemption ??= native.failure;
+				unverifiedExemptions.set(Number(match[2]), native.failure);
 				continue;
 			}
+			// Tamper evidence from a probe always stops, even if the process ends meanwhile.
+			if (isTamperEvidence(native.failure)) throw native.failure;
 			// Any other unverifiable answer fails closed unless the process has since ended.
 			if (!hasEnded(match[2], match[3])) throw new Error("compatibility_writer_present");
 		}
 		// Writers in the output of a failed scan still stop at once (above); otherwise the
 		// failed scan, or an unanswered exemption check, proves nothing.
-		if (processes.status !== 0) throw new WriterCheckInconclusiveError("ps", "exit_status", processes.status);
-		if (unverifiedExemption !== undefined) throw unverifiedExemption;
+		if (processes.status !== 0) {
+			processListing = new WriterCheckInconclusiveError("ps", "exit_status", processes.status);
+			throw processListing;
+		}
+		const [unverified] = unverifiedExemptions.values();
+		if (unverified !== undefined) throw unverified;
 	};
 	const proveSchedulersAbsent = () => {
 		if (platform === "darwin") {
@@ -268,10 +285,16 @@ const proveCompatibilityAbsentWith = (
 						isNativeCommunityReviewLaunchAgent(label, result.stdout, nativeReviewProcesses)
 					)
 						return;
-					// Only the native review agent can be exempt, and only by a completed process scan
-					// that verified its process; otherwise this label is as inconclusive as that scan.
-					if (result.status === 0 && label === "com.flow-harness.community-review-v2" && processScan !== undefined)
-						throw processScan;
+					// Only the native review agent can be exempt, and only while it runs exactly one
+					// process. That process's exemption is inconclusive when its own check could not
+					// answer, or when the process listing could not answer so it could not be checked.
+					// A loaded agent with no process, several processes, or a refuted process is a writer.
+					if (result.status === 0 && label === "com.flow-harness.community-review-v2") {
+						const pids = [...result.stdout.matchAll(/^\s*pid = (\d+)\s*$/gmu)];
+						const pid = pids.length === 1 ? Number(pids[0]![1]) : undefined;
+						const pending = pid === undefined ? undefined : (unverifiedExemptions.get(pid) ?? processListing);
+						if (pending !== undefined) throw pending;
+					}
 					// Any other loaded job is an observed writer; only "Could not find service" proves absence.
 					if (result.status === 0) throw new Error("compatibility_writer_present");
 					if (!`${result.stdout}\n${result.stderr}`.includes("Could not find service"))
@@ -287,15 +310,7 @@ const proveCompatibilityAbsentWith = (
 			throw new WriterCheckInconclusiveError("crontab", "exit_status", result.status);
 	};
 	// Every probe runs; an unanswered probe never hides an observed writer.
-	runAllWriterCheckProbes([
-		() => {
-			const scanned = Result.try({ try: proveProcessesAbsent, catch: (cause) => cause });
-			if (Result.isSuccess(scanned)) return;
-			if (scanned.failure instanceof WriterCheckInconclusiveError) processScan = scanned.failure;
-			throw scanned.failure;
-		},
-		proveSchedulersAbsent,
-	]);
+	runAllWriterCheckProbes([proveProcessesAbsent, proveSchedulersAbsent]);
 };
 
 /**
