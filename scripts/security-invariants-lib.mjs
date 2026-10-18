@@ -112,7 +112,8 @@ export const checkSecurityContract = (files) => {
 		}
 	}
 	for (const [path, text] of files) {
-		if (!path.startsWith(".github/workflows/")) continue;
+		// Local composite actions hold workflow steps too, so the same pinning rules apply.
+		if (!path.startsWith(".github/workflows/") && !path.startsWith(".github/actions/")) continue;
 		findings.push(
 			...scanWorkflow(path, text, {
 				canonicalSecurityWorkflow: requiredWorkflows.get(path) ?? false,

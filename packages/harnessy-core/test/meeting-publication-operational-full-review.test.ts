@@ -59,6 +59,10 @@ import {
 } from "../src/jarvis/meeting-publication/service.ts";
 import { MeetingPublicationStore } from "../src/jarvis/meeting-publication/store.ts";
 import { WRITER_CHECK_INCONCLUSIVE_WINDOW_MS, WriterCheckInconclusiveError } from "../src/jarvis/writer-check.ts";
+import {
+	assessManualMeetingDispatch,
+	parseMeetingDispatchResult,
+} from "./support/meeting-full-review-dispatch-outcome.ts";
 import { createMeetingPublicationFullReviewAuthorizationFixture } from "./support/meeting-full-review-runtime-fixture.ts";
 import { makeScriptedProbeRunner, SCRIPTED_WRITER_ARGV_SECRET } from "./support/scripted-probe-runner.ts";
 
@@ -998,6 +1002,66 @@ describe("meeting publication authorized full-review runtime", () => {
 			);
 		});
 	}
+
+	it.effect("lets a scheduled tick publish an approved item before the same session's manual dispatch (#118)", () =>
+		Effect.gen(function* () {
+			yield* TestClock.setTime(Date.now());
+			const fixture = yield* Effect.promise(() => setup({ reviewPort: 18_776, runtimeMode: "long_running" }));
+			const provider = providerFactory(fixture);
+			const ready = makeGate();
+			let origin = "";
+			const fiber = yield* fixture.authorization
+				.withSystem(
+					runAuthorizedMeetingPublicationFullReview(fixture.authorization.input, provider.factory, {
+						artifactAnchors: fixture.authorization.providerArtifactAnchors,
+						onReady: (address) =>
+							Effect.sync(() => {
+								origin = address.origin;
+								ready.signalStarted();
+							}),
+					}),
+				)
+				.pipe(Effect.forkScoped);
+			yield* Effect.raceFirst(
+				Effect.promise(() => ready.started),
+				Fiber.join(fiber).pipe(Effect.andThen(Effect.die("not ready"))),
+			);
+			const { cookie, csrf, approved } = yield* Effect.promise(() => approveForDispatch(fixture, origin));
+			expect(approved.status).toBe(303);
+			expect(stateRow(fixture)?.status).toBe("approved");
+			// The slow path: the reviewer's dispatch arrives after the long-running owner's
+			// scheduled interval, min(reviewSessionSeconds, 120 s), has elapsed.
+			yield* TestClock.adjust(`${fixture.config.reviewSessionSeconds} seconds`);
+			// The tick's publication runs in real time (cooperative artifact validation and
+			// provider calls); only its start is driven by the test clock.
+			yield* Effect.promise(() =>
+				expect.poll(() => stateRow(fixture)?.status, { timeout: 30_000, interval: 50 }).toBe("published"),
+			);
+			const dispatched = yield* Effect.promise(() => post(origin, cookie, "/dispatch", { csrf }));
+			// The same session is still authorized, but the scheduled tick already published
+			// the item, so the manual dispatch reports zero publications. The packed smoke
+			// required Published 1 here before #118.
+			expect(parseMeetingDispatchResult(dispatched.body)).toEqual({
+				scanned: 1,
+				published: 0,
+				failed: 0,
+				pendingReview: 0,
+			});
+			expect(
+				assessManualMeetingDispatch({
+					label: "manual dispatch after a scheduled tick",
+					status: dispatched.status,
+					body: dispatched.body,
+					maxItems: 1,
+					expected: { scanned: 1, failed: 0, pendingReview: 0, published: 1 },
+					publishedSinceApproval: stateRow(fixture)?.status === "published" ? 1 : 0,
+				}),
+			).toEqual({ manualPublished: 0, scheduledPublished: 1 });
+			expect(provider.calls.googleCompleted).toBe(1);
+			expect(provider.calls.discord).toHaveLength(1);
+			yield* Fiber.interrupt(fiber);
+		}),
+	);
 
 	it.effect("drains an active scheduled worker without starting another tick", () =>
 		Effect.gen(function* () {
