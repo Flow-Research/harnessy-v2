@@ -233,6 +233,26 @@ export const quarantineCommunityGenerationStatus = (path: string, now: Date = ne
 	return target;
 };
 
+export type CommunityGenerationRepair =
+	| { readonly outcome: "missing" }
+	| { readonly outcome: "valid" }
+	| { readonly outcome: "quarantined"; readonly fault: string; readonly movedTo: string };
+
+/**
+ * `generation-status --repair`: move the record aside only when it cannot be
+ * read safely. A valid record is never touched: it holds the attempt counts
+ * and `gaveUp` flags that bound paid retries.
+ */
+export const repairCommunityGenerationStatus = (path: string, now: Date = new Date()): CommunityGenerationRepair => {
+	const read = Result.try({
+		try: () => readCommunityGenerationStatus(path),
+		catch: (cause) => (cause instanceof Error ? cause.message : "status_record_unreadable"),
+	});
+	if (Result.isSuccess(read)) return { outcome: read.success === undefined ? "missing" : "valid" };
+	const movedTo = quarantineCommunityGenerationStatus(path, now);
+	return movedTo === undefined ? { outcome: "missing" } : { outcome: "quarantined", fault: read.failure, movedTo };
+};
+
 /** Atomic owner-only replacement; a crash leaves the previous record intact. */
 const writeStatus = (path: string, status: CommunityGenerationStatus) => {
 	const temporary = join(dirname(path), `.${COMMUNITY_GENERATION_STATUS_FILE}.${randomBytes(6).toString("hex")}.tmp`);
@@ -404,8 +424,18 @@ export const runCommunityGenerationTick = async (
 			await options.notify(notify, notify === "pending" ? 1 : 0).catch(() => false);
 		return event;
 	};
-	const store = (record: CommunityGenerationStatus) =>
-		Result.try({ try: () => writeStatus(options.statusPath, record), catch: () => "status_record_unwritable" });
+	/** A standing fault that has cleared is notified again if it recurs. */
+	const cleared = (...codes: ReadonlyArray<string>) => {
+		for (const code of codes) options.memory?.notified.delete(code);
+	};
+	const store = (record: CommunityGenerationStatus) => {
+		const written = Result.try({
+			try: () => writeStatus(options.statusPath, record),
+			catch: () => "status_record_unwritable",
+		});
+		if (Result.isSuccess(written)) cleared("status_record_unwritable");
+		return written;
+	};
 	const statusFor = (
 		weeks: Record<string, WeekRecord>,
 		lastFailure: CommunityGenerationStatus["lastFailure"],
@@ -446,6 +476,7 @@ export const runCommunityGenerationTick = async (
 		catch: (cause) => (cause instanceof Error ? cause.message : "status_record_unreadable"),
 	});
 	let current: CommunityGenerationStatus;
+	if (Result.isSuccess(read)) cleared("status_record_invalid", "status_record_unsafe", "status_record_unreadable");
 	if (Result.isSuccess(read) && read.success !== undefined) current = read.success;
 	else if (Result.isSuccess(read) || read.failure === "status_record_invalid") {
 		// Missing or damaged (for example truncated): rebuild from the queue. Only
@@ -503,6 +534,7 @@ export const runCommunityGenerationTick = async (
 			{ event: "weekly-generation", weekStart, status: "failed", code: "queue_unreadable", publication: false },
 			"error",
 		);
+	cleared("queue_unreadable");
 	if (queued.success !== undefined) {
 		const recovered = previous !== undefined;
 		const week: WeekRecord = {
@@ -529,12 +561,36 @@ export const runCommunityGenerationTick = async (
 	if (previous && started.getTime() - Date.parse(previous.lastAttemptAt) < retryAfterMs) return undefined;
 
 	const attempt = (previous?.attempts ?? 0) + 1;
+	// Persist the attempt before any paid call. If the process dies mid-run, or
+	// KeepAlive restarts it, the attempt still counts. If the record cannot be
+	// written, nothing is generated: attempts kept only in memory would reset
+	// with every restart.
+	const reservation: WeekRecord = {
+		status: "failed",
+		attempts: attempt,
+		lastAttemptAt: options.now().toISOString(),
+		code: "attempt_interrupted",
+		...(attempt >= maxAttempts ? { gaveUp: true } : {}),
+	};
+	const reserved = store(statusFor({ ...current.weeks, [weekStart]: reservation }, current.lastFailure));
+	if (Result.isFailure(reserved))
+		return finish(
+			{ event: "weekly-generation", weekStart, status: "failed", code: reserved.failure, publication: false },
+			"error",
+		);
+	options.memory?.weeks.set(weekStart, reservation);
 	const result = await Promise.resolve()
 		.then(() => options.generateWeek(weekStart))
 		.then(
 			(value) => value,
 			(): CommunityWeekGenerationResult => ({ status: "failed", code: "generation_failed" }),
 		);
+	if (result.status === "busy" || result.status === "cancelled") {
+		// Neither counts as an attempt: put the week back as it was.
+		store(current);
+		if (remembered === undefined) options.memory?.weeks.delete(weekStart);
+		else options.memory?.weeks.set(weekStart, remembered);
+	}
 	if (result.status === "busy")
 		// Another native draft holds the state directory. Not an attempt: try again next tick.
 		return finish({ event: "weekly-generation", weekStart, status: "busy", publication: false }, undefined);
@@ -595,15 +651,16 @@ export const runWeeklyCommunityGeneration = async (
 		options.sleep ??
 		((ms: number, signal: AbortSignal) =>
 			new Promise<void>((resolve) => {
-				const timer = setTimeout(resolve, ms);
-				signal.addEventListener(
-					"abort",
-					() => {
-						clearTimeout(timer);
-						resolve();
-					},
-					{ once: true },
-				);
+				const aborted = () => {
+					clearTimeout(timer);
+					resolve();
+				};
+				// Remove the listener when the timer fires too, or every tick leaks one.
+				const timer = setTimeout(() => {
+					signal.removeEventListener("abort", aborted);
+					resolve();
+				}, ms);
+				signal.addEventListener("abort", aborted, { once: true });
 			}));
 	const memory = options.memory ?? { notified: new Set<string>(), weeks: new Map<string, WeekRecord>() };
 	let lock: CommunityGenerationLock | undefined;

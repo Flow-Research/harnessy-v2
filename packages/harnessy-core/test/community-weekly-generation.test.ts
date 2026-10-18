@@ -48,6 +48,7 @@ import {
 	parseCommunityGenerationSchedule,
 	quarantineCommunityGenerationStatus,
 	readCommunityGenerationStatus,
+	repairCommunityGenerationStatus,
 	runCommunityGenerationTick,
 	runWeeklyCommunityGeneration,
 	sqliteQueuedWeeks,
@@ -475,6 +476,11 @@ describe("weekly community generation trigger", () => {
 		run.queued.break(false);
 		await run.tick();
 		expect(run.calls).toEqual(["2026-10-12"]);
+		// The fault cleared; a later recurrence is a new fault and is notified again.
+		run.queued.break(true);
+		run.at(wat("2026-10-25T23:05:00"));
+		await run.tick();
+		expect(run.notifications).toEqual(["error:0", "pending:1", "error:0"]);
 	});
 
 	it("rebuilds a damaged record from the queue, keeping the damaged copy", async () => {
@@ -524,6 +530,24 @@ describe("weekly community generation trigger", () => {
 		expect(run.calls).toEqual(["2026-10-12"]);
 	});
 
+	it("repairs only a record that cannot be read, never a valid one", async () => {
+		const run = harness(() => ({ status: "failed", code: "generation_failed" }));
+		expect(repairCommunityGenerationStatus(run.statusPath)).toEqual({ outcome: "missing" });
+		for (const time of ["2026-10-18T23:00:00", "2026-10-19T00:01:00", "2026-10-19T01:02:00"]) {
+			run.at(wat(time));
+			await run.tick();
+		}
+		const before = readFileSync(run.statusPath, "utf8");
+		expect(JSON.parse(before).weeks["2026-10-12"]).toMatchObject({ attempts: 3, gaveUp: true });
+		// A valid record holds the attempt limit: repairing it would buy three more paid attempts.
+		expect(repairCommunityGenerationStatus(run.statusPath)).toEqual({ outcome: "valid" });
+		expect(readFileSync(run.statusPath, "utf8")).toBe(before);
+		chmodSync(run.statusPath, 0o644);
+		const repaired = repairCommunityGenerationStatus(run.statusPath);
+		expect(repaired).toMatchObject({ outcome: "quarantined", fault: "status_record_unsafe" });
+		expect(existsSync(run.statusPath)).toBe(false);
+	});
+
 	it("refuses an oversized record and survives a failing notifier", async () => {
 		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
 		writeFileSync(run.statusPath, " ".repeat(300 * 1024), { mode: 0o600 });
@@ -536,17 +560,51 @@ describe("weekly community generation trigger", () => {
 		expect(run.events.at(-1)).toMatchObject({ status: "created", weekStart: "2026-10-12" });
 	});
 
-	it("does not reset the attempt limit when the record cannot be written", async () => {
+	it("generates nothing while the record cannot be written, and notifies once", async () => {
 		const run = harness(() => ({ status: "failed", code: "generation_failed" }));
 		chmodSync(run.root, 0o500);
-		for (const time of ["2026-10-18T23:00:00", "2026-10-19T00:01:00", "2026-10-19T01:02:00", "2026-10-19T02:03:00"]) {
+		for (const time of ["2026-10-18T23:00:00", "2026-10-19T00:01:00", "2026-10-19T01:02:00"]) {
 			run.at(wat(time));
 			await run.tick();
 		}
-		expect(run.calls).toHaveLength(3);
-		expect(run.events.every((event) => event.status === "failed")).toBe(true);
-		expect(run.events.map((event) => event.code)).toContain("status_record_unwritable");
-		expect(run.memory.weeks.get("2026-10-12")).toMatchObject({ attempts: 3, gaveUp: true });
+		// Attempts kept only in memory would reset at every KeepAlive restart.
+		expect(run.calls).toEqual([]);
+		expect(run.events.map((event) => [event.status, event.code])).toEqual([
+			["failed", "status_record_unwritable"],
+			["failed", "status_record_unwritable"],
+			["failed", "status_record_unwritable"],
+		]);
+		expect(run.notifications).toEqual(["error:0"]);
+		// Writable again: generation resumes, and a later recurrence is notified again.
+		chmodSync(run.root, 0o700);
+		run.at(wat("2026-10-19T02:03:00"));
+		await run.tick();
+		expect(run.calls).toEqual(["2026-10-12"]);
+		chmodSync(run.root, 0o500);
+		run.at(wat("2026-10-25T23:05:00"));
+		await run.tick();
+		expect(run.notifications).toEqual(["error:0", "error:0", "error:0"]);
+	});
+
+	it("counts an attempt before its paid call, so a restart mid-run cannot reset the limit", async () => {
+		const seen: Array<unknown> = [];
+		// Each generation never finishes: the process is killed or restarted mid-run.
+		const run = harness(() => {
+			seen.push(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]);
+			return new Promise<CommunityWeekGenerationResult>(() => undefined);
+		});
+		for (const time of ["2026-10-18T23:00:00", "2026-10-19T00:01:00", "2026-10-19T01:02:00", "2026-10-19T02:03:00"]) {
+			run.at(wat(time));
+			// A fresh process each time, as after a KeepAlive restart.
+			void run.tick({ memory: { notified: new Set(), weeks: new Map() } });
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		expect(run.calls).toEqual(["2026-10-12", "2026-10-12", "2026-10-12"]);
+		expect(seen).toEqual([
+			expect.objectContaining({ status: "failed", attempts: 1, code: "attempt_interrupted" }),
+			expect.objectContaining({ attempts: 2, code: "attempt_interrupted" }),
+			expect.objectContaining({ attempts: 3, code: "attempt_interrupted", gaveUp: true }),
+		]);
 	});
 
 	it("does nothing when disabled", async () => {
@@ -575,6 +633,32 @@ describe("queue and scheduler lock", () => {
 			{ weekStart: "2026-10-12", briefingId: briefingId("2026-10-12") },
 			{ weekStart: "2026-10-05", briefingId: briefingId("2026-10-05") },
 		]);
+	});
+
+	it("does not accumulate abort listeners across ticks", async () => {
+		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
+		const controller = new AbortController();
+		let live = 0;
+		const add = controller.signal.addEventListener.bind(controller.signal);
+		const remove = controller.signal.removeEventListener.bind(controller.signal);
+		controller.signal.addEventListener = ((...args: Parameters<typeof add>) => {
+			live++;
+			add(...args);
+		}) as typeof add;
+		controller.signal.removeEventListener = ((...args: Parameters<typeof remove>) => {
+			live--;
+			remove(...args);
+		}) as typeof remove;
+		const done = runWeeklyCommunityGeneration({
+			...run.options,
+			acquireLock: () => ({ release: () => undefined }),
+			signal: controller.signal,
+			tickMs: 1,
+		});
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		controller.abort();
+		await done;
+		expect(live).toBeLessThanOrEqual(1);
 	});
 
 	it("lets only one holder run the scheduler, within and across processes", async () => {

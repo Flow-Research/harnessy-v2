@@ -634,7 +634,8 @@ class ReviewRendezvousTests(unittest.TestCase):
     def test_a_leftover_staged_file_from_a_reused_pid_never_blocks_startup(self):
         leftover = self.state / f".community-review.rendezvous.json.{os.getpid()}"
         leftover.write_text("left by a review that died while publishing\n")
-        path, body = self.adapter.publish_review_rendezvous(self.state, 8872)
+        path, body, previous = self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertIsNone(previous)
         self.assertEqual(path.read_bytes(), body)
         self.assertEqual(json.loads(body)["port"], 8872)
         self.assertEqual(path.stat().st_mode & 0o7777, 0o600)
@@ -660,23 +661,55 @@ class ReviewRendezvousTests(unittest.TestCase):
         self.assertEqual(self.staged(), [fresh.name, link.name])
 
     def test_a_review_withdraws_only_its_own_rendezvous(self):
-        first_path, first = self.adapter.publish_review_rendezvous(self.state, 8872)
+        first_path, first, _ = self.adapter.publish_review_rendezvous(self.state, 8872)
         # KeepAlive started a new review before the old one finished shutting down.
-        second_path, second = self.adapter.publish_review_rendezvous(self.state, 8872)
+        second_path, second, replaced = self.adapter.publish_review_rendezvous(self.state, 8872)
         self.assertEqual(first_path, second_path)
         self.assertNotEqual(first, second)
-        self.adapter.withdraw_review_rendezvous(first_path, first)
+        self.assertEqual(replaced, first)
+        self.adapter.withdraw_review_rendezvous(first_path, first, None)
         self.assertEqual(second_path.read_bytes(), second)
-        self.adapter.withdraw_review_rendezvous(second_path, second)
+        self.adapter.withdraw_review_rendezvous(second_path, second, None)
         self.assertFalse(second_path.exists())
         # Already gone, or replaced by a link: nothing to withdraw, nothing followed.
-        self.adapter.withdraw_review_rendezvous(second_path, second)
+        self.adapter.withdraw_review_rendezvous(second_path, second, None)
         target = self.state / "target"
         target.write_bytes(second)
         second_path.symlink_to(target)
-        self.adapter.withdraw_review_rendezvous(second_path, second)
+        self.adapter.withdraw_review_rendezvous(second_path, second, None)
         self.assertTrue(second_path.is_symlink())
         self.assertEqual(self.staged(), [])
+
+    def test_a_foreground_review_hands_the_rendezvous_back_to_the_service(self):
+        path, service, _ = self.adapter.publish_review_rendezvous(self.state, 8872)
+        _, foreground, previous = self.adapter.publish_review_rendezvous(self.state, 8873)
+        self.assertEqual(previous, service)
+        self.assertEqual(json.loads(path.read_bytes())["port"], 8873)
+        # The foreground review exits while the service keeps serving.
+        self.adapter.withdraw_review_rendezvous(path, foreground, previous)
+        self.assertEqual(path.read_bytes(), service)
+        self.assertEqual(path.stat().st_mode & 0o7777, 0o600)
+        self.assertEqual(self.staged(), [])
+
+    def test_a_lock_file_error_never_leaves_the_review_lock_held(self):
+        sources = self.state / "sources"
+        sources.mkdir()
+        config = self.adapter.CommunityBriefingConfig(
+            source_path=str(sources), draft_path=str(self.state / "drafts"),
+            state_path=str(self.state / "state"), timezone="Africa/Lagos",
+            ai_provider="codex", enabled=False,
+        )
+        service = self.adapter.NativeReviewService(config)
+        self.addCleanup(service.close)
+        # The lock path is a link: opening it fails with ELOOP, not "busy".
+        lock = Path(config.state_path) / "community-native-draft.lock"
+        lock.symlink_to(self.state / "elsewhere")
+        for _ in range(2):
+            with self.assertRaises(OSError):
+                with service.native_run({"action": "revise"}):
+                    pass
+        self.assertTrue(service.native_lock.acquire(blocking=False))
+        service.native_lock.release()
 
 
 if __name__ == "__main__":

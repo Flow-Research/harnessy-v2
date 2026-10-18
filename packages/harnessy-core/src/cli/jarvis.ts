@@ -24,8 +24,8 @@ import {
 import {
 	COMMUNITY_GENERATION_STATUS_FILE,
 	parseCommunityGenerationSchedule,
-	quarantineCommunityGenerationStatus,
 	readCommunityGenerationStatus,
+	repairCommunityGenerationStatus,
 } from "../jarvis/community-briefing/weekly-generation.ts";
 import { JarvisConfigReader } from "../jarvis/config.ts";
 import { JarvisCredentialResolver } from "../jarvis/credentials.ts";
@@ -787,18 +787,20 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 				briefing.timezone ?? "Africa/Lagos",
 			);
 			const path = join(resolved.stateRoot, COMMUNITY_GENERATION_STATUS_FILE);
-			const quarantined = repair ? (quarantineCommunityGenerationStatus(path) ?? null) : null;
-			const read = repair
-				? { record: null, fault: null }
-				: yield* Effect.sync(() => {
-						const outcome = Result.try({
-							try: () => readCommunityGenerationStatus(path) ?? null,
-							catch: (cause) => (cause instanceof Error ? cause.message : "status_record_unreadable"),
+			const repaired = repair ? repairCommunityGenerationStatus(path) : null;
+			const quarantined = repaired?.outcome === "quarantined" ? repaired.movedTo : null;
+			const read =
+				quarantined !== null
+					? { record: null, fault: null }
+					: yield* Effect.sync(() => {
+							const outcome = Result.try({
+								try: () => readCommunityGenerationStatus(path) ?? null,
+								catch: (cause) => (cause instanceof Error ? cause.message : "status_record_unreadable"),
+							});
+							return Result.isSuccess(outcome)
+								? { record: outcome.success, fault: null }
+								: { record: null, fault: outcome.failure };
 						});
-						return Result.isSuccess(outcome)
-							? { record: outcome.success, fault: null }
-							: { record: null, fault: outcome.failure };
-					});
 			const { record, fault } = read;
 			const [latestWeek, latest] =
 				Object.entries(record?.weeks ?? {}).sort(([a], [b]) => b.localeCompare(a))[0] ?? [];
@@ -812,6 +814,7 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 							path,
 							schedule: { ...schedule, issues },
 							fault,
+							repair: repaired?.outcome ?? null,
 							quarantined,
 							latestWeek: latestWeek ?? null,
 							record,
@@ -826,6 +829,8 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 					yield* Console.log(
 						`Moved the record to ${quarantined}; the review service rebuilds it from the queue at its next tick.`,
 					);
+				else if (repaired?.outcome === "valid")
+					yield* Console.log("The record is valid; it was left unchanged (it bounds paid retries).");
 				else if (repair) yield* Console.log("No record to repair.");
 				if (fault !== null)
 					yield* Console.log(`Record fault: ${fault}. Run with --repair to move it aside and rebuild it.`);

@@ -289,6 +289,11 @@ class NativeReviewService(NativeCommunityService):
         except AdapterRefusal:
             self.native_lock.release()
             raise ValueError("Another native draft is running; retry after it finishes.") from None
+        except BaseException:
+            # Any other lock-file error (ELOOP, EACCES, EMFILE ...) must not leave
+            # this reviewer's in-process lock held, or every later revision fails.
+            self.native_lock.release()
+            raise
         run_id = str(uuid.uuid4())
         try:
             validate_paths(self.config.model_dump())
@@ -378,7 +383,7 @@ def serve_native_review(request):
     parent = os.getppid()
     server.timeout = 0.5
     token = review_token(service.state_root)
-    rendezvous, published = publish_review_rendezvous(service.state_root, server.server_port)
+    rendezvous, published, previous = publish_review_rendezvous(service.state_root, server.server_port)
     try:
         emit({"type": "ready", "url": f"http://127.0.0.1:{server.server_port}/?token={token}",
               "publication": False})
@@ -386,7 +391,7 @@ def serve_native_review(request):
             server.handle_request()
     finally:
         server.server_close()
-        withdraw_review_rendezvous(rendezvous, published)
+        withdraw_review_rendezvous(rendezvous, published, previous)
         service.close()
 
 
@@ -434,6 +439,7 @@ def publish_review_rendezvous(state_root, port):
         "instance": instance,
     }, sort_keys=True) + "\n").encode()
     _sweep_stale_staged(state_root)
+    previous = _read_rendezvous(path)
     # A random suffix: a leftover from a crashed review whose PID is reused can
     # never block startup (which, under KeepAlive, would be a restart loop).
     staged = state_root / f".{REVIEW_RENDEZVOUS}.{os.getpid()}.{instance}"
@@ -448,24 +454,53 @@ def publish_review_rendezvous(state_root, port):
     except BaseException:
         staged.unlink(missing_ok=True)
         raise
-    return path, body
+    return path, body, previous
 
 
-def withdraw_review_rendezvous(path, published):
-    """Remove the rendezvous only while it is still the one this review wrote.
+MAX_RENDEZVOUS_BYTES = 4096
 
-    A restarted review may already have replaced it; that newer file stays.
-    """
+
+def _read_rendezvous(path):
+    """The current rendezvous bytes, or None. Never follows a link."""
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-    except (FileNotFoundError, OSError):
-        return
+    except OSError:
+        return None
     try:
-        current = os.read(descriptor, len(published) + 1)
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            return None
+        return os.read(descriptor, MAX_RENDEZVOUS_BYTES + 1)[:MAX_RENDEZVOUS_BYTES + 1]
     finally:
         os.close(descriptor)
-    if current == published:
+
+
+def withdraw_review_rendezvous(path, published, previous=None):
+    """Withdraw this review's rendezvous only while it is still the one it wrote.
+
+    A newer review (a KeepAlive restart) may already have replaced it: that file
+    stays. When this review replaced another review's rendezvous (a foreground
+    review beside the service), that one is restored, so the launcher returns
+    to the service. A restored rendezvous whose review has ended is harmless:
+    the launcher's identity challenge rejects it.
+    """
+    if _read_rendezvous(path) != published:
+        return
+    if previous is None or len(previous) > MAX_RENDEZVOUS_BYTES:
         path.unlink(missing_ok=True)
+        return
+    staged = Path(path).parent / f".{REVIEW_RENDEZVOUS}.{os.getpid()}.{secrets.token_hex(16)}"
+    descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            os.write(descriptor, previous)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(staged, path)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
 
 
 def main():
