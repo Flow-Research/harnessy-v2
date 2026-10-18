@@ -29,6 +29,7 @@ import {
 import { readCommunityOperation } from "../../harnessy-core/src/jarvis/community-briefing/operational-input.ts";
 import {
 	CommunityOperationSystemReference,
+	isCommunityCompatibilityWriterCommand,
 	makeCommunityCompatibilityProof,
 	runAuthorizedCommunityBriefing,
 } from "../../harnessy-core/src/jarvis/community-briefing/operational-runtime.ts";
@@ -1298,6 +1299,120 @@ describe("community operational consumer", () => {
 					return { exit: yield* Fiber.await(fiber), elapsed };
 				}).pipe(Effect.provide(TestClock.layer())),
 			);
+
+		/**
+		 * The installation's own native reviewer is running and its launch agent is loaded.
+		 * `lsof` decides whether its exemption can be verified: "ok" verifies it, "timeout"
+		 * models a dark wake, and "other" answers definitively that it is not exempt.
+		 */
+		const nativeReviewerHost = () => {
+			const uid = process.geteuid?.() ?? 0;
+			const entryRoot = mkdtempSync(join(realpathSync(tmpdir()), "native-reviewer-"));
+			const entry = join(entryRoot, "harnessy-core", "dist", "cli.js");
+			mkdirSync(join(entryRoot, "harnessy-core", "dist"), { recursive: true });
+			writeFileSync(entry, "");
+			const commandLine = `${process.execPath} ${entry} jarvis community briefing review serve`;
+			let lsof: "ok" | "timeout" | "other" = "ok";
+			const run = (command: string, args: ReadonlyArray<string>) => {
+				const answer = (stdout: string, status: number | null = 0) => ({
+					status,
+					signal: null,
+					stdout,
+					stderr: "",
+				});
+				if (command === "/bin/ps" && args[0] === "-axo") return answer(`${uid} 4242 ${commandLine}\n`);
+				if (command === "/bin/ps" && args.at(-1) === "comm=") return answer(`${process.execPath}\n`);
+				if (command === "/bin/ps") return answer(`${uid} 4242 ${commandLine}\n`);
+				if (command === "/usr/sbin/lsof") {
+					if (lsof === "timeout")
+						return {
+							status: null,
+							signal: "SIGTERM",
+							error: Object.assign(new Error("spawnSync lsof ETIMEDOUT"), { code: "ETIMEDOUT" }),
+							stdout: "",
+							stderr: "",
+						};
+					return answer(`p4242\0\nftxt\0n${lsof === "ok" ? process.execPath : "/usr/bin/python3"}\0\n`);
+				}
+				if (command === "/bin/launchctl")
+					return String(args[1]).endsWith("com.flow-harness.community-review-v2")
+						? answer("pid = 4242\n")
+						: { status: 113, signal: null, stdout: "", stderr: "Could not find service in domain\n" };
+				throw new Error("unexpected OS command");
+			};
+			return {
+				commandLine,
+				proof: makeCommunityCompatibilityProof(run, "darwin", { executable: process.execPath, entry }),
+				setLsof: (mode: "ok" | "timeout" | "other") => {
+					lsof = mode;
+				},
+				cleanup: () => rmSync(entryRoot, { recursive: true, force: true }),
+			};
+		};
+
+		it("pauses on a dark-wake lsof timeout for the exempt native reviewer, then recovers and publishes", async () => {
+			const f = await fixture(undefined, true);
+			const host = nativeReviewerHost();
+			try {
+				expect(isCommunityCompatibilityWriterCommand(host.commandLine)).toBe(true);
+				f.setProof(host.proof);
+				host.setLsof("timeout");
+				const { exit } = await runWithClock(f.run(), (elapsed) => {
+					if (elapsed < 20_000 && f.wire.requests.length !== 0) throw new Error("provider called while paused");
+					if (elapsed === 20_000) host.setLsof("ok");
+				});
+				expect(Exit.isSuccess(exit) && exit.value).toMatchObject({ status: "published" });
+				const kinds = f.writerCheckEvents.map((event) => event.event);
+				expect(f.writerCheckEvents[0]).toMatchObject({
+					event: "writer_check_inconclusive",
+					reason: "lsof_timeout",
+				});
+				expect(kinds.at(-1)).toBe("writer_check_recovered");
+				expect(kinds).not.toContain("writer_check_escalated");
+			} finally {
+				host.cleanup();
+				await f.cleanup();
+			}
+		});
+
+		it("escalates a native-reviewer exemption that stays unverifiable for the window", async () => {
+			const f = await fixture(undefined, true);
+			const host = nativeReviewerHost();
+			try {
+				f.setProof(host.proof);
+				host.setLsof("timeout");
+				const { exit, elapsed } = await runWithClock(f.run(), () => undefined, 5_000);
+				expect(Exit.isFailure(exit)).toBe(true);
+				expect(JSON.stringify(exit)).toContain("lsof_timeout");
+				expect(elapsed).toBeGreaterThanOrEqual(WRITER_CHECK_INCONCLUSIVE_WINDOW_MS);
+				expect(f.writerCheckEvents.at(-1)).toMatchObject({
+					event: "writer_check_escalated",
+					reason: "lsof_timeout",
+				});
+				expect(f.wire.requests).toHaveLength(0);
+			} finally {
+				host.cleanup();
+				await f.cleanup();
+			}
+		});
+
+		it("stops at once when the exemption check answers definitively that the process is not exempt", async () => {
+			const f = await fixture(undefined, true);
+			const host = nativeReviewerHost();
+			try {
+				f.setProof(host.proof);
+				host.setLsof("other");
+				const { exit, elapsed } = await runWithClock(f.run(), () => undefined);
+				expect(Exit.isFailure(exit)).toBe(true);
+				expect(JSON.stringify(exit)).toContain("compatibility_writer_present");
+				expect(elapsed).toBeLessThanOrEqual(1_000);
+				expect(f.writerCheckEvents).toEqual([]);
+				expect(f.wire.requests).toHaveLength(0);
+			} finally {
+				host.cleanup();
+				await f.cleanup();
+			}
+		});
 
 		it("pauses a service run on a probe timeout, publishes nothing meanwhile, and publishes after recovery", async () => {
 			const f = await fixture(undefined, true);
