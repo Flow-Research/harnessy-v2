@@ -102,7 +102,9 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 	const [palette, setPalette] = useState(false);
 	const inbox = useResource<InboxResponse>("/v1/inbox");
 	const jobs = useResource<JobsResponse>("/v1/jobs");
-	const tasks = store.get("/v1/tasks").data as TasksResponse | undefined;
+	// The palette searches tasks: while it is open it reads them, even before the Tasks screen has.
+	const paletteTasks = useResource<TasksResponse>(palette ? "/v1/tasks" : null);
+	const tasks = paletteTasks.data ?? (store.get("/v1/tasks").data as TasksResponse | undefined);
 
 	useEffect(() => {
 		const timer = setInterval(() => setNow(Date.now()), 5_000);

@@ -34,15 +34,17 @@ export const tasksForTab = (tasks: ReadonlyArray<Task>, tab: TaskTab): ReadonlyA
 			return tasks.filter((task) => open(task) && (!task.mine || task.status === "waiting"));
 		case "project":
 			// Grouped by project; tasks without a project come last.
-			return tasks.filter(open).sort((a, b) =>
-				a.project === b.project
-					? 0
-					: a.project === null
-						? 1
-						: b.project === null
-							? -1
-							: a.project.localeCompare(b.project),
-			);
+			return tasks
+				.filter(open)
+				.sort((a, b) =>
+					a.project === b.project
+						? 0
+						: a.project === null
+							? 1
+							: b.project === null
+								? -1
+								: a.project.localeCompare(b.project),
+				);
 		case "done":
 			return tasks.filter((task) => !open(task));
 	}

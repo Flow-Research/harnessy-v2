@@ -109,11 +109,15 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 			>
 				{dates?.state === "ok" && dates.data !== undefined && dates.data.dates.length > 0 ? (
 					<nav className="date-switcher" aria-label="Recent briefs">
-						{dates.data.dates.map((entry, index) => (
+						{dates.data.dates.map((entry) => (
 							<a
 								key={entry.date}
-								href={index === 0 && date === undefined ? routeHref("today") : routeHref("today", entry.date)}
-								className={(date ?? dates.data!.dates[0]!.date) === entry.date ? "chip chip-current" : "chip"}
+								href={routeHref("today", entry.date)}
+								className={
+									(date ?? (briefTile?.state === "ok" ? briefTile.data?.date : undefined)) === entry.date
+										? "chip chip-current"
+										: "chip"
+								}
 							>
 								{dayLabel(entry.date)}
 							</a>

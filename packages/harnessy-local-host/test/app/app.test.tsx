@@ -257,6 +257,18 @@ describe("the app against a real portal", () => {
 			input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 		});
 		expect(container.querySelector('[role="dialog"]')).toBeNull();
+		// Tasks are searchable from the palette, which reads them itself.
+		await press("k", { metaKey: true });
+		const again = container.querySelector<HTMLInputElement>(".palette-input")!;
+		await act(async () => {
+			const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+			setter.call(again, "tasks approve the budget");
+			again.dispatchEvent(new Event("input", { bubbles: true }));
+		});
+		await waitFor(() => expect(container.querySelectorAll(".palette-item")).toHaveLength(1));
+		await act(async () => {
+			again.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+		});
 
 		// The theme toggle remembers a manual choice on this device.
 		await act(async () => {
