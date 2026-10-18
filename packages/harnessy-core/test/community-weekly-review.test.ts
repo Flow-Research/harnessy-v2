@@ -165,10 +165,14 @@ it("drafts each due week once as a one-shot child of the review service, and not
 	const review = run.requests().find((request) => request.action === "review")!;
 	expect(run.generations().every((request) => request.pid !== review.pid)).toBe(true);
 	expect(run.notifications).toEqual(["pending:1", "pending:1"]);
-	expect(run.logs.find((value) => value.event === "ready")).toMatchObject({
+	const ready = run.logs.find((value) => value.event === "ready");
+	expect(ready).toMatchObject({
+		reviewOrigin: "http://127.0.0.1:9",
 		weeklyGeneration: { weekday: 0, time: "23:00", timezone: "Africa/Lagos" },
 		publication: false,
 	});
+	// The LaunchAgent's persisted log never holds the review bearer token.
+	expect(JSON.stringify(run.logs)).not.toContain("token=");
 	await service.stop();
 	const restarted = run.serve();
 	await until(() => run.logs.filter((value) => value.event === "ready").length === 2);
@@ -276,7 +280,11 @@ it("never runs the trigger in a foreground review", async () => {
 	const service = run.serve({ weeklyGeneration: false });
 	await until(() => run.logs.some((value) => value.event === "ready"));
 	await settle();
-	expect(run.logs.find((value) => value.event === "ready")).toMatchObject({ weeklyGeneration: false });
+	// A foreground review prints the link for its owner.
+	expect(run.logs.find((value) => value.event === "ready")).toMatchObject({
+		reviewUrl: "http://127.0.0.1:9/?token=fixture",
+		weeklyGeneration: false,
+	});
 	expect(run.generations()).toEqual([]);
 	await service.stop();
 });

@@ -191,7 +191,10 @@ export const serveCommunityReview = async (options: CommunityReviewServiceOption
 			options.log({
 				command: "jarvis community briefing review serve",
 				event: "ready",
-				reviewUrl,
+				// The link carries the review bearer token. The LaunchAgent persists stdout in a
+				// long-lived log, so the service records only the origin; a foreground review
+				// prints the link for its owner.
+				...(options.weeklyGeneration ? { reviewOrigin: new URL(reviewUrl).origin } : { reviewUrl }),
 				weeklyGeneration:
 					options.weeklyGeneration && schedule.enabled
 						? {
