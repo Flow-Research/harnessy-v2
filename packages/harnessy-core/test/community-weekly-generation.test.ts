@@ -1,6 +1,21 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,20 +26,26 @@ import {
 } from "../src/jarvis/community-briefing/operational-runtime.ts";
 import {
 	COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL,
+	expectedReviewerRelease,
 	installCommunityReviewSchedule,
 	planCommunityReviewSchedule,
 } from "../src/jarvis/community-briefing/schedule.ts";
 import {
+	acquireCommunityGenerationLock,
 	COMMUNITY_GENERATION_STATUS_FILE,
 	type CommunityGenerationEvent,
 	type CommunityGenerationMemory,
+	type CommunityGenerationSchedule,
+	type CommunityQueuedWeeks,
 	type CommunityWeekGenerationResult,
 	DEFAULT_COMMUNITY_GENERATION_SCHEDULE,
 	dueCommunityGenerationWeek,
 	parseCommunityGenerationSchedule,
+	quarantineCommunityGenerationStatus,
 	readCommunityGenerationStatus,
 	runCommunityGenerationTick,
 	runWeeklyCommunityGeneration,
+	sqliteQueuedWeeks,
 	type WeeklyCommunityGenerationOptions,
 } from "../src/jarvis/community-briefing/weekly-generation.ts";
 import { JarvisPathResolver, JarvisRuntimeRoots } from "../src/jarvis/paths.ts";
@@ -48,23 +69,53 @@ const schedule = DEFAULT_COMMUNITY_GENERATION_SCHEDULE;
 const wat = (iso: string) => new Date(`${iso}+01:00`);
 const briefingId = (week: string) => week.replaceAll("-", "").padEnd(24, "a");
 
+/** An in-memory queue: generating a week queues its draft, as the adapter does. */
+const memoryQueue = () => {
+	const weeks = new Map<string, string>();
+	let broken = false;
+	const queue: CommunityQueuedWeeks = {
+		find: (week) => {
+			if (broken) throw new Error("database is locked");
+			return weeks.get(week);
+		},
+		list: (limit) =>
+			[...weeks.entries()]
+				.sort(([a], [b]) => b.localeCompare(a))
+				.slice(0, limit)
+				.map(([weekStart, id]) => ({ weekStart, briefingId: id })),
+	};
+	return {
+		queue,
+		weeks,
+		break: (value: boolean) => {
+			broken = value;
+		},
+	};
+};
+
 const harness = (
 	answer: (week: string, call: number) => CommunityWeekGenerationResult | Promise<CommunityWeekGenerationResult>,
+	options: { readonly queueOnCreate?: boolean } = {},
 ) => {
 	const root = temporary();
 	const statusPath = join(root, COMMUNITY_GENERATION_STATUS_FILE);
 	const calls: string[] = [];
 	const events: CommunityGenerationEvent[] = [];
 	const notifications: string[] = [];
+	const queued = memoryQueue();
 	let now = wat("2026-10-18T23:05:00");
 	const memory: CommunityGenerationMemory = { notified: new Set(), weeks: new Map() };
-	const options: WeeklyCommunityGenerationOptions = {
+	const base: WeeklyCommunityGenerationOptions = {
 		schedule,
 		statusPath,
+		queue: queued.queue,
 		now: () => now,
 		generateWeek: async (week) => {
 			calls.push(week);
-			return answer(week, calls.length);
+			const result = await answer(week, calls.length);
+			if (result.status === "created" && options.queueOnCreate !== false)
+				queued.weeks.set(week, result.briefingId ?? briefingId(week));
+			return result;
 		},
 		report: (event) => events.push(event),
 		notify: async (kind, count) => {
@@ -80,12 +131,13 @@ const harness = (
 		events,
 		notifications,
 		memory,
-		options,
+		queued,
+		options: base,
 		at: (value: Date) => {
 			now = value;
 		},
 		tick: (overrides: Partial<WeeklyCommunityGenerationOptions> = {}) =>
-			runCommunityGenerationTick({ ...options, ...overrides }),
+			runCommunityGenerationTick({ ...base, ...overrides }),
 	};
 };
 
@@ -102,30 +154,85 @@ describe("weekly community generation schedule", () => {
 	});
 
 	it("supports a configured Monday-morning run for the week that ended the day before", () => {
-		const monday = parseCommunityGenerationSchedule(true, { weekday: "monday", time: "08:00" });
+		const monday = parseCommunityGenerationSchedule(true, { weekday: "monday", time: "08:00" }).schedule;
 		expect(monday).toEqual({ enabled: true, weekday: 1, hour: 8, minute: 0, timezone: "Africa/Lagos" });
 		expect(dueCommunityGenerationWeek(wat("2026-10-19T07:59:00"), monday)).toBe("2026-10-05");
 		expect(dueCommunityGenerationWeek(wat("2026-10-19T08:00:00"), monday)).toBe("2026-10-12");
 		expect(dueCommunityGenerationWeek(wat("2026-10-21T08:00:00"), monday)).toBe("2026-10-12");
-		const saturday = parseCommunityGenerationSchedule(true, { weekday: "saturday", time: "09:30" });
+		const saturday = parseCommunityGenerationSchedule(true, { weekday: "saturday", time: "09:30" }).schedule;
 		expect(dueCommunityGenerationWeek(wat("2026-10-24T09:30:00"), saturday)).toBe("2026-10-12");
 	});
 
-	it("is on by default only when the community workflow is enabled, and rejects bad settings", () => {
-		expect(parseCommunityGenerationSchedule(true, undefined)).toEqual(DEFAULT_COMMUNITY_GENERATION_SCHEDULE);
-		expect(parseCommunityGenerationSchedule(undefined, undefined).enabled).toBe(false);
-		expect(parseCommunityGenerationSchedule("true", undefined).enabled).toBe(false);
-		expect(parseCommunityGenerationSchedule(true, { enabled: false }).enabled).toBe(false);
-		for (const value of [{ time: "24:00" }, { time: "7:00" }, { weekday: "funday" }, { cron: "0 23 * * 0" }])
-			expect(() => parseCommunityGenerationSchedule(true, value), JSON.stringify(value)).toThrow();
-		expect(() => parseCommunityGenerationSchedule(true, undefined, "Not/AZone")).toThrow();
+	it("fires once across daylight-saving changes in the configured zone", async () => {
+		// Europe/London falls back at 02:00 BST on Sunday 2026-10-25: 01:30 happens twice.
+		const london: CommunityGenerationSchedule = {
+			...parseCommunityGenerationSchedule(true, { time: "01:30" }, "Europe/London").schedule,
+		};
+		expect(london.timezone).toBe("Europe/London");
+		const fallBack = ["2026-10-25T00:20:00Z", "2026-10-25T00:30:00Z", "2026-10-25T01:00:00Z", "2026-10-25T01:30:00Z"];
+		expect(fallBack.map((iso) => dueCommunityGenerationWeek(new Date(iso), london))).toEqual([
+			"2026-10-12", // 01:20 BST, before the first 01:30
+			"2026-10-19", // 01:30 BST
+			"2026-10-12", // 01:00 GMT: the clocks went back, so 01:30 is ahead again
+			"2026-10-19", // 01:30 GMT, the repeated 01:30
+		]);
+		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
+		run.queued.weeks.set("2026-10-12", briefingId("2026-10-12"));
+		for (const iso of fallBack) {
+			run.at(new Date(iso));
+			await run.tick({ schedule: london });
+		}
+		expect(run.calls).toEqual(["2026-10-19"]);
+		// America/New_York springs forward on Sunday 2026-03-08: 02:30 never happens.
+		const newYork = parseCommunityGenerationSchedule(true, { time: "02:30" }, "America/New_York").schedule;
+		expect(dueCommunityGenerationWeek(new Date("2026-03-08T06:59:00Z"), newYork)).toBe("2026-02-23"); // 01:59 EST
+		expect(dueCommunityGenerationWeek(new Date("2026-03-08T07:00:00Z"), newYork)).toBe("2026-03-02"); // 03:00 EDT
+	});
+
+	it("is on by default only when the community workflow is enabled", () => {
+		expect(parseCommunityGenerationSchedule(true, undefined)).toEqual({
+			schedule: DEFAULT_COMMUNITY_GENERATION_SCHEDULE,
+			issues: [],
+		});
+		expect(parseCommunityGenerationSchedule(undefined, undefined)).toMatchObject({
+			schedule: { enabled: false },
+			issues: [],
+		});
+		expect(parseCommunityGenerationSchedule(false, undefined).issues).toEqual([]);
+		expect(parseCommunityGenerationSchedule(true, { enabled: false })).toMatchObject({
+			schedule: { enabled: false },
+			issues: [],
+		});
+	});
+
+	it("reports bad settings and disables only generation, never throwing", () => {
+		// A string "true" is not silently treated as off: it is an issue.
+		expect(parseCommunityGenerationSchedule("true", undefined)).toEqual({
+			schedule: { ...DEFAULT_COMMUNITY_GENERATION_SCHEDULE, enabled: false },
+			issues: ["community_briefing.enabled must be true or false"],
+		});
+		for (const value of [
+			{ time: "24:00" },
+			{ time: "7:00" },
+			{ weekday: "funday" },
+			{ cron: "0 23 * * 0" },
+			{ enabled: "yes" },
+			"sunday",
+		]) {
+			const parsed = parseCommunityGenerationSchedule(true, value);
+			expect(parsed.schedule.enabled, JSON.stringify(value)).toBe(false);
+			expect(parsed.issues.length, JSON.stringify(value)).toBeGreaterThan(0);
+		}
+		expect(parseCommunityGenerationSchedule(true, undefined, "Not/AZone")).toMatchObject({
+			schedule: { enabled: false, timezone: "Africa/Lagos" },
+			issues: ["community_briefing.timezone is not a known time zone"],
+		});
 	});
 });
 
 describe("weekly community generation trigger", () => {
 	it("fires exactly once per week across ticks, restarts and catch-up", async () => {
 		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
-		// Before the first occurrence the previous week is due; an existing draft answers it.
 		for (let tick = 0; tick < 6; tick++) {
 			run.at(new Date(wat("2026-10-18T23:00:00").getTime() + tick * 10 * 60 * 1000));
 			await run.tick();
@@ -146,12 +253,19 @@ describe("weekly community generation trigger", () => {
 		expect(record?.weeks["2026-10-26"]).toMatchObject({ status: "created", attempts: 1 });
 		expect(record?.publication).toBe(false);
 		expect(run.notifications).toEqual(["pending:1", "pending:1", "pending:1"]);
-		expect(readFileSync(run.statusPath).length).toBeGreaterThan(0);
 		expect(statSync(run.statusPath).mode & 0o777).toBe(0o600);
+	});
+
+	it("does not repeat the notice the generation itself delivered", async () => {
+		const run = harness((week) => ({ status: "created", briefingId: briefingId(week), notified: true }));
+		await run.tick();
+		expect(run.events.at(-1)).toMatchObject({ status: "created" });
+		expect(run.notifications).toEqual([]);
 	});
 
 	it("drives the loop with an injected clock and stops when the review stops", async () => {
 		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
+		run.queued.weeks.set("2026-10-05", briefingId("2026-10-05"));
 		const controller = new AbortController();
 		const instants = [
 			wat("2026-10-18T22:50:00"),
@@ -161,39 +275,84 @@ describe("weekly community generation trigger", () => {
 			wat("2026-10-26T06:00:00"),
 		];
 		let sleeps = 0;
+		let released = 0;
 		await runWeeklyCommunityGeneration({
 			...run.options,
 			memory: undefined,
 			now: () => instants[Math.min(sleeps, instants.length - 1)]!,
+			acquireLock: () => ({
+				release: () => {
+					released++;
+				},
+			}),
 			signal: controller.signal,
 			sleep: async () => {
 				sleeps++;
 				if (sleeps === instants.length) controller.abort();
 			},
 		});
-		// One call for the week due before the first occurrence, then one per new week.
-		expect(run.calls).toEqual(["2026-10-05", "2026-10-12", "2026-10-19"]);
+		// The week already queued before the first occurrence is recorded, not regenerated.
+		expect(run.calls).toEqual(["2026-10-12", "2026-10-19"]);
+		expect(released).toBe(1);
 	});
 
-	it("is idempotent: an existing draft is recorded and never regenerated", async () => {
-		const run = harness((week) => ({ status: "existing", briefingId: briefingId(week) }));
+	it("is idempotent: a week already in the queue is recorded and never generated", async () => {
+		const run = harness(() => ({ status: "created" }));
+		run.queued.weeks.set("2026-10-12", briefingId("2026-10-12"));
 		await run.tick();
 		await run.tick();
-		expect(run.calls).toEqual(["2026-10-12"]);
+		expect(run.calls).toEqual([]);
 		expect(run.notifications).toEqual([]);
-		expect(run.events.map((event) => event.status)).toEqual(["existing"]);
+		// A missing record is rebuilt from the queue, so the week is already done.
+		expect(run.events).toEqual([]);
 		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
 			status: "existing",
+			attempts: 0,
 			briefingId: briefingId("2026-10-12"),
 		});
 	});
 
-	it("does not count a busy adapter as an attempt", async () => {
+	it("records a draft queued by someone else since the record was written", async () => {
+		const run = harness(() => ({ status: "created" }));
+		run.queued.weeks.set("2026-10-05", briefingId("2026-10-05"));
+		run.at(wat("2026-10-18T22:00:00"));
+		await run.tick();
+		// A manual `generate` queues the next week.
+		run.queued.weeks.set("2026-10-12", briefingId("2026-10-12"));
+		run.at(wat("2026-10-18T23:05:00"));
+		await run.tick();
+		expect(run.calls).toEqual([]);
+		expect(run.events).toEqual([
+			{
+				event: "weekly-generation",
+				weekStart: "2026-10-12",
+				status: "existing",
+				briefingId: briefingId("2026-10-12"),
+				publication: false,
+			},
+		]);
+		expect(run.notifications).toEqual([]);
+	});
+
+	it("records nothing for a generation cancelled by shutdown", async () => {
+		const run = harness(() => ({ status: "cancelled" }));
+		expect(await run.tick()).toEqual({
+			event: "weekly-generation",
+			weekStart: "2026-10-12",
+			status: "skipped",
+			code: "cancelled",
+			publication: false,
+		});
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toBeUndefined();
+		expect(run.notifications).toEqual([]);
+	});
+
+	it("does not count a busy state directory as an attempt", async () => {
 		const run = harness((week, call) =>
 			call === 1 ? { status: "busy" } : { status: "created", briefingId: briefingId(week) },
 		);
 		await run.tick();
-		expect(readCommunityGenerationStatus(run.statusPath)).toBeUndefined();
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toBeUndefined();
 		await run.tick();
 		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
 			status: "created",
@@ -212,7 +371,6 @@ describe("weekly community generation trigger", () => {
 		expect(first?.lastFailure).toMatchObject({ weekStart: "2026-10-12", code: "generation_failed", attempts: 1 });
 		expect(run.notifications).toEqual(["error:0"]);
 		expect(JSON.stringify(run.events)).not.toContain("private");
-		// Within the hour nothing is retried.
 		run.at(wat("2026-10-18T23:35:00"));
 		await run.tick();
 		expect(run.calls).toHaveLength(1);
@@ -228,60 +386,142 @@ describe("weekly community generation trigger", () => {
 		});
 		expect(run.events.at(-1)).toMatchObject({ status: "failed", attempt: 3, gaveUp: true, publication: false });
 		expect(run.notifications).toEqual(["error:0", "error:0", "error:0"]);
-		// The next week is attempted normally.
 		run.at(wat("2026-10-25T23:00:00"));
 		await run.tick();
 		expect(run.calls.at(-1)).toBe("2026-10-19");
 	});
 
-	it("keeps a failed native run's own notification and passes only allow-listed codes", async () => {
-		const run = harness((_week, call) =>
-			call === 1
-				? { status: "failed", code: "generation_failed", ran: true }
-				: { status: "failed", code: "Bad Code!" },
-		);
+	it("gives up at once on orphaned artifacts instead of paying for retries", async () => {
+		const run = harness(() => ({ status: "failed", code: "orphan_artifacts" }));
+		for (const time of ["2026-10-18T23:00:00", "2026-10-19T01:00:00", "2026-10-19T03:00:00"]) {
+			run.at(wat(time));
+			await run.tick();
+		}
+		expect(run.calls).toEqual(["2026-10-12"]);
+		expect(run.events).toEqual([
+			{
+				event: "weekly-generation",
+				weekStart: "2026-10-12",
+				status: "failed",
+				attempt: 1,
+				code: "orphan_artifacts",
+				gaveUp: true,
+				publication: false,
+			},
+		]);
+		expect(run.notifications).toEqual(["error:0"]);
+	});
+
+	it("passes only allow-listed codes", async () => {
+		const run = harness(() => ({ status: "failed", code: "Bad Code! /Users/x" }));
 		await run.tick();
 		expect(run.events.at(-1)).toMatchObject({ status: "failed", code: "generation_failed" });
-		// The review's run-finished handler already notified this failure.
-		expect(run.notifications).toEqual([]);
-		run.at(wat("2026-10-19T01:00:00"));
-		await run.tick();
-		expect(run.events.at(-1)).toMatchObject({ status: "failed", code: "generation_failed", attempt: 2 });
-		expect(run.notifications).toEqual(["error:0"]);
 	});
 
-	it("fails closed without generating when the status record is unsafe, notifying once", async () => {
+	it("reconciles a draft that a timed-out attempt committed, and sends its notice", async () => {
+		const run = harness(
+			(week) => {
+				// The deadline killed the generation just after it committed the draft.
+				run.queued.weeks.set(week, briefingId(week));
+				return { status: "failed", code: "adapter_timeout" };
+			},
+			{ queueOnCreate: false },
+		);
+		await run.tick();
+		expect(run.events.at(-1)).toMatchObject({ status: "failed", code: "adapter_timeout", attempt: 1 });
+		expect(run.notifications).toEqual(["error:0"]);
+		// Next tick, well inside the retry window: no new attempt, the draft is found.
+		run.at(wat("2026-10-18T23:15:00"));
+		await run.tick();
+		expect(run.calls).toEqual(["2026-10-12"]);
+		expect(run.events.at(-1)).toEqual({
+			event: "weekly-generation",
+			weekStart: "2026-10-12",
+			status: "created",
+			briefingId: briefingId("2026-10-12"),
+			recovered: true,
+			publication: false,
+		});
+		expect(run.notifications).toEqual(["error:0", "pending:1"]);
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
+			status: "created",
+			attempts: 1,
+			recovered: true,
+		});
+		// Even a week that gave up is reconciled when its draft appears later.
+		await run.tick();
+		expect(run.notifications).toEqual(["error:0", "pending:1"]);
+	});
+
+	it("does not generate while the queue cannot be read, and notifies once", async () => {
 		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
-		writeFileSync(run.statusPath, "{not json", { mode: 0o600 });
+		run.queued.break(true);
 		await run.tick();
 		await run.tick();
 		expect(run.calls).toEqual([]);
-		expect(run.events.map((event) => event.code)).toEqual(["status_record_invalid", "status_record_invalid"]);
+		expect(run.events.map((event) => event.code)).toEqual(["queue_unreadable", "queue_unreadable"]);
 		expect(run.notifications).toEqual(["error:0"]);
-		writeFileSync(run.statusPath, "{}", { mode: 0o644 });
-		chmodSync(run.statusPath, 0o644);
+		run.queued.break(false);
 		await run.tick();
-		expect(run.events.at(-1)?.code).toBe("status_record_unsafe");
-		expect(run.calls).toEqual([]);
+		expect(run.calls).toEqual(["2026-10-12"]);
 	});
 
-	it("refuses a linked or oversized record and survives a failing notifier", async () => {
+	it("rebuilds a damaged record from the queue, keeping the damaged copy", async () => {
+		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
+		run.queued.weeks.set("2026-10-05", briefingId("2026-10-05"));
+		run.queued.weeks.set("2026-10-12", briefingId("2026-10-12"));
+		writeFileSync(run.statusPath, '{"kind":"harnessy.community.briefing.weekly', { mode: 0o600 });
+		await run.tick();
+		expect(run.calls).toEqual([]);
+		expect(run.events[0]).toMatchObject({ status: "repaired", code: "status_record_invalid" });
+		const record = readCommunityGenerationStatus(run.statusPath);
+		expect(Object.keys(record?.weeks ?? {}).sort()).toEqual(["2026-10-05", "2026-10-12"]);
+		const kept = readdirSync(run.root).filter((name) => name.includes(".quarantined-"));
+		expect(kept).toHaveLength(1);
+		expect(readFileSync(join(run.root, kept[0]!), "utf8")).toContain("weekly");
+		// A missing record is rebuilt the same way, silently.
+		rmSync(run.statusPath);
+		await run.tick();
+		expect(run.calls).toEqual([]);
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]?.status).toBe("existing");
+	});
+
+	it("stops on an unsafe record until the owner repairs it, notifying once", async () => {
 		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
 		writeFileSync(join(run.root, "elsewhere.json"), "{}", { mode: 0o600 });
 		symlinkSync(join(run.root, "elsewhere.json"), run.statusPath);
 		await run.tick();
 		expect(run.events.at(-1)?.code).toBe("status_record_unreadable");
 		rmSync(run.statusPath);
-		writeFileSync(run.statusPath, " ".repeat(300 * 1024), { mode: 0o600 });
+		writeFileSync(run.statusPath, "{}", { mode: 0o644 });
+		chmodSync(run.statusPath, 0o644);
 		await run.tick();
-		expect(run.events.at(-1)?.code).toBe("status_record_invalid");
+		await run.tick();
+		expect(run.events.map((event) => event.code)).toEqual([
+			"status_record_unreadable",
+			"status_record_unsafe",
+			"status_record_unsafe",
+		]);
 		expect(run.calls).toEqual([]);
-		rmSync(run.statusPath);
+		expect(run.notifications).toEqual(["error:0", "error:0"]);
+		// `generation-status --repair` moves it aside; the next tick rebuilds and proceeds.
+		const moved = quarantineCommunityGenerationStatus(run.statusPath, new Date("2026-10-18T23:20:00Z"));
+		expect(moved).toMatch(/\.quarantined-2026-10-18T23-20-00-000Z-[0-9a-f]{6}$/u);
+		expect(existsSync(moved!)).toBe(true);
+		expect(quarantineCommunityGenerationStatus(run.statusPath)).toBeUndefined();
+		await run.tick();
+		expect(run.calls).toEqual(["2026-10-12"]);
+	});
+
+	it("refuses an oversized record and survives a failing notifier", async () => {
+		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
+		writeFileSync(run.statusPath, " ".repeat(300 * 1024), { mode: 0o600 });
 		await run.tick({
 			notify: async () => {
 				throw new Error("notifier unavailable");
 			},
 		});
+		expect(run.events.at(0)).toMatchObject({ status: "repaired", code: "status_record_invalid" });
 		expect(run.events.at(-1)).toMatchObject({ status: "created", weekStart: "2026-10-12" });
 	});
 
@@ -305,6 +545,93 @@ describe("weekly community generation trigger", () => {
 	});
 });
 
+describe("queue and scheduler lock", () => {
+	it("reads queued weeks read-only, treating a missing queue as empty", () => {
+		const root = temporary();
+		const path = join(root, "weekly-briefings.sqlite3");
+		expect(sqliteQueuedWeeks(path).find("2026-10-12")).toBeUndefined();
+		const database = new DatabaseSync(path);
+		database.exec("CREATE TABLE unrelated(x)");
+		expect(sqliteQueuedWeeks(path).list(5)).toEqual([]);
+		database.exec("CREATE TABLE community_briefings(briefing_id TEXT, week_start TEXT)");
+		for (const week of ["2026-09-28", "2026-10-05", "2026-10-12"])
+			database.prepare("INSERT INTO community_briefings VALUES (?, ?)").run(briefingId(week), week);
+		database.close();
+		const queue = sqliteQueuedWeeks(path);
+		expect(queue.find("2026-10-12")).toBe(briefingId("2026-10-12"));
+		expect(queue.find("2026-10-19")).toBeUndefined();
+		expect(queue.list(2)).toEqual([
+			{ weekStart: "2026-10-12", briefingId: briefingId("2026-10-12") },
+			{ weekStart: "2026-10-05", briefingId: briefingId("2026-10-05") },
+		]);
+	});
+
+	it("lets only one holder run the scheduler, within and across processes", async () => {
+		const root = temporary();
+		const first = acquireCommunityGenerationLock(root);
+		expect(first).toBeDefined();
+		expect(statSync(join(root, "community-weekly-generation.lock")).mode & 0o777).toBe(0o600);
+		expect(acquireCommunityGenerationLock(root)).toBeUndefined();
+		first!.release();
+		// Another process holds it; the OS releases it when that process dies.
+		const module = fileURLToPath(new URL("../src/jarvis/community-briefing/weekly-generation.ts", import.meta.url));
+		const holder = spawn(
+			process.execPath,
+			[
+				"--no-warnings",
+				"--input-type=module",
+				"-e",
+				`const { acquireCommunityGenerationLock } = await import(${JSON.stringify(module)});
+				 process.stdout.write(acquireCommunityGenerationLock(${JSON.stringify(root)}) ? "held\\n" : "busy\\n");
+				 setInterval(() => {}, 1000);`,
+			],
+			{ stdio: ["ignore", "pipe", "inherit"] },
+		);
+		try {
+			const [line] = (await once(holder.stdout!, "data")) as [Buffer];
+			expect(line.toString()).toBe("held\n");
+			expect(acquireCommunityGenerationLock(root)).toBeUndefined();
+		} finally {
+			holder.kill("SIGKILL");
+			await once(holder, "exit");
+		}
+		const after = acquireCommunityGenerationLock(root);
+		expect(after).toBeDefined();
+		after!.release();
+	});
+
+	it("runs one scheduler when two review processes share a state directory", async () => {
+		const run = harness(async (week) => {
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			return { status: "created", briefingId: briefingId(week) };
+		});
+		const events: CommunityGenerationEvent[] = [];
+		const loop = (controller: AbortController) =>
+			runWeeklyCommunityGeneration({
+				...run.options,
+				memory: undefined,
+				report: (event) => events.push(event),
+				acquireLock: () => acquireCommunityGenerationLock(run.root),
+				signal: controller.signal,
+				tickMs: 5,
+			});
+		const a = new AbortController();
+		const b = new AbortController();
+		const running = [loop(a), loop(b)];
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		expect(run.calls).toEqual(["2026-10-12"]);
+		expect(events.filter((event) => event.code === "scheduler_locked")).toHaveLength(1);
+		// The holder stops; the other takes over at its next tick.
+		a.abort();
+		await running[0];
+		run.at(wat("2026-10-25T23:05:00"));
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		expect(run.calls).toEqual(["2026-10-12", "2026-10-19"]);
+		b.abort();
+		await running[1];
+	});
+});
+
 describe("one-writer guard for scheduled generation", () => {
 	const uid = process.geteuid?.() ?? 0;
 	const answer = (value: Partial<ProcessProbeResult>): ProcessProbeResult => ({
@@ -318,14 +645,18 @@ describe("one-writer guard for scheduled generation", () => {
 	/** A scripted OS where the review service owns weekly generation. */
 	const scheduledOs = (input: {
 		readonly reviewCommand: string;
+		readonly reviewLaunchd?: string;
 		readonly extraProcesses?: ReadonlyArray<string>;
 		readonly loadedLabels?: ReadonlyArray<string>;
 	}) => {
+		const adapter =
+			"/opt/release/jarvis-runtime/bin/python -I /opt/release/node_modules/@harnessy/core/resources/community-draft-adapter.py";
 		const processes = [
 			`${uid} 4100 ${input.reviewCommand}`,
-			// The review's own adapter child, mid-generation, and its Codex call.
-			`${uid} 4101 /opt/release/jarvis-runtime/bin/python -I /opt/release/node_modules/@harnessy/core/resources/community-draft-adapter.py`,
-			`${uid} 4102 node /opt/node/bin/codex exec --ignore-user-config --sandbox read-only --output-last-message /tmp/x`,
+			// The review's own adapter child, the one-shot generation child and its Codex call.
+			`${uid} 4101 ${adapter}`,
+			`${uid} 4102 ${adapter}`,
+			`${uid} 4103 node /opt/node/bin/codex exec --ignore-user-config --sandbox read-only --output-last-message /tmp/x`,
 			...(input.extraProcesses ?? []).map((command, index) => `${uid} ${5000 + index} ${command}`),
 		];
 		return (command: string, args: ReadonlyArray<string>): ProcessProbeResult => {
@@ -338,7 +669,8 @@ describe("one-writer guard for scheduled generation", () => {
 			if (command === "/usr/sbin/lsof") return answer({ stdout: `p${args[2]}\0\nftxt\0n${process.execPath}\0\n` });
 			if (command === "/bin/launchctl") {
 				const label = String(args[1]).split("/").at(-1)!;
-				if (label === COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL) return answer({ stdout: "pid = 4100\n" });
+				if (label === COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL)
+					return answer({ stdout: input.reviewLaunchd ?? "pid = 4100\n" });
 				if (input.loadedLabels?.includes(label)) return answer({ stdout: "state = running\n" });
 				return answer({ status: 113, stderr: `Could not find service "${label}" in domain` });
 			}
@@ -349,14 +681,13 @@ describe("one-writer guard for scheduled generation", () => {
 	const plannedReview = async () => {
 		const home = temporary();
 		const target = join(home, "project");
-		const node = join(home, "node");
 		// Installed shape: the guard recognizes this path as the Harnessy CLI.
 		const cli = join(home, "node_modules/@harnessy/core/dist/cli.js");
 		const config = join(home, "config.yaml");
 		const python = join(home, "python");
 		mkdirSync(target, { recursive: true });
 		mkdirSync(dirname(cli), { recursive: true });
-		for (const path of [node, cli, config, python]) writeFileSync(path, "fixture\n");
+		for (const path of [cli, config, python]) writeFileSync(path, "fixture\n");
 		const paths = await Effect.runPromise(
 			JarvisPathResolver.pipe(
 				Effect.flatMap((resolver) => resolver.resolve(target)),
@@ -401,7 +732,6 @@ describe("one-writer guard for scheduled generation", () => {
 				nativeReviewer,
 			)(),
 		).toThrow("compatibility_writer_present");
-		// The retired V1 generator label is a writer whenever it is loaded, even with no process.
 		expect(COMMUNITY_GUARD_LABELS).toContain("com.flow-harness.project.weekly-community-briefing-generate");
 		expect(() =>
 			makeCommunityCompatibilityProof(
@@ -415,17 +745,34 @@ describe("one-writer guard for scheduled generation", () => {
 		).toThrow("compatibility_writer_present");
 	});
 
+	it("treats a review label between restarts as a writer (why KeepAlive keeps that gap short)", async () => {
+		const { cli, file } = await plannedReview();
+		const reviewCommand = file.programArguments.join(" ");
+		const nativeReviewer = { executable: process.execPath, entry: cli };
+		// launchd shows the loaded label with no process while it waits to restart it.
+		expect(() =>
+			makeCommunityCompatibilityProof(
+				scheduledOs({ reviewCommand, reviewLaunchd: "state = spawn scheduled\n" }),
+				"darwin",
+				nativeReviewer,
+			)(),
+		).toThrow("compatibility_writer_present");
+	});
+
 	it("keeps the plan and status commands outside the guarded command route", async () => {
 		const { cli } = await plannedReview();
 		const node = process.execPath;
-		for (const route of ["jarvis community schedule --apply", "jarvis community generation-status --json"])
+		for (const route of [
+			"jarvis community schedule --apply",
+			"jarvis community generation-status --json",
+			"jarvis community generation-status --repair",
+		])
 			expect(isCommunityCompatibilityWriterCommand(`${node} ${cli} ${route}`), route).toBe(false);
-		// The guarded route is why these commands do not live under `community briefing`.
 		expect(isCommunityCompatibilityWriterCommand(`${node} ${cli} jarvis community briefing status`)).toBe(true);
 	});
 
-	it("renders and installs only the review LaunchAgent, with a rollback backup", async () => {
-		const { file, paths, home, cli, config, python } = await plannedReview();
+	it("renders a self-restarting review LaunchAgent that alone runs the weekly trigger", async () => {
+		const { file, config, python } = await plannedReview();
 		expect(file.programArguments.slice(2)).toEqual([
 			"jarvis",
 			"community",
@@ -438,23 +785,53 @@ describe("one-writer guard for scheduled generation", () => {
 			python,
 			"--port",
 			"8872",
+			"--weekly-generation",
 		]);
 		expect(file.content).toContain("<key>RunAtLoad</key>\n\t<true/>");
-		expect(file.content).not.toContain("KeepAlive");
+		expect(file.content).toContain("<key>KeepAlive</key>\n\t<true/>");
+		expect(file.content).toContain("<key>ThrottleInterval</key>\n\t<integer>10</integer>");
 		expect(file.content).not.toContain("StartCalendarInterval");
+	});
+
+	it("installs only the review LaunchAgent, from the publication service's release", async () => {
+		const { paths, home, config } = await plannedReview();
+		// An installed release: <release>/bin/node, <release>/node_modules/... and <release>/service/...
+		const release = join(home, "releases", "current.release-test");
+		const node = join(release, "bin", "node");
+		const cli = join(release, "node_modules/@harnessy/core/dist/cli.js");
+		const serviceEntry = join(release, "service/node_modules/@harnessy/local-host/dist/meeting-full-review-cli.js");
+		for (const path of [node, cli, serviceEntry]) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, "fixture\n");
+		}
+		const publication = [node, serviceEntry, "--service", "--input", "/x/service.json"];
+		expect(expectedReviewerRelease(publication)).toEqual({ nodePath: node, cliPath: cli });
+		expect(() => expectedReviewerRelease(["node", "/opt/elsewhere/cli.js"])).toThrow("installed Harnessy release");
 		const launchAgents = join(home, "LaunchAgents");
 		mkdirSync(launchAgents);
 		writeFileSync(join(launchAgents, `${COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL}.plist`), "previous");
 		writeFileSync(join(launchAgents, "com.example.unrelated.plist"), "unrelated");
-		const installed = await Effect.runPromise(
-			installCommunityReviewSchedule(paths, {
-				nodePath: process.execPath,
-				cliPath: cli,
-				configPath: config,
-				launchAgentsDirectory: launchAgents,
-				now: new Date("2026-10-18T05:00:00Z"),
-			}),
-		);
+		const install = (overrides: Partial<Parameters<typeof installCommunityReviewSchedule>[1]>) =>
+			Effect.runPromise(
+				installCommunityReviewSchedule(paths, {
+					nodePath: node,
+					cliPath: cli,
+					configPath: config,
+					launchAgentsDirectory: launchAgents,
+					now: new Date("2026-10-18T05:00:00Z"),
+					publication,
+					...overrides,
+				}),
+			);
+		// Refused: no publication release given, another Node, or another CLI.
+		await expect(install({ publication: undefined })).rejects.toThrow("--publication-plist");
+		await expect(install({ nodePath: process.execPath })).rejects.toThrow(`--node-path ${node} --cli-entry ${cli}`);
+		const other = join(home, "other/node_modules/@harnessy/core/dist/cli.js");
+		mkdirSync(dirname(other), { recursive: true });
+		writeFileSync(other, "fixture\n");
+		await expect(install({ cliPath: other })).rejects.toThrow("publication service's release");
+		expect(readFileSync(join(launchAgents, `${COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL}.plist`), "utf8")).toBe("previous");
+		const installed = await install({});
 		expect(installed.applied).toBe(true);
 		expect(readFileSync(installed.file.path, "utf8")).toBe(installed.file.content);
 		expect(installed.file.programArguments).not.toContain("--python-path");
@@ -462,10 +839,12 @@ describe("one-writer guard for scheduled generation", () => {
 			readFileSync(join(installed.backupDirectory!, `${COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL}.plist`), "utf8"),
 		).toBe("previous");
 		expect(readFileSync(join(launchAgents, "com.example.unrelated.plist"), "utf8")).toBe("unrelated");
+		// Explicitly without a publication service, any existing pair installs.
+		expect((await install({ publication: null, nodePath: process.execPath, cliPath: other })).applied).toBe(true);
 		await expect(
 			Effect.runPromise(
 				planCommunityReviewSchedule(paths, {
-					nodePath: process.execPath,
+					nodePath: node,
 					cliPath: join(home, "missing.js"),
 					configPath: config,
 					launchAgentsDirectory: launchAgents,
@@ -476,7 +855,7 @@ describe("one-writer guard for scheduled generation", () => {
 			await expect(
 				Effect.runPromise(
 					planCommunityReviewSchedule(paths, {
-						nodePath: process.execPath,
+						nodePath: node,
 						cliPath: cli,
 						configPath: config,
 						port,
@@ -487,7 +866,7 @@ describe("one-writer guard for scheduled generation", () => {
 		await expect(
 			Effect.runPromise(
 				planCommunityReviewSchedule(paths, {
-					nodePath: process.execPath,
+					nodePath: node,
 					cliPath: cli,
 					configPath: config,
 					launchAgentsDirectory: "relative",
@@ -495,16 +874,7 @@ describe("one-writer guard for scheduled generation", () => {
 			),
 		).rejects.toThrow("absolute");
 		chmodSync(launchAgents, 0o500);
-		await expect(
-			Effect.runPromise(
-				installCommunityReviewSchedule(paths, {
-					nodePath: process.execPath,
-					cliPath: cli,
-					configPath: config,
-					launchAgentsDirectory: launchAgents,
-				}),
-			),
-		).rejects.toThrow();
+		await expect(install({})).rejects.toThrow();
 		chmodSync(launchAgents, 0o700);
 	});
 });
@@ -515,7 +885,6 @@ describe("never publishes", () => {
 		for (const file of [
 			"../src/jarvis/community-briefing/weekly-generation.ts",
 			"../src/jarvis/community-briefing/schedule.ts",
-			"../src/jarvis/community-briefing/review-process.ts",
 		]) {
 			const imports = [...source(file).matchAll(/from "([^"]+)"/gu)].map((match) => match[1]);
 			for (const forbidden of ["authority", "grant-host", "operational", "service.ts", "meeting-publication"])
@@ -524,13 +893,14 @@ describe("never publishes", () => {
 					`${file} imports ${forbidden}`,
 				).toEqual([]);
 		}
-		const adapter = source("../resources/community-draft-adapter.py");
-		const scheduled = adapter.slice(
-			adapter.indexOf("def scheduled_generation"),
-			adapter.indexOf("def serve_native_review"),
+		// Scheduled weeks use the one-shot "generate" action, which never regenerates or approves.
+		const cli = source("../src/cli/community-draft.ts");
+		const scheduled = cli.slice(
+			cli.indexOf("export const serveCommunityReview"),
+			cli.indexOf("const startScheduler"),
 		);
-		expect(scheduled).toContain("regenerate=False");
-		for (const forbidden of ["approve(", "publish(", "claim", "google", "discord", "worker"])
+		expect(scheduled).toContain('action: "generate"');
+		for (const forbidden of ["regenerate", "approve", "publish", "grant"])
 			expect(scheduled.toLowerCase()).not.toContain(forbidden);
 	});
 });

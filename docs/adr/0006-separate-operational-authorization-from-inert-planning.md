@@ -517,14 +517,14 @@ Three options were evaluated:
   `com.flow-harness.community-review-v2` (`jarvis community briefing review
   serve`) is the only process the guard exempts as a community draft writer,
   and only while it runs exactly one verified process. That reviewer already
-  writes draft revisions and regenerations to the same queue through its single
-  adapter child, serialized by the adapter's native-draft lock. The weekly
-  trigger runs in the reviewer's Node process. When a week is due, the trigger
-  sends one `generate_week` request to the reviewer's existing adapter, and the
-  adapter generates through the same native run, run ledger and lock. No
-  process, argv or launchd label is added, so the guard sees exactly what it
-  verified before. The set of queue writers is unchanged: the reviewer writes
-  drafts, and the publication service claims only approved revisions.
+  writes draft revisions and regenerations to the same queue. The weekly
+  trigger runs in the reviewer's Node process. When a week is due, it starts
+  one one-shot adapter child for that week (the `generate` action that the
+  manual command uses), with its own deadline and its own cancellation. No
+  parent argv or launchd label is added, so the guard sees the processes it
+  verified before: the exempt reviewer and adapter children. The set of queue
+  writers is unchanged: the reviewer writes drafts, and the publication service
+  claims only approved revisions.
 - **(b) A launchd job recognised as a non-writer. Rejected.** Generation writes
   the guarded state. It inserts `community_briefings` rows and draft artifacts,
   and it records `community_draft_runs` in `weekly-briefings.sqlite3`. That is
@@ -540,36 +540,73 @@ Three options were evaluated:
 
 Constraints the implementation keeps:
 
-- Generation produces unapproved drafts only. The request carries only a week
-  start date. The adapter calls `generate(regenerate=False)`. A result that
-  claims publication is a protocol error that stops the review, and nothing is
-  accepted from it. The trigger has no access to grants, leases or providers.
-- Idempotency per week. The trigger records each week in an owner-only
-  `community-weekly-generation.json` beside the queue. Before any AI run, the
-  adapter answers `existing` when the queue already has the week, so a lost
-  record cannot duplicate a draft.
-- Failures stay visible. Each decision is one content-free JSON line in the
+- **Drafts only.** A scheduled week uses the `generate` action, which never
+  regenerates an existing draft, approves or publishes. The trigger has no
+  access to grants, leases or providers.
+- **Never takes down review.** A scheduled generation runs in its own child
+  process. When its deadline passes, or the review stops, only that child is
+  killed. Review's own two-second recovery for a stuck revision is unchanged
+  and never applies to scheduled work. A stop during shutdown is not counted
+  as a failed attempt.
+- **One owner, one paid run.** Only the LaunchAgent-owned service runs the
+  trigger (`review serve --weekly-generation`, set only by the plist that
+  `harnessy jarvis community schedule` writes). A foreground review never runs
+  it. The trigger also holds an exclusive lock on
+  `community-weekly-generation.lock` in the state directory for its whole life:
+  a second review process waits and takes over only when the holder exits.
+  The adapter takes an exclusive lock, `community-native-draft.lock`, for every
+  native draft: one-shot runs and review revisions. So a scheduled run and a
+  review revision never make paid calls at the same time; the scheduled run
+  reports `busy` and retries at the next tick without counting an attempt. The
+  OS releases both locks when their holder exits.
+- **Idempotency per week.** Before every attempt, the trigger reads the queue
+  read-only. A week that already has a draft is recorded, not generated. A week
+  whose earlier attempt failed is marked `recovered` and its "pending review"
+  notice is sent, for example when a deadline killed a generation that had
+  already committed. The adapter's own check (`generate` returns an existing
+  draft without any AI call) remains a second guard.
+- **No wasted retries.** The adapter refuses `orphan_artifacts`, a week with
+  draft files but no queue row, before any run or provider call. Before, it
+  detected them only while committing, after the paid calls. The trigger gives
+  up on that week at once and notifies the owner.
+- **Failures stay visible.** Each decision is one content-free JSON line in the
   review log. Each failure also updates the record's `lastFailure` and raises a
-  desktop notice. Automatic attempts are bounded to three per week, at least an
-  hour apart. An unreadable or unsafe record stops generation and is reported;
-  it is never silently reset. A busy adapter is retried at the next tick and
-  does not count as an attempt. A generation failure never stops the
-  reviewer: a loaded reviewer label with no process would itself stop
-  publication.
-- Schedule. The default is Sunday 23:00 Africa/Lagos for the Monday–Sunday
-  week ending that day, which is V1's boundary. The trigger runs only when
-  `community_briefing.enabled` is true. It is configurable through
-  `community_briefing.generation_schedule` (`enabled`, `weekday`, `time`). A
-  missed occurrence is caught up at the next ten-minute tick. Older missed weeks
-  are not backfilled.
-- Installation. `harnessy jarvis community schedule` plans the reviewer
-  LaunchAgent, and with `--apply` it installs the plist with a rollback backup.
-  `harnessy jarvis community generation-status` reads the record. Both commands
-  sit outside `community briefing`, so running them cannot trip the guard. The
-  reviewer and the publication service must run from the same release, because
-  the reviewer exemption compares their executables and artifact hashes.
-
-This amendment does not change the guard, its label list or its classifier.
+  desktop notice. Automatic attempts are bounded to three per week, at least
+  one hour apart.
+- **Settings and record faults.** A bad `community_briefing.enabled` (not a
+  boolean), `generation_schedule` or `timezone` disables only generation. It is
+  logged as `invalid_schedule` with the issues, and `generation-status` reports
+  it. Review keeps running. A damaged record (unparseable or invalid) is moved
+  aside and rebuilt from the queue. Weeks without a draft lose their attempt
+  counts, and the queue check still prevents a second draft. A record that is
+  a link, not owner-only or unreadable may be tampering. It stops generation
+  until the owner runs `harnessy jarvis community generation-status --repair`,
+  which moves it aside, never deleting it.
+- **Schedule.** The default is Sunday 23:00 Africa/Lagos for the Monday–Sunday
+  week ending that day, which is V1's boundary. Times are local wall-clock
+  times. Across a daylight-saving change a skipped minute fires at the next
+  tick, and a repeated hour never generates a week twice.
+- **Installation.** `harnessy jarvis community schedule --apply` refuses unless
+  its Node and CLI are the release the publication service runs. It reads that
+  release from the loaded `org.harnessy.meeting-publication` plist or
+  `--publication-plist`, or takes `--without-publication` explicitly. The
+  reviewer exemption compares executables and artifact hashes, and the hash
+  set now includes the scheduler's code: `dist/cli/community-draft.js`,
+  `dist/cli/jarvis.js`, `draft-process.js`, `notification.js` and
+  `weekly-generation.js`.
+- **Restart.** The plist sets `KeepAlive` with a 10-second `ThrottleInterval`.
+  Without it, a crashed reviewer left its label loaded with no process, which
+  the guard treats as an observed writer, so community publication stayed
+  stopped until someone noticed. With it, launchd restarts the reviewer.
+  The guard still classifies the restart gap as a writer: a loaded review label
+  without exactly one verified process throws `compatibility_writer_present`.
+  The pause-and-retry window of #117/#119 covers only unanswered probes, not
+  this observed state. A guard probe that lands in the gap therefore still
+  stops community publication. The gap is short: launchd restarts at once a
+  reviewer that ran for at least 10 seconds, and within 10 seconds one that
+  crashed sooner. This amendment does not change the guard, its label list or
+  its classifier. Pausing instead of stopping on that state would need a guard
+  change with its own review.
 
 ### Continuing consequences
 

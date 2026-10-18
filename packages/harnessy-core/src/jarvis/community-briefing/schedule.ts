@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 
 import * as Effect from "effect/Effect";
@@ -12,6 +12,10 @@ import type { JarvisPaths } from "../paths.ts";
  */
 export const COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL = "com.flow-harness.community-review-v2" as const;
 export const COMMUNITY_REVIEW_PORT = 8872;
+/** The service whose community worker the guard protects. */
+export const PUBLICATION_LAUNCH_AGENT_LABEL = "org.harnessy.meeting-publication" as const;
+/** launchd waits at least this long between restarts of a crashing reviewer. */
+export const COMMUNITY_REVIEW_THROTTLE_SECONDS = 10;
 
 export interface CommunityReviewScheduleOptions {
 	readonly nodePath: string;
@@ -22,6 +26,11 @@ export interface CommunityReviewScheduleOptions {
 	readonly port?: number;
 	readonly launchAgentsDirectory: string;
 	readonly now?: Date;
+	/**
+	 * Install only: the publication service's ProgramArguments, so the reviewer is
+	 * bound to the same release; `null` when no publication service runs here.
+	 */
+	readonly publication?: ReadonlyArray<string> | null;
 }
 
 export interface CommunityReviewScheduleFile {
@@ -60,12 +69,16 @@ export const communityReviewProgramArguments = (options: CommunityReviewSchedule
 	...(options.pythonPath === undefined ? [] : ["--python-path", options.pythonPath]),
 	"--port",
 	String(options.port ?? COMMUNITY_REVIEW_PORT),
+	// Only this LaunchAgent runs the weekly trigger; a foreground review never does.
+	"--weekly-generation",
 ];
 
 const renderPlist = (paths: JarvisPaths, programArguments: ReadonlyArray<string>): string => {
 	const log = join(paths.canonicalGlobalRoot, "logs", `${COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL}.log`);
-	// RunAtLoad without KeepAlive, as before: a stopped reviewer stays visibly
-	// stopped (and stops publication) instead of being restarted blindly.
+	// KeepAlive: a loaded review label without a process is a writer to the
+	// community guard, so a crashed reviewer must come back. ThrottleInterval
+	// bounds a crash loop (for example a broken configuration) to one start per
+	// interval.
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -89,6 +102,10 @@ ${programArguments.map((argument) => `\t\t<string>${xml(argument)}</string>`).jo
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>${COMMUNITY_REVIEW_THROTTLE_SECONDS}</integer>
 	<key>ProcessType</key>
 	<string>Background</string>
 	<key>WorkingDirectory</key>
@@ -138,6 +155,35 @@ export const planCommunityReviewSchedule = (
 			cause instanceof Error ? cause : new Error("Unable to plan the V2 community review LaunchAgent."),
 	});
 
+/**
+ * The reviewer the guard exempts must run the same release as the publication
+ * service. The service runs `<release>/bin/node` with
+ * `<release>/service/node_modules/@harnessy/…`; the reviewer must run that Node
+ * with `<release>/node_modules/@harnessy/core/dist/cli.js`.
+ */
+export const expectedReviewerRelease = (publication: ReadonlyArray<string>) => {
+	const [node, entry] = publication;
+	const marker = "/service/node_modules/@harnessy/";
+	const index = entry?.lastIndexOf(marker) ?? -1;
+	if (node === undefined || entry === undefined || !isAbsolute(node) || index <= 0)
+		throw new Error("The publication service does not run from an installed Harnessy release.");
+	return { nodePath: node, cliPath: join(entry.slice(0, index), "node_modules/@harnessy/core/dist/cli.js") };
+};
+
+const assertSameRelease = (options: CommunityReviewScheduleOptions) => {
+	if (options.publication === null) return;
+	if (options.publication === undefined)
+		throw new Error(
+			"Installing the reviewer needs the publication service's release: pass --publication-plist, or --without-publication when no publication service runs on this machine.",
+		);
+	const expected = expectedReviewerRelease(options.publication);
+	const same = (left: string, right: string) => existsSync(right) && realpathSync(left) === realpathSync(right);
+	if (!same(options.nodePath, expected.nodePath) || !same(options.cliPath, expected.cliPath))
+		throw new Error(
+			`The reviewer must run the publication service's release: use --node-path ${expected.nodePath} --cli-entry ${expected.cliPath}.`,
+		);
+};
+
 /** Atomically installs only the review candidate; launchd bootout/bootstrap remains separate. */
 export const installCommunityReviewSchedule = (
 	paths: JarvisPaths,
@@ -147,6 +193,7 @@ export const installCommunityReviewSchedule = (
 		const file = yield* planCommunityReviewSchedule(paths, options);
 		return yield* Effect.try({
 			try: () => {
+				assertSameRelease(options);
 				const stamp = (options.now ?? new Date()).toISOString().replace(/[:.]/g, "-");
 				const backupDirectory = join(paths.canonicalGlobalRoot, "backups", stamp, "LaunchAgents");
 				mkdirSync(backupDirectory, { recursive: true, mode: 0o700 });

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import {
 	closeSync,
 	constants,
+	existsSync,
 	fstatSync,
 	fsyncSync,
 	lstatSync,
@@ -12,20 +13,25 @@ import {
 	writeSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { Result, Schema } from "effect";
 
 /**
  * Weekly community draft generation, owned by the native review service.
  *
  * The review service (`com.flow-harness.community-review-v2`) is the only
- * process the community one-writer guard exempts as a draft writer. Running the
- * weekly trigger inside it adds no process, argv or launchd label for the guard
- * to see. This module decides when a week is due and records each attempt; the
- * review process supplies the single adapter request. It never approves or
- * publishes: it has no access to grants, leases or provider destinations.
+ * process the community one-writer guard exempts as a draft writer. The weekly
+ * trigger runs in that process and starts each scheduled week as its own
+ * one-shot adapter child, so the guard sees no new parent argv or launchd
+ * label, and a stuck generation is stopped without touching the review. This
+ * module decides when a week is due and records each attempt. It never approves
+ * or publishes: it has no access to grants, leases or provider destinations.
  */
 
 export const COMMUNITY_GENERATION_STATUS_FILE = "community-weekly-generation.json";
+/** Held by the one scheduler that owns a state directory, for its whole life. */
+export const COMMUNITY_GENERATION_LOCK_FILE = "community-weekly-generation.lock";
+export const COMMUNITY_QUEUE_FILE = "weekly-briefings.sqlite3";
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
 
@@ -53,27 +59,52 @@ const ScheduleSettings = Schema.Struct({
 	time: Schema.optional(Schema.String),
 });
 
+export interface CommunityGenerationScheduleSettings {
+	readonly schedule: CommunityGenerationSchedule;
+	/** Why generation is disabled despite the workflow being on; empty when the settings are valid. */
+	readonly issues: ReadonlyArray<string>;
+}
+
 /**
  * Read `community_briefing.generation_schedule`. Generation runs only when the
  * community workflow itself is enabled (`community_briefing.enabled: true`).
+ * Never throws: an invalid setting disables only generation and is reported,
+ * so a typo cannot stop the review service.
  */
 export const parseCommunityGenerationSchedule = (
 	workflowEnabled: unknown,
 	value: unknown,
-	timezone: string = DEFAULT_COMMUNITY_GENERATION_SCHEDULE.timezone,
-): CommunityGenerationSchedule => {
-	const settings = Schema.decodeUnknownSync(ScheduleSettings, { onExcessProperty: "error" })(value ?? {});
-	const time = settings.time ?? "23:00";
-	const match = /^([01]\d|2[0-3]):([0-5]\d)$/u.exec(time);
-	if (!match) throw new Error("community_briefing.generation_schedule.time must be HH:MM (24-hour).");
-	// Reject an unknown zone now rather than at the first weekly tick.
-	new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+	timezone: unknown = DEFAULT_COMMUNITY_GENERATION_SCHEDULE.timezone,
+): CommunityGenerationScheduleSettings => {
+	const issues: string[] = [];
+	if (workflowEnabled !== undefined && typeof workflowEnabled !== "boolean")
+		issues.push("community_briefing.enabled must be true or false");
+	const decoded = Result.try({
+		try: () => Schema.decodeUnknownSync(ScheduleSettings, { onExcessProperty: "error" })(value ?? {}),
+		catch: () => undefined,
+	});
+	if (Result.isFailure(decoded))
+		issues.push(
+			"community_briefing.generation_schedule accepts only enabled (true or false), weekday (sunday … saturday) and time (HH:MM)",
+		);
+	const settings = Result.isSuccess(decoded) ? decoded.success : {};
+	const match = /^([01]\d|2[0-3]):([0-5]\d)$/u.exec(settings.time ?? "23:00");
+	if (!match) issues.push("community_briefing.generation_schedule.time must be HH:MM (24-hour)");
+	const zone =
+		typeof timezone === "string" &&
+		Result.isSuccess(Result.try(() => new Intl.DateTimeFormat("en-US", { timeZone: timezone })))
+			? timezone
+			: undefined;
+	if (zone === undefined) issues.push("community_briefing.timezone is not a known time zone");
 	return {
-		enabled: workflowEnabled === true && settings.enabled !== false,
-		weekday: WEEKDAYS.indexOf(settings.weekday ?? "sunday"),
-		hour: Number(match[1]),
-		minute: Number(match[2]),
-		timezone,
+		schedule: {
+			enabled: issues.length === 0 && workflowEnabled === true && settings.enabled !== false,
+			weekday: WEEKDAYS.indexOf(settings.weekday ?? "sunday"),
+			hour: match ? Number(match[1]) : DEFAULT_COMMUNITY_GENERATION_SCHEDULE.hour,
+			minute: match ? Number(match[2]) : DEFAULT_COMMUNITY_GENERATION_SCHEDULE.minute,
+			timezone: zone ?? DEFAULT_COMMUNITY_GENERATION_SCHEDULE.timezone,
+		},
+		issues,
 	};
 };
 
@@ -84,7 +115,11 @@ const isoDate = (date: Date) => date.toISOString().slice(0, 10);
  * that has ended by the most recent scheduled occurrence. A Sunday 23:00
  * schedule generates the week ending that Sunday; a Monday 08:00 schedule
  * generates the week that ended the day before. A missed occurrence (machine
- * off) is caught up at the next tick, as V1's RunAtLoad catch-up did.
+ * off) is caught up at the next tick, as V1's RunAtLoad catch-up did. The
+ * comparison uses local wall-clock time. Across a daylight-saving change the
+ * scheduled minute can be skipped (it then fires at the next tick) or repeated;
+ * during a repeated hour the previous week is briefly due again. That week is
+ * already recorded, so no week is generated twice.
  */
 export const dueCommunityGenerationWeek = (now: Date, schedule: CommunityGenerationSchedule): string => {
 	const parts = Object.fromEntries(
@@ -114,11 +149,12 @@ export const dueCommunityGenerationWeek = (now: Date, schedule: CommunityGenerat
 
 /** The adapter's answer to one scheduled week. `publication` is always false. */
 export interface CommunityWeekGenerationResult {
-	readonly status: "created" | "existing" | "busy" | "failed";
+	/** `cancelled`: the review service stopped mid-generation. Not an attempt. */
+	readonly status: "created" | "existing" | "busy" | "cancelled" | "failed";
 	readonly briefingId?: string;
 	readonly code?: string;
-	/** True when the adapter ran a native AI run, whose failure the review already reports. */
-	readonly ran?: boolean;
+	/** True when the generation already delivered its own "pending review" notice. */
+	readonly notified?: boolean;
 }
 
 const WeekRecord = Schema.Struct({
@@ -128,6 +164,8 @@ const WeekRecord = Schema.Struct({
 	briefingId: Schema.optional(Schema.String),
 	code: Schema.optional(Schema.String),
 	gaveUp: Schema.optional(Schema.Boolean),
+	/** A failed attempt whose draft was found in the queue later (for example after a deadline). */
+	recovered: Schema.optional(Schema.Boolean),
 });
 type WeekRecord = typeof WeekRecord.Type;
 
@@ -182,6 +220,19 @@ export const readCommunityGenerationStatus = (path: string): CommunityGeneration
 	}
 };
 
+/**
+ * Move a damaged or unsafe record aside, never deleting it. The scheduler
+ * rebuilds the record from the queue at its next tick. Returns the new path,
+ * or `undefined` when there was no record.
+ */
+export const quarantineCommunityGenerationStatus = (path: string, now: Date = new Date()): string | undefined => {
+	if (lstatSync(path, { throwIfNoEntry: false }) === undefined) return undefined;
+	const target = `${path}.quarantined-${now.toISOString().replace(/[:.]/gu, "-")}-${randomBytes(3).toString("hex")}`;
+	// Renames a link itself, not its target.
+	renameSync(path, target);
+	return target;
+};
+
 /** Atomic owner-only replacement; a crash leaves the previous record intact. */
 const writeStatus = (path: string, status: CommunityGenerationStatus) => {
 	const temporary = join(dirname(path), `.${COMMUNITY_GENERATION_STATUS_FILE}.${randomBytes(6).toString("hex")}.tmp`);
@@ -211,15 +262,92 @@ const writeStatus = (path: string, status: CommunityGenerationStatus) => {
 	}
 };
 
+/** Read-only view of the drafts already in the community queue. */
+export interface CommunityQueuedWeeks {
+	/** The briefing ID queued for the week, or `undefined`. Throws when the queue cannot be read. */
+	readonly find: (weekStart: string) => string | undefined;
+	/** The most recent queued weeks, newest first. */
+	readonly list: (limit: number) => ReadonlyArray<{ readonly weekStart: string; readonly briefingId: string }>;
+}
+
+/** Reads the queue database read-only; a queue that does not exist yet has no weeks. */
+export const sqliteQueuedWeeks = (databasePath: string): CommunityQueuedWeeks => {
+	const query = <A>(read: (database: DatabaseSync) => A, empty: A): A => {
+		if (!existsSync(databasePath)) return empty;
+		const database = new DatabaseSync(databasePath, { readOnly: true, allowExtension: false });
+		try {
+			database.exec("PRAGMA busy_timeout=2000");
+			const table = database
+				.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name='community_briefings'")
+				.get();
+			return table === undefined ? empty : read(database);
+		} finally {
+			database.close();
+		}
+	};
+	return {
+		find: (weekStart) =>
+			query((database) => {
+				const row = database
+					.prepare("SELECT briefing_id FROM community_briefings WHERE week_start=?")
+					.get(weekStart);
+				return row === undefined ? undefined : String(row.briefing_id);
+			}, undefined),
+		list: (limit) =>
+			query(
+				(database) =>
+					database
+						.prepare("SELECT week_start, briefing_id FROM community_briefings ORDER BY week_start DESC LIMIT ?")
+						.all(limit)
+						.map((row) => ({ weekStart: String(row.week_start), briefingId: String(row.briefing_id) })),
+				[],
+			),
+	};
+};
+
+export interface CommunityGenerationLock {
+	readonly release: () => void;
+}
+
+/**
+ * Take the state directory's scheduler lock without waiting. Only its holder
+ * runs the weekly trigger, so two review processes cannot both pay for a week
+ * or lose each other's attempt counts. The record itself is replaced by rename
+ * on every write, so the lock lives on a sibling file. The OS releases it when
+ * the holder exits, however it exits. Returns `undefined` when another process
+ * holds it.
+ */
+export const acquireCommunityGenerationLock = (statePath: string): CommunityGenerationLock | undefined => {
+	const path = join(statePath, COMMUNITY_GENERATION_LOCK_FILE);
+	closeSync(openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600));
+	const database = new DatabaseSync(path, { allowExtension: false });
+	const locked = Result.try(() => {
+		database.exec("PRAGMA busy_timeout=0");
+		database.exec("BEGIN EXCLUSIVE");
+	});
+	if (Result.isFailure(locked)) {
+		database.close();
+		return undefined;
+	}
+	return {
+		release: () => {
+			database.exec("ROLLBACK");
+			database.close();
+		},
+	};
+};
+
 /** One allow-listed, content-free event per decision, for the service log. */
 export interface CommunityGenerationEvent {
 	readonly event: "weekly-generation";
 	readonly weekStart: string;
-	readonly status: "created" | "existing" | "busy" | "failed" | "skipped";
+	readonly status: "created" | "existing" | "busy" | "failed" | "skipped" | "repaired";
 	readonly attempt?: number;
 	readonly code?: string;
 	readonly briefingId?: string;
 	readonly gaveUp?: boolean;
+	readonly recovered?: boolean;
+	readonly issues?: ReadonlyArray<string>;
 	readonly publication: false;
 }
 
@@ -227,8 +355,10 @@ export interface WeeklyCommunityGenerationOptions {
 	readonly schedule: CommunityGenerationSchedule;
 	/** The owner-only status record path, beside the community queue. */
 	readonly statusPath: string;
+	/** Drafts already queued. Checked before every attempt, so no week is generated twice. */
+	readonly queue: CommunityQueuedWeeks;
 	readonly now: () => Date;
-	/** One adapter request for exactly one Monday. Must never publish. */
+	/** One generation for exactly one Monday. Must never publish. */
 	readonly generateWeek: (weekStart: string) => Promise<CommunityWeekGenerationResult>;
 	readonly report: (event: CommunityGenerationEvent) => void;
 	/** Desktop notification; returns whether it was delivered. */
@@ -237,7 +367,7 @@ export interface WeeklyCommunityGenerationOptions {
 	readonly maxAttempts?: number;
 	/** Minimum time between attempts for one week. Default one hour. */
 	readonly retryAfterMs?: number;
-	/** Per-process memory: notified record faults, and week records even when the file cannot be written. */
+	/** Per-process memory: notified faults, and week records even when the file cannot be written. */
 	readonly memory?: CommunityGenerationMemory;
 }
 
@@ -248,6 +378,11 @@ export interface CommunityGenerationMemory {
 
 const CODE = /^[a-z][a-z_]{0,63}$/u;
 const safeCode = (code: unknown) => (typeof code === "string" && CODE.test(code) ? code : "generation_failed");
+/** Codes that the same request cannot fix: retrying would only repeat the failure. */
+const FINAL_CODES = new Set(["orphan_artifacts"]);
+/** Faults that repeat every tick until someone acts; each is notified once per process. */
+const isStandingFault = (code: string | undefined) =>
+	code !== undefined && (code.startsWith("status_record_") || code === "queue_unreadable");
 
 /**
  * Evaluate the schedule once. Returns the decision taken. Never throws:
@@ -261,119 +396,197 @@ export const runCommunityGenerationTick = async (
 	const retryAfterMs = options.retryAfterMs ?? 60 * 60 * 1000;
 	const started = options.now();
 	const weekStart = dueCommunityGenerationWeek(started, options.schedule);
-	const finish = async (event: CommunityGenerationEvent) => {
+	const finish = async (event: CommunityGenerationEvent, notify: "pending" | "error" | undefined) => {
 		options.report(event);
-		// A persistent record fault repeats every tick; notify it once per process.
-		const recordFault = event.code?.startsWith("status_record_") === true;
-		const repeated = recordFault && options.memory?.notified.has(event.code!) === true;
-		if (recordFault) options.memory?.notified.add(event.code!);
-		if (options.notify && !repeated && (event.status === "created" || event.status === "failed"))
-			await options
-				.notify(event.status === "created" ? "pending" : "error", event.status === "created" ? 1 : 0)
-				.catch(() => false);
+		const repeated = isStandingFault(event.code) && options.memory?.notified.has(event.code!) === true;
+		if (isStandingFault(event.code)) options.memory?.notified.add(event.code!);
+		if (options.notify && notify !== undefined && !repeated)
+			await options.notify(notify, notify === "pending" ? 1 : 0).catch(() => false);
 		return event;
 	};
+	const store = (record: CommunityGenerationStatus) =>
+		Result.try({ try: () => writeStatus(options.statusPath, record), catch: () => "status_record_unwritable" });
+	const statusFor = (
+		weeks: Record<string, WeekRecord>,
+		lastFailure: CommunityGenerationStatus["lastFailure"],
+	): CommunityGenerationStatus => ({
+		kind: "harnessy.community.briefing.weekly-generation.v1",
+		publication: false,
+		updatedAt: options.now().toISOString(),
+		schedule: {
+			weekday: options.schedule.weekday,
+			hour: options.schedule.hour,
+			minute: options.schedule.minute,
+			timezone: options.schedule.timezone,
+		},
+		lastFailure,
+		weeks: Object.fromEntries(
+			Object.entries(weeks)
+				.sort(([left], [right]) => right.localeCompare(left))
+				.slice(0, RETAINED_WEEKS),
+		),
+	});
+	/** A fresh record seeded from the drafts already queued: those weeks are done. */
+	const rebuild = (): CommunityGenerationStatus => {
+		const queued = Result.try(() => options.queue.list(RETAINED_WEEKS));
+		const at = options.now().toISOString();
+		return statusFor(
+			Object.fromEntries(
+				(Result.isSuccess(queued) ? queued.success : []).map(({ weekStart: week, briefingId }) => [
+					week,
+					{ status: "existing", attempts: 0, lastAttemptAt: at, briefingId },
+				]),
+			),
+			null,
+		);
+	};
+
 	const read = Result.try({
 		try: () => readCommunityGenerationStatus(options.statusPath),
-		catch: (cause) => (cause instanceof Error ? cause.message : undefined),
+		catch: (cause) => (cause instanceof Error ? cause.message : "status_record_unreadable"),
 	});
-	// Fail closed and visibly: an unreadable record could hide spent attempts.
-	if (Result.isFailure(read))
-		return finish({
-			event: "weekly-generation",
-			weekStart,
-			status: "failed",
-			code: safeCode(read.failure),
-			publication: false,
-		});
-	const current = read.success;
-	const persisted = current?.weeks[weekStart];
+	let current: CommunityGenerationStatus;
+	if (Result.isSuccess(read) && read.success !== undefined) current = read.success;
+	else if (Result.isSuccess(read) || read.failure === "status_record_invalid") {
+		// Missing or damaged (for example truncated): rebuild from the queue. Only
+		// attempt counts of weeks without a draft are lost, and the queue check
+		// before every attempt still prevents a second draft.
+		const repaired = Result.isFailure(read);
+		if (repaired) Result.try(() => quarantineCommunityGenerationStatus(options.statusPath, options.now()));
+		current = rebuild();
+		const written = store(current);
+		if (repaired)
+			options.report({
+				event: "weekly-generation",
+				weekStart,
+				status: "repaired",
+				code: Result.isFailure(written) ? written.failure : "status_record_invalid",
+				publication: false,
+			});
+	} else {
+		// A record that is a link, not owner-only, or unreadable may be tampering.
+		// Stop and ask the owner: `harnessy jarvis community generation-status --repair`.
+		return finish(
+			{ event: "weekly-generation", weekStart, status: "failed", code: safeCode(read.failure), publication: false },
+			"error",
+		);
+	}
+
+	const persisted = current.weeks[weekStart];
 	const remembered = options.memory?.weeks.get(weekStart);
 	// An unwritable record must not reset the attempt limit within this process.
 	const previous = remembered && remembered.attempts > (persisted?.attempts ?? 0) ? remembered : persisted;
 	if (previous && previous.status !== "failed") return undefined;
+
+	const record = async (
+		week: WeekRecord,
+		event: CommunityGenerationEvent,
+		notify: "pending" | "error" | undefined,
+	) => {
+		options.memory?.weeks.set(weekStart, week);
+		const failure =
+			week.status === "failed"
+				? { weekStart, at: week.lastAttemptAt, code: week.code ?? "generation_failed", attempts: week.attempts }
+				: current.lastFailure;
+		const written = store(statusFor({ ...current.weeks, [weekStart]: week }, failure));
+		if (Result.isFailure(written)) return finish({ ...event, status: "failed", code: written.failure }, "error");
+		return finish(event, notify);
+	};
+
+	// Reconcile with the queue before anything else. A draft for the week means it
+	// is done: made by this scheduler after its deadline, by a manual run, or
+	// before a lost record. A previous failure that produced the draft is
+	// recovered, and its "pending review" notice is sent now.
+	const queued = Result.try(() => options.queue.find(weekStart));
+	if (Result.isFailure(queued))
+		return finish(
+			{ event: "weekly-generation", weekStart, status: "failed", code: "queue_unreadable", publication: false },
+			"error",
+		);
+	if (queued.success !== undefined) {
+		const recovered = previous !== undefined;
+		const week: WeekRecord = {
+			status: recovered ? "created" : "existing",
+			attempts: previous?.attempts ?? 0,
+			lastAttemptAt: options.now().toISOString(),
+			briefingId: queued.success,
+			...(recovered ? { recovered } : {}),
+		};
+		return record(
+			week,
+			{
+				event: "weekly-generation",
+				weekStart,
+				status: week.status,
+				briefingId: queued.success,
+				...(recovered ? { recovered } : {}),
+				publication: false,
+			},
+			recovered ? "pending" : undefined,
+		);
+	}
 	if (previous?.gaveUp) return undefined;
 	if (previous && started.getTime() - Date.parse(previous.lastAttemptAt) < retryAfterMs) return undefined;
+
 	const attempt = (previous?.attempts ?? 0) + 1;
 	const result = await Promise.resolve()
 		.then(() => options.generateWeek(weekStart))
 		.then(
 			(value) => value,
-			(cause: unknown): CommunityWeekGenerationResult => ({
-				status: "failed",
-				code: cause instanceof Error ? safeCode(cause.message) : "generation_failed",
-			}),
+			(): CommunityWeekGenerationResult => ({ status: "failed", code: "generation_failed" }),
 		);
 	if (result.status === "busy")
-		// Another native draft holds the adapter. Not an attempt: try again next tick.
-		return finish({ event: "weekly-generation", weekStart, status: "busy", publication: false });
-	const at = options.now().toISOString();
+		// Another native draft holds the state directory. Not an attempt: try again next tick.
+		return finish({ event: "weekly-generation", weekStart, status: "busy", publication: false }, undefined);
+	if (result.status === "cancelled")
+		// Shutdown is not a failure. A draft committed before the stop is reconciled at the next start.
+		return finish(
+			{ event: "weekly-generation", weekStart, status: "skipped", code: "cancelled", publication: false },
+			undefined,
+		);
 	const failed = result.status === "failed";
 	const code = failed ? safeCode(result.code) : undefined;
-	const gaveUp = failed && attempt >= maxAttempts;
+	const gaveUp = failed && (attempt >= maxAttempts || FINAL_CODES.has(code!));
 	const briefingId =
 		!failed && typeof result.briefingId === "string" && /^[a-f0-9]{24}$/u.test(result.briefingId)
 			? result.briefingId
 			: undefined;
-	const record: WeekRecord = {
+	const week: WeekRecord = {
 		status: result.status === "existing" ? "existing" : failed ? "failed" : "created",
 		attempts: attempt,
-		lastAttemptAt: at,
+		lastAttemptAt: options.now().toISOString(),
 		...(briefingId === undefined ? {} : { briefingId }),
 		...(code === undefined ? {} : { code }),
 		...(gaveUp ? { gaveUp } : {}),
 	};
-	options.memory?.weeks.set(weekStart, record);
-	const weeks = Object.fromEntries(
-		[...Object.entries(current?.weeks ?? {}), [weekStart, record] as const]
-			.sort(([left], [right]) => right.localeCompare(left))
-			.slice(0, RETAINED_WEEKS),
+	return record(
+		week,
+		{
+			event: "weekly-generation",
+			weekStart,
+			status: week.status,
+			attempt,
+			...(code === undefined ? {} : { code }),
+			...(briefingId === undefined ? {} : { briefingId }),
+			...(gaveUp ? { gaveUp } : {}),
+			publication: false,
+		},
+		failed ? "error" : week.status === "created" && result.notified !== true ? "pending" : undefined,
 	);
-	const event: CommunityGenerationEvent = {
-		event: "weekly-generation",
-		weekStart,
-		status: record.status,
-		attempt,
-		...(code === undefined ? {} : { code }),
-		...(briefingId === undefined ? {} : { briefingId }),
-		...(gaveUp ? { gaveUp } : {}),
-		publication: false,
-	};
-	const stored = Result.try({
-		try: () =>
-			writeStatus(options.statusPath, {
-				kind: "harnessy.community.briefing.weekly-generation.v1",
-				publication: false,
-				updatedAt: at,
-				schedule: {
-					weekday: options.schedule.weekday,
-					hour: options.schedule.hour,
-					minute: options.schedule.minute,
-					timezone: options.schedule.timezone,
-				},
-				lastFailure: failed
-					? { weekStart, at, code: code ?? "generation_failed", attempts: attempt }
-					: (current?.lastFailure ?? null),
-				weeks,
-			}),
-		catch: () => "status_record_unwritable",
-	});
-	if (Result.isFailure(stored)) return finish({ ...event, status: "failed", code: stored.failure });
-	// A failed native AI run is already notified by the review's run-finished handler.
-	if (failed && result.ran) {
-		options.report(event);
-		return event;
-	}
-	return finish(event);
 };
 
 /** Ten minutes: wake often enough to catch a scheduled minute after sleep. */
 export const COMMUNITY_GENERATION_TICK_MS = 10 * 60 * 1000;
 
-/** Run the weekly trigger until `signal` aborts. One tick at a time; never throws. */
+/**
+ * Run the weekly trigger until `signal` aborts. Only the holder of the state
+ * directory's scheduler lock runs ticks; another process keeps trying to take
+ * the lock, so it takes over if the holder exits. One tick at a time; never throws.
+ */
 export const runWeeklyCommunityGeneration = async (
 	options: WeeklyCommunityGenerationOptions & {
 		readonly signal: AbortSignal;
+		readonly acquireLock: () => CommunityGenerationLock | undefined;
 		readonly tickMs?: number;
 		readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 	},
@@ -393,9 +606,28 @@ export const runWeeklyCommunityGeneration = async (
 				);
 			}));
 	const memory = options.memory ?? { notified: new Set<string>(), weeks: new Map<string, WeekRecord>() };
-	while (!options.signal.aborted) {
-		await runCommunityGenerationTick({ ...options, memory });
-		if (options.signal.aborted) return;
-		await sleep(options.tickMs ?? COMMUNITY_GENERATION_TICK_MS, options.signal);
+	let lock: CommunityGenerationLock | undefined;
+	let waiting = false;
+	try {
+		while (!options.signal.aborted) {
+			if (lock === undefined) {
+				const taken = Result.try(options.acquireLock);
+				lock = Result.isSuccess(taken) ? taken.success : undefined;
+				if (lock === undefined && !waiting)
+					options.report({
+						event: "weekly-generation",
+						weekStart: dueCommunityGenerationWeek(options.now(), options.schedule),
+						status: "skipped",
+						code: Result.isSuccess(taken) ? "scheduler_locked" : "scheduler_lock_unavailable",
+						publication: false,
+					});
+				waiting = lock === undefined;
+			}
+			if (lock !== undefined) await runCommunityGenerationTick({ ...options, memory });
+			if (options.signal.aborted) return;
+			await sleep(options.tickMs ?? COMMUNITY_GENERATION_TICK_MS, options.signal);
+		}
+	} finally {
+		lock?.release();
 	}
 };

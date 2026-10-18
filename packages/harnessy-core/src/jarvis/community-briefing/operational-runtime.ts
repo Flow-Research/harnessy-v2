@@ -90,8 +90,12 @@ export const isNativeCommunityReviewProcess = (
 			"dist/cli.js",
 			"dist/jarvis/community-briefing/native-draft.js",
 			"dist/jarvis/community-briefing/review-process.js",
-			// The weekly trigger runs in the reviewer and writes drafts through it.
+			// The weekly trigger runs in the reviewer: its routing, one-shot generation
+			// child and notification acknowledgements decide what the reviewer writes.
 			"dist/cli/community-draft.js",
+			"dist/cli/jarvis.js",
+			"dist/jarvis/community-briefing/draft-process.js",
+			"dist/jarvis/community-briefing/notification.js",
 			"dist/jarvis/community-briefing/weekly-generation.js",
 			"resources/community-draft-adapter.py",
 		]) {

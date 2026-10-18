@@ -16,6 +16,18 @@ const Result = Schema.Struct({
 	publication: Schema.Literal(false),
 });
 
+/** Allow-listed adapter refusals, raised before any run or provider call. */
+const REFUSALS = new Set(["native_draft_busy", "orphan_artifacts"]);
+
+/** The fixed, content-free failure. `code` names a known cause when there is one. */
+export class CommunityDraftProcessError extends Error {
+	readonly code: "native_draft_busy" | "orphan_artifacts" | "deadline_exceeded" | undefined;
+	constructor(code: CommunityDraftProcessError["code"]) {
+		super("Community draft did not complete safely; inspect its local state before retrying.");
+		this.code = code;
+	}
+}
+
 export interface CommunityDraftProcessOptions {
 	readonly runId: string;
 	readonly pythonPath: string;
@@ -101,7 +113,12 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 	});
 	if (Buffer.byteLength(request) >= 1048576) throw new Error("Community draft input exceeds its bound.");
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+	let timedOut = false;
+	let refusal: "native_draft_busy" | "orphan_artifacts" | undefined;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		controller.abort();
+	}, options.timeoutMs);
 	const signal = AbortSignal.any([options.signal, controller.signal]);
 	const child = spawn(
 		options.pythonPath,
@@ -137,6 +154,11 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 						const event: unknown = JSON.parse(line);
 						if (typeof event !== "object" || event === null || !("type" in event) || result)
 							throw new Error("Unexpected adapter message.");
+						if (event.type === "error") {
+							if ("code" in event && typeof event.code === "string" && REFUSALS.has(event.code))
+								refusal = event.code as typeof refusal;
+							continue;
+						}
 						if (event.type === "result") {
 							result = Schema.decodeUnknownSync(Result)(event);
 							if (result.provider_calls !== calls) throw new Error("Adapter call count mismatch.");
@@ -194,7 +216,7 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 					if (code !== 0 || !result) throw new Error("Adapter did not complete.");
 					return result;
 				},
-				catch: () => new Error("Community draft did not complete safely; inspect its local state before retrying."),
+				catch: () => new CommunityDraftProcessError(timedOut ? "deadline_exceeded" : refusal),
 			}),
 		);
 	} finally {
