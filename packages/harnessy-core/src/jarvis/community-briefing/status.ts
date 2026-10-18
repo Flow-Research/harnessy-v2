@@ -1,10 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import * as Result from "effect/Result";
 import { parseDocument } from "yaml";
+
+import { resolveJarvisConfigPath } from "../paths.ts";
 
 export type CommunityBriefingStatusCounts = Readonly<Record<string, number>>;
 
@@ -23,6 +25,9 @@ export interface CommunityBriefingStatus {
 }
 
 export interface CommunityBriefingStatusOptions {
+	/** The home directory that a leading `~` in a configured path expands to. Defaults to the process home. */
+	readonly homeRoot?: string;
+	/** Defaults to `<homeRoot>/.jarvis/config.yaml`. */
 	readonly configPath?: string;
 	readonly stateRoot?: string;
 	/** SQLite busy timeout for the read-only queue read. Defaults to 10 000 ms. */
@@ -68,11 +73,6 @@ export interface CommunityBriefingQueueItem {
 	readonly updatedAt: string;
 }
 
-const expand = (value: string, base: string): string => {
-	const expanded = value.replace(/^~(?=\/|$)/, homedir());
-	return isAbsolute(expanded) ? resolve(expanded) : resolve(base, expanded);
-};
-
 const stringValue = (value: unknown): string | null =>
 	typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 
@@ -114,8 +114,10 @@ export const REQUIRED_QUEUE_COLUMNS = [
 export const resolveCommunityBriefingConfig = (
 	options: CommunityBriefingStatusOptions = {},
 ): CommunityBriefingConfigResolution => {
-	const configPath = resolve(options.configPath ?? join(homedir(), ".jarvis", "config.yaml"));
+	const homeRoot = resolve(options.homeRoot ?? homedir());
+	const configPath = resolve(options.configPath ?? join(homeRoot, ".jarvis", "config.yaml"));
 	const base = dirname(configPath);
+	const expand = (value: string) => resolveJarvisConfigPath(value, base, homeRoot);
 	const issues: Array<string> = [];
 	let config: Record<string, unknown> = {};
 	const configPresent = existsSync(configPath);
@@ -135,7 +137,7 @@ export const resolveCommunityBriefingConfig = (
 	const briefing = recordValue(config.community_briefing) ?? {};
 	const configuredStateRoot = stringValue(options.stateRoot) ?? stringValue(briefing.state_path);
 	const stateRoot =
-		configuredStateRoot === null ? join(base, "state", "meeting-publication") : expand(configuredStateRoot, base);
+		configuredStateRoot === null ? join(base, "state", "meeting-publication") : expand(configuredStateRoot);
 	const sourcePath = stringValue(briefing.source_path);
 	const draftPath = stringValue(briefing.draft_path);
 	return {
@@ -143,8 +145,8 @@ export const resolveCommunityBriefingConfig = (
 		configPresent,
 		stateRoot,
 		databasePath: join(stateRoot, "weekly-briefings.sqlite3"),
-		sourcePath: sourcePath === null ? null : expand(sourcePath, base),
-		draftPath: draftPath === null ? null : expand(draftPath, base),
+		sourcePath: sourcePath === null ? null : expand(sourcePath),
+		draftPath: draftPath === null ? null : expand(draftPath),
 		reviewHost: stringValue(briefing.review_host),
 		reviewPort: integerValue(briefing.review_port),
 		discordChannelConfigured: stringValue(briefing.discord_channel_id) !== null,

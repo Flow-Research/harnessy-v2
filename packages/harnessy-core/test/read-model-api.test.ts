@@ -206,6 +206,26 @@ describe("meeting publication configuration", () => {
 		});
 	});
 
+	it("returns absolute source and state paths, expanding `~` against homeRoot rather than HOME", () => {
+		const home = tempHome("meeting-config-tilde");
+		write(home, "meeting_publication:\n  source_path: ~/notes\n  state_path: ~/.jarvis/state/meeting-publication\n");
+		const previous = process.env.HOME;
+		process.env.HOME = tempHome("meeting-config-other-home");
+		try {
+			expect(readMeetingPublicationConfig({ homeRoot: home, now: NOW }).data).toMatchObject({
+				sourcePath: join(home, "notes"),
+				statePath: join(home, ".jarvis", "state", "meeting-publication"),
+			});
+			write(home, "meeting_publication:\n  source_path: '~'\n  state_path: state/../meeting\n");
+			expect(readMeetingPublicationConfig({ homeRoot: home, now: NOW }).data).toMatchObject({
+				sourcePath: home,
+				statePath: join(home, ".jarvis", "meeting"),
+			});
+		} finally {
+			process.env.HOME = previous;
+		}
+	});
+
 	it("defaults to the configuration under the home directory", () => {
 		const home = tempHome("meeting-config-home");
 		write(home, "meeting_publication:\n  enabled: true\n");

@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { isAbsolute, resolve } from "node:path";
 
 import { Path, Schema } from "effect";
 import * as Context from "effect/Context";
@@ -19,6 +20,16 @@ export class JarvisPaths extends Schema.Class<JarvisPaths>("JarvisPaths")({
 	legacyProjectContextDir: Schema.String,
 	legacyFallbackContextDir: Schema.String,
 }) {}
+
+/**
+ * Resolve a path value read from a Jarvis configuration file. A leading `~` segment
+ * expands against `homeRoot`, an explicit home directory, never the process `HOME`;
+ * a relative value resolves against `base`, the configuration file's directory.
+ */
+export const resolveJarvisConfigPath = (value: string, base: string, homeRoot: string): string => {
+	const expanded = value.replace(/^~(?=\/|$)/u, () => homeRoot);
+	return isAbsolute(expanded) ? resolve(expanded) : resolve(base, expanded);
+};
 
 /** Home-directory access kept behind a layer so path tests never depend on the developer machine. */
 export class JarvisRuntimeRoots extends Context.Service<

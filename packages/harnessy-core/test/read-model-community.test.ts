@@ -165,6 +165,32 @@ describe("community read model", () => {
 		expect(JSON.stringify(withError)).not.toContain("provider text");
 	});
 
+	it("expands `~` in configured paths against homeRoot rather than HOME", () => {
+		const { home } = setup("community-tilde", 2);
+		const configPath = join(home, ".jarvis", "config.yaml");
+		mkdirSync(join(home, ".jarvis"));
+		writeFileSync(
+			configPath,
+			"community_briefing:\n  source_path: ~/source\n  draft_path: ~/drafts\n  state_path: ~/state\n  discord_channel_id: '123'\n",
+		);
+		const previous = process.env.HOME;
+		process.env.HOME = tempHome("community-other-home");
+		try {
+			expect(readCommunitySummary({ homeRoot: home, now: NOW })).toMatchObject({
+				config: { state: "ok", data: { configured: true } },
+				queue: { state: "ok", data: { total: 2 } },
+			});
+			expect(inspectCommunityBriefingStatus({ homeRoot: home })).toMatchObject({
+				configPath,
+				stateRoot: join(home, "state"),
+				sourcePath: join(home, "source"),
+				draftPath: join(home, "drafts"),
+			});
+		} finally {
+			process.env.HOME = previous;
+		}
+	});
+
 	it("returns busy within the timeout and recovering for a hot journal", async () => {
 		const { configPath, databasePath } = setup("community-busy");
 		const writer = await startSqliteWriter(databasePath, "exclusive");

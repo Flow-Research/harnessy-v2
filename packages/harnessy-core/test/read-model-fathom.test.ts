@@ -111,6 +111,29 @@ describe("Fathom read model", () => {
 		expect(JSON.stringify(summary)).not.toContain(inbox);
 	});
 
+	it("expands a `~` source path against homeRoot rather than HOME", () => {
+		const { home, configPath, inbox } = setup("fathom-tilde");
+		writeFileSync(
+			configPath,
+			"community_briefing:\n  source_path: ~/private\nfathom:\n  accounts:\n    personal: {}\n",
+		);
+		const previous = process.env.HOME;
+		process.env.HOME = tempHome("fathom-other-home");
+		try {
+			expect(readFathomSummary({ homeRoot: home, now: NOW }).inbox).toMatchObject({
+				state: "ok",
+				data: { totals: { pending: 2, processed: 3, invalid: 1 } },
+			});
+			expect(inspectFathomStatus({ homeRoot: home })).toMatchObject({
+				configPath,
+				inboxPath: inbox,
+				statePath: join(home, ".jarvis", "state", "fathom"),
+			});
+		} finally {
+			process.env.HOME = previous;
+		}
+	});
+
 	it("reports missing, invalid and oversize sources as degraded tiles", async () => {
 		const missing = tempHome("fathom-missing");
 		expect(readFathomSummary({ homeRoot: missing, now: NOW })).toMatchObject({
