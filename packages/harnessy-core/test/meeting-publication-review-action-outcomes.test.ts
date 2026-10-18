@@ -364,6 +364,27 @@ describe("meeting review action outcomes", () => {
 		);
 	});
 
+	it("does not answer a repeat as already handled once the note changed on disk", async () => {
+		const result = await withReview({ a: note("a"), r: note("r") }, async (harness) => {
+			const [a, r] = [required(harness.items, "a"), required(harness.items, "r")];
+			await submit(harness, "approve", a);
+			await submit(harness, "reject", r);
+			writeFileSync(a.notePath, note("a", "Edited outside the review server."));
+			writeFileSync(r.notePath, note("r", "Edited outside the review server."));
+			const approve = await submit(harness, "approve", a);
+			const reject = await submit(harness, "reject", r);
+			return { approve, reject, a: await current(harness, a), r: await current(harness, r) };
+		});
+		for (const response of [result.approve, result.reject]) {
+			expect(response.status).toBe(409);
+			expect(response.body).not.toContain("No further action was taken.");
+		}
+		expect(result.approve.body).toContain("The meeting note changed after this page was loaded.");
+		expect(result.a).toMatchObject({ status: "pending_review", approvedHash: null });
+		expect(result.a.sourceHash).not.toBe(createHash("sha256").update(note("a")).digest("hex"));
+		expect(result.r.sourceHash).not.toBe(createHash("sha256").update(note("r")).digest("hex"));
+	});
+
 	it("keeps stale and no-longer-allowed decisions as 409 and names the current status", async () => {
 		const result = await withReview({ a: note("a"), b: note("b") }, async (harness) => {
 			const [a, b] = [required(harness.items, "a"), required(harness.items, "b")];

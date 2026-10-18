@@ -1457,20 +1457,26 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						// A repeated submission whose decision already holds is answered from the
 						// current row without another write, so double-submit stays idempotent.
 						const alreadyHandled = async (current: MeetingPublicationItem) => {
-							if (kind === "update-note") {
-								return current.status === "pending_review" && current.sourceHash === submittedHash;
-							}
-							if (!decidedStatuses[kind].includes(current.status)) return false;
-							if (kind !== "approve") return current.sourceHash === reviewedHash;
-							if (current.approvedHash !== reviewedHash && current.approvedHash !== submittedHash) return false;
-							// Publication clears the stored purpose override; the published note is final.
-							if (current.status === "published") return true;
+							const matches =
+								kind === "update-note"
+									? current.status === "pending_review" && current.sourceHash === submittedHash
+									: decidedStatuses[kind].includes(current.status) &&
+										(kind === "approve"
+											? current.approvedHash === reviewedHash || current.approvedHash === submittedHash
+											: current.sourceHash === reviewedHash);
+							if (!matches) return false;
+							// The row is only trusted while the canonical note still has the stored hash.
+							// Otherwise the service call below refreshes the row and reports the change.
 							const note = await runRequestEffect(source.read(current.notePath)).catch(() => null);
+							if (note === null || note.itemId !== current.itemId || note.sourceHash !== current.sourceHash) {
+								return false;
+							}
+							// Publication clears the stored purpose override; the published note is final.
+							if (kind !== "approve" || current.status === "published") return true;
 							const purpose = await runRequestEffect(
 								normalizeMeetingPublicationPurpose(form.purpose ?? ""),
 							).catch(() => null);
 							return (
-								note !== null &&
 								purpose !== null &&
 								(current.discordPurposeOverride ?? meetingPublicationDefaultPurpose(note)) === purpose
 							);
