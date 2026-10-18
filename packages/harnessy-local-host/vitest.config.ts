@@ -75,6 +75,7 @@ export default defineConfig({
 				"src/portal/inbox.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
 				"src/portal/jobs.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
 				"src/portal/liveness.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/task-changes.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
 				// The app's browser code: pure libraries at the portal floor, React screens at 80.
 				"src/portal/app/lib/safe-href.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/app/lib/session.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
@@ -82,6 +83,8 @@ export default defineConfig({
 				"src/portal/app/lib/router.ts": { statements: 90, branches: 90, functions: 90, lines: 90 },
 				"src/portal/app/lib/data.tsx": { statements: 90, branches: 85, functions: 90, lines: 90 },
 				"src/portal/app/lib/format.ts": { statements: 90, branches: 85, functions: 90, lines: 90 },
+				"src/portal/app/lib/browser.ts": { statements: 85, branches: 80, functions: 100, lines: 90 },
+				"src/portal/app/lib/keys.tsx": { statements: 90, branches: 75, functions: 100, lines: 90 },
 				"src/portal/app/**/*.tsx": { statements: 80, branches: 70, functions: 75, lines: 80 },
 				"src/portal/process.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/routes.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },

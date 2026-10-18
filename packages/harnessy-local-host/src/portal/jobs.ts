@@ -67,10 +67,26 @@ export interface JobsContext {
 	/** Where the Fathom poll runs (`--target`); `null` when no workspace is known. */
 	readonly workspaceRoot: string | null;
 	readonly meetingPort: number | null;
+	/** The configured review host (`127.0.0.1`, `::1` or `localhost`); `null` when unknown. */
+	readonly meetingHost?: string | null;
 	readonly meetingStatePath: string | null;
 	readonly communityPort: number | null;
+	readonly communityHost?: string | null;
 	readonly communityStatePath: string | null;
 }
+
+/** The loopback addresses a review service with configured `host` listens on. Unknown hosts default to IPv4. */
+export const reviewHostsOf = (host: string | null | undefined): ReadonlyArray<LoopbackHost> =>
+	host === "::1" ? ["::1"] : host === "localhost" ? ["127.0.0.1", "::1"] : ["127.0.0.1"];
+
+/** The URL of a loopback review service, in the address family it listens on; `null` for any other host. */
+export const reviewUrl = (host: string | null | undefined, port: number | null | undefined): string | null => {
+	if (typeof port !== "number" || !Number.isInteger(port) || port <= 0 || port > 65_535) return null;
+	if (host === "::1") return `http://[::1]:${port}/`;
+	if (host === "127.0.0.1") return `http://127.0.0.1:${port}/`;
+	if (host === "localhost") return `http://localhost:${port}/`;
+	return null;
+};
 
 const copy = (label: string, target: string, note: string | null = null): AppActionData => ({
 	kind: "copy",
@@ -85,9 +101,20 @@ const link = (label: string, target: string, note: string | null = null): AppAct
 	note,
 });
 
-/** Quote a path for a copied shell command when it holds anything but plain characters. */
-export const shellPath = (value: string): string =>
-	/^[A-Za-z0-9_./~-]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+/** Control and invisible format characters: a copied command must show every byte it holds. */
+export const HIDDEN_CHARACTERS = /[\p{Cc}\p{Cf}]/u;
+
+/**
+ * Quote a path for a copied shell command when it holds anything but plain
+ * characters. A path with control or invisible format characters (a bidi
+ * override, say) is never put in a command: its placeholder is.
+ */
+export const shellPath = (value: string, placeholder = "<path>"): string =>
+	HIDDEN_CHARACTERS.test(value)
+		? placeholder
+		: /^[A-Za-z0-9_./~-]+$/u.test(value)
+			? value
+			: `'${value.replaceAll("'", "'\\''")}'`;
 
 interface JobDefinition {
 	readonly id: string;
@@ -104,11 +131,15 @@ interface JobDefinition {
 
 /** The fixed job table. Ports and commands that depend on configuration are filled from `context`. */
 export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinition> => {
-	const target = context.workspaceRoot === null ? "<workspace>" : shellPath(context.workspaceRoot);
-	const meetingState = context.meetingStatePath === null ? "<state path>" : shellPath(context.meetingStatePath);
-	const communityState = context.communityStatePath === null ? "<state path>" : shellPath(context.communityStatePath);
+	const target = context.workspaceRoot === null ? "<workspace>" : shellPath(context.workspaceRoot, "<workspace>");
+	const meetingState =
+		context.meetingStatePath === null ? "<state path>" : shellPath(context.meetingStatePath, "<state path>");
+	const communityState =
+		context.communityStatePath === null ? "<state path>" : shellPath(context.communityStatePath, "<state path>");
 	const meetingPort = context.meetingPort ?? MEETING_REVIEW_DEFAULT_PORT;
 	const communityPort = context.communityPort ?? COMMUNITY_REVIEW_DEFAULT_PORT;
+	const meetingUrl = reviewUrl(context.meetingHost, meetingPort) ?? `http://127.0.0.1:${meetingPort}/`;
+	const communityUrl = reviewUrl(context.communityHost, communityPort) ?? `http://127.0.0.1:${communityPort}/`;
 	const reinstall = (command: string) => copy("Reinstall schedule", command, "Writes the plist; does not load it.");
 	return [
 		{
@@ -178,7 +209,7 @@ export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinitio
 			label: COMMUNITY_REVIEW_SERVICE_LABEL,
 			kind: "service",
 			port: communityPort,
-			hosts: ["127.0.0.1"],
+			hosts: reviewHostsOf(context.communityHost),
 			schedule: "Sun 23:00 drafts",
 			notes: [
 				"Never paused, stopped or restarted from here: a loaded label without a process stops publication.",
@@ -186,11 +217,7 @@ export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinitio
 				"Never run `jarvis community briefing …` while publication runs.",
 			],
 			controls: [
-				link(
-					"Open community review",
-					`http://127.0.0.1:${communityPort}/`,
-					"If it asks for a session, run the opener.",
-				),
+				link("Open community review", communityUrl, "If it asks for a session, run the opener."),
 				copy("Open with a session", `harnessy-community-review-open --state-path ${communityState}`),
 				copy("Generation status", "harnessy jarvis community generation-status"),
 			],
@@ -202,17 +229,13 @@ export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinitio
 			label: MEETING_PUBLICATION_SERVICE_LABEL,
 			kind: "service",
 			port: meetingPort,
-			hosts: ["127.0.0.1"],
+			hosts: reviewHostsOf(context.meetingHost),
 			notes: [
 				"Enrolment-bound: not reboot-safe. Re-enrolment needs the owner key, offline.",
 				"Approve and publish on the meeting review page. Harnessy never posts to it.",
 			],
 			controls: [
-				link(
-					"Open meeting review",
-					`http://127.0.0.1:${meetingPort}/`,
-					"If it asks for a session, run the opener.",
-				),
+				link("Open meeting review", meetingUrl, "If it asks for a session, run the opener."),
 				copy("Open with a session", `harnessy-meeting-review-open --state-path ${meetingState}`),
 				copy("Service status", "harnessy-meeting-full-review --service-status"),
 				copy("Enable service", "harnessy-meeting-full-review --service-enable"),
@@ -268,9 +291,56 @@ const xmlText = (value: string): string =>
 		.replaceAll("&apos;", "'")
 		.replaceAll("&amp;", "&");
 
+/** Option names whose value is a secret: `--api-key x`, `--token=x`, `-password x`. */
+const SECRET_OPTION =
+	/^-{1,2}[\w.-]*(?:token|key|secret|passw(?:or)?d|credential|auth|bearer|cookie|session)[\w.-]*$/iu;
+/** `NAME=value` with a shell-safe name, anywhere in an argument (`env FOO=x cmd`, `sh -c 'FOO=x cmd'`). */
+const ASSIGNMENT = /(^|[\s;&|'"(])([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|[^\s;&|'"()]*)/gu;
+/** `--secret-option=value` or `--secret-option value` inside a longer argument such as `sh -c '…'`. */
+const INLINE_SECRET_OPTION =
+	/(-{1,2}[\w.-]*(?:token|key|secret|passw(?:or)?d|credential|auth|bearer|cookie|session)[\w.-]*)(=|\s+)("[^"]*"|'[^']*'|[^\s;&|'"()]+)/giu;
+export const REDACTED = "<redacted>";
+
 /**
- * The `ProgramArguments` of a LaunchAgent plist, or `null` when the plist is
- * missing, unsafe or has none. The environment and every other key are ignored.
+ * Program arguments with every value that may be a secret replaced: the value
+ * after a secret-named option, `--option=value` of one, and every `NAME=value`
+ * assignment. Only the program, its plain options and its paths stay readable.
+ */
+export const redactProgramArguments = (argv: ReadonlyArray<string>): ReadonlyArray<string> => {
+	const out: string[] = [];
+	let redactNext = false;
+	for (const arg of argv) {
+		if (redactNext) {
+			out.push(REDACTED);
+			redactNext = false;
+			continue;
+		}
+		const option = /^(-{1,2}[^=\s]+)=/u.exec(arg);
+		if (option !== null && SECRET_OPTION.test(option[1]!)) {
+			out.push(`${option[1]}=${REDACTED}`);
+			continue;
+		}
+		if (SECRET_OPTION.test(arg)) {
+			out.push(arg);
+			redactNext = true;
+			continue;
+		}
+		out.push(
+			arg
+				.replace(ASSIGNMENT, (_match, lead: string, name: string) => `${lead}${name}=${REDACTED}`)
+				.replace(
+					INLINE_SECRET_OPTION,
+					(_match, name: string, separator: string) => `${name}${separator}${REDACTED}`,
+				),
+		);
+	}
+	return out;
+};
+
+/**
+ * The `ProgramArguments` of a LaunchAgent plist, redacted, or `null` when the
+ * plist is missing, unsafe or has none. The environment and every other key are
+ * ignored.
  */
 export const readProgramArguments = (homeRoot: string, label: string): ReadonlyArray<string> | null => {
 	try {
@@ -278,13 +348,16 @@ export const readProgramArguments = (homeRoot: string, label: string): ReadonlyA
 		if (file.truncated) return null;
 		const array = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/u.exec(file.bytes.toString("utf8"));
 		if (array === null) return null;
-		return [...array[1]!.matchAll(/<string>([^<]*)<\/string>/gu)]
-			.slice(0, 32)
-			.map((match) => xmlText(match[1]!).slice(0, 512));
+		return redactProgramArguments(
+			[...array[1]!.matchAll(/<string>([^<]*)<\/string>/gu)].slice(0, 32).map((match) => xmlText(match[1]!)),
+		).map((arg) => arg.slice(0, 512));
 	} catch {
 		return null;
 	}
 };
+
+/** The health reason of a job whose launchd state cannot be read on this platform at all. */
+export const LAUNCHD_UNAVAILABLE = "launchd not available";
 
 const healthOf = (
 	definition: JobDefinition,
@@ -293,8 +366,7 @@ const healthOf = (
 ): { readonly health: JobData["health"]; readonly reason: string } => {
 	if (definition.kind === "on-demand")
 		return open === true ? { health: "ok", reason: "running" } : { health: "idle", reason: "not running" };
-	if (tile === undefined || tile.state === "unsupported")
-		return { health: "unknown", reason: "launchd not available" };
+	if (tile === undefined || tile.state === "unsupported") return { health: "unknown", reason: LAUNCHD_UNAVAILABLE };
 	if (tile.state === "missing") return { health: "error", reason: "not loaded" };
 	if (tile.state !== "ok") return { health: "unknown", reason: `launchd ${tile.reason ?? tile.state}` };
 	const data = tile.data!;
@@ -347,7 +419,8 @@ export const readJobs = async (context: JobsContext): Promise<JobListData> => {
 					schedule !== undefined
 						? describeJobSchedule(schedule)
 						: (definition.schedule ?? (definition.port === null ? null : `port ${definition.port}`)),
-				nextRun: next === null ? null : next.toISOString(),
+				// launchd does not start a job whose label is not loaded: no next run is promised for it.
+				nextRun: next === null || tile?.state === "missing" ? null : next.toISOString(),
 				lastActivity,
 				loaded:
 					tile === undefined || (tile.state !== "ok" && tile.state !== "missing") ? null : tile.state === "ok",

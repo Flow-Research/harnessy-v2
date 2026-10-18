@@ -205,39 +205,50 @@ describe("app bundle loader", () => {
 			['<script type="module" src="/assets/other-12345678.js"></script>', "portal_index_reference_unlisted"],
 			['<link rel="stylesheet" href="https://cdn.example.test/x.css">', "portal_index_reference_unlisted"],
 			['<img src="data:image/png;base64,AAAA">', "portal_index_reference_unlisted"],
+			// Single-quoted and unquoted references are checked like double-quoted ones.
+			["<script src='https://x.example.test/a.js'></script>", "portal_index_reference_unlisted"],
+			["<link rel=stylesheet href=/x.css>", "portal_index_reference_unlisted"],
+			["<img src = /unlisted.png>", "portal_index_reference_unlisted"],
 		] as const)
 			expect([html, code(() => assertPortalIndexHtml(html, listed))]).toEqual([html, expected]);
 		const inline = bundle({ ...FILES, "index.html": INDEX.replace("</head>", "<style>body{}</style></head>") });
 		expect(code(() => loadPortalPageAssets(inline))).toBe("portal_index_inline_style");
 	});
 
-	it("passes its own checks for the real build, which injects no style element and inlines nothing", () => {
-		// CI builds the bundle before the tests run; a source checkout that was never built skips this case.
-		const dir = defaultPortalAppDir();
-		if (!existsSync(join(dir, PORTAL_ASSET_MANIFEST))) return;
-		const assets = loadPortalPageAssets(dir);
-		const index = assets.get("/")!.body.toString("utf8");
-		expect(index).toMatch(
-			/<script type="module" crossorigin src="\/assets\/index-[A-Za-z0-9_-]{8,}\.js"><\/script>/u,
-		);
-		const css = [...assets].filter(([path]) => path.endsWith(".css")).map(([, asset]) => asset.body.toString("utf8"));
-		expect(css).toHaveLength(1);
-		expect(css[0]).not.toMatch(/url\((?!["']?\/assets\/)/u);
-		expect(css[0]).not.toContain("data:");
-		const fonts = [...assets.keys()].filter((path) => path.endsWith(".woff2"));
-		expect(fonts.length).toBe(7);
-		const script = [...assets]
-			.filter(([path]) => path.endsWith(".js"))
-			.map(([, asset]) => asset.body.toString("utf8"));
-		expect(script).toHaveLength(1);
-		expect(script[0]).not.toMatch(/\beval\(|new Function\(/u);
-		// Every hashed file is cached as immutable; nothing else is.
-		for (const [path, asset] of assets)
-			expect([path, asset.cacheControl]).toEqual([
-				path,
-				/-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2)$/u.test(path) ? PORTAL_IMMUTABLE : PORTAL_NO_STORE,
-			]);
-	});
+	// CI builds the bundle before the tests run and must not pass this case without it. A source checkout that
+	// was never built reports the case as skipped, not passed.
+	const realBuild = existsSync(join(defaultPortalAppDir(), PORTAL_ASSET_MANIFEST));
+	it.skipIf(!realBuild && process.env.CI !== "true")(
+		"passes its own checks for the real build, which injects no style element and inlines nothing",
+		() => {
+			expect(realBuild, "the app bundle (dist/portal-app) must be built before this test in CI").toBe(true);
+			const dir = defaultPortalAppDir();
+			const assets = loadPortalPageAssets(dir);
+			const index = assets.get("/")!.body.toString("utf8");
+			expect(index).toMatch(
+				/<script type="module" crossorigin src="\/assets\/index-[A-Za-z0-9_-]{8,}\.js"><\/script>/u,
+			);
+			const css = [...assets]
+				.filter(([path]) => path.endsWith(".css"))
+				.map(([, asset]) => asset.body.toString("utf8"));
+			expect(css).toHaveLength(1);
+			expect(css[0]).not.toMatch(/url\((?!["']?\/assets\/)/u);
+			expect(css[0]).not.toContain("data:");
+			const fonts = [...assets.keys()].filter((path) => path.endsWith(".woff2"));
+			expect(fonts.length).toBe(7);
+			const script = [...assets]
+				.filter(([path]) => path.endsWith(".js"))
+				.map(([, asset]) => asset.body.toString("utf8"));
+			expect(script).toHaveLength(1);
+			expect(script[0]).not.toMatch(/\beval\(|new Function\(/u);
+			// Every hashed file is cached as immutable; nothing else is.
+			for (const [path, asset] of assets)
+				expect([path, asset.cacheControl]).toEqual([
+					path,
+					/-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2)$/u.test(path) ? PORTAL_IMMUTABLE : PORTAL_NO_STORE,
+				]);
+		},
+	);
 });
 
 describe("app bundle over HTTP", () => {

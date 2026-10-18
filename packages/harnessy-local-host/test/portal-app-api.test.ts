@@ -366,7 +366,6 @@ describe("inbox derivation", () => {
 			"action_required life-weekly:2026-W37",
 			"action_required life-weekly:2026-W40",
 			"action_required life-weekly:2026-W41",
-			"attention community-generation:2026-09-28",
 			"attention connection:meeting.google",
 			"attention connection:codex",
 			"attention connection:gws.x",
@@ -376,7 +375,8 @@ describe("inbox derivation", () => {
 			"attention life-weekly:2026-W42:draft",
 			"info fathom:inbox",
 		]);
-		expect(inbox.counts).toEqual({ action_required: 9, attention: 8, info: 1 });
+		// The standing fault covers its failed week: one item, not a second one per week.
+		expect(inbox.counts).toEqual({ action_required: 9, attention: 7, info: 1 });
 		expect(inbox.unreadable).toEqual(["connections.broken:database_busy"]);
 		const byKey = new Map(inbox.items.map((item) => [item.key, item]));
 		expect(byKey.get("community:pending")).toMatchObject({
@@ -418,6 +418,123 @@ describe("inbox derivation", () => {
 			}
 		// Readings are never called unread.
 		expect(JSON.stringify(inbox.items).toLowerCase()).not.toMatch(/\bunread\b/u);
+	});
+
+	it("raises a failed generation week as attention only without a standing fault", () => {
+		const generation = (standingFault: { code: string; since: string } | null) =>
+			keys(
+				deriveInbox({
+					...baseInputs(),
+					communityGeneration: ok({
+						schedule: null,
+						updatedAt: null,
+						nextRun: null,
+						lastFailure: { weekStart: "2026-09-28", at: "2026-10-05T22:30:00.000Z", code: "c", attempts: 3 },
+						standingFault,
+						weeks: [],
+					}),
+				}).items,
+			);
+		expect(generation(null)).toEqual(["attention community-generation:2026-09-28"]);
+		expect(generation({ code: "c", since: "2026-10-16T22:00:00.000Z" })).toEqual([
+			"action_required community-generation:fault",
+		]);
+	});
+
+	it("links and probes a review service on the host it is configured for, including ::1", () => {
+		const inbox = deriveInbox({
+			...baseInputs(),
+			meetingConfig: ok({ enabled: true, reviewHost: "::1", reviewPort: 8770 }),
+			meetingQueue: ok({
+				schemaVersion: 1,
+				schemaState: "current",
+				totalItems: 1,
+				statusCounts: { pending_review: 1 },
+				failureCounts: {},
+				pendingReview: [],
+				pendingReviewTruncated: false,
+			}),
+		});
+		expect(inbox.items[0]!.actions[0]).toMatchObject({ kind: "handoff", target: "http://[::1]:8770/" });
+		const context = (meetingHost: string | null): JobsContext => ({
+			now: NOW,
+			homeRoot: tempDir("jobs-host"),
+			health: {},
+			probePort: async () => false,
+			workspaceRoot: null,
+			meetingPort: 8770,
+			meetingHost,
+			meetingStatePath: null,
+			communityPort: 8872,
+			communityHost: "localhost",
+			communityStatePath: null,
+		});
+		const meeting = (host: string | null) =>
+			jobDefinitions(context(host)).find((entry) => entry.id === "meeting-publication")!;
+		const shape = (definition: ReturnType<typeof meeting>) => [definition.hosts, definition.controls[0]!.target];
+		expect(shape(meeting("::1"))).toEqual([["::1"], "http://[::1]:8770/"]);
+		expect(shape(meeting("127.0.0.1"))).toEqual([["127.0.0.1"], "http://127.0.0.1:8770/"]);
+		expect(shape(meeting(null))).toEqual([["127.0.0.1"], "http://127.0.0.1:8770/"]);
+		expect(shape(jobDefinitions(context(null)).find((entry) => entry.id === "community-review")!)).toEqual([
+			["127.0.0.1", "::1"],
+			"http://localhost:8872/",
+		]);
+	});
+
+	it("reports a job whose launchd probe failed as unreadable, and promises no run for an unloaded job", () => {
+		const inbox = deriveInbox({
+			...baseInputs(),
+			jobs: {
+				jobs: [
+					job({ id: "weekly-plan", name: "Weekly plan", loaded: false, nextRun: "2026-10-18T17:00:00.000Z" }),
+					job({ id: "daily-brief", health: "unknown", healthReason: "launchd probe_failed", loaded: null }),
+					job({
+						id: "fathom-poll",
+						health: "unknown",
+						healthReason: "launchd not available",
+						loaded: null,
+						nextRun: null,
+					}),
+					job({ id: "executor", kind: "on-demand", health: "unknown", healthReason: "x", nextRun: null }),
+				],
+				timezone: "Africa/Lagos",
+				errorCount: 0,
+			},
+		});
+		expect(inbox.items).toEqual([]);
+		expect(inbox.unreadable).toEqual(["jobs.daily-brief:launchd probe_failed"]);
+		expect(inbox.nextJob).toEqual({ name: "Daily brief", at: "2026-10-18T04:30:00.000Z" });
+	});
+
+	it("never offers a copy whose text hides characters", () => {
+		const bidi = "/home/owner/\u202Eevil";
+		const inbox = deriveInbox({
+			...baseInputs(),
+			communityStatePath: bidi,
+			communityQueue: ok({ counts: { pending_review: 1 }, total: 1, recent: [] }),
+			connections: {
+				codex: ok({
+					omitted: 0,
+					connections: [
+						{
+							id: "codex",
+							label: "Codex",
+							owner: "codex",
+							status: "attention",
+							detail: null,
+							checkedAt: null,
+							action: { kind: "command", value: "codex login\u2066 --evil", note: null },
+						},
+					],
+				}),
+			},
+		});
+		const targets = inbox.items.flatMap((item) => item.actions.map((action) => action.target));
+		expect(targets).toContain("harnessy-community-review-open --state-path <state path>");
+		expect(targets).toContain("#/connections");
+		expect(targets.some((target) => /[\u202A-\u202E\u2066-\u2069]/u.test(target))).toBe(false);
+		expect(shellPath("/a/\u200Bb", "<p>")).toBe("<p>");
+		expect(shellPath("/a\nb")).toBe("<path>");
 	});
 
 	it("keeps singular wording and drops a recovered generation failure", () => {
@@ -578,9 +695,10 @@ describe("jobs", () => {
 			nextRun: "2026-10-18T04:30:00.000Z",
 			pid: 41,
 		});
+		// launchd will not start an unloaded label: no next run is promised for it.
 		expect(byId.get("weekly-plan")).toMatchObject({
 			schedule: "Sun 18:00",
-			nextRun: "2026-10-18T17:00:00.000Z",
+			nextRun: null,
 			loaded: false,
 			stateReason: "not_loaded",
 		});
@@ -630,6 +748,36 @@ describe("jobs", () => {
 			`<plist><dict><key>ProgramArguments</key><array><string>/bin/a &amp; b</string><string>&lt;c&gt;</string></array><key>EnvironmentVariables</key><dict><key>T</key><string>${CANARY}</string></dict></dict></plist>`,
 		);
 		expect(readProgramArguments(home, "x.label")).toEqual(["/bin/a & b", "<c>"]);
+		// Values that may be secrets are redacted wherever they appear in the argv.
+		writeFileSync(
+			join(dir, "s.label.plist"),
+			`<plist><dict><key>ProgramArguments</key><array>${[
+				"/bin/sh",
+				"-c",
+				`FOO_TOKEN=${CANARY} exec tool --api-key ${CANARY} --state-path /x`,
+				"--api-key",
+				CANARY,
+				`--password=${CANARY}`,
+				`SECRET=${CANARY}`,
+				"--state-path",
+				"/home/owner/state",
+			]
+				.map((arg) => `<string>${arg}</string>`)
+				.join("")}</array></dict></plist>`,
+		);
+		const redacted = readProgramArguments(home, "s.label")!;
+		expect(JSON.stringify(redacted)).not.toContain(CANARY);
+		expect(redacted).toEqual([
+			"/bin/sh",
+			"-c",
+			"FOO_TOKEN=<redacted> exec tool --api-key <redacted> --state-path /x",
+			"--api-key",
+			"<redacted>",
+			"--password=<redacted>",
+			"SECRET=<redacted>",
+			"--state-path",
+			"/home/owner/state",
+		]);
 		writeFileSync(join(dir, "y.label.plist"), "<plist><dict></dict></plist>");
 		expect(readProgramArguments(home, "y.label")).toBeNull();
 		writeFileSync(join(dir, "z.label.plist"), "x".repeat(70 * 1024));
@@ -822,17 +970,50 @@ describe("app routes over a real server", () => {
 	it("flags a task whose source line changed between reads instead of silently replacing it", async () => {
 		const fixture = await buildPortalHome("task-changed");
 		const { get } = await start(fixture.home);
-		const titles = async () =>
-			(
-				(await get("/v1/tasks")).json as {
-					tiles: { tasks: { data: { tasks: Array<{ title: string; sourceChanged: boolean }> } } };
-				}
-			).tiles.tasks.data.tasks;
-		expect((await titles()).every((task) => !task.sourceChanged)).toBe(true);
+		type Row = { id: string; title: string; sourceChanged: boolean; previousTitle: string | null };
+		const read = async () =>
+			((await get("/v1/tasks")).json as { tiles: { tasks: { data: { tasks: Row[] } } } }).tiles.tasks.data.tasks;
+		const changed = async () =>
+			(await read()).filter((task) => task.sourceChanged).map((task) => [task.title, task.previousTitle]);
+		expect(await changed()).toEqual([]);
 		const reminders = join(fixture.home, ".agents", "life", "reminders.md");
 		writeFileSync(reminders, readFileSync(reminders, "utf8").replace("Call the bank", "Call the other bank"));
-		const changed = (await titles()).filter((task) => task.sourceChanged).map((task) => task.title);
-		expect(changed).toEqual(["Call the other bank by 2026-10-19"]);
+		const edited = [["Call the other bank by 2026-10-19", "Call the bank by 2026-10-19"]];
+		expect(await changed()).toEqual(edited);
+		// The flag survives later reads (a refetch or the palette's own read cannot use it up).
+		expect(await changed()).toEqual(edited);
+		expect(await changed()).toEqual(edited);
+		// A line inserted above shifts every line below it: neither the new item nor the shifted ones are edits.
+		writeFileSync(
+			reminders,
+			readFileSync(reminders, "utf8").replace(
+				"## Current Follow-Ups\n\n",
+				"## Current Follow-Ups\n\n- [ ] New first item\n",
+			),
+		);
+		expect(await changed()).toEqual(edited);
+		expect((await read()).map((task) => task.title)).toContain("New first item");
+		// A deleted line is not an edit either.
+		writeFileSync(reminders, readFileSync(reminders, "utf8").replace("- [x] Send the deck\n", ""));
+		expect(await changed()).toEqual(edited);
+	});
+
+	it("gives two identical task lines two ids", async () => {
+		const fixture = await buildPortalHome("task-duplicates");
+		const reminders = join(fixture.home, ".agents", "life", "reminders.md");
+		writeFileSync(
+			reminders,
+			readFileSync(reminders, "utf8").replace("- [x] Send the deck", "- [ ] Same\n- [ ] Same\n- [ ] same"),
+		);
+		const { get } = await start(fixture.home);
+		const tasks = (
+			(await get("/v1/tasks")).json as {
+				tiles: { tasks: { data: { tasks: Array<{ id: string; title: string }> } } };
+			}
+		).tiles.tasks.data.tasks;
+		const same = tasks.filter((task) => task.title.toLowerCase() === "same");
+		expect(same).toHaveLength(3);
+		expect(new Set(tasks.map((task) => task.id)).size).toBe(tasks.length);
 	});
 
 	it("serves the owner's brief, recent dates and a weekly draft as bounded text, and refuses other dates", async () => {

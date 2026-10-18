@@ -74,9 +74,9 @@ const start = async (
 };
 
 const homeSources = (home: string, probe: Parameters<typeof createPortalSources>[0]["probe"] = () => "unsupported") =>
-	// harnessy-test-env: configuration, not a child process environment
 	createPortalSources({
 		homeRoot: home,
+		// harnessy-test-env: configuration, not a child process environment
 		env: { USER: FIXTURE_USER },
 		probe,
 		timeoutMs: 250,

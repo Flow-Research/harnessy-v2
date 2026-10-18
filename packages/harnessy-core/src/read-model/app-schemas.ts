@@ -89,7 +89,7 @@ export const TaskSourceKindSchema = literals(["brief", "reminders", "register", 
 
 export const TaskSchema = Type.Object(
 	{
-		/** `sha256(kind, path, normalised text)`. */
+		/** `sha256(kind, path, normalised text)`, plus the occurrence for a repeated line: unique within a response. */
 		id: Type.String({ pattern: "^[a-f0-9]{64}$" }),
 		title: Type.String({ maxLength: 300 }),
 		status: TaskStatusSchema,
@@ -100,8 +100,10 @@ export const TaskSchema = Type.Object(
 		mine: Type.Boolean(),
 		/** The line did not parse and is shown as written. */
 		raw: Type.Boolean(),
-		/** The line at this place held different text at an earlier read. */
+		/** The task's line was edited in its source since an earlier read (kept for a day). */
 		sourceChanged: Type.Boolean(),
+		/** The task's title before that edit, when `sourceChanged`. */
+		previousTitle: nullable(Type.String({ maxLength: 300 })),
 		source: Type.Object(
 			{
 				kind: TaskSourceKindSchema,
@@ -168,7 +170,7 @@ export const JobSchema = Type.Object(
 		liveness: Type.Array(JobLivenessSchema, { maxItems: 2 }),
 		health: literals(["ok", "attention", "error", "idle", "unknown"] as const),
 		healthReason: Type.String({ maxLength: 96 }),
-		/** The LaunchAgent's `ProgramArguments`, environment omitted. */
+		/** The LaunchAgent's `ProgramArguments`, environment omitted and possible secrets redacted. */
 		programArguments: nullable(Type.Array(Type.String({ maxLength: 512 }), { maxItems: 32 })),
 		notes: Type.Array(Type.String({ maxLength: 240 }), { maxItems: 8 }),
 		controls: Type.Array(AppActionSchema, { maxItems: 8 }),

@@ -3,6 +3,7 @@
  * Africa/Lagos, derived tasks (golden files on redacted fixtures), the community
  * generation record, the weekly draft and brief dates, and the new schemas.
  */
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -491,6 +492,16 @@ describe("community weekly generation", () => {
 			join(linked, "community-weekly-generation.json"),
 		);
 		expect(readCommunityGeneration(linked, NOW)).toMatchObject({ state: "error", reason: "read_failed" });
+		// A FIFO would block a plain open (and the portal's event loop with it): it is refused before opening.
+		const fifo = tempHome("fifo-record");
+		execFileSync("mkfifo", [join(fifo, "community-weekly-generation.json")]);
+		expect(readCommunityGeneration(fifo, NOW)).toMatchObject({ state: "unsafe", reason: "status_record_unsafe" });
+		const directory = tempHome("directory-record");
+		mkdirSync(join(directory, "community-weekly-generation.json"));
+		expect(readCommunityGeneration(directory, NOW)).toMatchObject({
+			state: "unsafe",
+			reason: "status_record_unsafe",
+		});
 	});
 
 	it("resolves the community state directory for the opener command, or null", () => {

@@ -5,6 +5,7 @@
  * makes this tile `busy` within the timeout instead of blocking for 10 s.
  * Briefing contents, error messages and provider identifiers are never returned.
  */
+import { lstatSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -56,7 +57,14 @@ const isoDay = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/u.test(value);
  * following a link and refused unless it is owner-only. Codes and dates only.
  */
 export const readCommunityGeneration = (stateRoot: string, now: Date): TileResult<CommunityGenerationData> => {
-	const read = Result.try(() => readCommunityGenerationStatus(join(stateRoot, COMMUNITY_GENERATION_STATUS_FILE)));
+	const path = join(stateRoot, COMMUNITY_GENERATION_STATUS_FILE);
+	// The status reader opens without O_NONBLOCK: a FIFO here would block the portal's event loop. Refuse it first.
+	const entry = Result.try(() => lstatSync(path, { throwIfNoEntry: false }));
+	if (Result.isFailure(entry)) return stateTile("error", "read_failed", now);
+	// A symbolic link is left to the reader's O_NOFOLLOW, which refuses it.
+	if (entry.success !== undefined && !entry.success.isFile() && !entry.success.isSymbolicLink())
+		return stateTile("unsafe", "status_record_unsafe", now);
+	const read = Result.try(() => readCommunityGenerationStatus(path));
 	if (Result.isFailure(read)) {
 		const message = read.failure instanceof Error ? read.failure.message : "";
 		return message === "status_record_unsafe"

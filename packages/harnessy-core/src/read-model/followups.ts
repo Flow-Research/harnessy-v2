@@ -67,10 +67,14 @@ const bounded = (value: string): string => (value.length > MAX_TITLE ? `${value.
 /** The text a task's identity hashes: lower case, Markdown and whitespace removed. */
 export const normaliseTaskText = (value: string): string => plainText(value).toLowerCase();
 
-/** `sha256(kind, path, normalised text)` as 64 hex characters. */
-export const taskId = (kind: TaskSourceKind, path: string, text: string): string =>
+/**
+ * `sha256(kind, path, normalised text)` as 64 hex characters. The n-th repeat
+ * (`occurrence` > 0) of the same text in one source also hashes its occurrence,
+ * so two identical lines are two tasks with two ids.
+ */
+export const taskId = (kind: TaskSourceKind, path: string, text: string, occurrence = 0): string =>
 	createHash("sha256")
-		.update(`${kind}\0${path}\0${normaliseTaskText(text)}`)
+		.update(`${kind}\0${path}\0${normaliseTaskText(text)}${occurrence === 0 ? "" : `\0${occurrence}`}`)
 		.digest("hex");
 
 /** The lines of the section under the first heading that matches `title`, with their 1-based numbers. */
@@ -376,14 +380,19 @@ export const readTasks = (options: TaskReadOptions): TileResult<TaskListData> =>
 				count: extracted.length,
 				truncated: read.success.truncated,
 			});
+			const seen = new Map<string, number>();
 			for (const task of extracted) {
+				const text = `${task.ref ?? ""} ${task.title}`;
+				const normalised = normaliseTaskText(text);
+				const occurrence = seen.get(normalised) ?? 0;
+				seen.set(normalised, occurrence + 1);
 				if (tasks.length >= MAX_TASKS) {
 					omitted += 1;
 					continue;
 				}
 				const owner = task.owner === null ? null : task.owner.slice(0, 64);
 				tasks.push({
-					id: taskId(file.kind, file.path, `${task.ref ?? ""} ${task.title}`),
+					id: taskId(file.kind, file.path, text, occurrence),
 					title: task.title,
 					status: task.status,
 					owner,
@@ -392,6 +401,7 @@ export const readTasks = (options: TaskReadOptions): TileResult<TaskListData> =>
 					mine: owner === null || owners.some((name) => owner.toLowerCase().includes(name)),
 					raw: task.raw,
 					sourceChanged: false,
+					previousTitle: null,
 					source: {
 						kind: file.kind,
 						path,

@@ -25,7 +25,7 @@ import type {
 	TileResult,
 } from "@harnessy/core/read-model";
 
-import { shellPath } from "./jobs.ts";
+import { HIDDEN_CHARACTERS, LAUNCHD_UNAVAILABLE, reviewUrl, shellPath } from "./jobs.ts";
 
 export interface InboxInputs {
 	readonly now: Date;
@@ -61,11 +61,6 @@ const handoff = (label: string, target: string, note: string | null = null): App
 	note,
 });
 
-const loopback = (host: string | null | undefined, port: number | null | undefined): string | null =>
-	(host === "127.0.0.1" || host === "localhost") && typeof port === "number" && port > 0 && port <= 65_535
-		? `http://127.0.0.1:${port}/`
-		: null;
-
 const instantOrNull = (value: string | null | undefined): string | null =>
 	typeof value === "string" && !Number.isNaN(Date.parse(value)) ? new Date(Date.parse(value)).toISOString() : null;
 
@@ -100,14 +95,14 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 	// Community briefings waiting for review.
 	note("community.queue", inputs.communityQueue);
 	const communityConfig = inputs.communityConfig.state === "ok" ? inputs.communityConfig.data! : null;
-	const communityLink = loopback(communityConfig?.reviewHost, communityConfig?.reviewPort);
+	const communityLink = reviewUrl(communityConfig?.reviewHost, communityConfig?.reviewPort);
 	const communityOwner = {
 		service: "community-review",
 		port: communityConfig?.reviewPort ?? null,
 		label: `community review${communityConfig?.reviewPort ? ` · ${communityConfig.reviewPort}` : ""}`,
 	};
 	const communityOpener = `harnessy-community-review-open --state-path ${
-		inputs.communityStatePath === null ? "<state path>" : shellPath(inputs.communityStatePath)
+		inputs.communityStatePath === null ? "<state path>" : shellPath(inputs.communityStatePath, "<state path>")
 	}`;
 	if (inputs.communityQueue.state === "ok") {
 		const queue = inputs.communityQueue.data!;
@@ -157,7 +152,14 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 		const failure = generation.lastFailure;
 		const week =
 			failure === null ? undefined : generation.weeks.find((entry) => entry.weekStart === failure.weekStart);
-		if (failure !== null && week?.recovered !== true && week?.status !== "created" && week?.status !== "existing")
+		// A standing fault already covers its failed week: one item, at action_required, not two.
+		if (
+			generation.standingFault === null &&
+			failure !== null &&
+			week?.recovered !== true &&
+			week?.status !== "created" &&
+			week?.status !== "existing"
+		)
 			add({
 				key: `community-generation:${failure.weekStart}`,
 				severity: "attention",
@@ -244,7 +246,7 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 	if (inputs.meetingQueue.state === "ok") {
 		const queue = inputs.meetingQueue.data!;
 		const pending = queue.statusCounts.pending_review ?? 0;
-		const link = loopback(meetingConfig?.reviewHost, meetingConfig?.reviewPort);
+		const link = reviewUrl(meetingConfig?.reviewHost, meetingConfig?.reviewPort);
 		if (pending > 0)
 			add({
 				key: "meetings:pending",
@@ -267,7 +269,9 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 					copy(
 						"Copy opener",
 						`harnessy-meeting-review-open --state-path ${
-							inputs.meetingStatePath === null ? "<state path>" : shellPath(inputs.meetingStatePath)
+							inputs.meetingStatePath === null
+								? "<state path>"
+								: shellPath(inputs.meetingStatePath, "<state path>")
 						}`,
 						"Opens the review page with a fresh session.",
 					),
@@ -279,7 +283,7 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 	note("fathom.accounts", inputs.fathomAccounts);
 	if (inputs.fathomAccounts.state === "ok") {
 		const fathom = inputs.fathomAccounts.data!;
-		const target = inputs.workspaceRoot === null ? "<workspace>" : shellPath(inputs.workspaceRoot);
+		const target = inputs.workspaceRoot === null ? "<workspace>" : shellPath(inputs.workspaceRoot, "<workspace>");
 		const poll = copy("Copy poll", `harnessy jarvis meeting fathom poll --target ${target} --json`);
 		const owner = { service: "fathom-poll", port: null, label: "Fathom poll" };
 		let pending = 0;
@@ -328,8 +332,12 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 			});
 	}
 
-	// Jobs and services that are down.
+	// Jobs and services that are down. A supervised job whose launchd probe failed is not a
+	// finding, but it is not "fine" either: it is reported as unreadable. (Where launchd does
+	// not exist at all, there is nothing to read.)
 	for (const job of inputs.jobs.jobs) {
+		if (job.health === "unknown" && job.kind !== "on-demand" && job.healthReason !== LAUNCHD_UNAVAILABLE)
+			unreadable.push(`jobs.${job.id}:${job.healthReason}`);
 		if (job.health !== "error") continue;
 		add({
 			key: `job:${job.label ?? job.id}:${job.loaded === false ? "missing" : "failing"}`,
@@ -365,7 +373,12 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 				actions:
 					action === null
 						? [handoff("Open Connections", "#/connections")]
-						: [action.kind === "link" ? handoff("Open owner", action.value) : copy("Copy command", action.value)],
+						: action.kind === "link"
+							? [handoff("Open owner", action.value)]
+							: // A command with hidden characters would not copy what it shows.
+								HIDDEN_CHARACTERS.test(action.value)
+								? [handoff("Open Connections", "#/connections")]
+								: [copy("Copy command", action.value)],
 			});
 		}
 	}
@@ -378,7 +391,7 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 			a.key.localeCompare(b.key),
 	);
 	const nextJob = inputs.jobs.jobs
-		.filter((job) => job.nextRun !== null)
+		.filter((job) => job.nextRun !== null && job.loaded !== false)
 		.sort((a, b) => a.nextRun!.localeCompare(b.nextRun!))[0];
 	const kept = items.slice(0, MAX_ITEMS);
 	return {

@@ -55,6 +55,7 @@ import { readJobs } from "./jobs.ts";
 import { readLearningSummary } from "./learning.ts";
 import { type PortProbe, tcpPortProbe } from "./liveness.ts";
 import type { PortalRouteParams } from "./routes.ts";
+import { TaskChangeTracker } from "./task-changes.ts";
 
 export interface PortalSourceOptions {
 	/** The home directory whose Harnessy state is read. */
@@ -174,9 +175,6 @@ export const fathomAccountsTile = (summary: FathomSummary, now: Date): TileResul
 	);
 };
 
-/** Tasks remember, per source line, the identity seen at the last read, to flag edited lines. */
-const MAX_REMEMBERED_TASK_LINES = 5_000;
-
 /** Build the portal's sources. Each call reads afresh; the server caches the results. */
 export const createPortalSources = (options: PortalSourceOptions): PortalSources => {
 	const homeRoot = resolve(options.homeRoot);
@@ -184,7 +182,7 @@ export const createPortalSources = (options: PortalSourceOptions): PortalSources
 	const read = { timeoutMs: options.timeoutMs };
 	const probePort = options.probePort ?? tcpPortProbe();
 	const user = options.env.FLOW_USER ?? options.env.USER;
-	const seenTaskLines = new Map<string, string>();
+	const taskChanges = new TaskChangeTracker();
 
 	/** The meeting summary, plus the review state path for the opener command (never returned as data). */
 	const meeting = (now: Date): MeetingSummary & { readonly statePath: string | null } => {
@@ -227,8 +225,10 @@ export const createPortalSources = (options: PortalSourceOptions): PortalSources
 			probePort,
 			workspaceRoot: workspaceRootOf(life),
 			meetingPort: meetings.config.state === "ok" ? meetings.config.data!.reviewPort : null,
+			meetingHost: meetings.config.state === "ok" ? meetings.config.data!.reviewHost : null,
 			meetingStatePath: meetings.statePath,
 			communityPort: communitySummary.config.state === "ok" ? communitySummary.config.data!.reviewPort : null,
+			communityHost: communitySummary.config.state === "ok" ? communitySummary.config.data!.reviewHost : null,
 			communityStatePath: communityStatePath(),
 		});
 
@@ -366,14 +366,7 @@ export const createPortalSources = (options: PortalSourceOptions): PortalSources
 				ownerNames: user === undefined ? [] : [user],
 			});
 			if (tile.state !== "ok") return { tasks: tile };
-			if (seenTaskLines.size > MAX_REMEMBERED_TASK_LINES) seenTaskLines.clear();
-			const tasks = tile.data!.tasks.map((task) => {
-				const place = `${task.source.kind}\0${task.source.path}\0${task.source.line}`;
-				const previous = seenTaskLines.get(place);
-				seenTaskLines.set(place, task.id);
-				return previous === undefined || previous === task.id ? task : { ...task, sourceChanged: true };
-			});
-			return { tasks: { ...tile, data: { ...tile.data!, tasks } } };
+			return { tasks: { ...tile, data: { ...tile.data!, tasks: [...taskChanges.apply(tile.data!.tasks, now)] } } };
 		},
 		jobs: async () => {
 			const now = options.clock();

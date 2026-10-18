@@ -169,8 +169,14 @@ export const assertPortalIndexHtml = (html: string, listed: ReadonlySet<string>)
 		if (!/\ssrc\s*=/iu.test(script[1]!) || script[2]!.trim() !== "")
 			throw new PortalAssetError("portal_index_inline_script");
 	}
-	for (const reference of html.matchAll(/\s(?:src|href)\s*=\s*"([^"]*)"/giu)) {
-		const value = reference[1]!;
+	// Every quoting form: "…", '…' and unquoted. Any src/href attribute that is not one of these is refused too.
+	const attributes = [...html.matchAll(/\s(?:src|href|srcset|xlink:href)\s*=/giu)].length;
+	const references = [
+		...html.matchAll(/\s(?:src|href|srcset|xlink:href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/giu),
+	];
+	if (references.length !== attributes) throw new PortalAssetError("portal_index_reference_unlisted");
+	for (const reference of references) {
+		const value = reference[1] ?? reference[2] ?? reference[3]!;
 		if (!value.startsWith("/") || !listed.has(value.slice(1)))
 			throw new PortalAssetError("portal_index_reference_unlisted", value);
 	}
