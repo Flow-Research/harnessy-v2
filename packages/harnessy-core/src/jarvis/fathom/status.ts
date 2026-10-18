@@ -1,12 +1,17 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { Effect } from "effect";
 import { parseDocument } from "yaml";
 
+import { resolveJarvisConfigPath } from "../paths.ts";
+
 export interface FathomStatusOptions {
+	/** The home directory that a leading `~` in a configured path expands to. Defaults to the process home. */
+	readonly homeRoot?: string;
+	/** Defaults to `<homeRoot>/.jarvis/config.yaml`. */
 	readonly configPath?: string;
 	readonly stateRoot?: string;
 	readonly sourceRoot?: string;
@@ -54,11 +59,6 @@ const recordValue = (value: unknown): Record<string, unknown> | null =>
 const stringValue = (value: unknown): string | null =>
 	typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 
-const expand = (value: string, base: string): string => {
-	const expanded = value.replace(/^~(?=\/|$)/, homedir());
-	return isAbsolute(expanded) ? resolve(expanded) : resolve(base, expanded);
-};
-
 const emptyCounts = (): Record<string, number> => ({ pending: 0, processed: 0, invalid: 0 });
 
 const countInbox = (root: string): Readonly<Record<string, Readonly<Record<string, number>>>> => {
@@ -79,8 +79,10 @@ const countInbox = (root: string): Readonly<Record<string, Readonly<Record<strin
 
 /** Inspect configured Fathom accounts and local inbox state without provider calls or mutation. */
 export const inspectFathomStatus = (options: FathomStatusOptions = {}): FathomStatus => {
-	const configPath = resolve(options.configPath ?? join(homedir(), ".jarvis", "config.yaml"));
+	const homeRoot = resolve(options.homeRoot ?? homedir());
+	const configPath = resolve(options.configPath ?? join(homeRoot, ".jarvis", "config.yaml"));
 	const base = dirname(configPath);
+	const expand = (value: string) => resolveJarvisConfigPath(value, base, homeRoot);
 	const issues: Array<string> = [];
 	let config: Record<string, unknown> = {};
 	if (!existsSync(configPath)) issues.push(`configuration is missing: ${configPath}`);
@@ -118,9 +120,9 @@ export const inspectFathomStatus = (options: FathomStatusOptions = {}): FathomSt
 	const inboxPath =
 		configuredSource === null
 			? join(base, "context", "private", "meeting-inbox", "fathom")
-			: join(expand(configuredSource, base), "meeting-inbox", "fathom");
+			: join(expand(configuredSource), "meeting-inbox", "fathom");
 	const stateRoot =
-		options.stateRoot === undefined ? join(homedir(), ".jarvis", "state", "fathom") : expand(options.stateRoot, base);
+		options.stateRoot === undefined ? join(homeRoot, ".jarvis", "state", "fathom") : expand(options.stateRoot);
 	const pollStatePath = join(stateRoot, "poll-state.json");
 	const pollStatePresent = existsSync(pollStatePath);
 	const pollStateValid =

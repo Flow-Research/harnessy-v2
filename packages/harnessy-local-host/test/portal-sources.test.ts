@@ -3,7 +3,7 @@
  * then read 50 times through the server to prove nothing changes on disk.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -133,6 +133,27 @@ describe("portal sources", () => {
 		]);
 		expect(serialized).not.toContain(CANARY);
 		expect(serialized).not.toContain("owner@example.test");
+	});
+
+	it("expands `~/` config paths against the portal home root, not the process HOME", async () => {
+		const fixture = await buildPortalHome("tilde");
+		writeFileSync(fixture.configPath, readFileSync(fixture.configPath, "utf8").replaceAll(`${fixture.home}/`, "~/"));
+		expect(readFileSync(fixture.configPath, "utf8")).toContain("state_path: ~/meeting-state");
+		const previous = process.env.HOME;
+		process.env.HOME = tempDir("other-home");
+		try {
+			const sources = sourcesFor(fixture.home);
+			const meetings = sources.meetings() as Tiles;
+			expect(meetings.queue).toMatchObject({ state: "ok", data: { statusCounts: { pending_review: 2 } } });
+			expect(meetings.fathomInbox).toMatchObject({ state: "ok", data: { totals: { pending: 1 } } });
+			expect((sources.community() as Tiles).queue).toMatchObject({ state: "ok", data: { total: 2 } });
+			expect((sources.today() as Tiles).waiting).toMatchObject({
+				state: "ok",
+				data: { meetingsPendingReview: 2, communityPendingReview: 1, fathomPendingInbox: 1 },
+			});
+		} finally {
+			process.env.HOME = previous;
+		}
 	});
 
 	it("reports every tile of an empty home as a degraded state, not a failure", () => {

@@ -111,7 +111,7 @@ export const createPortalSources = (options: PortalSourceOptions): PortalSources
 	const read = { timeoutMs: options.timeoutMs };
 
 	const meeting = (now: Date): MeetingSummary => {
-		const config = readMeetingPublicationConfig({ configPath, env: options.env, now });
+		const config = readMeetingPublicationConfig({ homeRoot, configPath, env: options.env, now });
 		if (config.state !== "ok") {
 			const failed = stateTile<never>(config.state, config.reason!, now);
 			return { config: failed, queue: failed, providers: failed };
@@ -119,7 +119,7 @@ export const createPortalSources = (options: PortalSourceOptions): PortalSources
 		return readMeetingSummary(config.data!, { ...read, now });
 	};
 	const fathom = (now: Date): FathomSummary => readFathomSummary({ ...read, now, homeRoot, configPath });
-	const community = (now: Date): CommunitySummary => readCommunitySummary({ ...read, now, configPath });
+	const community = (now: Date): CommunitySummary => readCommunitySummary({ ...read, now, homeRoot, configPath });
 
 	return {
 		today: () => {

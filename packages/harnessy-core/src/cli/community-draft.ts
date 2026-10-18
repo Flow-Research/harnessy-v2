@@ -7,6 +7,7 @@ import { parseDocument } from "yaml";
 import { runNativeCommunityDraft, runNativeCommunityReview } from "../jarvis/community-briefing/native-draft.ts";
 import { notifyCommunityDraft } from "../jarvis/community-briefing/notification.ts";
 import { readStableMeetingPublicationSmokeFile } from "../jarvis/meeting-publication/operational-input.ts";
+import { resolveJarvisConfigPath } from "../jarvis/paths.ts";
 
 const Settings = Schema.Struct({
 	community_briefing: Schema.Struct({
@@ -59,7 +60,7 @@ const readExecutionConfig = (input: {
 		throw new Error("Configure an absolute community_briefing.python_path or supply --python-path.");
 	const path = (value: string) => {
 		if (!value.trim()) throw new Error("Explicit community paths required.");
-		return resolve(dirname(configPath), value.replace(/^~(?=\/|$)/u, homedir()));
+		return resolveJarvisConfigPath(value, dirname(configPath), homedir());
 	};
 	return {
 		pythonPath,

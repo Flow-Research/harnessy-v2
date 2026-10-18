@@ -30,7 +30,7 @@ import {
 export const MAX_FATHOM_CHECKPOINT_BYTES = 1024 * 1024;
 
 export interface FathomReadOptions extends ReadModelOptions {
-	/** The home directory that holds `.jarvis` and `.harnessy`. */
+	/** The home directory that holds `.jarvis` and `.harnessy` and that a leading `~` in a configured path expands to. */
 	readonly homeRoot?: string;
 	/** Defaults to `<homeRoot>/.jarvis/config.yaml`. */
 	readonly configPath?: string;
@@ -87,6 +87,7 @@ export const readFathomSummary = (options: FathomReadOptions = {}): FathomSummar
 		assertDelegatedFileBounded(configPath);
 		assertDelegatedFileBounded(join(stateRoot, "poll-state.json"));
 		status = inspectFathomStatus({
+			homeRoot,
 			configPath,
 			stateRoot,
 			...(options.sourceRoot === undefined ? {} : { sourceRoot: options.sourceRoot }),

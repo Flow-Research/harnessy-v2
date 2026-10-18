@@ -24,7 +24,9 @@ import {
 } from "./tile.ts";
 
 export interface CommunityReadOptions extends ReadModelOptions {
-	/** Defaults to `~/.jarvis/config.yaml`. */
+	/** The home directory that holds `.jarvis` and that a leading `~` in a configured path expands to. */
+	readonly homeRoot?: string;
+	/** Defaults to `<homeRoot>/.jarvis/config.yaml`. */
 	readonly configPath?: string;
 	readonly stateRoot?: string;
 	/** Recent briefings to return, newest week first (1–20, default 5). */
@@ -43,10 +45,12 @@ export const readCommunitySummary = (options: CommunityReadOptions = {}): Commun
 	const now = readClock(options);
 	let databasePath: string | undefined;
 	const config = guardTile(now, (): TileResult<CommunityConfigData> => {
-		const configPath = resolve(options.configPath ?? join(homedir(), ".jarvis", "config.yaml"));
+		const homeRoot = resolve(options.homeRoot ?? homedir());
+		const configPath = resolve(options.configPath ?? join(homeRoot, ".jarvis", "config.yaml"));
 		// `resolveCommunityBriefingConfig` reads the whole file; refuse a FIFO or an oversize file first.
 		assertDelegatedFileBounded(configPath);
 		const resolved = resolveCommunityBriefingConfig({
+			homeRoot,
 			configPath,
 			...(options.stateRoot === undefined ? {} : { stateRoot: options.stateRoot }),
 		});
