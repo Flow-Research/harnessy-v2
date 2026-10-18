@@ -63,6 +63,7 @@ const start = async (home: string, page: PortalPageAssets | null = loadPortalPag
 	const installToken = newPortalSecret();
 	const server = await startPortalServer({
 		installToken,
+		// harnessy-test-env: configuration, not a child process environment
 		sources: createPortalSources({ homeRoot: home, env: {}, probe, timeoutMs: 250, clock: () => FIXTURE_NOW }),
 		version: "0.0.3",
 		port: 0,
@@ -232,6 +233,8 @@ const runPage = async (port: number, hash: string, now = SERVER_NOW): Promise<Br
 	const home = tempDir("browser-home");
 	const child = spawn(process.execPath, ["--no-warnings", "--import", shim, join(dir, "app.js")], {
 		env: {
+			// Never reach the OS keychain from a test child.
+			PI_AUTH_ENCRYPTION: "off",
 			HOME: home,
 			PATH: process.env.PATH,
 			PORTAL_ORIGIN: `http://127.0.0.1:${port}`,

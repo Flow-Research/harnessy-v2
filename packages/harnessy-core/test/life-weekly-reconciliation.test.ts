@@ -149,7 +149,7 @@ const runCli = (root: string, args: readonly string[]) =>
 			"--compatibility-root",
 			join(root, "absent"),
 		],
-		{ encoding: "utf8", env: { PATH: process.env.PATH, HOME: root }, timeout: 60_000 },
+		{ encoding: "utf8", env: { PI_AUTH_ENCRYPTION: "off", PATH: process.env.PATH, HOME: root }, timeout: 60_000 },
 	);
 
 describe("weekly consumed-grant reconciliation", () => {
@@ -526,7 +526,10 @@ describe("weekly consumed-grant reconciliation", () => {
 						request.requestPath,
 						now.toISOString(),
 					],
-					{ env: { PATH: process.env.PATH, HOME: f.root }, stdio: ["pipe", "pipe", "inherit"] },
+					{
+						env: { PI_AUTH_ENCRYPTION: "off", PATH: process.env.PATH, HOME: f.root },
+						stdio: ["pipe", "pipe", "inherit"],
+					},
 				),
 			);
 			const lines = children.map((child) => {

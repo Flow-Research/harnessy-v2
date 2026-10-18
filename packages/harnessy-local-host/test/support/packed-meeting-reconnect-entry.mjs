@@ -121,7 +121,7 @@ try {
 		const child = spawn(process.execPath, [
 			join(process.argv[2], "node_modules/@harnessy/local-host/dist/meeting-setup-cli.js"),
 			"--resume-google", "--input", setupInputPath,
-		], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+		], { env: { ...process.env, PI_AUTH_ENCRYPTION: "off" }, stdio: ["ignore", "pipe", "pipe"] });
 		let stdout = "";
 		let ready = false;
 		let timedOut = false;

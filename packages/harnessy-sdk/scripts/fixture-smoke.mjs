@@ -38,7 +38,7 @@ const run = (command, args, cwd) => {
 		cwd,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
-		env: { ...process.env, npm_config_update_notifier: "false" },
+		env: { ...process.env, npm_config_update_notifier: "false", PI_AUTH_ENCRYPTION: "off" },
 	});
 	if (result.status !== 0) {
 		throw new Error(
@@ -55,7 +55,7 @@ const runForFailure = (command, args, cwd) =>
 		cwd,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
-		env: { ...process.env, npm_config_update_notifier: "false" },
+		env: { ...process.env, npm_config_update_notifier: "false", PI_AUTH_ENCRYPTION: "off" },
 	});
 
 const pack = (root) => {

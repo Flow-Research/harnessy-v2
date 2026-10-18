@@ -84,7 +84,7 @@ it("runs the real read-only CLI with external traffic denied and rejects bad inp
 			["--experimental-strip-types", "--import", guard, cli, "jarvis", "calendar", "inspect", "--plan", path],
 			{
 				cwd: root,
-				env: { HOME: root, NODE_NO_WARNINGS: "1" },
+				env: { PI_AUTH_ENCRYPTION: "off", HOME: root, NODE_NO_WARNINGS: "1" },
 				encoding: "utf8",
 				timeout: 15_000,
 			},

@@ -157,7 +157,12 @@ it.each([
 			cwd: f.root,
 			encoding: "utf8",
 			timeout: 10000,
-			env: { PATH: process.env.PATH, USER: "fixture", HSY_CODING_AGENT_DIR: join(f.root, "absent-auth") },
+			env: {
+				PI_AUTH_ENCRYPTION: "off",
+				PATH: process.env.PATH,
+				USER: "fixture",
+				HSY_CODING_AGENT_DIR: join(f.root, "absent-auth"),
+			},
 		},
 	);
 	expect(result.status).toBe(1);

@@ -31,7 +31,11 @@ const compatibilityReopen = (database: string, state: string) => {
 			database,
 			state,
 		],
-		{ encoding: "utf8", timeout: 20_000, env: { PATH: process.env.PATH, HOME: process.env.HOME } },
+		{
+			encoding: "utf8",
+			timeout: 20_000,
+			env: { PI_AUTH_ENCRYPTION: "off", PATH: process.env.PATH, HOME: process.env.HOME },
+		},
 	);
 	expect(result.error).toBeUndefined();
 	expect(result.stderr).toBe("");

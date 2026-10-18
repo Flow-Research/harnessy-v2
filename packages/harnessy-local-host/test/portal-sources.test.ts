@@ -211,6 +211,7 @@ describe("portal sources", () => {
 		const broken = createPortalSources({
 			homeRoot: home,
 			workspaceRoot: workspace,
+			// harnessy-test-env: configuration, not a child process environment
 			env: {},
 			probe: () => "unsupported",
 			timeoutMs: 250,

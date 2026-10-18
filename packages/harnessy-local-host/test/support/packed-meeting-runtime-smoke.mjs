@@ -147,7 +147,7 @@ const runFixture = (path, label) => {
 		cwd: installationRoot,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "pipe"],
-		env: { ...process.env, NODE_NO_WARNINGS: "1" },
+		env: { ...process.env, NODE_NO_WARNINGS: "1", PI_AUTH_ENCRYPTION: "off" },
 	});
 	if (result.status !== 0) {
 		throw new Error([`Packed meeting ${label} failed.`, result.stdout, result.stderr].filter(Boolean).join("\n"));

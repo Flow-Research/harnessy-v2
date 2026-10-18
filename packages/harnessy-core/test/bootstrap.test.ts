@@ -120,7 +120,7 @@ describe("Harnessy bootstrap", () => {
 				const invocation = yield* Effect.sync(() =>
 					spawnSync("/bin/bash", [`${globalRoot}/bin/jarvis`, "journal", "list"], {
 						encoding: "utf8",
-						env: { PATH: `${recorder}:/usr/bin:/bin`, HOME: globalRoot },
+						env: { PI_AUTH_ENCRYPTION: "off", PATH: `${recorder}:/usr/bin:/bin`, HOME: globalRoot },
 					}),
 				);
 				expect(invocation.status, invocation.stderr).toBe(0);

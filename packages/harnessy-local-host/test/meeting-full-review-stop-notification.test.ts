@@ -101,6 +101,8 @@ describe("explicit local full-review stop notification", () => {
 					killSignal: "SIGKILL",
 					maxBuffer: 1_024,
 					windowsHide: true,
+					// The exact environment the production notifier passes: asserted, not started.
+					// harnessy-test-env: configuration, not a child process environment
 					env: { PATH: "/usr/bin:/bin" },
 				});
 				completed(null);

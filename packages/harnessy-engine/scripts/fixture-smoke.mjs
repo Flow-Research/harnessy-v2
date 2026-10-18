@@ -19,7 +19,7 @@ const run = (cwd, command, args, capture = false) =>
     const child = spawn(command, args, {
       cwd,
       stdio: capture ? ["ignore", "pipe", "inherit"] : "inherit",
-      env: process.env,
+      env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
     });
     child.stdout?.on("data", (chunk) => output.push(chunk));
     child.on("error", reject);

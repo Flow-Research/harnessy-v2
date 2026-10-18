@@ -147,6 +147,8 @@ describe("signed weekly Life draft consumer", () => {
 									JARVIS_WIKIS_DIR: join(path, "wikis"),
 									PYTHONDONTWRITEBYTECODE: "1",
 									...command.env,
+									// Last, so no spread can switch it back on: never reach the OS keychain.
+									PI_AUTH_ENCRYPTION: "off",
 								},
 							});
 							expect(child.status, child.stderr).toBe(0);
@@ -223,7 +225,12 @@ describe("signed weekly Life draft consumer", () => {
 							const child = spawnSync(command.executable, args, {
 								cwd: path,
 								encoding: "utf8",
-								env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: "1", ...command.env },
+								env: {
+									PATH: process.env.PATH,
+									PYTHONDONTWRITEBYTECODE: "1",
+									...command.env,
+									PI_AUTH_ENCRYPTION: "off",
+								},
 							});
 							expect(child.status, child.stderr).toBe(0);
 							return result(command);

@@ -218,7 +218,7 @@ describe("Harnessy runtime assets", () => {
 				yield* fs.chmod(uv, 0o755);
 				const command = `${globalRoot}/bin/jarvis`;
 				const args = ["wiki", "ingest", "a note with spaces.md", "", "$(false)", "a'b", "--title=one;two"];
-				const env = { PATH: `${globalRoot}/bin:/usr/bin:/bin` };
+				const env = { PI_AUTH_ENCRYPTION: "off", PATH: `${globalRoot}/bin:/usr/bin:/bin` };
 				const initial = spawnSync(command, args, { env, encoding: "utf8", timeout: 5_000 });
 				expect(initial.error).toBeUndefined();
 				expect(initial.status).toBe(0);
@@ -232,7 +232,7 @@ describe("Harnessy runtime assets", () => {
 				]);
 				const configuredRoot = `${globalRoot}/custom 'root' $(false);literal`;
 				const failed = spawnSync(command, args, {
-					env: { ...env, HARNESSY_JARVIS_CLI_ROOT: configuredRoot, FIXTURE_EXIT: "37" },
+					env: { ...env, PI_AUTH_ENCRYPTION: "off", HARNESSY_JARVIS_CLI_ROOT: configuredRoot, FIXTURE_EXIT: "37" },
 					encoding: "utf8",
 					timeout: 5_000,
 				});
