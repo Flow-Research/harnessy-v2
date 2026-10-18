@@ -1,6 +1,8 @@
 """Exercise the packaged draft adapter against a real isolated Jarvis install."""
 
+import fcntl
 import hashlib
+import importlib.util
 from http.client import HTTPConnection
 import json
 import os
@@ -480,7 +482,9 @@ class CommunityDraftAdapterTests(unittest.TestCase):
                     self.assertEqual(rendezvous_path.stat().st_mode & 0o7777, 0o600)
                     self.assertEqual(rendezvous_path.stat().st_nlink, 1)
                     rendezvous_text = rendezvous_path.read_text()
-                    self.assertEqual(json.loads(rendezvous_text), {
+                    rendezvous_value = json.loads(rendezvous_text)
+                    self.assertRegex(rendezvous_value.pop("instance"), r"^[0-9a-f]{32}$")
+                    self.assertEqual(rendezvous_value, {
                         "kind": "harnessy.community.review-rendezvous.v1",
                         "origin": f"http://127.0.0.1:{url.port}",
                         "port": url.port,
@@ -567,6 +571,145 @@ class CommunityDraftAdapterTests(unittest.TestCase):
                 finally:
                     child.kill()
                     child.communicate(timeout=5)
+
+    def test_orphaned_artifacts_are_refused_before_any_run_or_provider_call(self):
+        self.add_source()
+        orphan = self.root / "drafts/2026/week-2026-09-14"
+        orphan.mkdir(parents=True)
+        (orphan / "briefing.md").write_text("Left by a generation stopped while committing.\n")
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        # A refusal, not a request for a paid call: no "generate" event and no run.
+        self.assertEqual(events, [{"type": "error", "code": "orphan_artifacts", "publication": False}])
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "community_draft_runs" in tables:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM community_draft_runs").fetchone()[0], 0)
+        self.assertEqual(self.queue(), [])
+        # A week that already has its draft is answered as before.
+        orphan.joinpath("briefing.md").unlink()
+        orphan.rmdir()
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1, "the source still needs a provider; the refusal is gone")
+        self.assertNotIn("orphan_artifacts", json.dumps(events))
+
+    def test_one_native_draft_per_state_directory_across_processes(self):
+        (self.root / "state").mkdir()
+        lock = os.open(self.root / "state/community-native-draft.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, lock)
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(events, [{"type": "error", "code": "native_draft_busy", "publication": False}])
+        self.assertEqual(self.queue(), [])
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[-1]["status"], "pending_review")
+        self.assertEqual(os.stat(self.root / "state/community-native-draft.lock").st_mode & 0o777, 0o600)
+
+
+class ReviewRendezvousTests(unittest.TestCase):
+    """The rendezvous file under KeepAlive restarts: never blocks startup, never removes a newer one."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Importing must not write resources/__pycache__ into the packaged tree.
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        cls.addClassCleanup(setattr, sys, "dont_write_bytecode", previous)
+        spec = importlib.util.spec_from_file_location("community_draft_adapter", ADAPTER)
+        cls.adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.adapter)
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="community-rendezvous-")
+        self.addCleanup(temp.cleanup)
+        self.state = Path(temp.name)
+        self.state.chmod(0o700)
+
+    def staged(self):
+        return sorted(p.name for p in self.state.iterdir() if p.name.startswith(".community-review.rendezvous.json."))
+
+    def test_a_leftover_staged_file_from_a_reused_pid_never_blocks_startup(self):
+        leftover = self.state / f".community-review.rendezvous.json.{os.getpid()}"
+        leftover.write_text("left by a review that died while publishing\n")
+        path, body, previous = self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertIsNone(previous)
+        self.assertEqual(path.read_bytes(), body)
+        self.assertEqual(json.loads(body)["port"], 8872)
+        self.assertEqual(path.stat().st_mode & 0o7777, 0o600)
+
+    def test_stale_staged_files_are_swept_without_following_links(self):
+        stale = self.state / ".community-review.rendezvous.json.111.old"
+        stale.write_text("stale\n")
+        old = time.time() - 3600
+        os.utime(stale, (old, old))
+        fresh = self.state / ".community-review.rendezvous.json.222.starting"
+        fresh.write_text("another review is publishing right now\n")
+        outside = self.state.parent / f"{self.state.name}-outside"
+        outside.write_text("must survive\n")
+        self.addCleanup(outside.unlink, missing_ok=True)
+        link = self.state / ".community-review.rendezvous.json.333.link"
+        link.symlink_to(outside)
+        os.utime(link, (old, old), follow_symlinks=False)
+        self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(outside.read_text(), "must survive\n")
+        self.assertEqual(self.staged(), [fresh.name, link.name])
+
+    def test_a_review_withdraws_only_its_own_rendezvous(self):
+        first_path, first, _ = self.adapter.publish_review_rendezvous(self.state, 8872)
+        # KeepAlive started a new review before the old one finished shutting down.
+        second_path, second, replaced = self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertEqual(first_path, second_path)
+        self.assertNotEqual(first, second)
+        self.assertEqual(replaced, first)
+        self.adapter.withdraw_review_rendezvous(first_path, first, None)
+        self.assertEqual(second_path.read_bytes(), second)
+        self.adapter.withdraw_review_rendezvous(second_path, second, None)
+        self.assertFalse(second_path.exists())
+        # Already gone, or replaced by a link: nothing to withdraw, nothing followed.
+        self.adapter.withdraw_review_rendezvous(second_path, second, None)
+        target = self.state / "target"
+        target.write_bytes(second)
+        second_path.symlink_to(target)
+        self.adapter.withdraw_review_rendezvous(second_path, second, None)
+        self.assertTrue(second_path.is_symlink())
+        self.assertEqual(self.staged(), [])
+
+    def test_a_foreground_review_hands_the_rendezvous_back_to_the_service(self):
+        path, service, _ = self.adapter.publish_review_rendezvous(self.state, 8872)
+        _, foreground, previous = self.adapter.publish_review_rendezvous(self.state, 8873)
+        self.assertEqual(previous, service)
+        self.assertEqual(json.loads(path.read_bytes())["port"], 8873)
+        # The foreground review exits while the service keeps serving.
+        self.adapter.withdraw_review_rendezvous(path, foreground, previous)
+        self.assertEqual(path.read_bytes(), service)
+        self.assertEqual(path.stat().st_mode & 0o7777, 0o600)
+        self.assertEqual(self.staged(), [])
+
+    def test_a_lock_file_error_never_leaves_the_review_lock_held(self):
+        sources = self.state / "sources"
+        sources.mkdir()
+        config = self.adapter.CommunityBriefingConfig(
+            source_path=str(sources), draft_path=str(self.state / "drafts"),
+            state_path=str(self.state / "state"), timezone="Africa/Lagos",
+            ai_provider="codex", enabled=False,
+        )
+        service = self.adapter.NativeReviewService(config)
+        self.addCleanup(service.close)
+        # The lock path is a link: opening it fails with ELOOP, not "busy".
+        lock = Path(config.state_path) / "community-native-draft.lock"
+        lock.symlink_to(self.state / "elsewhere")
+        for _ in range(2):
+            with self.assertRaises(OSError):
+                with service.native_run({"action": "revise"}):
+                    pass
+        self.assertTrue(service.native_lock.acquire(blocking=False))
+        service.native_lock.release()
 
 
 if __name__ == "__main__":

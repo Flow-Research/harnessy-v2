@@ -137,7 +137,33 @@ POSTs only with the exact `Host`, the exact same `Origin` and form encoding. Nat
 credential store, or an explicit `--auth-file`; they do not read credentials from
 chat or command-line token arguments. `--timeout-seconds` bounds each AI operation,
 not the review window. `--notifications off` suppresses desktop notifications for
-headless use. None of these commands activates a publication worker or schedule.
+headless use. None of these commands activates a publication worker.
+
+Weekly drafts are generated automatically by the review service, not by a
+separate scheduled `generate` job. The LaunchAgent-owned service runs
+`review serve --weekly-generation`. With `community_briefing.enabled: true`, it
+drafts the due week at Sunday 23:00 Africa/Lagos by default: the Monday–Sunday
+week ending that day. Each week runs as a one-shot adapter child of the review
+service, with its own deadline. A stuck generation is stopped without stopping
+review. A week already in the queue is never generated again. Configure the
+schedule with `community_briefing.generation_schedule: {enabled, weekday, time}`,
+for example `{weekday: monday, time: "08:00"}`. A bad setting disables only
+generation and is logged. Drafts stay unapproved. Failures appear in the review
+log, as a desktop notice, and in `community-weekly-generation.json` in the state
+directory. ADR-0006 ("weekly community drafts inside the native reviewer")
+records why this design keeps the one-writer guarantee. The reviewer
+LaunchAgent is planned or installed, and the generation record read or
+repaired, with:
+
+```sh
+harnessy jarvis community schedule --cli-entry CLI --node-path NODE --python-path PYTHON [--apply]
+harnessy jarvis community generation-status [--json] [--repair]
+```
+
+`--apply` refuses unless `NODE` and `CLI` belong to the release the publication
+service runs. Both commands are deliberately outside `community briefing`: the
+guard treats every other `jarvis community briefing …` process as a rival
+writer.
 
 The preserved V1 capability remains the compatibility oracle, not an instruction
 to reactivate V1 writers. See `PORT_MAP.md` for current verified implementation

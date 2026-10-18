@@ -229,6 +229,19 @@ class TestLauncherExchange:
         assert not path.exists()
         assert served.request("GET", f"/?code={code}")[0] == 401
 
+    def test_exchange_code_is_consumed_even_with_a_valid_cookie(
+        self, served: ReviewFixture
+    ) -> None:
+        """A code in the URL is single-use whatever else authenticates the request."""
+
+        code = secrets.token_urlsafe(32)
+        path = self._exchange(served, code)
+        status, _, _ = served.request("GET", f"/?code={code}", headers={"Cookie": served.cookie})
+        assert status == 200
+        assert not path.exists()
+        # The same link cannot sign in another browser later.
+        assert served.request("GET", f"/?code={code}")[0] == 401
+
     def test_stale_or_unsafe_exchange_codes_are_refused(self, served: ReviewFixture) -> None:
         """Expired, group-readable or unknown codes never authenticate."""
 

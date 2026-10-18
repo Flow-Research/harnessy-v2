@@ -113,11 +113,10 @@ def _handler_class(
                 return
             supplied = query.get("token", [""])[0]
             code = query.get("code", [""])[0]
-            authenticated = (
-                self._cookie_token_valid()
-                or _secret_matches(supplied, token)
-                or bool(code and _redeem_exchange_code(state_root, code))
-            )
+            # Redeem a supplied code first, so it is single-use even when a valid
+            # cookie or token already authenticates this request.
+            redeemed = bool(code and _redeem_exchange_code(state_root, code))
+            authenticated = self._cookie_token_valid() or _secret_matches(supplied, token) or redeemed
             supplied = supplied or code
             if not authenticated:
                 self._write(

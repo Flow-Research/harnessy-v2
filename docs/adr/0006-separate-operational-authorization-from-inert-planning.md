@@ -501,6 +501,135 @@ configuration/artifact drift, duplicate owners, crash/uncertain receipts and
 credential recovery using isolated state and providers. Only then update the
 live installation through a separately verified one-writer transition.
 
+### Accepted amendment — weekly community drafts inside the native reviewer, 18 October 2026
+
+The owner asked for weekly community briefing drafts to be generated
+automatically, as V1's Sunday 23:00 job did. A separately scheduled
+`jarvis community briefing generate` cannot do this. While it runs, its process
+matches the community guard's writer rule and is not the exempt reviewer, so the
+running publication service stops with `runtime_rejected`. V1's
+`com.flow-harness.project.weekly-community-briefing-generate` label is on the
+guard list and stops publication whenever it is loaded.
+
+Three options were evaluated:
+
+- **(a) Generate inside the native review service. Selected.**
+  `com.flow-harness.community-review-v2` (`jarvis community briefing review
+  serve`) is the only process the guard exempts as a community draft writer,
+  and only while it runs exactly one verified process. That reviewer already
+  writes draft revisions and regenerations to the same queue. The weekly
+  trigger runs in the reviewer's Node process. When a week is due, it starts
+  one one-shot adapter child for that week (the `generate` action that the
+  manual command uses), with its own deadline and its own cancellation. No
+  parent argv or launchd label is added, so the guard sees the processes it
+  verified before: the exempt reviewer and adapter children. The set of queue
+  writers is unchanged: the reviewer writes drafts, and the publication service
+  claims only approved revisions.
+- **(b) A launchd job recognised as a non-writer. Rejected.** Generation writes
+  the guarded state. It inserts `community_briefings` rows and draft artifacts,
+  and it records `community_draft_runs` in `weekly-briefings.sqlite3`. That is
+  the queue the publication service claims from. Exempting a second argv or
+  label would admit a real second writer. Argv and label are also not identity:
+  the reviewer exemption already needs executable, entry and artifact-hash
+  proof, and a generator exemption would need the same machinery for a weaker
+  reason.
+- **(c) A grant-based handoff. Rejected.** It would add a signed authority, a
+  ledger entry and a second process for work the exempt owner can already do.
+  Drafts need no publication authority: approval stays the only path to
+  publication.
+
+Constraints the implementation keeps:
+
+- **Drafts only.** A scheduled week uses the `generate` action, which never
+  regenerates an existing draft, approves or publishes. The trigger has no
+  access to grants, leases or providers.
+- **Never takes down review.** A scheduled generation runs in its own child
+  process. When its deadline passes, or the review stops, only that child is
+  killed. Review's own two-second recovery for a stuck revision is unchanged
+  and never applies to scheduled work. A stop during shutdown is not counted
+  as a failed attempt.
+- **One owner, one paid run.** Only the LaunchAgent-owned service runs the
+  trigger (`review serve --weekly-generation`, set only by the plist that
+  `harnessy jarvis community schedule` writes). A foreground review never runs
+  it. The trigger also holds an exclusive lock on
+  `community-weekly-generation.lock` in the state directory for its whole life:
+  a second review process waits and takes over only when the holder exits.
+  The adapter takes an exclusive lock, `community-native-draft.lock`, for every
+  native draft: one-shot runs and review revisions. So a scheduled run and a
+  review revision never make paid calls at the same time; the scheduled run
+  reports `busy` and retries at the next tick without counting an attempt. The
+  OS releases both locks when their holder exits.
+- **Idempotency per week.** Before every attempt, the trigger reads the queue
+  read-only. A week that already has a draft is recorded, not generated. A week
+  whose earlier attempt failed is marked `recovered` and its "pending review"
+  notice is sent, for example when a deadline killed a generation that had
+  already committed. The adapter's own check (`generate` returns an existing
+  draft without any AI call) remains a second guard.
+- **No wasted retries.** The adapter refuses `orphan_artifacts`, a week with
+  draft files but no queue row, before any run or provider call. Before, it
+  detected them only while committing, after the paid calls. The trigger gives
+  up on that week at once and notifies the owner.
+- **Failures stay visible.** Each decision is one content-free JSON line in the
+  review log. Each failure also updates the record's `lastFailure` and raises a
+  desktop notice. Automatic attempts are bounded to three per week, at least
+  one hour apart.
+- **Settings and record faults.** A bad `community_briefing.enabled` (not a
+  boolean), `generation_schedule` or `timezone` disables only generation. It is
+  logged as `invalid_schedule` with the issues, and `generation-status` reports
+  it. Review keeps running. A damaged record (unparseable or invalid) is moved
+  aside and rebuilt from the queue. Weeks without a draft lose their attempt
+  counts, and the queue check still prevents a second draft. A record that is
+  a link, not owner-only or unreadable may be tampering. It stops generation
+  until the owner runs `harnessy jarvis community generation-status --repair`,
+  which moves it aside, never deleting it.
+- **Schedule.** The default is Sunday 23:00 Africa/Lagos for the Monday–Sunday
+  week ending that day, which is V1's boundary. Times are local wall-clock
+  times. Across a daylight-saving change a skipped minute fires at the next
+  tick, and a repeated hour never generates a week twice.
+- **Installation.** `harnessy jarvis community schedule --apply` refuses unless
+  its Node and CLI are the release the publication service runs. It reads that
+  release from the loaded `org.harnessy.meeting-publication` plist or
+  `--publication-plist`, or takes `--without-publication` explicitly. The
+  reviewer exemption compares executables and artifact hashes, and the hash
+  set now includes the scheduler's code: `dist/cli/community-draft.js`,
+  `dist/cli/jarvis.js`, `draft-process.js`, `notification.js` and
+  `weekly-generation.js`.
+- **Restart.** The plist sets `KeepAlive` with a 10-second `ThrottleInterval`.
+  Without it, a crashed reviewer left its label loaded with no process, which
+  the guard treated as an observed writer, so community publication stayed
+  stopped until someone noticed. The community guard now classifies a loaded
+  `com.flow-harness.community-review-v2` label with no process as
+  inconclusive (`launchctl_no_process`), because no process exists to write.
+  It pauses new leases under the #117/#119 policy: monotonic backoff, a
+  five-minute window and at least six failed retries. A KeepAlive restart of
+  about 10 seconds therefore recovers without a stop. A label that stays
+  without a process past the window escalates to the existing stop
+  (`runtime_rejected`).
+
+  The complete rules, as the guard applies them:
+  - **Every writer-shaped process** of the owner must verify as the native
+    reviewer (the release's executable, entry and artifact digests),
+    whether or not launchd owns it. A verified process is exempt, so a second
+    verified reviewer, such as a foreground `review serve`, does not stop
+    publication. It cannot run the weekly trigger without
+    `--weekly-generation`, and the scheduler and native-draft locks bound it
+    anyway. A refuted process is an immediate stop. A process whose
+    verification could not answer pauses.
+  - **The review label, when loaded:**
+    - one pid that is a verified reviewer: exempt;
+    - one pid whose verification could not answer, or when the process
+      listing could not answer: pause;
+    - no pid: pause (`launchctl_no_process`), unless a writer-shaped process
+      is awaiting verification. That process cannot be the label's own, so it
+      is an immediate stop;
+    - more than one pid, or one pid that is not a verified reviewer: an
+      immediate stop.
+  - **Any other guarded label** loaded, or any other observed writer: an
+    immediate stop.
+
+  The meeting guard does not check this label (it checks only its V1 labels),
+  so it needs no change.
+
 ### Continuing consequences
 
 - A valid planning receipt remains non-authorizing evidence. It still contains

@@ -89,6 +89,7 @@ describe("writer probe classification", () => {
 
 	it("logs only allow-listed reasons and numbers", () => {
 		expect(isWriterCheckInconclusiveReason("lsof_timeout")).toBe(true);
+		expect(isWriterCheckInconclusiveReason("launchctl_no_process")).toBe(true);
 		expect(isWriterCheckInconclusiveReason("probe_failed")).toBe(false);
 		expect(isWriterCheckInconclusiveReason(undefined)).toBe(false);
 		const forged = Object.defineProperty(new WriterCheckInconclusiveError("ps", "timeout"), "reason", {
@@ -519,20 +520,32 @@ describe("community compatibility proof over an injected runner", () => {
 			reason: "lsof_timeout",
 			exitStatus: undefined,
 		});
+		// PID 77 cannot be the agent's process when launchd runs none, another PID, or several.
 		for (const stdout of ["state = waiting\n", "pid = 99\n", "pid = 77\npid = 78\n"]) {
 			scans = 0;
 			expect(() => makeCommunityCompatibilityProof(agent(stdout, "ok"), "darwin")(), stdout).toThrow(
 				"compatibility_writer_present",
 			);
 		}
-		// With no process listing at all, a running agent is pending; a loaded agent with no process is not.
+		// With no process listing at all, a running agent is pending.
 		expect(inconclusive(makeCommunityCompatibilityProof(agent("pid = 99\n", "timeout"), "darwin"))).toEqual({
 			reason: "ps_timeout",
 			exitStatus: undefined,
 		});
-		expect(() => makeCommunityCompatibilityProof(agent("state = waiting\n", "timeout"), "darwin")()).toThrow(
-			"compatibility_writer_present",
-		);
+		// A loaded agent with no process, and no unverified writer-shaped process, cannot write
+		// (launchd is restarting it): it pauses, never stops at once.
+		expect(inconclusive(makeCommunityCompatibilityProof(agent("state = waiting\n", "timeout"), "darwin"))).toEqual({
+			reason: "ps_timeout",
+			exitStatus: undefined,
+		});
+		const restarting = (command: string, args: ReadonlyArray<string>) =>
+			command === "/bin/launchctl" && String(args[1]).endsWith("com.flow-harness.community-review-v2")
+				? answer({ stdout: "state = spawn scheduled\n" })
+				: makeScriptedProbeRunner().run(command, args);
+		expect(inconclusive(makeCommunityCompatibilityProof(restarting, "darwin"))).toEqual({
+			reason: "launchctl_no_process",
+			exitStatus: undefined,
+		});
 	});
 
 	it("lets an observed community writer win over an unanswered probe", () => {

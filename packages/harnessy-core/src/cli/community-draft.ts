@@ -4,8 +4,23 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Console, Effect, Option, Schema } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { parseDocument } from "yaml";
-import { runNativeCommunityDraft, runNativeCommunityReview } from "../jarvis/community-briefing/native-draft.ts";
+import { CommunityDraftProcessError } from "../jarvis/community-briefing/draft-process.ts";
+import {
+	type NativeCommunityReviewOptions,
+	runNativeCommunityDraft,
+	runNativeCommunityReview,
+} from "../jarvis/community-briefing/native-draft.ts";
 import { notifyCommunityDraft } from "../jarvis/community-briefing/notification.ts";
+import {
+	acquireCommunityGenerationLock,
+	COMMUNITY_GENERATION_STATUS_FILE,
+	COMMUNITY_QUEUE_FILE,
+	type CommunityGenerationScheduleSettings,
+	type CommunityWeekGenerationResult,
+	parseCommunityGenerationSchedule,
+	runWeeklyCommunityGeneration,
+	sqliteQueuedWeeks,
+} from "../jarvis/community-briefing/weekly-generation.ts";
 import { readStableMeetingPublicationSmokeFile } from "../jarvis/meeting-publication/operational-input.ts";
 import { resolveJarvisConfigPath } from "../jarvis/paths.ts";
 
@@ -17,6 +32,9 @@ const Settings = Schema.Struct({
 		state_path: Schema.String,
 		timezone: Schema.optional(Schema.String),
 		max_sources: Schema.optional(Schema.Int),
+		// Read leniently: a bad schedule must disable only generation, not review.
+		enabled: Schema.optional(Schema.Unknown),
+		generation_schedule: Schema.optional(Schema.Unknown),
 	}),
 });
 
@@ -62,16 +80,143 @@ const readExecutionConfig = (input: {
 		if (!value.trim()) throw new Error("Explicit community paths required.");
 		return resolveJarvisConfigPath(value, dirname(configPath), homedir());
 	};
+	const timezone = settings.timezone ?? "Africa/Lagos";
 	return {
 		pythonPath,
+		weeklyGeneration: parseCommunityGenerationSchedule(settings.enabled, settings.generation_schedule, timezone),
 		config: {
 			source_path: path(settings.source_path),
 			draft_path: path(settings.draft_path),
 			state_path: path(settings.state_path),
-			timezone: settings.timezone ?? "Africa/Lagos",
+			timezone,
 			max_sources: settings.max_sources,
 		},
 	};
+};
+
+export interface CommunityReviewServiceOptions extends Omit<NativeCommunityReviewOptions, "onReady" | "onRunFinished"> {
+	readonly notifications: "desktop" | "off";
+	/** Set only by the LaunchAgent that `harnessy jarvis community schedule` installs. */
+	readonly weeklyGeneration: boolean;
+	readonly schedule: CommunityGenerationScheduleSettings;
+	readonly log: (value: unknown) => void;
+	readonly notify?: typeof notifyCommunityDraft;
+	readonly now?: () => Date;
+	readonly tickMs?: number;
+	/** Deadline for one scheduled generation; defaults to the review's operation deadline. */
+	readonly scheduledTimeoutMs?: number;
+}
+
+/**
+ * Serve review and, in the LaunchAgent-owned service, the weekly trigger.
+ *
+ * The trigger runs in this process, the one the community one-writer guard
+ * exempts, and starts each scheduled week as its own one-shot adapter child
+ * with its own deadline. When that deadline passes, only that child is
+ * stopped: review keeps running. Review ending stops the trigger and any
+ * generation in progress. A scheduler problem never ends review.
+ */
+export const serveCommunityReview = async (options: CommunityReviewServiceOptions): Promise<void> => {
+	const { schedule, issues } = options.schedule;
+	const scheduler = new AbortController();
+	let running: Promise<void> | undefined;
+	const generateWeek = (weekStart: string): Promise<CommunityWeekGenerationResult> =>
+		runNativeCommunityDraft({
+			runId: randomUUID(),
+			pythonPath: options.pythonPath,
+			authPath: options.authPath,
+			config: {
+				source_path: options.config.source_path,
+				draft_path: options.config.draft_path,
+				state_path: options.config.state_path,
+				timezone: options.config.timezone,
+				...(options.config.max_sources === undefined ? {} : { max_sources: options.config.max_sources }),
+			},
+			action: "generate",
+			week_start: weekStart,
+			model: options.model,
+			maximumOutputBytes: options.maximumOutputBytes,
+			timeoutMs: options.scheduledTimeoutMs ?? options.operationTimeoutMs,
+			signal: scheduler.signal,
+			...(options.notifications === "desktop" ? { notify: options.notify ?? notifyCommunityDraft } : {}),
+		}).then(
+			(result): CommunityWeekGenerationResult => ({
+				status: result.existing ? "existing" : "created",
+				briefingId: result.briefing_id,
+				notified: !result.existing && !result.notification_pending,
+			}),
+			(error: unknown): CommunityWeekGenerationResult => {
+				if (scheduler.signal.aborted) return { status: "cancelled" };
+				const code = error instanceof CommunityDraftProcessError ? error.code : undefined;
+				if (code === "native_draft_busy") return { status: "busy" };
+				return {
+					status: "failed",
+					code: code === "deadline_exceeded" ? "adapter_timeout" : (code ?? "generation_failed"),
+				};
+			},
+		);
+	const startScheduler = () => {
+		if (!options.weeklyGeneration || running !== undefined) return;
+		if (issues.length > 0) {
+			// Loud, but only generation is off; review keeps serving.
+			options.log({
+				event: "weekly-generation",
+				status: "skipped",
+				code: "invalid_schedule",
+				issues,
+				publication: false,
+			});
+			return;
+		}
+		if (!schedule.enabled) return;
+		const notify = options.notify ?? notifyCommunityDraft;
+		running = runWeeklyCommunityGeneration({
+			schedule,
+			statusPath: join(options.config.state_path, COMMUNITY_GENERATION_STATUS_FILE),
+			queue: sqliteQueuedWeeks(join(options.config.state_path, COMMUNITY_QUEUE_FILE)),
+			now: options.now ?? (() => new Date()),
+			generateWeek,
+			report: options.log,
+			acquireLock: () => acquireCommunityGenerationLock(options.config.state_path),
+			signal: scheduler.signal,
+			...(options.tickMs === undefined ? {} : { tickMs: options.tickMs }),
+			...(options.notifications === "desktop"
+				? { notify: (kind: "pending" | "error", count: number) => notify(kind, count, scheduler.signal) }
+				: {}),
+		}).catch(async () => {
+			// The loop never throws by design; if it does, say so rather than stop silently.
+			options.log({ event: "weekly-generation", status: "failed", code: "scheduler_stopped", publication: false });
+			if (options.notifications === "desktop") await notify("error", 0, scheduler.signal).catch(() => false);
+		});
+	};
+	await runNativeCommunityReview({
+		...options,
+		onReady: async (reviewUrl) => {
+			// Never the bearer token, in any mode: the origin and where the token lives.
+			options.log({
+				...communityReviewReadyEvent(reviewUrl, options.config.state_path),
+				weeklyGeneration:
+					options.weeklyGeneration && schedule.enabled
+						? {
+								weekday: schedule.weekday,
+								time: `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`,
+								timezone: schedule.timezone,
+							}
+						: false,
+			});
+			startScheduler();
+		},
+		onRunFinished: async (result) => {
+			const notificationDelivered =
+				result.status === "failed" && options.notifications === "desktop"
+					? await (options.notify ?? notifyCommunityDraft)("error", 0, options.signal)
+					: false;
+			options.log({ event: "draft-finished", ...result, notificationDelivered, publication: false });
+		},
+	}).finally(async () => {
+		scheduler.abort();
+		await running;
+	});
 };
 
 export const communityDraftCommand = Command.make(
@@ -135,12 +280,21 @@ export const communityReviewReadyEvent = (reviewUrl: string, statePath: string) 
 
 export const communityReviewServeCommand = Command.make(
 	"serve",
-	{ ...executionOptions, port: Flag.integer("port").pipe(Flag.withDefault(8872)) },
+	{
+		...executionOptions,
+		port: Flag.integer("port").pipe(Flag.withDefault(8872)),
+		weeklyGeneration: Flag.boolean("weekly-generation").pipe(
+			Flag.withDefault(false),
+			Flag.withDescription(
+				"Also draft each due week. Set only by the LaunchAgent that `harnessy jarvis community schedule` installs.",
+			),
+		),
+	},
 	(input) =>
 		Effect.tryPromise({
 			try: async (signal) => {
-				const { config, pythonPath } = readExecutionConfig(input);
-				await runNativeCommunityReview({
+				const { config, pythonPath, weeklyGeneration } = readExecutionConfig(input);
+				await serveCommunityReview({
 					pythonPath,
 					config: { ...config, review_port: input.port },
 					authPath: resolve(input.authPath),
@@ -148,26 +302,10 @@ export const communityReviewServeCommand = Command.make(
 					maximumOutputBytes: input.maximumOutputBytes,
 					operationTimeoutMs: input.timeoutSeconds * 1000,
 					signal,
-					onReady: (reviewUrl) =>
-						Effect.runPromise(
-							Console.log(JSON.stringify(communityReviewReadyEvent(reviewUrl, config.state_path))),
-						),
-					onRunFinished: async (result) => {
-						const notificationDelivered =
-							result.status === "failed" && input.notifications === "desktop"
-								? await notifyCommunityDraft("error", 0, signal)
-								: false;
-						await Effect.runPromise(
-							Console.log(
-								JSON.stringify({
-									event: "draft-finished",
-									...result,
-									notificationDelivered,
-									publication: false,
-								}),
-							),
-						);
-					},
+					notifications: input.notifications === "desktop" ? "desktop" : "off",
+					weeklyGeneration: input.weeklyGeneration,
+					schedule: weeklyGeneration,
+					log: (value) => Effect.runSync(Console.log(JSON.stringify(value))),
 				});
 			},
 			catch: () =>
@@ -177,6 +315,6 @@ export const communityReviewServeCommand = Command.make(
 		}),
 ).pipe(
 	Command.withDescription(
-		"Review and approve local briefings; native Codex revisions run in the background. This server never publishes or requires timed session renewal.",
+		"Review and approve local briefings; native Codex revisions run in the background. With --weekly-generation and community_briefing.enabled it also drafts each due week (community_briefing.generation_schedule, default Sunday 23:00 Africa/Lagos) for review. This server never publishes or requires timed session renewal.",
 	),
 );
