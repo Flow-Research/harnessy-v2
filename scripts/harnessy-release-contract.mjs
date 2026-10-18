@@ -159,7 +159,7 @@ export const localReleasePackages = (tags) => [
 	{
 		directory: "packages/harnessy-local-host",
 		name: "@harnessy/local-host",
-		requiredFiles: ["dist/cli.js", "dist/meeting-setup-cli.js", "dist/meeting-full-review-cli.js", "dist/meeting-review-open-cli.js", "dist/community-publication-cli.js", "dist/portal-cli.js", "LICENSE"],
+		requiredFiles: ["dist/cli.js", "dist/meeting-setup-cli.js", "dist/meeting-full-review-cli.js", "dist/meeting-review-open-cli.js", "dist/community-publication-cli.js", "dist/community-review-open-cli.js", "dist/portal-cli.js", "LICENSE"],
 		expectedLicense: "AGPL-3.0-only",
 		provenance: "harnessy-authored",
 	},

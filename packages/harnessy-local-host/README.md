@@ -461,6 +461,12 @@ harnessy-meeting-full-review --service-enable --input SERVICE_JSON_PATH --direct
 harnessy-meeting-review-open --state-path STATE_PATH
 ```
 
+The native community briefing review (`harnessy jarvis community briefing review
+serve`) has the matching `harnessy-community-review-open --state-path STATE_PATH`
+launcher. It reads the review's owner-only rendezvous and `review.token` files and
+opens the loopback review without printing the bearer link or running any
+`jarvis community briefing` command that the one-writer guards treat as a writer.
+
 Installation writes a private plist and private stdout/stderr logs; it does not
 start anything. Enablement submits that exact plist to the current macOS GUI
 session. Its `service-start-submitted` result has `runtimeHealth:not_assessed`:

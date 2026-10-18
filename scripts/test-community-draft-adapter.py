@@ -474,6 +474,20 @@ class CommunityDraftAdapterTests(unittest.TestCase):
                     ready = event()
                     self.assertEqual(ready["type"], "ready")
                     url = urlsplit(ready["url"])
+                    # harnessy-community-review-open reads this; it names the token file, never the token.
+                    state = Path(self.config["state_path"]).resolve()
+                    rendezvous_path = state / "community-review.rendezvous.json"
+                    self.assertEqual(rendezvous_path.stat().st_mode & 0o7777, 0o600)
+                    self.assertEqual(rendezvous_path.stat().st_nlink, 1)
+                    rendezvous_text = rendezvous_path.read_text()
+                    self.assertEqual(json.loads(rendezvous_text), {
+                        "kind": "harnessy.community.review-rendezvous.v1",
+                        "origin": f"http://127.0.0.1:{url.port}",
+                        "port": url.port,
+                        "tokenPath": str(state / "review.token"),
+                    })
+                    self.assertNotIn(url.query.removeprefix("token="), rendezvous_text)
+                    self.assertEqual((state / "review.token").stat().st_mode & 0o7777, 0o600)
 
                     def http(method, path, fields=None, cookie=None):
                         connection = HTTPConnection(url.hostname, url.port, timeout=2)

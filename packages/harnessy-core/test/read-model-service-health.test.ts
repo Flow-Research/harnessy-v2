@@ -300,4 +300,25 @@ describe("one-writer guards", () => {
 		).toBe(true);
 		expect(isMeetingPublicationV1WriterCommand("/opt/jarvis/bin/jarvis meeting publish worker")).toBe(true);
 	});
+
+	it("treat the community review-open launcher and its opener as non-writers", () => {
+		const host = "/opt/harnessy/service/node_modules/@harnessy/local-host/dist";
+		const state = "/Users/owner/.local/share/harnessy/community-state";
+		const commands = [
+			`/opt/harnessy/bin/harnessy-community-review-open --state-path ${state}`,
+			`/opt/harnessy/bin/node ${host}/community-review-open-cli.js --state-path ${state}`,
+			`/bin/sh /opt/harnessy/bin/harnessy-community-review-open --state-path ${state}`,
+			"/usr/bin/open http://127.0.0.1:8872/?token=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde",
+			"xdg-open http://127.0.0.1:8872/?token=AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde",
+		];
+		for (const command of commands) {
+			expect(isCommunityCompatibilityWriterCommand(command), command).toBe(false);
+			expect(isMeetingPublicationV1WriterCommand(command), command).toBe(false);
+		}
+		// Control: the V1 command it replaces is a community writer and would pause publication.
+		expect(
+			isCommunityCompatibilityWriterCommand("/opt/jarvis/bin/jarvis community briefing review open --port 8872"),
+		).toBe(true);
+		expect(isMeetingPublicationV1WriterCommand("/opt/jarvis/bin/jarvis meeting publish review serve")).toBe(true);
+	});
 });

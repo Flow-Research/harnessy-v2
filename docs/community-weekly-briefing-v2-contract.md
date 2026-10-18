@@ -118,8 +118,17 @@ interpreter paths fail before queue writes; no ambient Python or V1 fallback is
 selected. This removes repeated path flags, not the remaining installer discovery
 and provenance-verification work. No separate configuration file is created.
 Generation leaves
-the draft unapproved. Review prints an owner-only local bearer link; do not put
-that link in diagnostics or shared logs. Native revisions use the local Codex
+the draft unapproved. Review never prints its bearer link: the ready event names
+only the listener origin and the owner-only `review.token` path, and the review
+writes an owner-only `community-review.rendezvous.json` beside the token. Open
+the authenticated page with `harnessy-community-review-open --state-path
+STATE_PATH`, where `STATE_PATH` is the directory of the logged `tokenPath`. It
+checks that both files are owner-owned, mode `0600`, single-link and not
+symlinks, builds the `?token=` link in memory and passes it only to the platform
+opener. Do not use `jarvis community briefing review open`: any `jarvis
+community briefing` command other than `review serve` matches the community
+one-writer guard and pauses publication. The review server accepts state-changing
+POSTs only with the exact `Host`, the exact same `Origin` and form encoding. Native revisions use the local Codex
 credential store, or an explicit `--auth-file`; they do not read credentials from
 chat or command-line token arguments. `--timeout-seconds` bounds each AI operation,
 not the review window. `--notifications off` suppresses desktop notifications for
