@@ -501,6 +501,76 @@ configuration/artifact drift, duplicate owners, crash/uncertain receipts and
 credential recovery using isolated state and providers. Only then update the
 live installation through a separately verified one-writer transition.
 
+### Accepted amendment — weekly community drafts inside the native reviewer, 18 October 2026
+
+The owner asked for weekly community briefing drafts to be generated
+automatically, as V1's Sunday 23:00 job did. A separately scheduled
+`jarvis community briefing generate` cannot do this. While it runs, its process
+matches the community guard's writer rule and is not the exempt reviewer, so the
+running publication service stops with `runtime_rejected`. V1's
+`com.flow-harness.project.weekly-community-briefing-generate` label is on the
+guard list and stops publication whenever it is loaded.
+
+Three options were evaluated:
+
+- **(a) Generate inside the native review service. Selected.**
+  `com.flow-harness.community-review-v2` (`jarvis community briefing review
+  serve`) is the only process the guard exempts as a community draft writer,
+  and only while it runs exactly one verified process. That reviewer already
+  writes draft revisions and regenerations to the same queue through its single
+  adapter child, serialized by the adapter's native-draft lock. The weekly
+  trigger runs in the reviewer's Node process. When a week is due, the trigger
+  sends one `generate_week` request to the reviewer's existing adapter, and the
+  adapter generates through the same native run, run ledger and lock. No
+  process, argv or launchd label is added, so the guard sees exactly what it
+  verified before. The set of queue writers is unchanged: the reviewer writes
+  drafts, and the publication service claims only approved revisions.
+- **(b) A launchd job recognised as a non-writer. Rejected.** Generation writes
+  the guarded state. It inserts `community_briefings` rows and draft artifacts,
+  and it records `community_draft_runs` in `weekly-briefings.sqlite3`. That is
+  the queue the publication service claims from. Exempting a second argv or
+  label would admit a real second writer. Argv and label are also not identity:
+  the reviewer exemption already needs executable, entry and artifact-hash
+  proof, and a generator exemption would need the same machinery for a weaker
+  reason.
+- **(c) A grant-based handoff. Rejected.** It would add a signed authority, a
+  ledger entry and a second process for work the exempt owner can already do.
+  Drafts need no publication authority: approval stays the only path to
+  publication.
+
+Constraints the implementation keeps:
+
+- Generation produces unapproved drafts only. The request carries only a week
+  start date. The adapter calls `generate(regenerate=False)`. A result that
+  claims publication is a protocol error that stops the review, and nothing is
+  accepted from it. The trigger has no access to grants, leases or providers.
+- Idempotency per week. The trigger records each week in an owner-only
+  `community-weekly-generation.json` beside the queue. Before any AI run, the
+  adapter answers `existing` when the queue already has the week, so a lost
+  record cannot duplicate a draft.
+- Failures stay visible. Each decision is one content-free JSON line in the
+  review log. Each failure also updates the record's `lastFailure` and raises a
+  desktop notice. Automatic attempts are bounded to three per week, at least an
+  hour apart. An unreadable or unsafe record stops generation and is reported;
+  it is never silently reset. A busy adapter is retried at the next tick and
+  does not count as an attempt. A generation failure never stops the
+  reviewer: a loaded reviewer label with no process would itself stop
+  publication.
+- Schedule. The default is Sunday 23:00 Africa/Lagos for the Monday–Sunday
+  week ending that day, which is V1's boundary. The trigger runs only when
+  `community_briefing.enabled` is true. It is configurable through
+  `community_briefing.generation_schedule` (`enabled`, `weekday`, `time`). A
+  missed occurrence is caught up at the next ten-minute tick. Older missed weeks
+  are not backfilled.
+- Installation. `harnessy jarvis community schedule` plans the reviewer
+  LaunchAgent, and with `--apply` it installs the plist with a rollback backup.
+  `harnessy jarvis community generation-status` reads the record. Both commands
+  sit outside `community briefing`, so running them cannot trip the guard. The
+  reviewer and the publication service must run from the same release, because
+  the reviewer exemption compares their executables and artifact hashes.
+
+This amendment does not change the guard, its label list or its classifier.
+
 ### Continuing consequences
 
 - A valid planning receipt remains non-authorizing evidence. It still contains

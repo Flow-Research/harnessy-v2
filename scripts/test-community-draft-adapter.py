@@ -551,6 +551,90 @@ class CommunityDraftAdapterTests(unittest.TestCase):
                     child.kill()
                     child.communicate(timeout=5)
 
+    def start_scheduled_review(self):
+        child = subprocess.Popen(
+            [sys.executable, "-I", str(ADAPTER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, cwd=self.root, env={"PATH": os.defpath}, bufsize=0,
+        )
+        self.addCleanup(child.communicate, timeout=5)
+        self.addCleanup(child.kill)
+
+        def send(value):
+            child.stdin.write((json.dumps(value) + "\n").encode())
+            child.stdin.flush()
+
+        def event():
+            deadline = time.monotonic() + 10
+            data = bytearray()
+            while not data.endswith(b"\n"):
+                remaining = deadline - time.monotonic()
+                self.assertGreater(remaining, 0, "adapter event timed out")
+                self.assertTrue(select.select([child.stdout], [], [], remaining)[0])
+                chunk = os.read(child.stdout.fileno(), 1)
+                self.assertTrue(chunk, "adapter closed without event")
+                data.extend(chunk)
+            return json.loads(data)
+
+        send({"action": "review", "config": {**self.config, "review_port": 0}})
+        self.assertEqual(event()["type"], "ready")
+        return send, event
+
+    def test_scheduled_week_is_drafted_once_for_review_and_never_published(self):
+        send, event = self.start_scheduled_review()
+        request = str(uuid.uuid4())
+        send({"type": "generate_week", "request_id": request, "week_start": "2026-09-14"})
+        started, finished, result = event(), event(), event()
+        self.assertEqual(started["type"], "run_started")
+        self.assertEqual(finished, {"type": "run_finished", "run_id": started["run_id"], "status": "completed",
+                                    "provider_calls": 0, "publication": False})
+        self.assertEqual(result["type"], "generate_week_result")
+        self.assertEqual(result["request_id"], request)
+        self.assertEqual(result["status"], "created")
+        self.assertTrue(result["ran"])
+        self.assertFalse(result["publication"])
+        rows = self.queue()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["briefing_id"], result["briefing_id"])
+        self.assertEqual(rows[0]["status"], "pending_review")
+        for field in ("approved_hash", "google_doc_id", "discord_message_id"):
+            self.assertIsNone(rows[0][field])
+        before = self.queue()
+        # A repeated request is answered from the queue without another run.
+        again = str(uuid.uuid4())
+        send({"type": "generate_week", "request_id": again, "week_start": "2026-09-14"})
+        self.assertEqual(event(), {"type": "generate_week_result", "request_id": again, "week_start": "2026-09-14",
+                                   "status": "existing", "ran": False, "briefing_id": result["briefing_id"],
+                                   "publication": False})
+        self.assertEqual(self.queue(), before)
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM community_draft_runs").fetchone()[0], 1)
+
+    def test_scheduled_request_rejects_a_non_monday_without_state(self):
+        send, event = self.start_scheduled_review()
+        request = str(uuid.uuid4())
+        send({"type": "generate_week", "request_id": request, "week_start": "2026-09-15"})
+        self.assertEqual(event(), {"type": "generate_week_result", "request_id": request, "week_start": "2026-09-15",
+                                   "status": "failed", "ran": False, "code": "invalid_request", "publication": False})
+        extra = str(uuid.uuid4())
+        send({"type": "generate_week", "request_id": extra, "week_start": "2026-09-14", "approve": True})
+        self.assertEqual(event()["code"], "invalid_request")
+        self.assertFalse((self.root / "state/weekly-briefings.sqlite3").exists() and self.queue())
+
+    def test_scheduled_generation_failure_is_reported_without_content(self):
+        self.add_source()
+        send, event = self.start_scheduled_review()
+        request = str(uuid.uuid4())
+        send({"type": "generate_week", "request_id": request, "week_start": "2026-09-14"})
+        started, generation = event(), event()
+        self.assertEqual(generation["type"], "generate")
+        send({"run_id": started["run_id"], "error": "native_provider_failed",
+              "sequence": generation["sequence"], "provider": "codex"})
+        finished, result = event(), event()
+        self.assertEqual(finished["status"], "failed")
+        self.assertEqual(result, {"type": "generate_week_result", "request_id": request, "week_start": "2026-09-14",
+                                  "status": "failed", "ran": True, "code": "generation_failed", "publication": False})
+        self.assertEqual(self.queue(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

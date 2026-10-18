@@ -6,6 +6,14 @@ import { Command, Flag } from "effect/unstable/cli";
 import { parseDocument } from "yaml";
 import { runNativeCommunityDraft, runNativeCommunityReview } from "../jarvis/community-briefing/native-draft.ts";
 import { notifyCommunityDraft } from "../jarvis/community-briefing/notification.ts";
+import type { CommunityWeekRequest } from "../jarvis/community-briefing/review-process.ts";
+import {
+	COMMUNITY_GENERATION_STATUS_FILE,
+	type CommunityGenerationEvent,
+	type CommunityGenerationSchedule,
+	parseCommunityGenerationSchedule,
+	runWeeklyCommunityGeneration,
+} from "../jarvis/community-briefing/weekly-generation.ts";
 import { readStableMeetingPublicationSmokeFile } from "../jarvis/meeting-publication/operational-input.ts";
 import { resolveJarvisConfigPath } from "../jarvis/paths.ts";
 
@@ -17,6 +25,8 @@ const Settings = Schema.Struct({
 		state_path: Schema.String,
 		timezone: Schema.optional(Schema.String),
 		max_sources: Schema.optional(Schema.Int),
+		enabled: Schema.optional(Schema.Unknown),
+		generation_schedule: Schema.optional(Schema.Unknown),
 	}),
 });
 
@@ -62,17 +72,48 @@ const readExecutionConfig = (input: {
 		if (!value.trim()) throw new Error("Explicit community paths required.");
 		return resolveJarvisConfigPath(value, dirname(configPath), homedir());
 	};
+	const timezone = settings.timezone ?? "Africa/Lagos";
 	return {
 		pythonPath,
+		schedule: parseCommunityGenerationSchedule(settings.enabled, settings.generation_schedule, timezone),
 		config: {
 			source_path: path(settings.source_path),
 			draft_path: path(settings.draft_path),
 			state_path: path(settings.state_path),
-			timezone: settings.timezone ?? "Africa/Lagos",
+			timezone,
 			max_sources: settings.max_sources,
 		},
 	};
 };
+
+/**
+ * The review service's weekly trigger. It runs inside `review serve`, the one
+ * process the community one-writer guard exempts, and asks that review's own
+ * adapter for a draft. It never approves or publishes.
+ */
+export const communityReviewScheduler =
+	(input: {
+		readonly schedule: CommunityGenerationSchedule;
+		readonly statePath: string;
+		readonly notifications: "desktop" | "off";
+		readonly report: (event: CommunityGenerationEvent) => void;
+		readonly now?: () => Date;
+		readonly tickMs?: number;
+		readonly notify?: typeof notifyCommunityDraft;
+	}) =>
+	(generateWeek: CommunityWeekRequest, signal: AbortSignal): Promise<void> =>
+		runWeeklyCommunityGeneration({
+			schedule: input.schedule,
+			statusPath: join(input.statePath, COMMUNITY_GENERATION_STATUS_FILE),
+			now: input.now ?? (() => new Date()),
+			generateWeek,
+			report: input.report,
+			signal,
+			...(input.tickMs === undefined ? {} : { tickMs: input.tickMs }),
+			...(input.notifications === "desktop"
+				? { notify: (kind, count) => (input.notify ?? notifyCommunityDraft)(kind, count, signal) }
+				: {}),
+		});
 
 export const communityDraftCommand = Command.make(
 	"generate",
@@ -127,7 +168,8 @@ export const communityReviewServeCommand = Command.make(
 	(input) =>
 		Effect.tryPromise({
 			try: async (signal) => {
-				const { config, pythonPath } = readExecutionConfig(input);
+				const { config, pythonPath, schedule } = readExecutionConfig(input);
+				const log = (value: unknown) => Effect.runSync(Console.log(JSON.stringify(value)));
 				await runNativeCommunityReview({
 					pythonPath,
 					config: { ...config, review_port: input.port },
@@ -143,10 +185,23 @@ export const communityReviewServeCommand = Command.make(
 									command: "jarvis community briefing review serve",
 									event: "ready",
 									reviewUrl,
+									weeklyGeneration: schedule.enabled
+										? {
+												weekday: schedule.weekday,
+												time: `${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")}`,
+												timezone: schedule.timezone,
+											}
+										: false,
 									publication: false,
 								}),
 							),
 						),
+					onScheduler: communityReviewScheduler({
+						schedule,
+						statePath: config.state_path,
+						notifications: input.notifications === "desktop" ? "desktop" : "off",
+						report: log,
+					}),
 					onRunFinished: async (result) => {
 						const notificationDelivered =
 							result.status === "failed" && input.notifications === "desktop"
@@ -172,6 +227,6 @@ export const communityReviewServeCommand = Command.make(
 		}),
 ).pipe(
 	Command.withDescription(
-		"Review and approve local briefings; native Codex revisions run in the background. This server never publishes or requires timed session renewal.",
+		"Review and approve local briefings; native Codex revisions run in the background. With community_briefing.enabled it also drafts each due week (community_briefing.generation_schedule, default Sunday 23:00 Africa/Lagos) for review. This server never publishes or requires timed session renewal.",
 	),
 );

@@ -123,7 +123,27 @@ that link in diagnostics or shared logs. Native revisions use the local Codex
 credential store, or an explicit `--auth-file`; they do not read credentials from
 chat or command-line token arguments. `--timeout-seconds` bounds each AI operation,
 not the review window. `--notifications off` suppresses desktop notifications for
-headless use. None of these commands activates a publication worker or schedule.
+headless use. None of these commands activates a publication worker.
+
+Weekly drafts are generated automatically by the review service, not by a
+separate scheduled `generate` job. With `community_briefing.enabled: true`, `review serve`
+asks its own adapter for the due week, at Sunday 23:00 Africa/Lagos by default.
+That week is the Monday–Sunday week ending that day. The adapter skips a week
+that already has a draft. Configure the schedule with
+`community_briefing.generation_schedule: {enabled, weekday, time}`, for example
+`{weekday: monday, time: "08:00"}`. Drafts stay unapproved. Failures appear in
+the review log, as a desktop notice, and in `community-weekly-generation.json`
+in the state directory. ADR-0006 ("weekly community drafts inside the native
+reviewer") records why this design keeps the one-writer guarantee. The
+reviewer LaunchAgent is planned or installed with:
+
+```sh
+harnessy jarvis community schedule --cli-entry CLI --python-path PYTHON [--apply]
+harnessy jarvis community generation-status --json
+```
+
+Both commands are deliberately outside `community briefing`: the guard treats
+every other `jarvis community briefing …` process as a rival writer.
 
 The preserved V1 capability remains the compatibility oracle, not an instruction
 to reactivate V1 writers. See `PORT_MAP.md` for current verified implementation

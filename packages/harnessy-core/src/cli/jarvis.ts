@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { Console, Redacted } from "effect";
@@ -5,10 +6,20 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Command, Flag as Options } from "effect/unstable/cli";
 import {
+	COMMUNITY_REVIEW_PORT,
+	installCommunityReviewSchedule,
+	planCommunityReviewSchedule,
+} from "../jarvis/community-briefing/schedule.ts";
+import {
 	inspectCommunityBriefingStatus,
 	listCommunityBriefings,
 	preflightCommunityBriefingOffline,
+	resolveCommunityBriefingConfig,
 } from "../jarvis/community-briefing/status.ts";
+import {
+	COMMUNITY_GENERATION_STATUS_FILE,
+	readCommunityGenerationStatus,
+} from "../jarvis/community-briefing/weekly-generation.ts";
 import { JarvisConfigReader } from "../jarvis/config.ts";
 import { JarvisCredentialResolver } from "../jarvis/credentials.ts";
 import { JarvisDiagnostic } from "../jarvis/diagnostic.ts";
@@ -612,8 +623,109 @@ export const jarvisCommunityBriefingCommand = Command.make("briefing").pipe(
 	Command.withDescription("Prepare, inspect and review local community briefings through V2"),
 );
 
+/**
+ * Deliberately outside `community briefing`: the one-writer guard treats any
+ * `jarvis community briefing …` process except `review serve` as a rival
+ * writer, so planning the service must not run under that route.
+ */
+export const jarvisCommunityScheduleCommand = Command.make(
+	"schedule",
+	{
+		target: targetOption,
+		config: Options.string("config").pipe(Options.withDefault(join(homedir(), ".jarvis", "config.yaml"))),
+		pythonPath: Options.string("python-path").pipe(
+			Options.optional,
+			Options.withDescription("V2-installed Jarvis interpreter; omit to use community_briefing.python_path."),
+		),
+		port: Options.integer("port").pipe(Options.withDefault(COMMUNITY_REVIEW_PORT)),
+		cliEntry: cliEntryOption,
+		nodePath: nodePathOption,
+		launchAgentsDirectory: launchAgentsDirectoryOption,
+		apply: Options.boolean("apply").pipe(
+			Options.withDefault(false),
+			Options.withDescription("Backup and atomically replace only the community review LaunchAgent plist."),
+		),
+		json: jsonOption,
+	},
+	({ target, config, pythonPath, port, cliEntry, nodePath, launchAgentsDirectory, apply, json }) =>
+		Effect.gen(function* () {
+			const paths = yield* (yield* JarvisPathResolver).resolve(target);
+			const python = Option.getOrUndefined(pythonPath);
+			const options = {
+				nodePath: resolve(nodePath),
+				cliPath: resolve(cliEntry),
+				configPath: resolve(config),
+				...(python === undefined ? {} : { pythonPath: resolve(python) }),
+				port,
+				launchAgentsDirectory:
+					Option.getOrUndefined(launchAgentsDirectory) ?? join(homedir(), "Library", "LaunchAgents"),
+			};
+			const result = apply
+				? yield* installCommunityReviewSchedule(paths, options)
+				: { applied: false, backupDirectory: null, file: yield* planCommunityReviewSchedule(paths, options) };
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis community schedule", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(
+				`${result.applied ? "Installed" : "Planned"} V2 community review LaunchAgent: ${result.file.path}`,
+			);
+			if (result.backupDirectory !== null) yield* Console.log(`Rollback backup: ${result.backupDirectory}`);
+			if (result.applied)
+				yield* Console.log(
+					"Plist is installed but not reloaded; restart only this label, from the same release as the publication service.",
+				);
+		}),
+).pipe(
+	Command.withDescription(
+		"Plan or install the V2 community review LaunchAgent, which also owns weekly draft generation; never publishes",
+	),
+);
+
+/** Read-only, and outside `community briefing` for the same one-writer reason as `schedule`. */
+export const jarvisCommunityGenerationStatusCommand = Command.make(
+	"generation-status",
+	{ config: communityConfigOption, stateRoot: communityStateRootOption, json: jsonOption },
+	({ config, stateRoot, json }) =>
+		Effect.gen(function* () {
+			const resolved = resolveCommunityBriefingConfig({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+			});
+			const path = join(resolved.stateRoot, COMMUNITY_GENERATION_STATUS_FILE);
+			const record = yield* Effect.try({
+				try: () => readCommunityGenerationStatus(path) ?? null,
+				catch: (cause) => (cause instanceof Error ? cause : new Error("status_record_invalid")),
+			});
+			const [latestWeek, latest] =
+				Object.entries(record?.weeks ?? {}).sort(([a], [b]) => b.localeCompare(a))[0] ?? [];
+			const ok = latest?.status !== "failed";
+			if (json)
+				yield* Console.log(
+					JSON.stringify(
+						{ command: "jarvis community generation-status", ok, path, latestWeek: latestWeek ?? null, record },
+						null,
+						2,
+					),
+				);
+			else if (record === null) yield* Console.log("No scheduled community generation has run yet.");
+			else {
+				yield* Console.log(`Latest week ${latestWeek}: ${latest?.status} after ${latest?.attempts} attempt(s)`);
+				if (record.lastFailure !== null)
+					yield* Console.log(
+						`Last failure: week ${record.lastFailure.weekStart}, ${record.lastFailure.code}, ${record.lastFailure.at}`,
+					);
+			}
+			if (!ok) yield* Effect.fail(new Error("The latest scheduled community generation failed"));
+		}),
+).pipe(Command.withDescription("Show the review service's weekly community generation record without mutation"));
+
 export const jarvisCommunityCommand = Command.make("community").pipe(
-	Command.withSubcommands([jarvisCommunityBriefingCommand] as const),
+	Command.withSubcommands([
+		jarvisCommunityBriefingCommand,
+		jarvisCommunityScheduleCommand,
+		jarvisCommunityGenerationStatusCommand,
+	] as const),
 	Command.withDescription("Run V2-owned community workflow inspections"),
 );
 

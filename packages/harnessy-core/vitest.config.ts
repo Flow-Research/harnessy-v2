@@ -102,6 +102,15 @@ export default defineConfig({
 				"src/cli/portal.ts": { statements: 95, branches: 95, functions: 90, lines: 95 },
 				// One-writer guard probe classification and bounded inconclusive retry.
 				"src/jarvis/writer-check.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				// Weekly community generation inside the review service, and its LaunchAgent plan.
+				"src/jarvis/community-briefing/weekly-generation.ts": {
+					statements: 95,
+					branches: 95,
+					// The uncovered function is the fsync-failure mapper in the atomic record write.
+					functions: 95,
+					lines: 95,
+				},
+				"src/jarvis/community-briefing/schedule.ts": { statements: 98, branches: 80, functions: 100, lines: 98 },
 			},
 		},
 	},

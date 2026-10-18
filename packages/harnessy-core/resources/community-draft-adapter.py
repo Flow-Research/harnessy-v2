@@ -8,6 +8,8 @@ Run with the bootstrap-installed Jarvis Python, not an ambient source checkout.
 import json
 import hashlib
 import os
+import queue
+import re
 import sys
 import threading
 import uuid
@@ -23,18 +25,74 @@ from jarvis.meetings.publication.notify import review_token
 from jarvis.meetings.publication.review import create_briefing_review_server
 
 
+_EMIT_LOCK = threading.Lock()
+
+
 def emit(value):
-    print(json.dumps(value, ensure_ascii=False), flush=True)
+    # Review threads and scheduled generation share stdout; keep lines whole.
+    line = json.dumps(value, ensure_ascii=False) + "\n"
+    with _EMIT_LOCK:
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 
-def receive(limit):
-    line = sys.stdin.buffer.readline(limit + 1)
+def parse_line(line, limit):
     if not line.endswith(b"\n") or len(line) > limit:
         raise ValueError("invalid bounded protocol input")
     value = json.loads(line)
     if not isinstance(value, dict):
         raise ValueError("protocol requires an object")
     return value
+
+
+def receive(limit):
+    return parse_line(sys.stdin.buffer.readline(limit + 1), limit)
+
+
+class NativeDraftBusy(ValueError):
+    """The single native draft slot is taken; a scheduled request retries later."""
+
+
+class ParentChannel:
+    """The review's only stdin reader.
+
+    Replies to an active native run go to that run. A ``generate_week`` request
+    from the parent starts one scheduled generation. Malformed lines fail only
+    the run waiting for a reply, as direct reads did; EOF closes the channel.
+    """
+
+    _CLOSED = object()
+
+    def __init__(self, on_request):
+        self.replies = queue.Queue()
+        self.on_request = on_request
+        self.closed = threading.Event()
+
+    def read(self):
+        while True:
+            line = sys.stdin.buffer.readline(1048576 + 1)
+            if not line:
+                self.closed.set()
+                self.replies.put(self._CLOSED)
+                return
+            try:
+                message = parse_line(line, 1048576)
+            except Exception as error:
+                self.replies.put(error)
+                continue
+            if message.get("type") == "generate_week":
+                self.on_request(message)
+            else:
+                self.replies.put(message)
+
+    def reply(self):
+        message = self.replies.get()
+        if message is self._CLOSED:
+            self.replies.put(message)
+            raise ValueError("parent channel closed")
+        if isinstance(message, Exception):
+            raise ValueError("invalid bounded protocol input")
+        return message
 
 
 def deny_external(event, _args):
@@ -223,17 +281,18 @@ class NativeCommunityService(CommunityBriefingService):
 class NativeReviewService(NativeCommunityService):
     """Reuse the review jobs, artifacts and fences; only replace their AI owner."""
 
-    def __init__(self, config):
+    def __init__(self, config, channel=None):
         super().__init__(config, notifier=PendingNotifications())
         self.native_lock = threading.Lock()
         self.native_context = threading.local()
+        self.channel = channel
 
     @contextmanager
     def native_run(self, request):
         # There is one stdio conversation. Reject overlap rather than enqueueing
         # unbounded AI work or mixing replies between review threads.
         if not self.native_lock.acquire(blocking=False):
-            raise ValueError("Another native draft is running; retry after it finishes.")
+            raise NativeDraftBusy("Another native draft is running; retry after it finishes.")
         run_id = str(uuid.uuid4())
         try:
             validate_paths(self.config.model_dump())
@@ -241,7 +300,7 @@ class NativeReviewService(NativeCommunityService):
 
             def exchange(event):
                 emit({**event, "run_id": run_id})
-                response = receive(1048576)
+                response = receive(1048576) if self.channel is None else self.channel.reply()
                 if response.get("run_id") != run_id:
                     raise ValueError("Native draft response belongs to another run.")
                 return response
@@ -300,6 +359,54 @@ class NativeReviewService(NativeCommunityService):
             return super().generate(**kwargs)
 
 
+_REQUEST_ID = re.compile(r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}")
+
+
+def scheduled_generation(service, message):
+    """Generate one scheduled week as a draft for review. Never approves or publishes.
+
+    An existing draft for the week is reported without an AI run, so the
+    parent's weekly trigger is idempotent even when its own record is lost.
+    """
+    request_id = message.get("request_id")
+    week_text = message.get("week_start")
+    ran = False
+
+    def result(status, **fields):
+        emit({"type": "generate_week_result", "request_id": request_id, "week_start": week_text,
+              "status": status, "ran": ran, **fields, "publication": False})
+
+    try:
+        if (not isinstance(request_id, str) or not _REQUEST_ID.fullmatch(request_id)
+                or not isinstance(week_text, str) or len(week_text) != 10
+                or set(message) != {"type", "request_id", "week_start"}):
+            raise ValueError("invalid scheduled request")
+        week_start = date.fromisoformat(week_text)
+        if week_start.weekday() != 0:
+            raise ValueError("week_start must be a Monday")
+    except Exception:
+        if isinstance(request_id, str) and _REQUEST_ID.fullmatch(request_id):
+            result("failed", code="invalid_request")
+            return
+        raise ValueError("invalid scheduled request") from None
+    try:
+        existing = service.store.for_week(week_start)
+        if existing is not None:
+            result("existing", briefing_id=existing.briefing_id)
+            return
+        # Validate the requested week as the one-shot generator does.
+        validate_paths(service.config.model_dump(), week_start)
+        with service.native_run({"action": "generate", "trigger": "schedule", "week_start": week_text}):
+            ran = True
+            generated = service.generate(week_start=week_start, regenerate=False)
+        result("existing" if generated.existing else "created", briefing_id=generated.item.briefing_id)
+    except NativeDraftBusy:
+        result("busy")
+    except Exception:
+        # Never expose source excerpts, provider output or private paths.
+        result("failed", code="generation_failed")
+
+
 def serve_native_review(request):
     def review_guard(event, args):
         if event == "socket.bind" and args[1][0] == "127.0.0.1":
@@ -317,13 +424,19 @@ def serve_native_review(request):
         raise ValueError("Invalid review port.")
     if port == 0:
         config = config.model_copy(update={"review_port": 0})
-    service = NativeReviewService(config)
+    def on_request(message):
+        threading.Thread(target=scheduled_generation, args=(service, message), daemon=True).start()
+
+    channel = ParentChannel(on_request)
+    service = NativeReviewService(config, channel)
     server = create_briefing_review_server(service)
     parent = os.getppid()
     server.timeout = 0.5
     try:
         emit({"type": "ready", "url": f"http://127.0.0.1:{server.server_port}/?token={review_token(service.state_root)}",
               "publication": False})
+        # Read the parent only after readiness, so requests cannot race startup.
+        threading.Thread(target=channel.read, daemon=True).start()
         while os.getppid() == parent:
             server.handle_request()
     finally:
