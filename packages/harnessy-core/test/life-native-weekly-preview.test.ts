@@ -142,13 +142,13 @@ describe("signed weekly Life draft consumer", () => {
 								cwd: path,
 								encoding: "utf8",
 								env: {
-									// Never reach the OS keychain from a test child.
-									PI_AUTH_ENCRYPTION: "off",
 									PATH: process.env.PATH,
 									FLOW_USER: "fixture",
 									JARVIS_WIKIS_DIR: join(path, "wikis"),
 									PYTHONDONTWRITEBYTECODE: "1",
 									...command.env,
+									// Last, so no spread can switch it back on: never reach the OS keychain.
+									PI_AUTH_ENCRYPTION: "off",
 								},
 							});
 							expect(child.status, child.stderr).toBe(0);
@@ -226,10 +226,10 @@ describe("signed weekly Life draft consumer", () => {
 								cwd: path,
 								encoding: "utf8",
 								env: {
-									PI_AUTH_ENCRYPTION: "off",
 									PATH: process.env.PATH,
 									PYTHONDONTWRITEBYTECODE: "1",
 									...command.env,
+									PI_AUTH_ENCRYPTION: "off",
 								},
 							});
 							expect(child.status, child.stderr).toBe(0);

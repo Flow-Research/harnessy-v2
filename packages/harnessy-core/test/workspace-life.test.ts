@@ -54,7 +54,7 @@ const fixture = () => {
 const execute = (command: ExternalCommand) =>
 	execFileSync("python3", [...command.args], {
 		cwd: command.cwd,
-		env: { PI_AUTH_ENCRYPTION: "off", PATH: process.env.PATH, ...command.env },
+		env: { PATH: process.env.PATH, ...command.env, PI_AUTH_ENCRYPTION: "off" },
 		encoding: "utf8",
 		stdio: "pipe",
 		timeout: 30_000,

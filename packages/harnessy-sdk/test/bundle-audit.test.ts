@@ -52,9 +52,9 @@ function audit(
 		const result = spawnSync(process.execPath, ["--import", guard, join(root, "scripts", "audit-bundles.mjs")], {
 			cwd: root,
 			env: {
-				PI_AUTH_ENCRYPTION: "off",
 				NODE_NO_WARNINGS: "1",
 				...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+				PI_AUTH_ENCRYPTION: "off",
 			},
 			encoding: "utf8",
 			timeout: 10000,

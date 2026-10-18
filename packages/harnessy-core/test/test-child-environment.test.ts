@@ -21,6 +21,24 @@ const CHILD_PROCESS_CALL = /\b(?:spawn|spawnSync|execFile|execFileSync|fork|exec
 /** `env: { … }`, and an object literal bound to an env-named variable (`const env = { … }`), then passed by name. */
 const ENV_OBJECT = /\benv\s*:\s*\{|\b(?:const|let|var)\s+(?:env|\w+Env)\s*(?::[^=;]+)?=\s*\{/gu;
 
+/** Spreads that keep the setting off: the vitest process environment and the fixture environment. */
+const SAFE_SPREAD = /^\.\.\.\s*(?:process\.env\b|fixtureEnvironment\(\))/u;
+
+/**
+ * The effective value must be "off": an explicit `PI_AUTH_ENCRYPTION: "off"` that no later spread
+ * can overwrite, or only safe spreads with no other value for it. Comments never count.
+ */
+const guarded = (literal: string): boolean => {
+	const body = literal.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/\/\/[^\n]*/gu, "");
+	const settings = [...body.matchAll(/\bPI_AUTH_ENCRYPTION\s*:\s*(["'`])([^"'`]*)\1/gu)];
+	if (settings.some((setting) => setting[2] !== "off")) return false;
+	if (/\bPI_AUTH_ENCRYPTION\s*:\s*[^"'`\s]/u.test(body)) return false;
+	const spreads = [...body.matchAll(/\.\.\.\s*[^,}\n]+/gu)];
+	const last = settings.at(-1);
+	if (last !== undefined) return spreads.every((spread) => spread.index < last.index || SAFE_SPREAD.test(spread[0]));
+	return spreads.length > 0 && spreads.every((spread) => SAFE_SPREAD.test(spread[0]));
+};
+
 const findUnguardedChildEnvironments = (source: string): ReadonlyArray<number> => {
 	if (!CHILD_PROCESS_CALL.test(source)) return [];
 	const lines: number[] = [];
@@ -32,8 +50,7 @@ const findUnguardedChildEnvironments = (source: string): ReadonlyArray<number> =
 			else if (source[index] === "}") depth--;
 			index++;
 		}
-		const body = source.slice(match.index, index);
-		if (/PI_AUTH_ENCRYPTION|\.\.\.\s*process\.env\b|\.\.\.\s*fixtureEnvironment\(/u.test(body)) continue;
+		if (guarded(source.slice(match.index, index))) continue;
 		const before = source.slice(0, match.index).split("\n");
 		if (before.at(-2)?.includes(NOT_A_CHILD_ENV_MARKER) === true) continue;
 		lines.push(before.length);
@@ -86,6 +103,18 @@ describe("test child-process environments", () => {
 		expect(
 			findUnguardedChildEnvironments(byName('const env = { PI_AUTH_ENCRYPTION: "off", PATH: "/usr/bin" };')),
 		).toEqual([]);
+		// Only an effective "off" counts: not a comment, another value, or a value a later spread can replace.
+		expect(findUnguardedChildEnvironments(spawning('env: { // PI_AUTH_ENCRYPTION: "off"\nHOME: "/tmp" },'))).toEqual([
+			3,
+		]);
+		expect(findUnguardedChildEnvironments(spawning('env: { PI_AUTH_ENCRYPTION: "on" },'))).toEqual([3]);
+		expect(findUnguardedChildEnvironments(spawning("env: { PI_AUTH_ENCRYPTION: mode },"))).toEqual([3]);
+		expect(findUnguardedChildEnvironments(spawning('env: { PI_AUTH_ENCRYPTION: "off", ...extra },'))).toEqual([3]);
+		expect(findUnguardedChildEnvironments(spawning('env: { ...extra, PI_AUTH_ENCRYPTION: "off" },'))).toEqual([]);
+		expect(findUnguardedChildEnvironments(spawning('env: { ...process.env, PI_AUTH_ENCRYPTION: "on" },'))).toEqual([
+			3,
+		]);
+		expect(findUnguardedChildEnvironments(spawning("env: { ...process.env, ...extra },"))).toEqual([3]);
 		// Names that merely contain "env" are not environments.
 		expect(findUnguardedChildEnvironments(byName("const envelope = { a: 1 };"))).toEqual([]);
 		// A file that starts no child process is out of scope.

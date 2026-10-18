@@ -45,11 +45,11 @@ it.each(["daily", "weekly"] as const)("%s prompt subprocesses read only the conf
 								cwd: command.cwd,
 								encoding: "utf8",
 								env: {
-									PI_AUTH_ENCRYPTION: "off",
 									PATH: process.env.PATH,
 									HOME: inherited,
 									PYTHONDONTWRITEBYTECODE: "1",
 									...command.env,
+									PI_AUTH_ENCRYPTION: "off",
 								},
 							});
 							expect(child.status, child.stderr).toBe(0);
