@@ -4,14 +4,33 @@ Status date: 2026-10-18
 
 ## Current service inventory — 2026-10-18
 
-All Harnessy services are active. The loaded V2 services are meeting
-publication, community review and publication, the five-minute Fathom poll, the
-Life daily-brief, weekly-plan and learning-research schedules, the personal
-learning wiki, and the read-only local portal on `127.0.0.1:8790`, live since
-2026-10-18. This inventory supersedes every older statement in this file that a
-schedule is off, unloaded or disabled, that no meeting-review listener runs, or
-that the community reviewer and the Fathom poll are the only loaded labels. The
-retired V1 schedulers stay unloaded; V1 remains retained recovery material.
+The owner's operating policy is that all Harnessy services are on. On
+2026-10-18 at about 05:45 local time, `launchctl list` and `launchctl print`
+showed these V2 labels loaded:
+
+| Label | Observed state |
+|---|---|
+| `com.flow-harness.meeting-fathom-poll` | loaded; 16 runs, last exit 0 |
+| `com.flow-harness.community-review-v2` | running; reviewer listening on `127.0.0.1:8872` |
+| `org.harnessy.portal` | running; read-only portal listening on `127.0.0.1:8790` |
+| `tech.flowresearch.learning-wiki` | running; viewer listening on `127.0.0.1:4321` |
+| `com.flow-harness.life-orchestrator.daily-brief` | loaded calendar job; 1 run, last exit 0 |
+| `com.flow-harness.life-orchestrator.weekly-plan` | loaded calendar job; not yet run |
+| `com.flow-harness.life-orchestrator.learning-research` | loaded calendar job; not yet run |
+| `org.harnessy.meeting-publication` | **loaded but stopped**; 1 run, last exit 1 |
+
+The meeting-publication service stopped at 05:35 with
+`community_publication_stopped` and `meeting_full_review_failed`
+(`review_failed`). At that time the data volume was full (`ENOSPC`); it still had
+under 500 MiB free at about 05:45. The cause is not yet confirmed and the service has not been
+restarted. Until it runs again, meeting review and publication are not
+available. No backup, rollback or one-writer recheck is recorded for this
+inventory; it is an observation, not a cutover receipt.
+
+This inventory supersedes older statements in this file that a schedule is
+unloaded, or that the community reviewer and the Fathom poll are the only loaded
+labels. The retired V1 schedulers stay unloaded; V1 remains retained recovery
+material.
 
 Merged `dev` is `4485c2d6` (#120). Changes merged since the 2026-09-20
 checkpoint below that affect the running services:
@@ -55,7 +74,7 @@ V2 owns meeting ingestion/state/review/dispatch and the private context placemen
 At this checkpoint there was no meeting-review listener, the V2 community
 reviewer and five-minute Fathom poll were the only loaded Harnessy labels, and
 V1 writers and the Life schedules were unloaded for supervised draft-only Life
-operation. Since 2026-10-18 all Harnessy services are active; see the current
+operation. For the 2026-10-18 observed state, see the current
 service inventory above.
 
 The native community host and Life daily composition pass isolated installed-byte
