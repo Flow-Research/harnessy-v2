@@ -21,7 +21,7 @@ const model = join(root, "model.cjs");
 writeFileSync(model, `let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const r=JSON.parse(s),e=r.evidence[0],c={versionId:e.version.id,locator:e.version.passages[0].locator,quote:e.version.passages[0].text};process.stdout.write(JSON.stringify({pages:[{path:"topics/cache.md",title:"Cache",topics:["Cache"],claims:[{kind:"finding",text:"The experiment reports greater cache throughput.",citations:[c]}],links:[]},{path:"questions.md",title:"Questions",topics:[],claims:[{kind:"question",text:"Does the result generalize?",citations:[]}],links:["topics/cache.md"]}]}));});`);
 const host = createRequire(import.meta.url).resolve("@harnessy/local-host/wiki-cli");
 const invoke = args => new Promise((resolve, reject) => {
-	const child = spawn(process.execPath, [host, ...args, "--vault", join(root, "vault"), "--home-root", root], { env: { ...process.env, HARNESSY_WIKI_EXECUTOR: process.execPath, HARNESSY_WIKI_EXECUTOR_ARGS: JSON.stringify([model]), HARNESSY_AI_PROVIDER: "codex" }, stdio: ["ignore", "pipe", "pipe"] });
+	const child = spawn(process.execPath, [host, ...args, "--vault", join(root, "vault"), "--home-root", root], { env: { ...process.env, HARNESSY_WIKI_EXECUTOR: process.execPath, HARNESSY_WIKI_EXECUTOR_ARGS: JSON.stringify([model]), HARNESSY_AI_PROVIDER: "codex", PI_AUTH_ENCRYPTION: "off" }, stdio: ["ignore", "pipe", "pipe"] });
 	let output = "", errors = ""; child.stdout.on("data", c => output += c); child.stderr.on("data", c => errors += c);
 	child.on("error", reject); child.on("close", code => code === 0 ? resolve(JSON.parse(output)) : reject(new Error(errors)));
 });
@@ -40,7 +40,7 @@ assert(graph.edges.length>=3);assert(graph.nodes.some(n=>n.id==="topics/cache"))
 for(const n of graph.nodes){const text=await readFile(join(root,n.id+".md"),"utf8");assert.deepEqual(validateOkfFrontmatter(text),{valid:true});}
 console.log(JSON.stringify({nodes:graph.nodes.length,edges:graph.edges.length,okf:"0.2"}));`);
 	await new Promise((resolve, reject) => { const verifier = spawn(process.execPath, [verify], { stdio: "inherit" }); verifier.on("error", reject); verifier.on("close", code => code === 0 ? resolve() : reject(new Error("Viewer graph validation failed"))); });
-	child = spawn(process.execPath, [join(installed, "dist/cli/cli.js"), "visualize", join(root, "vault/wiki"), "--no-open", "--port", String(port)], { env: { ...process.env, OPENWIKI_TELEMETRY_DISABLED: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+	child = spawn(process.execPath, [join(installed, "dist/cli/cli.js"), "visualize", join(root, "vault/wiki"), "--no-open", "--port", String(port)], { env: { ...process.env, OPENWIKI_TELEMETRY_DISABLED: "1", PI_AUTH_ENCRYPTION: "off" }, stdio: ["ignore", "pipe", "pipe"] });
 	closed = new Promise(resolve => child.once("close", resolve));
 	let output = ""; child.stdout.on("data", c => output += c); child.stderr.on("data", c => output += c);
 	let graph;

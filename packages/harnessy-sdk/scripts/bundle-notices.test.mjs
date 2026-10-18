@@ -19,6 +19,8 @@ test("a real SDK bundle emits notices into a previously absent output directory"
 	const tsupCli = join(dirname(tsupPackage), JSON.parse(readFileSync(tsupPackage, "utf8")).bin.tsup);
 	const result = spawnSync(process.execPath, [tsupCli, "--out-dir", output, "--no-dts"], {
 		cwd: packageRoot, encoding: "utf8", timeout: 60_000,
+		// Run by plain node, not vitest: set the keychain switch explicitly.
+		env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
 	});
 	assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 	assert(existsSync(join(output, "index.js")));

@@ -80,19 +80,27 @@ const vitestDisablesKeychain = (packageName: string) => {
 	);
 };
 
+/**
+ * Only files vitest runs inherit its PI_AUTH_ENCRYPTION setting through `process.env`.
+ * Support scripts and package scripts run by plain node do not.
+ */
+const runByVitest = (path: string) => /\.test\.m?ts$/u.test(path) && !path.includes(join("test", "support"));
+
 /** This guard's own fixture strings look like environments; it is not scanned. */
 const SELF = resolve(import.meta.filename);
 
 describe("test child-process environments", () => {
 	it("never let a test child reach the OS keychain", () => {
 		const offenders = ["harnessy-core", "harnessy-local-host", "harnessy-sdk", "harnessy-engine"].flatMap((name) => {
-			const directory = join(packagesRoot, name, "test");
-			if (statSync(directory, { throwIfNoEntry: false })?.isDirectory() !== true) return [];
-			const trustProcessEnv = vitestDisablesKeychain(name);
-			return testFiles(directory)
+			const vitestOff = vitestDisablesKeychain(name);
+			// Test code, test support run directly by node, and package scripts that start test children.
+			return ["test", "scripts"]
+				.map((folder) => join(packagesRoot, name, folder))
+				.filter((directory) => statSync(directory, { throwIfNoEntry: false })?.isDirectory() === true)
+				.flatMap(testFiles)
 				.filter((path) => resolve(path) !== SELF)
 				.flatMap((path) =>
-					findUnguardedChildEnvironments(readFileSync(path, "utf8"), trustProcessEnv).map(
+					findUnguardedChildEnvironments(readFileSync(path, "utf8"), vitestOff && runByVitest(path)).map(
 						(line) => `${relative(packagesRoot, path)}:${line}`,
 					),
 				);
@@ -139,6 +147,9 @@ describe("test child-process environments", () => {
 		expect(findUnguardedChildEnvironments(spawning('env: { ...process.env, HOME: "/tmp/x" },'), false)).toEqual([3]);
 		expect(vitestDisablesKeychain("harnessy-core")).toBe(true);
 		expect(vitestDisablesKeychain("harnessy-engine")).toBe(false);
+		expect(runByVitest(join(packagesRoot, "harnessy-core/test/x.test.ts"))).toBe(true);
+		expect(runByVitest(join(packagesRoot, "harnessy-local-host/test/support/smoke.mjs"))).toBe(false);
+		expect(runByVitest(join(packagesRoot, "harnessy-sdk/scripts/bundle-notices.test.mjs"))).toBe(false);
 		// The guard's own fixtures would be flagged if it scanned itself, so it excludes itself by path.
 		expect(
 			findUnguardedChildEnvironments(`${readFileSync(SELF, "utf8")}\nspawnSync("x", []);\n`).length,
