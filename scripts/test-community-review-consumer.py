@@ -1,6 +1,8 @@
 """Installed briefing UI parity: real HTTP, files and SQLite; no live providers."""
 
+import contextlib
 import http.client
+import io
 import os
 from pathlib import Path
 import re
@@ -54,6 +56,7 @@ import jarvis
 from jarvis.community_briefing.ai import AIResponse
 from jarvis.community_briefing.service import CommunityBriefingService
 from jarvis.config.schema import CommunityBriefingConfig
+from jarvis.meetings.publication import review
 from jarvis.meetings.publication.notify import review_token
 from jarvis.meetings.publication.review import create_briefing_review_server
 
@@ -129,23 +132,31 @@ class CommunityReviewConsumerTests(unittest.TestCase):
                 self.assertFalse(thread.is_alive())
         self.service.close()
 
-    def request(self, method, path, fields=None, cookie=None):
+    def request(self, method, path, fields=None, cookie=None, **overrides):
         connection = http.client.HTTPConnection(*self.server.server_address, timeout=2)
         try:
-            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+            # A same-origin browser form post: exact Host, Origin and form encoding.
+            authority = f"127.0.0.1:{self.server.server_port}"
+            headers = {
+                "Host": authority,
+                "Origin": f"http://{authority}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
             if cookie:
                 headers["Cookie"] = cookie
+            headers.update({key.replace("_", "-"): value for key, value in overrides.items()})
+            headers = {key: value for key, value in headers.items() if value is not None}
             connection.request(method, path, urlencode(fields) if fields is not None else None, headers)
             response = connection.getresponse()
             return response.status, dict(response.getheaders()), response.read().decode()
         finally:
             connection.close()
 
-    def post(self, action, **fields):
+    def post(self, action, headers=None, **fields):
         return self.request("POST", f"/briefing/{action}/{self.item.briefing_id}", {
             "csrf": self.csrf, "briefing_markdown": self.markdown,
             "discord_summary": self.summary, **fields,
-        }, self.cookie)
+        }, self.cookie, **(headers or {}))
 
     def wait_revision(self):
         deadline = time.monotonic() + 5
@@ -179,6 +190,80 @@ class CommunityReviewConsumerTests(unittest.TestCase):
         self.assertEqual(self.service.store.get(self.item.briefing_id).status.value, "rejected")
         self.assertEqual([path.name for path in (self.root / "state").glob("*.sqlite3")], ["weekly-briefings.sqlite3"])
         self.assertEqual(self.ai.calls, 0)
+
+    def test_state_changes_require_exact_host_origin_and_form_encoding(self):
+        port = self.server.server_port
+        for origin in ("http://attacker.example", f"http://localhost:{port}", "null", None):
+            self.assertEqual(self.post("approve", headers={"Origin": origin})[0], 403)
+        for host in ("attacker.example", f"attacker.example:{port}", "127.0.0.1"):
+            self.assertEqual(self.post("approve", headers={"Host": host})[0], 400)
+            self.assertEqual(self.request("GET", "/?" + urlencode({"token": self.token}), Host=host)[0], 400)
+        self.assertEqual(self.post("approve", headers={"Content_Type": "text/plain"})[0], 415)
+        self.assertEqual(self.post("approve", headers={"Content_Type": None})[0], 415)
+        self.assertIsNone(self.service.store.get(self.item.briefing_id).approved_hash)
+        self.assertEqual(self.request("GET", "/?token=%C3%A9")[0], 401)
+        _, headers, _ = self.request("GET", f"/briefing/{self.item.briefing_id}", cookie=self.cookie)
+        self.assertEqual(headers["Referrer-Policy"], "same-origin")
+        _, headers, _ = self.request("GET", "/?" + urlencode({"token": self.token}))
+        self.assertEqual(headers["Referrer-Policy"], "no-referrer")
+        self.assertEqual(self.post("approve")[0], 303)
+        self.assertEqual(self.service.store.get(self.item.briefing_id).status.value, "approved")
+
+    def test_launcher_identity_proof_and_single_use_exchange_code(self):
+        import hashlib
+        import hmac
+        import secrets
+
+        port = self.server.server_port
+        nonce = secrets.token_hex(32)
+        status, _, body = self.request("GET", f"/identity?nonce={nonce}")
+        self.assertEqual(status, 200)
+        message = f"harnessy-community-review-identity:{port}:{nonce}".encode()
+        self.assertEqual(body, hmac.new(self.token.encode(), message, hashlib.sha256).hexdigest())
+        self.assertEqual(self.request("GET", "/identity?nonce=short")[0], 400)
+
+        def exchange(code, mode=0o600, age=0):
+            path = self.service.state_root / f"review-exchange-{hashlib.sha256(code.encode()).hexdigest()}"
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode))
+            os.chmod(path, mode)
+            if age:
+                os.utime(path, (time.time() - age, time.time() - age))
+            return path
+
+        code = secrets.token_urlsafe(32)
+        path = exchange(code)
+        status, headers, _ = self.request("GET", f"/?code={code}")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Set-Cookie"].split(";", 1)[0], self.cookie)
+        self.assertFalse(path.exists())
+        self.assertEqual(self.request("GET", f"/?code={code}")[0], 401)
+        for mode, age in ((0o600, 120), (0o644, 0)):
+            stale = secrets.token_urlsafe(32)
+            exchange(stale, mode, age)
+            self.assertEqual(self.request("GET", f"/?code={stale}")[0], 401)
+
+    def test_review_log_never_contains_the_bearer_token(self):
+        token_path = "/?" + urlencode({"token": self.token})
+
+        def failing_inbox(*_args, **_kwargs):
+            raise RuntimeError(f"inbox failed for {token_path}")
+
+        # The server writes to the process stderr, which launchd sends to review.log.
+        captured = io.StringIO()
+        original = review._inbox_page
+        try:
+            with contextlib.redirect_stderr(captured):
+                self.request("GET", token_path, Host="attacker.example")
+                self.post("approve", headers={"Origin": "http://attacker.example"})
+                review._inbox_page = failing_inbox
+                with self.assertRaises((http.client.HTTPException, ConnectionError)):
+                    self.request("GET", token_path)
+        finally:
+            review._inbox_page = original
+        log = captured.getvalue()
+        self.assertNotIn(self.token, log)
+        self.assertNotIn("token=", log)
+        self.assertIn("review request failed: RuntimeError", log)
 
     def test_revision_returns_before_ai_and_keeps_review_unapproved(self):
         self.assertEqual(self.post("revise", revise_instruction="Make the update shorter.", revise_provider="codex")[0], 303)

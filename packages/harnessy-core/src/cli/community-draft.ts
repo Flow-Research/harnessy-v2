@@ -121,6 +121,18 @@ export const communityDraftCommand = Command.make(
 	),
 );
 
+/**
+ * launchd appends stdout to a persistent review log. Record the listener and where
+ * the owner-only bearer token lives, never the bearer link itself.
+ */
+export const communityReviewReadyEvent = (reviewUrl: string, statePath: string) => ({
+	command: "jarvis community briefing review serve",
+	event: "ready",
+	reviewUrl: `${new URL(reviewUrl).origin}/`,
+	tokenPath: join(statePath, "review.token"),
+	publication: false,
+});
+
 export const communityReviewServeCommand = Command.make(
 	"serve",
 	{ ...executionOptions, port: Flag.integer("port").pipe(Flag.withDefault(8872)) },
@@ -138,14 +150,7 @@ export const communityReviewServeCommand = Command.make(
 					signal,
 					onReady: (reviewUrl) =>
 						Effect.runPromise(
-							Console.log(
-								JSON.stringify({
-									command: "jarvis community briefing review serve",
-									event: "ready",
-									reviewUrl,
-									publication: false,
-								}),
-							),
+							Console.log(JSON.stringify(communityReviewReadyEvent(reviewUrl, config.state_path))),
 						),
 					onRunFinished: async (result) => {
 						const notificationDelivered =

@@ -97,7 +97,7 @@ try {
 	if (runsPart("installed-product")) {
 		const binRoot = join(consumerRoot, "node_modules", ".bin");
 		const commandRoot = process.platform === "win32" ? binRoot : join(consumerRoot, "bin");
-		for (const name of ["harnessy-meeting-setup", "harnessy-meeting-full-review", "harnessy-meeting-review-open", "harnessy-community-publication", "harnessy-portal"]) {
+		for (const name of ["harnessy-meeting-setup", "harnessy-meeting-full-review", "harnessy-meeting-review-open", "harnessy-community-publication", "harnessy-community-review-open", "harnessy-portal"]) {
 			if (!existsSync(join(commandRoot, process.platform === "win32" ? `${name}.cmd` : name))) {
 				throw new Error(`Local operational candidate did not install ${name}`);
 			}

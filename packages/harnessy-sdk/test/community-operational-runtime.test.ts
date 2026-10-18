@@ -894,7 +894,7 @@ describe("community operational consumer", () => {
 			const approval = await fetch(`${base}/briefing/approve/${f.briefingId}`, {
 				method: "POST",
 				redirect: "manual",
-				headers: { cookie },
+				headers: { cookie, origin: base },
 				body: new URLSearchParams({
 					csrf,
 					briefing_markdown: readFileSync(f.markdownPath, "utf8"),
@@ -927,7 +927,7 @@ describe("community operational consumer", () => {
 					const response = await fetch(`${base}/briefing/${action}/${f.briefingId}`, {
 						method: "POST",
 						redirect: "manual",
-						headers: { cookie },
+						headers: { cookie, origin: base },
 						body: fields,
 					});
 					expect(response.status, action).toBe(409);

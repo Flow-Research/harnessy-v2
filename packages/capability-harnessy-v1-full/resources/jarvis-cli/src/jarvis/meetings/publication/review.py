@@ -5,11 +5,17 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import os
+import re
+import stat
+import sys
+import time
 import urllib.parse
 from datetime import date
 from http import HTTPStatus
-from http.cookies import SimpleCookie
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from markdown_it import MarkdownIt
 
@@ -26,6 +32,24 @@ from .service import PublicationService
 
 _COOKIE_NAME = "jarvis_meeting_review"
 _MAX_REVIEW_FORM_BYTES = 1_000_000
+_FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
+# harnessy-community-review-open hands the browser a single-use code, never the
+# long-lived token: it creates `review-exchange-<sha256(code)>` (0600) in the
+# owner-only state root, and the first GET /?code= that finds it fresh deletes it.
+_EXCHANGE_PREFIX = "review-exchange-"
+_EXCHANGE_MAX_AGE_SECONDS = 60
+_EXCHANGE_CODE = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_IDENTITY_NONCE = re.compile(r"^[a-f0-9]{64}$")
+
+
+class _ReviewServer(ThreadingHTTPServer):
+    """Report handler failures without tracebacks that could carry request data."""
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        # The default handler prints a traceback; exception text may include the
+        # request target, form fields or the bearer token. Log the type only.
+        error = sys.exc_info()[1]
+        sys.stderr.write(f"review request failed: {type(error).__name__}\n")
 
 
 def create_review_server(
@@ -35,8 +59,9 @@ def create_review_server(
     """Create a loopback-only server; callers control its lifecycle."""
 
     token = review_token(service.state_root)
-    handler = _handler_class(service, token, briefing_service)
-    return ThreadingHTTPServer((service.config.review_host, service.config.review_port), handler)
+    host = service.config.review_host
+    handler = _handler_class(service, token, briefing_service, host, service.state_root)
+    return _ReviewServer((host, service.config.review_port), handler)
 
 
 def serve_review(
@@ -56,9 +81,10 @@ def create_briefing_review_server(service: CommunityBriefingService) -> Threadin
     """Serve only briefing review without constructing a meeting service or queue."""
 
     token = review_token(service.state_root)
-    return ThreadingHTTPServer(
-        (service.config.review_host, service.config.review_port),
-        _handler_class(None, token, service),
+    host = service.config.review_host
+    return _ReviewServer(
+        (host, service.config.review_port),
+        _handler_class(None, token, service, host, service.state_root),
     )
 
 
@@ -66,18 +92,33 @@ def _handler_class(
     service: PublicationService | None,
     token: str,
     briefing_service: CommunityBriefingService | None,
+    host: str,
+    state_root: Path,
 ) -> type[BaseHTTPRequestHandler]:
     class ReviewHandler(BaseHTTPRequestHandler):
         server_version = "JarvisMeetingReview/1"
 
         def log_message(self, format: str, *args: object) -> None:
+            # Access and error lines include the request target, which can carry
+            # the bearer token. This loopback inbox keeps no request log.
             return
 
         def do_GET(self) -> None:  # noqa: N802
+            if not self._request_target_valid():
+                return
             parsed = urllib.parse.urlsplit(self.path)
             query = urllib.parse.parse_qs(parsed.query)
+            if parsed.path == "/identity":
+                self._write_identity(query.get("nonce", [""])[0])
+                return
             supplied = query.get("token", [""])[0]
-            authenticated = self._cookie_token_valid() or hmac.compare_digest(supplied, token)
+            code = query.get("code", [""])[0]
+            authenticated = (
+                self._cookie_token_valid()
+                or _secret_matches(supplied, token)
+                or bool(code and _redeem_exchange_code(state_root, code))
+            )
+            supplied = supplied or code
             if not authenticated:
                 self._write(
                     HTTPStatus.UNAUTHORIZED,
@@ -87,11 +128,16 @@ def _handler_class(
             headers = {}
             if supplied:
                 headers["Set-Cookie"] = f"{_COOKIE_NAME}={token}; HttpOnly; SameSite=Strict; Path=/"
+            # `no-referrer` makes browsers submit forms with `Origin: null`, which
+            # POST rejects. Only query-free pages, which never carry the bearer
+            # token, opt into a same-origin Referer so their forms send the origin.
+            referrer = "no-referrer" if parsed.query else "same-origin"
             if parsed.path == "/":
                 self._write(
                     HTTPStatus.OK,
                     _inbox_page(service, token, briefing_service),
                     headers=headers,
+                    referrer=referrer,
                 )
                 return
             if parsed.path.startswith("/briefing/") and briefing_service is not None:
@@ -100,19 +146,40 @@ def _handler_class(
                     HTTPStatus.OK,
                     _briefing_page(briefing_service, briefing_id, token),
                     headers=headers,
+                    referrer=referrer,
                 )
                 return
             if parsed.path.startswith("/item/") and service is not None:
                 item_id = parsed.path.removeprefix("/item/").strip("/")
-                self._write(HTTPStatus.OK, _item_page(service, item_id, token), headers=headers)
+                self._write(
+                    HTTPStatus.OK,
+                    _item_page(service, item_id, token),
+                    headers=headers,
+                    referrer=referrer,
+                )
                 return
             self._write(HTTPStatus.NOT_FOUND, _message_page("Not found", "Unknown review page."))
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._request_target_valid():
+                return
             if not self._cookie_token_valid():
                 self._write(
                     HTTPStatus.UNAUTHORIZED,
                     _message_page("Unauthorized", "Reload the authenticated local review link."),
+                )
+                return
+            if self._single_header("Origin") != f"http://{self._authority()}":
+                self._write(
+                    HTTPStatus.FORBIDDEN,
+                    _message_page("Forbidden", "Review actions must come from this review page."),
+                )
+                return
+            content_type = (self._single_header("Content-Type") or "").split(";", 1)[0]
+            if content_type.strip().lower() != _FORM_CONTENT_TYPE:
+                self._write(
+                    HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                    _message_page("Unsupported form", "Submit the review form from this page."),
                 )
                 return
             try:
@@ -124,7 +191,7 @@ def _handler_class(
                 length = 0
             form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", errors="replace"))
             supplied = form.get("csrf", [""])[0]
-            if not hmac.compare_digest(supplied, _csrf(token)):
+            if not _secret_matches(supplied, _csrf(token)):
                 self._write(
                     HTTPStatus.FORBIDDEN,
                     _message_page("Forbidden", "The review form expired. Reload it and try again."),
@@ -205,11 +272,56 @@ def _handler_class(
             self.send_header("Location", "/")
             self.end_headers()
 
+        def _authority(self) -> str:
+            # The bound port, not the configured one: tests and native review bind 0.
+            return f"{host}:{self.server.server_address[1]}"
+
+        def _single_header(self, name: str) -> str | None:
+            values = self.headers.get_all(name) or []
+            return values[0] if len(values) == 1 else None
+
+        def _request_target_valid(self) -> bool:
+            # Host must name this listener exactly (DNS-rebinding defence), and the
+            # target must be origin-form, as in the V2 meeting review service.
+            if self._single_header("Host") != self._authority() or (
+                not self.path.startswith("/") or self.path.startswith("//")
+            ):
+                self._write(
+                    HTTPStatus.BAD_REQUEST,
+                    _message_page("Bad request", "Open the review inbox from its local link."),
+                )
+                return False
+            return True
+
+        def _write_identity(self, nonce: str) -> None:
+            # Lets the launcher prove this listener holds the review token before it
+            # hands over a sign-in code. Bound to the bound port, so a relay on
+            # another port cannot replay this server's answer.
+            if not _IDENTITY_NONCE.fullmatch(nonce):
+                self._write(HTTPStatus.BAD_REQUEST, _message_page("Bad request", "Invalid nonce."))
+                return
+            proof = hmac.new(
+                token.encode("utf-8"),
+                f"harnessy-community-review-identity:{self.server.server_address[1]}:{nonce}".encode(),
+                hashlib.sha256,
+            ).hexdigest()
+            encoded = proof.encode()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def _cookie_token_valid(self) -> bool:
             cookie = SimpleCookie()
-            cookie.load(self.headers.get("Cookie", ""))
+            try:
+                cookie.load(self.headers.get("Cookie", ""))
+            except CookieError:
+                return False
             morsel = cookie.get(_COOKIE_NAME)
-            return bool(morsel and hmac.compare_digest(morsel.value, token))
+            return bool(morsel and _secret_matches(morsel.value, token))
 
         def _write(
             self,
@@ -217,6 +329,7 @@ def _handler_class(
             body: str,
             *,
             headers: dict[str, str] | None = None,
+            referrer: str = "no-referrer",
         ) -> None:
             encoded = body.encode("utf-8")
             self.send_response(status)
@@ -229,7 +342,8 @@ def _handler_class(
                 "form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
             )
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("Referrer-Policy", referrer)
             for key, value in (headers or {}).items():
                 self.send_header(key, value)
             self.end_headers()
@@ -669,6 +783,32 @@ def _item_page(service: PublicationService, item_id: str, token: str) -> str:
       </div>
     """
     return _page(note.title, body)
+
+
+def _redeem_exchange_code(state_root: Path, code: str) -> bool:
+    """Accept a fresh owner-only exchange file once; the unlink is the claim."""
+
+    if not _EXCHANGE_CODE.fullmatch(code):
+        return False
+    path = Path(state_root) / f"{_EXCHANGE_PREFIX}{hashlib.sha256(code.encode()).hexdigest()}"
+    try:
+        info = path.lstat()
+        valid = (
+            stat.S_ISREG(info.st_mode)
+            and info.st_uid == os.getuid()
+            and stat.S_IMODE(info.st_mode) == 0o600
+            and info.st_nlink == 1
+            and 0 <= time.time() - info.st_mtime <= _EXCHANGE_MAX_AGE_SECONDS
+        )
+        path.unlink()
+    except OSError:
+        return False
+    return valid
+
+
+def _secret_matches(supplied: str, expected: str) -> bool:
+    # Compare bytes: str comparison raises TypeError on non-ASCII input.
+    return hmac.compare_digest(supplied.encode("utf-8", errors="replace"), expected.encode("utf-8"))
 
 
 def _csrf(token: str) -> str:

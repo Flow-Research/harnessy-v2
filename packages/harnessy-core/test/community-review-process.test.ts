@@ -137,7 +137,7 @@ it.each(["success", "provider-failure", "deadline", "missing-credential", "cance
 			const response = await fetch(`${base}/briefing/revise/${draft.briefing_id}`, {
 				method: "POST",
 				redirect: "manual",
-				headers: { cookie },
+				headers: { cookie, origin: base },
 				body: new URLSearchParams({
 					csrf,
 					revise_instruction: "Make this clearer.",
@@ -292,7 +292,7 @@ it.each(["publishing", "blocked", "published", "orphan-lease"])(
 			const approve = await fetch(`${base}/briefing/approve/${draft.briefing_id}`, {
 				method: "POST",
 				redirect: "manual",
-				headers: { cookie },
+				headers: { cookie, origin: base },
 				body: fields,
 			});
 			expect(approve.status).toBe(303);
@@ -317,7 +317,7 @@ it.each(["publishing", "blocked", "published", "orphan-lease"])(
 				const response = await fetch(`${base}/briefing/${action}/${draft.briefing_id}`, {
 					method: "POST",
 					redirect: "manual",
-					headers: { cookie },
+					headers: { cookie, origin: base },
 					body: fields,
 				});
 				expect(response.status, action).toBe(409);

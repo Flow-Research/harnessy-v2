@@ -213,7 +213,7 @@ it.each(["draft", "review", "review-rejected", "excluded", "invalid-json", "reje
 					const response = await fetch(`${base}/briefing/revise/${item.briefing_id}`, {
 						method: "POST",
 						redirect: "manual",
-						headers: { cookie },
+						headers: { cookie, origin: base },
 						body: new URLSearchParams({
 							csrf,
 							revise_instruction: "Clarify the title.",

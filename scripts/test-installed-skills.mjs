@@ -61,7 +61,7 @@ try {
 	assert.match(run(["--help"], 0, null, join(launchers.commands, "hsy")).stdout, /Harnessy agent-first context engine/);
 	const host = join(dirname(modules), "service/node_modules/@harnessy/local-host");
 	const hostCommands = JSON.parse(readFileSync(join(host, "package.json"), "utf8")).bin;
-	assert.equal(Object.keys(hostCommands).length, 11);
+	assert.equal(Object.keys(hostCommands).length, 12);
 	for (const [name, entry] of Object.entries(hostCommands)) {
 		assert(readFileSync(join(launchers.commands, name), "utf8").includes("/service/node_modules/@harnessy/local-host/"), name);
 		const args = ["--fixture-invalid-option"];
@@ -71,6 +71,8 @@ try {
 		assert.equal(launched.stderr, direct.stderr, name);
 		if (name === "harnessy-meeting-review-open") {
 			assert.deepEqual(JSON.parse(launched.stderr), { error: "meeting_review_open_failed" });
+		} else if (name === "harnessy-community-review-open") {
+			assert.deepEqual(JSON.parse(launched.stderr), { error: "community_review_open_failed" });
 		} else if (name === "harnessy-meeting-setup") {
 			assert.deepEqual(JSON.parse(launched.stderr), {
 				error: "meeting_setup_failed", next: "Inspect preserved setup state before retrying; no activation occurred.",

@@ -321,14 +321,45 @@ def serve_native_review(request):
     server = create_briefing_review_server(service)
     parent = os.getppid()
     server.timeout = 0.5
+    token = review_token(service.state_root)
+    rendezvous = publish_review_rendezvous(service.state_root, server.server_port)
     try:
-        emit({"type": "ready", "url": f"http://127.0.0.1:{server.server_port}/?token={review_token(service.state_root)}",
+        emit({"type": "ready", "url": f"http://127.0.0.1:{server.server_port}/?token={token}",
               "publication": False})
         while os.getppid() == parent:
             server.handle_request()
     finally:
         server.server_close()
+        rendezvous.unlink(missing_ok=True)
         service.close()
+
+
+REVIEW_RENDEZVOUS = "community-review.rendezvous.json"
+
+
+def publish_review_rendezvous(state_root, port):
+    """Tell harnessy-community-review-open where this listener and its token live.
+
+    It never contains the token, so the launcher reads the owner-only token file
+    itself and no `jarvis community briefing ...` command is needed to sign in.
+    """
+    state_root = Path(state_root)
+    path = state_root / REVIEW_RENDEZVOUS
+    body = json.dumps({
+        "kind": "harnessy.community.review-rendezvous.v1",
+        "origin": f"http://127.0.0.1:{port}",
+        "port": port,
+        "tokenPath": str(state_root / "review.token"),
+    }, sort_keys=True) + "\n"
+    staged = state_root / f".{REVIEW_RENDEZVOUS}.{os.getpid()}"
+    descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(descriptor, body.encode())
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(staged, path)
+    return path
 
 
 def main():
