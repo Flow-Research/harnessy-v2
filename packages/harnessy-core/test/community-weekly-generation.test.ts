@@ -619,6 +619,25 @@ describe("weekly community generation trigger", () => {
 		expect(existsSync(run.statusPath)).toBe(false);
 	});
 
+	it("serializes a repair with the scheduler's record writes", async () => {
+		const run = harness(() => ({ status: "created" }));
+		writeFileSync(run.statusPath, "{", { mode: 0o600 });
+		// The scheduler is mid-write: the repair waits, then refuses instead of moving anything.
+		const held = new DatabaseSync(join(run.root, "community-weekly-generation.record.lock"));
+		held.exec("BEGIN EXCLUSIVE");
+		const started = Date.now();
+		expect(repairCommunityGenerationStatus(run.statusPath)).toEqual({ outcome: "busy" });
+		expect(Date.now() - started).toBeGreaterThanOrEqual(4_000);
+		expect(readFileSync(run.statusPath, "utf8")).toBe("{");
+		// A scheduler write that cannot take the lock generates nothing.
+		await run.tick();
+		expect(run.calls).toEqual([]);
+		expect(run.events.at(-1)).toMatchObject({ status: "failed", code: "status_record_unwritable" });
+		held.exec("ROLLBACK");
+		held.close();
+		expect(repairCommunityGenerationStatus(run.statusPath)).toMatchObject({ outcome: "quarantined" });
+	}, 30_000);
+
 	it("refuses an oversized record and survives a failing notifier", async () => {
 		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
 		writeFileSync(run.statusPath, " ".repeat(300 * 1024), { mode: 0o600 });

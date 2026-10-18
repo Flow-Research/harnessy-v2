@@ -836,6 +836,8 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 					yield* Console.log(
 						`Moved the record to ${quarantined}; the review service rebuilds it from the queue at its next tick.`,
 					);
+				else if (repaired?.outcome === "busy")
+					yield* Console.log("The review service is writing the record right now; run --repair again.");
 				else if (repaired?.outcome === "valid")
 					yield* Console.log("The record is valid; it was left unchanged (it bounds paid retries).");
 				else if (repair) yield* Console.log("No record to repair.");
@@ -857,6 +859,7 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 						);
 				}
 			}
+			if (repaired?.outcome === "busy") yield* Effect.fail(new Error("The record is busy; nothing was moved"));
 			if (!ok && !repair) yield* Effect.fail(new Error("Weekly community generation needs attention"));
 		}),
 ).pipe(

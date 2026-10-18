@@ -31,6 +31,8 @@ import { Result, Schema } from "effect";
 export const COMMUNITY_GENERATION_STATUS_FILE = "community-weekly-generation.json";
 /** Held by the one scheduler that owns a state directory, for its whole life. */
 export const COMMUNITY_GENERATION_LOCK_FILE = "community-weekly-generation.lock";
+/** Held briefly around each record write and around a repair's read-and-move-aside. */
+export const COMMUNITY_GENERATION_RECORD_LOCK_FILE = "community-weekly-generation.record.lock";
 export const COMMUNITY_QUEUE_FILE = "weekly-briefings.sqlite3";
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
@@ -237,7 +239,37 @@ export const quarantineCommunityGenerationStatus = (path: string, now: Date = ne
 	return target;
 };
 
+/**
+ * Run `action` holding the record lock, waiting at most `waitMs`. Returns
+ * `undefined` when the lock stays busy. Serializes the scheduler's writes with
+ * `--repair`, so a repair can never move aside a record written after it read.
+ */
+export const withCommunityGenerationRecordLock = <A>(
+	statePath: string,
+	waitMs: number,
+	action: () => A,
+): { readonly value: A } | undefined => {
+	const path = join(statePath, COMMUNITY_GENERATION_RECORD_LOCK_FILE);
+	closeSync(openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600));
+	const database = new DatabaseSync(path, { allowExtension: false });
+	try {
+		const locked = Result.try(() => {
+			database.exec(`PRAGMA busy_timeout=${Math.max(0, Math.trunc(waitMs))}`);
+			database.exec("BEGIN EXCLUSIVE");
+		});
+		if (Result.isFailure(locked)) return undefined;
+		try {
+			return { value: action() };
+		} finally {
+			database.exec("ROLLBACK");
+		}
+	} finally {
+		database.close();
+	}
+};
+
 export type CommunityGenerationRepair =
+	| { readonly outcome: "busy" }
 	| { readonly outcome: "missing" }
 	| { readonly outcome: "valid" }
 	| { readonly outcome: "quarantined"; readonly fault: string; readonly movedTo: string };
@@ -247,7 +279,12 @@ export type CommunityGenerationRepair =
  * read safely. A valid record is never touched: it holds the attempt counts
  * and `gaveUp` flags that bound paid retries.
  */
-export const repairCommunityGenerationStatus = (path: string, now: Date = new Date()): CommunityGenerationRepair => {
+export const repairCommunityGenerationStatus = (path: string, now: Date = new Date()): CommunityGenerationRepair =>
+	withCommunityGenerationRecordLock(dirname(path), 5_000, () => repairUnlocked(path, now))?.value ?? {
+		outcome: "busy",
+	};
+
+const repairUnlocked = (path: string, now: Date): CommunityGenerationRepair => {
 	const read = Result.try({
 		try: () => readCommunityGenerationStatus(path),
 		catch: (cause) => (cause instanceof Error ? cause.message : "status_record_unreadable"),
@@ -478,7 +515,13 @@ export const runCommunityGenerationTick = async (
 	};
 	const store = (record: CommunityGenerationStatus) => {
 		const written = Result.try({
-			try: () => writeStatus(options.statusPath, record),
+			try: () => {
+				// A busy record lock (a repair in progress) counts as unwritable: nothing is generated.
+				const done = withCommunityGenerationRecordLock(dirname(options.statusPath), 2_000, () =>
+					writeStatus(options.statusPath, record),
+				);
+				if (done === undefined) throw new Error("status_record_unwritable");
+			},
 			catch: () => "status_record_unwritable",
 		});
 		if (Result.isSuccess(written)) cleared("status_record_unwritable");
@@ -533,7 +576,12 @@ export const runCommunityGenerationTick = async (
 		// attempt counts of weeks without a draft are lost, and the queue check
 		// before every attempt still prevents a second draft.
 		const repaired = Result.isFailure(read);
-		if (repaired) Result.try(() => quarantineCommunityGenerationStatus(options.statusPath, options.now()));
+		if (repaired)
+			Result.try(() =>
+				withCommunityGenerationRecordLock(dirname(options.statusPath), 2_000, () =>
+					quarantineCommunityGenerationStatus(options.statusPath, options.now()),
+				),
+			);
 		current = rebuild();
 		const written = store(current);
 		if (repaired)
