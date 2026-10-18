@@ -1,6 +1,12 @@
-import { execFile } from "node:child_process";
+import { type ExecFileOptions, execFile } from "node:child_process";
 import { expect, it } from "vitest";
 import { notifyCommunityDraft } from "../src/jarvis/community-briefing/notification.ts";
+
+/** The production options for a real test child, with the test-only keychain switch added last. */
+const keychainOff = (options: ExecFileOptions): ExecFileOptions => ({
+	...options,
+	env: { ...options.env, PI_AUTH_ENCRYPTION: "off" },
+});
 
 it.each(["pending", "error"] as const)(
 	"submits a content-free %s message through a bounded shell-free child",
@@ -25,11 +31,17 @@ it.each(["pending", "error"] as const)(
 					// harnessy-test-env: configuration, not a child process environment
 					env: { PATH: "/usr/bin:/bin" },
 				});
-				// Real process execution with the OS executable replaced, not a desktop alert.
+				// Exact: the production notifier passes PATH and nothing else.
+				expect(Object.keys(options.env ?? {})).toEqual(["PATH"]);
+				// Real process execution with the OS executable replaced, not a desktop alert. The child gets
+				// the production environment plus the test-only keychain switch, which the secret check skips.
 				execFile(
 					process.execPath,
-					["-e", "if (Object.keys(process.env).some(k => /TOKEN|SECRET|AUTH/.test(k))) process.exit(9);"],
-					options,
+					[
+						"-e",
+						"if (Object.keys(process.env).some(k => k !== 'PI_AUTH_ENCRYPTION' && /TOKEN|SECRET|AUTH/.test(k))) process.exit(9);",
+					],
+					keychainOff(options),
 					completed,
 				);
 			},
@@ -47,7 +59,12 @@ it("reports a failed notifier without propagating its private diagnostic", async
 			new AbortController().signal,
 			"darwin",
 			(_file, _args, options, completed) => {
-				execFile(process.execPath, ["-e", "console.error('PRIVATE_FAILURE'); process.exit(1)"], options, completed);
+				execFile(
+					process.execPath,
+					["-e", "console.error('PRIVATE_FAILURE'); process.exit(1)"],
+					keychainOff(options),
+					completed,
+				);
 			},
 		),
 	).toBe(false);
@@ -59,7 +76,7 @@ it("cancels and awaits an unresponsive notifier child", async () => {
 	try {
 		expect(
 			await notifyCommunityDraft("pending", 1, controller.signal, "darwin", (_file, _args, options, completed) => {
-				execFile(process.execPath, ["-e", "setInterval(() => {}, 1000)"], options, completed);
+				execFile(process.execPath, ["-e", "setInterval(() => {}, 1000)"], keychainOff(options), completed);
 			}),
 		).toBe(false);
 	} finally {
