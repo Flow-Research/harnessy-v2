@@ -183,7 +183,11 @@ export const serveCommunityReview = async (options: CommunityReviewServiceOption
 			...(options.notifications === "desktop"
 				? { notify: (kind: "pending" | "error", count: number) => notify(kind, count, scheduler.signal) }
 				: {}),
-		}).catch(() => undefined);
+		}).catch(async () => {
+			// The loop never throws by design; if it does, say so rather than stop silently.
+			options.log({ event: "weekly-generation", status: "failed", code: "scheduler_stopped", publication: false });
+			if (options.notifications === "desktop") await notify("error", 0, scheduler.signal).catch(() => false);
+		});
 	};
 	await runNativeCommunityReview({
 		...options,

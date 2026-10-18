@@ -272,6 +272,32 @@ it("does not count a generation stopped by review shutdown as a failed attempt",
 	await until(() => !alive(run.generations()[0]!.pid));
 });
 
+it("logs and notifies a scheduler that stops, while review keeps serving", async () => {
+	const run = fixture({});
+	let thrown = false;
+	const service = run.serve({
+		log: (value) => {
+			const event = value as Record<string, unknown>;
+			// The first draft's report throws: the loop stops.
+			if (!thrown && event.event === "weekly-generation" && event.status === "created") {
+				thrown = true;
+				throw new Error("log sink failed");
+			}
+			run.logs.push(event);
+		},
+	});
+	await until(() => run.logs.some((value) => value.code === "scheduler_stopped"));
+	expect(run.logs.find((value) => value.code === "scheduler_stopped")).toEqual({
+		event: "weekly-generation",
+		status: "failed",
+		code: "scheduler_stopped",
+		publication: false,
+	});
+	expect(run.notifications).toContain("error:0");
+	expect(service.settled()).toBe("running");
+	await service.stop();
+});
+
 it("never runs the trigger in a foreground review", async () => {
 	const run = fixture({});
 	const service = run.serve({ weeklyGeneration: false });

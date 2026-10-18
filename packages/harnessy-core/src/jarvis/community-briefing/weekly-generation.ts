@@ -80,7 +80,9 @@ export const parseCommunityGenerationSchedule = (
 	if (workflowEnabled !== undefined && typeof workflowEnabled !== "boolean")
 		issues.push("community_briefing.enabled must be true or false");
 	const decoded = Result.try({
-		try: () => Schema.decodeUnknownSync(ScheduleSettings, { onExcessProperty: "error" })(value ?? {}),
+		// Only an absent setting selects the default; an explicit null is invalid.
+		try: () =>
+			Schema.decodeUnknownSync(ScheduleSettings, { onExcessProperty: "error" })(value === undefined ? {} : value),
 		catch: () => undefined,
 	});
 	if (Result.isFailure(decoded))
@@ -182,6 +184,8 @@ const StatusRecord = Schema.Struct({
 	lastFailure: Schema.NullOr(
 		Schema.Struct({ weekStart: Schema.String, at: Schema.String, code: Schema.String, attempts: Schema.Int }),
 	),
+	/** A failure that repeats every tick until it clears, such as an unreadable queue. */
+	standingFault: Schema.optional(Schema.NullOr(Schema.Struct({ code: Schema.String, since: Schema.String }))),
 	weeks: Schema.Record(Schema.String, WeekRecord),
 });
 export type CommunityGenerationStatus = typeof StatusRecord.Type;
@@ -357,6 +361,50 @@ export const acquireCommunityGenerationLock = (statePath: string): CommunityGene
 	};
 };
 
+/** True while a review process holds the state directory's scheduler lock. Takes and drops it otherwise. */
+export const isCommunityGenerationSchedulerRunning = (statePath: string): boolean => {
+	if (!existsSync(join(statePath, COMMUNITY_GENERATION_LOCK_FILE))) return false;
+	const lock = acquireCommunityGenerationLock(statePath);
+	lock?.release();
+	return lock === undefined;
+};
+
+export interface CommunityGenerationSummary {
+	readonly ok: boolean;
+	readonly latestWeek: string | null;
+	/**
+	 * `generating`: an attempt is in flight in the running scheduler.
+	 * `interrupted`: an attempt began but no scheduler is running to finish it.
+	 */
+	readonly state: "none" | "created" | "existing" | "failed" | "generating" | "interrupted";
+	readonly attempts: number;
+	readonly standingFault: string | null;
+}
+
+/** What `generation-status` reports. A reservation is in flight while the scheduler runs, not a failure. */
+export const summarizeCommunityGenerationStatus = (
+	record: CommunityGenerationStatus | null,
+	schedulerRunning: boolean,
+): CommunityGenerationSummary => {
+	const [latestWeek, latest] = Object.entries(record?.weeks ?? {}).sort(([a], [b]) => b.localeCompare(a))[0] ?? [];
+	const standingFault = record?.standingFault?.code ?? null;
+	const state =
+		latest === undefined
+			? "none"
+			: latest.status === "failed" && latest.code === "attempt_interrupted"
+				? schedulerRunning
+					? "generating"
+					: "interrupted"
+				: latest.status;
+	return {
+		ok: standingFault === null && state !== "failed" && state !== "interrupted",
+		latestWeek: latestWeek ?? null,
+		state,
+		attempts: latest?.attempts ?? 0,
+		standingFault,
+	};
+};
+
 /** One allow-listed, content-free event per decision, for the service log. */
 export interface CommunityGenerationEvent {
 	readonly event: "weekly-generation";
@@ -436,6 +484,7 @@ export const runCommunityGenerationTick = async (
 		if (Result.isSuccess(written)) cleared("status_record_unwritable");
 		return written;
 	};
+	let standing: CommunityGenerationStatus["standingFault"] = null;
 	const statusFor = (
 		weeks: Record<string, WeekRecord>,
 		lastFailure: CommunityGenerationStatus["lastFailure"],
@@ -450,6 +499,7 @@ export const runCommunityGenerationTick = async (
 			timezone: options.schedule.timezone,
 		},
 		lastFailure,
+		standingFault: standing,
 		weeks: Object.fromEntries(
 			Object.entries(weeks)
 				.sort(([left], [right]) => right.localeCompare(left))
@@ -503,6 +553,7 @@ export const runCommunityGenerationTick = async (
 		);
 	}
 
+	standing = current.standingFault ?? null;
 	const persisted = current.weeks[weekStart];
 	const remembered = options.memory?.weeks.get(weekStart);
 	// An unwritable record must not reset the attempt limit within this process.
@@ -529,12 +580,22 @@ export const runCommunityGenerationTick = async (
 	// before a lost record. A previous failure that produced the draft is
 	// recovered, and its "pending review" notice is sent now.
 	const queued = Result.try(() => options.queue.find(weekStart));
-	if (Result.isFailure(queued))
+	if (Result.isFailure(queued)) {
+		// Recorded, so generation-status reports it; no attempt is counted.
+		if (standing?.code !== "queue_unreadable") {
+			standing = { code: "queue_unreadable", since: options.now().toISOString() };
+			store(statusFor(current.weeks, current.lastFailure));
+		}
 		return finish(
 			{ event: "weekly-generation", weekStart, status: "failed", code: "queue_unreadable", publication: false },
 			"error",
 		);
+	}
 	cleared("queue_unreadable");
+	if (standing !== null) {
+		standing = null;
+		store(statusFor(current.weeks, current.lastFailure));
+	}
 	if (queued.success !== undefined) {
 		const recovered = previous !== undefined;
 		const week: WeekRecord = {
@@ -586,8 +647,14 @@ export const runCommunityGenerationTick = async (
 			(): CommunityWeekGenerationResult => ({ status: "failed", code: "generation_failed" }),
 		);
 	if (result.status === "busy" || result.status === "cancelled") {
-		// Neither counts as an attempt: put the week back as it was.
-		store(current);
+		// Neither counts as an attempt: put the week back as it was. If that write
+		// fails, the reservation stays on disk and in memory alike, and is reported.
+		const rolledBack = store(statusFor(current.weeks, current.lastFailure));
+		if (Result.isFailure(rolledBack))
+			return finish(
+				{ event: "weekly-generation", weekStart, status: "failed", code: rolledBack.failure, publication: false },
+				"error",
+			);
 		if (remembered === undefined) options.memory?.weeks.delete(weekStart);
 		else options.memory?.weeks.set(weekStart, remembered);
 	}

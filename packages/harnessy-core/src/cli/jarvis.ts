@@ -23,9 +23,11 @@ import {
 } from "../jarvis/community-briefing/status.ts";
 import {
 	COMMUNITY_GENERATION_STATUS_FILE,
+	isCommunityGenerationSchedulerRunning,
 	parseCommunityGenerationSchedule,
 	readCommunityGenerationStatus,
 	repairCommunityGenerationStatus,
+	summarizeCommunityGenerationStatus,
 } from "../jarvis/community-briefing/weekly-generation.ts";
 import { JarvisConfigReader } from "../jarvis/config.ts";
 import { JarvisCredentialResolver } from "../jarvis/credentials.ts";
@@ -802,9 +804,12 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 								: { record: null, fault: outcome.failure };
 						});
 			const { record, fault } = read;
-			const [latestWeek, latest] =
-				Object.entries(record?.weeks ?? {}).sort(([a], [b]) => b.localeCompare(a))[0] ?? [];
-			const ok = issues.length === 0 && fault === null && latest?.status !== "failed";
+			const summary = summarizeCommunityGenerationStatus(
+				record,
+				isCommunityGenerationSchedulerRunning(resolved.stateRoot),
+			);
+			const latestWeek = summary.latestWeek;
+			const ok = issues.length === 0 && fault === null && summary.ok;
 			if (json)
 				yield* Console.log(
 					JSON.stringify(
@@ -816,7 +821,9 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 							fault,
 							repair: repaired?.outcome ?? null,
 							quarantined,
-							latestWeek: latestWeek ?? null,
+							latestWeek,
+							state: summary.state,
+							standingFault: summary.standingFault,
 							record,
 						},
 						null,
@@ -837,7 +844,13 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 				if (record === null && fault === null && !repair)
 					yield* Console.log("No scheduled community generation has run yet.");
 				if (record !== null) {
-					yield* Console.log(`Latest week ${latestWeek}: ${latest?.status} after ${latest?.attempts} attempt(s)`);
+					yield* Console.log(
+						summary.state === "generating"
+							? `Latest week ${latestWeek}: generating now (attempt ${summary.attempts})`
+							: `Latest week ${latestWeek}: ${summary.state} after ${summary.attempts} attempt(s)`,
+					);
+					if (summary.standingFault !== null)
+						yield* Console.log(`Standing fault: ${summary.standingFault} (generation is paused until it clears)`);
 					if (record.lastFailure !== null)
 						yield* Console.log(
 							`Last failure: week ${record.lastFailure.weekStart}, ${record.lastFailure.code}, ${record.lastFailure.at}`,

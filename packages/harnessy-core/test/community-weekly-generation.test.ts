@@ -45,6 +45,7 @@ import {
 	type CommunityWeekGenerationResult,
 	DEFAULT_COMMUNITY_GENERATION_SCHEDULE,
 	dueCommunityGenerationWeek,
+	isCommunityGenerationSchedulerRunning,
 	parseCommunityGenerationSchedule,
 	quarantineCommunityGenerationStatus,
 	readCommunityGenerationStatus,
@@ -52,6 +53,7 @@ import {
 	runCommunityGenerationTick,
 	runWeeklyCommunityGeneration,
 	sqliteQueuedWeeks,
+	summarizeCommunityGenerationStatus,
 	type WeeklyCommunityGenerationOptions,
 } from "../src/jarvis/community-briefing/weekly-generation.ts";
 import { JarvisPathResolver, JarvisRuntimeRoots } from "../src/jarvis/paths.ts";
@@ -223,6 +225,9 @@ describe("weekly community generation schedule", () => {
 			schedule: { ...DEFAULT_COMMUNITY_GENERATION_SCHEDULE, enabled: false },
 			issues: ["community_briefing.enabled must be true or false"],
 		});
+		// An explicit null (an empty YAML value) is not "absent": it must not enable the default.
+		expect(parseCommunityGenerationSchedule(true, null).schedule.enabled).toBe(false);
+		expect(parseCommunityGenerationSchedule(true, null).issues).toHaveLength(1);
 		for (const value of [
 			{ time: "24:00" },
 			{ time: "7:00" },
@@ -344,6 +349,65 @@ describe("weekly community generation trigger", () => {
 			},
 		]);
 		expect(run.notifications).toEqual([]);
+	});
+
+	it("reports a failed rollback after a busy result instead of hiding the reservation", async () => {
+		const run = harness(() => {
+			// The directory becomes read-only after the attempt was reserved.
+			chmodSync(run.root, 0o500);
+			return { status: "busy" };
+		});
+		await run.tick();
+		expect(run.events.at(-1)).toMatchObject({ status: "failed", code: "status_record_unwritable" });
+		expect(run.notifications).toEqual(["error:0"]);
+		// Disk and memory agree: the reservation stands.
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
+			code: "attempt_interrupted",
+			attempts: 1,
+		});
+		expect(run.memory.weeks.get("2026-10-12")).toMatchObject({ code: "attempt_interrupted", attempts: 1 });
+	});
+
+	it("restores a remembered week after a busy result", async () => {
+		const run = harness((_week, call) =>
+			call === 1 ? { status: "failed", code: "generation_failed" } : { status: "busy" },
+		);
+		await run.tick();
+		run.at(wat("2026-10-19T00:10:00"));
+		await run.tick();
+		expect(run.events.at(-1)).toMatchObject({ status: "busy" });
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
+			status: "failed",
+			attempts: 1,
+			code: "generation_failed",
+		});
+		expect(run.memory.weeks.get("2026-10-12")).toMatchObject({ attempts: 1, code: "generation_failed" });
+	});
+
+	it("tells an attempt in flight from an interrupted one", async () => {
+		const run = harness(() => new Promise<CommunityWeekGenerationResult>(() => undefined));
+		void run.tick();
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		const record = readCommunityGenerationStatus(run.statusPath)!;
+		expect(summarizeCommunityGenerationStatus(record, true)).toEqual({
+			ok: true,
+			latestWeek: "2026-10-12",
+			state: "generating",
+			attempts: 1,
+			standingFault: null,
+		});
+		expect(summarizeCommunityGenerationStatus(record, false)).toMatchObject({ ok: false, state: "interrupted" });
+		expect(summarizeCommunityGenerationStatus(null, false)).toMatchObject({
+			ok: true,
+			state: "none",
+			latestWeek: null,
+		});
+		// The probe sees a running scheduler only while its lock is held.
+		expect(isCommunityGenerationSchedulerRunning(run.root)).toBe(false);
+		const lock = acquireCommunityGenerationLock(run.root)!;
+		expect(isCommunityGenerationSchedulerRunning(run.root)).toBe(true);
+		lock.release();
+		expect(isCommunityGenerationSchedulerRunning(run.root)).toBe(false);
 	});
 
 	it("records nothing for a generation cancelled by shutdown", async () => {
@@ -473,9 +537,16 @@ describe("weekly community generation trigger", () => {
 		expect(run.calls).toEqual([]);
 		expect(run.events.map((event) => event.code)).toEqual(["queue_unreadable", "queue_unreadable"]);
 		expect(run.notifications).toEqual(["error:0"]);
+		// generation-status sees the standing fault, with no attempt counted.
+		expect(readCommunityGenerationStatus(run.statusPath)?.standingFault).toMatchObject({ code: "queue_unreadable" });
+		expect(summarizeCommunityGenerationStatus(readCommunityGenerationStatus(run.statusPath)!, true)).toMatchObject({
+			ok: false,
+			standingFault: "queue_unreadable",
+		});
 		run.queued.break(false);
 		await run.tick();
 		expect(run.calls).toEqual(["2026-10-12"]);
+		expect(readCommunityGenerationStatus(run.statusPath)?.standingFault).toBeNull();
 		// The fault cleared; a later recurrence is a new fault and is notified again.
 		run.queued.break(true);
 		run.at(wat("2026-10-25T23:05:00"));
@@ -605,6 +676,80 @@ describe("weekly community generation trigger", () => {
 			expect.objectContaining({ attempts: 2, code: "attempt_interrupted" }),
 			expect.objectContaining({ attempts: 3, code: "attempt_interrupted", gaveUp: true }),
 		]);
+	});
+
+	it("handles the less common outcomes without generating twice", async () => {
+		// The adapter itself reports a draft the queue lookup missed (a race): recorded as existing.
+		const raced = harness((week) => ({ status: "existing", briefingId: briefingId(week) }), {
+			queueOnCreate: false,
+		});
+		await raced.tick();
+		expect(raced.events.at(-1)).toMatchObject({ status: "existing", attempt: 1 });
+		expect(summarizeCommunityGenerationStatus(readCommunityGenerationStatus(raced.statusPath)!, false)).toMatchObject(
+			{ ok: true, state: "existing" },
+		);
+		// A rebuild whose queue listing fails starts empty; the per-week lookup still guards.
+		const unlisted = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
+		await unlisted.tick({
+			queue: {
+				find: () => undefined,
+				list: () => {
+					throw new Error("database is locked");
+				},
+			},
+		});
+		expect(unlisted.calls).toEqual(["2026-10-12"]);
+		// Remembered attempts outrank a record that lost them: still inside the retry window.
+		const remembered = harness(() => ({ status: "created" }));
+		remembered.memory.weeks.set("2026-10-12", {
+			status: "failed",
+			attempts: 2,
+			lastAttemptAt: wat("2026-10-18T23:00:00").toISOString(),
+			code: "generation_failed",
+		});
+		await remembered.tick();
+		expect(remembered.calls).toEqual([]);
+	});
+
+	it("reports write failures on the repair and reconcile paths", async () => {
+		// A damaged record in a read-only directory: neither moved aside nor rebuilt, and nothing generated.
+		const damaged = harness(() => ({ status: "created" }));
+		writeFileSync(damaged.statusPath, "{", { mode: 0o600 });
+		chmodSync(damaged.root, 0o500);
+		await damaged.tick();
+		expect(damaged.events.map((event) => [event.status, event.code])).toEqual([
+			["repaired", "status_record_unwritable"],
+			["failed", "status_record_unwritable"],
+		]);
+		expect(damaged.calls).toEqual([]);
+		// A queued draft found while the record cannot be written.
+		const found = harness(() => ({ status: "created" }));
+		found.queued.weeks.set("2026-10-05", briefingId("2026-10-05"));
+		found.at(wat("2026-10-18T22:00:00"));
+		await found.tick();
+		found.queued.weeks.set("2026-10-12", briefingId("2026-10-12"));
+		chmodSync(found.root, 0o500);
+		found.at(wat("2026-10-18T23:05:00"));
+		await found.tick();
+		expect(found.events.at(-1)).toMatchObject({ status: "failed", code: "status_record_unwritable" });
+	});
+
+	it("waits when the scheduler lock cannot even be probed", async () => {
+		const run = harness(() => ({ status: "created" }));
+		const controller = new AbortController();
+		let sleeps = 0;
+		await runWeeklyCommunityGeneration({
+			...run.options,
+			acquireLock: () => {
+				throw new Error("EACCES");
+			},
+			signal: controller.signal,
+			sleep: async () => {
+				if (++sleeps === 3) controller.abort();
+			},
+		});
+		expect(run.calls).toEqual([]);
+		expect(run.events.map((event) => event.code)).toEqual(["scheduler_lock_unavailable"]);
 	});
 
 	it("does nothing when disabled", async () => {
