@@ -209,6 +209,39 @@ class CommunityReviewConsumerTests(unittest.TestCase):
         self.assertEqual(self.post("approve")[0], 303)
         self.assertEqual(self.service.store.get(self.item.briefing_id).status.value, "approved")
 
+    def test_launcher_identity_proof_and_single_use_exchange_code(self):
+        import hashlib
+        import hmac
+        import secrets
+
+        port = self.server.server_port
+        nonce = secrets.token_hex(32)
+        status, _, body = self.request("GET", f"/identity?nonce={nonce}")
+        self.assertEqual(status, 200)
+        message = f"harnessy-community-review-identity:{port}:{nonce}".encode()
+        self.assertEqual(body, hmac.new(self.token.encode(), message, hashlib.sha256).hexdigest())
+        self.assertEqual(self.request("GET", "/identity?nonce=short")[0], 400)
+
+        def exchange(code, mode=0o600, age=0):
+            path = self.service.state_root / f"review-exchange-{hashlib.sha256(code.encode()).hexdigest()}"
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode))
+            os.chmod(path, mode)
+            if age:
+                os.utime(path, (time.time() - age, time.time() - age))
+            return path
+
+        code = secrets.token_urlsafe(32)
+        path = exchange(code)
+        status, headers, _ = self.request("GET", f"/?code={code}")
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["Set-Cookie"].split(";", 1)[0], self.cookie)
+        self.assertFalse(path.exists())
+        self.assertEqual(self.request("GET", f"/?code={code}")[0], 401)
+        for mode, age in ((0o600, 120), (0o644, 0)):
+            stale = secrets.token_urlsafe(32)
+            exchange(stale, mode, age)
+            self.assertEqual(self.request("GET", f"/?code={stale}")[0], 401)
+
     def test_review_log_never_contains_the_bearer_token(self):
         token_path = "/?" + urlencode({"token": self.token})
 

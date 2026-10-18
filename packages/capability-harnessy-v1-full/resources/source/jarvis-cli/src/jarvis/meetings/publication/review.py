@@ -5,12 +5,17 @@ from __future__ import annotations
 import hashlib
 import hmac
 import html
+import os
+import re
+import stat
 import sys
+import time
 import urllib.parse
 from datetime import date
 from http import HTTPStatus
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from markdown_it import MarkdownIt
 
@@ -28,6 +33,13 @@ from .service import PublicationService
 _COOKIE_NAME = "jarvis_meeting_review"
 _MAX_REVIEW_FORM_BYTES = 1_000_000
 _FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
+# harnessy-community-review-open hands the browser a single-use code, never the
+# long-lived token: it creates `review-exchange-<sha256(code)>` (0600) in the
+# owner-only state root, and the first GET /?code= that finds it fresh deletes it.
+_EXCHANGE_PREFIX = "review-exchange-"
+_EXCHANGE_MAX_AGE_SECONDS = 60
+_EXCHANGE_CODE = re.compile(r"^[A-Za-z0-9_-]{43}$")
+_IDENTITY_NONCE = re.compile(r"^[a-f0-9]{64}$")
 
 
 class _ReviewServer(ThreadingHTTPServer):
@@ -48,7 +60,7 @@ def create_review_server(
 
     token = review_token(service.state_root)
     host = service.config.review_host
-    handler = _handler_class(service, token, briefing_service, host)
+    handler = _handler_class(service, token, briefing_service, host, service.state_root)
     return _ReviewServer((host, service.config.review_port), handler)
 
 
@@ -72,7 +84,7 @@ def create_briefing_review_server(service: CommunityBriefingService) -> Threadin
     host = service.config.review_host
     return _ReviewServer(
         (host, service.config.review_port),
-        _handler_class(None, token, service, host),
+        _handler_class(None, token, service, host, service.state_root),
     )
 
 
@@ -81,6 +93,7 @@ def _handler_class(
     token: str,
     briefing_service: CommunityBriefingService | None,
     host: str,
+    state_root: Path,
 ) -> type[BaseHTTPRequestHandler]:
     class ReviewHandler(BaseHTTPRequestHandler):
         server_version = "JarvisMeetingReview/1"
@@ -95,8 +108,17 @@ def _handler_class(
                 return
             parsed = urllib.parse.urlsplit(self.path)
             query = urllib.parse.parse_qs(parsed.query)
+            if parsed.path == "/identity":
+                self._write_identity(query.get("nonce", [""])[0])
+                return
             supplied = query.get("token", [""])[0]
-            authenticated = self._cookie_token_valid() or _secret_matches(supplied, token)
+            code = query.get("code", [""])[0]
+            authenticated = (
+                self._cookie_token_valid()
+                or _secret_matches(supplied, token)
+                or bool(code and _redeem_exchange_code(state_root, code))
+            )
+            supplied = supplied or code
             if not authenticated:
                 self._write(
                     HTTPStatus.UNAUTHORIZED,
@@ -270,6 +292,27 @@ def _handler_class(
                 )
                 return False
             return True
+
+        def _write_identity(self, nonce: str) -> None:
+            # Lets the launcher prove this listener holds the review token before it
+            # hands over a sign-in code. Bound to the bound port, so a relay on
+            # another port cannot replay this server's answer.
+            if not _IDENTITY_NONCE.fullmatch(nonce):
+                self._write(HTTPStatus.BAD_REQUEST, _message_page("Bad request", "Invalid nonce."))
+                return
+            proof = hmac.new(
+                token.encode("utf-8"),
+                f"harnessy-community-review-identity:{self.server.server_address[1]}:{nonce}".encode(),
+                hashlib.sha256,
+            ).hexdigest()
+            encoded = proof.encode()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(encoded)
 
         def _cookie_token_valid(self) -> bool:
             cookie = SimpleCookie()
@@ -740,6 +783,27 @@ def _item_page(service: PublicationService, item_id: str, token: str) -> str:
       </div>
     """
     return _page(note.title, body)
+
+
+def _redeem_exchange_code(state_root: Path, code: str) -> bool:
+    """Accept a fresh owner-only exchange file once; the unlink is the claim."""
+
+    if not _EXCHANGE_CODE.fullmatch(code):
+        return False
+    path = Path(state_root) / f"{_EXCHANGE_PREFIX}{hashlib.sha256(code.encode()).hexdigest()}"
+    try:
+        info = path.lstat()
+        valid = (
+            stat.S_ISREG(info.st_mode)
+            and info.st_uid == os.getuid()
+            and stat.S_IMODE(info.st_mode) == 0o600
+            and info.st_nlink == 1
+            and 0 <= time.time() - info.st_mtime <= _EXCHANGE_MAX_AGE_SECONDS
+        )
+        path.unlink()
+    except OSError:
+        return False
+    return valid
 
 
 def _secret_matches(supplied: str, expected: str) -> bool:

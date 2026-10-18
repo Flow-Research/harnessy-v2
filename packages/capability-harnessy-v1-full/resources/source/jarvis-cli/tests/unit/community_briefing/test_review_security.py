@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import http.client
 import io
+import os
 import re
+import secrets
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import redirect_stderr
 from dataclasses import dataclass
@@ -183,6 +188,61 @@ class TestReviewRequestBoundary:
 
         status, _, _ = served.request("GET", "/?token=%C3%A9")
         assert status == 401
+
+
+class TestLauncherExchange:
+    """The contract harnessy-community-review-open relies on."""
+
+    def _exchange(self, served: ReviewFixture, code: str, mode: int = 0o600) -> Path:
+        digest = hashlib.sha256(code.encode()).hexdigest()
+        path = served.service.state_root / f"review-exchange-{digest}"
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+        os.close(descriptor)
+        os.chmod(path, mode)
+        return path
+
+    def test_identity_proof_is_bound_to_token_and_port(self, served: ReviewFixture) -> None:
+        """Only the listener holding the token answers, and only for its own port."""
+
+        nonce = secrets.token_hex(32)
+        status, headers, body = served.request("GET", f"/identity?nonce={nonce}")
+        assert status == 200
+        assert headers["Cache-Control"] == "no-store"
+        message = f"harnessy-community-review-identity:{served.port}:{nonce}".encode()
+        assert body == hmac.new(served.token.encode(), message, hashlib.sha256).hexdigest()
+        assert served.token not in body
+        assert served.request("GET", "/identity?nonce=short")[0] == 400
+        status, _, _ = served.request(
+            "GET", f"/identity?nonce={nonce}", headers={"Host": "attacker.example"}
+        )
+        assert status == 400
+
+    def test_exchange_code_signs_in_once(self, served: ReviewFixture) -> None:
+        """A fresh owner-only code sets the session cookie and is consumed."""
+
+        code = secrets.token_urlsafe(32)
+        path = self._exchange(served, code)
+        status, headers, _ = served.request("GET", f"/?code={code}")
+        assert status == 200
+        assert headers["Set-Cookie"].split(";", 1)[0] == served.cookie
+        assert headers["Referrer-Policy"] == "no-referrer"
+        assert not path.exists()
+        assert served.request("GET", f"/?code={code}")[0] == 401
+
+    def test_stale_or_unsafe_exchange_codes_are_refused(self, served: ReviewFixture) -> None:
+        """Expired, group-readable or unknown codes never authenticate."""
+
+        expired = secrets.token_urlsafe(32)
+        path = self._exchange(served, expired)
+        old = time.time() - 120
+        os.utime(path, (old, old))
+        assert served.request("GET", f"/?code={expired}")[0] == 401
+        assert not path.exists()
+        loose = secrets.token_urlsafe(32)
+        self._exchange(served, loose, 0o644)
+        assert served.request("GET", f"/?code={loose}")[0] == 401
+        assert served.request("GET", f"/?code={secrets.token_urlsafe(32)}")[0] == 401
+        assert served.request("GET", "/?code=../review.token")[0] == 401
 
 
 class TestReviewLogHygiene:

@@ -21,7 +21,7 @@
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/review.py",
-        "sha256": "38359761e1834de1feccc2ab748dfedcde4366ed6d52e78fc5c092064f6e2926"
+        "sha256": "9da5896c749aa772b21104a82fee24e5e7e78ce2fdcb784acd611afc93a7c293"
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/discord.py",
