@@ -28,14 +28,28 @@ export const WRITER_CHECK_REASONS: ReadonlySet<string> = new Set(
 );
 
 /**
- * Five minutes. macOS dark wakes and maintenance wakes last from seconds to about a
- * minute; this window spans more than two 120-second meeting worker cycles and one
- * five-minute community cycle, so a transient stall recovers without a stop, while a
- * host where the probes stay broken is still stopped and reported within minutes.
- * Nothing is claimed or published while a probe is inconclusive, so the window adds
- * no publication exposure.
+ * Five minutes of awake (monotonic) time. macOS dark wakes and maintenance wakes last
+ * from seconds to about a minute; this window spans more than two 120-second meeting
+ * worker cycles and one five-minute community cycle, so a transient stall recovers
+ * without a stop, while a host where the probes stay broken is still stopped and
+ * reported within minutes. While a probe is inconclusive no new grant, claim or lease
+ * is issued; a provider call already granted before the pause runs to completion, and
+ * its next write is denied.
  */
 export const WRITER_CHECK_INCONCLUSIVE_WINDOW_MS = 5 * 60_000;
+/**
+ * Escalation also needs this many failed retries. Monotonic time excludes system sleep,
+ * and this floor keeps a few probes spread across separate wakes from escalating early.
+ */
+export const WRITER_CHECK_MIN_ESCALATION_ATTEMPTS = 6;
+
+/**
+ * Monotonic milliseconds from the Effect clock: `process.hrtime` in production, which does
+ * not advance while macOS sleeps and never steps backwards; the test clock in tests.
+ */
+export const writerCheckMonotonicMillis: Effect.Effect<number> = Effect.map(Clock.currentTimeNanos, (nanos) =>
+	Number(nanos / 1_000_000n),
+);
 /** Retry delays double from one second and are capped at 30 seconds (1, 2, 4, 8, 16, 30, 30 ...). */
 export const WRITER_CHECK_RETRY_INITIAL_MS = 1_000;
 export const WRITER_CHECK_RETRY_MAX_MS = 30_000;
@@ -92,7 +106,7 @@ export const runWriterCheckProbe = (
 	check: WriterCheckName,
 	command: string,
 	args: ReadonlyArray<string>,
-): { readonly status: number | null; readonly stdout: string; readonly stderr: string } => {
+): { readonly status: number; readonly stdout: string; readonly stderr: string } => {
 	const result = run(command, args);
 	if (result.error !== undefined && result.error !== null) {
 		const code = typeof result.error === "object" && "code" in result.error ? result.error.code : undefined;
@@ -104,6 +118,22 @@ export const runWriterCheckProbe = (
 	if (result.signal !== null) throw new WriterCheckInconclusiveError(check, "signal");
 	if (result.status === null) throw new WriterCheckInconclusiveError(check, "spawn_error");
 	return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+};
+
+/**
+ * Run every probe step. An observed writer (any error other than an inconclusive probe)
+ * is thrown at once; an inconclusive step never hides a later step. After all steps,
+ * the first inconclusive probe is thrown.
+ */
+export const runAllWriterCheckProbes = (steps: ReadonlyArray<() => void>): void => {
+	let first: WriterCheckInconclusiveError | undefined;
+	for (const step of steps) {
+		const ran = Result.try({ try: step, catch: (cause) => cause });
+		if (Result.isSuccess(ran)) continue;
+		if (!(ran.failure instanceof WriterCheckInconclusiveError)) throw ran.failure;
+		first ??= ran.failure;
+	}
+	if (first !== undefined) throw first;
 };
 
 export type WriterCheckEventKind = "writer_check_inconclusive" | "writer_check_recovered" | "writer_check_escalated";
@@ -149,8 +179,9 @@ export const writerCheckEvent = (
 /**
  * Retry `effect` while it fails with an inconclusive writer check, with bounded
  * backoff. Success after a retry logs recovery. Any other failure, including an
- * observed writer, is returned at once. When the window has elapsed, the last
- * inconclusive failure escalates through `escalate`.
+ * observed writer, is returned at once. The inconclusive failure escalates through
+ * `escalate` only when the monotonic window has elapsed since the first failure and
+ * at least WRITER_CHECK_MIN_ESCALATION_ATTEMPTS retries have failed.
  */
 export const retryWhileWriterCheckInconclusive = <A, E, R, E2>(
 	effect: Effect.Effect<A, E, R>,
@@ -161,23 +192,33 @@ export const retryWhileWriterCheckInconclusive = <A, E, R, E2>(
 		readonly report: WriterCheckReporter;
 		/** An inconclusive failure the caller already observed; the first retry waits one backoff step. */
 		readonly initial?: WriterCheckInconclusiveError;
+		/** Monotonic time (writerCheckMonotonicMillis) of `initial`; defaults to when retrying starts. */
+		readonly since?: number;
+		/** Escalate the first inconclusive failure at once (operator-run one-shot runs). */
+		readonly failFast?: boolean;
 	},
 ): Effect.Effect<A, E | E2, R> =>
 	Effect.gen(function* () {
-		let since: number | undefined;
+		let since = options.initial === undefined ? undefined : options.since;
 		let attempt = 0;
 		let pending = options.initial;
 		while (true) {
 			if (pending !== undefined) {
-				const now = yield* Clock.currentTimeMillis;
+				const now = yield* writerCheckMonotonicMillis;
 				since ??= now;
 				attempt += 1;
-				const elapsed = now - since;
-				if (elapsed >= WRITER_CHECK_INCONCLUSIVE_WINDOW_MS) {
+				const elapsed = Math.max(0, now - since);
+				if (
+					options.failFast === true ||
+					(elapsed >= WRITER_CHECK_INCONCLUSIVE_WINDOW_MS && attempt > WRITER_CHECK_MIN_ESCALATION_ATTEMPTS)
+				) {
 					options.report(writerCheckEvent("writer_check_escalated", options.service, pending, attempt, elapsed));
 					return yield* Effect.fail(options.escalate(pending));
 				}
-				const delay = Math.min(writerCheckRetryDelayMs(attempt), WRITER_CHECK_INCONCLUSIVE_WINDOW_MS - elapsed);
+				const delay = Math.min(
+					writerCheckRetryDelayMs(attempt),
+					Math.max(WRITER_CHECK_RETRY_INITIAL_MS, WRITER_CHECK_INCONCLUSIVE_WINDOW_MS - elapsed),
+				);
 				options.report(
 					writerCheckEvent("writer_check_inconclusive", options.service, pending, attempt, elapsed, delay),
 				);
@@ -186,7 +227,7 @@ export const retryWhileWriterCheckInconclusive = <A, E, R, E2>(
 			const result = yield* Effect.result(effect);
 			if (Result.isSuccess(result)) {
 				if (pending !== undefined && since !== undefined) {
-					const now = yield* Clock.currentTimeMillis;
+					const now = yield* writerCheckMonotonicMillis;
 					options.report(
 						writerCheckEvent("writer_check_recovered", options.service, pending, attempt, now - since),
 					);
@@ -195,6 +236,7 @@ export const retryWhileWriterCheckInconclusive = <A, E, R, E2>(
 			}
 			const inconclusive = options.inconclusive(result.failure);
 			if (inconclusive === undefined) return yield* Effect.fail(result.failure);
+			if (pending === undefined) since ??= yield* writerCheckMonotonicMillis;
 			pending = inconclusive;
 		}
 	});

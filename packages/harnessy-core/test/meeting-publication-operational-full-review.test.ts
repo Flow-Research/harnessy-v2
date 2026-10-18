@@ -27,6 +27,7 @@ import { TestClock } from "effect/testing";
 
 import { JarvisMeetingPublicationConfig } from "../src/jarvis/config-model.ts";
 import {
+	MeetingPublicationWriteAuthorityError,
 	MeetingPublicationWriteBinding,
 	type MeetingPublicationWriteGrant,
 	validateMeetingPublicationWriteGrant,
@@ -1791,7 +1792,7 @@ describe("meeting publication authorized full-review runtime", () => {
 						// check. A keep-alive now observes an unanswered probe before the scan resumes.
 						pauseDuringNextObservation = false;
 						failObservation = true;
-						expect(() => session?.assertReviewAlive()).toThrow(WriterCheckInconclusiveError);
+						expect(() => session?.assertReviewAlive(0)).toThrow(WriterCheckInconclusiveError);
 						failObservation = false;
 						paused = session.writerCheckPaused;
 					}
@@ -1815,6 +1816,130 @@ describe("meeting publication authorized full-review runtime", () => {
 				session.close();
 			}
 		});
+
+		it("absorbs only a revoked grant denial while paused", async () => {
+			const fixture = await setup({ reviewPort: 18_796 });
+			const base = Effect.runSync(fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference));
+			let failObservation = false;
+			const system = {
+				...base,
+				observe: () => {
+					if (failObservation) throw new WriterCheckInconclusiveError("sysctl", "timeout");
+					return base.observe();
+				},
+				proveNoKnownV1Writers: () => undefined,
+			};
+			const session = new MeetingRuntimeSession(
+				verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+				system,
+			);
+			try {
+				const denied = new MeetingPublicationWriteAuthorityError({ operation: "store_claim", code: "revoked" });
+				expect(session.absorbsPausedCycleFailure(denied)).toBe(false);
+				failObservation = true;
+				expect(() => session.assertReviewAlive(0)).toThrow(WriterCheckInconclusiveError);
+				failObservation = false;
+				expect(session.absorbsPausedCycleFailure(denied)).toBe(true);
+				expect(
+					session.absorbsPausedCycleFailure(
+						new MeetingPublicationWriteAuthorityError({ operation: "store_claim", code: "missing_binding" }),
+					),
+				).toBe(false);
+				expect(session.absorbsPausedCycleFailure(new Error("store failure"))).toBe(false);
+			} finally {
+				session.close();
+			}
+		});
+
+		it.effect("fails a one-shot worker fast on an unanswered probe, without labelling sysctl a writer", () =>
+			Effect.gen(function* () {
+				const fixture = yield* Effect.promise(() => setup({ approved: true, reviewPort: 18_797 }));
+				const provider = providerFactory(fixture);
+				const run = () =>
+					fixture.authorization
+						.withSystem(
+							runAuthorizedMeetingPublicationWorker(
+								fixture.authorization.createCompetingWorkerInput(),
+								provider.factory,
+							),
+						)
+						.pipe(Effect.forkChild);
+				const settle = (fiber: Fiber.Fiber<unknown, unknown>) =>
+					Effect.gen(function* () {
+						// No test-clock advance: a run that waited for a retry would never settle.
+						for (let step = 0; step < 200 && fiber.pollUnsafe() === undefined; step++)
+							yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 5)));
+						return fiber.pollUnsafe();
+					});
+				fixture.authorization.setObserveFailure(new WriterCheckInconclusiveError("sysctl", "timeout"));
+				const unanswered = yield* settle(yield* run());
+				expect(unanswered !== undefined && JSON.stringify(unanswered)).toContain("unsupported_platform");
+				expect(fixture.authorization.writerCheckEvents).toEqual([
+					{
+						event: "writer_check_escalated",
+						service: "meeting",
+						reason: "sysctl_timeout",
+						attempt: 1,
+						inconclusiveForMs: 0,
+					},
+				]);
+				fixture.authorization.setObserveFailure(undefined);
+				fixture.authorization.setWriterProof(
+					makeMeetingPublicationWriterProof(makeScriptedProbeRunner("timeout").run, "darwin"),
+				);
+				const proof = yield* settle(yield* run());
+				expect(proof !== undefined && JSON.stringify(proof)).toContain("writer_present");
+				expect(fixture.authorization.writerCheckEvents.at(-1)).toMatchObject({
+					event: "writer_check_escalated",
+					reason: "launchctl_timeout",
+					attempt: 1,
+				});
+				expect(provider.calls.make).toBe(0);
+			}),
+		);
+
+		it.effect("retries an unanswered startup observation of a service, then starts", () =>
+			Effect.gen(function* () {
+				yield* TestClock.setTime(Date.now());
+				const fixture = yield* Effect.promise(() => setup({ approved: true, reviewPort: 18_798 }));
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				fixture.authorization.setObserveFailure(new WriterCheckInconclusiveError("sysctl", "exit_status", 1));
+				const provider = providerFactory(fixture);
+				const ready = makeGate();
+				let started = false;
+				void ready.started.then(() => {
+					started = true;
+				});
+				const fiber = yield* fixture.authorization
+					.withSystem(
+						runAuthorizedMeetingPublicationFullReview(fixture.authorization.input, provider.factory, {
+							artifactAnchors: fixture.authorization.providerArtifactAnchors,
+							onReady: () => Effect.sync(() => ready.signalStarted()),
+						}),
+					)
+					.pipe(Effect.forkScoped);
+				for (let step = 0; step < 10; step++) {
+					yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 5)));
+					yield* TestClock.adjust(1_000);
+				}
+				expect(fiber.pollUnsafe()).toBeUndefined();
+				expect(started).toBe(false);
+				fixture.authorization.setObserveFailure(undefined);
+				for (let step = 0; step < 60 && !started && fiber.pollUnsafe() === undefined; step++) {
+					yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 10)));
+					yield* TestClock.adjust(1_000);
+				}
+				expect(started).toBe(true);
+				const kinds = fixture.authorization.writerCheckEvents.map((event) => event.event);
+				expect(kinds[0]).toBe("writer_check_inconclusive");
+				expect(fixture.authorization.writerCheckEvents[0]).toMatchObject({
+					reason: "sysctl_exit_status",
+					exitStatus: 1,
+				});
+				expect(kinds).toContain("writer_check_recovered");
+				yield* Fiber.interrupt(fiber);
+			}),
+		);
 
 		it.effect("stops at the first observed writer without a retry window", () =>
 			Effect.gen(function* () {

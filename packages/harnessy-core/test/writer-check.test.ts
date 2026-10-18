@@ -18,9 +18,11 @@ import {
 	spawnProcessProbe,
 	stderrWriterCheckReporter,
 	WRITER_CHECK_INCONCLUSIVE_WINDOW_MS,
+	WRITER_CHECK_MIN_ESCALATION_ATTEMPTS,
 	type WriterCheckEvent,
 	WriterCheckInconclusiveError,
 	writerCheckEvent,
+	writerCheckMonotonicMillis,
 	writerCheckRetryDelayMs,
 } from "../src/jarvis/writer-check.ts";
 import { makeScriptedProbeRunner, SCRIPTED_WRITER_ARGV_SECRET } from "./support/scripted-probe-runner.ts";
@@ -204,6 +206,88 @@ describe("bounded inconclusive retry", () => {
 	);
 });
 
+describe("bounded inconclusive retry timing", () => {
+	const failing = () =>
+		Effect.try({
+			try: () => {
+				throw new WriterCheckInconclusiveError("ps", "timeout");
+			},
+			catch: (cause) => cause,
+		});
+	const options = (events: Array<WriterCheckEvent>) => ({
+		service: "meeting" as const,
+		inconclusive: (cause: unknown) => (cause instanceof WriterCheckInconclusiveError ? cause : undefined),
+		escalate: (cause: WriterCheckInconclusiveError) => new Error(`escalated:${cause.reason}`),
+		report: (event: WriterCheckEvent) => events.push(event),
+	});
+
+	it.effect("needs a minimum number of failed retries even when a long gap exceeds the window", () =>
+		Effect.gen(function* () {
+			const events: Array<WriterCheckEvent> = [];
+			const now = yield* writerCheckMonotonicMillis;
+			// The first failure was 30 minutes ago, e.g. before the machine slept between two wakes.
+			const fiber = yield* Effect.forkChild(
+				retryWhileWriterCheckInconclusive(failing(), {
+					...options(events),
+					initial: new WriterCheckInconclusiveError("ps", "timeout"),
+					since: now - 30 * 60_000,
+				}),
+			);
+			let elapsed = 0;
+			for (; elapsed < 60_000 && fiber.pollUnsafe() === undefined; elapsed += 1_000) yield* TestClock.adjust(1_000);
+			const exit = yield* Fiber.await(fiber);
+			expect(Exit.isFailure(exit)).toBe(true);
+			expect(WRITER_CHECK_MIN_ESCALATION_ATTEMPTS).toBe(6);
+			expect(elapsed).toBeGreaterThanOrEqual(6_000);
+			expect(events.filter((event) => event.event === "writer_check_inconclusive")).toHaveLength(6);
+			expect(events.at(-1)).toMatchObject({
+				event: "writer_check_escalated",
+				attempt: 7,
+			});
+		}),
+	);
+
+	it.effect("measures from the caller's first failure and clamps a backwards clock", () =>
+		Effect.gen(function* () {
+			const events: Array<WriterCheckEvent> = [];
+			const now = yield* writerCheckMonotonicMillis;
+			const initial = new WriterCheckInconclusiveError("launchctl", "timeout");
+			const earlier = yield* Effect.forkChild(
+				retryWhileWriterCheckInconclusive(failing(), { ...options(events), initial, since: now - 120_000 }),
+			);
+			yield* Effect.yieldNow;
+			expect(events[0]).toMatchObject({ event: "writer_check_inconclusive", inconclusiveForMs: 120_000 });
+			yield* Fiber.interrupt(earlier);
+			const future: Array<WriterCheckEvent> = [];
+			const later = yield* Effect.forkChild(
+				retryWhileWriterCheckInconclusive(failing(), { ...options(future), initial, since: now + 3_600_000 }),
+			);
+			yield* Effect.yieldNow;
+			expect(future[0]).toMatchObject({ inconclusiveForMs: 0, retryInMs: 1_000 });
+			yield* Fiber.interrupt(later);
+		}),
+	);
+
+	it.effect("escalates the first unanswered probe at once in fail-fast mode", () =>
+		Effect.gen(function* () {
+			const events: Array<WriterCheckEvent> = [];
+			const exit = yield* Effect.exit(
+				retryWhileWriterCheckInconclusive(failing(), { ...options(events), failFast: true }),
+			);
+			expect(Exit.isFailure(exit) && (Cause.squash(exit.cause) as Error).message).toBe("escalated:ps_timeout");
+			expect(events).toEqual([
+				{
+					event: "writer_check_escalated",
+					service: "meeting",
+					reason: "ps_timeout",
+					attempt: 1,
+					inconclusiveForMs: 0,
+				},
+			]);
+		}),
+	);
+});
+
 describe("meeting writer proof over an injected runner", () => {
 	it("passes when no writer exists on macOS and Linux", () => {
 		expect(() => makeMeetingPublicationWriterProof(makeScriptedProbeRunner().run, "darwin")()).not.toThrow();
@@ -240,6 +324,41 @@ describe("meeting writer proof over an injected runner", () => {
 			reason: "crontab_exit_status",
 			exitStatus: 1,
 		});
+	});
+
+	it("lets an observed writer win over any unanswered probe", () => {
+		const uid = process.geteuid?.() ?? 0;
+		const writerLine = `${uid} 4242 jarvis meeting publish worker\n`;
+		const cases: Record<string, (command: string, args: ReadonlyArray<string>) => ProcessProbeResult> = {
+			// launchctl times out; the process scan still runs and sees the writer.
+			"launchctl timeout, ps writer": (command, args) =>
+				command === "/bin/launchctl"
+					? answer({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } })
+					: makeScriptedProbeRunner("writer").run(command, args),
+			// The first label fails without an answer; the second label is loaded.
+			"first label error, second label loaded": (command, args) =>
+				command === "/bin/launchctl"
+					? String(args[1]).endsWith("tech.flowresearch.jarvis.meeting-review")
+						? answer({ status: 5, stderr: "Bootstrap failed" })
+						: answer({ stdout: "state = running\n" })
+					: makeScriptedProbeRunner().run(command, args),
+			// ps exits non-zero but its output lists a writer.
+			"ps exit with writer output": (command, args) =>
+				command === "/bin/ps"
+					? answer({ status: 1, stdout: writerLine })
+					: makeScriptedProbeRunner().run(command, args),
+		};
+		for (const [name, run] of Object.entries(cases))
+			expect(() => makeMeetingPublicationWriterProof(run, "darwin")(), name).toThrowError(
+				expect.objectContaining({ code: "writer_present" }),
+			);
+		const linuxCrontabError = (command: string, args: ReadonlyArray<string>) =>
+			command === "/usr/bin/crontab"
+				? answer({ status: 1, stderr: "denied" })
+				: makeScriptedProbeRunner("writer").run(command, args);
+		expect(() => makeMeetingPublicationWriterProof(linuxCrontabError, "linux")()).toThrowError(
+			expect.objectContaining({ code: "writer_present" }),
+		);
 	});
 
 	it("rejects an unsupported platform", () => {
@@ -292,56 +411,111 @@ describe("community compatibility proof over an injected runner", () => {
 		).toEqual({ reason: "launchctl_exit_status", exitStatus: 5 });
 	});
 
-	it("reports an unanswered lsof probe for a writer-shaped process as inconclusive", () => {
-		const uid = process.geteuid?.() ?? 0;
-		const run = (command: string, args: ReadonlyArray<string>): ProcessProbeResult => {
-			if (command === "/bin/ps" && args[0] === "-axo")
-				return answer({
-					stdout: `${uid} 77 jarvis community briefing review serve --token ${SCRIPTED_WRITER_ARGV_SECRET}\n`,
-				});
-			if (command === "/bin/ps") return answer({ stdout: "node\n" });
-			if (command === "/usr/sbin/lsof")
-				return answer({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } });
-			throw new Error("unexpected OS command");
+	const writerShaped = `${process.geteuid?.() ?? 0} 77 jarvis community briefing review serve --token ${SCRIPTED_WRITER_ARGV_SECRET}`;
+	/**
+	 * A writer-shaped process whose native-reviewer exemption cannot be verified. `failing`
+	 * selects the unanswered probe; `freshScan` is what a second full scan reports.
+	 */
+	const unverifiable =
+		(
+			failing: "lsof_timeout" | "lsof_exit" | "comm_exit" | "confirm_exit",
+			freshScan: "present" | "gone" | "timeout",
+		) =>
+		(command: string, args: ReadonlyArray<string>): ProcessProbeResult => {
+			const scripted = makeScriptedProbeRunner();
+			if (command === "/bin/ps" && args[0] === "-axo") {
+				scans += 1;
+				if (scans === 1 || freshScan === "present") return answer({ stdout: `${writerShaped}\n` });
+				if (freshScan === "timeout")
+					return answer({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } });
+				return answer({ stdout: "" });
+			}
+			if (command === "/bin/ps" && args.at(-1) === "comm=")
+				return failing === "comm_exit" ? answer({ status: 1 }) : answer({ stdout: "node\n" });
+			if (command === "/bin/ps")
+				return failing === "confirm_exit" ? answer({ status: 1 }) : answer({ stdout: `${writerShaped}\n` });
+			if (command === "/usr/sbin/lsof") {
+				if (failing === "lsof_timeout")
+					return answer({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } });
+				if (failing === "lsof_exit") return answer({ status: 1 });
+				return answer({ stdout: "p77\0\nftxt\0n/usr/bin/node\0\n" });
+			}
+			return scripted.run(command, args);
 		};
-		expect(inconclusive(makeCommunityCompatibilityProof(run, "darwin"))).toEqual({
-			reason: "lsof_timeout",
-			exitStatus: undefined,
-		});
-		const lsofExit = (command: string, args: ReadonlyArray<string>) =>
-			command === "/usr/sbin/lsof" ? answer({ status: 1 }) : run(command, args);
-		expect(inconclusive(makeCommunityCompatibilityProof(lsofExit, "darwin"))).toEqual({
-			reason: "lsof_exit_status",
-			exitStatus: 1,
-		});
-		const lsofNoise = (command: string, args: ReadonlyArray<string>) =>
-			command === "/usr/sbin/lsof" ? answer({ stderr: "warning" }) : run(command, args);
-		expect(() => makeCommunityCompatibilityProof(lsofNoise, "darwin")()).toThrow("probe_failed");
-		const lsofGarbage = (command: string, args: ReadonlyArray<string>) =>
-			command === "/usr/sbin/lsof" ? answer({ stdout: "garbage" }) : run(command, args);
-		expect(() => makeCommunityCompatibilityProof(lsofGarbage, "darwin")()).toThrow("probe_failed");
+	let scans = 0;
+
+	it.each(["lsof_timeout", "lsof_exit", "comm_exit", "confirm_exit"] as const)(
+		"treats a writer-shaped process with an unverifiable exemption (%s) as a writer while it still runs",
+		(failing) => {
+			for (const fresh of ["present", "timeout"] as const) {
+				scans = 0;
+				expect(() => makeCommunityCompatibilityProof(unverifiable(failing, fresh), "darwin")()).toThrow(
+					"compatibility_writer_present",
+				);
+			}
+			scans = 0;
+			expect(() => makeCommunityCompatibilityProof(unverifiable(failing, "gone"), "darwin")()).not.toThrow();
+		},
+	);
+
+	it("keeps malformed lsof answers fail-closed", () => {
+		const run = (command: string, args: ReadonlyArray<string>) =>
+			command === "/usr/sbin/lsof"
+				? answer({ stdout: "garbage" })
+				: unverifiable("lsof_exit", "present")(command, args);
+		scans = 0;
+		expect(() => makeCommunityCompatibilityProof(run, "darwin")()).toThrow("compatibility_writer_present");
 	});
 
-	it("reports a failing PID-scoped ps probe for a writer-shaped process as inconclusive", () => {
+	it("lets an observed community writer win over an unanswered probe", () => {
 		const uid = process.geteuid?.() ?? 0;
-		const scan = answer({
-			stdout: `${uid} 77 jarvis community briefing review serve --token ${SCRIPTED_WRITER_ARGV_SECRET}\n`,
+		// The first guarded label fails without an answer; a later label is loaded.
+		const laterLabelLoaded = (command: string, args: ReadonlyArray<string>): ProcessProbeResult =>
+			command === "/bin/launchctl"
+				? String(args[1]).endsWith("tech.flowresearch.jarvis.meeting-review")
+					? answer({ status: 5, stderr: "Bootstrap failed" })
+					: String(args[1]).endsWith("com.flow-harness.project.weekly-community-briefing-worker")
+						? answer({ stdout: "state = running\n" })
+						: answer({ status: 113, stderr: "Could not find service" })
+				: makeScriptedProbeRunner().run(command, args);
+		expect(() => makeCommunityCompatibilityProof(laterLabelLoaded, "darwin")()).toThrow(
+			"compatibility_writer_present",
+		);
+		// The process scan exits non-zero but its output still lists a non-exempt writer.
+		const failedScanWithWriter = (command: string, args: ReadonlyArray<string>): ProcessProbeResult =>
+			command === "/bin/ps" && args[0] === "-axo"
+				? answer({ status: 1, stdout: `${uid} 88 jarvis community briefing publish\n` })
+				: command === "/bin/ps" && args.at(-1) === "comm="
+					? answer({ stdout: "node\n" })
+					: command === "/bin/ps"
+						? answer({ stdout: `${uid} 88 jarvis community briefing publish\n` })
+						: command === "/usr/sbin/lsof"
+							? answer({ stdout: "p88\0\nftxt\0n/usr/bin/node\0\n" })
+							: makeScriptedProbeRunner().run(command, args);
+		expect(() => makeCommunityCompatibilityProof(failedScanWithWriter, "darwin")()).toThrow(
+			"compatibility_writer_present",
+		);
+		// A process scan timeout plus loaded scheduler jobs: the writer wins.
+		const timeoutThenLoaded = (command: string, args: ReadonlyArray<string>): ProcessProbeResult =>
+			command === "/bin/ps"
+				? answer({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } })
+				: makeScriptedProbeRunner("loaded_job").run(command, args);
+		expect(() => makeCommunityCompatibilityProof(timeoutThenLoaded, "darwin")()).toThrow(
+			"compatibility_writer_present",
+		);
+	});
+
+	it("does not treat the native review agent as a writer when the process scan could not answer", () => {
+		const nativeAgentOnly = (command: string, args: ReadonlyArray<string>): ProcessProbeResult =>
+			command === "/bin/ps"
+				? answer({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } })
+				: command === "/bin/launchctl" && String(args[1]).endsWith("com.flow-harness.community-review-v2")
+					? answer({ stdout: "pid = 4242\n" })
+					: makeScriptedProbeRunner().run(command, args);
+		expect(inconclusive(makeCommunityCompatibilityProof(nativeAgentOnly, "darwin"))).toEqual({
+			reason: "ps_timeout",
+			exitStatus: undefined,
 		});
-		const runner =
-			(failing: "comm" | "confirm") =>
-			(command: string, args: ReadonlyArray<string>): ProcessProbeResult => {
-				if (command === "/bin/ps" && args[0] === "-axo") return scan;
-				if (command === "/bin/ps" && args.at(-1) === "comm=")
-					return failing === "comm" ? answer({ status: 1 }) : answer({ stdout: "node\n" });
-				if (command === "/bin/ps") return answer({ status: 1 });
-				if (command === "/usr/sbin/lsof") return answer({ stdout: "p77\0\nftxt\0n/usr/bin/node\0\n" });
-				throw new Error("unexpected OS command");
-			};
-		for (const failing of ["comm", "confirm"] as const)
-			expect(inconclusive(makeCommunityCompatibilityProof(runner(failing), "darwin"))).toEqual({
-				reason: "ps_exit_status",
-				exitStatus: 1,
-			});
 	});
 
 	it("reports crontab failures and observed crontab writers on Linux", () => {

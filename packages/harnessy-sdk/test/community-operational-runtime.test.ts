@@ -1379,7 +1379,16 @@ describe("community operational consumer", () => {
 				expect(JSON.stringify(exit)).toContain("ps_timeout");
 				// No backoff sleep: at most the first clock step passes while the real probe I/O settles.
 				expect(elapsed).toBeLessThanOrEqual(1_000);
-				expect(f.writerCheckEvents).toEqual([]);
+				// Fail-fast still logs the allow-listed reason once.
+				expect(f.writerCheckEvents).toEqual([
+					{
+						event: "writer_check_escalated",
+						service: "community",
+						reason: "ps_timeout",
+						attempt: 1,
+						inconclusiveForMs: 0,
+					},
+				]);
 			} finally {
 				await f.cleanup();
 			}
