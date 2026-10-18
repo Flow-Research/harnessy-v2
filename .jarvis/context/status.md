@@ -5,27 +5,35 @@ Status date: 2026-10-18
 ## Current service inventory — 2026-10-18
 
 The owner's operating policy is that all Harnessy services are on. On
-2026-10-18 at about 05:45 local time, `launchctl list` and `launchctl print`
-showed these V2 labels loaded:
+2026-10-18 at 06:40 WAT, `launchctl print` and the listening TCP ports showed
+these V2 labels loaded:
 
 | Label | Observed state |
 |---|---|
-| `com.flow-harness.meeting-fathom-poll` | loaded; 16 runs, last exit 0 |
+| `org.harnessy.meeting-publication` | running; listening on `127.0.0.1:8770` |
 | `com.flow-harness.community-review-v2` | running; reviewer listening on `127.0.0.1:8872` |
 | `org.harnessy.portal` | running; read-only portal listening on `127.0.0.1:8790` |
 | `tech.flowresearch.learning-wiki` | running; viewer listening on `127.0.0.1:4321` |
-| `com.flow-harness.life-orchestrator.daily-brief` | loaded calendar job; 1 run, last exit 0 |
-| `com.flow-harness.life-orchestrator.weekly-plan` | loaded calendar job; not yet run |
-| `com.flow-harness.life-orchestrator.learning-research` | loaded calendar job; not yet run |
-| `org.harnessy.meeting-publication` | **loaded but stopped**; 1 run, last exit 1 |
+| `com.flow-harness.meeting-fathom-poll` | loaded interval job; 4 runs, last exit 0 |
+| `com.flow-harness.life-orchestrator.daily-brief` | loaded calendar job; not yet run since reload |
+| `com.flow-harness.life-orchestrator.weekly-plan` | loaded calendar job; not yet run since reload |
+| `com.flow-harness.life-orchestrator.learning-research` | loaded calendar job; not yet run since reload |
 
-The meeting-publication service stopped at 05:35 with
+Between 06:14 and 06:16 WAT the release built from `dev` `4485c2d6` (#120)
+was installed, and meeting publication was re-enrolled under it. The run
+counts above therefore start from that reload. The installation record is kept
+in private workspace state, not in this repository.
+
+Incident, 2026-10-18: meeting publication stopped at 05:35 WAT with
 `community_publication_stopped` and `meeting_full_review_failed`
-(`review_failed`). At that time the data volume was full (`ENOSPC`); it still had
-under 500 MiB free at about 05:45. The cause is not yet confirmed and the service has not been
-restarted. Until it runs again, meeting review and publication are not
-available. No backup, rollback or one-writer recheck is recorded for this
-inventory; it is an observation, not a cutover receipt.
+(`review_failed`), last exit 1. The data volume was full at that time. The
+cause is consistent with the full disk (`ENOSPC`), but the service logs do not
+prove it. Publication was restored at 05:50 WAT. Before the restore its stores
+were checked: SQLite `quick_check` returned ok, and no journal files or leases
+were present. At 06:40 WAT it was running.
+
+This inventory is an observation, not a cutover receipt. No rollback or
+one-writer recheck is recorded for it.
 
 This inventory supersedes older statements in this file that a schedule is
 unloaded, or that the community reviewer and the Fathom poll are the only loaded
