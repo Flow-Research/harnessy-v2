@@ -8,6 +8,15 @@
   only after the corresponding hosted checks pass on a pushed commit.
 - Build/check gates must finish with `git diff --exit-code`; generated artifacts
   must be checked, not silently rewritten.
+- The Harnessy gates run as parallel CI jobs. The `build` job builds once and
+  uploads its outputs; every other gate job restores them and ends with its own
+  `git diff --exit-code` and `npm run check:clean-worktree`. The required check
+  `CI / Harnessy build, QA, and packages` is an aggregate job that needs every
+  gate job and fails unless all of them succeed. The packed release smoke runs as
+  two parts (`test:release-artifacts:installed-local-host` and
+  `test:release-artifacts:installed-product`); `npm run test:release-artifacts`
+  still runs both parts in one process locally and in release preflight.
+  `npm run check:ci-contract` enforces this shape.
 - Tag release preflight must pass before the first draft release or npm
   mutation. The SDK remains private and outside the publication list.
 - Root npm and Executor full-graph audits are executable gates. The repository

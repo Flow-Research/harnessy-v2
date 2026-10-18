@@ -14,51 +14,81 @@ permissions:
   contents: read
 
 jobs:
-  build-check-test:
-    name: Harnessy build, QA, and packages
+  # The Harnessy gates run as parallel jobs that share one build. Every gate job
+  # restores the same build outputs and ends with its own tracked-file and
+  # clean-worktree checks. The aggregate job keeps the historical required check
+  # name and fails unless every gate job succeeded.
+  build:
+    name: Harnessy build
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+      - name: Setup workspace
+        uses: ./.github/actions/harnessy-ci-setup
         with:
-          node-version: 22.22.2
-          cache: npm
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.4.0
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep poppler-utils
-          sudo ln -s "$(which fdfind)" /usr/local/bin/fd
-
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+          system-packages: "false"
 
       - name: Audit root dependencies
         run: npm run audit:root
 
-      - name: Install Executor dependencies
-        working-directory: executor
-        run: bun install --frozen-lockfile --ignore-scripts
-
       - name: Audit Executor dependency graph
         run: npm run audit:executor
+
+      - name: Mark build start
+        run: touch "$RUNNER_TEMP/harnessy-build-start"
 
       - name: Build current-platform Executor fixture input
         run: npm run build:executor-runtime
 
       - name: Build
         run: npm run build
+
+      - name: Build must not rewrite tracked files
+        run: git diff --exit-code
+
+      - name: Package build outputs
+        run: |
+          # Every file the build created or changed (including ignored output under
+          # node_modules and the Executor task cache); ctime cannot be preserved by copies.
+          find . -path ./.git -prune -o ! -type d -cnewer "$RUNNER_TEMP/harnessy-build-start" -print0 \
+            | LC_ALL=C sort -z > "$RUNNER_TEMP/harnessy-build-files"
+          test -s "$RUNNER_TEMP/harnessy-build-files"
+          mkdir -p "$RUNNER_TEMP/harnessy-build"
+          tar --null --no-recursion -T "$RUNNER_TEMP/harnessy-build-files" -czf "$RUNNER_TEMP/harnessy-build/harnessy-build.tar.gz"
+          echo "Packaged $(tr -cd '\0' < "$RUNNER_TEMP/harnessy-build-files" | wc -c) build output files ($(du -h "$RUNNER_TEMP/harnessy-build/harnessy-build.tar.gz" | cut -f1))."
+
+      - name: Upload build outputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/harnessy-build/harnessy-build.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+      - name: Build must leave no tracked or untracked output
+        run: npm run check:clean-worktree
+
+  static-checks:
+    name: Harnessy check and QA inventory
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup workspace
+        uses: ./.github/actions/harnessy-ci-setup
+        with:
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Verify V1 compatibility projection
         run: npm run verify:v1-compatibility
@@ -78,30 +108,34 @@ jobs:
       - name: Test repo-owned QA runtime and catalog contracts
         run: npm run test:qa-contract
 
-      - name: Prepare private Node runtime for security-bound QA
-        run: |
-          private_node_root="$RUNNER_TEMP/harnessy-node"
-          install -d -m 700 "$private_node_root/bin"
-          node_runtime="$(command -v node)"
-          install -m 700 "$node_runtime" "$private_node_root/bin/node"
-          echo "HARNESSY_NODE_RUNTIME=$node_runtime" >> "$GITHUB_ENV"
-          echo "$private_node_root/bin" >> "$GITHUB_PATH"
+      - name: Static gates must not rewrite tracked files
+        run: git diff --exit-code
 
-      - name: Setup Python for V2 reused runtime consumers
-        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+      - name: Static gates must leave no tracked or untracked output
+        run: npm run check:clean-worktree
+
+  qa-scenarios:
+    name: Harnessy QA scenarios and packed SDK and engine consumers
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          python-version: '3.11'
+          persist-credentials: false
 
-      - name: Prepare isolated installed Jarvis test runtime
+      - name: Setup workspace
+        uses: ./.github/actions/harnessy-ci-setup
+        with:
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          test-runtime: "true"
+
+      - name: Test community adapters in the isolated Jarvis runtime
         run: |
-          python -m pip install uv==0.6.10
-          fixture_root=$(mktemp -d "$RUNNER_TEMP/harnessy-jarvis-consumer.XXXXXX")
-          cp -R packages/capability-harnessy-v1-full/resources/jarvis-cli "$fixture_root/source"
-          UV_PROJECT_ENVIRONMENT="$fixture_root/venv" uv sync --project "$fixture_root/source" --frozen --no-dev --no-editable --python 3.11 --no-python-downloads
-          echo "HARNESSY_TEST_JARVIS_PYTHON=$fixture_root/venv/bin/python" >> "$GITHUB_ENV"
-          "$fixture_root/venv/bin/python" scripts/test-community-draft-adapter.py
-          "$fixture_root/venv/bin/python" -I -B scripts/test-community-collector-pruning.py
-          "$fixture_root/venv/bin/python" scripts/test-community-review-consumer.py
+          "$HARNESSY_TEST_JARVIS_PYTHON" scripts/test-community-draft-adapter.py
+          "$HARNESSY_TEST_JARVIS_PYTHON" -I -B scripts/test-community-collector-pruning.py
+          "$HARNESSY_TEST_JARVIS_PYTHON" scripts/test-community-review-consumer.py
 
       - name: Execute canonical-cutover QA scenarios
         run: npm run test:qa-scenarios
@@ -109,29 +143,169 @@ jobs:
       - name: Test packed private SDK consumer explicitly
         run: npm run test:sdk-fixture
 
-      - name: Test packed private local-host consumer explicitly
-        run: npm run test:local-host-fixture
-
-      - name: QA and packed gates must not rewrite tracked files
-        run: git diff --exit-code
-
-      - name: Test workspace without user credentials
-        run: ./test.sh
-
-      - name: Enforce Harnessy source coverage floors
-        run: npm run test:coverage
-
       - name: Test packed Harnessy engine consumer
         run: npm run test:engine-fixture
 
       - name: Test Executor package contracts
         run: npm run test:executor-package-contract
 
-      - name: Test packed Harnessy release artifacts
-        run: npm run test:release-artifacts
+      - name: QA and packed gates must not rewrite tracked files
+        run: git diff --exit-code
 
-      - name: Generated and packed gates must leave no tracked or untracked output
+      - name: QA and packed gates must leave no tracked or untracked output
         run: npm run check:clean-worktree
+
+  local-host-fixture:
+    name: Harnessy packed local-host consumer
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup workspace
+        uses: ./.github/actions/harnessy-ci-setup
+        with:
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          test-runtime: "true"
+
+      - name: Test packed private local-host consumer explicitly
+        run: npm run test:local-host-fixture
+
+      - name: Packed local-host gate must not rewrite tracked files
+        run: git diff --exit-code
+
+      - name: Packed local-host gate must leave no tracked or untracked output
+        run: npm run check:clean-worktree
+
+  workspace-tests:
+    name: Harnessy workspace tests without user credentials
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup workspace
+        uses: ./.github/actions/harnessy-ci-setup
+        with:
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          test-runtime: "true"
+
+      - name: Test workspace without user credentials
+        run: ./test.sh
+
+      - name: Workspace tests must not rewrite tracked files
+        run: git diff --exit-code
+
+      - name: Workspace tests must leave no tracked or untracked output
+        run: npm run check:clean-worktree
+
+  coverage:
+    name: Harnessy source coverage floors
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup workspace
+        uses: ./.github/actions/harnessy-ci-setup
+        with:
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          test-runtime: "true"
+
+      - name: Enforce Harnessy source coverage floors
+        run: npm run test:coverage
+
+      - name: Coverage gate must not rewrite tracked files
+        run: git diff --exit-code
+
+      - name: Coverage gate must leave no tracked or untracked output
+        run: npm run check:clean-worktree
+
+  release-installed-local-host:
+    name: Harnessy packed release local-host consumer
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup workspace
+        uses: ./.github/actions/harnessy-ci-setup
+        with:
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          test-runtime: "true"
+
+      - name: Test packed Harnessy release artifacts (installed local-host consumer)
+        run: npm run test:release-artifacts:installed-local-host
+
+      - name: Packed release gate must not rewrite tracked files
+        run: git diff --exit-code
+
+      - name: Packed release gate must leave no tracked or untracked output
+        run: npm run check:clean-worktree
+
+  release-installed-product:
+    name: Harnessy packed release product consumer
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup workspace
+        uses: ./.github/actions/harnessy-ci-setup
+        with:
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          test-runtime: "true"
+
+      - name: Test packed Harnessy release artifacts (installed product consumer)
+        run: npm run test:release-artifacts:installed-product
+
+      - name: Packed release gate must not rewrite tracked files
+        run: git diff --exit-code
+
+      - name: Packed release gate must leave no tracked or untracked output
+        run: npm run check:clean-worktree
+
+  build-check-test:
+    name: Harnessy build, QA, and packages
+    if: ${{ always() }}
+    needs:
+      - build
+      - static-checks
+      - qa-scenarios
+      - local-host-fixture
+      - workspace-tests
+      - coverage
+      - release-installed-local-host
+      - release-installed-product
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Harnessy gate job to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS_JSON" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS_JSON" | jq -e 'length > 0 and (to_entries | all(.value.result == "success"))' > /dev/null
 
   executor:
     name: Executor source
@@ -279,7 +453,57 @@ jobs:
         run: node ../../node_modules/vitest/dist/cli.js --run test/community-process-identity.test.ts
 
       - name: Pack, install, and exercise the macOS product
-        run: npm run test:release-artifacts
+        run: npm run test:release-artifacts:installed-product
+
+      - name: Installed acceptance must not rewrite tracked files
+        run: git diff --exit-code
+
+      - name: Installed acceptance must leave no tracked or untracked output
+        run: npm run check:clean-worktree
+
+  installed-local-host-acceptance:
+    name: Installed local-host consumer acceptance (macOS)
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22.22.2
+          cache: npm
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+
+      - name: Setup Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          python -m pip install uv==0.6.10
+
+      - name: Install Executor dependencies
+        working-directory: executor
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Build package inputs
+        run: npm run build
+
+      - name: Pack, install, and exercise the macOS packed local-host consumer
+        run: npm run test:release-artifacts:installed-local-host
+
+      - name: Installed acceptance must not rewrite tracked files
+        run: git diff --exit-code
 
       - name: Installed acceptance must leave no tracked or untracked output
         run: npm run check:clean-worktree
