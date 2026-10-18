@@ -1,39 +1,57 @@
 # Harnessy V2 portal page regression specification
 
-H-10 Phase 1, third slice: the local Today, Health and Connections page served by `harnessy-portal` at `/`. Every case runs against a real server on an ephemeral loopback port with an isolated home and state directory, or runs the page code unchanged against a recording document at the DOM boundary. Nothing is installed, and no live service, token or database is touched. Passing these scenarios shows that the page is served under the strict CSP, renders API data only as text, links only to loopback owning services, and signs in only with a one-time code. It does not show how the page looks in a particular browser.
+H-10, one Harnessy app, Phase A: the read-only React app served by `harnessy-portal` at `/`, its manifest-pinned static files, its new read routes (Inbox, Life brief and weekly draft, Tasks, Jobs) and the `harnessy open` front door. Every case runs against a real server on an ephemeral loopback port with an isolated home and state directory, or runs the app code unchanged in jsdom against such a server. Nothing is installed, no live service, token or database is touched, and every liveness probe is a fake or targets a server the test started. Passing these scenarios shows that the app is served under the unchanged strict CSP, renders API data only as text, links only to loopback owning services, signs in only with a one-time code, and that every action is a hand-off or a command to copy. It does not show how the app looks in a particular browser; the CI browser smoke covers that.
 
-## PRTP-001 The page files carry the strict CSP and no secret
+## PRTP-001 The app files are manifest-pinned and carry the strict CSP
 Layer: api
 Status: implemented
 Test File: qa/tests/portal-page.api.test.mjs
-Linked Refs: packages/harnessy-local-host/test/portal-page-server.test.ts, packages/harnessy-local-host/src/portal/page-assets.ts, packages/harnessy-local-host/src/portal/server.ts
-Expected: `/`, `/app.css` and each page script return 200 with the exact CSP, `no-store`, `nosniff`, `no-referrer`, `DENY`, the right content type, no `Set-Cookie` and no `Access-Control-*` header; no file contains the install token, a page token, a code or any 43-character secret; a script may statically import only another page script and may not use a dynamic `import(...)`; a page file refuses a non-GET method, a wrong `Host`, a foreign `Origin` and a `cross-site` or `same-site` fetch; nothing else is served; without page files the server serves only the API.
+Linked Refs: packages/harnessy-local-host/test/portal-assets.test.ts, packages/harnessy-local-host/src/portal/page-assets.ts, packages/harnessy-local-host/src/portal/server.ts, packages/harnessy-local-host/src/portal/app/vite.config.ts
+Expected: Only files listed in `asset-manifest.json` are served, each checked for length and SHA-256 at start; a tampered, resized, missing, linked, non-regular or oversize file, a malformed manifest, a path that leaves the bundle or an unknown file type stops the portal; `index.html` with an inline script, a `<style>` element, a `style` or `on…` attribute, or a reference outside the manifest is refused; hashed files are cached immutable and `index.html` is `no-store`; every file and every refusal carries the unchanged CSP and security headers; without a bundle a script-free page is served; the real build has one stylesheet, self-hosted fonts and no `data:` URL or `eval`.
 
-- Execute the page-file and loader cases against a real server.
+- Execute the bundle loader and HTTP cases.
 
-## PRTP-002 The page renders API data as text and links only to loopback services
+## PRTP-002 The app renders API data as text and links only to loopback services
 Layer: api
 Status: implemented
 Test File: qa/tests/portal-page.api.test.mjs
-Linked Refs: packages/harnessy-local-host/test/portal-page.test.ts, packages/harnessy-local-host/src/portal/page/view-model.ts, packages/harnessy-local-host/src/portal/page/mount.ts
-Expected: Markup, script and event-handler text in any API field stays text; the mount creates only the page's own elements and sets only `class`, `href` and `rel`; a link is kept only for `http://127.0.0.1:<port>/` or `http://localhost:<port>/` with no credentials, query or fragment, so `javascript:`, `data:`, `https:` and other hosts are withheld; the HTML has no inline script, inline style or event handler, and the page scripts never use `innerHTML`, `document.write`, `eval` or `Function`; a degraded or malformed tile shows its state and reason as text.
+Linked Refs: packages/harnessy-local-host/test/app/lib.test.ts, packages/harnessy-local-host/test/app/app.test.tsx, packages/harnessy-local-host/src/portal/app/lib/markdown.ts, packages/harnessy-local-host/src/portal/app/lib/safe-href.ts, packages/harnessy-local-host/src/portal/app/components/SafeMarkdown.tsx
+Expected: Markdown is parsed to a tree and rendered as React text, so script, image, style and event-handler text, `javascript:` links and bidi controls stay text; an anchor is created only for `http://127.0.0.1:<port>/` or `http://localhost:<port>/` with no credentials, query or fragment; a hand-off to anything else is shown as text; the parser bounds its output and always terminates; `dangerouslySetInnerHTML` and markup assignment are banned by lint.
 
-- Execute the view-model, mount and static-safety cases.
+- Execute the link, Markdown and rendering cases.
 
-## PRTP-003 The page signs in with a one-time code and renders seeded data end to end
+## PRTP-003 The app signs in with a one-time code and renders every screen end to end
 Layer: api
 Status: implemented
 Test File: qa/tests/portal-page.api.test.mjs
-Linked Refs: packages/harnessy-local-host/test/portal-page-server.test.ts, packages/harnessy-local-host/test/portal-page.test.ts, packages/harnessy-local-host/test/support/portal-browser-shim.mjs, packages/harnessy-local-host/src/portal/page/app.ts
-Expected: The exact scripts the server sent run in a child process against a server over a seeded home; the page removes the code from the address bar before it exchanges it, also when a new sign-in link is opened in an already-loaded tab, keeps the page token in session storage, sends every request with cookies omitted, and renders the seeded waiting counts, brief, readings and weekly plan on Today, every service on Health, and on Connections the meeting Google row with its link to the review page and note, the `gws-login <slug>` commands, Fathom accounts and Codex; no page shows the canary text, the account email, the install token or the code; a spent, malformed or refused code, an expired or refused session and a blocked storage leave the page signed out with the `harnessy-portal open` instruction or working from memory, and a slower older render never replaces a newer one.
+Linked Refs: packages/harnessy-local-host/test/app/app.test.tsx, packages/harnessy-local-host/test/app/lib.test.ts, packages/harnessy-local-host/src/portal/app/App.tsx, packages/harnessy-local-host/src/portal/app/lib/session.ts
+Expected: The app removes the code from the address bar before it exchanges it, keeps only a read token in session storage, sends cookies never, and renders the seeded Inbox (with j/k, c and Enter), Today (pinned brief sections, a weekly draft), Tasks (tabs and the derived-not-tracked banner), Jobs (community review never paused), Reviews, Learning (readings in queue or sent in a brief, never unread) and Connections (Tools & integrations); the palette copies commands; no screen shows the canary, the account email or the code; a missing, expired or refused session shows the `harnessy open` instruction; an empty home renders degraded states.
 
-- Execute the end-to-end and page-script cases.
+- Execute the end-to-end and session cases.
 
-## PRTP-004 The page adds no writer
+## PRTP-004 The app adds no writer
 Layer: api
 Status: implemented
 Test File: qa/tests/portal-page.api.test.mjs
 Linked Refs: packages/harnessy-local-host/test/portal-non-writer.test.ts, packages/harnessy-local-host/test/support/portal-recorder.mjs
-Expected: The real `portal-cli serve`, run under the recorder, serves every page file as well as every API route, and still starts only allow-listed `launchctl print` reads and opens no planted secret file.
+Expected: The real `portal-cli serve`, run under the recorder, serves every app file and every documented route, including the parameter routes with their examples, and still starts only allow-listed `launchctl print` reads, opens no planted secret file and makes outgoing connections only to the loopback service ports.
 
 - Execute the non-writer regression case.
+
+## PRTP-005 The read routes derive the Inbox, Tasks and Jobs honestly
+Layer: api
+Status: implemented
+Test File: qa/tests/portal-page.api.test.mjs
+Linked Refs: packages/harnessy-local-host/test/portal-app-api.test.ts, packages/harnessy-local-host/src/portal/inbox.ts, packages/harnessy-local-host/src/portal/jobs.ts, packages/harnessy-local-host/src/portal/liveness.ts, packages/harnessy-local-host/src/portal/routes.ts, packages/harnessy-core/test/read-model-app.test.ts, packages/harnessy-core/src/read-model/followups.ts, packages/harnessy-core/src/read-model/job-schedules.ts
+Expected: The Inbox ranks items by server-computed severity with stable keys and offers only hand-offs and copied commands, none writer-shaped; Tasks come from the brief, reminders, register and status files with content-hash ids, unparsed lines kept raw and edited lines flagged; Jobs report launchd state, a Lagos next run that mirrors each schedule, last activity labelled log mtime and loopback liveness on both families for the cockpit; community review is never offered a pause; the brief, its dates and a weekly draft are bounded text; parameters are validated before any read.
+
+- Execute the route, derivation, schedule and golden-file cases.
+
+## PRTP-006 `harnessy open` is the front door
+Layer: api
+Status: implemented
+Test File: qa/tests/portal-page.api.test.mjs
+Linked Refs: packages/harnessy-local-host/test/portal-command.test.ts, packages/harnessy-core/test/read-model-api.test.ts, packages/harnessy-core/src/cli/portal.ts, packages/harnessy-local-host/src/portal/command.ts
+Expected: `harnessy open [--route <screen>] [--print]` runs the same host as `harnessy portal open`, which keeps working; `--route` accepts only the seven screens and lands there after sign-in; `harnessy web` is described as the Tools engine.
+
+- Execute the command cases.

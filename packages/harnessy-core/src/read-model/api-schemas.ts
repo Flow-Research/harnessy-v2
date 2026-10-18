@@ -11,12 +11,22 @@ import { type Static, type TProperties, type TSchema, Type } from "typebox";
 import { Value } from "typebox/value";
 
 import {
+	CommunityGenerationSchema,
+	FathomAccountsSchema,
+	InboxListSchema,
+	JobListSchema,
+	LifeBriefDatesSchema,
+	LifeWeeklyDraftSchema,
+	TaskListSchema,
+} from "./app-schemas.ts";
+import {
 	CommunityConfigSchema,
 	CommunityQueueSchema,
 	FathomCheckpointSchema,
 	FathomConfigSchema,
 	FathomInboxSchema,
 	LifeBriefStatusSchema,
+	LifeBriefTextSchema,
 	LifePreviewSchema,
 	LifeReadingCountsSchema,
 	LifeSetupSchema,
@@ -168,6 +178,7 @@ export const MeetingsResponseSchema = envelope("meetings", {
 export const CommunityResponseSchema = envelope("community", {
 	config: TileSchema(CommunityConfigSchema),
 	queue: TileSchema(CommunityQueueSchema),
+	generation: TileSchema(CommunityGenerationSchema),
 });
 export const LearningResponseSchema = envelope("learning", {
 	catalog: TileSchema(LearningCatalogSchema),
@@ -175,6 +186,25 @@ export const LearningResponseSchema = envelope("learning", {
 export const WorkspaceResponseSchema = envelope("workspace", {
 	workspace: TileSchema(WorkspaceSummarySchema),
 	skills: TileSchema(SkillsSummarySchema),
+});
+
+export const InboxResponseSchema = envelope("inbox", {
+	inbox: TileSchema(InboxListSchema),
+});
+export const LifeBriefResponseSchema = envelope("lifeBrief", {
+	brief: TileSchema(LifeBriefTextSchema),
+	dates: TileSchema(LifeBriefDatesSchema),
+});
+export const LifeWeeklyDraftResponseSchema = envelope("lifeWeeklyDraft", {
+	draft: TileSchema(LifeWeeklyDraftSchema),
+});
+export const TasksResponseSchema = envelope("tasks", {
+	tasks: TileSchema(TaskListSchema),
+});
+export const JobsResponseSchema = envelope("jobs", {
+	jobs: TileSchema(JobListSchema),
+	communityGeneration: TileSchema(CommunityGenerationSchema),
+	fathomAccounts: TileSchema(FathomAccountsSchema),
 });
 
 /** Every portal API response schema, keyed by name. */
@@ -191,6 +221,11 @@ export const PortalApiSchemas = {
 	Community: CommunityResponseSchema,
 	Learning: LearningResponseSchema,
 	Workspace: WorkspaceResponseSchema,
+	Inbox: InboxResponseSchema,
+	LifeBrief: LifeBriefResponseSchema,
+	LifeWeeklyDraft: LifeWeeklyDraftResponseSchema,
+	Tasks: TasksResponseSchema,
+	Jobs: JobsResponseSchema,
 	Waiting: WaitingSchema,
 	LearningCatalog: LearningCatalogSchema,
 	Connection: ConnectionSchema,

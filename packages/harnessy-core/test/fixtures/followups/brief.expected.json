@@ -1,0 +1,58 @@
+[
+	{
+		"title": "Settle the October plan",
+		"status": "todo",
+		"owner": null,
+		"due": null,
+		"line": 8,
+		"raw": false
+	},
+	{
+		"title": "Answer the partner by 2026-10-21",
+		"status": "todo",
+		"owner": null,
+		"due": "2026-10-21",
+		"line": 10,
+		"raw": false
+	},
+	{
+		"title": "Plain item without a bold lead and code inside.",
+		"status": "todo",
+		"owner": null,
+		"due": null,
+		"line": 11,
+		"raw": false
+	},
+	{
+		"title": "Stray paragraph inside the section that is not a list item.",
+		"status": "todo",
+		"owner": null,
+		"due": null,
+		"line": 13,
+		"raw": true
+	},
+	{
+		"title": "vendor contract",
+		"status": "waiting",
+		"owner": "Ada and Ben",
+		"due": null,
+		"line": 21,
+		"raw": false
+	},
+	{
+		"title": "data room index",
+		"status": "waiting",
+		"owner": "Chidi",
+		"due": "2026-10-24",
+		"line": 22,
+		"raw": false
+	},
+	{
+		"title": "No dash lead",
+		"status": "waiting",
+		"owner": null,
+		"due": null,
+		"line": 23,
+		"raw": false
+	}
+]

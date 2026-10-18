@@ -26,7 +26,14 @@ import {
 } from "../src/portal/server.ts";
 import { createPortalSources, type PortalSources } from "../src/portal/sources.ts";
 import { newPortalSecret } from "../src/portal/token-store.ts";
-import { buildPortalHome, CANARY, cleanupPortalFixtures, FIXTURE_NOW, tempDir } from "./support/portal-fixture.ts";
+import {
+	buildPortalHome,
+	CANARY,
+	cleanupPortalFixtures,
+	FIXTURE_NOW,
+	FIXTURE_USER,
+	tempDir,
+} from "./support/portal-fixture.ts";
 import { bearer, installProof, type RawResponse, rawRequest } from "./support/portal-http.ts";
 
 const servers: PortalServer[] = [];
@@ -68,7 +75,22 @@ const start = async (
 
 const homeSources = (home: string, probe: Parameters<typeof createPortalSources>[0]["probe"] = () => "unsupported") =>
 	// harnessy-test-env: configuration, not a child process environment
-	createPortalSources({ homeRoot: home, env: {}, probe, timeoutMs: 250, clock: () => FIXTURE_NOW });
+	createPortalSources({
+		homeRoot: home,
+		env: { USER: FIXTURE_USER },
+		probe,
+		timeoutMs: 250,
+		clock: () => FIXTURE_NOW,
+		// No test ever probes a live loopback service.
+		probePort: async () => false,
+	});
+
+/** A request path for a route: each `{param}` takes its documented example. */
+const examplePath = (route: (typeof PORTAL_ROUTES)[number]): string =>
+	Object.entries(route.params ?? {}).reduce(
+		(path, [name, param]) => path.replace(`{${name}}`, param.example),
+		route.path,
+	);
 
 const exchange = async (harness: Harness): Promise<string> => {
 	const minted = await rawRequest(harness.port, {
@@ -369,7 +391,7 @@ describe("portal API data routes", () => {
 		const harness = await start(homeSources(fixture.home));
 		const page = await exchange(harness);
 		for (const route of PORTAL_ROUTES.filter((candidate) => candidate.data !== undefined)) {
-			const response = await rawRequest(harness.port, { path: route.path, headers: bearer(page) });
+			const response = await rawRequest(harness.port, { path: examplePath(route), headers: bearer(page) });
 			expect([route.path, response.status]).toEqual([route.path, 200]);
 			expect(checkPortalValue(PortalApiSchemas[route.schema as PortalApiSchemaName], response.json)).toBe(true);
 			expect((response.json as { schema: string }).schema).toBe(`harnessy.portal.${route.data!.name}.v1`);

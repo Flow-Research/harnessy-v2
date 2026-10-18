@@ -24,9 +24,13 @@ import {
 	readPortalInstallToken,
 } from "./token-store.ts";
 
+/** The app screens `open --route` can land on. */
+export const PORTAL_OPEN_ROUTES = ["inbox", "today", "tasks", "jobs", "reviews", "learning", "connections"] as const;
+export type PortalOpenRoute = (typeof PORTAL_OPEN_ROUTES)[number];
+
 export const PORTAL_USAGE =
 	"harnessy-portal serve [--port N] [--state-dir DIR] [--home-root DIR] [--workspace-root DIR] | " +
-	"status [--port N] [--state-dir DIR] | open [--port N] [--state-dir DIR] [--print] | " +
+	`status [--port N] [--state-dir DIR] | open [--port N] [--state-dir DIR] [--route ${PORTAL_OPEN_ROUTES.join("|")}] [--print] | ` +
 	"service-plan [--port N] [--state-dir DIR]";
 
 const OPTIONS = {
@@ -36,6 +40,7 @@ const OPTIONS = {
 	"workspace-root": { type: "string" },
 	host: { type: "string" },
 	print: { type: "boolean" },
+	route: { type: "string" },
 } as const;
 
 export interface PortalCommandIo {
@@ -218,14 +223,17 @@ export const runPortalCommand = async (
 			return { kind: "done" };
 		}
 		case "open": {
-			only(["port", "state-dir", "print"]);
+			only(["port", "state-dir", "print", "route"]);
+			const route = values.route;
+			if (route !== undefined && !(PORTAL_OPEN_ROUTES as ReadonlyArray<string>).includes(route))
+				fail("invalid_route");
 			const port = parsePort(values.port, false);
 			const token = readPortalInstallToken(stateDir);
 			const body = (await callWithInstallProof(port, token, "POST", "/v1/session/code", timeoutMs)) as {
 				readonly code: string;
 			};
 			// A fragment never reaches a server or a log.
-			const url = `http://${PORTAL_HOST}:${port}/#code=${body.code}`;
+			const url = `http://${PORTAL_HOST}:${port}/#code=${body.code}${route === undefined ? "" : `&route=${route}`}`;
 			if (values.print === true) io.write(`${url}\n`);
 			else io.openUrl(url);
 			return { kind: "done" };

@@ -1,131 +1,216 @@
 /**
- * The portal page's static files: `index.html`, `app.css` and the three page
- * scripts. They are read once at start and served from memory.
+ * The Harnessy app's static files, pinned by `asset-manifest.json`.
  *
- * The HTML has no inline script, no inline style and no event-handler
- * attribute, so the strict CSP (`script-src 'self'; style-src 'self'`) allows
- * everything it needs and nothing else. It contains no token or other secret.
+ * The app is built by Vite into `dist/portal-app/` (see `app/vite.config.ts`).
+ * The build writes a manifest that lists every file it emitted with its byte
+ * length and SHA-256. At start the portal reads the manifest, reads each listed
+ * file once (never following a symbolic link), checks its length and digest and
+ * serves it from memory. A file on disk that the manifest does not list is never
+ * served, and any mismatch stops the portal from starting.
  *
- * In a build, the scripts are the compiled `dist/portal/page/*.js`. When the
- * package runs from source (tests, `node src/portal-cli.ts`), the `.ts` files are
- * type-stripped with Node's own stripper and their relative `.ts` imports point
- * at the served `.js` names. Either way each script may statically import only
- * another page script; any other import, and any dynamic `import(...)`, is
- * refused at load.
+ * `index.html` is checked too: it may load scripts and styles only from files in
+ * the manifest, and it may hold no inline script, inline style or event-handler
+ * attribute. So the strict CSP (`script-src 'self'; style-src 'self'`) allows
+ * everything the app needs and nothing else. Files with a content hash in their
+ * name are cached as immutable; `index.html` is never cached.
+ *
+ * When no manifest exists (a source checkout that was never built), a small
+ * page without any script says so instead.
  */
-import { lstatSync, readFileSync } from "node:fs";
-import { stripTypeScriptTypes } from "node:module";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const PORTAL_PAGE_SCRIPTS = ["app", "mount", "view-model"] as const;
+export const PORTAL_ASSET_MANIFEST = "asset-manifest.json";
+export const PORTAL_ASSET_MANIFEST_SCHEMA = "harnessy.portal.asset-manifest.v1";
+export const PORTAL_NO_STORE = "no-store";
+export const PORTAL_IMMUTABLE = "public, max-age=31536000, immutable";
+/** One file may be at most this large; the whole bundle at most {@link MAX_BUNDLE_BYTES}. */
+export const MAX_ASSET_BYTES = 4 * 1024 * 1024;
+export const MAX_BUNDLE_BYTES = 16 * 1024 * 1024;
+export const MAX_ASSETS = 256;
+const MAX_MANIFEST_BYTES = 256 * 1024;
+
+export const PORTAL_ASSET_CONTENT_TYPES: Readonly<Record<string, string>> = {
+	".html": "text/html; charset=utf-8",
+	".js": "text/javascript; charset=utf-8",
+	".css": "text/css; charset=utf-8",
+	".woff2": "font/woff2",
+	".svg": "image/svg+xml",
+	".txt": "text/plain; charset=utf-8",
+};
+
+/** A relative path of one or two plain segments. No segment starts with a dot, so `..` is impossible. */
+const ASSET_PATH = /^(?:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\/)?[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/u;
+/** Vite names a built file `<name>-<hash>.<ext>`; such a file never changes under the same name. */
+const HASHED_NAME = /-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2|svg)$/u;
+const SHA256 = /^[a-f0-9]{64}$/u;
 
 export interface PortalPageAsset {
 	readonly contentType: string;
 	readonly body: Buffer;
+	readonly cacheControl: string;
 }
 
-/** Served path to file, for example `/app.js`. */
+/** Served path to file, for example `/assets/index-1a2b3c4d.js`. `/` is the app's `index.html`. */
 export type PortalPageAssets = ReadonlyMap<string, PortalPageAsset>;
 
-export const PORTAL_INDEX_HTML = `<!doctype html>
+export class PortalAssetError extends Error {
+	readonly code: string;
+
+	constructor(code: string, path?: string) {
+		super(path === undefined ? code : `${code}: ${path}`);
+		this.name = "PortalAssetError";
+		this.code = code;
+	}
+}
+
+/** Shown when the app bundle is not built. It loads nothing. */
+export const PORTAL_FALLBACK_HTML = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>Harnessy portal</title>
-<link rel="stylesheet" href="/app.css">
-<script type="module" src="/app.js"></script>
+<title>Harnessy</title>
 </head>
 <body>
-<header>
-<p class="brand">Harnessy</p>
-<nav aria-label="Pages">
-<a href="#/today">Today</a>
-<a href="#/health">Health</a>
-<a href="#/connections">Connections</a>
-</nav>
-</header>
-<h1 id="page-title">Today</h1>
-<main id="main" aria-live="polite"><p class="muted">Loading</p></main>
-<footer><p class="muted">Read-only. Approvals, publishing and sign-in stay in each owning service.</p></footer>
+<h1>Harnessy</h1>
+<p>The Harnessy app is not built in this installation, so only the read-only API is served.</p>
+<p>Build it with <code>npm run build</code> in the source checkout, or install a release.</p>
 </body>
 </html>
 `;
 
-/** Brand colours from the landing page, as variables a designer can change in one place. */
-export const PORTAL_APP_CSS = `:root {
-	--ink: #12151a;
-	--paper: #f7f8fa;
-	--panel: #ffffff;
-	--line: #dde1e6;
-	--muted: #5b6470;
-	--accent: #2fc7b0;
-	--warm: #e8963c;
-	--bad: #c2412d;
-	color-scheme: light dark;
-}
-@media (prefers-color-scheme: dark) {
-	:root { --ink: #e9edf2; --paper: #12151a; --panel: #1b1f26; --line: #2c323b; --muted: #9aa3ad; }
-}
-* { box-sizing: border-box; }
-body { margin: 0 auto; max-width: 960px; padding: 0 16px 32px; background: var(--paper); color: var(--ink);
-	font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-header { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
-.brand { margin: 0; font-weight: 700; }
-nav { display: flex; gap: 12px; }
-nav a, a { color: var(--accent); }
-h1 { font-size: 22px; margin: 20px 0 8px; }
-h2 { font-size: 16px; margin: 0 0 8px; }
-.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
-.rows { list-style: none; margin: 0; padding: 0; }
-.row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line); }
-.row:first-child { border-top: 0; }
-.row p { flex-basis: 100%; margin: 2px 0; }
-.count { margin-left: auto; }
-.muted { color: var(--muted); }
-.note { color: var(--muted); font-size: 14px; }
-.ok { color: var(--accent); }
-.warn { color: var(--warm); }
-.bad { color: var(--bad); }
-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--paper); padding: 1px 4px; border-radius: 4px;
-	overflow-wrap: anywhere; }
-`;
+/** The default bundle directory: `dist/portal-app/` of this package, from `src/` or `dist/`. */
+export const defaultPortalAppDir = (): string => fileURLToPath(new URL("../../dist/portal-app/", import.meta.url));
 
-const RELATIVE_TS_IMPORT = /(\bfrom\s+["']\.\/[a-z-]+)\.ts(["'])/gu;
-const IMPORT_SPECIFIER = /\b(?:from|import)\s*["']([^"']+)["']/gu;
-/** A dynamic `import(...)` could load any module, so a page script may not contain one. */
-const DYNAMIC_IMPORT = /\bimport\s*\(/u;
-
-/** The default page directory: `page/` next to this module, in `src/` or `dist/`. */
-export const defaultPortalPageDir = (): string => fileURLToPath(new URL("./page/", import.meta.url));
-
-const isFile = (path: string): boolean => lstatSync(path, { throwIfNoEntry: false })?.isFile() === true;
-
-/** One page script as browser JavaScript. */
-const loadScript = (pageDir: string, name: string): Buffer => {
-	const compiled = join(pageDir, `${name}.js`);
-	const source = isFile(compiled)
-		? readFileSync(compiled, "utf8")
-		: stripTypeScriptTypes(readFileSync(join(pageDir, `${name}.ts`), "utf8"), { mode: "strip" }).replace(
-				RELATIVE_TS_IMPORT,
-				"$1.js$2",
-			);
-	const allowed = new Set(PORTAL_PAGE_SCRIPTS.map((script) => `./${script}.js`));
-	if (DYNAMIC_IMPORT.test(source)) throw new Error(`portal_page_import_refused: ${name}`);
-	for (const match of source.matchAll(IMPORT_SPECIFIER))
-		if (!allowed.has(match[1]!)) throw new Error(`portal_page_import_refused: ${name}`);
-	return Buffer.from(source, "utf8");
+/** Read a regular file without following a final symbolic link. `undefined` when it does not exist. */
+const readNoFollow = (path: string, maxBytes: number): Buffer | undefined => {
+	let descriptor: number;
+	try {
+		descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw new PortalAssetError("portal_asset_unsafe", path);
+	}
+	try {
+		const stat = fstatSync(descriptor);
+		if (!stat.isFile()) throw new PortalAssetError("portal_asset_unsafe", path);
+		if (stat.size > maxBytes) throw new PortalAssetError("portal_asset_oversize", path);
+		const body = Buffer.alloc(stat.size);
+		const read = readSync(descriptor, body, 0, stat.size, 0);
+		if (read !== stat.size) throw new PortalAssetError("portal_asset_unreadable", path);
+		return body;
+	} finally {
+		closeSync(descriptor);
+	}
 };
 
-/** Read every page file once. Throws when a script is missing or imports anything but another page script. */
-export const loadPortalPageAssets = (pageDir: string = defaultPortalPageDir()): PortalPageAssets => {
-	const assets = new Map<string, PortalPageAsset>([
-		["/", { contentType: "text/html; charset=utf-8", body: Buffer.from(PORTAL_INDEX_HTML, "utf8") }],
-		["/app.css", { contentType: "text/css; charset=utf-8", body: Buffer.from(PORTAL_APP_CSS, "utf8") }],
-	]);
-	for (const name of PORTAL_PAGE_SCRIPTS)
-		assets.set(`/${name}.js`, { contentType: "text/javascript; charset=utf-8", body: loadScript(pageDir, name) });
+interface ManifestEntry {
+	readonly sha256: string;
+	readonly bytes: number;
+}
+
+const parseManifest = (body: Buffer): ReadonlyMap<string, ManifestEntry> => {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(body.toString("utf8"));
+	} catch {
+		throw new PortalAssetError("portal_asset_manifest_invalid");
+	}
+	const record = parsed as { schema?: unknown; files?: unknown } | null;
+	if (
+		typeof record !== "object" ||
+		record === null ||
+		Object.keys(record).length !== 2 ||
+		record.schema !== PORTAL_ASSET_MANIFEST_SCHEMA ||
+		typeof record.files !== "object" ||
+		record.files === null ||
+		Array.isArray(record.files)
+	)
+		throw new PortalAssetError("portal_asset_manifest_invalid");
+	const entries = Object.entries(record.files as Record<string, unknown>);
+	if (entries.length === 0 || entries.length > MAX_ASSETS) throw new PortalAssetError("portal_asset_manifest_invalid");
+	const files = new Map<string, ManifestEntry>();
+	for (const [path, value] of entries) {
+		const entry = value as { sha256?: unknown; bytes?: unknown } | null;
+		if (
+			!ASSET_PATH.test(path) ||
+			PORTAL_ASSET_CONTENT_TYPES[extname(path)] === undefined ||
+			typeof entry !== "object" ||
+			entry === null ||
+			Object.keys(entry).length !== 2 ||
+			typeof entry.sha256 !== "string" ||
+			!SHA256.test(entry.sha256) ||
+			typeof entry.bytes !== "number" ||
+			!Number.isSafeInteger(entry.bytes) ||
+			entry.bytes < 0 ||
+			entry.bytes > MAX_ASSET_BYTES
+		)
+			throw new PortalAssetError("portal_asset_manifest_invalid", path);
+		files.set(path, { sha256: entry.sha256, bytes: entry.bytes });
+	}
+	if (!files.has("index.html")) throw new PortalAssetError("portal_asset_manifest_invalid", "index.html");
+	return files;
+};
+
+/**
+ * Refuse an `index.html` that the CSP would partly block or that loads anything
+ * outside the manifest: an inline script, a `<style>` element, a `style` or `on…`
+ * attribute, or a `src`/`href` that is not a listed file.
+ */
+export const assertPortalIndexHtml = (html: string, listed: ReadonlySet<string>): void => {
+	if (/<style[\s>]/iu.test(html)) throw new PortalAssetError("portal_index_inline_style");
+	if (/\sstyle\s*=/iu.test(html)) throw new PortalAssetError("portal_index_inline_style");
+	if (/\son[a-z]+\s*=/iu.test(html)) throw new PortalAssetError("portal_index_event_handler");
+	for (const script of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/giu)) {
+		if (!/\ssrc\s*=/iu.test(script[1]!) || script[2]!.trim() !== "")
+			throw new PortalAssetError("portal_index_inline_script");
+	}
+	for (const reference of html.matchAll(/\s(?:src|href)\s*=\s*"([^"]*)"/giu)) {
+		const value = reference[1]!;
+		if (!value.startsWith("/") || !listed.has(value.slice(1)))
+			throw new PortalAssetError("portal_index_reference_unlisted", value);
+	}
+};
+
+/**
+ * Read and verify the bundle in `appDir`. Throws a {@link PortalAssetError} on
+ * any unsafe, unlisted, oversize or tampered file. Without a manifest, serves
+ * {@link PORTAL_FALLBACK_HTML} at `/`.
+ */
+export const loadPortalPageAssets = (appDir: string = defaultPortalAppDir()): PortalPageAssets => {
+	const manifestBody = readNoFollow(join(appDir, PORTAL_ASSET_MANIFEST), MAX_MANIFEST_BYTES);
+	if (manifestBody === undefined)
+		return new Map([
+			[
+				"/",
+				{
+					contentType: PORTAL_ASSET_CONTENT_TYPES[".html"]!,
+					body: Buffer.from(PORTAL_FALLBACK_HTML, "utf8"),
+					cacheControl: PORTAL_NO_STORE,
+				},
+			],
+		]);
+	const manifest = parseManifest(manifestBody);
+	const assets = new Map<string, PortalPageAsset>();
+	let total = 0;
+	for (const [path, entry] of manifest) {
+		const body = readNoFollow(join(appDir, path), MAX_ASSET_BYTES);
+		if (body === undefined) throw new PortalAssetError("portal_asset_missing", path);
+		if (body.byteLength !== entry.bytes || createHash("sha256").update(body).digest("hex") !== entry.sha256)
+			throw new PortalAssetError("portal_asset_digest_mismatch", path);
+		total += body.byteLength;
+		if (total > MAX_BUNDLE_BYTES) throw new PortalAssetError("portal_asset_oversize", path);
+		const isIndex = path === "index.html";
+		if (isIndex) assertPortalIndexHtml(body.toString("utf8"), new Set(manifest.keys()));
+		assets.set(isIndex ? "/" : `/${path}`, {
+			contentType: PORTAL_ASSET_CONTENT_TYPES[extname(path)]!,
+			body,
+			cacheControl: !isIndex && HASHED_NAME.test(path) ? PORTAL_IMMUTABLE : PORTAL_NO_STORE,
+		});
+	}
 	return assets;
 };

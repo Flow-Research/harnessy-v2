@@ -1,0 +1,69 @@
+/*
+ * Harnessy palette and type scale. Dark is the default; light follows the
+ * system preference unless a theme was chosen (`data-theme` on <html>).
+ * Status always pairs a dot with a word; colour never stands alone.
+ */
+:root {
+	--bg: #12151a;
+	--panel: #1b1f26;
+	--raised: #222731;
+	--hairline: #2a2f38;
+	--text: #edefec;
+	--text-2: #a7adb5;
+	--muted: #6e7580;
+	--ok: #2fc7b0;
+	--attention: #e8963c;
+	--danger: #e2543d;
+	--idle: #8a93a0;
+	--on-accent: #0c1a17;
+	--focus: var(--ok);
+
+	--font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+	--font-title: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-6: 24px;
+	--radius-control: 6px;
+	--radius-panel: 10px;
+	--row: 40px;
+	--motion: 120ms ease-out;
+	color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme="dark"]) {
+		--bg: #edefec;
+		--panel: #f7f8f6;
+		--raised: #ffffff;
+		--hairline: #d6dad4;
+		--text: #12151a;
+		--text-2: #4a515b;
+		--muted: #7a818b;
+		--ok: #14917f;
+		--attention: #b86a17;
+		--danger: #b83a26;
+		--idle: #6b7480;
+		--on-accent: #ffffff;
+		color-scheme: light;
+	}
+}
+
+:root[data-theme="light"] {
+	--bg: #edefec;
+	--panel: #f7f8f6;
+	--raised: #ffffff;
+	--hairline: #d6dad4;
+	--text: #12151a;
+	--text-2: #4a515b;
+	--muted: #7a818b;
+	--ok: #14917f;
+	--attention: #b86a17;
+	--danger: #b83a26;
+	--idle: #6b7480;
+	--on-accent: #ffffff;
+	color-scheme: light;
+}

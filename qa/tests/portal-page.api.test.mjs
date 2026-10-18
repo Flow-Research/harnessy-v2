@@ -29,19 +29,30 @@ const run = (pkg, file, pattern, expected) => {
 	assert.doesNotMatch(output, /\d+ (failed|todo)/u, output);
 };
 
-test("PRTP-001 the page files carry the strict CSP and no secret", () => {
-	run("harnessy-local-host", "test/portal-page-server.test.ts", "exact CSP|request checks to page files|without page files|compiled scripts|imports anything but", 5);
+test("PRTP-001 the app files are manifest-pinned and carry the strict CSP", () => {
+	run("harnessy-local-host", "test/portal-assets.test.ts", "manifest's files|script-free page|tampered, resized|malformed, escapes|inline script, style|real build|unchanged CSP", 7);
 });
 
-test("PRTP-002 the page renders API data as text and links only to loopback services", () => {
-	run("harnessy-local-host", "test/portal-page.test.ts", "only loopback http links|hostile API text|bad one|previous mount|degrades each tile|bounds long text|inline script|never parses markup", 8);
+test("PRTP-002 the app renders API data as text and links only to loopback services", () => {
+	run("harnessy-local-host", "test/app/lib.test.ts", "loopback http links|raw HTML, script|bounds the number|parses headings", 4);
+	run("harnessy-local-host", "test/app/app.test.tsx", "Markdown as text|unsafe hand-off", 2);
 });
 
-test("PRTP-003 the page signs in with a one-time code and renders seeded data end to end", () => {
-	run("harnessy-local-host", "test/portal-page-server.test.ts", "renders seeded|already spent", 2);
-	run("harnessy-local-host", "test/portal-page.test.ts", "clears the code|new code opened|drops a slower|malformed, refused|storage is blocked|expired or malformed|forgets a session|without its main element|from a browser window", 9);
+test("PRTP-003 the app signs in with a one-time code and renders every screen end to end", () => {
+	run("harnessy-local-host", "test/app/app.test.tsx", "signs in from the link|sign-in help|empty home usable|session storage, history|palette entries|inbox keys", 6);
+	run("harnessy-local-host", "test/app/lib.test.ts", "clears the code|unknown route|stored session|one fetch per path|decoded segments|Lagos times|level-2 headings", 7);
 });
 
-test("PRTP-004 the page adds no writer", () => {
+test("PRTP-004 the app adds no writer", () => {
 	run("harnessy-local-host", "test/portal-non-writer.test.ts", "every documented route and page file", 1);
+});
+
+test("PRTP-005 the read routes derive the Inbox, Tasks and Jobs honestly", () => {
+	run("harnessy-local-host", "test/portal-app-api.test.ts", ".", 15);
+	run("harnessy-core", "test/read-model-app.test.ts", ".", 21);
+});
+
+test("PRTP-006 harnessy open is the front door", () => {
+	run("harnessy-local-host", "test/portal-command.test.ts", "open --route", 1);
+	run("harnessy-core", "test/read-model-api.test.ts", "front door|through the same host", 2);
 });

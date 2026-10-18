@@ -9,6 +9,10 @@
 				"useConst": "error",
 				"useNodejsImportProtocol": "off"
 			},
+			"security": {
+				"noDangerouslySetInnerHtml": "error",
+				"noDangerouslySetInnerHtmlWithChildren": "error"
+			},
 			"suspicious": {
 				"noExplicitAny": "off",
 				"noControlCharactersInRegex": "off",
@@ -28,6 +32,8 @@
 			"packages/*/src/**/*.ts",
 			"packages/*/test/**/*.ts",
 			"packages/coding-agent/examples/**/*.ts",
+			"packages/harnessy-local-host/src/portal/app/**/*.tsx",
+			"packages/harnessy-local-host/test/app/**/*.tsx",
 			"!**/node_modules/**/*",
 			"!**/test-sessions.ts",
 			"!**/models.generated.ts",

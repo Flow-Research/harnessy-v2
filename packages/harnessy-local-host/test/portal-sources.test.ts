@@ -26,6 +26,7 @@ import {
 	CANARY,
 	cleanupPortalFixtures,
 	FIXTURE_NOW,
+	FIXTURE_USER,
 	fileFingerprint,
 	tempDir,
 	treeListing,
@@ -38,8 +39,23 @@ afterEach(async () => {
 	cleanupPortalFixtures();
 });
 
-const sourcesFor = (homeRoot: string, env: NodeJS.ProcessEnv = {}) =>
-	createPortalSources({ homeRoot, env, probe: () => "unsupported", timeoutMs: 250, clock: () => FIXTURE_NOW });
+const sourcesFor = (homeRoot: string, env: NodeJS.ProcessEnv = { USER: FIXTURE_USER }) =>
+	createPortalSources({
+		homeRoot,
+		env,
+		probe: () => "unsupported",
+		timeoutMs: 250,
+		clock: () => FIXTURE_NOW,
+		// No test ever probes a live loopback service.
+		probePort: async () => false,
+	});
+
+/** A request path for a route: each `{param}` takes its documented example. */
+const examplePath = (route: (typeof PORTAL_ROUTES)[number]): string =>
+	Object.entries(route.params ?? {}).reduce(
+		(path, [name, param]) => path.replace(`{${name}}`, param.example),
+		route.path,
+	);
 
 type Tiles = Record<string, { state: string; reason?: string; data?: unknown }>;
 
@@ -62,9 +78,10 @@ describe("portal sources", () => {
 		const routes = PORTAL_ROUTES.filter((route) => route.data !== undefined);
 		for (let read = 0; read < 50; read += 1)
 			for (const route of routes) {
+				const path = examplePath(route);
 				const response = await rawRequest(server.port, {
-					path: route.path,
-					headers: await installProof(server.port, token, "GET", route.path),
+					path,
+					headers: await installProof(server.port, token, "GET", path),
 				});
 				expect(response.status).toBe(200);
 			}
@@ -156,7 +173,7 @@ describe("portal sources", () => {
 		}
 	});
 
-	it("reports every tile of an empty home as a degraded state, not a failure", () => {
+	it("reports every tile of an empty home as a degraded state, not a failure", async () => {
 		const home = tempDir("empty");
 		const sources = sourcesFor(home);
 		const tree = treeListing(home);
@@ -186,7 +203,7 @@ describe("portal sources", () => {
 			const value = {
 				schema: `harnessy.portal.${route.data!.name}.v1`,
 				generatedAt: FIXTURE_NOW.toISOString(),
-				tiles: sources[route.data!.source](),
+				tiles: await sources[route.data!.source](),
 			};
 			expect([route.path, checkPortalValue(PortalApiSchemas[route.schema!], value)]).toEqual([route.path, true]);
 		}

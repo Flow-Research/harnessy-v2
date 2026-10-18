@@ -6,7 +6,7 @@
  * reader never calls it: it reads the ledger through a bounded read-only
  * snapshot and reads briefs, previews and weekly runs from the file system.
  */
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import type { LifeOrchestratorSettings } from "../jarvis/life-orchestrator/config.ts";
@@ -17,6 +17,7 @@ import {
 	LIFE_WEEKLY_RUN_FILE,
 	listLifeWeeklyRuns,
 } from "../jarvis/life-orchestrator/weekly-runs.ts";
+import type { LifeBriefDatesData, LifeWeeklyDraftData } from "./app-schemas.ts";
 import { assertDelegatedFileBounded, readBoundedDirectory, readBoundedFile } from "./files.ts";
 import type {
 	LifeBriefStatusData,
@@ -223,4 +224,73 @@ export const readLifeBrief = (
 			now,
 		);
 	});
+};
+
+/** How many recent days the brief date switcher offers, today included. */
+export const LIFE_BRIEF_DAYS = 7;
+const DAY_MS = 86_400_000;
+
+/** The canonical briefs that exist among the last {@link LIFE_BRIEF_DAYS} days, newest first. */
+export const readLifeBriefDates = (
+	settings: LifeOrchestratorSettings,
+	options: ReadModelOptions = {},
+): TileResult<LifeBriefDatesData> => {
+	const now = readClock(options);
+	return guardTile(now, () => {
+		const dates: Array<LifeBriefDatesData["dates"][number]> = [];
+		for (let offset = 0; offset < LIFE_BRIEF_DAYS; offset += 1) {
+			const date = new Date(now.getTime() - offset * DAY_MS);
+			const path = canonicalLifeBriefPath(settings.paths.lifeDirectory, date);
+			const stat = lstatSync(path, { throwIfNoEntry: false });
+			if (stat === undefined || !stat.isFile()) continue;
+			dates.push({ date: lagosDate(date), journaled: existsSync(`${path}.journaled`), bytes: stat.size });
+		}
+		return okTile({ dates }, now);
+	});
+};
+
+const RUN_HASH = /^[a-f0-9]{64}$/u;
+
+/**
+ * The text of one weekly run's `draft.md`, up to 64 KiB, to be rendered as text.
+ * The run is named by its 64-hex run hash; anything else is refused.
+ */
+export const readLifeWeeklyDraft = (
+	settings: LifeOrchestratorSettings,
+	runHash: string,
+	options: ReadModelOptions = {},
+): TileResult<LifeWeeklyDraftData> => {
+	const now = readClock(options);
+	return guardTile(now, () => {
+		if (!RUN_HASH.test(runHash)) return stateTile("error", "run_invalid", now);
+		const listing = readBoundedDirectory(settings.paths.reviewDirectory, MAX_REVIEW_SCAN);
+		const entry = listing.entries.find(
+			(candidate) =>
+				candidate.isDirectory() && WEEKLY_RUN_NAME.test(candidate.name) && candidate.name.endsWith(`-${runHash}`),
+		);
+		if (entry === undefined)
+			return stateTile(
+				listing.truncated ? "unsupported" : "missing",
+				listing.truncated ? "scan_limit" : "run_missing",
+				now,
+			);
+		const file = readBoundedFile(join(settings.paths.reviewDirectory, entry.name, "draft.md"), MAX_TEXT_BYTES);
+		return okTile(
+			{
+				periodId: /^weekly-(\d{4}-W\d{2})-/u.exec(entry.name)![1]!,
+				runHash,
+				text: new TextDecoder("utf-8", { fatal: false }).decode(file.bytes),
+				truncated: file.truncated,
+				bytes: file.size,
+				modifiedAt: file.modifiedAt.toISOString(),
+			},
+			now,
+		);
+	});
+};
+
+/** Today's canonical brief path when it exists as a regular file, else `null`. */
+export const lifeBriefPathIfPresent = (settings: LifeOrchestratorSettings, date: Date): string | null => {
+	const path = canonicalLifeBriefPath(settings.paths.lifeDirectory, date);
+	return lstatSync(path, { throwIfNoEntry: false })?.isFile() === true ? path : null;
 };

@@ -99,6 +99,9 @@ jobs:
       - name: Smoke test source cockpit headlessly
         run: node scripts/check-harnessy-cockpit.mjs
 
+      - name: Smoke the Harnessy app in headless Chrome (fails on any CSP violation)
+        run: node scripts/check-portal-app-browser.mjs
+
       - name: Check
         run: npm run check
 

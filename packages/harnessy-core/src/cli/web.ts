@@ -274,4 +274,9 @@ export const webCommand = Command.make(
 				return yield* new HarnessError({ message: `Executor web command exited with code ${webExitCode}.` });
 			}
 		}),
-).pipe(Command.withDescription("Start or attach the packaged engine daemon and open its cockpit"));
+).pipe(
+	Command.withDescription(
+		"Start or attach the Tools engine (the Executor cockpit: integrations, OAuth, secrets, policies, toolkits). " +
+			"For your day-to-day app, use `harnessy open`.",
+	),
+);

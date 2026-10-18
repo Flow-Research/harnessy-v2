@@ -223,20 +223,20 @@ const exactHostInventory = [
 	"dist/portal/command.js",
 	"dist/portal/connections.d.ts",
 	"dist/portal/connections.js",
+	"dist/portal/inbox.d.ts",
+	"dist/portal/inbox.js",
+	"dist/portal/jobs.d.ts",
+	"dist/portal/jobs.js",
 	"dist/portal/launchd-plan.d.ts",
 	"dist/portal/launchd-plan.js",
 	"dist/portal/learning.d.ts",
 	"dist/portal/learning.js",
+	"dist/portal/liveness.d.ts",
+	"dist/portal/liveness.js",
 	"dist/portal/openapi.d.ts",
 	"dist/portal/openapi.js",
 	"dist/portal/page-assets.d.ts",
 	"dist/portal/page-assets.js",
-	"dist/portal/page/app.d.ts",
-	"dist/portal/page/app.js",
-	"dist/portal/page/mount.d.ts",
-	"dist/portal/page/mount.js",
-	"dist/portal/page/view-model.d.ts",
-	"dist/portal/page/view-model.js",
 	"dist/portal/process.d.ts",
 	"dist/portal/process.js",
 	"dist/portal/routes.d.ts",
@@ -315,8 +315,19 @@ try {
 	const hostPack = pack(packageRoot);
 	const corePack = pack(coreRoot);
 	const packedPaths = hostPack.files.map((file) => file.path).sort();
+	// The app bundle's file names carry content hashes, so its inventory is its own manifest:
+	// exactly the manifest, plus every file it lists, with nothing else under dist/portal-app/.
+	const appManifestPath = join(packageRoot, "dist", "portal-app", "asset-manifest.json");
+	const appManifest = JSON.parse(readFileSync(appManifestPath, "utf8"));
+	assert(appManifest.schema === "harnessy.portal.asset-manifest.v1", "App bundle manifest schema drifted");
+	const appInventory = ["dist/portal-app/asset-manifest.json", ...Object.keys(appManifest.files).map((path) => `dist/portal-app/${path}`)].sort();
+	assert(appInventory.includes("dist/portal-app/index.html"), "App bundle manifest does not list index.html");
 	assert(
-		JSON.stringify(packedPaths) === JSON.stringify(exactHostInventory),
+		JSON.stringify(packedPaths.filter((path) => path.startsWith("dist/portal-app/"))) === JSON.stringify(appInventory),
+		`Packed app bundle differs from its manifest: ${JSON.stringify(packedPaths.filter((path) => path.startsWith("dist/portal-app/")))}`,
+	);
+	assert(
+		JSON.stringify(packedPaths.filter((path) => !path.startsWith("dist/portal-app/"))) === JSON.stringify(exactHostInventory),
 		`Packed local-host inventory drifted: ${JSON.stringify(packedPaths)}`,
 	);
 	assert(!packedPaths.some((path) => path.endsWith(".map")), "Packed local-host leaked source maps");

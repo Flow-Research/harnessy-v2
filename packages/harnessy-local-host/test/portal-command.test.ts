@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { checkPortalValue, PortalApiSchemas } from "@harnessy/core/read-model";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { type PortalCommandIo, runPortalCommand } from "../src/portal/command.ts";
+import { PORTAL_OPEN_ROUTES, PORTAL_USAGE, type PortalCommandIo, runPortalCommand } from "../src/portal/command.ts";
 import type { PortalServer } from "../src/portal/server.ts";
 import {
 	PORTAL_TOKEN_FILE,
@@ -99,6 +99,28 @@ describe("harnessy-portal commands", () => {
 		await runPortalCommand(["open", "--port", port, "--state-dir", stateDir], opened.io);
 		expect(opened.opened).toHaveLength(1);
 		expect(opened.output).toEqual([]);
+	});
+
+	it("open --route lands on one app screen and refuses any other route", async () => {
+		const home = tempDir("open-route");
+		const stateDir = join(tempDir("state"), "portal");
+		const served = await serve(home, stateDir);
+		const port = String(served.server.port);
+		for (const route of PORTAL_OPEN_ROUTES) {
+			const printed = io(home, { HARNESSY_PORTAL_STATE_DIR: stateDir });
+			await runPortalCommand(["open", "--port", port, "--route", route, "--print"], printed.io);
+			expect(printed.output.join("").trim()).toMatch(
+				new RegExp(`^http://127\\.0\\.0\\.1:${port}/#code=[A-Za-z0-9_-]{43}&route=${route}$`, "u"),
+			);
+		}
+		for (const route of ["activity", "#/x", "jobs&code=x", ""])
+			await expect(
+				runPortalCommand(
+					["open", "--port", port, "--route", route, "--print"],
+					io(home, { HARNESSY_PORTAL_STATE_DIR: stateDir }).io,
+				),
+			).rejects.toMatchObject({ code: "invalid_route" });
+		expect(PORTAL_USAGE).toContain("--route inbox|today|tasks|jobs|reviews|learning|connections");
 	});
 
 	it("service-plan prints the LaunchAgent and creates nothing", async () => {

@@ -21,7 +21,7 @@ import {
 import { bearerSecret, PortalSessions } from "./auth.ts";
 import { buildPortalOpenApi } from "./openapi.ts";
 import type { PortalPageAssets } from "./page-assets.ts";
-import { PORTAL_ROUTES, type PortalRoute } from "./routes.ts";
+import { matchPortalRoute, PORTAL_ROUTES, type PortalRoute, type PortalRouteParams } from "./routes.ts";
 import type { PortalSources } from "./sources.ts";
 
 export const PORTAL_HOST = "127.0.0.1";
@@ -58,7 +58,7 @@ export interface PortalServerOptions {
 	readonly clock?: () => number;
 	readonly cacheTtlMs?: number;
 	readonly log?: (entry: PortalLogEntry) => void;
-	/** The page's static files (`/`, `/app.css`, `/*.js`). Without them only the API is served. */
+	/** The app's static files, pinned by its asset manifest. Without them only the API is served. */
 	readonly page?: PortalPageAssets;
 }
 
@@ -121,6 +121,8 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 	const sessions = new PortalSessions(options.installToken, clock);
 	const openApi = buildPortalOpenApi(PORTAL_ROUTES, options.version);
 	const cache = new Map<string, { readonly expiresAt: number; readonly value: unknown }>();
+	/** Requests for the same path while its sources are read share one read. */
+	const inFlight = new Map<string, Promise<unknown>>();
 	let host = "";
 	let origin = "";
 
@@ -140,23 +142,48 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		response.end(bytes);
 	};
 
-	/** A data response, cached for `ttl` ms. Only a value that passed its schema is cached. */
-	const dataValue = (route: PortalRoute, data: NonNullable<PortalRoute["data"]>): unknown => {
-		const cached = cache.get(route.path);
+	/**
+	 * A data response, cached for `ttl` ms under its request path. Only a value that
+	 * passed its schema is cached.
+	 */
+	const dataValue = async (
+		route: PortalRoute,
+		data: NonNullable<PortalRoute["data"]>,
+		path: string,
+		params: PortalRouteParams,
+	): Promise<unknown> => {
+		const cached = cache.get(path);
 		const now = clock();
 		if (cached !== undefined && cached.expiresAt > now) return cached.value;
+		const running = inFlight.get(path);
+		if (running !== undefined) return running;
+		const read = readData(route, data, path, params, now).finally(() => inFlight.delete(path));
+		inFlight.set(path, read);
+		return read;
+	};
+
+	const readData = async (
+		route: PortalRoute,
+		data: NonNullable<PortalRoute["data"]>,
+		path: string,
+		params: PortalRouteParams,
+		now: number,
+	): Promise<unknown> => {
+		const tiles = await options.sources[data.source](params);
 		// A tile that fails its own schema becomes an `error` tile; only a broken envelope is a 500.
 		const checked = repairPortalTiles(PortalApiSchemas[route.schema!], {
 			schema: portalResponseSchemaId(data.name),
 			generatedAt: new Date(now).toISOString(),
-			tiles: options.sources[data.source](),
+			tiles,
 		});
 		if (checked === undefined) {
 			log({ kind: "error", code: "response_invalid", route: route.path });
 			throw new RequestRefused(500, "response_invalid");
 		}
 		if (checked.replaced.length > 0) log({ kind: "error", code: "tile_invalid", route: route.path });
-		cache.set(route.path, { expiresAt: now + ttl, value: checked.value });
+		// Parameter routes can have many paths; keep the cache bounded.
+		if (cache.size >= 64) cache.clear();
+		cache.set(path, { expiresAt: now + ttl, value: checked.value });
 		return checked.value;
 	};
 
@@ -166,9 +193,15 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 	};
 
 	/** Check the route's credential and build its response value. */
-	const authorize = (route: PortalRoute, request: IncomingMessage, body: Buffer): unknown => {
+	const authorize = (
+		route: PortalRoute,
+		request: IncomingMessage,
+		body: Buffer,
+		path: string,
+		params: PortalRouteParams,
+	): unknown => {
 		const authorization = request.headers.authorization;
-		const installProof = () => sessions.isInstallProof(authorization, origin, route.method, route.path);
+		const installProof = () => sessions.isInstallProof(authorization, origin, route.method, path);
 		switch (route.auth) {
 			case "none":
 				return route.schema === null
@@ -197,7 +230,7 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 			case "read":
 				if (!sessions.isPageToken(bearerSecret(authorization)) && !installProof())
 					throw new RequestRefused(401, "unauthorized");
-				return dataValue(route, route.data!);
+				return dataValue(route, route.data!, path, params);
 		}
 	};
 
@@ -230,21 +263,23 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 			// A static file is the same for every visitor and carries no secret; it needs no credential.
 			response.writeHead(200, {
 				...SECURITY_HEADERS,
+				"Cache-Control": asset.cacheControl,
 				"Content-Type": asset.contentType,
 				"Content-Length": String(asset.body.byteLength),
 			});
 			response.end(asset.body);
 			return;
 		}
-		const route = PORTAL_ROUTES.find((candidate) => candidate.path === path);
-		if (route === undefined) throw new RequestRefused(404, "not_found");
+		const matched = matchPortalRoute(PORTAL_ROUTES, path);
+		if (matched === undefined) throw new RequestRefused(404, "not_found");
+		const { route, params } = matched;
 		onRoute(route.path);
 		if (request.method !== route.method) {
 			respond(response, 405, { error: "method_not_allowed" }, { Allow: route.method });
 			return;
 		}
 		const body = await readBody(request);
-		respond(response, 200, authorize(route, request, body));
+		respond(response, 200, await authorize(route, request, body, path, params));
 	};
 
 	const server: Server = createServer(

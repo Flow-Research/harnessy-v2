@@ -62,6 +62,33 @@ export const FIXTURE_NOW = new Date("2026-10-17T08:00:00.000Z");
 export const MEETING_OWNER = "owner@example.test";
 /** Text that must never appear in a portal response, log or opened-file record. */
 export const CANARY = "PORTAL-CANARY-7f3a";
+/** The owner's own brief and draft text: the Today screen shows it, by design. */
+export const OWNER_BRIEF_TEXT = "OWNER-BRIEF-TEXT";
+export const OWNER_DRAFT_TEXT = "OWNER-DRAFT-TEXT";
+/** The fixture's user name, as `USER` gives it to the portal. */
+export const FIXTURE_USER = "owner";
+
+/** Today's brief in the shape the Life orchestrator writes it. */
+export const FIXTURE_BRIEF = [
+	"## What Changed",
+	"",
+	`- ${OWNER_BRIEF_TEXT} for today.`,
+	"",
+	"## Decisions and Actions for You",
+	"",
+	"1. **Settle the mandate.** Decide before Friday.",
+	"   Continuation detail stays with the item.",
+	"2. **Approve the budget.** Due 2026-10-20.",
+	"",
+	"## Delegated or Waiting",
+	"",
+	"- **Seyi and John — Garden delivery.** Beta testing continues.",
+	"",
+	"## Worth Reading",
+	"",
+	"- [A note](https://example.test/a) and <script>alert(1)</script> stay text.",
+	"",
+].join("\n");
 
 const COMMUNITY_STORE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS community_briefings (
@@ -196,12 +223,25 @@ const populateLife = async (home: string) => {
 	);
 	const brief = canonicalLifeBriefPath(join(home, ".agents", "life"), FIXTURE_NOW);
 	mkdirSync(dirname(brief), { recursive: true });
-	writeFileSync(brief, `# Daily brief\n${CANARY}\n`);
+	writeFileSync(brief, FIXTURE_BRIEF);
 	const reviews = join(home, ".harnessy", "jarvis", "life", "reviews");
 	const run = join(reviews, `weekly-2026-W42-${createHash("sha256").update("2026-W42").digest("hex")}`);
 	mkdirSync(run, { recursive: true });
 	writeFileSync(join(run, "run.json"), JSON.stringify({ runId: "weekly:2026-W42", grantId: "g", pid: 1 }));
-	writeFileSync(join(run, "draft.md"), `draft ${CANARY}`);
+	writeFileSync(join(run, "draft.md"), `# Week 42\n\ndraft ${OWNER_DRAFT_TEXT}\n`);
+	writeFileSync(
+		join(home, ".agents", "life", "reminders.md"),
+		[
+			"# Reminders",
+			"",
+			"## Current Follow-Ups",
+			"",
+			"- [ ] Call the bank by 2026-10-19",
+			"- [x] Send the deck",
+			"Loose note line",
+			"",
+		].join("\n"),
+	);
 	writeFileSync(join(reviews, "2026-10-16-bbbb.md"), `preview ${CANARY}`);
 	return path;
 };
@@ -293,8 +333,84 @@ export const buildPortalHome = async (prefix: string): Promise<PortalHome> => {
 		await store.loadCheckpoint(account);
 		await store.saveCheckpoint(account, { cursor: null, seen: {}, updatedAt });
 	}
+	// Workspace context for derived tasks: the action register and one project's status file.
+	const privateContext = join(home, ".jarvis", "context", "private", FIXTURE_USER);
+	mkdirSync(join(privateContext, "founder-office"), { recursive: true });
+	writeFileSync(
+		join(privateContext, "founder-office", "first-week-action-register.md"),
+		[
+			"# First-Week Action Register",
+			"",
+			"| ID | Action | Owner | Due | Status | Next action |",
+			"| --- | --- | --- | --- | --- | --- |",
+			"| FW-01 | Approve the mandate | Owner | 2026-10-20 | Open | Review |",
+			"| FW-02 | Publish the register | Gbolahan | 2026-10-21 | In progress | Draft |",
+			"| FW-03 | Old item | Owner | 2026-10-01 | Done | – |",
+			"| FW-04 | Parked item | Owner | 2026-10-01 | Parked | – |",
+			"",
+		].join("\n"),
+	);
+	mkdirSync(join(privateContext, "alpha"), { recursive: true });
+	writeFileSync(
+		join(privateContext, "alpha", "status.md"),
+		[
+			"# Alpha",
+			"",
+			"## This week action items",
+			"- Owner — ship the alpha",
+			"- Wait on legal",
+			"",
+			"## Notes",
+			"- not a task",
+			"",
+		].join("\n"),
+	);
+	// A LaunchAgent whose environment holds a secret: the Jobs detail shows only ProgramArguments.
+	mkdirSync(join(home, "Library", "LaunchAgents"), { recursive: true });
+	writeFileSync(
+		join(home, "Library", "LaunchAgents", "com.flow-harness.life-orchestrator.daily-brief.plist"),
+		[
+			'<?xml version="1.0" encoding="UTF-8"?>',
+			'<plist version="1.0"><dict>',
+			"<key>Label</key><string>com.flow-harness.life-orchestrator.daily-brief</string>",
+			"<key>ProgramArguments</key><array>",
+			"<string>/opt/node/bin/node</string><string>/opt/harnessy/cli.js</string><string>jarvis</string>",
+			"<string>life</string><string>daily</string><string>--max-output-bytes</string><string>1048576</string>",
+			"</array>",
+			`<key>EnvironmentVariables</key><dict><key>SECRET</key><string>${CANARY}</string></dict>`,
+			"</dict></plist>",
+			"",
+		].join("\n"),
+	);
 	const meeting = await populateMeetings(home);
 	const community = populateCommunity(communityState);
+	writeFileSync(
+		join(communityState, "community-weekly-generation.json"),
+		JSON.stringify({
+			kind: "harnessy.community.briefing.weekly-generation.v1",
+			publication: false,
+			updatedAt: "2026-10-12T22:10:00.000Z",
+			schedule: { weekday: 0, hour: 23, minute: 0, timezone: "Africa/Lagos" },
+			lastFailure: { weekStart: "2026-09-28", at: "2026-10-05T22:30:00.000Z", code: "model_retired", attempts: 3 },
+			standingFault: null,
+			weeks: {
+				"2026-09-28": {
+					status: "failed",
+					attempts: 3,
+					lastAttemptAt: "2026-10-05T22:30:00.000Z",
+					code: "model_retired",
+					gaveUp: true,
+				},
+				"2026-10-05": {
+					status: "created",
+					attempts: 1,
+					lastAttemptAt: "2026-10-12T22:05:00.000Z",
+					briefingId: "b1",
+				},
+			},
+		}),
+		{ mode: 0o600 },
+	);
 	const life = await populateLife(home);
 	const wiki = await populateWiki(home);
 	for (const slug of ["flow", "personal"]) mkdirSync(join(home, ".config", `gws-${slug}`), { recursive: true });

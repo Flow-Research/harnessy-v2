@@ -8,8 +8,16 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import * as Result from "effect/Result";
+
 import { REQUIRED_QUEUE_COLUMNS, resolveCommunityBriefingConfig } from "../jarvis/community-briefing/status.ts";
+import {
+	COMMUNITY_GENERATION_STATUS_FILE,
+	readCommunityGenerationStatus,
+} from "../jarvis/community-briefing/weekly-generation.ts";
+import type { CommunityGenerationData } from "./app-schemas.ts";
 import { assertDelegatedFileBounded } from "./files.ts";
+import { JOB_SCHEDULE_TIMEZONE, nextCalendarRun } from "./job-schedules.ts";
 import type { CommunityConfigData, CommunityQueueData } from "./schemas.ts";
 import { readSqliteSnapshot } from "./sqlite-snapshot.ts";
 import {
@@ -36,7 +44,73 @@ export interface CommunityReadOptions extends ReadModelOptions {
 export interface CommunitySummary {
 	readonly config: TileResult<CommunityConfigData>;
 	readonly queue: TileResult<CommunityQueueData>;
+	/** The review service's weekly draft generation record. */
+	readonly generation: TileResult<CommunityGenerationData>;
 }
+
+const bounded = (value: string, max: number): string => value.slice(0, max);
+const isoDay = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/u.test(value);
+
+/**
+ * The weekly generation record (`community-weekly-generation.json`), read without
+ * following a link and refused unless it is owner-only. Codes and dates only.
+ */
+export const readCommunityGeneration = (stateRoot: string, now: Date): TileResult<CommunityGenerationData> => {
+	const read = Result.try(() => readCommunityGenerationStatus(join(stateRoot, COMMUNITY_GENERATION_STATUS_FILE)));
+	if (Result.isFailure(read)) {
+		const message = read.failure instanceof Error ? read.failure.message : "";
+		return message === "status_record_unsafe"
+			? stateTile("unsafe", "status_record_unsafe", now)
+			: stateTile("error", message === "status_record_invalid" ? "status_record_invalid" : "read_failed", now);
+	}
+	const record = read.success;
+	if (record === undefined) return stateTile("missing", "generation_unrecorded", now);
+	const schedule = record.schedule;
+	const validSchedule =
+		schedule.weekday >= 0 &&
+		schedule.weekday <= 6 &&
+		schedule.hour >= 0 &&
+		schedule.hour <= 23 &&
+		schedule.minute >= 0 &&
+		schedule.minute <= 59;
+	const weeks = Object.entries(record.weeks)
+		.filter(([weekStart]) => isoDay(weekStart))
+		.sort(([a], [b]) => b.localeCompare(a))
+		.slice(0, 12)
+		.map(([weekStart, week]) => ({
+			weekStart,
+			status: week.status,
+			attempts: Math.max(0, week.attempts),
+			lastAttemptAt: bounded(week.lastAttemptAt, 40),
+			code: week.code === undefined ? null : bounded(week.code, 64),
+			gaveUp: week.gaveUp === true,
+			recovered: week.recovered === true,
+		}));
+	const failure = record.lastFailure;
+	const fault = record.standingFault ?? null;
+	return okTile(
+		{
+			schedule: validSchedule ? { ...schedule, timezone: bounded(schedule.timezone, 64) } : null,
+			updatedAt: bounded(record.updatedAt, 40),
+			nextRun:
+				validSchedule && schedule.timezone === JOB_SCHEDULE_TIMEZONE
+					? nextCalendarRun(now, schedule.hour, schedule.minute, schedule.weekday).toISOString()
+					: null,
+			lastFailure:
+				failure === null || !isoDay(failure.weekStart)
+					? null
+					: {
+							weekStart: failure.weekStart,
+							at: bounded(failure.at, 40),
+							code: bounded(failure.code, 64),
+							attempts: Math.max(0, failure.attempts),
+						},
+			standingFault: fault === null ? null : { code: bounded(fault.code, 64), since: bounded(fault.since, 40) },
+			weeks,
+		},
+		now,
+	);
+};
 
 const nullableText = (value: unknown): string | null => (value === null ? null : String(value));
 
@@ -44,6 +118,7 @@ const nullableText = (value: unknown): string | null => (value === null ? null :
 export const readCommunitySummary = (options: CommunityReadOptions = {}): CommunitySummary => {
 	const now = readClock(options);
 	let databasePath: string | undefined;
+	let stateRoot: string | undefined;
 	const config = guardTile(now, (): TileResult<CommunityConfigData> => {
 		const homeRoot = resolve(options.homeRoot ?? homedir());
 		const configPath = resolve(options.configPath ?? join(homeRoot, ".jarvis", "config.yaml"));
@@ -57,6 +132,7 @@ export const readCommunitySummary = (options: CommunityReadOptions = {}): Commun
 		if (!resolved.configPresent) return stateTile("missing", "config_missing", now);
 		if (resolved.issues.length > 0) return stateTile("error", "config_invalid", now);
 		databasePath = resolved.databasePath;
+		stateRoot = resolved.stateRoot;
 		return okTile(
 			{
 				configured:
@@ -109,5 +185,29 @@ export const readCommunitySummary = (options: CommunityReadOptions = {}): Commun
 		});
 		return snapshot.state === "ok" ? okTile(snapshot.value, now) : stateTile(snapshot.state, snapshot.reason, now);
 	});
-	return { config, queue };
+	const root = stateRoot;
+	const generation = guardTile(now, () =>
+		root === undefined
+			? stateTile<CommunityGenerationData>("missing", "config_unavailable", now)
+			: readCommunityGeneration(root, now),
+	);
+	return { config, queue, generation };
+};
+
+/**
+ * The community review state directory (`community_briefing.state_path`), or `null`
+ * when the configuration is missing, unsafe or invalid. Used to fill the opener command.
+ */
+export const readCommunityStateRoot = (
+	options: { readonly homeRoot?: string; readonly configPath?: string } = {},
+): string | null => {
+	const homeRoot = resolve(options.homeRoot ?? homedir());
+	const configPath = resolve(options.configPath ?? join(homeRoot, ".jarvis", "config.yaml"));
+	const resolved = Result.try(() => {
+		assertDelegatedFileBounded(configPath);
+		return resolveCommunityBriefingConfig({ homeRoot, configPath });
+	});
+	return Result.isSuccess(resolved) && resolved.success.configPresent && resolved.success.issues.length === 0
+		? resolved.success.stateRoot
+		: null;
 };
