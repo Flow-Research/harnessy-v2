@@ -41,7 +41,7 @@ for (const path of trackedPaths) {
 		throw error;
 	}
 	entries.push({ path, content });
-	if (path === ".npmrc" || path.startsWith(".github/workflows/") || dependencyContractFiles.has(path)) {
+	if (path === ".npmrc" || path.startsWith(".github/workflows/") || path.startsWith(".github/actions/") || dependencyContractFiles.has(path)) {
 		textFiles.set(path, content.toString("utf8"));
 	}
 }
