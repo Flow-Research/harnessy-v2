@@ -100,6 +100,8 @@ export default defineConfig({
 				"src/read-model/workspace.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				// H-10 `harnessy portal` forwarder (the uncovered function is the host-missing catch mapper).
 				"src/cli/portal.ts": { statements: 95, branches: 95, functions: 90, lines: 95 },
+				// One-writer guard probe classification and bounded inconclusive retry.
+				"src/jarvis/writer-check.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
 			},
 		},
 	},

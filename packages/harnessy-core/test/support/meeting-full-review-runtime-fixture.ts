@@ -29,6 +29,7 @@ import {
 	type MeetingPublicationSmokeRuntimeSystem,
 	MeetingPublicationSmokeRuntimeSystemReference,
 } from "../../src/jarvis/meeting-publication/operational-runtime.ts";
+import type { WriterCheckEvent } from "../../src/jarvis/writer-check.ts";
 
 interface MeetingPublicationFullReviewAuthorizationFixtureOptions {
 	readonly privateRoot: string;
@@ -258,11 +259,15 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 	writeAuthorization();
 
 	let writersPresent = false;
+	let writerProof: (() => void) | undefined;
+	let observeFailure: Error | undefined;
+	const writerCheckEvents: Array<WriterCheckEvent> = [];
 	let observationStep = 0n;
 	let observationOffsetMillis = 0;
 	let bootId = observation.bootId;
 	const system: MeetingPublicationSmokeRuntimeSystem = {
 		observe: () => {
+			if (observeFailure !== undefined) throw observeFailure;
 			const step = observationStep;
 			observationStep += 1_000_000n;
 			return {
@@ -273,7 +278,11 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 			};
 		},
 		proveNoKnownV1Writers: () => {
+			if (writerProof !== undefined) return writerProof();
 			if (writersPresent) throw new Error("A fixture writer is present.");
+		},
+		reportWriterCheck: (event) => {
+			writerCheckEvents.push(event);
 		},
 	};
 	const input: MeetingPublicationFullReviewRuntimeInput = {
@@ -300,6 +309,15 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 		setWritersPresent: (value: boolean) => {
 			writersPresent = value;
 		},
+		/** Replace the inert writer observer, e.g. with the production proof over a scripted runner. */
+		setWriterProof: (proof: (() => void) | undefined) => {
+			writerProof = proof;
+		},
+		/** Make every observation fail, e.g. with an unanswered `sysctl` probe. */
+		setObserveFailure: (failure: Error | undefined) => {
+			observeFailure = failure;
+		},
+		writerCheckEvents,
 		advanceTimeBy: (milliseconds: number) => {
 			observationOffsetMillis += milliseconds;
 		},

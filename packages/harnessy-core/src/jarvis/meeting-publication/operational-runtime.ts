@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { arch, hostname } from "node:os";
@@ -11,7 +10,17 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import type * as Scope from "effect/Scope";
-
+import {
+	type ProcessProbeRunner,
+	retryWhileWriterCheckInconclusive,
+	runAllWriterCheckProbes,
+	runWriterCheckProbe,
+	spawnProcessProbe,
+	stderrWriterCheckReporter,
+	WriterCheckInconclusiveError,
+	type WriterCheckReporter,
+	writerCheckMonotonicMillis,
+} from "../writer-check.ts";
 import {
 	MeetingPublicationWriteAuthority,
 	MeetingPublicationWriteAuthorityError,
@@ -103,7 +112,14 @@ export interface MeetingPublicationWorkerProviderFactory {
 
 export interface MeetingPublicationSmokeRuntimeSystem {
 	readonly observe: () => MeetingPublicationSmokeRuntimeObservation;
+	/**
+	 * Throws `MeetingPublicationSmokeRuntimeError("writer_present")` (or any other error) when a
+	 * writer is observed or the proof is unsafe, and `WriterCheckInconclusiveError` when a probe
+	 * could not run or timed out.
+	 */
 	readonly proveNoKnownV1Writers: () => void;
+	/** Receives allow-listed writer-check events; defaults to one JSON line on stderr. */
+	readonly reportWriterCheck?: WriterCheckReporter;
 }
 
 interface ReplayRow {
@@ -163,23 +179,16 @@ const fail = (code: MeetingPublicationSmokeRuntimeErrorCode): never => {
 	throw new MeetingPublicationSmokeRuntimeError({ code });
 };
 
-const runCommand = (command: string, args: ReadonlyArray<string>) => {
+/** Only a root-owned, non-writable executable may answer a writer probe; anything else is tamper evidence. */
+const liveProbeRunner: ProcessProbeRunner = (command, args) => {
 	const resolvedCommand = realpathSync(command);
 	const executable = lstatSync(resolvedCommand, { bigint: true });
 	if (!executable.isFile() || executable.uid !== 0n || (executable.mode & 0o0022n) !== 0n) fail("writer_present");
-	const result = spawnSync(resolvedCommand, args, {
-		encoding: "utf8",
-		timeout: 2_000,
-		maxBuffer: 1_000_000,
-		shell: false,
-	});
-	if (result.error !== undefined || result.signal !== null) fail("writer_present");
-	return { status: result.status, stdout: result.stdout, stderr: result.stderr } as const;
+	return spawnProcessProbe(resolvedCommand, args);
 };
 
-const proveProcessAbsent = () => {
-	const result = runCommand("/bin/ps", ["-axo", "uid=,pid=,command="]);
-	if (result.status !== 0) fail("writer_present");
+const proveProcessAbsent = (run: ProcessProbeRunner) => {
+	const result = runWriterCheckProbe(run, "ps", "/bin/ps", ["-axo", "uid=,pid=,command="]);
 	const uid = process.geteuid?.();
 	if (uid === undefined) fail("unsupported_platform");
 	for (const line of result.stdout.split("\n")) {
@@ -192,26 +201,33 @@ const proveProcessAbsent = () => {
 			fail("writer_present");
 		}
 	}
+	// Any writer in the output of a failed scan still stops at once (checked above);
+	// otherwise the failed scan proves nothing.
+	if (result.status !== 0) throw new WriterCheckInconclusiveError("ps", "exit_status", result.status);
 };
 
-const proveDarwinSchedulersAbsent = () => {
+const proveDarwinSchedulersAbsent = (run: ProcessProbeRunner) => {
 	const uid = process.geteuid?.();
 	if (uid === undefined) fail("unsupported_platform");
-	for (const label of [
-		"tech.flowresearch.jarvis.meeting-review",
-		"com.flow-harness.project.flow-meeting-publication-worker",
-	]) {
-		const result = runCommand("/bin/launchctl", ["print", `gui/${uid}/${label}`]);
-		if (result.status === 0) fail("writer_present");
-		if (!`${result.stdout}\n${result.stderr}`.includes("Could not find service")) fail("writer_present");
-	}
+	runAllWriterCheckProbes(
+		["tech.flowresearch.jarvis.meeting-review", "com.flow-harness.project.flow-meeting-publication-worker"].map(
+			(label) => () => {
+				const result = runWriterCheckProbe(run, "launchctl", "/bin/launchctl", ["print", `gui/${uid}/${label}`]);
+				// A loaded job is an observed writer. Only "Could not find service" proves absence;
+				// any other failure is an unanswered probe, not a writer.
+				if (result.status === 0) fail("writer_present");
+				if (!`${result.stdout}\n${result.stderr}`.includes("Could not find service"))
+					throw new WriterCheckInconclusiveError("launchctl", "exit_status", result.status);
+			},
+		),
+	);
 };
 
-const proveLinuxSchedulersAbsent = () => {
-	const result = runCommand("/usr/bin/crontab", ["-l"]);
+const proveLinuxSchedulersAbsent = (run: ProcessProbeRunner) => {
+	const result = runWriterCheckProbe(run, "crontab", "/usr/bin/crontab", ["-l"]);
 	if (result.status !== 0) {
 		if (/no crontab for/iu.test(result.stderr)) return;
-		fail("writer_present");
+		throw new WriterCheckInconclusiveError("crontab", "exit_status", result.status);
 	}
 	if (
 		result.stdout.includes("# flow-harness: project/flow-meeting-publication-worker") ||
@@ -219,6 +235,21 @@ const proveLinuxSchedulersAbsent = () => {
 	)
 		fail("writer_present");
 };
+
+/**
+ * @internal The production V1 writer proof over an injectable process runner.
+ * Tests pass a scripted runner; the live system passes the bounded `spawnSync` runner.
+ */
+export const makeMeetingPublicationWriterProof =
+	(run: ProcessProbeRunner, platform: NodeJS.Platform = process.platform) =>
+	(): void => {
+		if (platform !== "darwin" && platform !== "linux") fail("unsupported_platform");
+		// Every probe runs: an unanswered scheduler probe never hides a writer process.
+		runAllWriterCheckProbes([
+			() => (platform === "darwin" ? proveDarwinSchedulersAbsent(run) : proveLinuxSchedulersAbsent(run)),
+			() => proveProcessAbsent(run),
+		]);
+	};
 
 const readLinuxBootId = () => {
 	const path = "/proc/sys/kernel/random/boot_id";
@@ -234,9 +265,13 @@ const readLinuxBootId = () => {
 	}
 };
 
-const readDarwinBootId = () => {
-	const result = runCommand("/usr/sbin/sysctl", ["-n", "kern.boottime"]);
-	if (result.status !== 0) fail("unsupported_platform");
+/**
+ * @internal Boot identity from `sysctl`. A probe that does not complete or exits non-zero is
+ * inconclusive (retried by a running service); malformed successful output is unsupported.
+ */
+export const readMeetingPublicationDarwinBootId = (run: ProcessProbeRunner = liveProbeRunner) => {
+	const result = runWriterCheckProbe(run, "sysctl", "/usr/sbin/sysctl", ["-n", "kern.boottime"]);
+	if (result.status !== 0) throw new WriterCheckInconclusiveError("sysctl", "exit_status", result.status);
 	const value = result.stdout.trim();
 	if (!/^\{ sec = \d+, usec = \d+ \} .+$/u.test(value)) fail("unsupported_platform");
 	return value;
@@ -248,7 +283,7 @@ const liveObservation = (): MeetingPublicationSmokeRuntimeObservation => {
 		platform === "darwin" ? "darwin" : platform === "linux" ? "linux" : fail("unsupported_platform");
 	const uid = process.geteuid?.() ?? fail("unsupported_platform");
 	if (!Number.isSafeInteger(uid) || uid < 0) fail("unsupported_platform");
-	const bootId = supportedPlatform === "darwin" ? readDarwinBootId() : readLinuxBootId();
+	const bootId = supportedPlatform === "darwin" ? readMeetingPublicationDarwinBootId() : readLinuxBootId();
 	const executablePath = realpathSync(process.execPath);
 	return {
 		now: Date.now(),
@@ -264,12 +299,7 @@ const liveObservation = (): MeetingPublicationSmokeRuntimeObservation => {
 
 const liveSystem: MeetingPublicationSmokeRuntimeSystem = {
 	observe: liveObservation,
-	proveNoKnownV1Writers: () => {
-		if (process.platform === "darwin") proveDarwinSchedulersAbsent();
-		else if (process.platform === "linux") proveLinuxSchedulersAbsent();
-		else fail("unsupported_platform");
-		proveProcessAbsent();
-	},
+	proveNoKnownV1Writers: makeMeetingPublicationWriterProof(liveProbeRunner),
 };
 
 /** @internal Tests may replace this default without adding a public observer or bypass input. */
@@ -617,7 +647,8 @@ const assertCurrentFullReviewItem = (
 	assertMeetingPublicationRollbackDatabaseFile(dbPath, before);
 };
 
-class MeetingRuntimeSession {
+/** @internal Exported for owner-session tests; not part of the package API. */
+export class MeetingRuntimeSession {
 	readonly leaseId = randomUUID();
 	readonly database: DatabaseSync;
 	readonly verified: VerifiedMeetingPublicationRuntimeInput;
@@ -628,10 +659,18 @@ class MeetingRuntimeSession {
 	private reviewDatabaseIdentity: { readonly device: string; readonly inode: string } | undefined;
 	private reviewing = false;
 	private readonly bootId: string;
+	/** Set while a writer probe is inconclusive: every grant is denied until a retry succeeds. */
+	private writerCheckPending: WriterCheckInconclusiveError | undefined;
+	/** Monotonic time (writerCheckMonotonicMillis) of the first unanswered probe in this pause. */
+	private writerCheckPausedSince = 0;
+	/** Set once a writer was observed: the session stops with `writer_present`. */
+	private writerObserved = false;
+	readonly reportWriterCheck: WriterCheckReporter;
 
 	constructor(verified: VerifiedMeetingPublicationRuntimeInput, system: MeetingPublicationSmokeRuntimeSystem) {
 		this.verified = verified;
 		this.system = system;
+		this.reportWriterCheck = system.reportWriterCheck ?? stderrWriterCheckReporter;
 		this.bootId = verified.authorization.runtime.bootId ?? system.observe().bootId;
 		if (verified.kind === "review" && verified.authorization.stateDatabase.kind === "existing") {
 			this.reviewDatabaseIdentity = verified.authorization.stateDatabase;
@@ -984,7 +1023,8 @@ class MeetingRuntimeSession {
 		validate: (operation, binding) =>
 			Effect.tryPromise({
 				try: async (signal) => {
-					if (!this.active || !this.bindingAllowed(operation, binding)) return false;
+					if (!this.active || this.writerCheckPending !== undefined || !this.bindingAllowed(operation, binding))
+						return false;
 					const started = this.system.observe();
 					if (
 						this.verified.authorization.expiresAt !== null &&
@@ -994,7 +1034,14 @@ class MeetingRuntimeSession {
 					await assertMeetingPublicationArtifactInventoryCurrentAsync(this.verified, started, signal);
 					// No grant or replay transaction spans the cooperative scan. A close,
 					// cancellation, or competing validation may have run while it yielded.
-					if (signal.aborted || !this.active || !this.bindingAllowed(operation, binding)) return false;
+					// A keep-alive may also have paused this session on an unanswered probe meanwhile.
+					if (
+						signal.aborted ||
+						!this.active ||
+						this.writerCheckPending !== undefined ||
+						!this.bindingAllowed(operation, binding)
+					)
+						return false;
 					const validation = Result.try({
 						try: () => {
 							const timeCurrent = (observation: MeetingPublicationSmokeRuntimeObservation) => {
@@ -1014,7 +1061,7 @@ class MeetingRuntimeSession {
 								!this.immutableBindingsCurrent(initial)
 							)
 								return false;
-							if (this.verified.kind !== "review") this.system.proveNoKnownV1Writers();
+							if (this.verified.kind !== "review") this.proveWriters();
 							// Immutable control checks and the OS writer proof can still
 							// consume the remaining authority or claim lifetime. Never issue a
 							// grant using their earlier time, lease, or revocation observation.
@@ -1068,21 +1115,23 @@ class MeetingRuntimeSession {
 							}
 							return true;
 						},
-						catch: () => undefined,
+						catch: (cause) => cause,
 					});
-					if (Result.isFailure(validation)) {
-						this.active = false;
-						return false;
-					}
+					if (Result.isFailure(validation)) throw validation.failure;
 					return validation.success;
 				},
-				catch: () => undefined,
+				catch: (cause) => cause,
 			}).pipe(
-				Effect.catch(() =>
-					Effect.sync(() => {
-						this.active = false;
-						return false;
-					}),
+				Effect.catch((cause) =>
+					Effect.flatMap(writerCheckMonotonicMillis, (now) =>
+						Effect.sync(() => {
+							// An unanswered probe pauses this session without ending it: deny this grant,
+							// and let the keep-alive loop retry. Any other failure ends the session.
+							if (cause instanceof WriterCheckInconclusiveError) this.pauseWriters(cause, now);
+							else this.active = false;
+							return false;
+						}),
+					),
 				),
 			),
 	};
@@ -1153,8 +1202,74 @@ class MeetingRuntimeSession {
 		this.outcome = "reviewing";
 	}
 
-	/** Bounded idle-session check; requests separately validate all artifact/state bindings. */
-	assertReviewAlive() {
+	get writerCheckPaused() {
+		return this.writerCheckPending !== undefined;
+	}
+
+	/** The unanswered probe that started the current pause, and when (monotonic milliseconds). */
+	get writerCheckPause() {
+		return this.writerCheckPending === undefined
+			? undefined
+			: { error: this.writerCheckPending, since: this.writerCheckPausedSince };
+	}
+
+	private pauseWriters(cause: WriterCheckInconclusiveError, nowMs: number) {
+		if (this.writerCheckPending !== undefined) return;
+		this.writerCheckPending = cause;
+		this.writerCheckPausedSince = nowMs;
+	}
+
+	/**
+	 * Whether a scheduled cycle's failure is the expected consequence of a pause: a grant
+	 * denied with `revoked` while paused. Every other failure still ends the owner.
+	 */
+	absorbsPausedCycleFailure(cause: unknown) {
+		return (
+			this.writerCheckPending !== undefined &&
+			cause instanceof MeetingPublicationWriteAuthorityError &&
+			cause.code === "revoked"
+		);
+	}
+
+	get writerWasObserved() {
+		return this.writerObserved;
+	}
+
+	/** Observed writers, and unsafe or unparseable proofs, end the session; unanswered probes do not. */
+	private proveWriters() {
+		const proved = Result.try({ try: () => this.system.proveNoKnownV1Writers(), catch: (cause) => cause });
+		if (Result.isSuccess(proved)) return;
+		if (proved.failure instanceof WriterCheckInconclusiveError) throw proved.failure;
+		this.writerObserved = true;
+		this.active = false;
+		fail("writer_present");
+	}
+
+	/**
+	 * Bounded idle-session check; requests separately validate all artifact/state bindings.
+	 * Throws `WriterCheckInconclusiveError` while a writer probe or observation is unanswered.
+	 */
+	assertReviewAlive(nowMs: number) {
+		if (this.writerObserved) fail("writer_present");
+		if (this.writerCheckPending !== undefined) throw this.writerCheckPending;
+		const checked = Result.try({ try: () => this.assertLeaseCurrent(), catch: (cause) => cause });
+		if (Result.isSuccess(checked)) return;
+		if (checked.failure instanceof WriterCheckInconclusiveError) this.pauseWriters(checked.failure, nowMs);
+		throw checked.failure;
+	}
+
+	/** One retry while paused: a fresh observation, writer proof and lease check. Success resumes grants. */
+	recheckWriters() {
+		if (this.writerObserved) fail("writer_present");
+		if (!this.active) fail("revoked");
+		this.system.observe();
+		if (this.verified.kind !== "review") this.proveWriters();
+		this.assertLeaseCurrent();
+		this.writerCheckPending = undefined;
+	}
+
+	/** Lease, expiry and revocation check without writer-check pause handling. */
+	assertLeaseCurrent() {
 		const observation = this.system.observe();
 		if (
 			!this.active ||
@@ -1187,10 +1302,85 @@ class MeetingRuntimeSession {
 	}
 }
 
+/**
+ * Stop code for an unanswered probe that reaches a stop: the fail-closed writer stop for
+ * writer probes; an unanswered boot-identity observation is not reported as a writer.
+ */
+const inconclusiveStopCode = (cause: WriterCheckInconclusiveError): MeetingPublicationSmokeRuntimeErrorCode =>
+	cause.check === "sysctl" ? "unsupported_platform" : "writer_present";
+
 const runtimeFailure = (cause: unknown, fallback: MeetingPublicationSmokeRuntimeErrorCode) =>
 	cause instanceof MeetingPublicationSmokeRuntimeError
 		? cause
-		: new MeetingPublicationSmokeRuntimeError({ code: fallback });
+		: new MeetingPublicationSmokeRuntimeError({
+				code: cause instanceof WriterCheckInconclusiveError ? inconclusiveStopCode(cause) : fallback,
+			});
+
+const inconclusiveWriterCheck = (cause: unknown) => (cause instanceof WriterCheckInconclusiveError ? cause : undefined);
+
+const writerCheckPolicy = (
+	report: WriterCheckReporter,
+	retry: boolean,
+	pause?: { readonly error: WriterCheckInconclusiveError; readonly since: number },
+) => ({
+	service: "meeting" as const,
+	inconclusive: inconclusiveWriterCheck,
+	escalate: (cause: WriterCheckInconclusiveError) =>
+		new MeetingPublicationSmokeRuntimeError({ code: inconclusiveStopCode(cause) }),
+	report,
+	failFast: !retry,
+	...(pause === undefined ? {} : { initial: pause.error, since: pause.since }),
+});
+
+/**
+ * A startup step that may run an OS probe. A service start retries an unanswered probe
+ * within the bounded window before taking its lease; operator-run one-shot and finite
+ * runs fail fast. Both log the probe's allow-listed reason.
+ */
+const guardedStartup = <A>(
+	system: MeetingPublicationSmokeRuntimeSystem,
+	retry: boolean,
+	step: () => A,
+	fallback: MeetingPublicationSmokeRuntimeErrorCode,
+) =>
+	retryWhileWriterCheckInconclusive(
+		Effect.try({ try: step, catch: (cause) => cause }),
+		writerCheckPolicy(system.reportWriterCheck ?? stderrWriterCheckReporter, retry),
+	).pipe(Effect.mapError((cause) => runtimeFailure(cause, fallback)));
+
+/**
+ * Keep-alive tick. While a writer probe is unanswered the session denies every grant,
+ * and this tick retries with bounded backoff. Recovery resumes grants; an observed
+ * writer stops at once; a probe still unanswered after the window stops the owner.
+ */
+const keepSessionAlive = (session: MeetingRuntimeSession) =>
+	Effect.flatMap(writerCheckMonotonicMillis, (now) =>
+		Effect.try({ try: () => session.assertReviewAlive(now), catch: (cause) => cause }),
+	).pipe(
+		Effect.catch((cause) => {
+			const pause = session.writerCheckPause;
+			return inconclusiveWriterCheck(cause) === undefined || pause === undefined
+				? Effect.fail(cause)
+				: retryWhileWriterCheckInconclusive(
+						Effect.try({ try: () => session.recheckWriters(), catch: (failure) => failure }),
+						writerCheckPolicy(session.reportWriterCheck, true, pause),
+					);
+		}),
+		Effect.mapError((cause) => runtimeFailure(cause, "revoked")),
+	);
+
+/** Scheduler tick: whether this cycle may claim work. A paused session skips the cycle without ending. */
+const sessionReadyForWork = (session: MeetingRuntimeSession) =>
+	Effect.flatMap(writerCheckMonotonicMillis, (now) =>
+		Effect.try({ try: () => session.assertReviewAlive(now), catch: (cause) => cause }),
+	).pipe(
+		Effect.as(true),
+		Effect.catch((cause) =>
+			cause instanceof WriterCheckInconclusiveError
+				? Effect.succeed(false)
+				: Effect.fail(runtimeFailure(cause, "revoked")),
+		),
+	);
 
 const requireCurrentProviderSession = (
 	session: MeetingRuntimeSession,
@@ -1220,26 +1410,18 @@ const runAuthorizedMeetingPublicationSmokeWithSystem = (
 	system: MeetingPublicationSmokeRuntimeSystem,
 ): Effect.Effect<MeetingPublicationPublishOneResult, MeetingPublicationSmokeRuntimeError, Scope.Scope> =>
 	Effect.gen(function* () {
-		const observation = yield* Effect.try({
-			try: () => system.observe(),
-			catch: (cause) => runtimeFailure(cause, "unsupported_platform"),
-		});
+		const observation = yield* guardedStartup(system, false, () => system.observe(), "unsupported_platform");
 		const verified = yield* Effect.try({
 			try: () => verifyMeetingPublicationSmokeInput(input, observation),
 			catch: (cause) => runtimeFailure(cause, "invalid_input"),
 		});
 		yield* Effect.try({
-			try: () => {
-				assertCurrentItem(verified, "eligible", observation.now);
-				system.proveNoKnownV1Writers();
-			},
+			try: () => assertCurrentItem(verified, "eligible", observation.now),
 			catch: (cause) => runtimeFailure(cause, "writer_present"),
 		});
+		yield* guardedStartup(system, false, () => system.proveNoKnownV1Writers(), "writer_present");
 		const session = yield* Effect.acquireRelease(
-			Effect.try({
-				try: () => new MeetingRuntimeSession(verified, system),
-				catch: (cause) => runtimeFailure(cause, "replay_unavailable"),
-			}),
+			guardedStartup(system, false, () => new MeetingRuntimeSession(verified, system), "replay_unavailable"),
 			(resource) => Effect.sync(() => resource.close()).pipe(Effect.orDie),
 		);
 		yield* requireCurrentProviderSession(session, verified);
@@ -1300,10 +1482,7 @@ export const runAuthorizedMeetingPublicationWorker = (
 ): Effect.Effect<MeetingPublicationWorkerResult, MeetingPublicationSmokeRuntimeError> =>
 	Effect.gen(function* () {
 		const system = yield* MeetingPublicationSmokeRuntimeSystemReference;
-		const observation = yield* Effect.try({
-			try: () => system.observe(),
-			catch: (cause) => runtimeFailure(cause, "unsupported_platform"),
-		});
+		const observation = yield* guardedStartup(system, false, () => system.observe(), "unsupported_platform");
 		const verified = yield* Effect.try({
 			try: () => verifyMeetingPublicationWorkerInput(input, observation),
 			catch: (cause) => runtimeFailure(cause, "invalid_input"),
@@ -1312,16 +1491,10 @@ export const runAuthorizedMeetingPublicationWorker = (
 			try: () => assertCurrentWorkerStore(verified),
 			catch: (cause) => runtimeFailure(cause, "state_drift"),
 		});
-		yield* Effect.try({
-			try: () => system.proveNoKnownV1Writers(),
-			catch: (cause) => runtimeFailure(cause, "writer_present"),
-		});
+		yield* guardedStartup(system, false, () => system.proveNoKnownV1Writers(), "writer_present");
 		const operation = Effect.gen(function* () {
 			const session = yield* Effect.acquireRelease(
-				Effect.try({
-					try: () => new MeetingRuntimeSession(verified, system),
-					catch: (cause) => runtimeFailure(cause, "replay_unavailable"),
-				}),
+				guardedStartup(system, false, () => new MeetingRuntimeSession(verified, system), "replay_unavailable"),
 				(resource) => Effect.sync(() => resource.close()).pipe(Effect.orDie),
 			);
 			yield* requireCurrentProviderSession(session, verified);
@@ -1354,10 +1527,7 @@ export const runAuthorizedMeetingPublicationWorker = (
 			session.setOutcome("completed");
 			return result;
 		});
-		const current = yield* Effect.try({
-			try: () => system.observe(),
-			catch: (cause) => runtimeFailure(cause, "unsupported_platform"),
-		});
+		const current = yield* guardedStartup(system, false, () => system.observe(), "unsupported_platform");
 		return yield* operation.pipe(
 			Effect.scoped,
 			Effect.timeoutOrElse({
@@ -1408,10 +1578,12 @@ export const runAuthorizedMeetingPublicationFullReview = (
 		let drainCompleted = false;
 		let cleanupFailure: MeetingPublicationSmokeRuntimeError | undefined;
 		const system = yield* MeetingPublicationSmokeRuntimeSystemReference;
-		const observation = yield* Effect.try({
-			try: () => system.observe(),
-			catch: (cause) => runtimeFailure(cause, "unsupported_platform"),
-		});
+		const observation = yield* guardedStartup(
+			system,
+			input.mode === "service",
+			() => system.observe(),
+			"unsupported_platform",
+		);
 		const verified = yield* Effect.try({
 			try: () => verifyMeetingPublicationFullReviewInput(input, observation),
 			catch: (cause) => runtimeFailure(cause, "invalid_input"),
@@ -1420,10 +1592,7 @@ export const runAuthorizedMeetingPublicationFullReview = (
 			try: () => assertCurrentWorkerStore(verified),
 			catch: (cause) => runtimeFailure(cause, "state_drift"),
 		});
-		yield* Effect.try({
-			try: () => system.proveNoKnownV1Writers(),
-			catch: (cause) => runtimeFailure(cause, "writer_present"),
-		});
+		yield* guardedStartup(system, input.mode === "service", () => system.proveNoKnownV1Writers(), "writer_present");
 		const expectedAnchors = meetingPublicationSmokeArtifactAnchors(verified);
 		if (
 			providers.artifactAnchors.host !== expectedAnchors.host ||
@@ -1435,17 +1604,19 @@ export const runAuthorizedMeetingPublicationFullReview = (
 			return yield* new MeetingPublicationSmokeRuntimeError({ code: "artifact_drift" });
 		const operation = Effect.gen(function* () {
 			const session = yield* Effect.acquireRelease(
-				Effect.try({
-					try: () => new MeetingRuntimeSession(verified, system),
-					catch: (cause) => runtimeFailure(cause, "replay_unavailable"),
-				}),
+				guardedStartup(
+					system,
+					input.mode === "service",
+					() => new MeetingRuntimeSession(verified, system),
+					"replay_unavailable",
+				),
 				(resource) =>
 					Effect.sync(() => {
 						// This is the last finalizer: the owning provider/Engine has already closed.
 						// Never turn revocation during that cleanup into a successful graceful stop.
 						if (drainCompleted) {
 							const current = Result.try({
-								try: () => resource.assertReviewAlive(),
+								try: () => resource.assertLeaseCurrent(),
 								catch: (cause) => runtimeFailure(cause, "revoked"),
 							});
 							if (Result.isFailure(current)) cleanupFailure = current.failure;
@@ -1498,11 +1669,22 @@ export const runAuthorizedMeetingPublicationFullReview = (
 												Deferred.await(drainRequested),
 											);
 											if (isDraining()) return;
-											yield* Effect.try({
-												try: () => session.assertReviewAlive(),
-												catch: (cause) => runtimeFailure(cause, "revoked"),
-											});
-											yield* service.worker(verified.authorization.maxItems);
+											// A paused session skips this cycle: no claim, lease or provider call.
+											if (!(yield* sessionReadyForWork(session))) continue;
+											yield* service.worker(verified.authorization.maxItems).pipe(
+												Effect.catch((cause) =>
+													// A pause that began during this cycle denied its grants: skip it.
+													// Delivery uncertainty still stops the owner via deliveryUncertain,
+													// and a writer observed by a grant check stops it with its own code.
+													session.absorbsPausedCycleFailure(cause)
+														? Effect.void
+														: Effect.fail(
+																session.writerWasObserved
+																	? new MeetingPublicationSmokeRuntimeError({ code: "writer_present" })
+																	: cause,
+															),
+												),
+											);
 										}
 									})
 								: Deferred.await(drainRequested);
@@ -1547,26 +1729,17 @@ export const runAuthorizedMeetingPublicationFullReview = (
 						);
 					}).pipe(
 						Effect.provide(serviceLayer),
-						Effect.raceFirst(
-							Effect.forever(
-								Effect.sleep(1_000).pipe(
-									Effect.andThen(
-										Effect.try({
-											try: () => session.assertReviewAlive(),
-											catch: (cause) => runtimeFailure(cause, "revoked"),
-										}),
-									),
-								),
-							),
-						),
+						Effect.raceFirst(Effect.forever(Effect.sleep(1_000).pipe(Effect.andThen(keepSessionAlive(session))))),
 					);
 				}),
 			);
 		});
-		const current = yield* Effect.try({
-			try: () => system.observe(),
-			catch: (cause) => runtimeFailure(cause, "unsupported_platform"),
-		});
+		const current = yield* guardedStartup(
+			system,
+			input.mode === "service",
+			() => system.observe(),
+			"unsupported_platform",
+		);
 		yield* Effect.scoped(
 			Effect.gen(function* () {
 				const deadline = yield* (
@@ -1690,10 +1863,7 @@ export const runAuthorizedMeetingPublicationReview = (
 						Effect.gen(function* () {
 							while (true) {
 								yield* Effect.sleep(1000);
-								yield* Effect.try({
-									try: () => session.assertReviewAlive(),
-									catch: (cause) => runtimeFailure(cause, "revoked"),
-								});
+								yield* keepSessionAlive(session);
 							}
 						}),
 					);

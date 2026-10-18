@@ -71,6 +71,41 @@ the platform-specific V1 scheduler and known worker identity, acquire an
 exclusive owner-only capability lease, and immediately recheck. The proof is
 revalidated before every grant and loss revokes the V2 session.
 
+A probe has three outcomes. An observed writer stops the session at once with
+`writer_present` (community: `runtime_rejected`). Observed writers are a running
+V1 command, a loaded scheduler job, a matching crontab entry, a non-exempt
+writer-shaped process, and an unsafe or unparseable probe. A probe that could
+not answer is inconclusive: a spawn error, timeout, signal, oversized output, or
+a non-zero exit that is not the documented "not found" answer. Every probe runs,
+and an observed writer always wins over an inconclusive probe. That includes
+writer lines in the output of a `ps` that exited non-zero. The community guard
+treats a writer-shaped process as a writer when its native-reviewer exemption
+cannot be verified. Only a fresh complete scan that no longer lists the process
+clears it. The native review launch agent is exempt only after a completed
+process scan.
+
+A running meeting service that sees an inconclusive probe denies every new
+grant, claim and lease, and skips scheduled cycles. It retries with backoff of
+1, 2, 4, 8, 16 and then 30 seconds. A grant that was issued before the pause
+lets its in-flight provider call finish; that item's next write is denied and
+follows the existing uncertain-delivery stop. Only a `revoked` grant denial
+during a pause is absorbed as a skipped cycle. Service starts retry a
+pre-lease probe or boot-identity observation; operator-run one-shot and finite
+runs fail fast. Community service runs retry before creating their lease;
+community one-shot runs fail fast. The community lease covers only one
+in-flight publication, so an inconclusive revalidation during that publication
+ends it as `publication_uncertain`. That matches the meeting service's
+mid-item behaviour.
+
+Escalation needs both 5 minutes of monotonic time since the first inconclusive
+probe and at least 6 failed retries. The monotonic clock is `process.hrtime`,
+which does not advance during system sleep. Escalation then produces the stop
+above, except that an unanswered boot-identity (`sysctl`) observation stops with
+`unsupported_platform`, not `writer_present`. Every stop or recovery caused by
+an inconclusive probe writes one stderr JSON event. The event carries an
+allow-listed `<check>_<failure>` reason and, for exits, the exit status. No
+argv or probe output is logged.
+
 The preferred design is an interlock honored by both V1 and V2. Until that
 exists, absence of a known scheduler or process is only bounded evidence and
 cannot silently be presented as a universal one-writer proof. V1 and V2 never

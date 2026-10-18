@@ -9,8 +9,10 @@ on:
     branches: [main, dev]
     types: [opened, synchronize, reopened, edited]
 
+# Description edits get their own group. Otherwise an `edited` run (which skips the
+# credential scan) cancels the in-progress code-event run, and the scan reports as cancelled.
 concurrency:
-  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}-${{ github.event.action == 'edited' && 'description' || 'code' }}
   cancel-in-progress: true
 
 permissions:
