@@ -4,6 +4,7 @@
  * the owning service. The community review service is never paused from here.
  */
 import { ActionList } from "../components/actions.tsx";
+import { DetailPane } from "../components/DetailPane.tsx";
 import { Card, StatusDot, WithTile } from "../components/primitives.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
 import type { Job, JobsResponse } from "../lib/api-types.ts";
@@ -19,7 +20,7 @@ const KIND_LABEL: Readonly<Record<Job["kind"], string>> = {
 };
 
 const JobDetail = ({ job, now }: { job: Job; now: number }) => (
-	<aside className="detail" aria-label={`${job.name} detail`}>
+	<>
 		<p className="label">
 			{KIND_LABEL[job.kind]}
 			{job.label === null ? "" : ` · ${job.label}`}
@@ -76,14 +77,14 @@ const JobDetail = ({ job, now }: { job: Job; now: number }) => (
 		)}
 		{job.programArguments === null ? null : (
 			<>
-				<p className="label">Program arguments (environment omitted)</p>
+				<p className="label">Program arguments (environment omitted, possible secrets redacted)</p>
 				<pre className="code-block">
 					<code>{job.programArguments.join(" \\\n  ")}</code>
 				</pre>
 			</>
 		)}
 		<ActionList actions={job.controls} />
-	</aside>
+	</>
 );
 
 export const JobsScreen = ({ rest, now }: { rest: ReadonlyArray<string>; now: number }) => {
@@ -133,7 +134,15 @@ export const JobsScreen = ({ rest, now }: { rest: ReadonlyArray<string>; now: nu
 									</tbody>
 								</table>
 							</div>
-							{selected === undefined ? null : <JobDetail job={selected} now={now} />}
+							{selected === undefined ? null : (
+								<DetailPane
+									label={`${selected.name} detail`}
+									open={rest[0] !== undefined && selected.id === rest[0]}
+									onClose={() => window.location.replace(routeHref("jobs"))}
+								>
+									<JobDetail job={selected} now={now} />
+								</DetailPane>
+							)}
 						</div>
 					);
 				}}

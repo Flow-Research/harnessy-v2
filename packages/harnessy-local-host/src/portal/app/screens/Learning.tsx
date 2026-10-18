@@ -48,7 +48,11 @@ export const LearningScreen = ({ now }: { now: number }) => {
 						action={{ kind: "handoff", label: "Open the wiki", target: "http://127.0.0.1:4321/", note: null }}
 						primary
 					/>
-					<CommandChip command="learning ingest <url>" note="Fetches the page and adds it to the library." />
+					<p className="label">Add a page</p>
+					<CommandChip
+						command="learning ingest <url>"
+						note="Replace <url> with the page's address before running it. Fetches the page and adds it to the library."
+					/>
 					<p className="fine-print">Asking the wiki is not offered here until it has a cost guard.</p>
 				</Card>
 				<Card title="Reading queue">

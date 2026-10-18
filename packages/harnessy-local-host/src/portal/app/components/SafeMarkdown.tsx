@@ -5,6 +5,7 @@
  */
 import { type Block, type Inline, type ListBlock, parseMarkdown } from "../lib/markdown.ts";
 import { safeHref } from "../lib/safe-href.ts";
+import { ErrorBoundary, PlainTextFallback } from "./ErrorBoundary.tsx";
 
 /** Pair each item with a key. A parsed document never reorders, so position is each item's identity. */
 const withKeys = <T,>(items: ReadonlyArray<T>, prefix: string) =>
@@ -141,8 +142,15 @@ export const MarkdownBlocks = ({ blocks }: { blocks: ReadonlyArray<Block> }) => 
 	</>
 );
 
-export const SafeMarkdown = ({ text }: { text: string }) => (
+const ParsedMarkdown = ({ text }: { text: string }) => (
 	<div className="markdown">
 		<MarkdownBlocks blocks={parseMarkdown(text)} />
 	</div>
+);
+
+/** Markdown as React elements. If parsing or rendering ever fails, the text is shown as written instead. */
+export const SafeMarkdown = ({ text }: { text: string }) => (
+	<ErrorBoundary fallback={<PlainTextFallback text={text} />} resetKey={text}>
+		<ParsedMarkdown text={text} />
+	</ErrorBoundary>
 );

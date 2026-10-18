@@ -14,6 +14,9 @@ It has seven screens. Use `g` and a letter to move between them, and `⌘K` (or
   service, ranked by the server as *needs you*, *attention* or *info*. Each item
   names the service that owns the fix. Keys: `j`/`k` move, `Enter` follows the
   primary action, `c` copies the command, `o` opens the owning service or screen.
+  These keys act only when no button or link has the focus; a focused control
+  keeps its own `Enter`. When a source could not be read, the empty Inbox says
+  so instead of "Nothing needs you".
 - **Today** (`g t`): today's Life brief, with "Decisions and Actions for You" and
   "Delegated or Waiting" pinned, a switcher for the last seven briefs, the
   weekly plan drafts, what ran overnight and the reading queue. Readings are
@@ -21,12 +24,18 @@ It has seven screens. Use `g` and a letter to move between them, and `⌘K` (or
 - **Tasks** (`g k`): follow-ups gathered read-only from your brief, the Life
   reminders file, the founder-office action register and each project's
   "this week" list. They are derived, not tracked: completion arrives in a
-  later phase, and source files are never edited from here.
+  later phase, and source files are never edited from here. When a task's line
+  is edited in its source file, the row shows "source changed" and its old
+  title for a day (until the portal restarts), instead of replacing it silently.
 - **Jobs** (`g j`): every Harnessy job and service, its schedule and next run
   (Africa/Lagos), launchd state, whether its port answers, and the commands
-  that control it. "Last activity" is a log file's modified time.
-- **Reviews** (`g r`): meeting and community review queues, with links to the
-  review pages on `8770` and `8872`.
+  that control it. "Last activity" is a log file's modified time. A job whose
+  LaunchAgent is not loaded shows no next run. Program arguments are shown with
+  the environment left out and values that may be secrets redacted.
+- **Reviews** (`g r`): meeting and community review queues (`#/reviews/meetings`
+  and `#/reviews/community`), with links to the review pages on `8770` and
+  `8872`, in the address family each service is configured for (`::1` or
+  `127.0.0.1`).
 - **Learning** (`g l`): the learning library and the reading queue.
 - **Connections** (`g c`): each connection's status and owner, and **Tools &
   integrations**, which is the cockpit (`harnessy web`).
@@ -100,7 +109,9 @@ names the owner of the credential and how to reconnect it:
   their SHA-256 in an asset manifest; the portal serves only those files and
   refuses to start if one was changed.
 - Text from your data is always shown as text. Markdown is parsed into a tree,
-  never into HTML, and only loopback links become links.
+  never into HTML, and only loopback links become links. Invisible bidi and
+  zero-width characters in titles and commands are shown as `⟨U+202E⟩`, and a
+  command that holds one is never offered for copying.
 - The app holds only its own read-only sign-in. It never sees the install
   token, the cockpit (Executor) token or any provider credential, and it sends
   no cookies.

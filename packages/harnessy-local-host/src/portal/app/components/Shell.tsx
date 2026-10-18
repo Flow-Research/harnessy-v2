@@ -45,6 +45,21 @@ export const NAV: ReadonlyArray<{ readonly screen: Screen; readonly key: string 
 
 const PHONE_PRIMARY: ReadonlyArray<Screen> = ["inbox", "today", "tasks", "jobs"];
 
+/** Sub-pages of a screen that the rail lists under it and the breadcrumb names. */
+export const SUB_PAGES: Readonly<
+	Partial<Record<Screen, ReadonlyArray<{ readonly id: string; readonly title: string }>>>
+> = {
+	reviews: [
+		{ id: "meetings", title: "Meetings" },
+		{ id: "community", title: "Community" },
+	],
+	connections: [{ id: "tools", title: "Tools & integrations" }],
+};
+
+/** The title of `screen`'s sub-page `id`, if it is one. */
+export const subPageTitle = (screen: Screen, id: string | undefined): string | undefined =>
+	SUB_PAGES[screen]?.find((page) => page.id === id)?.title;
+
 export interface ShellBadges {
 	readonly inbox: number;
 	readonly jobs: number;
@@ -83,7 +98,7 @@ const NavLink = ({
 	);
 };
 
-export const Rail = ({ current, badges }: { current: Screen; badges: ShellBadges }) => (
+export const Rail = ({ current, sub, badges }: { current: Screen; sub?: string | undefined; badges: ShellBadges }) => (
 	<nav className="rail" aria-label="Main">
 		<a className="brand" href={routeHref("inbox")}>
 			<span className="brand-mark" aria-hidden="true">
@@ -93,14 +108,35 @@ export const Rail = ({ current, badges }: { current: Screen; badges: ShellBadges
 		</a>
 		<div className="rail-links">
 			{NAV.map((item) => (
-				<NavLink key={item.screen} screen={item.screen} current={current} shortcut={item.key} badges={badges} />
+				<div key={item.screen} className="rail-item">
+					<NavLink screen={item.screen} current={current} shortcut={item.key} badges={badges} />
+					{item.screen === "reviews"
+						? (SUB_PAGES.reviews ?? []).map((page) => {
+								const here = current === "reviews" && sub === page.id;
+								return (
+									<a
+										key={page.id}
+										href={routeHref("reviews", page.id)}
+										className={here ? "nav-sub nav-current" : "nav-sub"}
+										aria-current={here ? "page" : undefined}
+									>
+										{page.title}
+									</a>
+								);
+							})
+						: null}
+				</div>
 			))}
 		</div>
-		<a className="rail-tools" href={`${routeHref("connections")}`}>
+		<a
+			className="rail-tools"
+			href={routeHref("connections", "tools")}
+			aria-current={current === "connections" && sub === "tools" ? "page" : undefined}
+		>
 			<Plug size={16} strokeWidth={1.5} aria-hidden="true" />
 			Tools &amp; integrations
 		</a>
-		<p className="rail-note">The cockpit (harnessy web): agent tools, OAuth, secrets.</p>
+		<p className="rail-note">Opens the cockpit (harnessy web) in a new tab. Agent tools, OAuth, secrets.</p>
 	</nav>
 );
 
@@ -141,6 +177,7 @@ export const BottomBar = ({ current, badges }: { current: Screen; badges: ShellB
 
 export const TopBar = ({
 	screen,
+	sub,
 	fetchedAt,
 	now,
 	sessionExpiresAt,
@@ -150,6 +187,7 @@ export const TopBar = ({
 	onRefresh,
 }: {
 	screen: Screen;
+	sub?: string | undefined;
 	fetchedAt: number | undefined;
 	now: number;
 	sessionExpiresAt: number | undefined;
@@ -159,9 +197,21 @@ export const TopBar = ({
 	onRefresh: () => void;
 }) => (
 	<header className="top-bar">
-		<div className="crumbs">
-			Harnessy / <span className="crumb-current">{SCREEN_TITLES[screen]}</span>
-		</div>
+		<nav className="crumbs" aria-label="Breadcrumb">
+			Harnessy /{" "}
+			{subPageTitle(screen, sub) === undefined ? (
+				<span className="crumb-current" aria-current="page">
+					{SCREEN_TITLES[screen]}
+				</span>
+			) : (
+				<>
+					<a href={routeHref(screen)}>{SCREEN_TITLES[screen]}</a> ›{" "}
+					<span className="crumb-current" aria-current="page">
+						{subPageTitle(screen, sub)}
+					</span>
+				</>
+			)}
+		</nav>
 		<div className="top-spacer" />
 		<FreshnessStamp at={fetchedAt} now={now} />
 		<button type="button" className="icon-button" onClick={onRefresh} aria-label="Read again">

@@ -4,15 +4,17 @@
  * o opens the owning service or screen.
  */
 import { BookOpen, Cpu, Megaphone, Mic, Plug, Radio, Sun } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { ActionList } from "../components/actions.tsx";
+import { DetailPane } from "../components/DetailPane.tsx";
 import { EmptyState, Stat, StatusDot, type Tone, WithTile } from "../components/primitives.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
 import type { InboxItem, InboxResponse, JobsResponse } from "../lib/api-types.ts";
 import { copyText, followHandoff } from "../lib/browser.ts";
 import { useResource } from "../lib/data.tsx";
-import { dateTime, greeting, plural, relativeTime } from "../lib/format.ts";
+import { dateTime, greeting, plural, relativeTime, visibleText } from "../lib/format.ts";
+import { isPageFocus, useScreenKeys } from "../lib/keys.tsx";
 import { routeHref } from "../lib/router.ts";
 
 const SOURCE_ICONS = {
@@ -46,22 +48,23 @@ export const inboxKeyAction = (
 	return undefined;
 };
 
-const isTyping = (target: EventTarget | null): boolean =>
-	target instanceof HTMLElement && (target.isContentEditable || /^(?:INPUT|TEXTAREA|SELECT)$/u.test(target.tagName));
+/** The headline when the list is empty: "Nothing needs you." only when every source was read. */
+export const emptyInboxTitle = (unreadable: number): string =>
+	unreadable === 0 ? "Nothing needs you." : `Nothing found, but ${plural(unreadable, "source")} could not be read.`;
 
 const Detail = ({ item }: { item: InboxItem }) => (
-	<aside className="detail" aria-label="Selected item">
+	<>
 		<p className="label">
 			{item.source} · owned by {item.owner.label}
 		</p>
-		<h2 className="detail-title">{item.title}</h2>
-		<p className="text-2">{item.detail}</p>
-		{item.context === "" ? null : <p className="muted">{item.context}</p>}
+		<h2 className="detail-title">{visibleText(item.title)}</h2>
+		<p className="text-2">{visibleText(item.detail)}</p>
+		{item.context === "" ? null : <p className="muted">{visibleText(item.context)}</p>}
 		<ActionList actions={item.actions} />
 		<p className="fine-print">
 			Approvals and publishing stay in the owning service. Harnessy shows, links and lets you copy; it runs nothing.
 		</p>
-	</aside>
+	</>
 );
 
 export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefined; now: number }) => {
@@ -74,38 +77,44 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 		items.findIndex((item) => item.key === selectedKey),
 	);
 	const selected = items[index];
+	const list = useRef<HTMLUListElement>(null);
+	const [notice, setNotice] = useState("");
 	const select = (next: number) => {
 		const item = items[next];
 		if (item !== undefined) window.location.replace(routeHref("inbox", item.key));
 	};
+	const copyCommand = (item: InboxItem) => {
+		const command = item.actions.find((candidate) => candidate.kind === "copy");
+		if (command === undefined) return;
+		void copyText(command.target).then((ok) =>
+			setNotice(ok ? `Copied: ${visibleText(command.target)}` : "The browser refused to copy."),
+		);
+	};
 
-	useEffect(() => {
-		const onKey = (event: globalThis.KeyboardEvent) => {
-			if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
-			const action = inboxKeyAction(event.key, items, index);
-			if (action === undefined) return;
-			event.preventDefault();
-			const item = items[index]!;
-			if (action.kind === "select") select(action.index);
-			else if (action.kind === "copy") {
-				const command = item.actions.find((candidate) => candidate.kind === "copy");
-				if (command !== undefined) void copyText(command.target);
-			} else {
-				const handoff = item.actions.find((candidate) => candidate.kind === "handoff");
-				if (handoff !== undefined) followHandoff(handoff.target);
-				else if (action.kind === "primary") {
-					const command = item.actions.find((candidate) => candidate.kind === "copy");
-					if (command !== undefined) void copyText(command.target);
-				}
-			}
-		};
-		window.addEventListener("keydown", onKey);
-		return () => window.removeEventListener("keydown", onKey);
+	// The app passes only keys no global shortcut took. On the page or in the list, j/k/c/o act;
+	// Enter acts only when no control has the focus, so a focused link or button keeps its own Enter.
+	useScreenKeys((event) => {
+		const onPage = isPageFocus(event.target);
+		const inList = event.target instanceof Node && list.current?.contains(event.target) === true;
+		if (!onPage && !inList) return;
+		if (event.key === "Enter" && !onPage) return;
+		const action = inboxKeyAction(event.key, items, index);
+		if (action === undefined) return;
+		event.preventDefault();
+		const item = items[index]!;
+		if (action.kind === "select") select(action.index);
+		else if (action.kind === "copy") copyCommand(item);
+		else {
+			const handoff = item.actions.find((candidate) => candidate.kind === "handoff");
+			if (handoff !== undefined) followHandoff(handoff.target);
+			else if (action.kind === "primary") copyCommand(item);
+		}
 	});
 
 	const jobList = jobs.data?.tiles.jobs.state === "ok" ? jobs.data.tiles.jobs.data : undefined;
 	const supervised = jobList?.jobs.filter((job) => job.kind !== "on-demand") ?? [];
 	const healthy = supervised.filter((job) => job.health === "ok").length;
+	const unreadable = tile?.state === "ok" ? (tile.data?.unreadable.length ?? 0) : 0;
 
 	return (
 		<div className="screen">
@@ -113,7 +122,9 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 				{tile?.state === "ok" && tile.data !== undefined ? (
 					<p className="text-2">
 						{tile.data.counts.action_required === 0
-							? "Nothing needs you."
+							? tile.data.items.length === 0
+								? emptyInboxTitle(unreadable)
+								: "Nothing needs you."
 							: `${plural(tile.data.counts.action_required, "thing")} need${tile.data.counts.action_required === 1 ? "s" : ""} you.`}
 						{tile.data.nextJob === null
 							? ""
@@ -137,7 +148,10 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 			<WithTile tile={tile}>
 				{(data) =>
 					data.items.length === 0 ? (
-						<EmptyState title="Nothing needs you.">
+						<EmptyState
+							title={emptyInboxTitle(data.unreadable.length)}
+							tone={unreadable > 0 ? "attention" : undefined}
+						>
 							{data.nextJob === null ? null : (
 								<p>
 									Next job: {data.nextJob.name} at {dateTime(data.nextJob.at)}.
@@ -146,7 +160,7 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 						</EmptyState>
 					) : (
 						<div className="split">
-							<ul className="list" aria-label="Inbox">
+							<ul className="list" aria-label="Inbox" ref={list}>
 								{data.items.map((item, position) => {
 									const Icon = SOURCE_ICONS[item.source];
 									const severity = SEVERITY[item.severity];
@@ -165,8 +179,8 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 													<StatusDot tone={severity.tone} label={severity.label} />
 												</span>
 												<span className="row-main">
-													<span className="row-title">{item.title}</span>
-													<span className="row-context">{item.context}</span>
+													<span className="row-title">{visibleText(item.title)}</span>
+													<span className="row-context">{visibleText(item.context)}</span>
 												</span>
 												<span className="row-meta">
 													<Icon size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -178,7 +192,15 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 									);
 								})}
 							</ul>
-							{selected === undefined ? null : <Detail item={selected} />}
+							{selected === undefined ? null : (
+								<DetailPane
+									label="Selected item"
+									open={selectedKey !== undefined && selected.key === selectedKey}
+									onClose={() => window.location.replace(routeHref("inbox"))}
+								>
+									<Detail item={selected} />
+								</DetailPane>
+							)}
 						</div>
 					)
 				}
@@ -186,6 +208,9 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 			{tile?.state === "ok" && tile.data !== undefined && tile.data.unreadable.length > 0 ? (
 				<p className="fine-print">Could not read: {tile.data.unreadable.join(", ")}</p>
 			) : null}
+			<p className="copy-notice" aria-live="polite">
+				{notice}
+			</p>
 		</div>
 	);
 };

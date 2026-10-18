@@ -10,7 +10,7 @@ import { EmptyState, StatusDot, type TabItem, Tabs, type Tone, WithTile } from "
 import { ScreenHeader } from "../components/Shell.tsx";
 import type { Task, TasksResponse } from "../lib/api-types.ts";
 import { useResource } from "../lib/data.tsx";
-import { dayLabel } from "../lib/format.ts";
+import { dayLabel, visibleText } from "../lib/format.ts";
 import { routeHref } from "../lib/router.ts";
 
 export type TaskTab = "mine" | "waiting" | "project" | "done";
@@ -57,15 +57,35 @@ const TABS: ReadonlyArray<TabItem<TaskTab>> = [
 	{ id: "done", label: "Done" },
 ];
 
+/** Open tasks in project groups, in the order `tasksForTab` sorted them; `null` is "No project". */
+export const projectGroups = (
+	tasks: ReadonlyArray<Task>,
+): ReadonlyArray<{ readonly project: string | null; readonly tasks: ReadonlyArray<Task> }> => {
+	const groups: Array<{ project: string | null; tasks: Task[] }> = [];
+	for (const task of tasks) {
+		const last = groups[groups.length - 1];
+		if (last !== undefined && last.project === task.project) last.tasks.push(task);
+		else groups.push({ project: task.project, tasks: [task] });
+	}
+	return groups;
+};
+
 const TaskRow = ({ task, expanded, onToggle }: { task: Task; expanded: boolean; onToggle: () => void }) => (
 	<>
 		<tr className={task.raw ? "task-raw" : undefined}>
 			<td>
 				<button type="button" className="link-button" aria-expanded={expanded} onClick={onToggle}>
-					{task.title}
+					{visibleText(task.title)}
 				</button>
 				{task.raw ? <span className="pill">unparsed line</span> : null}
-				{task.sourceChanged ? <span className="pill pill-attention">source changed</span> : null}
+				{task.sourceChanged ? (
+					<span className="pill pill-attention" title="The line in the source file changed since an earlier read.">
+						source changed
+					</span>
+				) : null}
+				{task.sourceChanged && task.previousTitle !== null ? (
+					<span className="task-previous muted">was: {visibleText(task.previousTitle)}</span>
+				) : null}
 			</td>
 			<td className="text-2">{task.owner ?? "Julian"}</td>
 			<td className="text-2">{task.due === null ? "–" : dayLabel(task.due)}</td>
@@ -105,9 +125,7 @@ export const TasksScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
 				label="Task views"
 				items={TABS.map((item) => ({ ...item, count: tasksForTab(all, item.id).length }))}
 				current={tab}
-				onSelect={(id) => {
-					window.location.hash = routeHref("tasks", id);
-				}}
+				hrefOf={(id) => routeHref("tasks", id)}
 			/>
 			<p className="banner">
 				Derived, not tracked: these come from your briefs, reminders, action register and project status files.
@@ -133,16 +151,37 @@ export const TasksScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
 												<th scope="col">Source</th>
 											</tr>
 										</thead>
-										<tbody>
-											{shown.map((task) => (
-												<TaskRow
-													key={task.id}
-													task={task}
-													expanded={expanded === task.id}
-													onToggle={() => setExpanded(expanded === task.id ? undefined : task.id)}
-												/>
-											))}
-										</tbody>
+										{tab === "project" ? (
+											projectGroups(shown).map((group) => (
+												<tbody key={group.project === null ? "no-project" : `project:${group.project}`}>
+													<tr className="group-row">
+														<th scope="colgroup" colSpan={5}>
+															{group.project ?? "No project"}
+															<span className="tab-count"> {group.tasks.length}</span>
+														</th>
+													</tr>
+													{group.tasks.map((task) => (
+														<TaskRow
+															key={task.id}
+															task={task}
+															expanded={expanded === task.id}
+															onToggle={() => setExpanded(expanded === task.id ? undefined : task.id)}
+														/>
+													))}
+												</tbody>
+											))
+										) : (
+											<tbody>
+												{shown.map((task) => (
+													<TaskRow
+														key={task.id}
+														task={task}
+														expanded={expanded === task.id}
+														onToggle={() => setExpanded(expanded === task.id ? undefined : task.id)}
+													/>
+												))}
+											</tbody>
+										)}
 									</table>
 								</div>
 							)}

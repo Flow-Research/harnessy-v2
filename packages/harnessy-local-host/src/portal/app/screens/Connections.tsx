@@ -3,6 +3,8 @@
  * owner of the credential: the app never runs OAuth and never holds, reads or
  * relays the Executor token.
  */
+import { useEffect, useRef } from "react";
+
 import { CommandChip, HandoffButton } from "../components/actions.tsx";
 import { Card, StatusDot, type Tone, WithTile } from "../components/primitives.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
@@ -49,7 +51,15 @@ const ConnectionCard = ({ connection }: { connection: Connection }) => (
 	</Card>
 );
 
-export const ConnectionsScreen = () => {
+export const ConnectionsScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
+	// `#/connections/tools` (the rail's "Tools & integrations") scrolls to and focuses that section.
+	const tools = useRef<HTMLElement>(null);
+	const toTools = rest[0] === "tools";
+	useEffect(() => {
+		if (!toTools || tools.current === null) return;
+		tools.current.scrollIntoView?.({ block: "start" });
+		tools.current.focus();
+	}, [toTools]);
 	const connections = useResource<ConnectionsResponse>("/v1/connections");
 	const jobs = useResource<JobsResponse>("/v1/jobs");
 	const executor =
@@ -82,7 +92,7 @@ export const ConnectionsScreen = () => {
 					</div>
 				</section>
 			))}
-			<section className="section" id="tools">
+			<section className="section" id="tools" ref={tools} tabIndex={-1} aria-label="Tools & integrations">
 				<h2 className="section-title">Tools &amp; integrations</h2>
 				<Card
 					title="The cockpit (Tools engine)"

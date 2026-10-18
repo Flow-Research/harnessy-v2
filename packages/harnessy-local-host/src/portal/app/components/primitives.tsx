@@ -47,9 +47,9 @@ export const Card = ({
 	</section>
 );
 
-export const EmptyState = ({ title, children }: { title: string; children?: ReactNode }) => (
-	<div className="empty">
-		<p className="empty-title">{title}</p>
+export const EmptyState = ({ title, tone, children }: { title: string; tone?: Tone; children?: ReactNode }) => (
+	<div className={tone === undefined ? "empty" : `empty empty-${tone}`}>
+		<p className={tone === undefined ? "empty-title" : `empty-title tone-${tone}`}>{title}</p>
 		{children === undefined ? null : <div className="empty-body">{children}</div>}
 	</div>
 );
@@ -70,36 +70,44 @@ export interface TabItem<T extends string> {
 	readonly count?: number;
 }
 
+/** View switches that change the route: links in a nav, the current one marked `aria-current="page"`. */
 export const Tabs = <T extends string>({
 	items,
 	current,
-	onSelect,
+	hrefOf,
 	label,
 }: {
 	items: ReadonlyArray<TabItem<T>>;
 	current: T;
-	onSelect: (id: T) => void;
+	hrefOf: (id: T) => string;
 	label: string;
 }) => (
-	<div className="tabs" role="tablist" aria-label={label}>
+	<nav className="tabs" aria-label={label}>
 		{items.map((item) => (
-			<button
+			<a
 				key={item.id}
-				type="button"
-				role="tab"
-				aria-selected={item.id === current}
+				href={hrefOf(item.id)}
+				aria-current={item.id === current ? "page" : undefined}
 				className={item.id === current ? "tab tab-current" : "tab"}
-				onClick={() => onSelect(item.id)}
 			>
 				{item.label}
 				{item.count === undefined ? null : <span className="tab-count">{item.count}</span>}
-			</button>
+			</a>
 		))}
-	</div>
+	</nav>
 );
 
+/** Tone of each tile state (spec 2.5): missing and unsupported are idle, busy and recovering need attention, error and unsafe are danger. */
+export const TILE_STATE_TONE: Readonly<Record<string, Tone>> = {
+	missing: "idle",
+	unsupported: "idle",
+	busy: "attention",
+	recovering: "attention",
+	error: "danger",
+	unsafe: "danger",
+};
+
 const STATE_TEXT: Readonly<Record<string, string>> = {
-	missing: "Not set up yet",
 	busy: "Busy: another process is writing. Try again shortly",
 	recovering: "Recovering: a write was interrupted. The owning service will repair it",
 	unsupported: "Not supported here",
@@ -107,17 +115,34 @@ const STATE_TEXT: Readonly<Record<string, string>> = {
 	error: "Could not be read",
 };
 
+/** `missing` means different things: nothing configured, nothing written yet, or nothing recorded yet. */
+const MISSING_TEXT: Readonly<Record<string, string>> = {
+	config_missing: "Not set up yet",
+	config_unavailable: "Not set up yet",
+	workspace_missing: "Not set up yet",
+	meeting_disabled: "Turned off in the configuration",
+	not_loaded: "Not loaded in launchd",
+	ledger_uninitialized: "Not started yet",
+	catalog_uninitialized: "Not started yet",
+	database_missing: "Not started yet",
+	file_missing: "Not written yet",
+	run_missing: "Not written yet",
+	no_preview: "Not written yet",
+	generation_unrecorded: "Nothing recorded yet",
+};
+
+/** The words for a tile that is not `ok`. */
+export const tileStateText = (state: string, reason: string | undefined): string =>
+	state === "missing"
+		? ((reason === undefined ? undefined : MISSING_TEXT[reason]) ?? "Nothing here yet")
+		: (STATE_TEXT[state] ?? "No data");
+
 /** The line shown for a tile that is not `ok`. */
 export const TileState = ({ tile }: { tile: Tile<unknown> | undefined }) => {
 	if (tile === undefined) return <p className="muted">No data</p>;
-	const summary = STATE_TEXT[tile.state] ?? "No data";
 	return (
-		<p
-			className={
-				tile.state === "missing" || tile.state === "busy" ? "tile-state tone-attention" : "tile-state tone-danger"
-			}
-		>
-			{summary}
+		<p className={`tile-state tone-${TILE_STATE_TONE[tile.state] ?? "danger"}`}>
+			{tileStateText(tile.state, tile.reason)}
 			{tile.reason === undefined ? null : <span className="mono muted"> ({tile.reason})</span>}
 		</p>
 	);

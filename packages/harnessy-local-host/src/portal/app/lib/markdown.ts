@@ -46,6 +46,12 @@ export type Block =
 /** Blocks parsed at most; the rest of the text is dropped with a note. */
 export const MAX_BLOCKS = 2_000;
 const MAX_INLINE_DEPTH = 6;
+/**
+ * Block quotes nest at most this deep. A deeper `>` run stays text, so a line of
+ * thousands of `>` characters can neither exhaust the parser's stack nor the
+ * renderer's.
+ */
+export const MAX_QUOTE_DEPTH = 8;
 
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/u;
 const BULLET = /^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/u;
@@ -113,8 +119,8 @@ const checkbox = (text: string): { readonly checked: boolean | null; readonly te
 	return match === null ? { checked: null, text } : { checked: match[1] !== " ", text: match[2]! };
 };
 
-/** Parse a whole document into blocks. */
-export const parseMarkdown = (source: string): ReadonlyArray<Block> => {
+/** Parse a whole document into blocks. `depth` is the block-quote nesting of `source`. */
+export const parseMarkdown = (source: string, depth = 0): ReadonlyArray<Block> => {
 	const lines = source.replace(/\r\n?/gu, "\n").split("\n");
 	const blocks: Block[] = [];
 	let index = 0;
@@ -160,7 +166,15 @@ export const parseMarkdown = (source: string): ReadonlyArray<Block> => {
 			const body: string[] = [];
 			while (index < lines.length && lines[index]!.trimStart().startsWith(">"))
 				body.push(lines[index++]!.trimStart().replace(/^>\s?/u, ""));
-			push({ type: "quote", children: parseMarkdown(body.join("\n")).slice(0, 200) });
+			// At the depth limit the rest of the quote is shown as written, `>` included.
+			push(
+				depth + 1 >= MAX_QUOTE_DEPTH
+					? {
+							type: "quote",
+							children: [{ type: "paragraph", children: [{ type: "text", text: body.join(" ") }] }],
+						}
+					: { type: "quote", children: parseMarkdown(body.join("\n"), depth + 1).slice(0, 200) },
+			);
 			continue;
 		}
 		const bullet = BULLET.exec(line);

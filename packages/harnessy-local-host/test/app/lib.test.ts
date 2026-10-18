@@ -11,6 +11,7 @@ import {
 	type Block,
 	inlineText,
 	MAX_BLOCKS,
+	MAX_QUOTE_DEPTH,
 	parseInline,
 	parseMarkdown,
 	sectionsOf,
@@ -30,6 +31,8 @@ describe("links", () => {
 	it("accepts only explicit-port loopback http links without credentials, query or fragment", () => {
 		expect(safeHref("http://127.0.0.1:8770/")).toBe("http://127.0.0.1:8770/");
 		expect(safeHref("http://localhost:4788/")).toBe("http://localhost:4788/");
+		// A review service configured with reviewHost ::1 listens on IPv6 loopback only.
+		expect(safeHref("http://[::1]:8770/")).toBe("http://[::1]:8770/");
 		for (const value of [
 			"javascript:alert(1)",
 			"data:text/html,<script>x</script>",
@@ -40,7 +43,9 @@ describe("links", () => {
 			"http://127.0.0.1:8770/?token=x",
 			"http://127.0.0.1:8770/#x",
 			"http://127.0.0.1:8770/a b",
-			"http://[::1]:4788/",
+			"http://[::1]/",
+			"http://[::2]:8770/",
+			"http://[::ffff:7f00:1]:8770/",
 			`http://127.0.0.1:8770/${"a".repeat(300)}`,
 			"not a url",
 			"http//127.0.0.1:8770/",
@@ -158,6 +163,23 @@ describe("markdown", () => {
 		expect(parseMarkdown("|not a table|")).toEqual([
 			{ type: "paragraph", children: [{ type: "text", text: "|not a table|" }] },
 		]);
+	});
+
+	it("bounds block-quote nesting, so a long run of `>` neither overflows the stack nor vanishes", () => {
+		const depthOf = (blocks: ReadonlyArray<Block>): number => {
+			const quote = blocks.find((block) => block.type === "quote");
+			return quote === undefined ? 0 : 1 + depthOf(quote.children);
+		};
+		for (const source of [">".repeat(20_000), `${">".repeat(5_000)} deep`, Array(30_000).fill(">").join("\n")]) {
+			const blocks = parseMarkdown(source);
+			expect(depthOf(blocks)).toBeLessThanOrEqual(MAX_QUOTE_DEPTH);
+		}
+		// The text past the limit is kept as written, `>` included.
+		const deep = parseMarkdown(`${">".repeat(MAX_QUOTE_DEPTH + 3)} deep`);
+		expect(depthOf(deep)).toBe(MAX_QUOTE_DEPTH);
+		expect(JSON.stringify(deep)).toContain(`${">".repeat(2)} deep`);
+		// Ordinary nesting below the limit is unchanged.
+		expect(depthOf(parseMarkdown("> > > three"))).toBe(3);
 	});
 
 	it("splits a brief into sections at level-2 headings", () => {

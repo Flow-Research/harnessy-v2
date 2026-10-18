@@ -2,14 +2,16 @@
  * The Harnessy app: sign-in, the frame, the screens, the palette and the
  * keyboard shortcuts (`g` + letter to change screen, ⌘K or Ctrl+K for the palette).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CommandChip } from "./components/actions.tsx";
+import { ErrorBoundary, ScreenFailed } from "./components/ErrorBoundary.tsx";
 import { Palette, type PaletteEntry, screenEntries } from "./components/Palette.tsx";
 import { BottomBar, NAV, Rail, TopBar } from "./components/Shell.tsx";
 import type { InboxResponse, JobsResponse, TasksResponse } from "./lib/api-types.ts";
 import { applyTheme, effectiveTheme, storedTheme, type Theme } from "./lib/browser.ts";
 import { type DataStore, useDataStore, useResource } from "./lib/data.tsx";
+import { isTyping, type ScreenKeyHandler, ScreenKeysProvider } from "./lib/keys.tsx";
 import { type HashLocation, routeHref, type Screen, useRoute } from "./lib/router.ts";
 import type { SessionClient } from "./lib/session.ts";
 import { ConnectionsScreen } from "./screens/Connections.tsx";
@@ -86,11 +88,11 @@ const ScreenView = ({ screen, rest, now }: { screen: Screen; rest: ReadonlyArray
 		case "jobs":
 			return <JobsScreen rest={rest} now={now} />;
 		case "reviews":
-			return <ReviewsScreen />;
+			return <ReviewsScreen rest={rest} />;
 		case "learning":
 			return <LearningScreen now={now} />;
 		case "connections":
-			return <ConnectionsScreen />;
+			return <ConnectionsScreen rest={rest} />;
 	}
 };
 
@@ -113,6 +115,10 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 	useEffect(() => {
 		if (storedTheme() !== undefined) applyTheme(theme, false);
 	}, [theme]);
+	// The only window key listener: global shortcuts first, then the current screen's handler.
+	const screenKeys = useRef<ScreenKeyHandler | null>(null);
+	const paletteOpen = useRef(palette);
+	paletteOpen.current = palette;
 	useEffect(() => {
 		let pendingG = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -122,16 +128,11 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 				setPalette((open) => !open);
 				return;
 			}
-			const target = event.target;
-			if (
-				event.metaKey ||
-				event.ctrlKey ||
-				event.altKey ||
-				(target instanceof HTMLElement &&
-					(target.isContentEditable || /^(?:INPUT|TEXTAREA|SELECT)$/u.test(target.tagName)))
-			)
-				return;
+			// The palette handles its own keys while it is open.
+			if (paletteOpen.current || event.defaultPrevented) return;
+			if (event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
 			if (pendingG) {
+				// The key after `g` belongs to the chord, whether or not it names a screen.
 				pendingG = false;
 				clearTimeout(timer);
 				const destination = NAV.find((item) => item.key === event.key);
@@ -146,7 +147,9 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 				timer = setTimeout(() => {
 					pendingG = false;
 				}, 1_000);
+				return;
 			}
+			screenKeys.current?.(event);
 		};
 		window.addEventListener("keydown", onKey);
 		return () => {
@@ -163,13 +166,15 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 
 	return (
 		<div className="app">
-			<a className="skip-link" href="#main">
+			{/* A button, not `href="#main"`: in a hash-routed app that link would change the route. */}
+			<button type="button" className="skip-link" onClick={() => document.getElementById("main")?.focus()}>
 				Skip to content
-			</a>
-			<Rail current={route.screen} badges={badges} />
+			</button>
+			<Rail current={route.screen} sub={route.rest[0]} badges={badges} />
 			<div className="main-column">
 				<TopBar
 					screen={route.screen}
+					sub={route.rest[0]}
 					fetchedAt={inbox.fetchedAt}
 					now={now}
 					sessionExpiresAt={client.session()?.expiresAt}
@@ -182,8 +187,12 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 					onOpenPalette={() => setPalette(true)}
 					onRefresh={() => void store.refreshAll()}
 				/>
-				<main id="main" className="content">
-					<ScreenView screen={route.screen} rest={route.rest} now={now} />
+				<main id="main" className="content" tabIndex={-1}>
+					<ScreenKeysProvider handler={screenKeys}>
+						<ErrorBoundary fallback={<ScreenFailed />} resetKey={`${route.screen}/${route.rest.join("/")}`}>
+							<ScreenView screen={route.screen} rest={route.rest} now={now} />
+						</ErrorBoundary>
+					</ScreenKeysProvider>
 				</main>
 			</div>
 			<BottomBar current={route.screen} badges={badges} />

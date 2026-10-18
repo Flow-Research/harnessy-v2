@@ -21,7 +21,7 @@ body {
 }
 
 a {
-	color: var(--ok);
+	color: var(--ok-text);
 }
 
 a:hover {
@@ -71,6 +71,10 @@ h6 {
 .skip-link {
 	position: absolute;
 	left: -9999px;
+	border: 1px solid var(--hairline);
+	color: var(--text);
+	font: inherit;
+	cursor: pointer;
 }
 
 .skip-link:focus {
@@ -91,19 +95,19 @@ h6 {
 }
 
 .tone-ok {
-	color: var(--ok);
+	color: var(--ok-text);
 }
 
 .tone-attention {
-	color: var(--attention);
+	color: var(--attention-text);
 }
 
 .tone-danger {
-	color: var(--danger);
+	color: var(--danger-text);
 }
 
 .tone-idle {
-	color: var(--idle);
+	color: var(--idle-text);
 }
 
 .label {
@@ -152,7 +156,7 @@ h6 {
 }
 
 .brand-mark {
-	color: var(--ok);
+	color: var(--ok-text);
 	display: inline-flex;
 }
 
@@ -289,7 +293,7 @@ h6 {
 .freshness.stale {
 	text-decoration: underline dashed;
 	text-underline-offset: 3px;
-	color: var(--attention);
+	color: var(--attention-text);
 }
 
 .session-chip {
@@ -527,19 +531,19 @@ h6 {
 }
 
 .status-ok {
-	color: var(--ok);
+	color: var(--ok-text);
 }
 
 .status-attention {
-	color: var(--attention);
+	color: var(--attention-text);
 }
 
 .status-danger {
-	color: var(--danger);
+	color: var(--danger-text);
 }
 
 .status-idle {
-	color: var(--idle);
+	color: var(--idle-text);
 }
 
 .dot-pulse {
@@ -569,13 +573,13 @@ h6 {
 
 .pill-ok {
 	border-color: var(--ok);
-	color: var(--ok);
+	color: var(--ok-text);
 	margin-left: 0;
 }
 
 .pill-attention {
 	border-color: var(--attention);
-	color: var(--attention);
+	color: var(--attention-text);
 }
 
 .badge-row {
@@ -804,7 +808,7 @@ h6 {
 }
 
 .glyph {
-	color: var(--ok);
+	color: var(--ok-text);
 }
 
 .source-chip {
@@ -1097,6 +1101,117 @@ h6 {
 }
 
 /* Phone width: bottom bar, 16 px gutters, no horizontal page scroll. */
+/* Sub-pages in the rail */
+.rail-item {
+	display: flex;
+	flex-direction: column;
+}
+
+.nav-sub {
+	display: flex;
+	align-items: center;
+	min-height: 32px;
+	padding: 0 10px 0 36px;
+	border-radius: var(--radius-control);
+	color: var(--text-2);
+	font-size: 13px;
+	text-decoration: none;
+}
+
+.nav-sub:hover,
+.nav-sub.nav-current {
+	background: var(--raised);
+	color: var(--text);
+}
+
+.crumbs a {
+	color: var(--text-2);
+}
+
+.content:focus:not(:focus-visible) {
+	outline: none;
+}
+
+/* Untrusted text never reorders the text around it. */
+.command-text,
+.row-title,
+.row-context,
+.detail-title,
+.link-button,
+.palette-title {
+	unicode-bidi: isolate;
+}
+
+/* Detail as a sheet below 1100 px */
+.sheet-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	background: rgb(0 0 0 / 0.45);
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+}
+
+.sheet {
+	position: relative;
+	width: min(720px, 100%);
+	max-height: 85vh;
+	overflow: auto;
+	border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+	padding-top: 48px;
+	animation: sheet-in var(--motion);
+}
+
+.sheet:focus {
+	outline: none;
+}
+
+.sheet-close {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+}
+
+@keyframes sheet-in {
+	from {
+		transform: translateY(16px);
+		opacity: 0;
+	}
+	to {
+		transform: none;
+		opacity: 1;
+	}
+}
+
+/* Tasks grouped by project */
+.group-row th {
+	text-align: left;
+	font-size: 12px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--text-2);
+	background: var(--panel);
+}
+
+.task-previous {
+	display: block;
+	font-size: 12px;
+}
+
+.empty-attention {
+	border-color: var(--attention);
+}
+
+.copy-notice:empty {
+	display: none;
+}
+
+.copy-notice {
+	font-size: 12px;
+	color: var(--text-2);
+}
+
 @media (max-width: 760px) {
 	.app {
 		grid-template-columns: minmax(0, 1fr);

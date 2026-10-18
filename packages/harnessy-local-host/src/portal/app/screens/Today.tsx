@@ -5,6 +5,7 @@
  * ledger has no read state, so the app never says "unread".
  */
 import { CommandChip } from "../components/actions.tsx";
+import { ErrorBoundary, PlainTextFallback } from "../components/ErrorBoundary.tsx";
 import { Card, StatusDot, TileState, type Tone, WithTile } from "../components/primitives.tsx";
 import { MarkdownBlocks, SafeMarkdown } from "../components/SafeMarkdown.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
@@ -109,19 +110,20 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 			>
 				{dates?.state === "ok" && dates.data !== undefined && dates.data.dates.length > 0 ? (
 					<nav className="date-switcher" aria-label="Recent briefs">
-						{dates.data.dates.map((entry) => (
-							<a
-								key={entry.date}
-								href={routeHref("today", entry.date)}
-								className={
-									(date ?? (briefTile?.state === "ok" ? briefTile.data?.date : undefined)) === entry.date
-										? "chip chip-current"
-										: "chip"
-								}
-							>
-								{dayLabel(entry.date)}
-							</a>
-						))}
+						{dates.data.dates.map((entry) => {
+							const current =
+								(date ?? (briefTile?.state === "ok" ? briefTile.data?.date : undefined)) === entry.date;
+							return (
+								<a
+									key={entry.date}
+									href={routeHref("today", entry.date)}
+									className={current ? "chip chip-current" : "chip"}
+									aria-current={current ? "page" : undefined}
+								>
+									{dayLabel(entry.date)}
+								</a>
+							);
+						})}
 					</nav>
 				) : null}
 			</ScreenHeader>
@@ -137,7 +139,12 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 								)}
 								{briefTile.data.truncated ? <span className="pill pill-attention">first 64 KiB</span> : null}
 							</div>
-							<Brief text={briefTile.data.text} />
+							<ErrorBoundary
+								fallback={<PlainTextFallback text={briefTile.data.text} />}
+								resetKey={briefTile.data.text}
+							>
+								<Brief text={briefTile.data.text} />
+							</ErrorBoundary>
 						</>
 					) : brief.status === "loading" ? (
 						<p className="muted">Loading</p>

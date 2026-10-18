@@ -64,3 +64,21 @@ export const greeting = (now: number): string => {
 };
 
 export const plural = (count: number, one: string, many = `${one}s`): string => `${count} ${count === 1 ? one : many}`;
+
+/**
+ * Invisible format controls: bidi embeddings, overrides and isolates, zero-width
+ * characters, the Arabic letter mark and the byte-order mark. In a command or a
+ * title they can make what is shown differ from the bytes that are there
+ * (Trojan Source), so they are shown as a visible escape instead.
+ */
+const FORMAT_CONTROLS = /[؜​-‏‪-‮⁠-⁩﻿]/gu;
+
+/** `text` with every invisible format control shown as `⟨U+202E⟩`. */
+export const visibleText = (text: string): string =>
+	text.replace(
+		FORMAT_CONTROLS,
+		(control) => `⟨U+${control.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`,
+	);
+
+/** Whether `text` holds an invisible format control. */
+export const hasFormatControls = (text: string): boolean => text.search(FORMAT_CONTROLS) !== -1;
