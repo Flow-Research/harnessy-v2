@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CodexProviderError } from "../src/ai/codex-failure.ts";
 import { resolveLifeOrchestratorSettings } from "../src/jarvis/life-orchestrator/config.ts";
 import { lifeDraftGrantPayload } from "../src/jarvis/life-orchestrator/draft-grant-host.ts";
 import { prepareLifeWeeklyPrompt, runLifeWeekly } from "../src/jarvis/life-orchestrator/service.ts";
@@ -352,6 +353,24 @@ describe("signed weekly Life draft consumer", () => {
 			);
 		await expect(run()).rejects.toThrow("consumed grant");
 		await expect(run()).rejects.toThrow("Weekly run reserved");
+		expect(f.draftProvider.generate).toHaveBeenCalledTimes(1);
+	});
+	it("surfaces only the allow-listed provider code when weekly generation fails", async () => {
+		const f = fixture();
+		f.draftProvider.generate.mockRejectedValue(new CodexProviderError("provider_auth"));
+		await expect(
+			Effect.runPromise(
+				runLifeWeekly(f.settings, f.options).pipe(
+					Effect.provideService(CommandRunner, {
+						run: () => {
+							throw new Error("Command forbidden");
+						},
+					}),
+				),
+			),
+		).rejects.toThrow(
+			"Native weekly generation failed (provider_auth); reconcile the consumed grant before retrying.",
+		);
 		expect(f.draftProvider.generate).toHaveBeenCalledTimes(1);
 	});
 	it("rejects concurrent consumption while the first provider request is in flight", async () => {
