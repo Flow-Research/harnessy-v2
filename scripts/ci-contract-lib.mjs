@@ -94,13 +94,22 @@ const validateHarnessyGateJobs = (issues, ci) => {
 	if (!String(aggregate.if ?? "").includes("always()")) {
 		issues.push(`CI:${harnessyAggregateJob} must run with always() so failed or skipped gate jobs fail it`);
 	}
-	const verdict = (aggregate.steps ?? []).find(
-		(step) =>
-			Object.values(step.env ?? {}).some((value) => String(value).includes("toJSON(needs)")) &&
-			String(step.run ?? "").includes('all(.value.result == "success")'),
+	// The verdict must be an exit-status check (jq -e) on one command line, with nothing that
+	// can swallow its failure: no "|| true", no continue-on-error on the step or the job.
+	const isVerdictLine = (line) =>
+		/^echo "\$NEEDS_JSON" \| jq -e '[^']*all\(\.value\.result == "success"\)[^']*'( > \/dev\/null)?$/u.test(line);
+	const verdict = (aggregate.steps ?? []).find((step) =>
+		Object.values(step.env ?? {}).some((value) => String(value).includes("toJSON(needs)")),
 	);
-	if (verdict === undefined) {
-		issues.push(`CI:${harnessyAggregateJob} must fail unless every needed job result is success`);
+	if (
+		verdict !== undefined &&
+		(String(verdict.run ?? "").includes("||") ||
+			String(verdict["continue-on-error"] ?? "false") !== "false" ||
+			String(aggregate["continue-on-error"] ?? "false") !== "false")
+	) {
+		issues.push(`CI:${harnessyAggregateJob} must not ignore a failed verdict (no ||, no continue-on-error)`);
+	} else if (verdict === undefined || !commandLinesFor({ steps: [verdict] }).some(isVerdictLine)) {
+		issues.push(`CI:${harnessyAggregateJob} must fail unless every needed job result is success (jq -e on NEEDS_JSON)`);
 	}
 	if (commandLinesFor(aggregate).some((line) => generatorCommands.includes(line))) {
 		issues.push(`CI:${harnessyAggregateJob} must only aggregate gate job results`);
@@ -122,6 +131,14 @@ const validateHarnessyGateJobs = (issues, ci) => {
 	);
 	const buildArtifact = String(buildUpload?.with?.name ?? "");
 	if (buildJob !== undefined && buildArtifact === "") issues.push(`CI:${buildJob} must upload the shared build outputs`);
+	// "Re-run failed jobs" does not re-run a successful build, so gate jobs in a later attempt
+	// must find the first attempt's artifact; a re-run build replaces it.
+	if (buildArtifact.includes("run_attempt")) {
+		issues.push(`CI:${buildJob} build artifact name must not include github.run_attempt`);
+	}
+	if (buildUpload !== undefined && String(buildUpload.with?.overwrite) !== "true") {
+		issues.push(`CI:${buildJob} build artifact upload must set overwrite: true`);
+	}
 	for (const jobId of gateJobs.filter((candidate) => candidate !== buildJob)) {
 		if (!normalizeNeeds(ci.jobs[jobId]?.needs).includes(buildJob)) {
 			issues.push(`CI:${jobId} must need the shared build job ${String(buildJob)}`);

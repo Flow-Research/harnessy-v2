@@ -6,9 +6,6 @@ description: >-
   Python environment).
 
 inputs:
-  system-packages:
-    description: Install the apt packages used by the workspace tests.
-    default: "true"
   build-artifact:
     description: Name of the build-output artifact to restore; empty skips the restore.
     default: ""
@@ -31,7 +28,6 @@ runs:
         bun-version: 1.4.0
 
     - name: Install system dependencies
-      if: ${{ inputs.system-packages == 'true' }}
       shell: bash
       run: |
         sudo apt-get update
@@ -60,6 +56,12 @@ runs:
       run: |
         archive="$RUNNER_TEMP/harnessy-build/harnessy-build.tar.gz"
         test -s "$archive"
+        built="$(cat "$RUNNER_TEMP/harnessy-build/harnessy-build.sha")"
+        checked_out="$(git rev-parse HEAD)"
+        if [ "$built" != "$checked_out" ]; then
+          echo "::error::Build outputs are for $built, but this job checked out $checked_out."
+          exit 1
+        fi
         tar -xpzf "$archive"
         git diff --exit-code
 

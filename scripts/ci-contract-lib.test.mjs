@@ -15,7 +15,7 @@ jobs:
       - run: npm run build
       - run: git diff --exit-code
       - uses: actions/upload-artifact@sha
-        with: { name: harnessy-build-run, path: build.tar.gz }
+        with: { name: harnessy-build-run, path: build.tar.gz, overwrite: true }
       - run: npm run check:clean-worktree
   static-checks:
     needs: build
@@ -264,7 +264,7 @@ test("CI contract requires release-part jobs outside the aggregate to check the 
 test("CI contract rejects an aggregate that can pass when a gate job fails, is skipped, or is missing", () => {
 	const cases = [
 		[ciSource.replace(/^ {4}if: .*always\(\).*\n/mu, ""), "CI:build-check-test must run with always() so failed or skipped gate jobs fail it"],
-		[ciSource.replace(` | jq -e 'to_entries | all(.value.result == "success")'`, ""), "CI:build-check-test must fail unless every needed job result is success"],
+		[ciSource.replace(` | jq -e 'to_entries | all(.value.result == "success")'`, ""), "CI:build-check-test must fail unless every needed job result is success (jq -e on NEEDS_JSON)"],
 		[ciSource.replace(", local-host-fixture, workspace-tests", ", workspace-tests"), "CI:build-check-test gate jobs must run npm run test:local-host-fixture"],
 		[ciSource.replace("  release:\n    needs: build\n", "  release:\n"), "CI:release must need the shared build job build"],
 		[ciSource.replace("  release:\n    needs: build\n    steps:\n      - uses: ./.github/actions/harnessy-ci-setup\n        with: { build-artifact: harnessy-build-run }\n", "  release:\n    needs: build\n    steps:\n"), "CI:release must restore the shared build outputs"],
@@ -275,6 +275,36 @@ test("CI contract rejects an aggregate that can pass when a gate job fails, is s
 		assert.equal(result.ok, false, issue);
 		assert(result.issues.includes(issue), `${issue}: ${JSON.stringify(result.issues)}`);
 	}
+});
+
+test("CI contract rejects an aggregate verdict that cannot fail the job", () => {
+	const verdictLine = `run: echo "$NEEDS_JSON" | jq -e 'to_entries | all(.value.result == "success")'`;
+	const unchecked = "CI:build-check-test must fail unless every needed job result is success (jq -e on NEEDS_JSON)";
+	const ignored = "CI:build-check-test must not ignore a failed verdict (no ||, no continue-on-error)";
+	const cases = [
+		[ciSource.replace(verdictLine, verdictLine.replace("jq -e", "jq")), unchecked],
+		[ciSource.replace(verdictLine, `run: echo 'all(.value.result == "success")'`), unchecked],
+		[ciSource.replace(verdictLine, `${verdictLine} || true`), ignored],
+		[ciSource.replace(`      - env: { NEEDS_JSON:`, `      - continue-on-error: true\n        env: { NEEDS_JSON:`), ignored],
+		[ciSource.replace("    name: Harnessy build, QA, and packages\n", "    name: Harnessy build, QA, and packages\n    continue-on-error: true\n"), ignored],
+	];
+	for (const [source, issue] of cases) {
+		assert.notEqual(source, ciSource, issue);
+		const result = validate({ ciSource: source });
+		assert.equal(result.ok, false, issue);
+		assert(result.issues.includes(issue), `${issue}: ${JSON.stringify(result.issues)}`);
+	}
+});
+
+test("CI contract rejects a build artifact that a re-run of failed jobs cannot find", () => {
+	const named = validate({
+		ciSource: ciSource.replace("{ name: harnessy-build-run,", '{ name: "harnessy-build-run-${{ github.run_attempt }}",'),
+	});
+	assert.equal(named.ok, false);
+	assert(named.issues.includes("CI:build build artifact name must not include github.run_attempt"));
+	const kept = validate({ ciSource: ciSource.replace(", overwrite: true", "") });
+	assert.equal(kept.ok, false);
+	assert(kept.issues.includes("CI:build build artifact upload must set overwrite: true"));
 });
 
 test("CI contract rejects a profile clean-worktree gate that runs before package generation", () => {

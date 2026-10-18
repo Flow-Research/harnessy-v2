@@ -16,6 +16,9 @@
   two parts (`test:release-artifacts:installed-local-host` and
   `test:release-artifacts:installed-product`); `npm run test:release-artifacts`
   still runs both parts in one process locally and in release preflight.
+  The build artifact is named by run ID and commit, not by attempt, so "Re-run
+  failed jobs" restores the first attempt's build; each restore fails unless the
+  stamped build commit equals the checked-out commit.
   `npm run check:ci-contract` enforces this shape.
 - Tag release preflight must pass before the first draft release or npm
   mutation. The SDK remains private and outside the publication list.

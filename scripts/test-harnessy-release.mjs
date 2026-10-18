@@ -7,21 +7,15 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { currentExecutorPlatformTag, localReleasePackages } from "./harnessy-release-contract.mjs";
+import { selectedHarnessyReleaseParts } from "./harnessy-release-parts.mjs";
 import { prepareReleaseInstaller } from "./prepare-release-installer.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const platformTag = currentExecutorPlatformTag();
 const packages = localReleasePackages([platformTag]);
 
-// CI runs the two installed-consumer parts in parallel jobs; together they run every
-// check below. With no --part argument the script runs both parts in one process.
-const releaseParts = new Set(["installed-local-host", "installed-product"]);
-const partArguments = process.argv.slice(2);
-const requestedPart = partArguments.length === 0 ? undefined : /^--part=(.+)$/u.exec(partArguments[0])?.[1];
-if (partArguments.length > 1 || (partArguments.length === 1 && !releaseParts.has(requestedPart))) {
-	throw new Error(`Usage: test-harnessy-release.mjs [--part=${[...releaseParts].join("|")}]`);
-}
-const runsPart = (part) => requestedPart === undefined || requestedPart === part;
+const selectedParts = selectedHarnessyReleaseParts(process.argv.slice(2));
+const runsPart = (part) => selectedParts.includes(part);
 
 const temporaryRoot = mkdtempSync(join(tmpdir(), "harnessy-release-"));
 const artifactRoot = join(temporaryRoot, "artifacts");

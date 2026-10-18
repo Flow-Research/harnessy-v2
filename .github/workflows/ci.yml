@@ -30,8 +30,6 @@ jobs:
 
       - name: Setup workspace
         uses: ./.github/actions/harnessy-ci-setup
-        with:
-          system-packages: "false"
 
       - name: Audit root dependencies
         run: npm run audit:root
@@ -60,14 +58,19 @@ jobs:
           test -s "$RUNNER_TEMP/harnessy-build-files"
           mkdir -p "$RUNNER_TEMP/harnessy-build"
           tar --null --no-recursion -T "$RUNNER_TEMP/harnessy-build-files" -czf "$RUNNER_TEMP/harnessy-build/harnessy-build.tar.gz"
-          echo "Packaged $(tr -cd '\0' < "$RUNNER_TEMP/harnessy-build-files" | wc -c) build output files ($(du -h "$RUNNER_TEMP/harnessy-build/harnessy-build.tar.gz" | cut -f1))."
+          git rev-parse HEAD > "$RUNNER_TEMP/harnessy-build/harnessy-build.sha"
+          echo "Packaged $(tr -cd '\0' < "$RUNNER_TEMP/harnessy-build-files" | wc -c) build output files ($(du -h "$RUNNER_TEMP/harnessy-build/harnessy-build.tar.gz" | cut -f1)) for $(cat "$RUNNER_TEMP/harnessy-build/harnessy-build.sha")."
 
       - name: Upload build outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/harnessy-build/harnessy-build.tar.gz
+          name: harnessy-build-${{ github.run_id }}-${{ github.sha }}
+          # A re-run of the build job replaces this run's artifact instead of failing.
+          path: |
+            ${{ runner.temp }}/harnessy-build/harnessy-build.tar.gz
+            ${{ runner.temp }}/harnessy-build/harnessy-build.sha
           if-no-files-found: error
+          overwrite: true
           compression-level: 0
           retention-days: 1
 
@@ -88,7 +91,7 @@ jobs:
       - name: Setup workspace
         uses: ./.github/actions/harnessy-ci-setup
         with:
-          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.sha }}
 
       - name: Verify V1 compatibility projection
         run: npm run verify:v1-compatibility
@@ -128,7 +131,7 @@ jobs:
       - name: Setup workspace
         uses: ./.github/actions/harnessy-ci-setup
         with:
-          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.sha }}
           test-runtime: "true"
 
       - name: Test community adapters in the isolated Jarvis runtime
@@ -169,7 +172,7 @@ jobs:
       - name: Setup workspace
         uses: ./.github/actions/harnessy-ci-setup
         with:
-          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.sha }}
           test-runtime: "true"
 
       - name: Test packed private local-host consumer explicitly
@@ -195,7 +198,7 @@ jobs:
       - name: Setup workspace
         uses: ./.github/actions/harnessy-ci-setup
         with:
-          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.sha }}
           test-runtime: "true"
 
       - name: Test workspace without user credentials
@@ -221,7 +224,7 @@ jobs:
       - name: Setup workspace
         uses: ./.github/actions/harnessy-ci-setup
         with:
-          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.sha }}
           test-runtime: "true"
 
       - name: Enforce Harnessy source coverage floors
@@ -247,7 +250,7 @@ jobs:
       - name: Setup workspace
         uses: ./.github/actions/harnessy-ci-setup
         with:
-          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.sha }}
           test-runtime: "true"
 
       - name: Test packed Harnessy release artifacts (installed local-host consumer)
@@ -273,7 +276,7 @@ jobs:
       - name: Setup workspace
         uses: ./.github/actions/harnessy-ci-setup
         with:
-          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.run_attempt }}
+          build-artifact: harnessy-build-${{ github.run_id }}-${{ github.sha }}
           test-runtime: "true"
 
       - name: Test packed Harnessy release artifacts (installed product consumer)
