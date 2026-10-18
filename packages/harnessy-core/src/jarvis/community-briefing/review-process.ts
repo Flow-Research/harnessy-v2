@@ -126,7 +126,11 @@ export const runCommunityReviewProcess = async (options: CommunityReviewProcessO
 								timer: setTimeout(() => {
 									operation.abort();
 									// Give the adapter time to record an ordinary failed operation.
-									// A stuck adapter is stopped, never silently retried/restarted.
+									// A stuck adapter is stopped, which ends this review process. Under
+									// the scheduled LaunchAgent, KeepAlive then starts a fresh reviewer,
+									// but the interrupted run is never retried: its run ledger row and
+									// revision marker stay "running", so the restarted service refuses
+									// further revisions of that briefing until the owner reconciles it.
 									recoveryTimer = setTimeout(() => controller.abort(), 2000);
 								}, options.operationTimeoutMs),
 							};
@@ -188,7 +192,10 @@ export const runCommunityReviewProcess = async (options: CommunityReviewProcessO
 					await closed;
 					if (!options.signal.aborted) throw new Error("Review process stopped unexpectedly.");
 				},
-				catch: () => new Error("Community review stopped; inspect unfinished local revisions before restarting."),
+				catch: () =>
+					new Error(
+						"Community review stopped; an interrupted local revision stays marked unfinished and is not retried after a restart.",
+					),
 			}),
 		);
 	} finally {

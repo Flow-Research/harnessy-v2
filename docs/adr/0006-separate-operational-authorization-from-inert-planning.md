@@ -604,12 +604,28 @@ Constraints the implementation keeps:
   five-minute window and at least six failed retries. A KeepAlive restart of
   about 10 seconds therefore recovers without a stop. A label that stays
   without a process past the window escalates to the existing stop
-  (`runtime_rejected`). These remain immediate stops, as before:
-  - more than one process;
-  - a process that fails identity verification, or is not launchd's;
-  - a writer-shaped process still awaiting verification while the label has
-    no process, since that process cannot be the label's own;
-  - any other writer-shaped process or guarded label.
+  (`runtime_rejected`).
+
+  The complete rules, as the guard applies them:
+  - **Every writer-shaped process** of the owner must verify as the native
+    reviewer (the release's executable, entry and artifact digests),
+    whether or not launchd owns it. A verified process is exempt, so a second
+    verified reviewer, such as a foreground `review serve`, does not stop
+    publication. It cannot run the weekly trigger without
+    `--weekly-generation`, and the scheduler and native-draft locks bound it
+    anyway. A refuted process is an immediate stop. A process whose
+    verification could not answer pauses.
+  - **The review label, when loaded:**
+    - one pid that is a verified reviewer: exempt;
+    - one pid whose verification could not answer, or when the process
+      listing could not answer: pause;
+    - no pid: pause (`launchctl_no_process`), unless a writer-shaped process
+      is awaiting verification. That process cannot be the label's own, so it
+      is an immediate stop;
+    - more than one pid, or one pid that is not a verified reviewer: an
+      immediate stop.
+  - **Any other guarded label** loaded, or any other observed writer: an
+    immediate stop.
 
   The meeting guard does not check this label (it checks only its V1 labels),
   so it needs no change.
