@@ -38,6 +38,8 @@ const fixture = () => {
 	const privateContext = join(root, ".jarvis/context/private/tester");
 	mkdirSync(privateContext, { recursive: true });
 	writeFileSync(join(privateContext, "priorities.md"), "# Priorities\nShip the portable workspace.\n");
+	// Input to prepareWorkspaceLifeCommand; `execute` sets PI_AUTH_ENCRYPTION on the child.
+	// harnessy-test-env: configuration, not a child process environment
 	const env = {
 		HOME: home,
 		USER: "tester",

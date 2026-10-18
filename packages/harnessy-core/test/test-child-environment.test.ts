@@ -9,7 +9,8 @@ import { describe, expect, it } from "vitest";
  * keychain. The vitest configurations set PI_AUTH_ENCRYPTION=off for the test
  * process, but a child given an explicit environment does not inherit it.
  *
- * Rule: in a test file that starts child processes, every `env: { … }` object
+ * Rule: in a test file that starts child processes, every `env: { … }` object,
+ * and every object literal bound to an env-named variable (`const env = { … }`),
  * must set PI_AUTH_ENCRYPTION, spread `process.env`, or spread
  * `fixtureEnvironment()`. An `env` object that is not a child-process
  * environment carries the marker comment on the line above it.
@@ -17,7 +18,8 @@ import { describe, expect, it } from "vitest";
 const NOT_A_CHILD_ENV_MARKER = "harnessy-test-env: configuration, not a child process environment";
 
 const CHILD_PROCESS_CALL = /\b(?:spawn|spawnSync|execFile|execFileSync|fork|exec|execSync)\s*\(/u;
-const ENV_OBJECT = /\benv\s*:\s*\{/gu;
+/** `env: { … }`, and an object literal bound to an env-named variable (`const env = { … }`), then passed by name. */
+const ENV_OBJECT = /\benv\s*:\s*\{|\b(?:const|let|var)\s+(?:env|\w+Env)\s*(?::[^=;]+)?=\s*\{/gu;
 
 const findUnguardedChildEnvironments = (source: string): ReadonlyArray<number> => {
 	if (!CHILD_PROCESS_CALL.test(source)) return [];
@@ -74,6 +76,18 @@ describe("test child-process environments", () => {
 		expect(findUnguardedChildEnvironments(spawning(`// ${NOT_A_CHILD_ENV_MARKER}\nenv: { A: "1" },`))).toEqual([]);
 		// Nested objects inside the environment are part of it.
 		expect(findUnguardedChildEnvironments(spawning('env: { A: "1", nested: { B: "2" } },'))).toEqual([3]);
+		// An environment built in a variable and passed by shorthand is inspected too.
+		const byName = (declaration: string) =>
+			`import { spawnSync } from "node:child_process";\n${declaration}\nspawnSync("x", [], { env });\n`;
+		expect(findUnguardedChildEnvironments(byName('const env = { PATH: "/usr/bin" };'))).toEqual([2]);
+		expect(findUnguardedChildEnvironments(byName('const childEnv: NodeJS.ProcessEnv = { HOME: "/tmp" };'))).toEqual([
+			2,
+		]);
+		expect(
+			findUnguardedChildEnvironments(byName('const env = { PI_AUTH_ENCRYPTION: "off", PATH: "/usr/bin" };')),
+		).toEqual([]);
+		// Names that merely contain "env" are not environments.
+		expect(findUnguardedChildEnvironments(byName("const envelope = { a: 1 };"))).toEqual([]);
 		// A file that starts no child process is out of scope.
 		expect(findUnguardedChildEnvironments('readConfig({ env: { A: "1" } });')).toEqual([]);
 	});
