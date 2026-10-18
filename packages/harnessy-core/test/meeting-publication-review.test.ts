@@ -380,7 +380,9 @@ describe("MeetingPublicationReviewServer", () => {
 				expect(lstatSync(notePath).mtimeMs).toBe(result.beforeStat.mtimeMs);
 			} else expect(result.current?.sourceHash).not.toBe(result.item.sourceHash);
 		} else if (variant === "denied-approval") {
-			expect(result.response.status).toBe(409);
+			expect(result.response.status).toBe(503);
+			expect(result.response.body).toContain("Publication is paused");
+			expect(result.response.body).toContain("Your edited note was saved and is still waiting for review.");
 			expect(deniedApproval).toBe(true);
 			expect(after.toString("utf8").trim()).toBe(edited.trim());
 			expect(result.current).toMatchObject({
@@ -391,7 +393,7 @@ describe("MeetingPublicationReviewServer", () => {
 			expect(result.current?.sourceHash).toBe(createHash("sha256").update(after).digest("hex"));
 			expect(result.current?.sourceHash).not.toBe(result.item.sourceHash);
 		} else {
-			expect(result.response.status).toBe(variant === "decision-only" ? 400 : 409);
+			expect(result.response.status).toBe(variant === "decision-only" ? 400 : variant === "stale" ? 409 : 422);
 			expect(after.equals(result.before)).toBe(true);
 			expect(result.current?.status).toBe("pending_review");
 			expect(result.current?.approvedHash).toBeNull();
@@ -983,8 +985,22 @@ describe("MeetingPublicationReviewServer", () => {
 					const updatedPage = yield* Effect.promise(() =>
 						call(review.address.origin, `/item/${item.itemId}`, { cookie: session }),
 					);
-					const stale = yield* Effect.promise(() =>
+					const repeated = yield* Effect.promise(() =>
 						post(review.address.origin, session, `/update-note/${item.itemId}`, updateBody),
+					);
+					const repeatedNote = readFileSync(notePath, "utf8");
+					const stale = yield* Effect.promise(() =>
+						post(
+							review.address.origin,
+							session,
+							`/update-note/${item.itemId}`,
+							form({
+								csrf,
+								item_id: item.itemId,
+								source_hash: item.sourceHash,
+								meeting_markdown: markdown({ summary: "Edit of an older revision." }),
+							}),
+						),
 					);
 					const approval = yield* Effect.promise(() =>
 						post(
@@ -1039,6 +1055,8 @@ describe("MeetingPublicationReviewServer", () => {
 						updated,
 						callsAfterEdit,
 						updatedPage,
+						repeated,
+						repeatedNote,
 						stale,
 						approval,
 						blockedPage,
@@ -1071,10 +1089,15 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(result.updated).toMatchObject({ status: "pending_review", approvedHash: null });
 		expect(result.callsAfterEdit).toEqual({ google: 0, discord: 0, notifier: 0 });
 		expect(result.updatedPage.body).toContain("Reviewer-edited canonical summary.");
+		expect(result.repeated.status).toBe(303);
+		expect(result.repeated.headers.location).toBe(`/item/${result.updated.itemId}`);
+		expect(result.repeatedNote).toContain("Reviewer-edited canonical summary.");
 		expect(result.stale.status).toBe(409);
+		expect(result.stale.body).toContain("The meeting note changed after this page was loaded.");
 		expect(result.approval.status).toBe(303);
 		expect(result.blockedPage.body).not.toContain('name="meeting_markdown"');
 		expect(result.blockedEdit.status).toBe(409);
+		expect(result.blockedEdit.body).toContain("This meeting is blocked after a failed publication attempt.");
 		expect(state.calls).toEqual({ google: 0, discord: 0, notifier: 0 });
 		expect(readFileSync(notePath, "utf8")).toContain("Reviewer-edited canonical summary.");
 		if (process.platform !== "win32") expect(lstatSync(notePath).mode & 0o777).toBe(0o640);
@@ -1277,7 +1300,7 @@ credential=TOP_SECRET`;
 			.digest("base64");
 		expect(result.page.headers["content-security-policy"]).toContain(`style-src 'sha256-${stylesheetDigest}'`);
 		expect(result.controls.map((response) => response.status)).toEqual([
-			401, 200, 403, 403, 400, 405, 415, 413, 400, 400, 409, 404, 409,
+			401, 200, 403, 403, 400, 405, 415, 413, 400, 400, 409, 404, 422,
 		]);
 		expect(result.controls[1]?.body).toBe("");
 		expect(result.afterControls.equals(result.baseline)).toBe(true);

@@ -27,17 +27,33 @@ import {
 	JARVIS_MEETING_PUBLICATION_REVIEW_MAX_BODY_BYTES,
 	type JarvisMeetingPublicationConfig,
 } from "../config-model.ts";
-import { MeetingPublicationWriteAuthority, resolveMeetingPublicationWriteBinding } from "./authority.ts";
+import {
+	MeetingPublicationWriteAuthority,
+	MeetingPublicationWriteAuthorityCode,
+	MeetingPublicationWriteAuthorityError,
+	resolveMeetingPublicationWriteBinding,
+} from "./authority.ts";
 import { authorizeMeetingPublicationWrite } from "./authority-check.ts";
 import {
+	type MeetingPublicationEvent,
+	MeetingPublicationExclusionCode,
 	MeetingPublicationFailureStage,
 	type MeetingPublicationItem,
 	type MeetingPublicationPreflightResult,
+	MeetingPublicationProviderError,
 	MeetingPublicationReviewAddress,
 	MeetingPublicationReviewError,
+	MeetingPublicationSourceError,
 	MeetingPublicationStatus,
+	MeetingPublicationStoreError,
+	MeetingPublicationTransitionError,
+	transitionMeetingPublicationSync,
 } from "./models.ts";
-import { MEETING_PUBLICATION_NOTE_MAX_LENGTH, MeetingPublicationSource } from "./notes.ts";
+import {
+	canonicalMeetingPublicationNoteMarkdown,
+	MEETING_PUBLICATION_NOTE_MAX_LENGTH,
+	MeetingPublicationSource,
+} from "./notes.ts";
 import { MEETING_AUTH_RECOVERY_ATTEMPT_LIMIT, type MeetingProviderHealth } from "./provider-health.ts";
 import { redactMeetingPublicationReviewText, renderMeetingPublicationReviewNote } from "./review-markdown.ts";
 import {
@@ -48,7 +64,7 @@ import {
 	meetingPublicationDefaultPurpose,
 	normalizeMeetingPublicationPurpose,
 } from "./service.ts";
-import { MeetingPublicationStore } from "./store.ts";
+import { MEETING_PUBLICATION_DELIVERY_UNCERTAIN, MeetingPublicationStore } from "./store.ts";
 
 const cookieName = "hsy_meeting_review";
 const tokenFileName = "meeting-publication-v2-review.token";
@@ -88,14 +104,22 @@ interface ReviewSession {
 
 export type MeetingPublicationReviewMode = "full" | "decision_only";
 
+/** Plain-text page copy for one outcome. Rendered escaped; never carries note content or secrets. */
+interface ReviewMessage {
+	readonly heading: string;
+	readonly detail: string;
+}
+
 class ReviewHttpError extends Error {
 	readonly status: number;
 	readonly title: string;
+	readonly copy: ReviewMessage | undefined;
 
-	constructor(status: number, title: string) {
+	constructor(status: number, title: string, copy?: ReviewMessage) {
 		super(title);
 		this.status = status;
 		this.title = title;
+		this.copy = copy;
 	}
 }
 
@@ -404,23 +428,25 @@ const page = (title: string, body: string) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>${escapeHtml(title)}</title><style>${reviewStyles}</style></head><body>${body}</body></html>`;
 
-const messagePage = (status: number) => {
+const messagePage = (status: number, override?: ReviewMessage) => {
 	const [title, message] =
-		status === 401
-			? ["Unauthorized", "Use a fresh local review link."]
-			: status === 403
-				? ["Forbidden", "Reload the review page and try again."]
-				: status === 404
-					? ["Not found", "That review page is unavailable."]
-					: status === 405
-						? ["Method not allowed", "That request method is not supported."]
-						: status === 413
-							? ["Request too large", "The review form exceeded its local size limit."]
-							: status === 409
-								? ["Review changed", "Reload the item and review its current version."]
-								: status === 400 || status === 411 || status === 415
-									? ["Invalid request", "The local review request was rejected."]
-									: ["Unavailable", "The local review service could not complete the request."];
+		override !== undefined
+			? [override.heading, escapeHtml(override.detail)]
+			: status === 401
+				? ["Unauthorized", "Use a fresh local review link."]
+				: status === 403
+					? ["Forbidden", "Reload the review page and try again."]
+					: status === 404
+						? ["Not found", "That review page is unavailable."]
+						: status === 405
+							? ["Method not allowed", "That request method is not supported."]
+							: status === 413
+								? ["Request too large", "The review form exceeded its local size limit."]
+								: status === 409
+									? ["Review changed", "Reload the item and review its current version."]
+									: status === 400 || status === 411 || status === 415
+										? ["Invalid request", "The local review request was rejected."]
+										: ["Unavailable", "The local review service could not complete the request."];
 	return page(
 		title,
 		`<section class="card message-card"><p class="eyebrow">Meeting publication</p><h1>${escapeHtml(title)}</h1>
@@ -827,6 +853,83 @@ ${purposePreview}
 	);
 };
 
+type ReviewAction = "update-note" | "approve" | "reject" | "archive";
+
+const reviewEvents = {
+	"update-note": "update",
+	approve: "approve",
+	reject: "reject",
+	archive: "archive",
+} as const satisfies Record<ReviewAction, MeetingPublicationEvent>;
+
+/** Statuses that mean the submitted decision has already taken effect. */
+const decidedStatuses: Record<Exclude<ReviewAction, "update-note">, ReadonlyArray<MeetingPublicationStatus>> = {
+	approve: ["approved", "publishing", "published"],
+	reject: ["rejected"],
+	archive: ["archived"],
+};
+
+const statusCopy: Record<MeetingPublicationStatus, { readonly heading: string; readonly sentence: string }> = {
+	pending_review: { heading: "Waiting for review", sentence: "is waiting for review" },
+	approved: { heading: "Already approved", sentence: "was already approved" },
+	publishing: { heading: "Already being published", sentence: "is already being published" },
+	published: { heading: "Already published", sentence: "was already published" },
+	rejected: { heading: "Already rejected", sentence: "was already rejected" },
+	blocked: { heading: "Blocked", sentence: "is blocked after a failed publication attempt" },
+	archived: { heading: "Already archived", sentence: "was already archived" },
+};
+
+const staleCopy = (action: ReviewAction, status: MeetingPublicationStatus): ReviewMessage => {
+	const allowed = Result.isSuccess(Result.try(() => transitionMeetingPublicationSync(status, reviewEvents[action])));
+	return {
+		heading: "Review changed",
+		detail: allowed
+			? "The meeting note changed after this page was loaded. Reload the item and review its current version."
+			: `This meeting ${statusCopy[status].sentence}. Reload the item to see its current state.`,
+	};
+};
+
+const nothingRecorded = (action: ReviewAction) =>
+	action === "update-note" ? "The note was not saved." : "Nothing was saved or approved.";
+
+const submittedNoteProblems: Partial<Record<MeetingPublicationExclusionCode, string>> = {
+	empty_note: "The edited meeting note is empty.",
+	note_too_long: `The edited meeting note is longer than ${MEETING_PUBLICATION_NOTE_MAX_LENGTH} characters.`,
+	oversize: "The edited meeting note is larger than the configured note size limit.",
+	invalid_utf8: "The edited meeting note is not valid UTF-8 text.",
+	project_boundary: "The edited meeting note must keep the Project metadata line for this project.",
+	invalid_date: "The edited meeting note needs a valid Date metadata line (YYYY-MM-DD).",
+	missing_summary: "The edited meeting note needs a non-empty Executive Summary section.",
+	transcript_section: "The edited meeting note must not contain a transcript section.",
+	identity_change:
+		"The edit changes which meeting this note is. Keep the Project and Fingerprint metadata lines unchanged.",
+};
+
+const storeErrorCodes: ReadonlySet<string> = new Set(MeetingPublicationStoreError.fields.code.literals);
+const sourceErrorCodes: ReadonlySet<string> = new Set(MeetingPublicationExclusionCode.literals);
+const authorityErrorCodes: ReadonlySet<string> = new Set(MeetingPublicationWriteAuthorityCode.literals);
+const reviewErrorCodes: ReadonlySet<string> = new Set(MeetingPublicationReviewError.fields.code.literals);
+const providerStages: ReadonlySet<string> = new Set(MeetingPublicationProviderError.fields.stage.literals);
+
+/** Allow-listed diagnostic for the server log: error kind and enumerated code only, never free text. */
+const actionFailureLogCode = (cause: unknown) => {
+	const allow = (kind: string, code: string, known: ReadonlySet<string>) =>
+		`${kind}:${known.has(code) ? code : "unknown"}`;
+	if (cause instanceof MeetingPublicationStoreError) return allow("store", cause.code, storeErrorCodes);
+	if (cause instanceof MeetingPublicationSourceError) return allow("source", cause.code, sourceErrorCodes);
+	if (cause instanceof MeetingPublicationWriteAuthorityError)
+		return allow("authority", cause.code, authorityErrorCodes);
+	if (cause instanceof MeetingPublicationReviewError) return allow("review", cause.code, reviewErrorCodes);
+	if (cause instanceof MeetingPublicationProviderError) return allow("provider", cause.stage, providerStages);
+	if (cause instanceof MeetingPublicationTransitionError) return "transition";
+	if (cause instanceof ReviewHttpError) return `http:${cause.status}`;
+	return "unexpected";
+};
+
+const logActionFailure = (action: ReviewAction, outcome: "paused" | "unavailable", cause: unknown) => {
+	console.error(`meeting-review action=${action} outcome=${outcome} code=${actionFailureLogCode(cause)}`);
+};
+
 const closeServer = (server: Server) =>
 	Effect.promise(
 		() =>
@@ -969,7 +1072,13 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					});
 				};
 				const runMutation = async <A>(mutation: () => Promise<A>) => {
-					if (mutationInFlight) throw new ReviewHttpError(409, "mutation_in_flight");
+					if (mutationInFlight) {
+						throw new ReviewHttpError(409, "mutation_in_flight", {
+							heading: "Another action is running",
+							detail:
+								"Another review action is still running. Wait a moment, then reload the page and check the current state.",
+						});
+					}
 					mutationInFlight = true;
 					try {
 						return await mutation();
@@ -1313,15 +1422,17 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						return;
 					}
 					const action = /^\/(update-note|approve|reject|archive)\/([a-f0-9]{24})$/u.exec(url.pathname);
-					if (action?.[1] === undefined || action[2] === undefined) throw new ReviewHttpError(404, "route");
-					const item = await runMutation(async () => {
+					const kind = action?.[1] as ReviewAction | undefined;
+					const itemId = action?.[2];
+					if (kind === undefined || itemId === undefined) throw new ReviewHttpError(404, "route");
+					const outcome = await runMutation(async () => {
 						const body = await readBody(request, config.reviewMaxBodyBytes);
 						let allowed: ReadonlyArray<string>;
-						if (action[1] === "approve") {
+						if (kind === "approve") {
 							allowed = ["csrf", "item_id", "source_hash", "purpose"];
 							if (mode === "full" && new URLSearchParams(body).has("meeting_markdown"))
 								allowed = [...allowed, "meeting_markdown"];
-						} else if (action[1] === "update-note") {
+						} else if (kind === "update-note") {
 							allowed = ["csrf", "item_id", "source_hash", "meeting_markdown"];
 							if (new URLSearchParams(body).has("purpose")) allowed = [...allowed, "purpose"];
 						} else allowed = ["csrf", "item_id", "source_hash"];
@@ -1332,46 +1443,168 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						if (
 							!itemIdPattern.test(form.item_id ?? "") ||
 							!hashPattern.test(form.source_hash ?? "") ||
-							!secureEqual(form.item_id ?? "", action[2])
+							!secureEqual(form.item_id ?? "", itemId)
 						) {
 							throw new ReviewHttpError(409, "item");
 						}
-						const item = await runRequestEffect(store.get(action[2]));
+						const reviewedHash = form.source_hash ?? "";
+						const submittedHash =
+							form.meeting_markdown === undefined
+								? null
+								: createHash("sha256")
+										.update(canonicalMeetingPublicationNoteMarkdown(form.meeting_markdown))
+										.digest("hex");
+						// A repeated submission whose decision already holds is answered from the
+						// current row without another write, so double-submit stays idempotent.
+						const alreadyHandled = async (current: MeetingPublicationItem) => {
+							if (kind === "update-note") {
+								return current.status === "pending_review" && current.sourceHash === submittedHash;
+							}
+							if (!decidedStatuses[kind].includes(current.status)) return false;
+							if (kind !== "approve") return current.sourceHash === reviewedHash;
+							if (current.approvedHash !== reviewedHash && current.approvedHash !== submittedHash) return false;
+							// Publication clears the stored purpose override; the published note is final.
+							if (current.status === "published") return true;
+							const note = await runRequestEffect(source.read(current.notePath)).catch(() => null);
+							const purpose = await runRequestEffect(
+								normalizeMeetingPublicationPurpose(form.purpose ?? ""),
+							).catch(() => null);
+							return (
+								note !== null &&
+								purpose !== null &&
+								(current.discordPurposeOverride ?? meetingPublicationDefaultPurpose(note)) === purpose
+							);
+						};
+						const item = await runRequestEffect(store.get(itemId));
 						if (item === null) throw new ReviewHttpError(404, "item");
-						const accepted = await (async () => {
-							if (action[1] === "update-note") {
+						if (await alreadyHandled(item)) return { item, already: true } as const;
+						// "current" failures concern the stored or on-disk revision; "submitted"
+						// failures concern the reviewer's edited Markdown.
+						const progress: { stage: "current" | "submitted"; noteSaved: boolean } = {
+							stage: "current",
+							noteSaved: false,
+						};
+						const attempt = await (async () => {
+							if (kind === "update-note") {
+								await runRequestEffect(source.read(item.notePath));
+								progress.stage = "submitted";
 								await runRequestEffect(
-									publication.updateNote(item.itemId, form.source_hash ?? "", form.meeting_markdown ?? ""),
+									publication.updateNote(item.itemId, reviewedHash, form.meeting_markdown ?? ""),
 								);
-							} else if (action[1] === "approve") {
-								let reviewedHash = form.source_hash ?? "";
+							} else if (kind === "approve") {
+								let approvalHash = reviewedHash;
 								if (form.meeting_markdown !== undefined) {
-									if (item.status !== "pending_review") throw new ReviewHttpError(409, "status");
+									if (item.status !== "pending_review") {
+										throw new ReviewHttpError(409, "status", {
+											heading: "Review changed",
+											detail: `This meeting ${statusCopy[item.status].sentence}, so its note can no longer be edited here. Reload the item to see its current state.`,
+										});
+									}
 									// Validate the whole decision before saving. Reuse the existing exact-revision
 									// update/approval boundaries; interruption between them leaves the note pending.
 									await runRequestEffect(normalizeMeetingPublicationPurpose(form.purpose ?? ""));
 									const current = await runRequestEffect(source.read(item.notePath));
 									if (current.markdown !== form.meeting_markdown) {
+										progress.stage = "submitted";
 										const updated = await runRequestEffect(
-											publication.updateNote(item.itemId, reviewedHash, form.meeting_markdown),
+											publication.updateNote(item.itemId, approvalHash, form.meeting_markdown),
 										);
-										reviewedHash = updated.sourceHash;
+										progress.stage = "current";
+										progress.noteSaved = true;
+										approvalHash = updated.sourceHash;
 									}
 								}
-								await runRequestEffect(publication.approve(item.itemId, reviewedHash, form.purpose));
-							} else if (action[1] === "reject") {
-								await runRequestEffect(publication.reject(item.itemId, form.source_hash));
+								await runRequestEffect(publication.approve(item.itemId, approvalHash, form.purpose));
+							} else if (kind === "reject") {
+								await runRequestEffect(publication.reject(item.itemId, reviewedHash));
 							} else {
-								await runRequestEffect(publication.archive(item.itemId, form.source_hash));
+								await runRequestEffect(publication.archive(item.itemId, reviewedHash));
 							}
 						})().then(
-							() => true,
-							() => false,
+							() => ({ ok: true }) as const,
+							(cause: unknown) => ({ ok: false, cause }) as const,
 						);
-						if (!accepted) throw new ReviewHttpError(409, "conflict");
-						return item;
+						if (attempt.ok) return { item, already: false } as const;
+						const cause = attempt.cause;
+						const savedNote = progress.noteSaved
+							? " Your edited note was saved and is still waiting for review."
+							: "";
+						if (cause instanceof ReviewHttpError && cause.copy !== undefined) throw cause;
+						if (cause instanceof MeetingPublicationReviewError && cause.code === "invalid_purpose") {
+							throw new ReviewHttpError(422, "purpose", {
+								heading: "Check the Discord purpose",
+								detail: `The Discord purpose must be one plain sentence of at most ${MEETING_PUBLICATION_PURPOSE_MAX_LENGTH} characters, without links, Markdown symbols or control characters. ${nothingRecorded(kind)}`,
+							});
+						}
+						const noteProblem =
+							cause instanceof MeetingPublicationSourceError ? submittedNoteProblems[cause.code] : undefined;
+						if (progress.stage === "submitted" && noteProblem !== undefined) {
+							throw new ReviewHttpError(422, "note", {
+								heading: "Check the edited note",
+								detail: `${noteProblem} ${nothingRecorded(kind)}`,
+							});
+						}
+						if (
+							cause instanceof MeetingPublicationTransitionError ||
+							(cause instanceof MeetingPublicationSourceError &&
+								(cause.code === "race_detected" || noteProblem !== undefined))
+						) {
+							const current = await runRequestEffect(store.get(item.itemId)).catch((readFailure: unknown) => {
+								logActionFailure(kind, "unavailable", readFailure);
+								throw new ReviewHttpError(500, "unavailable");
+							});
+							if (current === null) throw new ReviewHttpError(404, "item");
+							if (await alreadyHandled(current)) return { item: current, already: true } as const;
+							const copy = staleCopy(kind, current.status);
+							throw new ReviewHttpError(409, "changed", { ...copy, detail: `${copy.detail}${savedNote}` });
+						}
+						const paused = (detail: string) => {
+							logActionFailure(kind, "paused", cause);
+							return new ReviewHttpError(503, "paused", {
+								heading: "Publication is paused",
+								detail: `${detail} ${kind === "update-note" ? "The note was not saved." : "The decision was not recorded."}${savedNote}`,
+							});
+						};
+						if (cause instanceof MeetingPublicationWriteAuthorityError) {
+							throw paused(
+								"This review service does not currently hold meeting publication write authority. Check which runtime owns meeting publication, then reload this page.",
+							);
+						}
+						if (cause instanceof MeetingPublicationProviderError) {
+							throw paused(
+								"A publication connection needs attention. Check connection health in the review inbox, reconnect if it asks you to, then try again.",
+							);
+						}
+						if (cause instanceof MeetingPublicationStoreError && cause.code === "write_failed") {
+							const items = await runRequestEffect(store.list()).catch(() => []);
+							if (
+								items.some(
+									(entry) =>
+										entry.status === "publishing" ||
+										entry.failureCode === MEETING_PUBLICATION_DELIVERY_UNCERTAIN,
+								)
+							) {
+								throw paused(
+									"A publication is in progress or its delivery outcome is uncertain, so review decisions wait until it is reconciled. Check the queue status in the review inbox, then try again.",
+								);
+							}
+						}
+						logActionFailure(kind, "unavailable", cause);
+						throw new ReviewHttpError(500, "unavailable");
 					});
-					redirect(response, action[1] === "update-note" ? `/item/${item.itemId}` : "/");
+					if (outcome.already && kind !== "update-note") {
+						const copy = statusCopy[outcome.item.status];
+						send(
+							response,
+							200,
+							messagePage(200, {
+								heading: copy.heading,
+								detail: `This meeting ${copy.sentence}. No further action was taken.`,
+							}),
+						);
+						return;
+					}
+					redirect(response, kind === "update-note" ? `/item/${outcome.item.itemId}` : "/");
 				};
 				const handler = async (request: IncomingMessage, response: ServerResponse) => {
 					const failure = await handleRequest(request, response).then(
@@ -1380,7 +1613,8 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					);
 					if (failure !== null) {
 						const status = failure instanceof ReviewHttpError ? failure.status : 500;
-						send(response, status, messagePage(status), request.method === "HEAD");
+						const copy = failure instanceof ReviewHttpError ? failure.copy : undefined;
+						send(response, status, messagePage(status, copy), request.method === "HEAD");
 					}
 				};
 
