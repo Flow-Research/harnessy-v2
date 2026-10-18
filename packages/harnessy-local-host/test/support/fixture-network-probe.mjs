@@ -22,7 +22,7 @@ if (process.argv[2] === "grandchild") {
 			outgoing.end();
 		}), isDenied);
 	}
-	const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "grandchild"], { env: process.env, encoding: "utf8", timeout: 5_000 });
+	const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "grandchild"], { env: { ...process.env, PI_AUTH_ENCRYPTION: "off" }, encoding: "utf8", timeout: 5_000 });
 	assert.equal(child.status, 0, child.stderr);
 	assert.equal(child.stdout, "denied");
 	let requests = 0;

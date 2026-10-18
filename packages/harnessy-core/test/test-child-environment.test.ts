@@ -17,6 +17,7 @@ import { describe, expect, it } from "vitest";
  */
 const NOT_A_CHILD_ENV_MARKER = "harnessy-test-env: configuration, not a child process environment";
 
+const CHILD_PROCESS_CALLS = /\b(?:spawn|spawnSync|execFile|execFileSync|fork|exec|execSync)\s*\(/gu;
 const CHILD_PROCESS_CALL = /\b(?:spawn|spawnSync|execFile|execFileSync|fork|exec|execSync)\s*\(/u;
 /** `env: { … }`, and an object literal bound to an env-named variable (`const env = { … }`), then passed by name. */
 const ENV_OBJECT = /\benv\s*:\s*\{|\b(?:const|let|var)\s+(?:env|\w+Env)\s*(?::[^=;]+)?=\s*\{/gu;
@@ -60,8 +61,39 @@ const findUnguardedChildEnvironments = (source: string, trustProcessEnv = true):
 		if (before.at(-2)?.includes(NOT_A_CHILD_ENV_MARKER) === true) continue;
 		lines.push(before.length);
 	}
-	return lines;
+	// A direct reference passed to a child-process call: `env: process.env`, `env: someName` or `{ env }`.
+	for (const call of source.matchAll(CHILD_PROCESS_CALLS)) {
+		const start = call.index + call[0].length;
+		let end = start;
+		let depth = 1;
+		while (depth > 0 && end < source.length) {
+			if (source[end] === "(") depth++;
+			else if (source[end] === ")") depth--;
+			end++;
+		}
+		// Blank out comments, keeping offsets, so commented text is never read as code.
+		const args = source
+			.slice(start, end)
+			.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/gu, (comment) => comment.replace(/[^\n]/gu, " "));
+		for (const match of args.matchAll(ENV_REFERENCE)) {
+			const name = match[1] ?? match[2] ?? "env";
+			if (name === "process.env" ? trustProcessEnv : referenceProven(source, name)) continue;
+			lines.push(source.slice(0, start + match.index).split("\n").length);
+		}
+	}
+	return [...new Set(lines)].sort((a, b) => a - b);
 };
+
+/** `env: process.env`, `env: name`, or `{ env }` / `{ …, env, … }`. Member access like `options.env` is not matched. */
+const ENV_REFERENCE =
+	/\benv\s*:\s*(process\.env)\b(?!\s*\.)|\benv\s*:\s*([A-Za-z_$][\w$]*)\s*(?=[,}\n])|(?<=[{,]\s*)\benv\s*(?=[,}])/gu;
+
+/**
+ * A named environment is proven when the same file binds that name to `fixtureEnvironment()` or to an
+ * object literal (which the literal rule checks on its own). Anything else cannot be proven here.
+ */
+const referenceProven = (source: string, name: string) =>
+	new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*(?::[^=;]+)?=\\s*(?:\\{|fixtureEnvironment\\()`, "u").test(source);
 
 const packagesRoot = resolve(import.meta.dirname, "../..");
 const testFiles = (directory: string): string[] =>
@@ -125,8 +157,9 @@ describe("test child-process environments", () => {
 		const byName = (declaration: string) =>
 			`import { spawnSync } from "node:child_process";\n${declaration}\nspawnSync("x", [], { env });\n`;
 		expect(findUnguardedChildEnvironments(byName('const env = { PATH: "/usr/bin" };'))).toEqual([2]);
+		// The literal is unguarded (line 2), and the passed `{ env }` is bound nowhere in the file (line 3).
 		expect(findUnguardedChildEnvironments(byName('const childEnv: NodeJS.ProcessEnv = { HOME: "/tmp" };'))).toEqual([
-			2,
+			2, 3,
 		]);
 		expect(
 			findUnguardedChildEnvironments(byName('const env = { PI_AUTH_ENCRYPTION: "off", PATH: "/usr/bin" };')),
@@ -154,8 +187,24 @@ describe("test child-process environments", () => {
 		expect(
 			findUnguardedChildEnvironments(`${readFileSync(SELF, "utf8")}\nspawnSync("x", []);\n`).length,
 		).toBeGreaterThan(0);
+		// Direct references: process.env only where trusted; a name only when bound to a literal or the fixture env.
+		const direct = (line: string, declaration = "") =>
+			`import { spawnSync } from "node:child_process";\n${declaration}\nspawnSync("x", [], { ${line} });\n`;
+		expect(findUnguardedChildEnvironments(direct("env: process.env"), false)).toEqual([3]);
+		expect(findUnguardedChildEnvironments(direct("env: process.env"), true)).toEqual([]);
+		expect(findUnguardedChildEnvironments(direct("env: childEnvironment"))).toEqual([3]);
+		expect(
+			findUnguardedChildEnvironments(
+				direct("env: childEnvironment", "const childEnvironment = fixtureEnvironment();"),
+			),
+		).toEqual([]);
+		expect(findUnguardedChildEnvironments(direct("cwd, env", "const env = { ...fixtureEnvironment() };"))).toEqual(
+			[],
+		);
+		expect(findUnguardedChildEnvironments(direct("env, cwd"))).toEqual([3]);
+		expect(findUnguardedChildEnvironments(direct("env: options.env"))).toEqual([]);
 		// Names that merely contain "env" are not environments.
-		expect(findUnguardedChildEnvironments(byName("const envelope = { a: 1 };"))).toEqual([]);
+		expect(findUnguardedChildEnvironments(direct("cwd", "const envelope = { a: 1 };"))).toEqual([]);
 		// A file that starts no child process is out of scope.
 		expect(findUnguardedChildEnvironments('readConfig({ env: { A: "1" } });')).toEqual([]);
 	});
