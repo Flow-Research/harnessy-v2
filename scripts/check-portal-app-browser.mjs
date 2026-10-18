@@ -216,7 +216,12 @@ try {
 	}
 	const fonts = await evaluate("document.fonts.ready.then(() => [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family))");
 	if (!fonts.some((family) => family.includes("IBM Plex Sans"))) failures.push(`self-hosted fonts did not load: ${JSON.stringify(fonts)}`);
-	const hostile = await evaluate("document.body.innerText.includes('<script>alert(1)</script>') && document.querySelectorAll('img').length === 0");
+	// The hostile brief text renders on Today, as text.
+	await evaluate("location.hash = '#/today'");
+	await until("the brief", () => evaluate("document.body.innerText.includes('Settle the plan')"));
+	const hostile = await evaluate(
+		"document.body.innerText.includes('<script>alert(1)</script>') && document.querySelectorAll('main img, main script, main style').length === 0 && document.querySelector('a[href^=\"javascript:\"]') === null",
+	);
 	if (!hostile) failures.push("hostile brief text was not shown as text");
 
 	for (const event of events) {
