@@ -7,9 +7,10 @@
  * page (`0600`, created with `O_EXCL | O_NOFOLLOW`) into the owner-only
  * `server-control/` directory and hands the opener only that file's path. The
  * code stays out of argv, stdout and logs; the page redirects to
- * `<origin>/#_code=<code>`, and the fragment never reaches a server.
+ * `<origin>/#_code=<code>`, and the fragment never reaches a server. The page
+ * is named after the code's hash, so the server deletes it as soon as the code
+ * is spent; pages whose code expired unused are swept on the next run.
  */
-import { randomBytes } from "node:crypto";
 import {
   closeSync,
   constants as fsConstants,
@@ -22,6 +23,8 @@ import {
 } from "node:fs";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
+
+import { signInPageName } from "@executor-js/local";
 
 import { type BrowserOpenCommand, platformOpenCommand } from "./device-login";
 
@@ -57,12 +60,23 @@ const signInPageHtml = (target: string): string =>
     "",
   ].join("\n");
 
+/** Best-effort: a page removed concurrently (e.g. by the server) is not an error. */
 const removeStaleSignInPages = (controlDir: string, now: number): void => {
-  for (const name of readdirSync(controlDir)) {
+  const names = (() => {
+    try {
+      return readdirSync(controlDir);
+    } catch {
+      return [];
+    }
+  })();
+  for (const name of names) {
     if (!SIGN_IN_PAGE.test(name)) continue;
     const path = join(controlDir, name);
-    const stat = lstatSync(path);
-    if (now - stat.mtimeMs > STALE_SIGN_IN_PAGE_MS) unlinkSync(path);
+    try {
+      if (now - lstatSync(path).mtimeMs > STALE_SIGN_IN_PAGE_MS) unlinkSync(path);
+    } catch {
+      // Already gone, or unreadable: leave it for a later sweep.
+    }
   }
 };
 
@@ -73,11 +87,13 @@ const removeStaleSignInPages = (controlDir: string, now: number): void => {
  */
 export const writeSignInPage = (
   controlDir: string,
-  target: string,
+  origin: string,
+  code: string,
   now: number = Date.now(),
 ): string => {
   removeStaleSignInPages(controlDir, now);
-  const path = join(controlDir, `sign-in-${randomBytes(16).toString("hex")}.html`);
+  const target = `${origin}/#_code=${code}`;
+  const path = join(controlDir, signInPageName(code));
   const fd = openSync(
     path,
     fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | (fsConstants.O_NOFOLLOW ?? 0),

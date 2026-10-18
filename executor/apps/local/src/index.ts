@@ -14,6 +14,7 @@ export {
 } from "./executor";
 export { createMcpRequestHandler, runMcpStdioServer, type McpRequestHandler } from "./mcp";
 export { startServer, type StartServerOptions, type ServerInstance } from "./serve";
+export { signInPageName } from "./serve-shared";
 export {
   DataDirOwnershipHeld,
   findDataDirOwnershipHeld,
@@ -24,4 +25,5 @@ export {
   rotateLocalAuthToken,
   localAuthTokenPath,
   secureLocalStateDir,
+  type StateDirChecks,
 } from "./auth";

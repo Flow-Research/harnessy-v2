@@ -147,6 +147,7 @@ import {
   withCliServerAuthFallback,
 } from "./server-connection";
 import {
+  blankDataDirRefusal,
   readLocalServerManifest,
   removeLocalServerManifestIfOwnedBy,
   resolveExecutorDataDir,
@@ -2599,7 +2600,7 @@ const webCommand = Command.make(
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
-          "For --foreground, grant an extra origin cross-origin (CORS) access (repeatable). Not needed to reach the server from another host — the bearer token is the gate; localhost is always allowed.",
+          "For --foreground, grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there. Not needed to reach the server from another host (the bearer token is the gate). The server's own localhost origins are always allowed.",
         ),
       ),
     authToken: Options.string("auth-token")
@@ -2651,7 +2652,7 @@ const daemonRunCommand = Command.make(
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
-          "Grant an extra origin cross-origin (CORS) access (repeatable). Not needed to reach the server from another host — the bearer token is the gate; localhost is always allowed.",
+          "Grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there. Not needed to reach the server from another host (the bearer token is the gate). The server's own localhost origins are always allowed.",
         ),
       ),
     authToken: Options.string("auth-token")
@@ -3194,7 +3195,8 @@ const openRunningLocalWebApp = (): Effect.Effect<
           secureLocalStateDir(resolveExecutorDataDir(path));
           return writeSignInPage(
             path.join(resolveExecutorDataDir(path), "server-control"),
-            `${origin}/#_code=${code}`,
+            origin,
+            code,
           );
         },
         catch: (cause) => cause,
@@ -3307,5 +3309,11 @@ const program = (
     }),
   ),
 );
+
+const dataDirRefusal = blankDataDirRefusal();
+if (dataDirRefusal !== null) {
+  console.error(`executor: ${dataDirRefusal}`);
+  process.exit(1);
+}
 
 BunRuntime.runMain(program as Effect.Effect<void, never, never>);

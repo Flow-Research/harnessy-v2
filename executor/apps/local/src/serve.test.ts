@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -12,9 +14,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadOrMintLocalAuthToken } from "./auth";
+import { loadOrMintLocalAuthToken, secureLocalStateDir } from "./auth";
 import { acquireDataDirOwnership } from "./db/data-dir-ownership";
-import { COCKPIT_CONTENT_SECURITY_POLICY, startServer, type ServerInstance } from "./serve";
+import {
+  COCKPIT_CONTENT_SECURITY_POLICY,
+  cockpitContentSecurityPolicy,
+  startServer,
+  type ServerInstance,
+} from "./serve";
+import { signInPageName } from "./serve-shared";
 
 let clientDir: string;
 let dataDir: string;
@@ -71,6 +79,7 @@ afterEach(async () => {
     server = null;
   }
   delete process.env.EXECUTOR_DATA_DIR;
+  delete process.env.EXECUTOR_WEB_CONNECT_SRC;
   delete process.env.EXECUTOR_SCOPE_DIR;
   rmSync(clientDir, { recursive: true, force: true });
   rmSync(dataDir, { recursive: true, force: true });
@@ -391,6 +400,66 @@ describe("startServer refuses symlinked state", () => {
   });
 });
 
+describe("startServer refuses hard-linked state files", () => {
+  const plantHardLink = (name: string): string => {
+    const control = join(dataDir, "server-control");
+    mkdirSync(control, { recursive: true });
+    const target = join(dataDir, "zshrc");
+    writeFileSync(target, "export KEEP=1\n", { mode: 0o644 });
+    chmodSync(target, 0o644);
+    linkSync(target, join(control, name));
+    return target;
+  };
+
+  for (const name of ["auth.json", "server.json"]) {
+    it(`refuses a hard-linked ${name} and leaves the linked file unchanged`, async () => {
+      const target = plantHardLink(name);
+      await expect(startServer({ port: 0, clientDir, handlers: testHandlers() })).rejects.toThrow(
+        /hard links/,
+      );
+      expect(modeOf(target)).toBe(0o644);
+      expect(readFileSync(target, "utf8")).toBe("export KEEP=1\n");
+    });
+  }
+
+  it("refuses a hard-linked auth.json in the direct token loader", () => {
+    const target = plantHardLink("auth.json");
+    expect(() => loadOrMintLocalAuthToken(dataDir)).toThrow(/hard links/);
+    expect(readFileSync(target, "utf8")).toBe("export KEEP=1\n");
+  });
+});
+
+describe("secureLocalStateDir refusals", () => {
+  it("refuses a state directory owned by another user", () => {
+    const uid = process.getuid?.() ?? 0;
+    expect(() => secureLocalStateDir(dataDir, { getuid: () => uid + 1 })).toThrow(
+      /owned by uid .*not the current user/,
+    );
+  });
+
+  it("refuses when a loose mode cannot be repaired", () => {
+    chmodSync(dataDir, 0o755);
+    expect(() => secureLocalStateDir(dataDir, { fchmod: () => {} })).toThrow(
+      /could not set .* to mode 700/,
+    );
+  });
+
+  it("refuses a set-but-empty EXECUTOR_DATA_DIR instead of using the working directory", async () => {
+    process.env.EXECUTOR_DATA_DIR = " ";
+    await expect(
+      startServer({ port: 0, clientDir, authToken: TOKEN, handlers: testHandlers() }),
+    ).rejects.toThrow(/EXECUTOR_DATA_DIR is set but empty/);
+  });
+});
+
+describe("startServer --allowed-host validation", () => {
+  it("refuses a loopback host without a port", async () => {
+    await expect(startTestServer({ allowedHosts: ["localhost"] })).rejects.toThrow(
+      /loopback host needs an explicit port/,
+    );
+  });
+});
+
 describe("startServer web UI hardening", () => {
   it("serves the UI shell with a strict Content-Security-Policy", async () => {
     const baseUrl = await startTestServer();
@@ -408,11 +477,41 @@ describe("startServer web UI hardening", () => {
       expect(directives.get("script-src")).toEqual(["'self'"]);
       expect(directives.get("object-src")).toEqual(["'none'"]);
       expect(directives.get("frame-ancestors")).toEqual(["'none'"]);
-      expect(directives.get("connect-src")).toEqual(["'self'", "http:", "https:"]);
+      expect(directives.get("connect-src")).toEqual(["'self'"]);
       expect(directives.get("default-src")).toEqual(["'self'"]);
       expect(policy).not.toContain("unsafe-eval");
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     }
+  });
+});
+
+describe("startServer CSP connect-src", () => {
+  const connectSrc = async (baseUrl: string): Promise<string | undefined> =>
+    (await fetch(`${baseUrl}/`)).headers
+      .get("content-security-policy")
+      ?.split(";")
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith("connect-src"));
+
+  it("adds --allowed-host hosts and EXECUTOR_WEB_CONNECT_SRC origins", async () => {
+    process.env.EXECUTOR_WEB_CONNECT_SRC = "https://exec.example";
+    const baseUrl = await startTestServer({ allowedHosts: ["cockpit.example:8443"] });
+    expect(await connectSrc(baseUrl)).toBe(
+      "connect-src 'self' http://cockpit.example:8443 https://cockpit.example:8443 https://exec.example",
+    );
+  });
+
+  it("opens every http(s) origin only with the explicit any opt-in", async () => {
+    const baseUrl = await startTestServer();
+    expect(await connectSrc(baseUrl)).toBe("connect-src 'self'");
+    expect(cockpitContentSecurityPolicy(["http:", "https:"])).toContain(
+      "connect-src 'self' http: https:",
+    );
+  });
+
+  it("refuses an invalid EXECUTOR_WEB_CONNECT_SRC entry", async () => {
+    process.env.EXECUTOR_WEB_CONNECT_SRC = "exec.example";
+    await expect(startTestServer()).rejects.toThrow(/EXECUTOR_WEB_CONNECT_SRC/);
   });
 });
 
@@ -447,6 +546,82 @@ describe("startServer one-time sign-in codes", () => {
 
     const replay = await exchange(baseUrl, JSON.stringify({ code }));
     expect(replay.status).toBe(401);
+  });
+
+  const mintCode = async (baseUrl: string): Promise<string> =>
+    ((await (await mint(baseUrl, `Bearer ${TOKEN}`)).json()) as { code: string }).code;
+
+  it("refuses the exchange from a foreign origin, before spending the code", async () => {
+    const baseUrl = await startTestServer();
+    const code = await mintCode(baseUrl);
+    const otherPort = server!.port === 65535 ? 65534 : server!.port + 1;
+    for (const origin of ["https://evil.example", `http://localhost:${otherPort}`, "null"]) {
+      const response = await fetch(`${baseUrl}/api/local-auth/exchange`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin },
+        body: JSON.stringify({ code }),
+      });
+      expect(response.status).toBe(403);
+      expect(await response.text()).not.toContain(TOKEN);
+    }
+    const own = await fetch(`${baseUrl}/api/local-auth/exchange`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: baseUrl },
+      body: JSON.stringify({ code }),
+    });
+    expect(own.status).toBe(200);
+  });
+
+  it("caps the exchange body before parsing it", async () => {
+    const baseUrl = await startTestServer();
+    const code = await mintCode(baseUrl);
+    // Fresh connections: a 413 closes its connection with the rest of the
+    // oversized body unread, so the follow-up must not reuse that socket.
+    const declared = await fetch(`${baseUrl}/api/local-auth/exchange`, {
+      method: "POST",
+      keepalive: false,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code, pad: "x".repeat(2048) }),
+    });
+    expect(declared.status).toBe(413);
+    expect(await declared.json()).toEqual({ error: "body_too_large" });
+
+    const encoder = new TextEncoder();
+    const chunked = await fetch(`${baseUrl}/api/local-auth/exchange`, {
+      method: "POST",
+      keepalive: false,
+      headers: { "content-type": "application/json" },
+      body: new ReadableStream({
+        start(controller) {
+          for (let i = 0; i < 4; i++) controller.enqueue(encoder.encode("x".repeat(512)));
+          controller.close();
+        },
+      }),
+    });
+    expect(chunked.status).toBe(413);
+    expect(await chunked.json()).toEqual({ error: "body_too_large" });
+    // The capped requests did not spend the code.
+    const spend = await fetch(`${baseUrl}/api/local-auth/exchange`, {
+      method: "POST",
+      keepalive: false,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    expect(spend.status).toBe(200);
+  });
+
+  it("deletes the CLI's sign-in page once its code is spent", async () => {
+    const baseUrl = await startTestServer();
+    const code = await mintCode(baseUrl);
+    const other = await mintCode(baseUrl);
+    const page = join(dataDir, "server-control", signInPageName(code));
+    const otherPage = join(dataDir, "server-control", signInPageName(other));
+    writeFileSync(page, "<meta>", { mode: 0o600 });
+    writeFileSync(otherPage, "<meta>", { mode: 0o600 });
+
+    expect((await exchange(baseUrl, JSON.stringify({ code }))).status).toBe(200);
+    expect(existsSync(page)).toBe(false);
+    expect(existsSync(otherPage)).toBe(true);
   });
 
   it("rejects unknown and malformed codes without revealing the token", async () => {

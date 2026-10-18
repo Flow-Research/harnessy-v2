@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -12,12 +13,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { signInPageName } from "@executor-js/local";
+
 import {
   isLoopbackHttpOrigin,
   signInPageOpenCommand,
   STALE_SIGN_IN_PAGE_MS,
   writeSignInPage,
 } from "./sign-in-page";
+import { blankDataDirRefusal } from "./local-server-manifest";
 
 let dir: string;
 
@@ -44,11 +48,12 @@ describe("isLoopbackHttpOrigin", () => {
 
 describe("writeSignInPage", () => {
   it("writes an owner-only redirect page that carries the code only in its body", () => {
-    const target = `http://localhost:4788/#_code=${"c".repeat(43)}`;
-    const path = writeSignInPage(dir, target);
+    const code = "c".repeat(43);
+    const target = `http://localhost:4788/#_code=${code}`;
+    const path = writeSignInPage(dir, "http://localhost:4788", code);
 
-    expect(path.startsWith(dir)).toBe(true);
-    expect(path).not.toContain("_code");
+    expect(path).toBe(join(dir, signInPageName(code)));
+    expect(path).not.toContain(code);
     expect(statSync(path).mode & 0o777).toBe(0o600);
     const html = readFileSync(path, "utf8");
     expect(html).toContain(`<meta http-equiv="refresh" content="0;url=${target}">`);
@@ -56,7 +61,7 @@ describe("writeSignInPage", () => {
   });
 
   it("escapes the target so it cannot break out of the attribute", () => {
-    const path = writeSignInPage(dir, 'http://localhost:4788/#_code="><script>x</script>');
+    const path = writeSignInPage(dir, "http://localhost:4788", '"><script>x</script>');
     const html = readFileSync(path, "utf8");
     expect(html).not.toContain("<script>");
     expect(html).toContain("&quot;&gt;&lt;script&gt;");
@@ -64,18 +69,38 @@ describe("writeSignInPage", () => {
 
   it("removes stale sign-in pages and keeps fresh and unrelated files", () => {
     const now = Date.now();
-    const stale = writeSignInPage(dir, "http://localhost:4788/#_code=a", now);
+    const stale = writeSignInPage(dir, "http://localhost:4788", "a", now);
     const old = new Date(now - STALE_SIGN_IN_PAGE_MS - 1_000);
     utimesSync(stale, old, old);
-    const fresh = writeSignInPage(dir, "http://localhost:4788/#_code=b", now);
+    const fresh = writeSignInPage(dir, "http://localhost:4788", "b", now);
     writeFileSync(join(dir, "auth.json"), "{}");
 
-    const latest = writeSignInPage(dir, "http://localhost:4788/#_code=c", now);
+    const latest = writeSignInPage(dir, "http://localhost:4788", "c", now);
 
     expect(existsSync(stale)).toBe(false);
     expect(existsSync(fresh)).toBe(true);
     expect(existsSync(latest)).toBe(true);
     expect(readdirSync(dir)).toContain("auth.json");
+  });
+});
+
+describe("writeSignInPage sweep races", () => {
+  it("does not fail when the sweep finds an unreadable or vanished entry", () => {
+    // A directory with a page-like name: lstat succeeds, unlink fails (EPERM/EISDIR).
+    const stuck = join(dir, `sign-in-${"d".repeat(32)}.html`);
+    mkdirSync(stuck);
+    const old = new Date(Date.now() - STALE_SIGN_IN_PAGE_MS - 1_000);
+    utimesSync(stuck, old, old);
+    expect(() => writeSignInPage(dir, "http://localhost:4788", "e")).not.toThrow();
+  });
+});
+
+describe("blankDataDirRefusal", () => {
+  it("refuses a set-but-blank EXECUTOR_DATA_DIR only", () => {
+    expect(blankDataDirRefusal({ EXECUTOR_DATA_DIR: "" })).toMatch(/set but empty/);
+    expect(blankDataDirRefusal({ EXECUTOR_DATA_DIR: "  " })).toMatch(/set but empty/);
+    expect(blankDataDirRefusal({ EXECUTOR_DATA_DIR: "/tmp/x" })).toBeNull();
+    expect(blankDataDirRefusal({})).toBeNull();
   });
 });
 

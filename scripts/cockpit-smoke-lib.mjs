@@ -51,6 +51,7 @@ export const signInCodeFromBrowserUrl = (url, origin) => {
 const REQUIRED_CSP = {
 	"default-src": ["'self'"],
 	"script-src": ["'self'"],
+	"connect-src": ["'self'"],
 	"object-src": ["'none'"],
 	"base-uri": ["'none'"],
 	"frame-ancestors": ["'none'"],

@@ -41,23 +41,117 @@ const parseOrigin = (origin: string): URL | null => {
   }
 };
 
+/** One `--allowed-host` entry: a hostname (IPv6 without brackets) and an optional port. */
+export interface AllowedHost {
+  readonly host: string;
+  readonly port: number | null;
+}
+
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
+
+const invalidAllowedHost = (entry: string, reason: string): never => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time option validation outside the Effect graph; refusing to start is the intended outcome
+  throw new Error(`Refusing to start: invalid --allowed-host "${entry}": ${reason}`);
+};
+
+/**
+ * Parse an `--allowed-host` entry: `host`, `host:port`, `[v6]`, `[v6]:port`
+ * or a bare IPv6 address. Entries are trimmed and lowercased. A loopback host
+ * needs a port: without one it would re-open credentialed CORS to every local
+ * web app, which the exact self-origin default exists to prevent.
+ */
+export const parseAllowedHost = (entry: string): AllowedHost => {
+  const value = entry.trim().toLowerCase();
+  const bracketed = /^\[([0-9a-f:.]+)\](?::(\d{1,5}))?$/.exec(value);
+  const bareV6 = bracketed === null && /^[0-9a-f:.]+$/.test(value) && value.split(":").length > 2;
+  const named = /^([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)(?::(\d{1,5}))?$/.exec(value);
+  const [host, rawPort] = bracketed
+    ? [bracketed[1]!, bracketed[2]]
+    : bareV6
+      ? [value, undefined]
+      : named
+        ? [named[1]!, named[2]]
+        : invalidAllowedHost(entry, "expected host, host:port or [ipv6]:port");
+  const port = rawPort === undefined ? null : Number(rawPort);
+  if (port !== null && (port < 1 || port > 65535)) invalidAllowedHost(entry, "port out of range");
+  if (port === null && LOOPBACK_HOSTNAMES.has(host)) {
+    invalidAllowedHost(entry, "a loopback host needs an explicit port");
+  }
+  return { host, port };
+};
+
 /**
  * Whether a cross-origin request's `Origin` is allowed CORS access. Only the
  * server's own exact loopback origins plus operator-added hosts
- * (`--allowed-host`, any port) qualify — never a reflected arbitrary origin and
- * never another loopback port. This is what keeps `Allow-Credentials: true`
- * from handing an authenticated cross-origin channel to any other web page.
+ * (`--allowed-host`: any port unless the entry names one; http or https only)
+ * qualify — never a reflected arbitrary origin and never another loopback
+ * port. This is what keeps `Allow-Credentials: true` from handing an
+ * authenticated cross-origin channel to any other web page.
  */
 export const isAllowedOrigin = (
   origin: string,
   selfOrigins: ReadonlySet<string>,
-  extraHosts: ReadonlySet<string> = new Set(),
+  extraHosts: ReadonlyArray<AllowedHost> = [],
 ): boolean => {
   const parsed = parseOrigin(origin);
   if (parsed === null || parsed.origin !== origin) return false;
   if (selfOrigins.has(parsed.origin)) return true;
-  return extraHosts.has(parsed.hostname) || extraHosts.has(`[${parsed.hostname}]`);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  // URL keeps IPv6 brackets in `hostname`; entries are stored without them.
+  const hostname = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
+  const port = parsed.port === "" ? (parsed.protocol === "https:" ? 443 : 80) : Number(parsed.port);
+  return extraHosts.some((entry) => entry.host === hostname && (entry.port ?? port) === port);
 };
+
+/**
+ * CSP `connect-src` sources for operator-added hosts. IPv6 literals are
+ * skipped: CSP host-source syntax cannot express them.
+ */
+export const allowedHostConnectSources = (
+  extraHosts: ReadonlyArray<AllowedHost>,
+): ReadonlyArray<string> =>
+  extraHosts
+    .filter((entry) => !entry.host.includes(":"))
+    .flatMap((entry) => {
+      const port = entry.port === null ? "*" : String(entry.port);
+      return [`http://${entry.host}:${port}`, `https://${entry.host}:${port}`];
+    });
+
+/**
+ * Parse `EXECUTOR_WEB_CONNECT_SRC`: extra origins (space or comma separated)
+ * the web UI may call, for pointing the server selector at another Executor.
+ * `any` allows every http(s) origin. Anything else must be an exact
+ * http(s) origin; an invalid entry refuses startup.
+ */
+export const parseWebConnectSources = (value: string | undefined): ReadonlyArray<string> => {
+  const entries = (value ?? "").split(/[\s,]+/).filter((entry) => entry !== "");
+  return entries.flatMap((entry) => {
+    if (entry.toLowerCase() === "any") return ["http:", "https:"];
+    const parsed = parseOrigin(entry);
+    if (
+      parsed === null ||
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      parsed.origin !== entry.replace(/\/$/, "").toLowerCase()
+    ) {
+      // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time option validation outside the Effect graph; refusing to start is the intended outcome
+      throw new Error(
+        `Refusing to start: EXECUTOR_WEB_CONNECT_SRC entry "${entry}" is not an http(s) origin or "any".`,
+      );
+    }
+    return [parsed.origin];
+  });
+};
+
+/** Largest accepted sign-in exchange body; a real one is about 55 bytes. */
+export const LOCAL_LOGIN_EXCHANGE_MAX_BYTES = 1024;
+
+/**
+ * File name of the CLI's redirect page for a sign-in code. Derived from the
+ * code's hash so the server can delete exactly that page once the code is
+ * spent, without the name revealing the code.
+ */
+export const signInPageName = (code: string): string =>
+  `sign-in-${createHash("sha256").update(code).digest("hex").slice(0, 32)}.html`;
 
 /** `POST` with the bearer: mint a one-time sign-in code for the web UI. */
 export const LOCAL_LOGIN_CODE_PATH = "/api/local-auth/code";

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -312,6 +313,9 @@ const verifyCockpit = async ({ manifest, expectedDataDir, commandOutput, browser
 	assertNoSecretsInOutput(commandOutput, [code], "Harnessy printed the one-time sign-in code.");
 	await verifyStatePermissions(expectedDataDir);
 	await verifySignIn(origin, token, code);
+	if (existsSync(fileURLToPath(openerArg))) {
+		throw new Error("The sign-in page was not deleted after its code was spent.");
+	}
 	await verifyCors(origin);
 
 	const health = await fetchWithTimeout(`${origin}/api/health`);

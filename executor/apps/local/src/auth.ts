@@ -35,9 +35,23 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 
-/** Resolve the executor data directory — `EXECUTOR_DATA_DIR` or `~/.executor`. */
-export const resolveExecutorDataDir = (): string =>
-  resolve(process.env.EXECUTOR_DATA_DIR ?? join(homedir(), ".executor"));
+const refuseToStart = (message: string): never => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time check outside the Effect graph; refusing to start is the intended outcome
+  throw new Error(`Refusing to start: ${message}`);
+};
+
+/**
+ * Resolve the executor data directory — `EXECUTOR_DATA_DIR` or `~/.executor`.
+ * A set-but-blank `EXECUTOR_DATA_DIR` is refused: `resolve("")` is the working
+ * directory, which would put the token and database wherever the process runs.
+ */
+export const resolveExecutorDataDir = (): string => {
+  const configured = process.env.EXECUTOR_DATA_DIR;
+  if (configured !== undefined && configured.trim() === "") {
+    refuseToStart("EXECUTOR_DATA_DIR is set but empty.");
+  }
+  return resolve(configured ?? join(homedir(), ".executor"));
+};
 
 const serverControlDir = (dataDir: string): string => join(dataDir, "server-control");
 
@@ -59,23 +73,45 @@ const O_NOFOLLOW = fsConstants.O_NOFOLLOW ?? 0;
 const O_NONBLOCK = fsConstants.O_NONBLOCK ?? 0;
 const O_DIRECTORY = fsConstants.O_DIRECTORY ?? 0;
 
-const refuseToStart = (message: string): never => {
-  // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time check outside the Effect graph; refusing to start is the intended outcome
-  throw new Error(`Refusing to start: ${message}`);
-};
-
 const isErrnoCode = (cause: unknown, code: string): boolean =>
   typeof cause === "object" && cause !== null && "code" in cause && cause.code === code;
 
-/** Fail unless the open descriptor is the expected kind and owned by this user. */
-const assertOwned = (fd: number, path: string, kind: "directory" | "file"): Stats => {
+/**
+ * System calls the state checks use, injectable so tests can simulate a
+ * foreign owner or a mode that cannot be repaired.
+ */
+export interface StateDirChecks {
+  readonly getuid?: () => number | undefined;
+  readonly fchmod?: (fd: number, mode: number) => void;
+}
+
+const defaultChecks: Required<StateDirChecks> = {
+  getuid: () => process.getuid?.(),
+  fchmod: fchmodSync,
+};
+
+/**
+ * Fail unless the open descriptor is the expected kind, owned by this user
+ * and, for a file, has exactly one link. A second hard link means the name
+ * may point at another of the user's files (planted while the directory was
+ * loose), which a later fchmod/truncate/write would then clobber.
+ */
+const assertOwned = (
+  fd: number,
+  path: string,
+  kind: "directory" | "file",
+  checks: Required<StateDirChecks> = defaultChecks,
+): Stats => {
   const stat = fstatSync(fd);
   if (kind === "directory" ? !stat.isDirectory() : !stat.isFile()) {
     refuseToStart(`${path} is not a ${kind === "directory" ? "directory" : "regular file"}.`);
   }
-  const uid = process.getuid?.();
+  const uid = checks.getuid();
   if (uid !== undefined && stat.uid !== uid) {
     refuseToStart(`${path} is owned by uid ${stat.uid}, not the current user (uid ${uid}).`);
+  }
+  if (kind === "file" && stat.nlink !== 1) {
+    refuseToStart(`${path} has ${stat.nlink} hard links; expected exactly one.`);
   }
   return stat;
 };
@@ -86,7 +122,12 @@ const assertOwned = (fd: number, path: string, kind: "directory" | "file"): Stat
  * confirm the descriptor is the same inode lstat saw, check type and owner on
  * the descriptor, then `fchmod` that descriptor.
  */
-const enforceMode = (path: string, kind: "directory" | "file", mode: number): void => {
+const enforceMode = (
+  path: string,
+  kind: "directory" | "file",
+  mode: number,
+  checks: Required<StateDirChecks>,
+): void => {
   const link = lstatSync(path);
   if (link.isSymbolicLink()) refuseToStart(`${path} is a symbolic link.`);
   const fd = openSync(
@@ -95,12 +136,12 @@ const enforceMode = (path: string, kind: "directory" | "file", mode: number): vo
   );
   // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: the descriptor must be closed whether or not the check refuses
   try {
-    const stat = assertOwned(fd, path, kind);
+    const stat = assertOwned(fd, path, kind, checks);
     if (stat.dev !== link.dev || stat.ino !== link.ino) {
       refuseToStart(`${path} changed while its permissions were checked.`);
     }
     if ((stat.mode & 0o777) === mode) return;
-    fchmodSync(fd, mode);
+    checks.fchmod(fd, mode);
     if ((fstatSync(fd).mode & 0o777) !== mode) {
       refuseToStart(`could not set ${path} to mode ${mode.toString(8)}.`);
     }
@@ -131,19 +172,23 @@ const ensureDirectory = (path: string, recursive: boolean): void => {
  * of serving a token other local users could read or redirect.
  * POSIX only: Windows has no equivalent mode bits.
  */
-export const secureLocalStateDir = (dataDir: string = resolveExecutorDataDir()): void => {
+export const secureLocalStateDir = (
+  dataDir: string = resolveExecutorDataDir(),
+  overrides: StateDirChecks = {},
+): void => {
+  const checks = { ...defaultChecks, ...overrides };
   const controlDir = serverControlDir(dataDir);
   if (process.platform === "win32") {
     mkdirSync(controlDir, { recursive: true });
     return;
   }
   ensureDirectory(dataDir, true);
-  enforceMode(dataDir, "directory", PRIVATE_DIR_MODE);
+  enforceMode(dataDir, "directory", PRIVATE_DIR_MODE, checks);
   ensureDirectory(controlDir, false);
-  enforceMode(controlDir, "directory", PRIVATE_DIR_MODE);
+  enforceMode(controlDir, "directory", PRIVATE_DIR_MODE, checks);
   for (const name of SECRET_FILES) {
     const path = join(controlDir, name);
-    if (lstatSyncOrNull(path) !== null) enforceMode(path, "file", SECRET_FILE_MODE);
+    if (lstatSyncOrNull(path) !== null) enforceMode(path, "file", SECRET_FILE_MODE, checks);
   }
 };
 

@@ -26,6 +26,8 @@ import { getExecutorServerConnection, setExecutorServerConnection } from "./serv
 const STORAGE_KEY = "executor.authToken";
 const LOGIN_CODE_PARAM = "_code";
 const LOGIN_EXCHANGE_PATH = "/api/local-auth/exchange";
+/** A hung server must not leave the boot (and so the page) blank. */
+export const LOGIN_EXCHANGE_TIMEOUT_MS = 10_000;
 const DESKTOP_LAUNCH_CACHE_BUST_PARAM = "_executor_desktop_launch";
 
 const isDesktopBridge = (): boolean =>
@@ -56,8 +58,10 @@ const applyBearer = (token: string): void => {
   setExecutorServerConnection({ ...current, auth: { kind: "bearer", token } });
 };
 
-const exchangeLoginCode = async (code: string): Promise<string | null> => {
-  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: fetch can reject (server gone); an unredeemed code falls back to the stored token or the gate
+const exchangeLoginCode = async (code: string, timeoutMs: number): Promise<string | null> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: fetch can reject (server gone, timed out); an unredeemed code falls back to the stored token or the gate
   try {
     // oxlint-disable-next-line executor/no-raw-fetch -- boundary: runs before the API client exists, against the serving origin only
     const response = await fetch(LOGIN_EXCHANGE_PATH, {
@@ -65,12 +69,15 @@ const exchangeLoginCode = async (code: string): Promise<string | null> => {
       cache: "no-store",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code }),
+      signal: controller.signal,
     });
     if (!response.ok) return null;
     const body = (await response.json()) as { readonly token?: unknown };
     return typeof body.token === "string" && body.token.length > 0 ? body.token : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 };
 
@@ -80,7 +87,9 @@ const exchangeLoginCode = async (code: string): Promise<string | null> => {
  * `?_token` URL param (persisted + stripped) → localStorage. Identical in dev
  * and prod.
  */
-export const bootstrapLocalAuthToken = async (): Promise<void> => {
+export const bootstrapLocalAuthToken = async (
+  options: { readonly exchangeTimeoutMs?: number } = {},
+): Promise<void> => {
   const url = globalThis.window ? new URL(window.location.href) : null;
   const fragment = new URLSearchParams(url?.hash.slice(1) ?? "");
   const loginCode = fragment.get(LOGIN_CODE_PARAM);
@@ -107,7 +116,10 @@ export const bootstrapLocalAuthToken = async (): Promise<void> => {
 
   if (loginCode !== null) {
     globalThis.window?.history?.replaceState(null, "", url!.pathname + url!.search + url!.hash);
-    const token = await exchangeLoginCode(loginCode);
+    const token = await exchangeLoginCode(
+      loginCode,
+      options.exchangeTimeoutMs ?? LOGIN_EXCHANGE_TIMEOUT_MS,
+    );
     if (token) {
       persistToken(token);
       applyBearer(token);

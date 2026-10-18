@@ -81,12 +81,13 @@ describe("cockpit smoke secret and header guards", () => {
 
 	it("requires a strict script policy", () => {
 		const strict =
-			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http: https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 		assert.doesNotThrow(() => assertStrictCockpitCsp(strict));
 		assert.throws(() => assertStrictCockpitCsp(null), /no Content-Security-Policy/);
 		assert.throws(() => assertStrictCockpitCsp(strict.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'")), /script-src/);
 		assert.throws(() => assertStrictCockpitCsp(strict.replace("frame-ancestors 'none'", "")), /frame-ancestors/);
 		assert.throws(() => assertStrictCockpitCsp(`${strict}; worker-src 'self' 'wasm-unsafe-eval'`), /eval/);
+		assert.throws(() => assertStrictCockpitCsp(strict.replace("connect-src 'self'", "connect-src 'self' http: https:")), /connect-src/);
 	});
 });
 
