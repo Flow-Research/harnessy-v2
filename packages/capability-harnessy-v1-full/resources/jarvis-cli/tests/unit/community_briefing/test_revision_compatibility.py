@@ -113,7 +113,10 @@ def test_real_reviewer_dispatches_background_operations(
     thread.start()
     try:
         with httpx.Client(
-            base_url=f"http://127.0.0.1:{server.server_port}", trust_env=False, timeout=5
+            base_url=f"http://127.0.0.1:{server.server_port}",
+            headers={"Origin": f"http://127.0.0.1:{server.server_port}"},
+            trust_env=False,
+            timeout=5,
         ) as client:
             assert client.get(f"/briefing/{item.briefing_id}").status_code == 401
             assert (

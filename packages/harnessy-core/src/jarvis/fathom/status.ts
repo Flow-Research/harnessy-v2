@@ -6,6 +6,9 @@ import { dirname, join, resolve } from "node:path";
 import { Effect } from "effect";
 import { parseDocument } from "yaml";
 
+import { fathomV2CheckpointPath, readFathomCheckpoint } from "../../read-model/fathom-checkpoint.ts";
+import type { FathomCheckpointData } from "../../read-model/schemas.ts";
+import type { TileResult } from "../../read-model/tile.ts";
 import { resolveJarvisConfigPath } from "../paths.ts";
 
 export interface FathomStatusOptions {
@@ -13,13 +16,25 @@ export interface FathomStatusOptions {
 	readonly homeRoot?: string;
 	/** Defaults to `<homeRoot>/.jarvis/config.yaml`. */
 	readonly configPath?: string;
+	/** The V1 Fathom state directory that holds `poll-state.json`. Defaults to `<homeRoot>/.jarvis/state/fathom`. */
 	readonly stateRoot?: string;
 	readonly sourceRoot?: string;
+	/** The clock for checkpoint age and staleness. Defaults to the current time. */
+	readonly now?: Date;
 }
+
+/**
+ * The V2 poller's checkpoint (`<homeRoot>/.harnessy/jarvis/state/fathom/poll-state-v2.json`).
+ * `state` is `ok` with per-account `updatedAt` freshness, `missing` before the first V2 poll,
+ * `error` (`checkpoint_invalid`) for content the poller would reject, or `unsafe` for a
+ * symbolic link, non-file or oversize file. A rejected checkpoint carries no `data`.
+ */
+export type FathomPollCheckpointStatus = TileResult<FathomCheckpointData> & { readonly path: string };
 
 export interface FathomStatus {
 	readonly ready: boolean;
 	readonly configPath: string;
+	/** The V1 state directory; see {@link FathomStatus.legacyPollState}. */
 	readonly statePath: string;
 	readonly inboxPath: string;
 	readonly defaultAccount: string | null;
@@ -29,7 +44,17 @@ export interface FathomStatus {
 		readonly accounts: ReadonlyArray<string>;
 		readonly issues: ReadonlyArray<string>;
 	};
+	/** The V2 poll checkpoint that the scheduled V2 poller writes. */
+	readonly pollCheckpoint: FathomPollCheckpointStatus;
+	/** The retired V1 poller's `poll-state.json`. The V2 poller never writes it. */
+	readonly legacyPollState: {
+		readonly path: string;
+		readonly present: boolean;
+		readonly valid: boolean;
+	};
+	/** Same as `legacyPollState.present`; kept for existing callers. It says nothing about V2 polling. */
 	readonly pollStatePresent: boolean;
+	/** Same as `legacyPollState.valid`; kept for existing callers. It says nothing about V2 polling. */
 	readonly pollStateValid: boolean;
 	readonly inboxCounts: Readonly<Record<string, Readonly<Record<string, number>>>>;
 	readonly issues: ReadonlyArray<string>;
@@ -136,7 +161,14 @@ export const inspectFathomStatus = (options: FathomStatusOptions = {}): FathomSt
 	if (accounts.length === 0) issues.push("no Fathom accounts configured");
 	if (defaultAccount !== null && !accounts.includes(defaultAccount))
 		issues.push("default Fathom account is not configured");
-	if (!pollStateValid) issues.push("Fathom poll state is invalid JSON");
+	const checkpointPath = fathomV2CheckpointPath(homeRoot);
+	const pollCheckpoint = {
+		...readFathomCheckpoint(checkpointPath, accounts, options.now ?? new Date()),
+		path: checkpointPath,
+	};
+	if (!pollStateValid) issues.push("legacy V1 Fathom poll state is invalid JSON");
+	if (pollCheckpoint.state === "error" || pollCheckpoint.state === "unsafe")
+		issues.push(`V2 Fathom poll checkpoint was rejected (${pollCheckpoint.reason})`);
 	return {
 		ready: issues.length === 0,
 		configPath,
@@ -145,6 +177,8 @@ export const inspectFathomStatus = (options: FathomStatusOptions = {}): FathomSt
 		defaultAccount,
 		accounts,
 		polling: { configured: pollIssues.length === 0, accounts: pollAccounts, issues: pollIssues },
+		pollCheckpoint,
+		legacyPollState: { path: pollStatePath, present: pollStatePresent, valid: pollStateValid },
 		pollStatePresent,
 		pollStateValid,
 		inboxCounts: countInbox(inboxPath),

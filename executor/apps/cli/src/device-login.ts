@@ -322,21 +322,32 @@ const normalizeBrowserOpenUrl = (url: string): string | undefined => {
   }
 };
 
+/** The platform opener for an already-validated target, passed as one argument. */
+export const platformOpenCommand = (
+  target: string,
+  platform: typeof process.platform = process.platform,
+): BrowserOpenCommand => {
+  if (platform === "darwin") return ["open", [target]];
+  if (platform === "win32") return ["rundll32.exe", ["url.dll,FileProtocolHandler", target]];
+  return ["xdg-open", [target]];
+};
+
 export const browserOpenCommand = (
   url: string,
   platform: typeof process.platform = process.platform,
 ): BrowserOpenCommand | undefined => {
   const normalizedUrl = normalizeBrowserOpenUrl(url);
-  if (!normalizedUrl) return undefined;
-  if (platform === "darwin") return ["open", [normalizedUrl]];
-  if (platform === "win32") return ["rundll32.exe", ["url.dll,FileProtocolHandler", normalizedUrl]];
-  return ["xdg-open", [normalizedUrl]];
+  return normalizedUrl ? platformOpenCommand(normalizedUrl, platform) : undefined;
 };
 
 /** Best-effort open the verification URL in the user's default browser. */
 export const openBrowser = (url: string): void => {
   const openCommand = browserOpenCommand(url);
-  if (!openCommand) return;
+  if (openCommand) launchOpenCommand(openCommand);
+};
+
+/** Spawn a validated opener command detached; failures are ignored (the caller prints a fallback). */
+export const launchOpenCommand = (openCommand: BrowserOpenCommand): void => {
   const [command, args] = openCommand;
   try {
     const child = spawn(command, args, { stdio: "ignore", detached: true });

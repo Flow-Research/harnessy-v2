@@ -188,13 +188,9 @@ export const serveCommunityReview = async (options: CommunityReviewServiceOption
 	await runNativeCommunityReview({
 		...options,
 		onReady: async (reviewUrl) => {
+			// Never the bearer token, in any mode: the origin and where the token lives.
 			options.log({
-				command: "jarvis community briefing review serve",
-				event: "ready",
-				// The link carries the review bearer token. The LaunchAgent persists stdout in a
-				// long-lived log, so the service records only the origin; a foreground review
-				// prints the link for its owner.
-				...(options.weeklyGeneration ? { reviewOrigin: new URL(reviewUrl).origin } : { reviewUrl }),
+				...communityReviewReadyEvent(reviewUrl, options.config.state_path),
 				weeklyGeneration:
 					options.weeklyGeneration && schedule.enabled
 						? {
@@ -203,7 +199,6 @@ export const serveCommunityReview = async (options: CommunityReviewServiceOption
 								timezone: schedule.timezone,
 							}
 						: false,
-				publication: false,
 			});
 			startScheduler();
 		},
@@ -266,6 +261,18 @@ export const communityDraftCommand = Command.make(
 		"Prepare an unapproved community draft with native Codex (at most three calls); never publish. Time/output limits are not a spending cap.",
 	),
 );
+
+/**
+ * launchd appends stdout to a persistent review log. Record the listener and where
+ * the owner-only bearer token lives, never the bearer link itself.
+ */
+export const communityReviewReadyEvent = (reviewUrl: string, statePath: string) => ({
+	command: "jarvis community briefing review serve",
+	event: "ready",
+	reviewUrl: `${new URL(reviewUrl).origin}/`,
+	tokenPath: join(statePath, "review.token"),
+	publication: false,
+});
 
 export const communityReviewServeCommand = Command.make(
 	"serve",

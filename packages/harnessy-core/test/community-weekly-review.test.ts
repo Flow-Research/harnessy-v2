@@ -165,14 +165,11 @@ it("drafts each due week once as a one-shot child of the review service, and not
 	const review = run.requests().find((request) => request.action === "review")!;
 	expect(run.generations().every((request) => request.pid !== review.pid)).toBe(true);
 	expect(run.notifications).toEqual(["pending:1", "pending:1"]);
-	const ready = run.logs.find((value) => value.event === "ready");
-	expect(ready).toMatchObject({
-		reviewOrigin: "http://127.0.0.1:9",
+	expect(run.logs.find((value) => value.event === "ready")).toMatchObject({
+		reviewUrl: "http://127.0.0.1:9/",
 		weeklyGeneration: { weekday: 0, time: "23:00", timezone: "Africa/Lagos" },
 		publication: false,
 	});
-	// The LaunchAgent's persisted log never holds the review bearer token.
-	expect(JSON.stringify(run.logs)).not.toContain("token=");
 	await service.stop();
 	const restarted = run.serve();
 	await until(() => run.logs.filter((value) => value.event === "ready").length === 2);
@@ -280,13 +277,28 @@ it("never runs the trigger in a foreground review", async () => {
 	const service = run.serve({ weeklyGeneration: false });
 	await until(() => run.logs.some((value) => value.event === "ready"));
 	await settle();
-	// A foreground review prints the link for its owner.
-	expect(run.logs.find((value) => value.event === "ready")).toMatchObject({
-		reviewUrl: "http://127.0.0.1:9/?token=fixture",
-		weeklyGeneration: false,
-	});
+	expect(run.logs.find((value) => value.event === "ready")).toMatchObject({ weeklyGeneration: false });
 	expect(run.generations()).toEqual([]);
 	await service.stop();
+});
+
+it.each([true, false])("never logs the review bearer token (weekly generation: %s)", async (weeklyGeneration) => {
+	const run = fixture({ mode: "hang" });
+	const service = run.serve({ weeklyGeneration });
+	await until(() => run.logs.some((value) => value.event === "ready"));
+	await service.stop();
+	const ready = run.logs.find((value) => value.event === "ready")!;
+	// The origin and where the token lives, never the token itself.
+	expect(ready).toEqual({
+		command: "jarvis community briefing review serve",
+		event: "ready",
+		reviewUrl: "http://127.0.0.1:9/",
+		tokenPath: join(run.root, "state", "review.token"),
+		publication: false,
+		weeklyGeneration: weeklyGeneration ? { weekday: 0, time: "23:00", timezone: "Africa/Lagos" } : false,
+	});
+	expect(JSON.stringify(run.logs)).not.toContain("token=");
+	expect(JSON.stringify(run.logs)).not.toContain("fixture");
 });
 
 it("retries a busy state directory without counting it, and stops at once on orphaned artifacts", async () => {

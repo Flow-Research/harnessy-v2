@@ -9,7 +9,10 @@ import fcntl
 import json
 import hashlib
 import os
+import secrets
+import stat
 import sys
+import time
 import threading
 import uuid
 from contextlib import contextmanager
@@ -374,14 +377,95 @@ def serve_native_review(request):
     server = create_briefing_review_server(service)
     parent = os.getppid()
     server.timeout = 0.5
+    token = review_token(service.state_root)
+    rendezvous, published = publish_review_rendezvous(service.state_root, server.server_port)
     try:
-        emit({"type": "ready", "url": f"http://127.0.0.1:{server.server_port}/?token={review_token(service.state_root)}",
+        emit({"type": "ready", "url": f"http://127.0.0.1:{server.server_port}/?token={token}",
               "publication": False})
         while os.getppid() == parent:
             server.handle_request()
     finally:
         server.server_close()
+        withdraw_review_rendezvous(rendezvous, published)
         service.close()
+
+
+REVIEW_RENDEZVOUS = "community-review.rendezvous.json"
+# A staged file older than this was left by a review that died while publishing.
+STALE_STAGED_SECONDS = 600
+
+
+def _sweep_stale_staged(state_root):
+    """Remove staged rendezvous files that a crashed review left behind.
+
+    Only regular, owner-owned files with the staging prefix are removed. The
+    entry is inspected with lstat, and unlink removes a link itself, so no
+    link is followed. Fresh files may belong to a review starting right now.
+    """
+    prefix = f".{REVIEW_RENDEZVOUS}."
+    now = time.time()
+    for entry in os.scandir(state_root):
+        if not entry.name.startswith(prefix):
+            continue
+        try:
+            info = os.lstat(entry.path)
+            if (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+                    and now - info.st_mtime > STALE_STAGED_SECONDS):
+                os.unlink(entry.path)
+        except FileNotFoundError:
+            continue
+
+
+def publish_review_rendezvous(state_root, port):
+    """Tell harnessy-community-review-open where this listener and its token live.
+
+    It never contains the token, so the launcher reads the owner-only token file
+    itself and no `jarvis community briefing ...` command is needed to sign in.
+    """
+    state_root = Path(state_root)
+    path = state_root / REVIEW_RENDEZVOUS
+    # Identifies this review, so it never withdraws a newer review's rendezvous.
+    instance = secrets.token_hex(16)
+    body = (json.dumps({
+        "kind": "harnessy.community.review-rendezvous.v1",
+        "origin": f"http://127.0.0.1:{port}",
+        "port": port,
+        "tokenPath": str(state_root / "review.token"),
+        "instance": instance,
+    }, sort_keys=True) + "\n").encode()
+    _sweep_stale_staged(state_root)
+    # A random suffix: a leftover from a crashed review whose PID is reused can
+    # never block startup (which, under KeepAlive, would be a restart loop).
+    staged = state_root / f".{REVIEW_RENDEZVOUS}.{os.getpid()}.{instance}"
+    descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            os.write(descriptor, body)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(staged, path)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+    return path, body
+
+
+def withdraw_review_rendezvous(path, published):
+    """Remove the rendezvous only while it is still the one this review wrote.
+
+    A restarted review may already have replaced it; that newer file stays.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except (FileNotFoundError, OSError):
+        return
+    try:
+        current = os.read(descriptor, len(published) + 1)
+    finally:
+        os.close(descriptor)
+    if current == published:
+        path.unlink(missing_ok=True)
 
 
 def main():

@@ -160,6 +160,8 @@ const exactHostInventory = [
 	"dist/community-publication-cli.js",
 	"dist/community-publication-command.d.ts",
 	"dist/community-publication-command.js",
+	"dist/community-review-open-cli.d.ts",
+	"dist/community-review-open-cli.js",
 	"dist/community-service-enrollment.d.ts",
 	"dist/community-service-enrollment.js",
 	"dist/community-stop-event.d.ts",
@@ -333,6 +335,10 @@ try {
 	assert(manifest.private === true, "Packed local host must remain private");
 	assert(manifest.bin?.["harnessy-local-host"] === "dist/cli.js", "Packed local-host bin target drifted");
 	assert(manifest.bin?.["harnessy-community-publication"] === "dist/community-publication-cli.js", "Packed community bin target drifted");
+	assert(
+		manifest.bin?.["harnessy-community-review-open"] === "dist/community-review-open-cli.js",
+		"Packed community review-open bin target drifted",
+	);
 	assert(
 		manifest.bin?.["harnessy-meeting-full-review"] === "dist/meeting-full-review-cli.js",
 		"Packed full-review bin target drifted",
@@ -666,6 +672,14 @@ try {
 	assert((statSync(reviewOpenCliPath).mode & 0o777) === 0o755, "Packed review-open CLI is not executable");
 	const reviewOpenRejected = run(process.execPath, [reviewOpenCliPath], consumerRoot, 1);
 	assert(reviewOpenRejected.stdout === "" && reviewOpenRejected.stderr === '{"error":"meeting_review_open_failed"}\n', "Review-open argv rejection was not content-free");
+	const communityReviewOpenCliPath = join(installedHostRoot, manifest.bin["harnessy-community-review-open"]);
+	assert((statSync(communityReviewOpenCliPath).mode & 0o777) === 0o755, "Packed community review-open CLI is not executable");
+	const communityReviewOpenRejected = run(process.execPath, [communityReviewOpenCliPath], consumerRoot, 1);
+	assert(
+		communityReviewOpenRejected.stdout === "" &&
+			communityReviewOpenRejected.stderr === '{"error":"community_review_open_failed"}\n',
+		"Community review-open argv rejection was not content-free",
+	);
 	const smokeArgs = ["--authorization", join(protectedRoot, "missing-auth.json"), "--trusted-keyring", join(protectedRoot, "missing-trust.json"), "--trusted-keyring-device", "0", "--trusted-keyring-inode", "0", "--trusted-keyring-sha256", "0".repeat(64)];
 	for (const args of [[], ["--receipt", "must-not-leak"], smokeArgs.slice(0, -2), [...smokeArgs, "--activate", "true"], [...smokeArgs.slice(0, 9), "must-not-leak"], ["--authorization", ...smokeArgs.slice(1, 2), "--authorization", ...smokeArgs.slice(3)]]) {
 		const result = run(process.execPath, [smokeCliPath, ...args], consumerRoot, 1);

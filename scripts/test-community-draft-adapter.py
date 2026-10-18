@@ -2,6 +2,7 @@
 
 import fcntl
 import hashlib
+import importlib.util
 from http.client import HTTPConnection
 import json
 import os
@@ -475,11 +476,30 @@ class CommunityDraftAdapterTests(unittest.TestCase):
                     ready = event()
                     self.assertEqual(ready["type"], "ready")
                     url = urlsplit(ready["url"])
+                    # harnessy-community-review-open reads this; it names the token file, never the token.
+                    state = Path(self.config["state_path"]).resolve()
+                    rendezvous_path = state / "community-review.rendezvous.json"
+                    self.assertEqual(rendezvous_path.stat().st_mode & 0o7777, 0o600)
+                    self.assertEqual(rendezvous_path.stat().st_nlink, 1)
+                    rendezvous_text = rendezvous_path.read_text()
+                    rendezvous_value = json.loads(rendezvous_text)
+                    self.assertRegex(rendezvous_value.pop("instance"), r"^[0-9a-f]{32}$")
+                    self.assertEqual(rendezvous_value, {
+                        "kind": "harnessy.community.review-rendezvous.v1",
+                        "origin": f"http://127.0.0.1:{url.port}",
+                        "port": url.port,
+                        "tokenPath": str(state / "review.token"),
+                    })
+                    self.assertNotIn(url.query.removeprefix("token="), rendezvous_text)
+                    self.assertEqual((state / "review.token").stat().st_mode & 0o7777, 0o600)
 
                     def http(method, path, fields=None, cookie=None):
                         connection = HTTPConnection(url.hostname, url.port, timeout=2)
                         try:
-                            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                            headers = {
+                                "Origin": f"http://{url.netloc}",
+                                "Content-Type": "application/x-www-form-urlencoded",
+                            }
                             if cookie:
                                 headers["Cookie"] = cookie
                             connection.request(method, path, urlencode(fields) if fields else None, headers)
@@ -587,6 +607,72 @@ class CommunityDraftAdapterTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(events[-1]["status"], "pending_review")
         self.assertEqual(os.stat(self.root / "state/community-native-draft.lock").st_mode & 0o777, 0o600)
+
+
+class ReviewRendezvousTests(unittest.TestCase):
+    """The rendezvous file under KeepAlive restarts: never blocks startup, never removes a newer one."""
+
+    @classmethod
+    def setUpClass(cls):
+        spec = importlib.util.spec_from_file_location("community_draft_adapter", ADAPTER)
+        cls.adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.adapter)
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="community-rendezvous-")
+        self.addCleanup(temp.cleanup)
+        self.state = Path(temp.name)
+        self.state.chmod(0o700)
+
+    def staged(self):
+        return sorted(p.name for p in self.state.iterdir() if p.name.startswith(".community-review.rendezvous.json."))
+
+    def test_a_leftover_staged_file_from_a_reused_pid_never_blocks_startup(self):
+        leftover = self.state / f".community-review.rendezvous.json.{os.getpid()}"
+        leftover.write_text("left by a review that died while publishing\n")
+        path, body = self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertEqual(path.read_bytes(), body)
+        self.assertEqual(json.loads(body)["port"], 8872)
+        self.assertEqual(path.stat().st_mode & 0o7777, 0o600)
+
+    def test_stale_staged_files_are_swept_without_following_links(self):
+        stale = self.state / ".community-review.rendezvous.json.111.old"
+        stale.write_text("stale\n")
+        old = time.time() - 3600
+        os.utime(stale, (old, old))
+        fresh = self.state / ".community-review.rendezvous.json.222.starting"
+        fresh.write_text("another review is publishing right now\n")
+        outside = self.state.parent / f"{self.state.name}-outside"
+        outside.write_text("must survive\n")
+        self.addCleanup(outside.unlink, missing_ok=True)
+        link = self.state / ".community-review.rendezvous.json.333.link"
+        link.symlink_to(outside)
+        os.utime(link, (old, old), follow_symlinks=False)
+        self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(outside.read_text(), "must survive\n")
+        self.assertEqual(self.staged(), [fresh.name, link.name])
+
+    def test_a_review_withdraws_only_its_own_rendezvous(self):
+        first_path, first = self.adapter.publish_review_rendezvous(self.state, 8872)
+        # KeepAlive started a new review before the old one finished shutting down.
+        second_path, second = self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertEqual(first_path, second_path)
+        self.assertNotEqual(first, second)
+        self.adapter.withdraw_review_rendezvous(first_path, first)
+        self.assertEqual(second_path.read_bytes(), second)
+        self.adapter.withdraw_review_rendezvous(second_path, second)
+        self.assertFalse(second_path.exists())
+        # Already gone, or replaced by a link: nothing to withdraw, nothing followed.
+        self.adapter.withdraw_review_rendezvous(second_path, second)
+        target = self.state / "target"
+        target.write_bytes(second)
+        second_path.symlink_to(target)
+        self.adapter.withdraw_review_rendezvous(second_path, second)
+        self.assertTrue(second_path.is_symlink())
+        self.assertEqual(self.staged(), [])
 
 
 if __name__ == "__main__":

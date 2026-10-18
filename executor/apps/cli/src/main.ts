@@ -5,6 +5,7 @@ import "./native-bindings";
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 // Make sibling binaries and standard GUI-missing CLI install locations
 // discoverable on $PATH so child processes spawned without an absolute path
 // still find them.
@@ -92,6 +93,7 @@ import {
 import {
   decodeAccessTokenClaims,
   discoverCliLogin,
+  launchOpenCommand,
   openBrowser,
   pollForDeviceTokens,
   refreshDeviceTokens,
@@ -101,11 +103,13 @@ import {
   startServer,
   rotateLocalAuthToken,
   localAuthTokenPath,
+  secureLocalStateDir,
   findDataDirOwnershipHeld,
   type ServerInstance,
   type StartServerOptions,
 } from "@executor-js/local";
 import { fetchIntegrations } from "./integrations";
+import { isLoopbackHttpOrigin, signInPageOpenCommand, writeSignInPage } from "./sign-in-page";
 import {
   buildDaemonSpawnSpec,
   chooseDaemonPort,
@@ -143,6 +147,7 @@ import {
   withCliServerAuthFallback,
 } from "./server-connection";
 import {
+  blankDataDirRefusal,
   readLocalServerManifest,
   removeLocalServerManifestIfOwnedBy,
   resolveExecutorDataDir,
@@ -1128,7 +1133,8 @@ const runForegroundSession = (input: {
 
       try {
         console.log(`Executor is ready.`);
-        console.log(`Open:    ${baseUrl}/?_token=${server.authToken}`);
+        // Never print the bearer: `open` signs the browser in with a one-time code.
+        console.log(`Open:    ${cliPrefix} open`);
         console.log(`Web:     ${baseUrl}`);
         console.log(`MCP:     ${baseUrl}/mcp`);
         console.log(`OpenAPI: ${baseUrl}/api/docs`);
@@ -2594,7 +2600,7 @@ const webCommand = Command.make(
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
-          "For --foreground, grant an extra origin cross-origin (CORS) access (repeatable). Not needed to reach the server from another host — the bearer token is the gate; localhost is always allowed.",
+          "For --foreground, grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there. Not needed to reach the server from another host (the bearer token is the gate). The server's own localhost origins are always allowed.",
         ),
       ),
     authToken: Options.string("auth-token")
@@ -2646,7 +2652,7 @@ const daemonRunCommand = Command.make(
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
-          "Grant an extra origin cross-origin (CORS) access (repeatable). Not needed to reach the server from another host — the bearer token is the gate; localhost is always allowed.",
+          "Grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there. Not needed to reach the server from another host (the bearer token is the gate). The server's own localhost origins are always allowed.",
         ),
       ),
     authToken: Options.string("auth-token")
@@ -3139,6 +3145,27 @@ const printNoRunningLocalWebApp = (): void => {
   console.log(`  ${cliPrefix} web --foreground`);
 };
 
+/**
+ * Ask the running server for a single-use, 60-second sign-in code. `null` when
+ * the server is unreachable or predates the code endpoint.
+ */
+const mintLocalLoginCode = (origin: string, token: string): Effect.Effect<string | null> =>
+  HttpClient.execute(
+    HttpClientRequest.post(`${origin}/api/local-auth/code`).pipe(
+      HttpClientRequest.bearerToken(token),
+    ),
+  ).pipe(
+    Effect.flatMap((response) => (response.status === 200 ? response.json : Effect.succeed(null))),
+    Effect.map((body) => {
+      const code =
+        typeof body === "object" && body !== null && "code" in body ? body.code : undefined;
+      return typeof code === "string" ? code : null;
+    }),
+    Effect.timeout("5 seconds"),
+    Effect.provide(FetchHttpClient.layer),
+    Effect.orElseSucceed(() => null),
+  );
+
 const openRunningLocalWebApp = (): Effect.Effect<
   void,
   never,
@@ -3150,17 +3177,54 @@ const openRunningLocalWebApp = (): Effect.Effect<
       printNoRunningLocalWebApp();
       return;
     }
-    const { origin, auth } = manifest.connection;
+    const { auth } = manifest.connection;
+    const origin = manifest.connection.origin.replace(/\/$/, "");
     const token = auth?.kind === "bearer" ? auth.token : undefined;
-    const url = token ? `${origin}/?_token=${token}` : origin;
-    console.log(`Opening ${url}`);
-    yield* openInBrowser(url);
+    // The bearer only ever travels in an Authorization header to this machine's
+    // own loopback server; it is never printed, logged or put in a URL or argv.
+    const code =
+      token && isLoopbackHttpOrigin(origin) ? yield* mintLocalLoginCode(origin, token) : null;
+    console.log(`Opening ${origin}/`);
+    if (code !== null) {
+      // The single-use code is not printed and not passed to the opener: it goes
+      // into an owner-only redirect page in server-control/, and the opener only
+      // sees that page's path.
+      const path = yield* PlatformPath.Path;
+      const page = yield* Effect.try({
+        try: () => {
+          secureLocalStateDir(resolveExecutorDataDir(path));
+          return writeSignInPage(
+            path.join(resolveExecutorDataDir(path), "server-control"),
+            origin,
+            code,
+          );
+        },
+        catch: (cause) => cause,
+      }).pipe(Effect.orElseSucceed(() => undefined));
+      const openCommand = page === undefined ? undefined : signInPageOpenCommand(page);
+      if (page !== undefined && openCommand) {
+        yield* Effect.sync(() => launchOpenCommand(openCommand));
+        // The opener fails silently on headless hosts. The page path is no
+        // secret (an owner-only file in server-control/), so offer it by hand.
+        console.log(
+          `If no browser opened, open ${pathToFileURL(page).href} within 60 seconds, or run \`${cliPrefix} open\` again.`,
+        );
+        return;
+      }
+    }
+    if (token) {
+      console.log(
+        "Could not prepare a one-time sign-in link. Paste the token from server-control/auth.json in the Executor data directory when prompted, or restart the server.",
+      );
+    }
+    yield* openInBrowser(`${origin}/`);
   });
 
 /**
  * `executor open` — the friendly way back in. Reads the running local server's
- * manifest and opens the browser straight to its `?_token=` URL, so the user
- * never has to copy a bearer token out of a terminal or auth.json by hand.
+ * manifest, asks it for a one-time sign-in code and opens the browser on
+ * `/#_code=<code>`, so the user never copies a bearer token out of a terminal
+ * or auth.json by hand, and the bearer itself is never printed.
  */
 const openCommand = Command.make("open", {}, () => openRunningLocalWebApp()).pipe(
   Command.withDescription("Open the running Executor web app in your browser, already signed in"),
@@ -3245,5 +3309,11 @@ const program = (
     }),
   ),
 );
+
+const dataDirRefusal = blankDataDirRefusal();
+if (dataDirRefusal !== null) {
+  console.error(`executor: ${dataDirRefusal}`);
+  process.exit(1);
+}
 
 BunRuntime.runMain(program as Effect.Effect<void, never, never>);

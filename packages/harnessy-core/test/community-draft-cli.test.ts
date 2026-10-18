@@ -140,6 +140,8 @@ it.each(["configured", "override"])(
 			});
 			const lines = createInterface({ input: reviewer.stdout, crlfDelay: Infinity });
 			const iterator = lines[Symbol.asyncIterator]();
+			// launchd appends this stdout and stderr to the persistent review log.
+			let transcript = "";
 			const next = async () => {
 				let timer: ReturnType<typeof setTimeout> | undefined;
 				try {
@@ -150,6 +152,7 @@ it.each(["configured", "override"])(
 						}),
 					]);
 					expect(entry.done, diagnostics).toBe(false);
+					transcript += `${entry.value!}\n`;
 					return JSON.parse(entry.value!);
 				} finally {
 					clearTimeout(timer);
@@ -159,8 +162,12 @@ it.each(["configured", "override"])(
 			let forced = false;
 			try {
 				const ready = await next();
-				expect(ready).toMatchObject({ event: "ready", publication: false });
-				reviewUrl = ready.reviewUrl;
+				const tokenPath = join(root, "state", "review.token");
+				expect(ready).toMatchObject({ event: "ready", publication: false, tokenPath });
+				expect(ready.reviewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/u);
+				const token = readFileSync(tokenPath, "utf8").trim();
+				expect(token.length).toBeGreaterThan(20);
+				reviewUrl = `${ready.reviewUrl}?token=${encodeURIComponent(token)}`;
 				if (suppliedCli) {
 					const command = spawnSync("/bin/ps", ["-p", String(reviewer.pid), "-o", "command="], {
 						encoding: "utf8",
@@ -220,7 +227,7 @@ it.each(["configured", "override"])(
 				const revision = await fetch(`${base}/briefing/revise/${itemId}`, {
 					method: "POST",
 					body: fields,
-					headers: { cookie },
+					headers: { cookie, origin: base },
 					redirect: "manual",
 				});
 				expect(revision.status).toBe(303);
@@ -235,7 +242,7 @@ it.each(["configured", "override"])(
 				const approve = await fetch(`${base}/briefing/approve/${itemId}`, {
 					method: "POST",
 					body: fields,
-					headers: { cookie },
+					headers: { cookie, origin: base },
 					redirect: "manual",
 				});
 				expect(approve.status).toBe(303);
@@ -265,6 +272,10 @@ it.each(["configured", "override"])(
 				lines.close();
 			}
 			expect(forced, "review CLI must stop without forced cleanup").toBe(false);
+			const token = readFileSync(join(root, "state", "review.token"), "utf8").trim();
+			expect(transcript).toContain('"event":"ready"');
+			expect(transcript).not.toContain(token);
+			expect(diagnostics).not.toContain(token);
 			if (reviewUrl) await expect(fetch(reviewUrl)).rejects.toThrow();
 			writeFileSync(config, "community_briefing: [INVALID]");
 			const invalid = run();
