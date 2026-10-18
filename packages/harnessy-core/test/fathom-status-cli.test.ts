@@ -33,7 +33,12 @@ const status = (home: string) => {
 	const result = spawnSync(
 		process.execPath,
 		["--experimental-strip-types", cliEntry, "jarvis", "meeting", "fathom", "status", "--json"],
-		{ cwd: packageRoot, env: { HOME: home, USERPROFILE: home, NODE_NO_WARNINGS: "1" }, encoding: "utf8", timeout: 30_000 },
+		{
+			cwd: packageRoot,
+			env: { HOME: home, USERPROFILE: home, NODE_NO_WARNINGS: "1" },
+			encoding: "utf8",
+			timeout: 30_000,
+		},
 	);
 	expect(result.status, result.stderr).toBe(0);
 	return { stdout: result.stdout, json: JSON.parse(result.stdout) };
