@@ -171,7 +171,11 @@ export const isCommunityCompatibilityWriterCommand = (commandLine: string): bool
 	);
 
 /** Bounded known-process evidence, not protection from arbitrary same-UID code. */
-const proveCompatibilityAbsentWith = (run: ProcessProbeRunner, platform: NodeJS.Platform) => {
+const proveCompatibilityAbsentWith = (
+	run: ProcessProbeRunner,
+	platform: NodeJS.Platform,
+	nativeReviewer: { readonly executable: string; readonly entry: string },
+) => {
 	const command = (check: WriterCheckName, path: string, args: ReadonlyArray<string>) =>
 		runWriterCheckProbe(run, check, path, args);
 	const darwinProcessExecutable = (pid: number): string => {
@@ -204,8 +208,8 @@ const proveCompatibilityAbsentWith = (run: ProcessProbeRunner, platform: NodeJS.
 				commandLine,
 				launchExecutable.stdout.trim(),
 				processExecutable,
-				process.execPath,
-				fileURLToPath(new URL("../../cli.js", import.meta.url)),
+				nativeReviewer.executable,
+				nativeReviewer.entry,
 			)
 		);
 	};
@@ -226,6 +230,7 @@ const proveCompatibilityAbsentWith = (run: ProcessProbeRunner, platform: NodeJS.
 	let processScan: WriterCheckInconclusiveError | undefined;
 	const proveProcessesAbsent = () => {
 		const processes = scanProcesses();
+		let unverifiedExemption: WriterCheckInconclusiveError | undefined;
 		for (const line of processes.stdout.split("\n")) {
 			if (!line.trim()) continue;
 			const match = communityProcessLinePattern.exec(line);
@@ -234,16 +239,24 @@ const proveCompatibilityAbsentWith = (run: ProcessProbeRunner, platform: NodeJS.
 			if (!isCommunityCompatibilityWriterCommand(match[3])) continue;
 			const native = Result.try({ try: () => isNativeReviewer(match[2], match[3]), catch: (cause) => cause });
 			if (Result.isSuccess(native)) {
+				// A definitive "not exempt" answer is an observed writer.
 				if (!native.success) throw new Error("compatibility_writer_present");
 				nativeReviewProcesses.add(Number(match[2]));
 				continue;
 			}
-			// The exemption could not be verified: this is a writer unless it has since ended.
+			// An exemption probe that could not answer (e.g. lsof timing out in a dark wake)
+			// pauses rather than stops; keep scanning so an observed writer still wins.
+			if (native.failure instanceof WriterCheckInconclusiveError) {
+				unverifiedExemption ??= native.failure;
+				continue;
+			}
+			// Any other unverifiable answer fails closed unless the process has since ended.
 			if (!hasEnded(match[2], match[3])) throw new Error("compatibility_writer_present");
 		}
 		// Writers in the output of a failed scan still stop at once (above); otherwise the
-		// failed scan proves nothing.
+		// failed scan, or an unanswered exemption check, proves nothing.
 		if (processes.status !== 0) throw new WriterCheckInconclusiveError("ps", "exit_status", processes.status);
+		if (unverifiedExemption !== undefined) throw unverifiedExemption;
 	};
 	const proveSchedulersAbsent = () => {
 		if (platform === "darwin") {
@@ -255,7 +268,8 @@ const proveCompatibilityAbsentWith = (run: ProcessProbeRunner, platform: NodeJS.
 						isNativeCommunityReviewLaunchAgent(label, result.stdout, nativeReviewProcesses)
 					)
 						return;
-					// Only the native review agent can be exempt, and only by a completed process scan.
+					// Only the native review agent can be exempt, and only by a completed process scan
+					// that verified its process; otherwise this label is as inconclusive as that scan.
 					if (result.status === 0 && label === "com.flow-harness.community-review-v2" && processScan !== undefined)
 						throw processScan;
 					// Any other loaded job is an observed writer; only "Could not find service" proves absence.
@@ -290,9 +304,16 @@ const proveCompatibilityAbsentWith = (run: ProcessProbeRunner, platform: NodeJS.
  * `WriterCheckInconclusiveError`.
  */
 export const makeCommunityCompatibilityProof =
-	(run: ProcessProbeRunner, platform: NodeJS.Platform = process.platform) =>
+	(
+		run: ProcessProbeRunner,
+		platform: NodeJS.Platform = process.platform,
+		nativeReviewer = {
+			executable: process.execPath,
+			entry: fileURLToPath(new URL("../../cli.js", import.meta.url)),
+		},
+	) =>
 	(): void =>
-		proveCompatibilityAbsentWith(run, platform);
+		proveCompatibilityAbsentWith(run, platform, nativeReviewer);
 
 /** Source-private fixture seam; no observer, bypass or signing key is accepted by the CLI. */
 export const CommunityOperationSystemReference = Context.Reference<{

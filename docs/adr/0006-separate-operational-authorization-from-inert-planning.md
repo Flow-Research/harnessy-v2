@@ -79,10 +79,15 @@ not answer is inconclusive: a spawn error, timeout, signal, oversized output, or
 a non-zero exit that is not the documented "not found" answer. Every probe runs,
 and an observed writer always wins over an inconclusive probe. That includes
 writer lines in the output of a `ps` that exited non-zero. The community guard
-treats a writer-shaped process as a writer when its native-reviewer exemption
-cannot be verified. Only a fresh complete scan that no longer lists the process
-clears it. The native review launch agent is exempt only after a completed
-process scan.
+stops at once when a writer-shaped process's native-reviewer exemption check
+answers "not exempt". If that check cannot answer, the result is inconclusive,
+not a writer: for example `lsof` or a per-process `ps` that times out or exits
+non-zero during a dark wake. Inconclusive results pause and retry under the same
+window, and an observed writer elsewhere in the same check still wins. Any other
+unverifiable answer, such as malformed `lsof` output, fails closed unless a
+fresh complete scan no longer lists the process. The native review launch agent
+is exempt only after a completed process scan has verified its process;
+otherwise that label is inconclusive.
 
 A running meeting service that sees an inconclusive probe denies every new
 grant, claim and lease, and skips scheduled cycles. It retries with backoff of

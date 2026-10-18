@@ -444,19 +444,38 @@ describe("community compatibility proof over an injected runner", () => {
 		};
 	let scans = 0;
 
-	it.each(["lsof_timeout", "lsof_exit", "comm_exit", "confirm_exit"] as const)(
-		"treats a writer-shaped process with an unverifiable exemption (%s) as a writer while it still runs",
-		(failing) => {
-			for (const fresh of ["present", "timeout"] as const) {
-				scans = 0;
-				expect(() => makeCommunityCompatibilityProof(unverifiable(failing, fresh), "darwin")()).toThrow(
-					"compatibility_writer_present",
-				);
-			}
+	it.each([
+		["lsof_timeout", "lsof_timeout", undefined],
+		["lsof_exit", "lsof_exit_status", 1],
+		["comm_exit", "ps_exit_status", 1],
+		["confirm_exit", "ps_exit_status", 1],
+	] as const)("pauses rather than stops when an exemption check cannot answer (%s)", (failing, reason, exitStatus) => {
+		for (const fresh of ["present", "gone", "timeout"] as const) {
 			scans = 0;
-			expect(() => makeCommunityCompatibilityProof(unverifiable(failing, "gone"), "darwin")()).not.toThrow();
-		},
-	);
+			expect(inconclusive(makeCommunityCompatibilityProof(unverifiable(failing, fresh), "darwin"))).toEqual({
+				reason,
+				exitStatus,
+			});
+		}
+	});
+
+	it("lets an observed writer win over an unanswered exemption check", () => {
+		const uid = process.geteuid?.() ?? 0;
+		const run = (command: string, args: ReadonlyArray<string>): ProcessProbeResult => {
+			if (command === "/bin/ps" && args[0] === "-axo")
+				return answer({ stdout: `${writerShaped}\n${uid} 88 jarvis meeting review serve\n` });
+			if (command === "/usr/sbin/lsof" && args[2] === "77")
+				return answer({ status: null, signal: "SIGTERM", error: { code: "ETIMEDOUT" } });
+			if (command === "/usr/sbin/lsof") return answer({ stdout: "p88\0\nftxt\0n/usr/bin/python3\0\n" });
+			if (command === "/bin/ps" && args.at(-1) === "comm=") return answer({ stdout: "node\n" });
+			if (command === "/bin/ps")
+				return answer({
+					stdout: args[1] === "88" ? `${uid} 88 jarvis meeting review serve\n` : `${writerShaped}\n`,
+				});
+			return makeScriptedProbeRunner().run(command, args);
+		};
+		expect(() => makeCommunityCompatibilityProof(run, "darwin")()).toThrow("compatibility_writer_present");
+	});
 
 	it("keeps malformed lsof answers fail-closed", () => {
 		const run = (command: string, args: ReadonlyArray<string>) =>
