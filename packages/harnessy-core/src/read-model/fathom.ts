@@ -1,33 +1,22 @@
 /**
  * Read-only Fathom summary: configured accounts, inbox counts and the V2 poll checkpoint.
  *
- * `inspectFathomStatus` looks for the V1 `~/.jarvis/state/fathom/poll-state.json`,
- * but the V2 poller writes `poll-state-v2.json` under `~/.harnessy/jarvis/state/fathom`.
- * This reader reads the V2 checkpoint, so the portal sees real poll evidence.
+ * The checkpoint tile comes from `inspectFathomStatus`, which reads the V2
+ * `poll-state-v2.json` under `~/.harnessy/jarvis/state/fathom` with
+ * {@link readFathomCheckpoint}, so the portal and the CLI report the same poll evidence.
  * It returns counts only and never reads an envelope.
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import * as Result from "effect/Result";
-
-import { fathomAccountKey, fathomFileStoreStateFile, parseFathomFileStoreState } from "../jarvis/fathom/file-store.ts";
-import { FATHOM_POLL_INTERVAL_SECONDS } from "../jarvis/fathom/poll.ts";
 import { inspectFathomStatus } from "../jarvis/fathom/status.ts";
-import { assertDelegatedFileBounded, readBoundedFile } from "./files.ts";
+import { fathomV2CheckpointPath, MAX_FATHOM_CHECKPOINT_BYTES, readFathomCheckpoint } from "./fathom-checkpoint.ts";
+import { assertDelegatedFileBounded } from "./files.ts";
 import type { FathomCheckpointData, FathomConfigData, FathomInboxData } from "./schemas.ts";
-import {
-	guardTile,
-	okTile,
-	type ReadModelOptions,
-	ReadModelStateError,
-	readClock,
-	stateTile,
-	type TileResult,
-} from "./tile.ts";
+import { guardTile, okTile, type ReadModelOptions, readClock, stateTile, type TileResult } from "./tile.ts";
 
-export const MAX_FATHOM_CHECKPOINT_BYTES = 1024 * 1024;
+export { fathomV2CheckpointPath, MAX_FATHOM_CHECKPOINT_BYTES, readFathomCheckpoint };
 
 export interface FathomReadOptions extends ReadModelOptions {
 	/** The home directory that holds `.jarvis` and `.harnessy` and that a leading `~` in a configured path expands to. */
@@ -43,35 +32,6 @@ export interface FathomSummary {
 	readonly inbox: TileResult<FathomInboxData>;
 	readonly checkpoint: TileResult<FathomCheckpointData>;
 }
-
-/** Where the V2 poller keeps its checkpoint for one home directory. */
-export const fathomV2CheckpointPath = (homeRoot: string): string =>
-	join(homeRoot, ".harnessy", "jarvis", "state", "fathom", fathomFileStoreStateFile);
-
-const readCheckpoint = (path: string, accounts: ReadonlyArray<string>, now: Date): TileResult<FathomCheckpointData> =>
-	guardTile(now, () => {
-		const file = readBoundedFile(path, MAX_FATHOM_CHECKPOINT_BYTES);
-		if (file.truncated) throw new ReadModelStateError("unsafe", "checkpoint_oversize");
-		const parsed = Result.try(() => parseFathomFileStoreState(file.bytes.toString("utf8")));
-		if (Result.isFailure(parsed)) throw new ReadModelStateError("error", "checkpoint_invalid");
-		const state = parsed.success;
-		const known = new Set(accounts.map(fathomAccountKey));
-		const staleAfterSeconds = 2 * FATHOM_POLL_INTERVAL_SECONDS;
-		return okTile(
-			{
-				intervalSeconds: FATHOM_POLL_INTERVAL_SECONDS,
-				modifiedAt: file.modifiedAt.toISOString(),
-				accounts: accounts.map((account) => {
-					const updatedAt = state.accounts[fathomAccountKey(account)]?.updatedAt ?? null;
-					const ageSeconds =
-						updatedAt === null ? null : Math.max(0, Math.floor((now.getTime() - Date.parse(updatedAt)) / 1000));
-					return { account, updatedAt, ageSeconds, stale: ageSeconds === null || ageSeconds > staleAfterSeconds };
-				}),
-				unknownAccounts: Object.keys(state.accounts).filter((key) => !known.has(key)).length,
-			},
-			now,
-		);
-	});
 
 /** Fathom configuration, inbox counts and V2 checkpoint freshness. Reads only. */
 export const readFathomSummary = (options: FathomReadOptions = {}): FathomSummary => {
@@ -90,6 +50,7 @@ export const readFathomSummary = (options: FathomReadOptions = {}): FathomSummar
 			homeRoot,
 			configPath,
 			stateRoot,
+			now,
 			...(options.sourceRoot === undefined ? {} : { sourceRoot: options.sourceRoot }),
 		});
 		if (status.issues.includes("configuration has invalid YAML")) return stateTile("error", "config_invalid", now);
@@ -120,9 +81,10 @@ export const readFathomSummary = (options: FathomReadOptions = {}): FathomSummar
 		}
 		return okTile({ accounts, totals }, now);
 	});
-	const checkpoint =
-		loaded === undefined
-			? stateTile<FathomCheckpointData>("missing", "config_unavailable", now)
-			: readCheckpoint(fathomV2CheckpointPath(homeRoot), loaded.accounts, now);
+	let checkpoint: TileResult<FathomCheckpointData> = stateTile("missing", "config_unavailable", now);
+	if (loaded !== undefined) {
+		const { path: _path, ...tile } = loaded.pollCheckpoint;
+		checkpoint = tile;
+	}
 	return { config, inbox, checkpoint };
 };

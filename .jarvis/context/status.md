@@ -1,8 +1,43 @@
 # Harnessy V2 status
 
-Status date: 2026-09-20
+Status date: 2026-10-18
 
-## Reconciled current checkpoint
+## Current service inventory — 2026-10-18
+
+All Harnessy services are active. The loaded V2 services are meeting
+publication, community review and publication, the five-minute Fathom poll, the
+Life daily-brief, weekly-plan and learning-research schedules, the personal
+learning wiki, and the read-only local portal on `127.0.0.1:8790`, live since
+2026-10-18. This inventory supersedes every older statement in this file that a
+schedule is off, unloaded or disabled, that no meeting-review listener runs, or
+that the community reviewer and the Fathom poll are the only loaded labels. The
+retired V1 schedulers stay unloaded; V1 remains retained recovery material.
+
+Merged `dev` is `4485c2d6` (#120). Changes merged since the 2026-09-20
+checkpoint below that affect the running services:
+
+- #105 scopes community source traversal to the target week, so community
+  review no longer exits at startup on the directory entry limit.
+- #106 reserves and fences each weekly Life run before a grant is consumed, and
+  adds `jarvis life weekly-reconcile` for an owner decision on an unreconciled run.
+- #107 adds the synthetic meeting-context catalog slice (gap-closure H-06).
+- #108, #114, #116 and #120 add the portal: the bounded read-only read model,
+  the loopback portal API and page, and `~` expansion against the read-model
+  home root for configured paths.
+- #117 and #119 make the meeting and community one-writer guards pause and
+  retry when a probe or an exemption check cannot answer, and stop only after
+  five minutes of unanswered checks. An observed writer still stops a service
+  at once.
+- #115 refreshes the retained V1 Jarvis CLI dependencies and provenance.
+
+`harnessy jarvis meeting fathom status` reports the V2 poll checkpoint
+(`~/.harnessy/jarvis/state/fathom/poll-state-v2.json`) per account, as the
+portal does; the retired V1 `poll-state.json` is reported only as legacy state.
+
+## Reconciled migration checkpoint — 2026-09-20
+
+This section records the supervised-migration checkpoint. Its service
+statements are superseded by the current service inventory above.
 
 The agreed migration to V2 canonical ownership and supervised usage is complete.
 Merged `dev` is `3ebf8569`; all eight required post-merge checks pass. Verified
@@ -17,10 +52,11 @@ cutover gates and their evidence; do not restart completed transfers from older
 paragraphs here.
 
 V2 owns meeting ingestion/state/review/dispatch and the private context placement.
-There is currently no meeting-review listener; a new finite authorized session is
-needed to serve it. The V2 community reviewer and five-minute Fathom poll are the
-only loaded Harnessy labels. V1 writers and the Life schedules remain unloaded;
-supervised draft-only Life operation is intentional, not a missing automation task.
+At this checkpoint there was no meeting-review listener, the V2 community
+reviewer and five-minute Fathom poll were the only loaded Harnessy labels, and
+V1 writers and the Life schedules were unloaded for supervised draft-only Life
+operation. Since 2026-10-18 all Harnessy services are active; see the current
+service inventory above.
 
 The native community host and Life daily composition pass isolated installed-byte
 checks. Receipt-preserving rollback passes through the actual packed compatibility
@@ -39,7 +75,7 @@ Fathom checkpoint, notes and inbox. Ordinary Fathom polling exits successfully.
 Native Life daily generation now also passes with the real separate V2 Codex
 login: one finite signed grant, a receipt-bound local draft, three selected
 readings and no publication or journal write. The grant is consumed and the
-reading reservation released; schedules remain disabled. A real native weekly
+reading reservation released; schedules were disabled at this checkpoint. A real native weekly
 draft also passes through the merged installed candidate with matching provider
 receipts, a consumed finite grant and unchanged credentials. It remains a local
 review draft, not an approved canonical plan or published content. A fresh
@@ -47,7 +83,7 @@ post-operation backup preserves its draft, receipts and replay evidence.
 
 The owner explicitly approved one existing key for distinct scoped workflow grants;
 no additional workflow key was generated. Unattended renewal,
-automatic recovery and Life schedules remain outside this supervised milestone.
+automatic recovery and Life schedules were outside this supervised milestone.
 Garden and preserved rollback data remain untouched.
 
 Community update: the existing Python publication worker is disabled by its
@@ -96,8 +132,9 @@ provider probe also succeeded with unchanged credentials. No forced poll, code
 fix or service restart was needed; the earlier cause remains unknown.
 Community review remains available, and meeting review still requires a fresh
 finite session. No provider call or publication was performed by this audit.
-Unattended renewal/restart/recovery and automatic Life schedules remain deferred;
-future deliveries still need valid authority and exact-item approval. No required
+Unattended renewal/restart/recovery and automatic Life schedules were deferred
+at this checkpoint; future deliveries still need valid authority and exact-item
+approval. No required
 gate remains open within the agreed supervised migration scope. Other operational
 documentation and inherited edits remain local, uncommitted and preserved.
 
@@ -1539,10 +1576,11 @@ through the run, and supports permanent revocation. Its isolated authority and
 grant-host tests pass. Only wiring this host into the selected review command
 remains; no scheduler or publication was activated by this change.
 
-Current machine state supersedes older listener wording: the community
-reviewer remains on `127.0.0.1:8872`; no meeting listener is running on
-`8770`, no meeting replay lease is active, Fathom polling remains loaded, and
-the three Life LaunchAgents remain unloaded under supervised-draft policy.
+Machine state on 2026-09-19 superseded older listener wording: the community
+reviewer was on `127.0.0.1:8872`; no meeting listener was running on
+`8770`, no meeting replay lease was active, Fathom polling was loaded, and
+the three Life LaunchAgents were unloaded under supervised-draft policy. The
+current service inventory at the top of this file supersedes this state.
 
 The SDK package build, bundle audit, full SDK suite (17 files/162 tests), and
 isolated packed-consumer fixture pass. The command/state source hashes and
