@@ -119,13 +119,16 @@ export const attributableHeartbeatStallMs = (
 	processGaps: ReadonlyArray<HeartbeatGap>,
 	periodMs: number,
 ): number => {
-	const shared = mergedIntervals(processGaps);
+	// A gap [start, end] includes the normal wait of one period. Only [start + period, end]
+	// is delay, so both streams are reduced to their delay intervals before overlapping.
+	const delay = ([start, end]: HeartbeatGap): HeartbeatGap => [start + periodMs, end];
+	const shared = mergedIntervals(processGaps.map(delay).filter(([start, end]) => end > start));
 	let maximum = 0;
-	for (const [start, end] of ownerGaps) {
+	for (const [start, end] of ownerGaps.map(delay)) {
 		let overlap = 0;
 		for (const [sharedStart, sharedEnd] of shared)
 			overlap += Math.max(0, Math.min(end, sharedEnd) - Math.max(start, sharedStart));
-		maximum = Math.max(maximum, end - start - periodMs - overlap);
+		maximum = Math.max(maximum, end - start - overlap);
 	}
 	return maximum;
 };

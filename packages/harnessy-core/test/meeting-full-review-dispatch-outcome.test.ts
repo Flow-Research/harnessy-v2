@@ -103,7 +103,7 @@ describe("ready-owner event-loop stall attribution (#118)", () => {
 	});
 
 	it("charges only the part of an owner stall that outlasted a shared stall", () => {
-		// Shared starvation for 700 ms inside a 2,500 ms owner stall leaves 1,780 ms on the owner.
+		// Owner delay [20, 2500] = 2,480 ms; shared delay [1020, 1700] = 680 ms; 1,800 ms remain.
 		expect(
 			attributableHeartbeatStallMs(
 				[[0, 2_500]],
@@ -113,6 +113,13 @@ describe("ready-owner event-loop stall attribution (#118)", () => {
 				],
 				period,
 			),
-		).toBe(1_780);
+		).toBe(1_800);
+	});
+
+	it("does not subtract the normal period of each shared gap from an owner stall", () => {
+		// Ten 60 ms process gaps hold only 40 ms of delay each. Subtracting their full
+		// intervals (600 ms) would hide 200 ms of owner blocking.
+		const processGaps = Array.from({ length: 10 }, (_, index) => [index * 100, index * 100 + 60] as const);
+		expect(attributableHeartbeatStallMs([[0, 1_100]], processGaps, period)).toBe(680);
 	});
 });
