@@ -18,7 +18,7 @@
  * during boot without a runtime.
  */
 
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -46,14 +46,55 @@ const readToken = (path: string): string | null => {
   }
 };
 
+const PRIVATE_DIR_MODE = 0o700;
+const SECRET_FILE_MODE = 0o600;
+/** Files under `server-control/` that carry the bearer token. */
+const SECRET_FILES = ["auth.json", "server.json"] as const;
+
+const enforceMode = (path: string, mode: number): void => {
+  const uid = process.getuid?.();
+  const before = statSync(path);
+  if (uid !== undefined && before.uid !== uid) {
+    // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time check outside the Effect graph; refusing to start is the intended outcome
+    throw new Error(
+      `Refusing to start: ${path} is owned by uid ${before.uid}, not the current user (uid ${uid}).`,
+    );
+  }
+  if ((before.mode & 0o777) === mode) return;
+  chmodSync(path, mode);
+  if ((statSync(path).mode & 0o777) !== mode) {
+    // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time check outside the Effect graph; refusing to start is the intended outcome
+    throw new Error(`Refusing to start: could not set ${path} to mode ${mode.toString(8)}.`);
+  }
+};
+
+/**
+ * Create the data directory and `server-control/` owner-only (`0700`) and keep
+ * every token-bearing file owner read/write (`0600`). Existing looser modes are
+ * repaired; a path owned by another user, or one whose mode cannot be repaired,
+ * stops startup instead of serving a token other local users could read.
+ * POSIX only: Windows has no equivalent mode bits.
+ */
+export const secureLocalStateDir = (dataDir: string = resolveExecutorDataDir()): void => {
+  const controlDir = serverControlDir(dataDir);
+  mkdirSync(controlDir, { recursive: true, mode: PRIVATE_DIR_MODE });
+  if (process.platform === "win32") return;
+  enforceMode(dataDir, PRIVATE_DIR_MODE);
+  enforceMode(controlDir, PRIVATE_DIR_MODE);
+  for (const name of SECRET_FILES) {
+    const path = join(controlDir, name);
+    if (existsSync(path)) enforceMode(path, SECRET_FILE_MODE);
+  }
+};
+
 const writeToken = (dataDir: string, token: string): string => {
   const dir = serverControlDir(dataDir);
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: PRIVATE_DIR_MODE });
   const path = join(dir, "auth.json");
   // `mode` only applies when the file is created; chmod afterwards covers the
   // case where an older world-readable file already exists.
-  writeFileSync(path, `${JSON.stringify({ token }, null, 2)}\n`, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  writeFileSync(path, `${JSON.stringify({ token }, null, 2)}\n`, { mode: SECRET_FILE_MODE });
+  chmodSync(path, SECRET_FILE_MODE);
   return token;
 };
 

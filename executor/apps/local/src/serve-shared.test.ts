@@ -1,28 +1,65 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
-  DEFAULT_ALLOWED_HOSTS,
   hasBearerToken,
   isAllowedOrigin,
   isUnauthenticatedOAuthClientMetadataPath,
   isUnauthenticatedOAuthCallbackPath,
   isUnauthenticatedOAuthPath,
+  LOCAL_LOGIN_CODE_TTL_MS,
   makeIsAuthorized,
+  makeLocalLoginCodes,
+  selfLoopbackOrigins,
 } from "./serve-shared";
 
-const allowed = new Set<string>(DEFAULT_ALLOWED_HOSTS);
+const self = selfLoopbackOrigins(4788);
 const req = (headers: Record<string, string>): Request =>
   new Request("http://127.0.0.1/api/scope", { headers });
 
 describe("isAllowedOrigin", () => {
-  it("allows loopback origins on any port", () => {
-    expect(isAllowedOrigin("http://127.0.0.1:4789", allowed)).toBe(true);
-    expect(isAllowedOrigin("http://localhost:5173", allowed)).toBe(true);
+  it("allows only the server's own exact loopback origins", () => {
+    expect(isAllowedOrigin("http://127.0.0.1:4788", self)).toBe(true);
+    expect(isAllowedOrigin("http://localhost:4788", self)).toBe(true);
+    expect(isAllowedOrigin("http://[::1]:4788", self)).toBe(true);
+    expect(isAllowedOrigin("http://127.0.0.1:4789", self)).toBe(false);
+    expect(isAllowedOrigin("http://localhost:5173", self)).toBe(false);
+    expect(isAllowedOrigin("https://localhost:4788", self)).toBe(false);
   });
 
-  it("rejects foreign and malformed origins", () => {
-    expect(isAllowedOrigin("https://evil.example", allowed)).toBe(false);
-    expect(isAllowedOrigin("not-a-url", allowed)).toBe(false);
+  it("allows operator-added hosts on any port", () => {
+    const extra = new Set(["cockpit.example"]);
+    expect(isAllowedOrigin("https://cockpit.example:8443", self, extra)).toBe(true);
+    expect(isAllowedOrigin("https://other.example", self, extra)).toBe(false);
+  });
+
+  it("rejects foreign, non-canonical and malformed origins", () => {
+    expect(isAllowedOrigin("https://evil.example", self)).toBe(false);
+    expect(isAllowedOrigin("http://127.0.0.1:4788/", self)).toBe(false);
+    expect(isAllowedOrigin("null", self)).toBe(false);
+    expect(isAllowedOrigin("not-a-url", self)).toBe(false);
+  });
+});
+
+describe("makeLocalLoginCodes", () => {
+  it("redeems a code once and never after it expires", () => {
+    let now = 1_000;
+    const codes = makeLocalLoginCodes(() => now);
+    const first = codes.mint();
+    expect(codes.redeem(first)).toBe(true);
+    expect(codes.redeem(first)).toBe(false);
+
+    const second = codes.mint();
+    now += LOCAL_LOGIN_CODE_TTL_MS;
+    expect(codes.redeem(second)).toBe(false);
+    expect(codes.redeem("unknown")).toBe(false);
+  });
+
+  it("drops the oldest code past sixteen outstanding codes", () => {
+    const codes = makeLocalLoginCodes(() => 0);
+    const minted = Array.from({ length: 17 }, () => codes.mint());
+    expect(codes.redeem(minted[0]!)).toBe(false);
+    expect(codes.redeem(minted[16]!)).toBe(true);
+    expect(codes.redeem(minted[1]!)).toBe(true);
   });
 });
 

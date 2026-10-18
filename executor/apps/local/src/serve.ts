@@ -12,18 +12,21 @@ import { readdirSync } from "node:fs";
 import type { Subprocess } from "bun";
 import { setOAuthCompletionListener } from "@executor-js/api";
 import { oauthClientIdMetadataDocumentFromRequest } from "@executor-js/api/server";
-import { loadOrMintLocalAuthToken } from "./auth";
+import { loadOrMintLocalAuthToken, secureLocalStateDir } from "./auth";
 import { consumeOAuthResult, publishOAuthResult } from "./oauth-result-store";
 import { startIntegrationsRefresh } from "./integrations";
 import { disposeServerHandlers, getServerHandlers } from "./main";
 import {
-  DEFAULT_ALLOWED_HOSTS,
   hasFileExtension,
   isAllowedOrigin,
   isUnauthenticatedOAuthClientMetadataPath,
   isUnauthenticatedOAuthPath,
+  LOCAL_LOGIN_CODE_PATH,
+  LOCAL_LOGIN_EXCHANGE_PATH,
   makeIsAuthorized,
+  makeLocalLoginCodes,
   normalizeCredential,
+  selfLoopbackOrigins,
 } from "./serve-shared";
 
 // ---------------------------------------------------------------------------
@@ -32,10 +35,58 @@ import {
 
 type StaticHandler = () => Response | Promise<Response>;
 
+/**
+ * Content-Security-Policy for the built web UI shell. The production bundle has
+ * no inline script, eval or WebAssembly, so scripts are `'self'` only. Two
+ * deliberate allowances:
+ * - `style-src 'unsafe-inline'`: the chart component and UI primitives inject
+ *   `<style>` elements at runtime. Inline style cannot run script; the script
+ *   policy stays strict.
+ * - `img-src https:`: integration logos come from integrations.sh, svgl.app
+ *   and arbitrary provider hosts. Images cannot run script.
+ * Google Fonts is the only third-party stylesheet/font origin. `connect-src
+ * 'self'` keeps API traffic on the serving origin. Vite dev mode (proxied, with
+ * an inline HMR preamble) does not use this response and gets no CSP.
+ */
+export const COCKPIT_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob: https:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join("; ");
+
 const htmlResponse = (file: Bun.BunFile): Response =>
   new Response(file, {
-    headers: { "content-type": "text/html", "cache-control": "no-store" },
+    headers: {
+      "content-type": "text/html",
+      "cache-control": "no-store",
+      "content-security-policy": COCKPIT_CONTENT_SECURITY_POLICY,
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+    },
   });
+
+const jsonNoStore = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
+
+const readLoginCode = async (req: Request): Promise<string | null> => {
+  const body: unknown = await req.json().then(
+    (value: unknown) => value,
+    () => null,
+  );
+  if (typeof body !== "object" || body === null || !("code" in body)) return null;
+  const code = body.code;
+  return typeof code === "string" && /^[A-Za-z0-9_-]{43}$/.test(code) ? code : null;
+};
 
 const oauthClientMetadataResponse = (requestUrl: string, webRequest: Request): Response =>
   new Response(
@@ -220,10 +271,11 @@ export interface StartServerOptions {
   /** Bind address. Defaults to 127.0.0.1. Use 0.0.0.0 to listen on all interfaces. */
   hostname?: string;
   /**
-   * Extra origins granted credentialed CORS access, on top of localhost/
-   * 127.0.0.1 (any port). There is no Host allowlist — the bearer token is the
-   * security boundary — so reaching the server from another host (e.g. over a
-   * tailnet) needs nothing here; this only widens cross-origin CORS.
+   * Extra hosts (any port) granted credentialed CORS access, on top of the
+   * server's own exact loopback origins. There is no Host allowlist — the
+   * bearer token is the security boundary — so reaching the server from
+   * another host (e.g. over a tailnet) needs nothing here; this only widens
+   * cross-origin CORS.
    */
   allowedHosts?: ReadonlyArray<string>;
   /**
@@ -240,7 +292,7 @@ export interface StartServerOptions {
 export interface ServerInstance {
   port: number;
   /** The effective bearer token this server validates. Callers publish it in the
-   * manifest, print the `?_token=` bootstrap URL, and hand it to MCP clients. */
+   * owner-only manifest and hand it to MCP clients; it is never printed. */
   authToken: string;
   stop: () => Promise<void>;
 }
@@ -255,17 +307,19 @@ const corsHeaders = {
   "access-control-expose-headers": "*",
 } as const;
 
-const withCorsHeaders = (
-  req: Request,
-  response: Response,
-  allowedHosts: ReadonlySet<string>,
-): Response => {
+interface CorsPolicy {
+  readonly selfOrigins: ReadonlySet<string>;
+  readonly extraHosts: ReadonlySet<string>;
+}
+
+const withCorsHeaders = (req: Request, response: Response, policy: CorsPolicy): Response => {
   const origin = req.headers.get("origin");
-  // Same-origin requests carry no Origin header — nothing to do. Cross-origin
-  // requests only get credentialed CORS if their Origin is an allowed loopback
-  // host; an arbitrary web page (e.g. https://evil.example) gets no ACAO, so
-  // the browser blocks it reading the response even if it knew the token.
-  if (!origin || !isAllowedOrigin(origin, allowedHosts)) return response;
+  // Requests without an Origin header need nothing. Cross-origin requests only
+  // get credentialed CORS if their Origin is this server's own loopback origin
+  // or an operator-added host; any other page (https://evil.example, or another
+  // app on a different localhost port) gets no ACAO, so the browser blocks it
+  // reading the response even if it knew the token.
+  if (!origin || !isAllowedOrigin(origin, policy.selfOrigins, policy.extraHosts)) return response;
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", origin);
   for (const [key, value] of Object.entries(corsHeaders)) headers.set(key, value);
@@ -282,8 +336,8 @@ const withCorsHeaders = (
   });
 };
 
-const corsPreflightResponse = (req: Request, allowedHosts: ReadonlySet<string>): Response =>
-  withCorsHeaders(req, new Response(null, { status: 204 }), allowedHosts);
+const corsPreflightResponse = (req: Request, policy: CorsPolicy): Response =>
+  withCorsHeaders(req, new Response(null, { status: 204 }), policy);
 
 const closeProvidedHandlers = async (handlers: ServerHandlers): Promise<void> => {
   await handlers.mcp.close();
@@ -302,13 +356,16 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   // from auth.json (minted on first run). Auth is unconditionally on — loopback
   // is no longer a free pass, since Executor runs arbitrary code that any local
   // process could otherwise drive.
+  // The data dir holds the token and the database: owner-only before anything
+  // reads or writes it, refusing to start if that cannot be guaranteed.
+  secureLocalStateDir();
   const authToken = normalizeCredential(opts.authToken) ?? loadOrMintLocalAuthToken();
   const isAuthorized = makeIsAuthorized(authToken);
+  const loginCodes = makeLocalLoginCodes();
   // CORS-only origin allowlist (no Host gate — the bearer is the boundary).
-  const corsAllowedHosts = new Set<string>([
-    ...DEFAULT_ALLOWED_HOSTS,
-    ...(opts.allowedHosts ?? []),
-  ]);
+  // `selfOrigins` is filled in once Bun reports the bound port.
+  const corsPolicy: { selfOrigins: ReadonlySet<string>; readonly extraHosts: ReadonlySet<string> } =
+    { selfOrigins: new Set(), extraHosts: new Set(opts.allowedHosts ?? []) };
   const clientDir = opts.clientDir ?? resolve(import.meta.dirname, "../dist");
 
   startIntegrationsRefresh();
@@ -375,10 +432,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       routes: { ...staticRoutes },
       async fetch(req) {
         const withCors = (response: Response): Response =>
-          withCorsHeaders(req, response, corsAllowedHosts);
+          withCorsHeaders(req, response, corsPolicy);
 
         if (req.method === "OPTIONS" && req.headers.has("origin")) {
-          return corsPreflightResponse(req, corsAllowedHosts);
+          return corsPreflightResponse(req, corsPolicy);
         }
 
         const url = new URL(req.url);
@@ -387,6 +444,17 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
         // reachability check (which therefore never forwards a credential).
         if (url.pathname === "/api/health" && req.method === "GET") {
           return withCors(new Response("ok", { headers: { "content-type": "text/plain" } }));
+        }
+
+        // One-time sign-in code exchange: the browser has no bearer yet, so the
+        // single-use code is the credential. Unknown, used or expired codes 401.
+        if (url.pathname === LOCAL_LOGIN_EXCHANGE_PATH && req.method === "POST") {
+          const code = await readLoginCode(req);
+          return withCors(
+            code !== null && loginCodes.redeem(code)
+              ? jsonNoStore({ token: authToken })
+              : jsonNoStore({ error: "invalid_code" }, 401),
+          );
         }
 
         // OAuth callbacks and CIMD documents are reached by the external
@@ -407,6 +475,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
         if (isUnauthenticatedOAuthClientMetadataPath(url.pathname) && req.method === "GET") {
           return withCors(oauthClientMetadataResponse(`${url.pathname}${url.search}`, req));
+        }
+
+        if (url.pathname === LOCAL_LOGIN_CODE_PATH && req.method === "POST") {
+          return withCors(jsonNoStore({ code: loginCodes.mint() }));
         }
 
         if (isMcpPath) {
@@ -473,6 +545,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       },
     });
 
+    corsPolicy.selfOrigins = selfLoopbackOrigins(server.port!);
+
     let stopped = false;
     return {
       port: server.port!,
@@ -493,5 +567,5 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
 if (import.meta.main) {
   const server = await startServer();
-  console.log(`Executor listening on http://localhost:${server.port}/?_token=${server.authToken}`);
+  console.log(`Executor listening on http://localhost:${server.port}`);
 }

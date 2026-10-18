@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { assertIsolatedRuntimeScope } from "./cockpit-smoke-lib.mjs";
+import {
+	assertIsolatedRuntimeScope,
+	assertNoSecretsInOutput,
+	assertStrictCockpitCsp,
+	signInCodeFromBrowserUrl,
+} from "./cockpit-smoke-lib.mjs";
 
 const COMMAND_TIMEOUT_MS = 90_000;
 const MANIFEST_TIMEOUT_MS = 10_000;
@@ -34,6 +39,7 @@ const executorLaunch = configuredExecutorCli
 const redactSecrets = (value) =>
 	value
 		.replace(/([?&]_token=)[^\s&]+/g, "$1[redacted]")
+		.replace(/([#&]_code=)[^\s&]+/g, "$1[redacted]")
 		.replace(/("token"\s*:\s*")[^"]+"/g, '$1[redacted]"');
 
 const wait = (milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
@@ -218,7 +224,71 @@ const verifyAnytype = async (origin, token) => {
 	}
 };
 
-const verifyCockpit = async (manifest, expectedDataDir, commandOutput) => {
+const readBrowserUrl = async (browserLog) => {
+	const deadline = Date.now() + MANIFEST_TIMEOUT_MS;
+	while (Date.now() < deadline) {
+		const lines = (await readFile(browserLog, "utf8").catch(() => "")).split("\n").filter((line) => line !== "");
+		if (lines.length > 0) return lines.at(-1);
+		await wait(POLL_INTERVAL_MS);
+	}
+	throw new Error("Harnessy did not open the cockpit in the browser.");
+};
+
+const collectLogs = async (root) => {
+	const entries = await readdir(root, { recursive: true, withFileTypes: true });
+	const logs = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".log"));
+	return (await Promise.all(logs.map((entry) => readFile(join(entry.parentPath, entry.name), "utf8")))).join("\n");
+};
+
+const expectMode = async (path, mode) => {
+	const actual = (await stat(path)).mode & 0o777;
+	if (actual !== mode) {
+		throw new Error(`${path} has mode ${actual.toString(8)}; expected ${mode.toString(8)}.`);
+	}
+};
+
+const verifyStatePermissions = async (dataDir) => {
+	if (process.platform === "win32") return;
+	await expectMode(dataDir, 0o700);
+	await expectMode(join(dataDir, "server-control"), 0o700);
+	await expectMode(join(dataDir, "server-control", "auth.json"), 0o600);
+	await expectMode(join(dataDir, "server-control", "server.json"), 0o600);
+};
+
+const verifySignIn = async (origin, token, code) => {
+	const exchange = () =>
+		fetchWithTimeout(`${origin}/api/local-auth/exchange`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ code }),
+		});
+	const first = await exchange();
+	if (!first.ok || (await first.json())?.token !== token) {
+		throw new Error(`Cockpit sign-in code exchange failed with HTTP ${first.status}.`);
+	}
+	const replay = await exchange();
+	await replay.body?.cancel();
+	if (replay.status !== 401) throw new Error(`A spent sign-in code was accepted again (HTTP ${replay.status}).`);
+};
+
+const verifyCors = async (origin) => {
+	const port = Number(new URL(origin).port);
+	const foreign = `http://127.0.0.1:${port === 65535 ? 65534 : port + 1}`;
+	for (const [requestOrigin, expected] of [
+		[origin, origin],
+		[foreign, null],
+		["https://evil.example", null],
+	]) {
+		const response = await fetchWithTimeout(`${origin}/api/health`, { headers: { origin: requestOrigin } });
+		await response.body?.cancel();
+		const allowed = response.headers.get("access-control-allow-origin");
+		if (allowed !== expected) {
+			throw new Error(`Cockpit CORS for ${requestOrigin} allowed ${allowed}; expected ${expected}.`);
+		}
+	}
+};
+
+const verifyCockpit = async ({ manifest, expectedDataDir, commandOutput, browserLog, temporaryRoot }) => {
 	assertIsolatedRuntimeScope({
 		manifest,
 		expectedDataDir,
@@ -226,9 +296,17 @@ const verifyCockpit = async (manifest, expectedDataDir, commandOutput) => {
 		message: "Executor advertised the wrong data directory or workspace scope.",
 	});
 	const origin = loopbackOrigin(manifest.connection.origin);
-	if (!commandOutput.includes(`Opening ${origin}/?_token=${manifest.connection.auth.token}`)) {
-		throw new Error("Harnessy did not print the authenticated cockpit URL.");
+	const token = manifest.connection.auth.token;
+	if (!commandOutput.includes(`Opening ${origin}/`)) {
+		throw new Error("Harnessy did not print the cockpit URL.");
 	}
+	const logs = await collectLogs(temporaryRoot);
+	assertNoSecretsInOutput(`${commandOutput}\n${logs}`, [token], "Harnessy wrote the cockpit bearer token to its output or logs.");
+	const code = signInCodeFromBrowserUrl(await readBrowserUrl(browserLog), origin);
+	assertNoSecretsInOutput(commandOutput, [code], "Harnessy printed the one-time sign-in code.");
+	await verifyStatePermissions(expectedDataDir);
+	await verifySignIn(origin, token, code);
+	await verifyCors(origin);
 
 	const health = await fetchWithTimeout(`${origin}/api/health`);
 	if (!health.ok || (await health.text()).trim() !== "ok") {
@@ -241,8 +319,9 @@ const verifyCockpit = async (manifest, expectedDataDir, commandOutput) => {
 	if (!page.ok || !contentType.includes("text/html") || !/<title>\s*Harnessy\s*<\/title>/i.test(html)) {
 		throw new Error(`Cockpit did not serve the built Harnessy HTML (HTTP ${page.status}, ${contentType}).`);
 	}
+	assertStrictCockpitCsp(page.headers.get("content-security-policy"));
 	await verifyAssets(origin, html);
-	await verifyAnytype(origin, manifest.connection.auth.token);
+	await verifyAnytype(origin, token);
 };
 
 const isReachable = async (origin) => {
@@ -309,8 +388,14 @@ const main = async () => {
 	const browserStubDir = join(temporaryRoot, "bin");
 	await mkdir(browserStubDir, { recursive: true });
 	const browserStub = join(browserStubDir, "xdg-open");
-	await writeFile(browserStub, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-	await writeFile(join(browserStubDir, "open"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+	// The stub records the URL the CLI hands the browser; it never reaches stdout.
+	const browserLog = join(temporaryRoot, "browser-urls.txt");
+	const stubScript = `#!/bin/sh\nprintf '%s\\n' "$1" >> '${browserLog}'\nexit 0\n`;
+	await writeFile(browserStub, stubScript, { mode: 0o755 });
+	await writeFile(join(browserStubDir, "open"), stubScript, { mode: 0o755 });
+	// A pre-existing, group/world-readable data directory must be repaired to 0700.
+	await mkdir(dataDir, { recursive: true });
+	await chmod(dataDir, 0o755);
 	const env = {
 		...process.env,
 		BROWSER: browserStub,
@@ -339,7 +424,7 @@ const main = async () => {
 			smokeScope,
 		], env);
 		manifest = await waitForManifest(manifestPath);
-		await verifyCockpit(manifest, dataDir, output);
+		await verifyCockpit({ manifest, expectedDataDir: dataDir, commandOutput: output, browserLog, temporaryRoot });
 		console.log(`Harnessy ${smokeLabel} cockpit smoke passed.`);
 	} finally {
 		if (manifest === undefined) {

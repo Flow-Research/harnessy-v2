@@ -7,11 +7,13 @@
  *
  *   - Desktop: the Electron main process injects the header at the session
  *     layer, so the renderer never needs the token and this module no-ops.
- *   - Standalone web AND dev (vite): the server prints `…/?_token=<token>`.
- *     `bootstrapLocalAuthToken` reads it once, stores it in localStorage, strips
- *     it from the URL, and sets the connection's bearer auth. Subsequent loads
- *     read it from localStorage. Dev uses the exact same path — no dev-only
- *     token injection.
+ *   - Standalone web AND dev (vite): `executor open` / `harnessy web` open
+ *     `…/#_code=<code>`, a single-use 60-second sign-in code in the fragment
+ *     (never sent to a server or printed). `bootstrapLocalAuthToken` strips
+ *     it, exchanges it once for the bearer, stores that in localStorage and
+ *     sets the connection's bearer auth. A manually built `?_token=<token>`
+ *     URL is still accepted. Subsequent loads read localStorage. Dev uses the
+ *     exact same path — no dev-only token injection.
  *
  * When a request still 401s (cleared storage, rotated token), the API client
  * calls `notifyLocalAuthRequired()` and `<LocalAuthGate>` prompts for the token.
@@ -22,6 +24,8 @@ import * as React from "react";
 import { getExecutorServerConnection, setExecutorServerConnection } from "./server-connection";
 
 const STORAGE_KEY = "executor.authToken";
+const LOGIN_CODE_PARAM = "_code";
+const LOGIN_EXCHANGE_PATH = "/api/local-auth/exchange";
 const DESKTOP_LAUNCH_CACHE_BUST_PARAM = "_executor_desktop_launch";
 
 const isDesktopBridge = (): boolean =>
@@ -52,13 +56,39 @@ const applyBearer = (token: string): void => {
   setExecutorServerConnection({ ...current, auth: { kind: "bearer", token } });
 };
 
+const exchangeLoginCode = async (code: string): Promise<string | null> => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: fetch can reject (server gone); an unredeemed code falls back to the stored token or the gate
+  try {
+    // oxlint-disable-next-line executor/no-raw-fetch -- boundary: runs before the API client exists, against the serving origin only
+    const response = await fetch(LOGIN_EXCHANGE_PATH, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { readonly token?: unknown };
+    return typeof body.token === "string" && body.token.length > 0 ? body.token : null;
+  } catch {
+    return null;
+  }
+};
+
 /**
- * Resolve and apply the local bearer token at boot. Call once before the router
- * mounts. Order: `?_token` URL param (one-time, persisted + stripped) →
- * localStorage. Identical in dev and prod.
+ * Resolve and apply the local bearer token at boot. Await once before the
+ * router mounts. Order: `#_code` sign-in code (stripped, exchanged once) →
+ * `?_token` URL param (persisted + stripped) → localStorage. Identical in dev
+ * and prod.
  */
-export const bootstrapLocalAuthToken = (): void => {
+export const bootstrapLocalAuthToken = async (): Promise<void> => {
   const url = globalThis.window ? new URL(window.location.href) : null;
+  const fragment = new URLSearchParams(url?.hash.slice(1) ?? "");
+  const loginCode = fragment.get(LOGIN_CODE_PARAM);
+  if (loginCode !== null) {
+    fragment.delete(LOGIN_CODE_PARAM);
+    const rest = fragment.toString();
+    url!.hash = rest === "" ? "" : `#${rest}`;
+  }
   const fromUrl = url?.searchParams.get("_token") ?? null;
   const stripCacheBust = url?.searchParams.has(DESKTOP_LAUNCH_CACHE_BUST_PARAM) ?? false;
   if (stripCacheBust) {
@@ -69,10 +99,20 @@ export const bootstrapLocalAuthToken = (): void => {
     if (fromUrl) {
       url!.searchParams.delete("_token");
     }
-    if (stripCacheBust || fromUrl) {
+    if (stripCacheBust || fromUrl || loginCode !== null) {
       globalThis.window?.history?.replaceState(null, "", url!.pathname + url!.search + url!.hash);
     }
     return;
+  }
+
+  if (loginCode !== null) {
+    globalThis.window?.history?.replaceState(null, "", url!.pathname + url!.search + url!.hash);
+    const token = await exchangeLoginCode(loginCode);
+    if (token) {
+      persistToken(token);
+      applyBearer(token);
+      return;
+    }
   }
 
   if (fromUrl) {
@@ -164,8 +204,7 @@ export function LocalAuthGate(props: { readonly children: React.ReactNode }) {
       >
         <h1 className="text-base font-semibold text-foreground">Authentication required</h1>
         <p className="text-sm text-muted-foreground">
-          Open the auth URL printed by <code>harnessy web</code> in your terminal to sign in, or
-          paste the server's token below.
+          Run <code>harnessy web</code> again to sign in, or paste the server's token below.
         </p>
         {/* oxlint-disable-next-line react/forbid-elements -- token entry input */}
         <input

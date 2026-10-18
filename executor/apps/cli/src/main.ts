@@ -1128,7 +1128,8 @@ const runForegroundSession = (input: {
 
       try {
         console.log(`Executor is ready.`);
-        console.log(`Open:    ${baseUrl}/?_token=${server.authToken}`);
+        // Never print the bearer: `open` signs the browser in with a one-time code.
+        console.log(`Open:    ${cliPrefix} open`);
         console.log(`Web:     ${baseUrl}`);
         console.log(`MCP:     ${baseUrl}/mcp`);
         console.log(`OpenAPI: ${baseUrl}/api/docs`);
@@ -3139,6 +3140,27 @@ const printNoRunningLocalWebApp = (): void => {
   console.log(`  ${cliPrefix} web --foreground`);
 };
 
+/**
+ * Ask the running server for a single-use, 60-second sign-in code. `null` when
+ * the server is unreachable or predates the code endpoint.
+ */
+const mintLocalLoginCode = (origin: string, token: string): Effect.Effect<string | null> =>
+  HttpClient.execute(
+    HttpClientRequest.post(`${origin}/api/local-auth/code`).pipe(
+      HttpClientRequest.bearerToken(token),
+    ),
+  ).pipe(
+    Effect.flatMap((response) => (response.status === 200 ? response.json : Effect.succeed(null))),
+    Effect.map((body) => {
+      const code =
+        typeof body === "object" && body !== null && "code" in body ? body.code : undefined;
+      return typeof code === "string" ? code : null;
+    }),
+    Effect.timeout("5 seconds"),
+    Effect.provide(FetchHttpClient.layer),
+    Effect.orElseSucceed(() => null),
+  );
+
 const openRunningLocalWebApp = (): Effect.Effect<
   void,
   never,
@@ -3150,17 +3172,27 @@ const openRunningLocalWebApp = (): Effect.Effect<
       printNoRunningLocalWebApp();
       return;
     }
-    const { origin, auth } = manifest.connection;
+    const { auth } = manifest.connection;
+    const origin = manifest.connection.origin.replace(/\/$/, "");
     const token = auth?.kind === "bearer" ? auth.token : undefined;
-    const url = token ? `${origin}/?_token=${token}` : origin;
-    console.log(`Opening ${url}`);
-    yield* openInBrowser(url);
+    const code = token ? yield* mintLocalLoginCode(origin, token) : null;
+    // The bearer never goes to stdout, a log, the browser history or the opener's
+    // argv. The single-use code rides in the fragment, which browsers never send
+    // to a server, and is not printed either.
+    console.log(`Opening ${origin}/`);
+    if (token && code === null) {
+      console.log(
+        "This server did not issue a sign-in code. Restart it to enable sign-in links, or paste the token from server-control/auth.json in the Executor data directory.",
+      );
+    }
+    yield* openInBrowser(code === null ? `${origin}/` : `${origin}/#_code=${code}`);
   });
 
 /**
  * `executor open` — the friendly way back in. Reads the running local server's
- * manifest and opens the browser straight to its `?_token=` URL, so the user
- * never has to copy a bearer token out of a terminal or auth.json by hand.
+ * manifest, asks it for a one-time sign-in code and opens the browser on
+ * `/#_code=<code>`, so the user never copies a bearer token out of a terminal
+ * or auth.json by hand, and the bearer itself is never printed.
  */
 const openCommand = Command.make("open", {}, () => openRunningLocalWebApp()).pipe(
   Command.withDescription("Open the running Executor web app in your browser, already signed in"),

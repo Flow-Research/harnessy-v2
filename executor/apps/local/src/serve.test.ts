@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { acquireDataDirOwnership } from "./db/data-dir-ownership";
-import { startServer, type ServerInstance } from "./serve";
+import { COCKPIT_CONTENT_SECURITY_POLICY, startServer, type ServerInstance } from "./serve";
 
 let clientDir: string;
 let dataDir: string;
@@ -26,17 +34,20 @@ const testHandlers = () => ({
 });
 
 const startTestServer = async (
-  opts: { authToken?: string; hostname?: string } = {},
+  opts: { authToken?: string; hostname?: string; allowedHosts?: ReadonlyArray<string> } = {},
 ): Promise<string> => {
   server = await startServer({
     port: 0,
     hostname: opts.hostname ?? "127.0.0.1",
     clientDir,
     authToken: opts.authToken ?? TOKEN,
+    allowedHosts: opts.allowedHosts,
     handlers: testHandlers(),
   });
   return `http://127.0.0.1:${server.port}`;
 };
+
+const modeOf = (path: string): number => statSync(path).mode & 0o777;
 
 beforeEach(() => {
   clientDir = mkdtempSync(join(tmpdir(), "exec-local-serve-"));
@@ -220,13 +231,17 @@ describe("startServer bearer auth", () => {
 });
 
 describe("startServer CORS hardening", () => {
-  it("reflects credentialed CORS only for allowed loopback origins", async () => {
+  it("grants credentialed CORS to the server's own loopback origins", async () => {
     const baseUrl = await startTestServer();
-    const response = await fetch(`${baseUrl}/api/health`, {
-      headers: { origin: "http://127.0.0.1:4789" },
-    });
-    expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:4789");
-    expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    for (const origin of [
+      baseUrl,
+      `http://localhost:${server!.port}`,
+      `http://[::1]:${server!.port}`,
+    ]) {
+      const response = await fetch(`${baseUrl}/api/health`, { headers: { origin } });
+      expect(response.headers.get("access-control-allow-origin")).toBe(origin);
+      expect(response.headers.get("access-control-allow-credentials")).toBe("true");
+    }
   });
 
   it("does not send CORS headers to a disallowed origin", async () => {
@@ -237,20 +252,151 @@ describe("startServer CORS hardening", () => {
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
   });
 
+  it("does not grant CORS to another app on a different loopback port", async () => {
+    const baseUrl = await startTestServer();
+    const otherPort = server!.port === 65535 ? 65534 : server!.port + 1;
+    for (const origin of [
+      `http://127.0.0.1:${otherPort}`,
+      `http://localhost:${otherPort}`,
+      "http://localhost",
+      "null",
+    ]) {
+      const response = await fetch(`${baseUrl}/api/scope`, {
+        method: "OPTIONS",
+        headers: { origin, "access-control-request-method": "GET" },
+      });
+      expect(response.headers.get("access-control-allow-origin")).toBeNull();
+      expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+    }
+  });
+
+  it("still honours an operator-added host on any port", async () => {
+    const baseUrl = await startTestServer({ allowedHosts: ["cockpit.example"] });
+    const response = await fetch(`${baseUrl}/api/health`, {
+      headers: { origin: "https://cockpit.example:8443" },
+    });
+    expect(response.headers.get("access-control-allow-origin")).toBe(
+      "https://cockpit.example:8443",
+    );
+  });
+
   it("answers browser CORS preflights before auth", async () => {
     const baseUrl = await startTestServer();
     const response = await fetch(`${baseUrl}/api/scope`, {
       method: "OPTIONS",
       headers: {
-        origin: "http://127.0.0.1:4789",
+        origin: baseUrl,
         "access-control-request-method": "GET",
         "access-control-request-headers": "authorization,b3,traceparent",
       },
     });
 
     expect(response.status).toBe(204);
-    expect(response.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:4789");
+    expect(response.headers.get("access-control-allow-origin")).toBe(baseUrl);
     expect(response.headers.get("access-control-allow-credentials")).toBe("true");
     expect(response.headers.get("access-control-allow-headers")).toContain("traceparent");
+  });
+});
+
+describe("startServer state directory permissions", () => {
+  it("creates a missing data directory and server-control owner-only", async () => {
+    const fresh = join(dataDir, "nested", "executor");
+    process.env.EXECUTOR_DATA_DIR = fresh;
+    server = await startServer({ port: 0, clientDir, handlers: testHandlers() });
+    expect(modeOf(fresh)).toBe(0o700);
+    expect(modeOf(join(fresh, "server-control"))).toBe(0o700);
+    expect(modeOf(join(fresh, "server-control", "auth.json"))).toBe(0o600);
+  });
+
+  it("repairs looser modes on an existing data directory and token files", async () => {
+    const control = join(dataDir, "server-control");
+    mkdirSync(control, { recursive: true });
+    writeFileSync(join(control, "auth.json"), `${JSON.stringify({ token: "kept-token" })}\n`);
+    writeFileSync(join(control, "server.json"), "{}\n");
+    chmodSync(dataDir, 0o755);
+    chmodSync(control, 0o777);
+    chmodSync(join(control, "auth.json"), 0o644);
+    chmodSync(join(control, "server.json"), 0o666);
+
+    server = await startServer({ port: 0, clientDir, handlers: testHandlers() });
+
+    expect(modeOf(dataDir)).toBe(0o700);
+    expect(modeOf(control)).toBe(0o700);
+    expect(modeOf(join(control, "auth.json"))).toBe(0o600);
+    expect(modeOf(join(control, "server.json"))).toBe(0o600);
+    // Repair keeps the existing token rather than rotating it.
+    expect(server.authToken).toBe("kept-token");
+  });
+});
+
+describe("startServer web UI hardening", () => {
+  it("serves the UI shell with a strict Content-Security-Policy", async () => {
+    const baseUrl = await startTestServer();
+    for (const path of ["/", "/index.html", "/integrations/add"]) {
+      const response = await fetch(`${baseUrl}${path}`);
+      expect(response.status).toBe(200);
+      const policy = response.headers.get("content-security-policy");
+      expect(policy).toBe(COCKPIT_CONTENT_SECURITY_POLICY);
+      const directives = new Map(
+        policy!.split(";").map((directive) => {
+          const [name, ...values] = directive.trim().split(/\s+/);
+          return [name, values] as const;
+        }),
+      );
+      expect(directives.get("script-src")).toEqual(["'self'"]);
+      expect(directives.get("object-src")).toEqual(["'none'"]);
+      expect(directives.get("frame-ancestors")).toEqual(["'none'"]);
+      expect(directives.get("connect-src")).toEqual(["'self'"]);
+      expect(policy).not.toContain("unsafe-eval");
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    }
+  });
+});
+
+describe("startServer one-time sign-in codes", () => {
+  const mint = (baseUrl: string, authorization?: string) =>
+    fetch(`${baseUrl}/api/local-auth/code`, {
+      method: "POST",
+      ...(authorization ? { headers: { authorization } } : {}),
+    });
+  const exchange = (baseUrl: string, body: string) =>
+    fetch(`${baseUrl}/api/local-auth/exchange`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+
+  it("mints a code only for the bearer and spends it exactly once", async () => {
+    const baseUrl = await startTestServer();
+    expect((await mint(baseUrl)).status).toBe(401);
+
+    const minted = await mint(baseUrl, `Bearer ${TOKEN}`);
+    expect(minted.status).toBe(200);
+    expect(minted.headers.get("cache-control")).toBe("no-store");
+    const { code } = (await minted.json()) as { code: string };
+    expect(code).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(code).not.toContain(TOKEN);
+
+    const first = await exchange(baseUrl, JSON.stringify({ code }));
+    expect(first.status).toBe(200);
+    expect(first.headers.get("cache-control")).toBe("no-store");
+    expect(await first.json()).toEqual({ token: TOKEN });
+
+    const replay = await exchange(baseUrl, JSON.stringify({ code }));
+    expect(replay.status).toBe(401);
+  });
+
+  it("rejects unknown and malformed codes without revealing the token", async () => {
+    const baseUrl = await startTestServer();
+    for (const body of [
+      JSON.stringify({ code: "A".repeat(43) }),
+      JSON.stringify({ code: 42 }),
+      JSON.stringify({}),
+      "not json",
+    ]) {
+      const response = await exchange(baseUrl, body);
+      expect(response.status).toBe(401);
+      expect(await response.text()).not.toContain(TOKEN);
+    }
   });
 });

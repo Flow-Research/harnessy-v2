@@ -96,6 +96,35 @@ Known upstream-branded surfaces deliberately NOT patched (deferred):
 - docs links to executor.sh — functional docs for engine features
 - the built-in `Executor` integration (slug `executor`) — functional identity; renaming would change tool addresses
 
+### Local cockpit hardening overlay — 2026-10-18
+
+Security overlay from the H-10 portal analysis. The server, token store and
+browser bootstrap only exist in these vendored files, so the change cannot live
+in Harnessy-owned code. On an upstream sync, reapply it unless upstream ships
+an equivalent:
+
+- `apps/local/src/auth.ts` — `secureLocalStateDir`: the data directory and
+  `server-control/` are created and kept `0700`, `auth.json` and `server.json`
+  `0600`. Looser modes are repaired at startup; a path owned by another user or
+  a mode that cannot be repaired stops startup. POSIX only.
+- `apps/local/src/serve-shared.ts`, `apps/local/src/serve.ts` — credentialed
+  CORS only for the server's own exact loopback origins
+  (`http://{127.0.0.1,localhost,[::1]}:<bound port>`) plus `--allowed-host`
+  entries; upstream allowed every loopback port. In-memory single-use 60 s
+  sign-in codes (`POST /api/local-auth/code` with the bearer,
+  `POST /api/local-auth/exchange` without it). The UI shell is served with a
+  strict Content-Security-Policy (`script-src 'self'`; `style-src` keeps
+  `'unsafe-inline'` for runtime-injected `<style>` elements), a no-referrer
+  policy and `nosniff`. The direct-run banner no longer prints the token.
+- `apps/cli/src/main.ts` — `executor web` / `executor open` open
+  `<origin>/#_code=<code>` and print only `<origin>/`; the foreground banner
+  points at `executor open` instead of printing a `?_token=` URL.
+- `packages/react/src/api/local-auth.tsx`, `packages/app/src/entry-client.tsx`
+  — the SPA strips and redeems `#_code` before the router mounts; manual
+  `?_token=` URLs still work.
+- `apps/local/src/serve.test.ts`, `apps/local/src/serve-shared.test.ts` —
+  coverage for the above.
+
 ### Existing migration deltas — 2026-09-05
 
 These are observed uncommitted changes against the V2 checkout baseline,
@@ -152,9 +181,9 @@ separate preservation boundary above:
   self-contained.
 
 `npm run build` produces `apps/local/dist`; then `npm run hsy:web` starts the
-vendored daemon on `127.0.0.1:4788`, serves those static assets, and opens its
-one-time `?_token=` auth URL. Normal Harnessy usage does not keep a Vite
-development server running.
+vendored daemon on `127.0.0.1:4788`, serves those static assets, and opens the
+browser on a one-time `#_code=` sign-in URL (see the local cockpit hardening
+overlay above). Normal Harnessy usage does not keep a Vite development server running.
 
 ### Runtime-split guard
 

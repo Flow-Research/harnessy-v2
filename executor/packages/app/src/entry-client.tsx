@@ -12,11 +12,10 @@ if ("executor" in window && navigator.platform.includes("Mac")) {
   document.documentElement.classList.add("executor-desktop-macos");
 }
 
-// Resolve the local bearer token (?_token → localStorage → dev global) and set
-// the connection's auth BEFORE the router mounts, so the first API atom carries
-// it. No-op on desktop (the main process injects the header).
-bootstrapLocalAuthToken();
-
-const router = getRouter();
-
-ReactDOM.createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);
+// Resolve the local bearer token (#_code exchange → ?_token → localStorage) and
+// set the connection's auth BEFORE the router mounts, so the first API atom
+// carries it. No-op on desktop (the main process injects the header).
+void bootstrapLocalAuthToken().then(() => {
+  const router = getRouter();
+  ReactDOM.createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);
+});
