@@ -5,10 +5,14 @@ JSON-line request is answered once; EOF or malformed output fails without retry.
 Run with the bootstrap-installed Jarvis Python, not an ambient source checkout.
 """
 
+import fcntl
 import json
 import hashlib
 import os
+import secrets
+import stat
 import sys
+import time
 import threading
 import uuid
 from contextlib import contextmanager
@@ -16,7 +20,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from jarvis.community_briefing.ai import AIResponse
-from jarvis.community_briefing.collector import iter_content_files
+from jarvis.community_briefing.collector import iter_content_files, resolve_draft_root
 from jarvis.community_briefing.service import CommunityBriefingService
 from jarvis.config.schema import CommunityBriefingConfig
 from jarvis.meetings.publication.notify import review_token
@@ -35,6 +39,52 @@ def receive(limit):
     if not isinstance(value, dict):
         raise ValueError("protocol requires an object")
     return value
+
+
+class AdapterRefusal(ValueError):
+    """A refusal before any run or AI call, reported with an allow-listed code."""
+
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+NATIVE_DRAFT_LOCK = "community-native-draft.lock"
+
+
+def acquire_native_draft_lock(state_root):
+    """One native draft per state directory, across processes.
+
+    A review's revision and a scheduled or manual generation run in different
+    adapter processes; the in-process lock alone cannot keep them from making
+    paid calls at the same time. The OS releases the lock when a process dies.
+    """
+    fd = os.open(Path(state_root) / NATIVE_DRAFT_LOCK,
+                 os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        raise AdapterRefusal("native_draft_busy") from None
+    return fd
+
+
+def release_native_draft_lock(fd):
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+
+def refuse_orphan_artifacts(service, week_start):
+    """Refuse before any paid call when a crashed generation left files behind.
+
+    The shared service only detects them while committing, after the provider
+    calls, so every retry would pay again and fail the same way.
+    """
+    if service.store.for_week(week_start) is not None:
+        return
+    artifact_dir = resolve_draft_root(service.config) / f"{week_start:%Y}" / f"week-{week_start.isoformat()}"
+    if artifact_dir.is_dir() and any(artifact_dir.iterdir()):
+        raise AdapterRefusal("orphan_artifacts")
 
 
 def deny_external(event, _args):
@@ -234,6 +284,16 @@ class NativeReviewService(NativeCommunityService):
         # unbounded AI work or mixing replies between review threads.
         if not self.native_lock.acquire(blocking=False):
             raise ValueError("Another native draft is running; retry after it finishes.")
+        try:
+            draft_lock = acquire_native_draft_lock(self.state_root)
+        except AdapterRefusal:
+            self.native_lock.release()
+            raise ValueError("Another native draft is running; retry after it finishes.") from None
+        except BaseException:
+            # Any other lock-file error (ELOOP, EACCES, EMFILE ...) must not leave
+            # this reviewer's in-process lock held, or every later revision fails.
+            self.native_lock.release()
+            raise
         run_id = str(uuid.uuid4())
         try:
             validate_paths(self.config.model_dump())
@@ -259,6 +319,7 @@ class NativeReviewService(NativeCommunityService):
                       "provider_calls": self.native_context.ai.calls, "publication": False})
         finally:
             self.native_context.ai = None
+            release_native_draft_lock(draft_lock)
             self.native_lock.release()
 
     def _ai_client(self, provider=None):
@@ -322,7 +383,7 @@ def serve_native_review(request):
     parent = os.getppid()
     server.timeout = 0.5
     token = review_token(service.state_root)
-    rendezvous = publish_review_rendezvous(service.state_root, server.server_port)
+    rendezvous, published, previous = publish_review_rendezvous(service.state_root, server.server_port)
     try:
         emit({"type": "ready", "url": f"http://127.0.0.1:{server.server_port}/?token={token}",
               "publication": False})
@@ -330,11 +391,34 @@ def serve_native_review(request):
             server.handle_request()
     finally:
         server.server_close()
-        rendezvous.unlink(missing_ok=True)
+        withdraw_review_rendezvous(rendezvous, published, previous)
         service.close()
 
 
 REVIEW_RENDEZVOUS = "community-review.rendezvous.json"
+# A staged file older than this was left by a review that died while publishing.
+STALE_STAGED_SECONDS = 600
+
+
+def _sweep_stale_staged(state_root):
+    """Remove staged rendezvous files that a crashed review left behind.
+
+    Only regular, owner-owned files with the staging prefix are removed. The
+    entry is inspected with lstat, and unlink removes a link itself, so no
+    link is followed. Fresh files may belong to a review starting right now.
+    """
+    prefix = f".{REVIEW_RENDEZVOUS}."
+    now = time.time()
+    for entry in os.scandir(state_root):
+        if not entry.name.startswith(prefix):
+            continue
+        try:
+            info = os.lstat(entry.path)
+            if (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+                    and now - info.st_mtime > STALE_STAGED_SECONDS):
+                os.unlink(entry.path)
+        except FileNotFoundError:
+            continue
 
 
 def publish_review_rendezvous(state_root, port):
@@ -345,21 +429,78 @@ def publish_review_rendezvous(state_root, port):
     """
     state_root = Path(state_root)
     path = state_root / REVIEW_RENDEZVOUS
-    body = json.dumps({
+    # Identifies this review, so it never withdraws a newer review's rendezvous.
+    instance = secrets.token_hex(16)
+    body = (json.dumps({
         "kind": "harnessy.community.review-rendezvous.v1",
         "origin": f"http://127.0.0.1:{port}",
         "port": port,
         "tokenPath": str(state_root / "review.token"),
-    }, sort_keys=True) + "\n"
-    staged = state_root / f".{REVIEW_RENDEZVOUS}.{os.getpid()}"
+        "instance": instance,
+    }, sort_keys=True) + "\n").encode()
+    _sweep_stale_staged(state_root)
+    previous = _read_rendezvous(path)
+    # A random suffix: a leftover from a crashed review whose PID is reused can
+    # never block startup (which, under KeepAlive, would be a restart loop).
+    staged = state_root / f".{REVIEW_RENDEZVOUS}.{os.getpid()}.{instance}"
     descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     try:
-        os.write(descriptor, body.encode())
-        os.fsync(descriptor)
+        try:
+            os.write(descriptor, body)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(staged, path)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
+    return path, body, previous
+
+
+MAX_RENDEZVOUS_BYTES = 4096
+
+
+def _read_rendezvous(path):
+    """The current rendezvous bytes, or None. Never follows a link."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            return None
+        return os.read(descriptor, MAX_RENDEZVOUS_BYTES + 1)[:MAX_RENDEZVOUS_BYTES + 1]
     finally:
         os.close(descriptor)
-    os.replace(staged, path)
-    return path
+
+
+def withdraw_review_rendezvous(path, published, previous=None):
+    """Withdraw this review's rendezvous only while it is still the one it wrote.
+
+    A newer review (a KeepAlive restart) may already have replaced it: that file
+    stays. When this review replaced another review's rendezvous (a foreground
+    review beside the service), that one is restored, so the launcher returns
+    to the service. A restored rendezvous whose review has ended is harmless:
+    the launcher's identity challenge rejects it.
+    """
+    if _read_rendezvous(path) != published:
+        return
+    if previous is None or len(previous) > MAX_RENDEZVOUS_BYTES:
+        path.unlink(missing_ok=True)
+        return
+    staged = Path(path).parent / f".{REVIEW_RENDEZVOUS}.{os.getpid()}.{secrets.token_hex(16)}"
+    descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        try:
+            os.write(descriptor, previous)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(staged, path)
+    except BaseException:
+        staged.unlink(missing_ok=True)
+        raise
 
 
 def main():
@@ -382,6 +523,14 @@ def main():
     config = CommunityBriefingConfig(**{**settings, "ai_provider": "codex", "enabled": False})
     notices = PendingNotifications(request.get("notifications") is True)
     service = NativeCommunityService(config, notifier=notices)
+    try:
+        # Held until this process exits; refusals happen before the run exists.
+        acquire_native_draft_lock(service.state_root)
+        if action == "generate":
+            refuse_orphan_artifacts(service, week_start)
+    except Exception:
+        service.close()
+        raise
     start_run(service.store, run_id, request)
     service._ai = ParentAI(service.store, run_id)
     ai = service._ai
@@ -419,6 +568,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except AdapterRefusal as refusal:
+        emit({"type": "error", "code": refusal.code, "publication": False})
+        sys.exit(1)
     except Exception:
         # Never expose source excerpts, provider output or private paths in errors.
         emit({"type": "error", "code": "community_draft_failed", "publication": False})

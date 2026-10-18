@@ -1,14 +1,34 @@
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { Console, Redacted } from "effect";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import { Command, Flag as Options } from "effect/unstable/cli";
+import { parseDocument } from "yaml";
+import {
+	COMMUNITY_REVIEW_PORT,
+	installCommunityReviewSchedule,
+	PUBLICATION_LAUNCH_AGENT_LABEL,
+	planCommunityReviewSchedule,
+} from "../jarvis/community-briefing/schedule.ts";
 import {
 	inspectCommunityBriefingStatus,
 	listCommunityBriefings,
 	preflightCommunityBriefingOffline,
+	resolveCommunityBriefingConfig,
 } from "../jarvis/community-briefing/status.ts";
+import {
+	COMMUNITY_GENERATION_STATUS_FILE,
+	isCommunityGenerationSchedulerRunning,
+	parseCommunityGenerationSchedule,
+	readCommunityGenerationStatus,
+	repairCommunityGenerationStatus,
+	summarizeCommunityGenerationStatus,
+} from "../jarvis/community-briefing/weekly-generation.ts";
 import { JarvisConfigReader } from "../jarvis/config.ts";
 import { JarvisCredentialResolver } from "../jarvis/credentials.ts";
 import { JarvisDiagnostic } from "../jarvis/diagnostic.ts";
@@ -612,8 +632,248 @@ export const jarvisCommunityBriefingCommand = Command.make("briefing").pipe(
 	Command.withDescription("Prepare, inspect and review local community briefings through V2"),
 );
 
+/**
+ * Deliberately outside `community briefing`: the one-writer guard treats any
+ * `jarvis community briefing …` process except `review serve` as a rival
+ * writer, so planning the service must not run under that route.
+ */
+export const jarvisCommunityScheduleCommand = Command.make(
+	"schedule",
+	{
+		target: targetOption,
+		config: Options.string("config").pipe(Options.withDefault(join(homedir(), ".jarvis", "config.yaml"))),
+		pythonPath: Options.string("python-path").pipe(
+			Options.optional,
+			Options.withDescription("V2-installed Jarvis interpreter; omit to use community_briefing.python_path."),
+		),
+		port: Options.integer("port").pipe(Options.withDefault(COMMUNITY_REVIEW_PORT)),
+		cliEntry: cliEntryOption,
+		nodePath: nodePathOption,
+		launchAgentsDirectory: launchAgentsDirectoryOption,
+		apply: Options.boolean("apply").pipe(
+			Options.withDefault(false),
+			Options.withDescription("Backup and atomically replace only the community review LaunchAgent plist."),
+		),
+		publicationPlist: Options.string("publication-plist").pipe(
+			Options.optional,
+			Options.withDescription(
+				`The publication service plist whose release the reviewer must match. Defaults to the loaded ${PUBLICATION_LAUNCH_AGENT_LABEL} job.`,
+			),
+		),
+		withoutPublication: Options.boolean("without-publication").pipe(
+			Options.withDefault(false),
+			Options.withDescription("Install without a publication service on this machine (no release match)."),
+		),
+		json: jsonOption,
+	},
+	({
+		target,
+		config,
+		pythonPath,
+		port,
+		cliEntry,
+		nodePath,
+		launchAgentsDirectory,
+		apply,
+		publicationPlist,
+		withoutPublication,
+		json,
+	}) =>
+		Effect.gen(function* () {
+			const paths = yield* (yield* JarvisPathResolver).resolve(target);
+			const python = Option.getOrUndefined(pythonPath);
+			const publication =
+				!apply || withoutPublication
+					? withoutPublication
+						? null
+						: undefined
+					: yield* Effect.try({
+							try: () => readPublicationProgramArguments(Option.getOrUndefined(publicationPlist)),
+							catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+						});
+			const options = {
+				publication,
+				nodePath: resolve(nodePath),
+				cliPath: resolve(cliEntry),
+				configPath: resolve(config),
+				...(python === undefined ? {} : { pythonPath: resolve(python) }),
+				port,
+				launchAgentsDirectory:
+					Option.getOrUndefined(launchAgentsDirectory) ?? join(homedir(), "Library", "LaunchAgents"),
+			};
+			const result = apply
+				? yield* installCommunityReviewSchedule(paths, options)
+				: { applied: false, backupDirectory: null, file: yield* planCommunityReviewSchedule(paths, options) };
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis community schedule", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(
+				`${result.applied ? "Installed" : "Planned"} V2 community review LaunchAgent: ${result.file.path}`,
+			);
+			if (result.backupDirectory !== null) yield* Console.log(`Rollback backup: ${result.backupDirectory}`);
+			if (result.applied)
+				yield* Console.log(
+					"Plist is installed but not reloaded; restart only this label, from the same release as the publication service.",
+				);
+		}),
+).pipe(
+	Command.withDescription(
+		"Plan or install the V2 community review LaunchAgent, which also owns weekly draft generation; never publishes",
+	),
+);
+
+/**
+ * The loaded publication service's ProgramArguments, read with the system
+ * `plutil`. The plist path comes from `launchctl print` unless given.
+ */
+const readPublicationProgramArguments = (plistPath: string | undefined): ReadonlyArray<string> => {
+	let path = plistPath;
+	if (path === undefined) {
+		const printed = spawnSync(
+			"/bin/launchctl",
+			["print", `gui/${process.getuid?.() ?? 0}/${PUBLICATION_LAUNCH_AGENT_LABEL}`],
+			{ encoding: "utf8", timeout: 5000 },
+		);
+		path = printed.status === 0 ? /^\s*path = (\/.+)$/mu.exec(printed.stdout)?.[1] : undefined;
+		if (path === undefined)
+			throw new Error(
+				`${PUBLICATION_LAUNCH_AGENT_LABEL} is not loaded: pass --publication-plist, or --without-publication when no publication service runs here.`,
+			);
+	}
+	const extracted = spawnSync("/usr/bin/plutil", ["-extract", "ProgramArguments", "json", "-o", "-", path], {
+		encoding: "utf8",
+		timeout: 5000,
+	});
+	const value: unknown = extracted.status === 0 ? JSON.parse(extracted.stdout) : undefined;
+	if (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
+		throw new Error(`Could not read ProgramArguments from ${path}.`);
+	return value;
+};
+
+/** Outside `community briefing` for the same one-writer reason as `schedule`. Read-only unless --repair. */
+export const jarvisCommunityGenerationStatusCommand = Command.make(
+	"generation-status",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		repair: Options.boolean("repair").pipe(
+			Options.withDefault(false),
+			Options.withDescription(
+				"Move a damaged or unsafe record aside (never deleted); the review service rebuilds it from the queue at its next tick.",
+			),
+		),
+		json: jsonOption,
+	},
+	({ config, stateRoot, repair, json }) =>
+		Effect.gen(function* () {
+			const resolved = resolveCommunityBriefingConfig({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+			});
+			// The same lenient reading the review service uses, so a bad setting shows here.
+			const briefing = yield* Effect.try({
+				try: () => {
+					const value: unknown = parseDocument(readFileSync(resolved.configPath, "utf8")).toJS();
+					const section =
+						typeof value === "object" && value !== null
+							? (value as Record<string, unknown>).community_briefing
+							: undefined;
+					return typeof section === "object" && section !== null ? (section as Record<string, unknown>) : {};
+				},
+				catch: () => new Error(`Could not read ${resolved.configPath}.`),
+			});
+			const { schedule, issues } = parseCommunityGenerationSchedule(
+				briefing.enabled,
+				briefing.generation_schedule,
+				briefing.timezone ?? "Africa/Lagos",
+			);
+			const path = join(resolved.stateRoot, COMMUNITY_GENERATION_STATUS_FILE);
+			const repaired = repair ? repairCommunityGenerationStatus(path) : null;
+			const quarantined = repaired?.outcome === "quarantined" ? repaired.movedTo : null;
+			const read =
+				quarantined !== null
+					? { record: null, fault: null }
+					: yield* Effect.sync(() => {
+							const outcome = Result.try({
+								try: () => readCommunityGenerationStatus(path) ?? null,
+								catch: (cause) => (cause instanceof Error ? cause.message : "status_record_unreadable"),
+							});
+							return Result.isSuccess(outcome)
+								? { record: outcome.success, fault: null }
+								: { record: null, fault: outcome.failure };
+						});
+			const { record, fault } = read;
+			const summary = summarizeCommunityGenerationStatus(
+				record,
+				isCommunityGenerationSchedulerRunning(resolved.stateRoot),
+			);
+			const latestWeek = summary.latestWeek;
+			const ok = issues.length === 0 && fault === null && summary.ok;
+			if (json)
+				yield* Console.log(
+					JSON.stringify(
+						{
+							command: "jarvis community generation-status",
+							ok,
+							path,
+							schedule: { ...schedule, issues },
+							fault,
+							repair: repaired?.outcome ?? null,
+							quarantined,
+							latestWeek,
+							state: summary.state,
+							standingFault: summary.standingFault,
+							record,
+						},
+						null,
+						2,
+					),
+				);
+			else {
+				for (const issue of issues) yield* Console.log(`Schedule issue (generation is off): ${issue}`);
+				if (quarantined !== null)
+					yield* Console.log(
+						`Moved the record to ${quarantined}; the review service rebuilds it from the queue at its next tick.`,
+					);
+				else if (repaired?.outcome === "busy")
+					yield* Console.log("The review service is writing the record right now; run --repair again.");
+				else if (repaired?.outcome === "valid")
+					yield* Console.log("The record is valid; it was left unchanged (it bounds paid retries).");
+				else if (repair) yield* Console.log("No record to repair.");
+				if (fault !== null)
+					yield* Console.log(`Record fault: ${fault}. Run with --repair to move it aside and rebuild it.`);
+				if (record === null && fault === null && !repair)
+					yield* Console.log("No scheduled community generation has run yet.");
+				if (record !== null) {
+					yield* Console.log(
+						summary.state === "generating"
+							? `Latest week ${latestWeek}: generating now (attempt ${summary.attempts})`
+							: `Latest week ${latestWeek}: ${summary.state} after ${summary.attempts} attempt(s)`,
+					);
+					if (summary.standingFault !== null)
+						yield* Console.log(`Standing fault: ${summary.standingFault} (generation is paused until it clears)`);
+					if (record.lastFailure !== null)
+						yield* Console.log(
+							`Last failure: week ${record.lastFailure.weekStart}, ${record.lastFailure.code}, ${record.lastFailure.at}`,
+						);
+				}
+			}
+			if (repaired?.outcome === "busy") yield* Effect.fail(new Error("The record is busy; nothing was moved"));
+			if (!ok && !repair) yield* Effect.fail(new Error("Weekly community generation needs attention"));
+		}),
+).pipe(
+	Command.withDescription(
+		"Show the review service's weekly community generation record and schedule; --repair moves a damaged record aside",
+	),
+);
+
 export const jarvisCommunityCommand = Command.make("community").pipe(
-	Command.withSubcommands([jarvisCommunityBriefingCommand] as const),
+	Command.withSubcommands([
+		jarvisCommunityBriefingCommand,
+		jarvisCommunityScheduleCommand,
+		jarvisCommunityGenerationStatusCommand,
+	] as const),
 	Command.withDescription("Run V2-owned community workflow inspections"),
 );
 

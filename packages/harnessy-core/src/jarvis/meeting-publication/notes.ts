@@ -231,13 +231,17 @@ export const readArchivedMeetingPublicationNoteForImport = Effect.fn("readArchiv
 	},
 );
 
+/** The exact canonical form a reviewer-submitted note is written in; its SHA-256 is the resulting source hash. */
+export const canonicalMeetingPublicationNoteMarkdown = (markdown: string) =>
+	`${markdown.replaceAll("\r\n", "\n").replaceAll("\r", "\n").trim()}\n`;
+
 const normalizeNoteUpdate = Effect.fn("MeetingPublicationSource.normalizeNoteUpdate")(function* (markdown: string) {
-	const normalized = markdown.replaceAll("\r\n", "\n").replaceAll("\r", "\n").trim();
-	if (normalized.length === 0) yield* new MeetingPublicationSourceError({ code: "empty_note" });
-	if (Array.from(normalized).length > MEETING_PUBLICATION_NOTE_MAX_LENGTH) {
+	const normalized = canonicalMeetingPublicationNoteMarkdown(markdown);
+	if (normalized.length === 1) yield* new MeetingPublicationSourceError({ code: "empty_note" });
+	if (Array.from(normalized).length - 1 > MEETING_PUBLICATION_NOTE_MAX_LENGTH) {
 		yield* new MeetingPublicationSourceError({ code: "note_too_long" });
 	}
-	return `${normalized}\n`;
+	return normalized;
 });
 
 const syncDirectoryBestEffort = (path: string) => {
