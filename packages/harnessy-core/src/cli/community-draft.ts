@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Console, Effect, Option, Schema } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { parseDocument } from "yaml";
+import { DEFAULT_CODEX_MODEL } from "../ai/codex-model.ts";
 import { CommunityDraftProcessError } from "../jarvis/community-briefing/draft-process.ts";
 import {
 	type NativeCommunityReviewOptions,
@@ -38,7 +39,8 @@ const Settings = Schema.Struct({
 	}),
 });
 
-const executionOptions = {
+/** Shared by generate and review serve; exported so tests can pin the defaults. */
+export const communityExecutionOptions = {
 	config: Flag.string("config").pipe(Flag.withDefault(join(homedir(), ".jarvis", "config.yaml"))),
 	pythonPath: Flag.string("python-path").pipe(
 		Flag.withDescription("Override community_briefing.python_path with a V2-installed Jarvis interpreter."),
@@ -47,7 +49,7 @@ const executionOptions = {
 	authPath: Flag.string("auth-file").pipe(
 		Flag.withDefault(join(process.env.HSY_CODING_AGENT_DIR ?? join(homedir(), ".hsy", "agent"), "auth.json")),
 	),
-	model: Flag.string("model").pipe(Flag.withDefault("gpt-5.5")),
+	model: Flag.string("model").pipe(Flag.withDefault(DEFAULT_CODEX_MODEL)),
 	timeoutSeconds: Flag.integer("timeout-seconds").pipe(
 		Flag.withDefault(600),
 		Flag.withDescription("Per AI operation, 1–600 seconds; not the lifetime of the review window."),
@@ -222,7 +224,7 @@ export const serveCommunityReview = async (options: CommunityReviewServiceOption
 export const communityDraftCommand = Command.make(
 	"generate",
 	{
-		...executionOptions,
+		...communityExecutionOptions,
 		weekStart: Flag.string("week-start").pipe(Flag.withDescription("Monday in YYYY-MM-DD format.")),
 		runId: Flag.string("run-id").pipe(
 			Flag.withDefault(""),
@@ -253,9 +255,10 @@ export const communityDraftCommand = Command.make(
 					});
 					return { command: "jarvis community briefing generate", runId, ...result };
 				},
-				catch: () =>
+				// Only an allow-listed code is surfaced, never provider or adapter text.
+				catch: (error) =>
 					new Error(
-						"Community generation failed. Check community_briefing.python_path (or --python-path), configuration, credentials and the local run record before retrying; no publication was requested.",
+						`Community generation failed${error instanceof CommunityDraftProcessError && error.code ? ` (${error.code})` : ""}. Check community_briefing.python_path (or --python-path), configuration, credentials and the local run record before retrying; no publication was requested.`,
 					),
 			});
 			yield* Console.log(JSON.stringify(result, null, 2));
@@ -281,7 +284,7 @@ export const communityReviewReadyEvent = (reviewUrl: string, statePath: string) 
 export const communityReviewServeCommand = Command.make(
 	"serve",
 	{
-		...executionOptions,
+		...communityExecutionOptions,
 		port: Flag.integer("port").pipe(Flag.withDefault(8872)),
 		weeklyGeneration: Flag.boolean("weekly-generation").pipe(
 			Flag.withDefault(false),

@@ -157,7 +157,7 @@ describe("Life Orchestrator CLI", () => {
 
 	it.each([
 		{ args: ["--draft-model", "synthetic-model"], model: "synthetic-model" },
-		{ args: [], model: "gpt-5.5" },
+		{ args: [], model: "gpt-6-astra" },
 	])("prepares a prompt with the explicit or catalog-supported default model: $model", async ({ args, model }) => {
 		const root = realpathSync(mkdtempSync(join(tmpdir(), "harnessy-life-cli-")));
 		try {

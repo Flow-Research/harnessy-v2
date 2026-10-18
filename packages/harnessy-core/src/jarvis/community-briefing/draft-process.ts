@@ -4,6 +4,8 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Effect, Schema } from "effect";
 
+import { type CodexProviderFailureCode, codexProviderFailureCode } from "../../ai/codex-failure.ts";
+
 const Result = Schema.Struct({
 	type: Schema.Literal("result"),
 	briefing_id: Schema.String,
@@ -21,12 +23,15 @@ const REFUSALS = new Set(["native_draft_busy", "orphan_artifacts"]);
 
 /** The fixed, content-free failure. `code` names a known cause when there is one. */
 export class CommunityDraftProcessError extends Error {
-	readonly code: "native_draft_busy" | "orphan_artifacts" | "deadline_exceeded" | undefined;
+	readonly code: "native_draft_busy" | "orphan_artifacts" | "deadline_exceeded" | CodexProviderFailureCode | undefined;
 	constructor(code: CommunityDraftProcessError["code"]) {
 		super("Community draft did not complete safely; inspect its local state before retrying.");
 		this.code = code;
 	}
 }
+
+/** How long a stopped adapter may take to record its failed run after stdin closes. */
+export const ADAPTER_STOP_GRACE_MS = 5_000;
 
 export interface CommunityDraftProcessOptions {
 	readonly runId: string;
@@ -46,6 +51,8 @@ export interface CommunityDraftProcessOptions {
 	readonly discord_summary?: string;
 	readonly timeoutMs: number;
 	readonly signal: AbortSignal;
+	/** Grace between closing the adapter's stdin and SIGKILL; defaults to ADAPTER_STOP_GRACE_MS. */
+	readonly stopGraceMs?: number;
 	/** Return true only after the local notifier confirms successful submission. */
 	readonly notify?: (kind: "pending" | "error", count: number, signal: AbortSignal) => Promise<boolean>;
 	/** Called only after the adapter durably consumes the explicit run/call.
@@ -115,6 +122,7 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 	const controller = new AbortController();
 	let timedOut = false;
 	let refusal: "native_draft_busy" | "orphan_artifacts" | undefined;
+	let providerFailure: CodexProviderFailureCode | undefined;
 	const timer = setTimeout(() => {
 		timedOut = true;
 		controller.abort();
@@ -132,7 +140,14 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 	const closed = new Promise<number | null>((resolve) => child.once("close", resolve));
 	child.once("error", () => controller.abort());
 	child.stdin.on("error", () => controller.abort());
-	const stop = () => child.kill("SIGKILL");
+	// Close stdin first: an adapter waiting for a reply then fails its read, marks
+	// its run failed and exits. SIGKILL only an adapter that outlives the grace.
+	let killTimer: ReturnType<typeof setTimeout> | undefined;
+	const stop = () => {
+		if (child.exitCode !== null || child.signalCode !== null) return;
+		if (!child.stdin.destroyed) child.stdin.end();
+		killTimer ??= setTimeout(() => child.kill("SIGKILL"), options.stopGraceMs ?? ADAPTER_STOP_GRACE_MS);
+	};
 	signal.addEventListener("abort", stop, { once: true });
 	if (signal.aborted) stop();
 	let bytes = 0;
@@ -203,7 +218,12 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 							throw new Error("Invalid adapter request.");
 						const prompt = event.prompt;
 						calls++;
-						const data = await callWhileActive(signal, () => options.generate(prompt, calls, signal));
+						const data = await callWhileActive(signal, () => options.generate(prompt, calls, signal)).catch(
+							(error: unknown) => {
+								providerFailure = codexProviderFailureCode(error);
+								throw error;
+							},
+						);
 						signal.throwIfAborted();
 						if (typeof data !== "object" || data === null || Array.isArray(data))
 							throw new Error("Strict JSON object required.");
@@ -216,15 +236,16 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 					if (code !== 0 || !result) throw new Error("Adapter did not complete.");
 					return result;
 				},
-				catch: () => new CommunityDraftProcessError(timedOut ? "deadline_exceeded" : refusal),
+				catch: () => new CommunityDraftProcessError(timedOut ? "deadline_exceeded" : (refusal ?? providerFailure)),
 			}),
 		);
 	} finally {
 		clearTimeout(timer);
 		signal.removeEventListener("abort", stop);
 		controller.abort();
-		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+		stop();
 		await closed;
+		clearTimeout(killTimer);
 		lines.close();
 	}
 };

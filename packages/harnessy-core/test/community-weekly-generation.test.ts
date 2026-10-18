@@ -437,6 +437,15 @@ describe("weekly community generation trigger", () => {
 		expect(run.events.map((event) => event.status)).toEqual(["busy", "created"]);
 	});
 
+	it("records an allow-listed provider code instead of generation_failed", async () => {
+		const run = harness(() => ({ status: "failed", code: "provider_model_unsupported" }));
+		await run.tick();
+		const record = readCommunityGenerationStatus(run.statusPath);
+		expect(record?.weeks["2026-10-12"]).toMatchObject({ status: "failed", code: "provider_model_unsupported" });
+		expect(record?.lastFailure).toMatchObject({ code: "provider_model_unsupported" });
+		expect(run.events.at(-1)).toMatchObject({ status: "failed", code: "provider_model_unsupported" });
+	});
+
 	it("records a failure visibly, retries after an hour and gives up after three attempts", async () => {
 		const run = harness(() => {
 			throw new Error("Codex said: /private/path leaked");

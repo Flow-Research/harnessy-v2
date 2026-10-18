@@ -33,7 +33,7 @@ describe("AiRunner model resolution", () => {
 		expect(isClaudeModelAlias("gpt-5.4-mini")).toBe(false);
 		expect(resolveProviderModel({}, "claude", "sonnet")).toBe("sonnet");
 		// A Claude alias must not forward to codex/opencode.
-		expect(resolveProviderModel({}, "codex", "sonnet")).toBe("gpt-5.4-mini");
+		expect(resolveProviderModel({}, "codex", "sonnet")).toBe("gpt-6-astra");
 		expect(resolveProviderModel({}, "opencode", "sonnet")).toBeNull();
 	});
 

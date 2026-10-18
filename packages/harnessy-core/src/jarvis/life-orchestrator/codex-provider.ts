@@ -3,6 +3,9 @@ import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-code
 import { createDefaultAuthFileCipher } from "@earendil-works/pi-coding-agent/auth-storage";
 import * as Effect from "effect/Effect";
 
+import { CodexProviderError, classifyCodexProviderFailure } from "../../ai/codex-failure.ts";
+import { resolveCodexModel } from "../../ai/codex-model.ts";
+
 import { readStableMeetingPublicationSmokeFile } from "../meeting-publication/operational-input.ts";
 import type { LifeDraftRequest } from "./draft-provider.ts";
 
@@ -22,14 +25,15 @@ export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, p
 				throw new Error("Codex timeout must be a positive bounded integer.");
 			if (!Number.isSafeInteger(options.maximumOutputBytes) || options.maximumOutputBytes < 1)
 				throw new Error("Codex output limit must be positive.");
-			const model = provider.getModels().find((candidate) => candidate.id === request.model);
-			if (
-				request.provider !== "codex" ||
-				!model ||
-				model.provider !== "openai-codex" ||
-				model.api !== "openai-codex-responses"
-			)
-				throw new Error("Codex requires the exact requested provider and supported model; no fallback.");
+			const model = Effect.runSync(
+				Effect.try({
+					try: () => {
+						if (request.provider !== "codex") throw new Error();
+						return resolveCodexModel(provider, request.model);
+					},
+					catch: () => new Error("Codex requires the exact requested provider and supported model; no fallback."),
+				}),
+			);
 			if (!process.getuid || process.platform === "win32") throw new Error("Codex OAuth requires POSIX ownership.");
 			const uid = BigInt(process.getuid());
 			const { authBytes, access, expires } = Effect.runSync(
@@ -108,6 +112,10 @@ export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, p
 					throw new Error("Codex OAuth expired; no refresh or fallback.");
 			};
 			let abortListener: (() => void) | undefined;
+			// The final HTTP status, read only to classify a failure. maxRetries is 0, so it is the one answer.
+			let responseStatus: number | undefined;
+			// Set once the request is about to leave: earlier failures are local, never a provider code.
+			let dispatched = false;
 			try {
 				assertActive();
 				const stream = provider.stream(
@@ -125,6 +133,9 @@ export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, p
 						reasoningEffort: "high",
 						signal: controller.signal,
 						timeoutMs: options.timeoutMs,
+						onResponse: (response) => {
+							responseStatus = response.status;
+						},
 						onPayload: (payload) => {
 							assertActive();
 							if (
@@ -134,6 +145,7 @@ export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, p
 							)
 								throw new Error("Codex OAuth changed before dispatch.");
 							if (typeof payload !== "object" || payload === null) throw new Error("Invalid Codex payload.");
+							dispatched = true;
 							return { ...payload, tools: [], tool_choice: "none", parallel_tool_calls: false };
 						},
 					},
@@ -152,7 +164,13 @@ export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, p
 						}
 						if (size > options.maximumOutputBytes)
 							throw new Error("Codex output exceeded its byte limit; reconcile before retrying.");
-						if (event.type === "error") throw new Error("Codex generation failed; reconcile before retrying.");
+						if (event.type === "error") {
+							controller.signal.throwIfAborted();
+							if (!dispatched) throw new Error("Codex generation failed; reconcile before retrying.");
+							throw new CodexProviderError(
+								classifyCodexProviderFailure(responseStatus, event.error.errorMessage),
+							);
+						}
 						if (event.type === "done") result = event.message;
 					}
 					assertActive();
