@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { Command, Flag as Options } from "effect/unstable/cli";
 import { parseDocument } from "yaml";
+import { DEFAULT_CODEX_MODEL } from "../ai/codex-model.ts";
 import {
 	COMMUNITY_REVIEW_PORT,
 	installCommunityReviewSchedule,
@@ -75,7 +76,7 @@ const prepareNativePromptOption = Options.boolean("prepare-native-prompt").pipe(
 	Options.withDescription("Prepare an exact private Life prompt for owner signing; does not call an AI provider."),
 );
 const draftModelOption = Options.string("draft-model").pipe(
-	Options.withDefault("gpt-5.5"),
+	Options.withDefault(DEFAULT_CODEX_MODEL),
 	Options.withDescription("Explicit Codex model for a prepared native Life draft."),
 );
 const nativeRequestOption = Options.string("native-request").pipe(

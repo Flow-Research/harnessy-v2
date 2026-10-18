@@ -2,12 +2,12 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import { DEFAULT_CODEX_MODEL } from "./codex-model.ts";
+
 /** Default provider fallback order, mirroring v1 `ai_runner.DEFAULT_PROVIDER_ORDER`. */
 const DEFAULT_PROVIDER_ORDER = ["claude", "codex", "opencode"] as const;
 /** Default Claude model alias. */
 const DEFAULT_CLAUDE_MODEL = "sonnet";
-/** Default Codex model when a Claude alias would otherwise leak across providers. */
-const DEFAULT_CODEX_MODEL = "gpt-5.4-mini";
 /** Short Claude aliases that must not be forwarded to other providers. */
 const CLAUDE_MODEL_ALIASES = new Set(["sonnet", "haiku", "opus"]);
 /** Failure classes that may succeed on retry. */

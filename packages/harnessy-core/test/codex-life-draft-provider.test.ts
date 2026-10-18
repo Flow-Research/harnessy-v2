@@ -21,6 +21,7 @@ import { zstdDecompressSync } from "node:zlib";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { CodexProviderError } from "../src/ai/codex-failure.ts";
 import { createCodexLifeDraftProvider } from "../src/jarvis/life-orchestrator/codex-provider.ts";
 import type { LifeDraftRequest } from "../src/jarvis/life-orchestrator/draft-provider.ts";
 
@@ -191,16 +192,67 @@ describe("text-only Codex Life draft provider", () => {
 		expect(test.calls).toHaveLength(1);
 		test.assertUnchanged();
 	});
-	it.each([401, 429, 503])("does not retry HTTP %s or leak response details", async (status) => {
-		const test = await fixture((response) => {
-			response.statusCode = status;
-			response.end(JSON.stringify({ error: { message: "synthetic-sensitive-response" } }));
+	it.each([
+		[
+			400,
+			{ detail: "The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account." },
+			"provider_model_unsupported",
+		],
+		[400, { error: { message: "synthetic-sensitive-response" } }, "provider_rejected"],
+		[401, { error: { message: "synthetic-sensitive-response" } }, "provider_auth"],
+		[403, { error: { message: "synthetic-sensitive-response" } }, "provider_auth"],
+		[429, { error: { message: "synthetic-sensitive-response" } }, "provider_rate_limited"],
+		[500, { error: { message: "synthetic-sensitive-response" } }, "provider_unavailable"],
+		[503, { error: { message: "synthetic-sensitive-response" } }, "provider_unavailable"],
+	] as const)(
+		"maps HTTP %s to an allow-listed code without retrying or leaking details",
+		async (status, body, code) => {
+			const test = await fixture((response) => {
+				response.statusCode = status;
+				response.setHeader("Content-Type", "application/json");
+				response.end(JSON.stringify(body));
+			});
+			const failure = await test
+				.create()
+				.generate(request, new AbortController().signal)
+				.then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+			expect(failure).toBeInstanceOf(CodexProviderError);
+			expect(failure).toMatchObject({
+				code,
+				message: `Codex generation failed (${code}); reconcile before retrying.`,
+			});
+			expect(JSON.stringify(failure)).not.toMatch(/sensitive|not supported/u);
+			expect(test.calls).toHaveLength(1);
+			test.assertUnchanged();
+		},
+	);
+	it("maps a dropped connection to provider_network", async () => {
+		const test = await fixture((response) => response.socket?.destroy());
+		await expect(test.create().generate(request, new AbortController().signal)).rejects.toMatchObject({
+			code: "provider_network",
 		});
-		await expect(test.create().generate(request, new AbortController().signal)).rejects.toThrow(
-			"Codex generation failed; reconcile before retrying.",
-		);
 		expect(test.calls).toHaveLength(1);
 		test.assertUnchanged();
+	});
+	it("sends an id pi-ai does not list, built from the documented base entry", async () => {
+		const test = await fixture();
+		const astra = { ...request, model: "gpt-6-astra" };
+		expect(await test.create().generate(astra, new AbortController().signal)).toMatchObject({
+			model: "gpt-6-astra",
+			receiptId: "resp_fixture",
+		});
+		expect(test.calls).toHaveLength(1);
+		expect(test.calls[0]).toMatchObject({ path: "/codex/responses", body: { model: "gpt-6-astra" } });
+	});
+	it("rejects a malformed model id before any request", async () => {
+		const test = await fixture();
+		await expect(
+			test.create().generate({ ...request, model: "../gpt" }, new AbortController().signal),
+		).rejects.toThrow("supported model; no fallback");
+		expect(test.calls).toHaveLength(0);
 	});
 	it.each([
 		["expired stored OAuth", { expires: 0 }],
@@ -260,7 +312,7 @@ describe("text-only Codex Life draft provider", () => {
 		},
 	);
 	it.each([
-		{ ...request, model: "not-an-exact-supported-model" },
+		{ ...request, model: "not an exact supported model" },
 		{ ...request, provider: "claude" as const },
 	])("rejects provider/model mismatch", async (input) => {
 		const test = await fixture();

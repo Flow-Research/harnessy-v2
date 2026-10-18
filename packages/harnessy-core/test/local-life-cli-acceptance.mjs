@@ -104,7 +104,7 @@ try {
 	const result = JSON.parse(generated.stdout);
 	assert.equal(result.published, false);
 	assert.equal(requests, 1);
-	assert.equal(requestBody.model, "gpt-5.5");
+	assert.equal(requestBody.model, "gpt-6-astra");
 	assert.deepEqual(requestBody.tools, []);
 	assert.equal(requestBody.tool_choice, "none");
 	assert(JSON.stringify(requestBody).includes("Synthetic planning canary"));

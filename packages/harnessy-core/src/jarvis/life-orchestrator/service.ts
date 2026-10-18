@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
 
+import { codexProviderFailureCode } from "../../ai/codex-failure.ts";
 import type { HarnessError } from "../../errors.ts";
 import { CommandRunner, type CommandRunResult, type ExternalCommand } from "../../runtime/command-runner.ts";
 import { prepareWorkspaceLifeCommand } from "../../workspace-life.ts";
@@ -540,13 +541,15 @@ export const runLifeDaily = (
 											signal,
 											options.draftProvider,
 										),
-									catch: (cause) =>
-										new LifeOrchestratorError({
+									catch: (cause) => {
+										// Only the allow-listed provider code is surfaced, never provider text.
+										const providerCode = codexProviderFailureCode(cause);
+										return new LifeOrchestratorError({
 											code: "artifact_invalid",
-											message:
-												"Native Life generation failed; reconcile the consumed grant before retrying.",
+											message: `Native Life generation failed${providerCode ? ` (${providerCode})` : ""}; reconcile the consumed grant before retrying.`,
 											cause,
-										}),
+										});
+									},
 								});
 								draft = generated.markdown;
 								nativeReceipt = generated.receipt;
@@ -940,12 +943,15 @@ export const runLifeWeekly = (
 				const generated = yield* Effect.tryPromise({
 					try: (signal) =>
 						generateNativeLifePreview(settings, nativePreview, request, signal, options.draftProvider),
-					catch: (cause) =>
-						new LifeOrchestratorError({
+					catch: (cause) => {
+						// Only the allow-listed provider code is surfaced, never provider text.
+						const providerCode = codexProviderFailureCode(cause);
+						return new LifeOrchestratorError({
 							code: "artifact_invalid",
-							message: "Native weekly generation failed; reconcile the consumed grant before retrying.",
+							message: `Native weekly generation failed${providerCode ? ` (${providerCode})` : ""}; reconcile the consumed grant before retrying.`,
 							cause,
-						}),
+						});
+					},
 				});
 				phase = "preserve-raw-draft";
 				yield* Effect.try({

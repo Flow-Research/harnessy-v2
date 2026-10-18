@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
+import { CodexProviderError } from "../src/ai/codex-failure.ts";
 import {
+	CommunityDraftProcessError,
 	type CommunityDraftProcessOptions,
 	runCommunityDraftProcess,
 } from "../src/jarvis/community-briefing/draft-process.ts";
@@ -176,6 +178,31 @@ it("preserves failure without fallback and sanitizes provider errors", async () 
 	).rejects.toThrow(/^Community draft did not complete safely/);
 	expect(calls).toBe(1);
 	expect(rows(options)).toEqual([]);
+});
+
+it("reports the provider code and lets the adapter mark its run failed instead of SIGKILLing it", async () => {
+	const options = fixture(true);
+	const failure = await runCommunityDraftProcess({
+		...options,
+		generate: async () => {
+			throw new CodexProviderError("provider_model_unsupported");
+		},
+	}).then(
+		() => undefined,
+		(error: unknown) => error,
+	);
+	expect(failure).toBeInstanceOf(CommunityDraftProcessError);
+	expect(failure).toMatchObject({ code: "provider_model_unsupported" });
+	expect(rows(options)).toEqual([]);
+	const db = new DatabaseSync(join(options.config.state_path, "weekly-briefings.sqlite3"), { readOnly: true });
+	try {
+		// A SIGKILLed adapter left this row `running`; closing stdin lets it record the failure.
+		expect(db.prepare("SELECT status, calls FROM community_draft_runs").all()).toEqual([
+			{ status: "failed", calls: 1 },
+		]);
+	} finally {
+		db.close();
+	}
 });
 
 it("cancels an unresponsive provider callback and awaits child shutdown", async () => {

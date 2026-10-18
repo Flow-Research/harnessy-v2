@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import * as Effect from "effect/Effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { CodexProviderError } from "../src/ai/codex-failure.ts";
 import { resolveLifeOrchestratorSettings } from "../src/jarvis/life-orchestrator/config.ts";
 import { lifeDraftGrantPayload } from "../src/jarvis/life-orchestrator/draft-grant-host.ts";
 import { canonicalLifeBriefPath } from "../src/jarvis/life-orchestrator/history.ts";
@@ -201,6 +202,25 @@ describe("native Life preview consumer", () => {
 			),
 		).rejects.toThrow("generation failed");
 		expect(fixture.draftProvider.generate).not.toHaveBeenCalled();
+	});
+	it("surfaces only the allow-listed provider code when native generation fails", async () => {
+		const fixture = inputs();
+		fixture.draftProvider.generate.mockRejectedValueOnce(new CodexProviderError("provider_model_unsupported"));
+		const failure = await Effect.runPromise(
+			runLifeDaily(fixture.settings, {
+				publish: false,
+				nativePreview: fixture.nativePreview,
+				draftProvider: fixture.draftProvider,
+			}).pipe(Effect.provideService(CommandRunner, noCommands)),
+		).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(failure).toMatchObject({
+			message:
+				"Native Life generation failed (provider_model_unsupported); reconcile the consumed grant before retrying.",
+		});
+		expect(fixture.draftProvider.generate).toHaveBeenCalledTimes(1);
 	});
 	it("preserves a consumed grant and original draft when hygiene fails", async () => {
 		const fixture = inputs();
