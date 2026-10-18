@@ -596,17 +596,23 @@ Constraints the implementation keeps:
   `weekly-generation.js`.
 - **Restart.** The plist sets `KeepAlive` with a 10-second `ThrottleInterval`.
   Without it, a crashed reviewer left its label loaded with no process, which
-  the guard treats as an observed writer, so community publication stayed
-  stopped until someone noticed. With it, launchd restarts the reviewer.
-  The guard still classifies the restart gap as a writer: a loaded review label
-  without exactly one verified process throws `compatibility_writer_present`.
-  The pause-and-retry window of #117/#119 covers only unanswered probes, not
-  this observed state. A guard probe that lands in the gap therefore still
-  stops community publication. The gap is short: launchd restarts at once a
-  reviewer that ran for at least 10 seconds, and within 10 seconds one that
-  crashed sooner. This amendment does not change the guard, its label list or
-  its classifier. Pausing instead of stopping on that state would need a guard
-  change with its own review.
+  the guard treated as an observed writer, so community publication stayed
+  stopped until someone noticed. The community guard now classifies a loaded
+  `com.flow-harness.community-review-v2` label with no process as
+  inconclusive (`launchctl_no_process`), because no process exists to write.
+  It pauses new leases under the #117/#119 policy: monotonic backoff, a
+  five-minute window and at least six failed retries. A KeepAlive restart of
+  about 10 seconds therefore recovers without a stop. A label that stays
+  without a process past the window escalates to the existing stop
+  (`runtime_rejected`). These remain immediate stops, as before:
+  - more than one process;
+  - a process that fails identity verification, or is not launchd's;
+  - a writer-shaped process still awaiting verification while the label has
+    no process, since that process cannot be the label's own;
+  - any other writer-shaped process or guarded label.
+
+  The meeting guard does not check this label (it checks only its V1 labels),
+  so it needs no change.
 
 ### Continuing consequences
 

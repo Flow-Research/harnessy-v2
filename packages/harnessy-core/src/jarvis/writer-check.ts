@@ -18,8 +18,19 @@ import * as Result from "effect/Result";
 export const WRITER_CHECK_NAMES = ["ps", "launchctl", "crontab", "lsof", "sysctl"] as const;
 export type WriterCheckName = (typeof WRITER_CHECK_NAMES)[number];
 
-/** Why a probe was inconclusive. */
-export const WRITER_CHECK_FAILURES = ["timeout", "signal", "spawn_error", "output_overflow", "exit_status"] as const;
+/**
+ * Why a probe was inconclusive. `no_process`: the native community review label
+ * is loaded but runs no process, as while launchd restarts it. No process exists
+ * to write, but the reviewer is not back yet, so publication pauses.
+ */
+export const WRITER_CHECK_FAILURES = [
+	"timeout",
+	"signal",
+	"spawn_error",
+	"output_overflow",
+	"exit_status",
+	"no_process",
+] as const;
 export type WriterCheckFailure = (typeof WRITER_CHECK_FAILURES)[number];
 
 /** Every allow-listed `<check>_<failure>` reason code. Nothing else is logged as a reason. */

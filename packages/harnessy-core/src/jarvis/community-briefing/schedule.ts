@@ -75,8 +75,9 @@ export const communityReviewProgramArguments = (options: CommunityReviewSchedule
 
 const renderPlist = (paths: JarvisPaths, programArguments: ReadonlyArray<string>): string => {
 	const log = join(paths.canonicalGlobalRoot, "logs", `${COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL}.log`);
-	// KeepAlive: a loaded review label without a process is a writer to the
-	// community guard, so a crashed reviewer must come back. ThrottleInterval
+	// KeepAlive: a crashed reviewer comes back. While its label has no process
+	// the community guard pauses publication, and it stops publication if the
+	// label stays without a process past the retry window. ThrottleInterval
 	// bounds a crash loop (for example a broken configuration) to one start per
 	// interval.
 	return `<?xml version="1.0" encoding="UTF-8"?>

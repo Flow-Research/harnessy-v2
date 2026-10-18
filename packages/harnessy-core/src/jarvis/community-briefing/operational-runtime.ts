@@ -295,9 +295,18 @@ const proveCompatibilityAbsentWith = (
 					// Only the native review agent can be exempt, and only while it runs exactly one
 					// process. That process's exemption is inconclusive when its own check could not
 					// answer, or when the process listing could not answer so it could not be checked.
-					// A loaded agent with no process, several processes, or a refuted process is a writer.
+					// A loaded agent with no process is inconclusive too: no process exists to write,
+					// as while launchd restarts it under KeepAlive. It pauses, and escalates to a stop
+					// only if it stays without a process past the retry window. Several processes or a
+					// refuted process are writers at once.
 					if (result.status === 0 && label === "com.flow-harness.community-review-v2") {
 						const pids = [...result.stdout.matchAll(/^\s*pid = (\d+)\s*$/gmu)];
+						if (pids.length === 0) {
+							// A writer-shaped process still awaiting verification cannot be this label's
+							// process, because launchd owns none: it stays an observed writer.
+							if (unverifiedExemptions.size > 0) throw new Error("compatibility_writer_present");
+							throw new WriterCheckInconclusiveError("launchctl", "no_process");
+						}
 						const pid = pids.length === 1 ? Number(pids[0]![1]) : undefined;
 						const pending = pid === undefined ? undefined : (unverifiedExemptions.get(pid) ?? processListing);
 						if (pending !== undefined) throw pending;

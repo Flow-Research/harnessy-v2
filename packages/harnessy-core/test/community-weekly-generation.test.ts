@@ -16,8 +16,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { it as effectIt } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import { TestClock } from "effect/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	COMMUNITY_GUARD_LABELS,
@@ -49,7 +54,13 @@ import {
 	type WeeklyCommunityGenerationOptions,
 } from "../src/jarvis/community-briefing/weekly-generation.ts";
 import { JarvisPathResolver, JarvisRuntimeRoots } from "../src/jarvis/paths.ts";
-import type { ProcessProbeResult } from "../src/jarvis/writer-check.ts";
+import {
+	type ProcessProbeResult,
+	retryWhileWriterCheckInconclusive,
+	WRITER_CHECK_INCONCLUSIVE_WINDOW_MS,
+	type WriterCheckEvent,
+	WriterCheckInconclusiveError,
+} from "../src/jarvis/writer-check.ts";
 
 const roots: string[] = [];
 const temporary = () => {
@@ -645,7 +656,10 @@ describe("one-writer guard for scheduled generation", () => {
 	/** A scripted OS where the review service owns weekly generation. */
 	const scheduledOs = (input: {
 		readonly reviewCommand: string;
-		readonly reviewLaunchd?: string;
+		/** launchd's answer for the review label; a function answers per probe. */
+		readonly reviewLaunchd?: string | (() => string);
+		/** The executable lsof reports for the review PID (identity verification). */
+		readonly reviewExecutable?: string;
 		readonly extraProcesses?: ReadonlyArray<string>;
 		readonly loadedLabels?: ReadonlyArray<string>;
 	}) => {
@@ -666,11 +680,16 @@ describe("one-writer guard for scheduled generation", () => {
 				const line = processes.find((value) => value.split(" ")[1] === args[1]);
 				return answer({ stdout: `${line}\n` });
 			}
-			if (command === "/usr/sbin/lsof") return answer({ stdout: `p${args[2]}\0\nftxt\0n${process.execPath}\0\n` });
+			if (command === "/usr/sbin/lsof")
+				return answer({
+					stdout: `p${args[2]}\0\nftxt\0n${args[2] === "4100" ? (input.reviewExecutable ?? process.execPath) : process.execPath}\0\n`,
+				});
 			if (command === "/bin/launchctl") {
 				const label = String(args[1]).split("/").at(-1)!;
-				if (label === COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL)
-					return answer({ stdout: input.reviewLaunchd ?? "pid = 4100\n" });
+				if (label === COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL) {
+					const reviewLaunchd = input.reviewLaunchd ?? "pid = 4100\n";
+					return answer({ stdout: typeof reviewLaunchd === "function" ? reviewLaunchd() : reviewLaunchd });
+				}
 				if (input.loadedLabels?.includes(label)) return answer({ stdout: "state = running\n" });
 				return answer({ status: 113, stderr: `Could not find service "${label}" in domain` });
 			}
@@ -745,19 +764,97 @@ describe("one-writer guard for scheduled generation", () => {
 		).toThrow("compatibility_writer_present");
 	});
 
-	it("treats a review label between restarts as a writer (why KeepAlive keeps that gap short)", async () => {
-		const { cli, file } = await plannedReview();
-		const reviewCommand = file.programArguments.join(" ");
-		const nativeReviewer = { executable: process.execPath, entry: cli };
-		// launchd shows the loaded label with no process while it waits to restart it.
-		expect(() =>
-			makeCommunityCompatibilityProof(
-				scheduledOs({ reviewCommand, reviewLaunchd: "state = spawn scheduled\n" }),
+	/** The community guard's pre-lease policy: retry while inconclusive, escalate to the stop after the window. */
+	const guarded = (proof: () => void, events: Array<WriterCheckEvent>) =>
+		retryWhileWriterCheckInconclusive(Effect.try({ try: proof, catch: (cause) => cause }), {
+			service: "community",
+			inconclusive: (cause) => (cause instanceof WriterCheckInconclusiveError ? cause : undefined),
+			escalate: (cause) => new Error(`runtime_rejected:${cause.reason}`),
+			report: (event) => events.push(event),
+		});
+	const failure = (exit: Exit.Exit<unknown, unknown>) =>
+		Exit.isFailure(exit) ? (Cause.squash(exit.cause) as Error).message : "success";
+
+	effectIt.effect("pauses through a ~10 s KeepAlive restart of the reviewer and recovers with no stop", () =>
+		Effect.gen(function* () {
+			const { cli, file } = yield* Effect.promise(plannedReview);
+			const reviewCommand = file.programArguments.join(" ");
+			let restarted = false;
+			// launchd shows the loaded label with no process while it restarts the reviewer.
+			const proof = makeCommunityCompatibilityProof(
+				scheduledOs({
+					reviewCommand,
+					reviewLaunchd: () => (restarted ? "pid = 4100\n" : "state = spawn scheduled\n"),
+				}),
 				"darwin",
-				nativeReviewer,
-			)(),
-		).toThrow("compatibility_writer_present");
-	});
+				{ executable: process.execPath, entry: cli },
+			);
+			const events: Array<WriterCheckEvent> = [];
+			const fiber = yield* Effect.forkChild(guarded(proof, events));
+			yield* TestClock.adjust(7_000); // retries at 1 s, 3 s and 7 s: still restarting
+			expect(fiber.pollUnsafe()).toBeUndefined();
+			yield* TestClock.adjust(3_000);
+			restarted = true; // the new reviewer is up 10 s after the crash
+			yield* TestClock.adjust(5_000); // the 15 s retry sees it
+			expect(Exit.isSuccess(yield* Fiber.await(fiber))).toBe(true);
+			expect(events.map((event) => [event.event, event.reason])).toEqual([
+				["writer_check_inconclusive", "launchctl_no_process"],
+				["writer_check_inconclusive", "launchctl_no_process"],
+				["writer_check_inconclusive", "launchctl_no_process"],
+				["writer_check_inconclusive", "launchctl_no_process"],
+				["writer_check_recovered", "launchctl_no_process"],
+			]);
+		}),
+	);
+
+	effectIt.effect("stops publication when the review label stays without a process past the window", () =>
+		Effect.gen(function* () {
+			const { cli, file } = yield* Effect.promise(plannedReview);
+			const proof = makeCommunityCompatibilityProof(
+				scheduledOs({ reviewCommand: file.programArguments.join(" "), reviewLaunchd: "state = waiting\n" }),
+				"darwin",
+				{ executable: process.execPath, entry: cli },
+			);
+			const events: Array<WriterCheckEvent> = [];
+			const fiber = yield* Effect.forkChild(guarded(proof, events));
+			yield* TestClock.adjust(WRITER_CHECK_INCONCLUSIVE_WINDOW_MS - 1);
+			expect(fiber.pollUnsafe()).toBeUndefined();
+			yield* TestClock.adjust(1);
+			expect(failure(yield* Fiber.await(fiber))).toBe("runtime_rejected:launchctl_no_process");
+			expect(events.at(-1)).toMatchObject({
+				event: "writer_check_escalated",
+				service: "community",
+				reason: "launchctl_no_process",
+				inconclusiveForMs: WRITER_CHECK_INCONCLUSIVE_WINDOW_MS,
+			});
+		}),
+	);
+
+	effectIt.effect("still stops at once for two reviewer processes or one that fails identity", () =>
+		Effect.gen(function* () {
+			const { cli, file, home } = yield* Effect.promise(plannedReview);
+			const reviewCommand = file.programArguments.join(" ");
+			const impostor = join(home, "impostor-node");
+			writeFileSync(impostor, "not the release node\n");
+			for (const os of [
+				scheduledOs({ reviewCommand, reviewLaunchd: "pid = 4100\npid = 4101\n" }),
+				// launchd's PID is not the verified reviewer process.
+				scheduledOs({ reviewCommand, reviewLaunchd: "pid = 4999\n" }),
+				// The PID runs another executable than the release's Node.
+				scheduledOs({ reviewCommand, reviewExecutable: impostor }),
+			]) {
+				const events: Array<WriterCheckEvent> = [];
+				const exit = yield* Effect.exit(
+					guarded(
+						makeCommunityCompatibilityProof(os, "darwin", { executable: process.execPath, entry: cli }),
+						events,
+					),
+				);
+				expect(failure(exit)).toBe("compatibility_writer_present");
+				expect(events).toEqual([]);
+			}
+		}),
+	);
 
 	it("keeps the plan and status commands outside the guarded command route", async () => {
 		const { cli } = await plannedReview();
