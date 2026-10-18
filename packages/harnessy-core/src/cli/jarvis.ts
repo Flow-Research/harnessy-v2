@@ -641,9 +641,21 @@ export const jarvisMeetingFathomStatusCommand = Command.make(
 			yield* Console.log(`Fathom V2 boundary: ${result.ready ? "ready" : "not ready"}`);
 			yield* Console.log(`Accounts: ${result.accounts.join(", ") || "none"}`);
 			yield* Console.log(`Inbox: ${result.inboxPath}`);
+			const checkpoint = result.pollCheckpoint;
+			yield* Console.log(
+				`V2 poll checkpoint: ${checkpoint.path} (${checkpoint.state === "ok" ? "ok" : `${checkpoint.state}: ${checkpoint.reason}`})`,
+			);
+			for (const account of checkpoint.data?.accounts ?? [])
+				yield* Console.log(
+					`  ${account.account}: ${account.updatedAt === null ? "never polled" : `updated ${account.updatedAt}`}${account.stale ? " (stale)" : ""}`,
+				);
+			if (result.legacyPollState.present)
+				yield* Console.log(`Legacy V1 poll state (not written by V2): ${result.legacyPollState.path}`);
 			for (const issue of result.issues) yield* Console.log(`Issue: ${issue}`);
 		}),
-).pipe(Command.withDescription("Inspect Fathom accounts and local inbox state without provider calls"));
+).pipe(
+	Command.withDescription("Inspect Fathom accounts, inbox state and the V2 poll checkpoint without provider calls"),
+);
 
 export const jarvisMeetingFathomListCommand = Command.make(
 	"list",
