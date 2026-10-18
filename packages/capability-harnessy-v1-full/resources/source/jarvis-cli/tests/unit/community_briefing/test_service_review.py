@@ -340,7 +340,9 @@ def test_review_server_edits_and_approves_both_weekly_artifacts(tmp_path: Path) 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        with httpx.Client(base_url=f"http://127.0.0.1:{port}") as client:
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{port}", headers={"Origin": f"http://127.0.0.1:{port}"}
+        ) as client:
             token = review_token(briefing_service.state_root)
             assert client.get("/", params={"token": token}).status_code == 200
             page = client.get(f"/briefing/{generated.item.briefing_id}")

@@ -478,7 +478,10 @@ class CommunityDraftAdapterTests(unittest.TestCase):
                     def http(method, path, fields=None, cookie=None):
                         connection = HTTPConnection(url.hostname, url.port, timeout=2)
                         try:
-                            headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                            headers = {
+                                "Origin": f"http://{url.netloc}",
+                                "Content-Type": "application/x-www-form-urlencoded",
+                            }
                             if cookie:
                                 headers["Cookie"] = cookie
                             connection.request(method, path, urlencode(fields) if fields else None, headers)

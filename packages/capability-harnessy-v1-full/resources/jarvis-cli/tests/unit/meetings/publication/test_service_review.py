@@ -349,7 +349,10 @@ class TestReviewServer:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            with httpx.Client(base_url=f"http://127.0.0.1:{port}") as client:
+            with httpx.Client(
+                base_url=f"http://127.0.0.1:{port}",
+                headers={"Origin": f"http://127.0.0.1:{port}"},
+            ) as client:
                 assert client.get("/").status_code == 401
                 token = review_token(service.state_root)
                 inbox = client.get("/", params={"token": token})
@@ -463,7 +466,10 @@ class TestReviewServer:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            with httpx.Client(base_url=f"http://127.0.0.1:{port}") as client:
+            with httpx.Client(
+                base_url=f"http://127.0.0.1:{port}",
+                headers={"Origin": f"http://127.0.0.1:{port}"},
+            ) as client:
                 token = review_token(service.state_root)
                 client.get("/", params={"token": token})
                 item_page = client.get(f"/item/{item_id}")
@@ -510,7 +516,10 @@ class TestReviewServer:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            with httpx.Client(base_url=f"http://127.0.0.1:{port}") as client:
+            with httpx.Client(
+                base_url=f"http://127.0.0.1:{port}",
+                headers={"Origin": f"http://127.0.0.1:{port}"},
+            ) as client:
                 token = review_token(service.state_root)
                 client.get("/", params={"token": token})
                 item_page = client.get(f"/item/{item_id}")
