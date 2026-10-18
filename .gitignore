@@ -53,3 +53,7 @@ harnessy-v1/
 .supply-chain-python/
 # Generated Executor task cache; source and other untracked output remain checked.
 /executor/.turbo/cache/
+
+# Python bytecode
+__pycache__/
+*.pyc

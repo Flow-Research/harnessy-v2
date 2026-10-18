@@ -614,6 +614,10 @@ class ReviewRendezvousTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        # Importing must not write resources/__pycache__ into the packaged tree.
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        cls.addClassCleanup(setattr, sys, "dont_write_bytecode", previous)
         spec = importlib.util.spec_from_file_location("community_draft_adapter", ADAPTER)
         cls.adapter = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.adapter)
