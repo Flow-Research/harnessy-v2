@@ -25,7 +25,7 @@ describe("meeting setup command boundary", () => {
 						cwd: packageRoot,
 						encoding: "utf8",
 						timeout: 10_000,
-						env: { HOME: root, NODE_NO_WARNINGS: "1" },
+						env: { PI_AUTH_ENCRYPTION: "off", HOME: root, NODE_NO_WARNINGS: "1" },
 					},
 				);
 				expect(result.error).toBeUndefined();

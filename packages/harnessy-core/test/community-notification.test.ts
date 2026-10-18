@@ -21,7 +21,7 @@ it.each(["pending", "error"] as const)(
 					timeout: 2000,
 					killSignal: "SIGKILL",
 					maxBuffer: 1024,
-					env: { PATH: "/usr/bin:/bin" },
+					env: { PI_AUTH_ENCRYPTION: "off", PATH: "/usr/bin:/bin" },
 				});
 				// Real process execution with the OS executable replaced, not a desktop alert.
 				execFile(

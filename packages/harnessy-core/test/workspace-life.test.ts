@@ -52,7 +52,7 @@ const fixture = () => {
 const execute = (command: ExternalCommand) =>
 	execFileSync("python3", [...command.args], {
 		cwd: command.cwd,
-		env: { PATH: process.env.PATH, ...command.env },
+		env: { PI_AUTH_ENCRYPTION: "off", PATH: process.env.PATH, ...command.env },
 		encoding: "utf8",
 		stdio: "pipe",
 		timeout: 30_000,
@@ -167,7 +167,7 @@ describe("workspace Life adapter", () => {
 			executable: "python3",
 			args: [join(scripts, "daily-brief")],
 			cwd: home,
-			env: { HOME: home },
+			env: { PI_AUTH_ENCRYPTION: "off", HOME: home },
 		};
 		expect(prepareWorkspaceLifeCommand(command)).toEqual({ command, snapshotPath: null });
 		const unrelated = { ...command, args: ["other.py"] };

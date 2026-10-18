@@ -998,7 +998,7 @@ describe("community operational consumer", () => {
 			const child = fork(new URL("./support/community-operational-child.ts", import.meta.url), [configPath], {
 				execArgv: ["--import", "tsx"],
 				cwd: join(import.meta.dirname, ".."),
-				env: { NODE_NO_WARNINGS: "1", TSX_TSCONFIG_PATH: childConfig },
+				env: { PI_AUTH_ENCRYPTION: "off", NODE_NO_WARNINGS: "1", TSX_TSCONFIG_PATH: childConfig },
 				stdio: ["ignore", "ignore", "pipe", "ipc"],
 			});
 			children.push(child);

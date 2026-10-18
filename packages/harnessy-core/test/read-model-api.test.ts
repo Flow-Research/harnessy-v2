@@ -194,6 +194,7 @@ describe("meeting publication configuration", () => {
 		});
 		const overridden = readMeetingPublicationConfig({
 			configPath: join(home, ".jarvis", "config.yaml"),
+			// harnessy-test-env: configuration, not a child process environment
 			env: { JARVIS_MEETING_PUBLICATION__REVIEW_PORT: "8775", OTHER: "ignored", UNSET: undefined },
 			now: NOW,
 		});
@@ -259,6 +260,7 @@ describe("meeting publication configuration", () => {
 		expect(
 			readMeetingPublicationConfig({
 				homeRoot: home,
+				// harnessy-test-env: configuration, not a child process environment
 				env: { JARVIS_MEETING_PUBLICATION__REVIEW_HOST: "192.0.2.10" },
 				now: NOW,
 			}),

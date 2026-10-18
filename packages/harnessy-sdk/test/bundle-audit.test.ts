@@ -51,7 +51,11 @@ function audit(
 		for (const [name, source] of Object.entries(files)) writeFileSync(join(root, "dist", name), source);
 		const result = spawnSync(process.execPath, ["--import", guard, join(root, "scripts", "audit-bundles.mjs")], {
 			cwd: root,
-			env: { NODE_NO_WARNINGS: "1", ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) },
+			env: {
+				PI_AUTH_ENCRYPTION: "off",
+				NODE_NO_WARNINGS: "1",
+				...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
+			},
 			encoding: "utf8",
 			timeout: 10000,
 		});

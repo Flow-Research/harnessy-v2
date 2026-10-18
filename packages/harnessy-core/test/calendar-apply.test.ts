@@ -526,7 +526,7 @@ await applyCalendarPlan(${JSON.stringify(path)}, ${JSON.stringify(hash)}, {
 		);
 		const child = spawnSync(process.execPath, ["--experimental-strip-types", childPath], {
 			cwd: root,
-			env: { HOME: root, NODE_OPTIONS: `--import=${guard}` },
+			env: { PI_AUTH_ENCRYPTION: "off", HOME: root, NODE_OPTIONS: `--import=${guard}` },
 			timeout: 15000,
 			encoding: "utf8",
 		});
@@ -602,7 +602,7 @@ else if (args.slice(0, 3).join(' ') === 'calendar events insert') {
 				],
 				{
 					cwd: root,
-					env: { HOME: root, NODE_NO_WARNINGS: "1", NODE_OPTIONS: `--import=${guard}` },
+					env: { PI_AUTH_ENCRYPTION: "off", HOME: root, NODE_NO_WARNINGS: "1", NODE_OPTIONS: `--import=${guard}` },
 					encoding: "utf8",
 					timeout: 15000,
 				},

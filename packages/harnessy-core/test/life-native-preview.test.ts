@@ -253,6 +253,8 @@ describe("native Life preview consumer", () => {
 			spawnSync("python3", ["-B", wrapper, adapter, output], {
 				encoding: "utf8",
 				env: {
+					// Never reach the OS keychain from a test child.
+					PI_AUTH_ENCRYPTION: "off",
 					PATH: process.env.PATH,
 					FLOW_PROJECT_ROOT: root,
 					AGENTS_LIFE_DIR: join(root, "life"),

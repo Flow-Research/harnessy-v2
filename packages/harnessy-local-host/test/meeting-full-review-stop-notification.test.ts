@@ -101,7 +101,7 @@ describe("explicit local full-review stop notification", () => {
 					killSignal: "SIGKILL",
 					maxBuffer: 1_024,
 					windowsHide: true,
-					env: { PATH: "/usr/bin:/bin" },
+					env: { PI_AUTH_ENCRYPTION: "off", PATH: "/usr/bin:/bin" },
 				});
 				completed(null);
 			}),

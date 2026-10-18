@@ -63,7 +63,12 @@ it.each(["configured", "override"])(
 						"cli-run",
 						...extra,
 					],
-					{ cwd: root, env: { HOME: root, NODE_NO_WARNINGS: "1" }, encoding: "utf8", timeout: 15000 },
+					{
+						cwd: root,
+						env: { PI_AUTH_ENCRYPTION: "off", HOME: root, NODE_NO_WARNINGS: "1" },
+						encoding: "utf8",
+						timeout: 15000,
+					},
 				);
 			const configured = JSON.parse(before.toString());
 			for (const pythonPath of [undefined, "relative-python"]) {
@@ -126,6 +131,8 @@ it.each(["configured", "override"])(
 				{
 					cwd: root,
 					env: {
+						// Never reach the OS keychain from a test child.
+						PI_AUTH_ENCRYPTION: "off",
 						HOME: root,
 						NODE_NO_WARNINGS: "1",
 						NODE_OPTIONS: `--import=${new URL("../../harnessy-local-host/test/support/fixture-network-guard.mjs", import.meta.url).href}`,

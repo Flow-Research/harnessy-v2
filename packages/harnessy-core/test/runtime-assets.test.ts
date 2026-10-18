@@ -232,7 +232,7 @@ describe("Harnessy runtime assets", () => {
 				]);
 				const configuredRoot = `${globalRoot}/custom 'root' $(false);literal`;
 				const failed = spawnSync(command, args, {
-					env: { ...env, HARNESSY_JARVIS_CLI_ROOT: configuredRoot, FIXTURE_EXIT: "37" },
+					env: { PI_AUTH_ENCRYPTION: "off", ...env, HARNESSY_JARVIS_CLI_ROOT: configuredRoot, FIXTURE_EXIT: "37" },
 					encoding: "utf8",
 					timeout: 5_000,
 				});

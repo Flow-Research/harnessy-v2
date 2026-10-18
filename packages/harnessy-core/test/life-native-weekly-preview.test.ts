@@ -142,6 +142,8 @@ describe("signed weekly Life draft consumer", () => {
 								cwd: path,
 								encoding: "utf8",
 								env: {
+									// Never reach the OS keychain from a test child.
+									PI_AUTH_ENCRYPTION: "off",
 									PATH: process.env.PATH,
 									FLOW_USER: "fixture",
 									JARVIS_WIKIS_DIR: join(path, "wikis"),
@@ -223,7 +225,12 @@ describe("signed weekly Life draft consumer", () => {
 							const child = spawnSync(command.executable, args, {
 								cwd: path,
 								encoding: "utf8",
-								env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: "1", ...command.env },
+								env: {
+									PI_AUTH_ENCRYPTION: "off",
+									PATH: process.env.PATH,
+									PYTHONDONTWRITEBYTECODE: "1",
+									...command.env,
+								},
 							});
 							expect(child.status, child.stderr).toBe(0);
 							return result(command);
