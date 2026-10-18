@@ -246,6 +246,8 @@ const exactHostInventory = [
 	"dist/portal/sources.js",
 	"dist/portal/token-store.d.ts",
 	"dist/portal/token-store.js",
+	"dist/review-open.d.ts",
+	"dist/review-open.js",
 	"dist/schema.d.ts",
 	"dist/schema.js",
 	"dist/wiki-cli.js",

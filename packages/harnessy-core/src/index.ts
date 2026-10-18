@@ -260,6 +260,8 @@ export { MeetingPublicationSource } from "./jarvis/meeting-publication/notes.ts"
 export {
 	MeetingPublicationReviewRandom,
 	MeetingPublicationReviewServer,
+	meetingPublicationReviewExchangePrefix,
+	meetingPublicationReviewIdentityDomain,
 	meetingPublicationReviewRendezvousFileName,
 } from "./jarvis/meeting-publication/review.ts";
 export type {

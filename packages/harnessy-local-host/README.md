@@ -272,7 +272,11 @@ recurring worker in the same owner, and is capped at 24 hours. The review
 server publishes an owner-only rendezvous file; the fixed
 `harnessy-meeting-review-open --state-path STATE_PATH` consumer validates that
 file and opens only the active loopback owner without receiving a bearer in
-notification arguments. The signed notifier binding supplies only the launcher
+notification arguments. It verifies the listener with a port-bound
+`GET /identity` challenge only the token holder can answer, then hands the
+platform opener only the path of an owner-only redirect page carrying a
+single-use 60-second code for `GET /exchange?code=`; the long-lived token never
+enters any argv. The signed notifier binding supplies only the launcher
 and state paths. A supervised launch can use a shorter owner-approved finite
 window without unattended renewal, reboot restart or automatic crash recovery.
 Source edits and provider writes require the separately authorized operational
@@ -463,12 +467,20 @@ harnessy-meeting-review-open --state-path STATE_PATH
 
 The native community briefing review (`harnessy jarvis community briefing review
 serve`) has the matching `harnessy-community-review-open --state-path STATE_PATH`
-launcher. It reads the review's owner-only rendezvous and `review.token` files,
+launcher, built on the same shared launcher module
+(`src/review-open.ts`). It reads the review's owner-only rendezvous and `review.token` files,
 verifies the listener with a port-bound challenge only the token holder can
 answer, and hands the platform opener only the path of an owner-only redirect page
 carrying a single-use 60-second code. The long-lived token never enters argv or
 output, and no `jarvis community briefing` command that the one-writer guards
 treat as a writer is run.
+
+Both launchers call `/usr/bin/open` on macOS and, on Linux, the first
+`xdg-open` under `/usr/bin`, `/usr/local/bin` or `/bin` whose real path and
+ancestors are root-owned and not group- or world-writable; PATH is never
+consulted, and other platforms fail with `"reason":"unsupported_platform"`. The
+redirect page and any unredeemed code are removed on redemption, after 30
+seconds, on refusal, and on SIGINT, SIGTERM or SIGHUP.
 
 Installation writes a private plist and private stdout/stderr logs; it does not
 start anything. Enablement submits that exact plist to the current macOS GUI

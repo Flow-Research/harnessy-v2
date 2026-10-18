@@ -83,7 +83,7 @@ authorized consumers; no V1 command is silently re-enabled by the mapping:
 | `publish scan --dry-run` / `status` | `harnessy-local-host scan-dry` / `status` / `inspect` | No mutation or scheduler activation from planning commands |
 | `publish approve` / `reject` / review UI | `harnessy-meeting-review` or `harnessy-meeting-full-review` | Signed review authorization and owner click-through acceptance |
 | `publish worker` | `harnessy-meeting-worker` or the composed full-review runtime | Signed worker/full-review authorization and operational acceptance |
-| `publish review open` | `harnessy-meeting-review-open` | Fixed loopback rendezvous and signed notifier binding |
+| `publish review open` | `harnessy-meeting-review-open` (identity challenge, single-use code; no token in argv) | Fixed loopback rendezvous and signed notifier binding |
 | `publish scan --enqueue` / `cutover` / `review install` | No V2 activation command | Separate scheduler, one-writer, backup, rollback, and production authorization gates |
 
 This mapping preserves the usable review/dispatch path while keeping planning
@@ -285,7 +285,23 @@ comparison, creates separately domain-derived session and CSRF values, and
 redirects immediately to `/`. The HttpOnly, SameSite=Strict, Path=/ session is
 bounded by configured lifetime and in-memory capacity. Logout, expiry, server
 scope close, and restart invalidate sessions; restart requires a fresh token
-exchange. Responses use no-store, restrictive CSP, frame denial,
+exchange.
+
+`harnessy-meeting-review-open` never puts that token in argv. It first sends
+`GET /identity?nonce=<64 hex>` and requires
+`HMAC-SHA256(token, "harnessy-meeting-review-identity:<bound port>:<nonce>")`,
+which only the listener holding the token can produce and which a relay on
+another port cannot replay. It then creates an empty, owner-only
+`meeting-review-exchange-<sha256(code)>` file and an owner-only redirect page in
+the state root, and passes only the page path to `/usr/bin/open` (macOS) or a
+root-owned `xdg-open` (Linux). `GET /exchange?code=` accepts a code once, within
+60 seconds, only from a regular, empty, owner-owned `0600` single-link file, and
+deletes the file whether or not it was valid; the synchronous unlink is the
+claim, so concurrent redemptions have one winner. The launcher removes its page
+and any unredeemed code on redemption, after 30 seconds, on refusal, and on
+SIGINT, SIGTERM or SIGHUP. `GET /exchange?token=` remains for direct owner use.
+
+Responses use no-store, restrictive CSP, frame denial,
 nosniff, bounded request/body/header/time controls, safe generic errors, and
 safe CommonMark rendering with transcript notes excluded at the source. Raw HTML
 is escaped, links allow only absolute HTTP(S), and images render as text rather
