@@ -83,6 +83,23 @@ describe("security invariant scanner", () => {
 			[{ rule: "unpinned-action", path: ".github/workflows/issue-gate.yml", line: 2 }],
 		);
 	});
+
+	it("scans local composite actions for moving action references", () => {
+		const files = new Map([
+			[".npmrc", "ignore-scripts=true\n"],
+			[".github/workflows/ci.yml", ""],
+			[".github/workflows/npm-audit.yml", ""],
+			[
+				".github/workflows/qa-security-sweep.yml",
+				"node scripts/audit-root.mjs --json\nnode scripts/audit-executor.mjs --json\nif-no-files-found: error\n",
+			],
+			[".github/actions/setup/action.yml", "runs:\n  steps:\n    - uses: actions/setup-node@v4\n"],
+		]);
+		assert.deepEqual(
+			checkSecurityContract(files).filter((finding) => finding.path === ".github/actions/setup/action.yml"),
+			[{ rule: "unpinned-action", path: ".github/actions/setup/action.yml", line: 3 }],
+		);
+	});
 });
 
 const dependencyContractFiles = () =>

@@ -51,6 +51,117 @@ const requireEvidenceUploadBetween = (issues, workflowName, workflow, jobId, ear
 	}
 };
 
+const commandLinesFor = (job) =>
+	commandsFor(job)
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+
+// The aggregate job keeps the historical required check name; the gates themselves run
+// in the parallel jobs it needs.
+export const harnessyAggregateJob = "build-check-test";
+export const harnessyGateCommands = [
+	"npm run build",
+	"npm run verify:v1-compatibility",
+	"npm run check",
+	"npm run qa:check",
+	"npm run test:qa-contract",
+	"npm run test:qa-scenarios",
+	"npm run test:sdk-fixture",
+	"npm run test:local-host-fixture",
+	"./test.sh",
+	"npm run test:coverage",
+	"npm run test:engine-fixture",
+	"npm run test:executor-package-contract",
+	"npm run test:release-artifacts:installed-local-host",
+	"npm run test:release-artifacts:installed-product",
+];
+const releaseArtifactCommands = [
+	"npm run test:release-artifacts",
+	"npm run test:release-artifacts:installed-local-host",
+	"npm run test:release-artifacts:installed-product",
+];
+const generatorCommands = [...harnessyGateCommands, ...releaseArtifactCommands];
+
+const validateHarnessyGateJobs = (issues, ci) => {
+	const aggregate = ci.jobs[harnessyAggregateJob];
+	if (aggregate === undefined) {
+		issues.push(`CI must define the ${harnessyAggregateJob} aggregate job`);
+		return;
+	}
+	const gateJobs = normalizeNeeds(aggregate.needs);
+	if (gateJobs.length === 0) issues.push(`CI:${harnessyAggregateJob} must need every Harnessy gate job`);
+	if (!String(aggregate.if ?? "").includes("always()")) {
+		issues.push(`CI:${harnessyAggregateJob} must run with always() so failed or skipped gate jobs fail it`);
+	}
+	// The verdict must be an exit-status check (jq -e) on one command line, with nothing that
+	// can swallow its failure: no "|| true", no continue-on-error on the step or the job.
+	const isVerdictLine = (line) =>
+		/^echo "\$NEEDS_JSON" \| jq -e '[^']*all\(\.value\.result == "success"\)[^']*'( > \/dev\/null)?$/u.test(line);
+	const verdict = (aggregate.steps ?? []).find((step) =>
+		Object.values(step.env ?? {}).some((value) => String(value).includes("toJSON(needs)")),
+	);
+	if (
+		verdict !== undefined &&
+		(String(verdict.run ?? "").includes("||") ||
+			String(verdict["continue-on-error"] ?? "false") !== "false" ||
+			String(aggregate["continue-on-error"] ?? "false") !== "false")
+	) {
+		issues.push(`CI:${harnessyAggregateJob} must not ignore a failed verdict (no ||, no continue-on-error)`);
+	} else if (verdict === undefined || !commandLinesFor({ steps: [verdict] }).some(isVerdictLine)) {
+		issues.push(`CI:${harnessyAggregateJob} must fail unless every needed job result is success (jq -e on NEEDS_JSON)`);
+	}
+	if (commandLinesFor(aggregate).some((line) => generatorCommands.includes(line))) {
+		issues.push(`CI:${harnessyAggregateJob} must only aggregate gate job results`);
+	}
+	for (const jobId of gateJobs) {
+		if (ci.jobs[jobId] === undefined) issues.push(`CI:${harnessyAggregateJob} needs unknown job ${jobId}`);
+	}
+
+	const jobsRunning = (command) => gateJobs.filter((jobId) => commandLinesFor(ci.jobs[jobId]).includes(command));
+	for (const command of harnessyGateCommands) {
+		if (jobsRunning(command).length === 0) issues.push(`CI:${harnessyAggregateJob} gate jobs must run ${command}`);
+	}
+
+	const buildJobs = jobsRunning("npm run build");
+	const buildJob = buildJobs[0];
+	if (buildJobs.length > 1) issues.push("CI Harnessy gate jobs must share one build job");
+	const buildUpload = (ci.jobs[buildJob]?.steps ?? []).find((step) =>
+		String(step.uses ?? "").startsWith("actions/upload-artifact@"),
+	);
+	const buildArtifact = String(buildUpload?.with?.name ?? "");
+	if (buildJob !== undefined && buildArtifact === "") issues.push(`CI:${buildJob} must upload the shared build outputs`);
+	// "Re-run failed jobs" does not re-run a successful build, so gate jobs in a later attempt
+	// must find the first attempt's artifact; a re-run build replaces it.
+	if (buildArtifact.includes("run_attempt")) {
+		issues.push(`CI:${buildJob} build artifact name must not include github.run_attempt`);
+	}
+	if (buildUpload !== undefined && String(buildUpload.with?.overwrite) !== "true") {
+		issues.push(`CI:${buildJob} build artifact upload must set overwrite: true`);
+	}
+	for (const jobId of gateJobs.filter((candidate) => candidate !== buildJob)) {
+		if (!normalizeNeeds(ci.jobs[jobId]?.needs).includes(buildJob)) {
+			issues.push(`CI:${jobId} must need the shared build job ${String(buildJob)}`);
+		}
+		const restoresBuild = (ci.jobs[jobId]?.steps ?? []).some((step) => step.with?.["build-artifact"] === buildArtifact);
+		if (buildArtifact !== "" && !restoresBuild) issues.push(`CI:${jobId} must restore the shared build outputs`);
+	}
+
+	// Every gate job, and every other job that runs a packed release part, must prove it
+	// left tracked files unchanged and produced no tracked or untracked output.
+	for (const [jobId, job] of Object.entries(ci.jobs)) {
+		const lines = commandLinesFor(job);
+		if (!gateJobs.includes(jobId) && !lines.some((line) => releaseArtifactCommands.includes(line))) continue;
+		const lastGenerator = Math.max(...lines.map((line, index) => (generatorCommands.includes(line) ? index : -1)));
+		if (lastGenerator < 0) continue;
+		for (const check of ["git diff --exit-code", "npm run check:clean-worktree"]) {
+			if (lines.lastIndexOf(check) < lastGenerator) {
+				issues.push(`CI:${jobId} must run ${check} after ${lines[lastGenerator]}`);
+			}
+		}
+	}
+};
+
 const requireBranches = (issues, workflowName, workflow, event) => {
 	const branches = workflow.on?.[event]?.branches;
 	for (const branch of ["main", "dev"]) {
@@ -74,41 +185,7 @@ export const validateCiContract = ({ ciSource, securitySource, releaseSource, pr
 		requireBranches(issues, name, workflow, "pull_request");
 	}
 
-	for (const command of [
-		"npm run build",
-		"npm run verify:v1-compatibility",
-		"npm run check",
-		"git diff --exit-code",
-		"npm run qa:check",
-		"npm run test:qa-contract",
-		"npm run test:qa-scenarios",
-		"npm run test:sdk-fixture",
-		"npm run test:local-host-fixture",
-		"./test.sh",
-		"npm run test:coverage",
-		"npm run test:engine-fixture",
-		"npm run test:executor-package-contract",
-		"npm run test:release-artifacts",
-		"npm run check:clean-worktree",
-	]) {
-		requireCommand(issues, "CI", ci, "build-check-test", command);
-	}
-	requireCommandAfter(
-		issues,
-		"CI",
-		ci,
-		"build-check-test",
-		"git diff --exit-code",
-		"npm run test:local-host-fixture",
-	);
-	requireCommandAfter(
-		issues,
-		"CI",
-		ci,
-		"build-check-test",
-		"npm run check:clean-worktree",
-		"npm run test:release-artifacts",
-	);
+	validateHarnessyGateJobs(issues, ci);
 	requireCommand(issues, "CI", ci, "executor", "bun run ci");
 	requireCommand(issues, "CI", ci, "supply-chain", "npm run test:supply-chain");
 	requireCommand(issues, "CI", ci, "supply-chain", "npm run supply-chain:generate");
@@ -154,16 +231,19 @@ export const validateCiContract = ({ ciSource, securitySource, releaseSource, pr
 
 	const packedProfileGate = (profile.gates ?? []).find((gate) => gate.name === "packed consumers and release contracts");
 	const packedProfileCommands = packedProfileGate?.commands ?? [];
-	for (const command of ["npm run test:local-host-fixture", "npm run test:release-artifacts", "npm run check:clean-worktree"]) {
+	const profileReleaseParts = [
+		"npm run test:release-artifacts:installed-local-host",
+		"npm run test:release-artifacts:installed-product",
+	];
+	for (const command of ["npm run test:local-host-fixture", ...profileReleaseParts, "npm run check:clean-worktree"]) {
 		if (!packedProfileCommands.includes(command)) {
 			issues.push(`CI profile packed consumer gate must run ${command}`);
 		}
 	}
-	if (
-		packedProfileCommands.indexOf("npm run check:clean-worktree") <
-		packedProfileCommands.indexOf("npm run test:release-artifacts")
-	) {
-		issues.push("CI profile packed consumer gate must run npm run check:clean-worktree after npm run test:release-artifacts");
+	for (const command of profileReleaseParts) {
+		if (packedProfileCommands.lastIndexOf("npm run check:clean-worktree") < packedProfileCommands.indexOf(command)) {
+			issues.push(`CI profile packed consumer gate must run npm run check:clean-worktree after ${command}`);
+		}
 	}
 
 	const declaredChecks = new Set(profile.remote?.requiredCheckNames ?? []);

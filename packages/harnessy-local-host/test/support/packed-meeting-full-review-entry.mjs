@@ -2,6 +2,7 @@ import assertStrict from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { url as inspectorUrl } from "node:inspector";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import {
 	chmodSync,
 	existsSync,
@@ -16,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
 
 import { fileSecretsPlugin } from "@executor-js/plugin-file-secrets";
 import {
@@ -40,6 +42,10 @@ import {
 	MeetingPublicationService,
 } from "../../../harnessy-core/src/jarvis/meeting-publication/service.ts";
 import { MeetingPublicationStore } from "../../../harnessy-core/src/jarvis/meeting-publication/store.ts";
+import {
+	assessManualMeetingDispatch,
+	attributableHeartbeatStallMs,
+} from "../../../harnessy-core/test/support/meeting-full-review-dispatch-outcome.ts";
 import { createMeetingPublicationFullReviewAuthorizationFixture } from "../../../harnessy-core/test/support/meeting-full-review-runtime-fixture.ts";
 import { openExistingMeetingEngineStore } from "../../../harnessy-sdk/src/meeting-publication/existing-engine-store.ts";
 import { seedExistingMeetingEngineStore } from "../../../harnessy-sdk/src/meeting-publication/existing-engine-store-test-fixture.ts";
@@ -67,6 +73,37 @@ const requestTimings = [];
 let heartbeat;
 let preserveFixture = false;
 let maximumHeartbeatStallMs = 0;
+let attributableStallMs;
+const heartbeatPeriodMs = 20;
+const epochNow = () => performance.timeOrigin + performance.now();
+const ownerHeartbeatGaps = [];
+// An idle heartbeat on a second thread of this process. It stalls only when the runner
+// stops the whole process, so its gaps separate runner starvation from synchronous work
+// on the review owner's thread (#118). Started before the owner so it covers readiness.
+const processHeartbeat = new Worker(
+	`const { parentPort } = require("node:worker_threads");
+	const now = () => performance.timeOrigin + performance.now();
+	const gaps = [];
+	let previous = now();
+	const timer = setInterval(() => {
+		const current = now();
+		if (current - previous > ${2 * heartbeatPeriodMs}) gaps.push([previous, current]);
+		previous = current;
+	}, ${heartbeatPeriodMs});
+	parentPort.on("message", () => {
+		clearInterval(timer);
+		parentPort.postMessage(gaps);
+	});`,
+	{ eval: true },
+);
+processHeartbeat.unref();
+const processHeartbeatGaps = async () => {
+	processHeartbeat.postMessage("report");
+	const [gaps] = await once(processHeartbeat, "message");
+	await processHeartbeat.terminate();
+	return gaps;
+};
+const dispatchOutcomes = [];
 const assert = (condition, message) => {
 	if (!condition) {
 		failedAssertion = message;
@@ -74,6 +111,17 @@ const assert = (condition, message) => {
 	}
 };
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+// Diagnose a rejected dispatch with its status, counts and body instead of a bare message.
+const assessDispatch = (input) => {
+	try {
+		const outcome = assessManualMeetingDispatch(input);
+		dispatchOutcomes.push({ label: input.label, ...outcome });
+		return outcome;
+	} catch (cause) {
+		failedAssertion = cause instanceof Error ? cause.message : String(cause);
+		throw cause;
+	}
+};
 const call = async (origin, path, init = {}) => {
 	const route = `${init.method ?? "GET"} ${path.split("?", 1)[0].replace(/[a-f0-9]{24}/gu, ":item")}`;
 	requestPhase = route;
@@ -99,15 +147,6 @@ const formRequest = (origin, cookie, values) => ({
 		"Content-Type": "application/x-www-form-urlencoded",
 	},
 });
-const hasDispatchResult = (body, pendingReview) =>
-	body.includes("<title>Meeting dispatch result</title>") &&
-	body.includes("<h1>Dispatch run finished</h1>") &&
-	body.includes("The bounded dispatch run completed. Queued work may remain.") &&
-	body.includes("<div><span>Source notes scanned</span><strong>2</strong></div>") &&
-	body.includes("<div><span>Published</span><strong>1</strong></div>") &&
-	body.includes("<div><span>Failed</span><strong>0</strong></div>") &&
-	body.includes(`<div><span>Waiting for review</span><strong>${pendingReview}</strong></div>`) &&
-	body.includes("Return to review");
 
 const originalMarkdown = `# Original Full Review Meeting
 
@@ -177,6 +216,15 @@ const makeConfig = (channelId) =>
 		googleDriveFolder: "Published/Meetings",
 		discordChannelId: channelId,
 	});
+
+const publishedCount = (config) => {
+	const database = new DatabaseSync(join(config.statePath, "meeting-publication.sqlite3"), { readOnly: true });
+	try {
+		return Number(database.prepare("SELECT COUNT(*) AS count FROM publication_items WHERE status='published'").get()?.count);
+	} finally {
+		database.close();
+	}
+};
 
 const seedPendingItems = (config) => {
 	const authority = meetingPublicationTestWriteAuthorityLayer(config);
@@ -352,12 +400,13 @@ try {
 				Effect.promise(async () => {
 					reviewOrigin = address.origin;
 					// Startup is excluded: measure responsiveness only while the HTTP owner is ready.
-					let previousHeartbeat = performance.now();
+					let previousHeartbeat = epochNow();
 					heartbeat = setInterval(() => {
-						const now = performance.now();
-						maximumHeartbeatStallMs = Math.max(maximumHeartbeatStallMs, now - previousHeartbeat - 20);
+						const now = epochNow();
+						maximumHeartbeatStallMs = Math.max(maximumHeartbeatStallMs, now - previousHeartbeat - heartbeatPeriodMs);
+						if (now - previousHeartbeat > 2 * heartbeatPeriodMs) ownerHeartbeatGaps.push([previousHeartbeat, now]);
 						previousHeartbeat = now;
-					}, 20);
+					}, heartbeatPeriodMs);
 					assert(new URL(address.origin).port === "18773", "Long-running review did not bind the signed fixed port.");
 					assert(
 						existsSync(join(config.statePath, "meeting-publication-v2-review.rendezvous.json")),
@@ -395,6 +444,7 @@ try {
 							updatedPage.status === 200 && updatedHash === sha256(editedMarkdown) && updatedHash !== oldHash,
 							"Updated review revision was not rendered.",
 						);
+						const publishedBeforeFirstApproval = publishedCount(config);
 						const approve = await call(
 							address.origin,
 							`/approve/${item.itemId}`,
@@ -417,31 +467,46 @@ try {
 								!inbox.body.includes('name="max_items"'),
 							"Authenticated signed-batch dispatch form was not rendered.",
 						);
-						let dispatchSettled = false;
-						let concurrentUnauthenticated;
-						// A provider mutation proves this signed dispatch is admitted, rather than
-						// merely testing an HTTP request queued before dispatch started.
-						wire.onRequest = ({ method, path }) => {
-							if (method !== "POST" || path !== "/files" || concurrentUnauthenticated !== undefined) return;
-							assert(!dispatchSettled, "Responsiveness probe started after dispatch settled.");
-							concurrentUnauthenticated = call(address.origin, "/").then(
-								(response) => ({ status: response.status, completedDuringDispatch: !dispatchSettled }),
-								() => ({ status: 0, completedDuringDispatch: false }),
+						// A provider mutation while the signed dispatch is in flight proves the owner
+						// answers HTTP during dispatch work, rather than testing a request queued before
+						// dispatch started. On a slow runner the scheduled tick may own that mutation (#118).
+						const probedDispatch = async (label, csrfValue) => {
+							let dispatchSettled = false;
+							let probe;
+							wire.onRequest = ({ method, path }) => {
+								if (method !== "POST" || path !== "/files" || probe !== undefined || dispatchSettled) return;
+								probe = call(address.origin, "/").then(
+									(response) => ({ status: response.status, completedDuringDispatch: !dispatchSettled }),
+									() => ({ status: 0, completedDuringDispatch: false }),
+								);
+							};
+							const response = await call(
+								address.origin,
+								"/dispatch",
+								formRequest(address.origin, cookie, { csrf: csrfValue }),
+							).finally(() => {
+								dispatchSettled = true;
+								wire.onRequest = undefined;
+							});
+							const probeResult = probe === undefined ? undefined : await probe;
+							assert(
+								probeResult === undefined || (probeResult.status === 401 && probeResult.completedDuringDispatch),
+								`Installed review did not answer an unauthenticated request while ${label} was ongoing.`,
 							);
+							return { response, probed: probeResult !== undefined };
 						};
-						const dispatch = await call(
-							address.origin,
-							"/dispatch",
-							formRequest(address.origin, cookie, { csrf: dispatchCsrf }),
-						).finally(() => { dispatchSettled = true; wire.onRequest = undefined; });
-						assert(concurrentUnauthenticated !== undefined, "Signed dispatch never admitted the responsiveness probe.");
-						const concurrentResult = await concurrentUnauthenticated;
-						assert(concurrentResult.status === 401 && concurrentResult.completedDuringDispatch,
-							"Installed review did not answer an unauthenticated request while signed dispatch was ongoing.");
-						assert(
-							dispatch.status === 200 && hasDispatchResult(dispatch.body, 1),
-							"Manual dispatch did not render its bounded result.",
-						);
+						const firstDispatch = await probedDispatch("signed dispatch", dispatchCsrf);
+						const firstOutcome = assessDispatch({
+							label: "Manual dispatch",
+							status: firstDispatch.response.status,
+							body: firstDispatch.response.body,
+							maxItems: 1,
+							expected: { scanned: 2, failed: 0, pendingReview: 1, published: 1 },
+							publishedSinceApproval: publishedCount(config) - publishedBeforeFirstApproval,
+						});
+						// A manual publication is provider work inside the in-flight request.
+						assert(firstOutcome.manualPublished === 0 || firstDispatch.probed,
+							"Signed dispatch never admitted the responsiveness probe.");
 						const firstDispatchDatabase = new DatabaseSync(join(config.statePath, "meeting-publication.sqlite3"), {
 							readOnly: true,
 						});
@@ -473,6 +538,7 @@ try {
 							"Installed meeting editor is not submitted with approval.",
 						);
 						const writesBeforeSecondApproval = wire.requests.filter(({ method }) => method !== "GET").length;
+						const publishedBeforeSecondApproval = publishedCount(config);
 						const secondApproval = await call(
 							address.origin,
 							`/approve/${secondItem.itemId}`,
@@ -513,21 +579,35 @@ try {
 							secondInbox.status === 200 && secondDispatchCsrf === csrf,
 							"Second authenticated dispatch form was not rendered.",
 						);
-						const secondDispatch = await call(
-							address.origin,
-							"/dispatch",
-							formRequest(address.origin, cookie, { csrf: secondDispatchCsrf }),
-						);
-						assert(
-							secondDispatch.status === 200 && hasDispatchResult(secondDispatch.body, 0),
-							"Second manual dispatch did not reuse the authorized review session.",
-						);
+						// The same session must be accepted for a second bounded dispatch. Whether this
+						// dispatch or the long-running owner's scheduled tick publishes the approved item
+						// depends on runner speed; exactly one of them must (#118).
+						const secondDispatch = await probedDispatch("the second signed dispatch", secondDispatchCsrf);
+						const secondOutcome = assessDispatch({
+							label: "Second manual dispatch did not reuse the authorized review session",
+							status: secondDispatch.response.status,
+							body: secondDispatch.response.body,
+							maxItems: 1,
+							expected: { scanned: 2, failed: 0, pendingReview: 0, published: 1 },
+							publishedSinceApproval: publishedCount(config) - publishedBeforeSecondApproval,
+						});
+						assert(secondOutcome.manualPublished === 0 || secondDispatch.probed,
+							"Second signed dispatch never admitted the responsiveness probe.");
+						assert(firstOutcome.manualPublished + secondOutcome.manualPublished > 0,
+							"The scheduled worker published both items, so no manual dispatch publication was exercised.");
 						// Let the ready-owner heartbeat account for the final HTTP handler too.
-						await new Promise((resolve) => setTimeout(resolve, 20));
+						await new Promise((resolve) => setTimeout(resolve, heartbeatPeriodMs));
 						clearInterval(heartbeat);
 						heartbeat = undefined;
-						assert(maximumHeartbeatStallMs <= 1_000,
-							`Ready installed review stalled its event loop for ${Math.round(maximumHeartbeatStallMs)} ms (budget 1000 ms).`);
+						// The 1 s budget applies to stalls caused by the owner's thread, not to periods
+						// in which the runner stopped the whole process (see attributableHeartbeatStallMs).
+						attributableStallMs = attributableHeartbeatStallMs(
+							ownerHeartbeatGaps,
+							await processHeartbeatGaps(),
+							heartbeatPeriodMs,
+						);
+						assert(attributableStallMs <= 1_000,
+							`Ready installed review stalled its event loop for ${Math.round(attributableStallMs)} ms beyond process-wide stalls (budget 1000 ms; raw maximum ${Math.round(maximumHeartbeatStallMs)} ms).`);
 						completedReviewJourney = true;
 						// Let the adapter finish the readiness callback before delivering the
 						// external stop; aborting inside the callback can race its final
@@ -544,6 +624,8 @@ try {
 			assertion: failedAssertion ?? "callback-or-runtime-failure",
 			requests: wire.requests.slice(-12).map(({ method, path }) => ({ method, path })),
 			maximumHeartbeatStallMs: Math.round(maximumHeartbeatStallMs),
+			attributableHeartbeatStallMs: attributableStallMs === undefined ? null : Math.round(attributableStallMs),
+			dispatchOutcomes,
 			requestTimings,
 		})}\n`);
 	}
@@ -1124,10 +1206,11 @@ try {
 	assert(wire.requests.slice(freshRequestOffset).every(({ method }) => method === "GET"), "Fresh installation wrote to providers.");
 	assertStrict.deepEqual(queueSnapshot(), beforeDrain, "Fresh installation altered the existing queue.");
 	process.stdout.write(
-		`${JSON.stringify({ edited: true, approved: 2, published: 2, purposeBound: true, boundedDispatches: 2, providerRequests: wire.requests.length, leaseReleased: true, serviceCleanRestarts: 2, serviceRevocationRejected: true, serviceReceiptsPreserved: true, installedOwnerEnrollment: true, startupDrain: "SIGUSR2", drainSignals: 2, inspectorEnabled: false, previousHealthCached, concurrentUnauthenticatedDuringDispatch: true, maximumHeartbeatStallMs: Math.round(maximumHeartbeatStallMs), requestTimings })}\n`,
+		`${JSON.stringify({ edited: true, approved: 2, published: 2, purposeBound: true, boundedDispatches: 2, providerRequests: wire.requests.length, leaseReleased: true, serviceCleanRestarts: 2, serviceRevocationRejected: true, serviceReceiptsPreserved: true, installedOwnerEnrollment: true, startupDrain: "SIGUSR2", drainSignals: 2, inspectorEnabled: false, previousHealthCached, concurrentUnauthenticatedDuringDispatch: true, maximumHeartbeatStallMs: Math.round(maximumHeartbeatStallMs), attributableHeartbeatStallMs: Math.round(attributableStallMs), dispatchOutcomes, requestTimings })}\n`,
 	);
 } finally {
 	clearInterval(heartbeat);
+	await processHeartbeat.terminate();
 	await Promise.all([googleServer.close(), discordServer.close()]);
 	if (!preserveFixture) rmSync(root, { recursive: true, force: true });
 }
