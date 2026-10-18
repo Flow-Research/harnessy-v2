@@ -64,7 +64,8 @@
 				"npm run test:engine-fixture",
 				"npm run test:sdk-fixture",
 				"npm run test:local-host-fixture",
-				"npm run test:release-artifacts",
+				"npm run test:release-artifacts:installed-local-host",
+				"npm run test:release-artifacts:installed-product",
 				"git diff --exit-code",
 				"npm run check:clean-worktree"
 			],
