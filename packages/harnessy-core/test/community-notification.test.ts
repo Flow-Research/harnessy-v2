@@ -21,7 +21,9 @@ it.each(["pending", "error"] as const)(
 					timeout: 2000,
 					killSignal: "SIGKILL",
 					maxBuffer: 1024,
-					env: { PI_AUTH_ENCRYPTION: "off", PATH: "/usr/bin:/bin" },
+					// The exact environment the production notifier passes: asserted, not started.
+					// harnessy-test-env: configuration, not a child process environment
+					env: { PATH: "/usr/bin:/bin" },
 				});
 				// Real process execution with the OS executable replaced, not a desktop alert.
 				execFile(
