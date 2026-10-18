@@ -35,7 +35,9 @@ test("PRTP-001 the app files are manifest-pinned and carry the strict CSP", () =
 
 test("PRTP-002 the app renders API data as text and links only to loopback services", () => {
 	run("harnessy-local-host", "test/app/lib.test.ts", "loopback http links|raw HTML, script|bounds the number|parses headings", 4);
-	run("harnessy-local-host", "test/app/app.test.tsx", "Markdown as text|unsafe hand-off", 2);
+	run("harnessy-local-host", "test/app/app.test.tsx", "Markdown as text|unsafe hand-off|hostile brief|hidden format characters", 4);
+	run("harnessy-local-host", "test/app/lib.test.ts", "block-quote nesting", 1);
+	run("harnessy-local-host", "test/app/tokens.test.ts", ".", 5);
 });
 
 test("PRTP-003 the app signs in with a one-time code and renders every screen end to end", () => {
@@ -48,7 +50,8 @@ test("PRTP-004 the app adds no writer", () => {
 });
 
 test("PRTP-005 the read routes derive the Inbox, Tasks and Jobs honestly", () => {
-	run("harnessy-local-host", "test/portal-app-api.test.ts", ".", 15);
+	run("harnessy-local-host", "test/portal-app-api.test.ts", ".", 20);
+	run("harnessy-local-host", "test/portal-task-changes.test.ts", ".", 4);
 	run("harnessy-core", "test/read-model-app.test.ts", ".", 21);
 });
 
