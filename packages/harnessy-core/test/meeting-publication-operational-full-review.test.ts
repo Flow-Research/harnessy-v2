@@ -1032,7 +1032,11 @@ describe("meeting publication authorized full-review runtime", () => {
 			// The slow path: the reviewer's dispatch arrives after the long-running owner's
 			// scheduled interval, min(reviewSessionSeconds, 120 s), has elapsed.
 			yield* TestClock.adjust(`${fixture.config.reviewSessionSeconds} seconds`);
-			yield* Effect.promise(() => expect.poll(() => stateRow(fixture)?.status).toBe("published"));
+			// The tick's publication runs in real time (cooperative artifact validation and
+			// provider calls); only its start is driven by the test clock.
+			yield* Effect.promise(() =>
+				expect.poll(() => stateRow(fixture)?.status, { timeout: 30_000, interval: 50 }).toBe("published"),
+			);
 			const dispatched = yield* Effect.promise(() => post(origin, cookie, "/dispatch", { csrf }));
 			// The same session is still authorized, but the scheduled tick already published
 			// the item, so the manual dispatch reports zero publications. The packed smoke
