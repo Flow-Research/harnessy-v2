@@ -54,7 +54,11 @@ export {
 	runAuthorizedMeetingPublicationWorker,
 } from "./jarvis/meeting-publication/operational-runtime.ts";
 export type { MeetingProviderHealth } from "./jarvis/meeting-publication/provider-health.ts";
-export { meetingPublicationReviewRendezvousFileName } from "./jarvis/meeting-publication/review.ts";
+export {
+	meetingPublicationReviewExchangePrefix,
+	meetingPublicationReviewIdentityDomain,
+	meetingPublicationReviewRendezvousFileName,
+} from "./jarvis/meeting-publication/review.ts";
 export type {
 	MeetingPublicationDiscordRequest,
 	MeetingPublicationGoogleReconnect,

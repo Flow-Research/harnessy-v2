@@ -387,6 +387,7 @@ it("keeps the private planning surface separate from the guarded runtime export"
 					"meeting-worker-command.ts",
 					"meeting-worker-cli.ts",
 					"portal-cli.ts",
+					"review-open.ts",
 					"wiki-cli.ts",
 					"wiki-command.ts",
 				].includes(name),

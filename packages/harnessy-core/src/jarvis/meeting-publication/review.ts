@@ -1,5 +1,5 @@
 import { isUtf8 } from "node:buffer";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import {
 	closeSync,
 	constants,
@@ -21,6 +21,7 @@ import { dirname, resolve } from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 
 import {
 	JARVIS_MEETING_PUBLICATION_REVIEW_MAX_BODY_BYTES,
@@ -52,6 +53,19 @@ import { MeetingPublicationStore } from "./store.ts";
 const cookieName = "hsy_meeting_review";
 const tokenFileName = "meeting-publication-v2-review.token";
 export const meetingPublicationReviewRendezvousFileName = "meeting-publication-v2-review.rendezvous.json";
+/**
+ * harnessy-meeting-review-open hands the browser a single-use code, never the
+ * long-lived token: it creates `<prefix><sha256(code)>` (empty, 0600) in the
+ * owner-only state root, and the first `GET /exchange?code=` that finds it fresh
+ * deletes it and starts a session.
+ */
+export const meetingPublicationReviewExchangePrefix = "meeting-review-exchange-";
+/** HMAC message domain for `GET /identity`: `<domain>:<bound port>:<nonce>`, keyed by the token. */
+export const meetingPublicationReviewIdentityDomain = "harnessy-meeting-review-identity";
+const exchangeMaxAgeMs = 60_000;
+/** Tolerates filesystem timestamps that run slightly ahead of the wall clock. */
+const exchangeClockSkewMs = 1_000;
+const identityNoncePattern = /^[a-f0-9]{64}$/u;
 const tokenPattern = /^[A-Za-z0-9_-]{43}$/u;
 const itemIdPattern = /^[a-f0-9]{24}$/u;
 const hashPattern = /^[a-f0-9]{64}$/u;
@@ -105,6 +119,37 @@ const secureEqual = (left: string, right: string) => {
 	const leftDigest = createHash("sha256").update(left).digest();
 	const rightDigest = createHash("sha256").update(right).digest();
 	return timingSafeEqual(leftDigest, rightDigest);
+};
+
+/**
+ * Accept a fresh, empty, owner-only, single-link exchange file once. The
+ * synchronous unlink is the claim, so concurrent requests cannot both redeem it;
+ * an invalid file is removed too, revoking the code.
+ */
+const redeemExchangeCode = (stateRoot: string, code: string, now: number) => {
+	if (!tokenPattern.test(code)) return false;
+	const path = resolve(
+		stateRoot,
+		`${meetingPublicationReviewExchangePrefix}${createHash("sha256").update(code).digest("hex")}`,
+	);
+	const uid = process.geteuid?.();
+	const redeemed = Result.try(() => {
+		const stat = lstatSync(path, { bigint: true, throwIfNoEntry: false });
+		if (stat === undefined) return false;
+		const age = now - Number(stat.mtimeMs);
+		const valid =
+			uid !== undefined &&
+			stat.isFile() &&
+			stat.uid === BigInt(uid) &&
+			(stat.mode & 0o7777n) === 0o600n &&
+			stat.nlink === 1n &&
+			stat.size === 0n &&
+			age >= -exchangeClockSkewMs &&
+			age <= exchangeMaxAgeMs;
+		unlinkSync(path);
+		return valid;
+	});
+	return Result.isSuccess(redeemed) && redeemed.success;
 };
 
 const encodeRandom = (bytes: Uint8Array, expectedLength: number) => {
@@ -413,6 +458,15 @@ const send = (
 	response.setHeader("Content-Type", "text/html; charset=utf-8");
 	response.setHeader("Content-Length", String(encoded.byteLength));
 	response.end(head ? undefined : encoded);
+};
+
+const sendIdentity = (response: ServerResponse, proof: string) => {
+	const encoded = Buffer.from(proof, "utf8");
+	setSecurityHeaders(response);
+	response.statusCode = 200;
+	response.setHeader("Content-Type", "text/plain; charset=utf-8");
+	response.setHeader("Content-Length", String(encoded.byteLength));
+	response.end(encoded);
 };
 
 const redirect = (response: ServerResponse, location: string, cookie?: string) => {
@@ -863,6 +917,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 				let randomCounter = 0;
 				let authority = "";
 				let origin = "";
+				let boundPort = 0;
 				let mutationInFlight = false;
 				let pendingReconnect:
 					| {
@@ -982,16 +1037,44 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						);
 						return;
 					}
-					if (request.method === "GET" && url.pathname === "/exchange") {
+					if (request.method === "GET" && url.pathname === "/identity") {
+						// Lets harnessy-meeting-review-open prove that this listener holds the
+						// review token before it creates a sign-in code. The proof is bound to
+						// the bound port, so a relay on another port cannot replay it.
+						const nonces = url.searchParams.getAll("nonce");
 						if (
 							!validPercentEncoding(url.search) ||
-							[...new Set(url.searchParams.keys())].some((key) => key !== "token")
+							[...url.searchParams.keys()].length !== 1 ||
+							nonces.length !== 1 ||
+							!identityNoncePattern.test(nonces[0] ?? "")
+						)
+							throw new ReviewHttpError(400, "query");
+						sendIdentity(
+							response,
+							createHmac("sha256", bootstrapToken)
+								.update(`${meetingPublicationReviewIdentityDomain}:${boundPort}:${nonces[0]}`, "utf8")
+								.digest("hex"),
+						);
+						return;
+					}
+					if (request.method === "GET" && url.pathname === "/exchange") {
+						// `?token=` stays for direct owner use and existing consumers; the
+						// launcher sends only a single-use `?code=`.
+						const kind = url.searchParams.has("code") ? "code" : "token";
+						if (
+							!validPercentEncoding(url.search) ||
+							[...new Set(url.searchParams.keys())].some((key) => key !== kind)
 						) {
 							throw new ReviewHttpError(400, "query");
 						}
-						const tokens = url.searchParams.getAll("token");
-						if (tokens.length !== 1 || !secureEqual(tokens[0] ?? "", bootstrapToken)) {
-							throw new ReviewHttpError(401, "token");
+						const supplied = url.searchParams.getAll(kind);
+						if (
+							supplied.length !== 1 ||
+							(kind === "token"
+								? !secureEqual(supplied[0] ?? "", bootstrapToken)
+								: !redeemExchangeCode(stateRoot, supplied[0] ?? "", Date.now()))
+						) {
+							throw new ReviewHttpError(401, kind);
 						}
 						const current = await now();
 						await purgeSessions(current);
@@ -1357,6 +1440,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					return yield* new MeetingPublicationReviewError({ code: "server_failed" });
 				}
 				const port = (address as AddressInfo).port;
+				boundPort = port;
 				authority = config.reviewHost === "::1" ? `[::1]:${port}` : `127.0.0.1:${port}`;
 				origin = `http://${authority}`;
 				if (port !== 0 && !isDraining()) publishRendezvous(stateRoot, origin, port);
