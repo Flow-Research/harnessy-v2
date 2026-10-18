@@ -4,7 +4,7 @@
     "kind": "jarvis-click",
     "version": "0.1.0",
     "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli",
-    "pythonSourceSha256": "907cfed132a0812c2407ac74c2dae312ed1e571c0abc3a6cbcd9853609ac5ce7"
+    "pythonSourceSha256": "7a60136773acdbc90d0bf13e392c0df42dbfb88435fcd56e363a62072ca5c2f0"
   },
   "generatedBy": "scripts/export-jarvis-command-manifest.py",
   "normalization": {
