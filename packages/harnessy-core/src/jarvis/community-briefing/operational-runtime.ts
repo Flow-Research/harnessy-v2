@@ -90,6 +90,9 @@ export const isNativeCommunityReviewProcess = (
 			"dist/cli.js",
 			"dist/jarvis/community-briefing/native-draft.js",
 			"dist/jarvis/community-briefing/review-process.js",
+			// The weekly trigger runs in the reviewer and writes drafts through it.
+			"dist/cli/community-draft.js",
+			"dist/jarvis/community-briefing/weekly-generation.js",
 			"resources/community-draft-adapter.py",
 		]) {
 			const expected = readStableMeetingPublicationSmokeFile(

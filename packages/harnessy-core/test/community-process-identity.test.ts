@@ -77,6 +77,8 @@ it("recognizes only the byte-identical installed review sibling of the service t
 			for (const relative of [
 				"dist/jarvis/community-briefing/native-draft.js",
 				"dist/jarvis/community-briefing/review-process.js",
+				"dist/cli/community-draft.js",
+				"dist/jarvis/community-briefing/weekly-generation.js",
 				"resources/community-draft-adapter.py",
 			]) {
 				const path = join(directory, "node_modules/@harnessy/core", relative);
@@ -98,6 +100,14 @@ it("recognizes only the byte-identical installed review sibling of the service t
 		writeFileSync(adapter, "// Missing native lease fencing.\n");
 		expect(matches(reviewer)).toBe(false);
 		writeFileSync(adapter, "// Matching review implementation.\n");
+		// A stale sibling scheduler must not inherit the reviewer exemption.
+		for (const relative of ["dist/cli/community-draft.js", "dist/jarvis/community-briefing/weekly-generation.js"]) {
+			const scheduler = join(root, "node_modules/@harnessy/core", relative);
+			writeFileSync(scheduler, "// Older scheduler.\n");
+			expect(matches(reviewer), relative).toBe(false);
+			writeFileSync(scheduler, "// Matching review implementation.\n");
+		}
+		expect(matches(reviewer)).toBe(true);
 		writeFileSync(reviewer, "// Older compatibility reviewer.\n");
 		expect(matches(reviewer)).toBe(false);
 		rmSync(reviewer);
