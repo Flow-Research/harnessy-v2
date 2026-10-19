@@ -10,9 +10,12 @@ export {
 	resolveLifeOrchestratorSettings,
 } from "./jarvis/life-orchestrator/config.ts";
 export * from "./read-model/api-schemas.ts";
+export * from "./read-model/app-schemas.ts";
 export {
 	type CommunityReadOptions,
 	type CommunitySummary,
+	readCommunityGeneration,
+	readCommunityStateRoot,
 	readCommunitySummary,
 } from "./read-model/community.ts";
 export {
@@ -22,14 +25,41 @@ export {
 	MAX_FATHOM_CHECKPOINT_BYTES,
 	readFathomSummary,
 } from "./read-model/fathom.ts";
-export { type BoundedDirectory, readBoundedDirectory } from "./read-model/files.ts";
+export { type BoundedDirectory, type BoundedFile, readBoundedDirectory, readBoundedFile } from "./read-model/files.ts";
 export {
+	type ExtractedTask,
+	extractBriefTasks,
+	extractRegisterTasks,
+	extractReminderTasks,
+	extractStatusTasks,
+	MAX_TASK_SOURCE_BYTES,
+	MAX_TASKS,
+	normaliseTaskText,
+	plainText,
+	readTasks,
+	type TaskReadOptions,
+	taskId,
+} from "./read-model/followups.ts";
+export {
+	describeJobSchedule,
+	JOB_SCHEDULE_TIMEZONE,
+	JOB_SCHEDULES,
+	type JobSchedule,
+	LAGOS_UTC_OFFSET_MINUTES,
+	nextCalendarRun,
+	nextJobRun,
+} from "./read-model/job-schedules.ts";
+export {
+	LIFE_BRIEF_DAYS,
 	LIFE_LEDGER_SUPPORTED_SCHEMA,
 	type LifeReadOptions,
 	type LifeSummary,
+	lifeBriefPathIfPresent,
 	MAX_REVIEW_SCAN,
 	readLifeBrief,
+	readLifeBriefDates,
 	readLifeSummary,
+	readLifeWeeklyDraft,
 } from "./read-model/life.ts";
 export { type MeetingConfigReadOptions, readMeetingPublicationConfig } from "./read-model/meeting-config.ts";
 export { type MeetingReadOptions, type MeetingSummary, readMeetingSummary } from "./read-model/meetings.ts";
@@ -42,6 +72,7 @@ export {
 	type LaunchdProbe,
 	type LaunchdProbeOptions,
 	type LaunchdProbeResult,
+	LEARNING_WIKI_SERVICE_LABEL,
 	MEETING_PUBLICATION_SERVICE_LABEL,
 	PORTAL_SERVICE_LABEL,
 	PORTAL_SERVICE_LABELS,

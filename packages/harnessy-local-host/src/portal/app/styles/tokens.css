@@ -1,0 +1,86 @@
+/*
+ * Harnessy palette and type scale. Dark is the default; light follows the
+ * system preference unless a theme was chosen (`data-theme` on <html>).
+ * Status always pairs a dot with a word; colour never stands alone.
+ *
+ * The values are the mockup's (decision 3, 2026-10-18), which corrected the
+ * spec table for contrast. Tone colours fill dots, rules, borders and badges;
+ * text set in a tone uses its `-text` token, which keeps 4.5:1 or more on
+ * --bg, --panel and --raised in both themes (test/app/tokens.test.ts).
+ */
+:root {
+	--bg: #12151a;
+	--panel: #1b1f26;
+	--raised: #222731;
+	--hairline: #2a2f38;
+	--text: #edefec;
+	--text-2: #a7adb5;
+	--muted: #878f9a;
+	--ok: #2fc7b0;
+	--attention: #e8963c;
+	--danger: #e2543d;
+	--idle: #8a93a0;
+	--ok-text: #2fc7b0;
+	--attention-text: #e8963c;
+	--danger-text: #ec6a54;
+	--idle-text: #8a93a0;
+	--on-accent: #0c1a17;
+	--focus: var(--ok);
+
+	--font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+	--font-title: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-6: 24px;
+	--radius-control: 6px;
+	--radius-panel: 10px;
+	--row: 40px;
+	--motion: 120ms ease-out;
+	color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme="dark"]) {
+		--bg: #edefec;
+		--panel: #f7f8f6;
+		--raised: #ffffff;
+		--hairline: #d6dad4;
+		--text: #12151a;
+		--text-2: #4a515b;
+		--muted: #5f6670;
+		--ok: #12806f;
+		--attention: #a65f12;
+		--danger: #b83a26;
+		--idle: #6b7480;
+		--ok-text: #0f7464;
+		--attention-text: #975611;
+		--danger-text: #b83a26;
+		--idle-text: #5f6670;
+		--on-accent: #ffffff;
+		color-scheme: light;
+	}
+}
+
+:root[data-theme="light"] {
+	--bg: #edefec;
+	--panel: #f7f8f6;
+	--raised: #ffffff;
+	--hairline: #d6dad4;
+	--text: #12151a;
+	--text-2: #4a515b;
+	--muted: #5f6670;
+	--ok: #12806f;
+	--attention: #a65f12;
+	--danger: #b83a26;
+	--idle: #6b7480;
+	--ok-text: #0f7464;
+	--attention-text: #975611;
+	--danger-text: #b83a26;
+	--idle-text: #5f6670;
+	--on-accent: #ffffff;
+	color-scheme: light;
+}

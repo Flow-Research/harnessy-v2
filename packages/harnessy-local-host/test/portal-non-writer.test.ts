@@ -22,7 +22,8 @@ import {
 	MEETING_V1_LABELS,
 } from "../../harnessy-core/src/jarvis/meeting-publication/operational-input.ts";
 import { renderPortalLaunchAgent } from "../src/portal/launchd-plan.ts";
-import { PORTAL_PAGE_SCRIPTS } from "../src/portal/page-assets.ts";
+import { loadPortalPageAssets } from "../src/portal/page-assets.ts";
+import { PORTAL_CSP } from "../src/portal/server.ts";
 import { PORTAL_TOKEN_FILE } from "../src/portal/token-store.ts";
 import { buildPortalHome, CANARY, cleanupPortalFixtures, tempDir } from "./support/portal-fixture.ts";
 import { installProof, rawRequest } from "./support/portal-http.ts";
@@ -37,9 +38,28 @@ afterEach(() => {
 	cleanupPortalFixtures();
 });
 
-const PORTAL_PAGE_PATHS = ["/", "/app.css", ...PORTAL_PAGE_SCRIPTS.map((name) => `/${name}.js`)];
+/** The page files the child serves: the built app's manifest-listed files, or the fallback page. */
+const PORTAL_PAGE_PATHS = [...loadPortalPageAssets().keys()];
 
-type RecordEntry = { kind: "spawn"; file: string; args: string[] } | { kind: "open"; path: string };
+type RecordEntry =
+	| { kind: "spawn"; file: string; args: string[] }
+	| { kind: "open"; path: string }
+	| { kind: "connect"; host: string; port: number };
+
+/** The only outgoing connections: loopback liveness probes of the known service ports. */
+const ALLOWED_CONNECTS: ReadonlySet<string> = new Set([
+	"127.0.0.1:8770",
+	"127.0.0.1:8872",
+	"127.0.0.1:4321",
+	"127.0.0.1:4788",
+	"::1:4788",
+]);
+
+/** A request path for every documented route: a `{param}` takes its documented example. */
+const examplePath = (path: string, operation: unknown): string => {
+	const parameters = (operation as { parameters?: Array<{ name: string; example: string }> }).parameters ?? [];
+	return parameters.reduce((current, parameter) => current.replace(`{${parameter.name}}`, parameter.example), path);
+};
 
 const LAUNCHCTL_PRINT = new RegExp(
 	`^/bin/launchctl print gui/\\d+/(?:${PORTAL_SERVICE_LABELS.map((label) => label.replaceAll(".", "\\.")).join("|")})$`,
@@ -56,6 +76,9 @@ const assertNonWriterRecords = (records: ReadonlyArray<RecordEntry>, canaries: R
 			const commandLine = [entry.file, ...entry.args].join(" ");
 			if (isWriterShaped(commandLine)) throw new Error(`writer-shaped spawn: ${commandLine}`);
 			if (!LAUNCHCTL_PRINT.test(commandLine)) throw new Error(`spawn outside the allowlist: ${commandLine}`);
+		} else if (entry.kind === "connect") {
+			if (!ALLOWED_CONNECTS.has(`${entry.host}:${entry.port}`))
+				throw new Error(`connect outside the allowlist: ${entry.host}:${entry.port}`);
 		} else if (canaries.includes(entry.path) || entry.path.includes(CANARY)) {
 			throw new Error(`opened a secret file: ${entry.path}`);
 		}
@@ -95,6 +118,8 @@ const startChild = async (home: string, stateDir: string, log: string) => {
 				PORTAL_RECORDER_LOG: log,
 				// launchctl is answered by the recorder, so no live launchd state is read.
 				PORTAL_RECORDER_STUB_LAUNCHCTL: "1",
+				// Liveness probes are recorded and refused: no live service is ever contacted.
+				PORTAL_RECORDER_STUB_CONNECT: "1",
 				PORTAL_RECORDER_CORE_SOURCE: coreSource,
 			},
 			stdio: ["ignore", "pipe", "pipe"],
@@ -137,7 +162,11 @@ describe("portal non-writer regression", () => {
 		let code = "";
 		// Session routes first, so the exchange has a fresh code.
 		const operations = Object.entries(paths)
-			.flatMap(([path, methods]) => Object.keys(methods).map((method) => [method.toUpperCase(), path] as const))
+			.flatMap(([path, methods]) =>
+				Object.entries(methods).map(
+					([method, operation]) => [method.toUpperCase(), examplePath(path, operation)] as const,
+				),
+			)
 			.sort(([, a], [, b]) => Number(b === "/v1/session/code") - Number(a === "/v1/session/code"));
 		for (const [method, path] of operations) {
 			const response =
@@ -160,10 +189,11 @@ describe("portal non-writer regression", () => {
 						});
 			expect([method, path, response.status]).toEqual([method, path, 200]);
 			expect(response.text).not.toContain(CANARY);
+			expect(response.headers["content-security-policy"]).toBe(PORTAL_CSP);
 			if (path === "/v1/session/code") code = (response.json as { code: string }).code;
 			called.push(`${method} ${path}`);
 		}
-		expect(called).toHaveLength(12);
+		expect(called).toHaveLength(18);
 		// The page files are served from memory: they spawn nothing and open nothing per request.
 		for (const path of PORTAL_PAGE_PATHS) {
 			const response = await rawRequest(port, { path });
@@ -193,9 +223,12 @@ describe("portal non-writer regression", () => {
 		const canaries = fixture.canaries.map((path) => realpathSync(path));
 		expect(() => assertNonWriterRecords(records, canaries)).not.toThrow();
 		const spawns = records.filter((entry) => entry.kind === "spawn");
-		// The health route probes each fixed label once (answered by the recorder, never run); elsewhere
-		// launchd does not exist and nothing spawns.
-		expect(spawns).toHaveLength(process.platform === "darwin" ? PORTAL_SERVICE_LABELS.length : 0);
+		// The health, inbox and jobs routes each probe every fixed label once (answered by the recorder,
+		// never run); elsewhere launchd does not exist and nothing spawns.
+		expect(spawns).toHaveLength(process.platform === "darwin" ? PORTAL_SERVICE_LABELS.length * 3 : 0);
+		// Liveness probes reached only the loopback service ports, and each was refused by the recorder.
+		const connects = records.filter((entry) => entry.kind === "connect");
+		expect(connects.length).toBeGreaterThan(0);
 		// The recorder did see file opens, so an empty spawn list is not a recorder failure.
 		expect(records.some((entry) => entry.kind === "open" && entry.path.includes("config.yaml"))).toBe(true);
 	});
@@ -222,6 +255,8 @@ describe("portal non-writer regression", () => {
 			[{ kind: "spawn", file: "/bin/launchctl", args: ["bootout", "gui/501/org.harnessy.portal"] }, /allowlist/u],
 			[{ kind: "spawn", file: "/bin/launchctl", args: ["print", "gui/501/com.example.other"] }, /allowlist/u],
 			[{ kind: "open", path: canary }, /secret/u],
+			[{ kind: "connect", host: "127.0.0.1", port: 22 }, /connect outside/u],
+			[{ kind: "connect", host: "192.0.2.1", port: 8770 }, /connect outside/u],
 		];
 		for (const [entry, message] of cases) expect(() => assertNonWriterRecords([entry], [canary])).toThrow(message);
 		expect(() =>

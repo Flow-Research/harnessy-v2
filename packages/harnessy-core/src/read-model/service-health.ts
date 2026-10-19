@@ -30,6 +30,8 @@ import {
 export const MEETING_PUBLICATION_SERVICE_LABEL = "org.harnessy.meeting-publication";
 export const COMMUNITY_REVIEW_SERVICE_LABEL = "com.flow-harness.community-review-v2";
 export const PORTAL_SERVICE_LABEL = "org.harnessy.portal";
+/** The learning wiki viewer on 127.0.0.1:4321 (a preview install). */
+export const LEARNING_WIKI_SERVICE_LABEL = "tech.flowresearch.learning-wiki";
 
 /** The fixed services the portal reports on. */
 export const PORTAL_SERVICE_LABELS = [
@@ -38,6 +40,7 @@ export const PORTAL_SERVICE_LABELS = [
 	MEETING_PUBLICATION_SERVICE_LABEL,
 	COMMUNITY_REVIEW_SERVICE_LABEL,
 	PORTAL_SERVICE_LABEL,
+	LEARNING_WIKI_SERVICE_LABEL,
 ] as const;
 
 export interface LaunchdProbeResult {

@@ -35,12 +35,25 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 		};
 		if (security !== undefined || route.auth === "code")
 			responses["401"] = errorResponse("Missing or invalid credential");
+		if (route.params !== undefined) responses["404"] = errorResponse("A path parameter does not match its pattern");
 		paths[route.path] = {
 			...paths[route.path],
 			[route.method.toLowerCase()]: {
 				operationId: route.operationId,
 				summary: route.summary,
 				...(security === undefined ? {} : { security }),
+				...(route.params === undefined
+					? {}
+					: {
+							parameters: Object.entries(route.params).map(([name, param]) => ({
+								name,
+								in: "path",
+								required: true,
+								description: param.description,
+								example: param.example,
+								schema: { type: "string", pattern: param.pattern },
+							})),
+						}),
 				...(field !== undefined
 					? {
 							requestBody: {

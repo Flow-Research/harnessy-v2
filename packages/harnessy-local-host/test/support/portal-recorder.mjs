@@ -6,16 +6,21 @@
 // only appends one JSON line per call to PORTAL_RECORDER_LOG:
 //   {"kind":"spawn","file":…,"args":[…]}   child_process.spawn/spawnSync/exec*/fork
 //   {"kind":"open","path":…}               fs open/read entry points (sync, callback and promises)
+//   {"kind":"connect","host":…,"port":…}  net.connect/createConnection (outgoing TCP)
 //
 // With PORTAL_RECORDER_STUB_LAUNCHCTL=1, a spawnSync of launchctl is recorded and answered with
 // launchctl's own "service not found" result (exit 113) instead of running, so the test never reads
 // the developer's live launchd state. Every other spawn still runs.
+//
+// With PORTAL_RECORDER_STUB_CONNECT=1, an outgoing TCP connection is recorded and refused
+// (ECONNREFUSED) without ever leaving the process, so liveness probes never reach a live service.
 //
 // With PORTAL_RECORDER_CORE_SOURCE set to packages/harnessy-core/src, `@harnessy/core/<subpath>`
 // resolves to that source, so the child runs the code under test rather than a stale build.
 import childProcess from "node:child_process";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
+import net from "node:net";
 import { register, syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -50,6 +55,16 @@ const wrapOpen = (target, name) => {
 };
 for (const name of ["openSync", "open", "readFileSync", "readFile", "createReadStream", "opendirSync"]) wrapOpen(fs, name);
 for (const name of ["open", "readFile", "opendir"]) wrapOpen(fsPromises, name);
+if (process.env.PORTAL_RECORDER_STUB_CONNECT === "1")
+	for (const name of ["connect", "createConnection"]) {
+		net[name] = function recordedConnect(options) {
+			const target = typeof options === "object" && options !== null ? options : { port: options };
+			record({ kind: "connect", host: String(target.host ?? "localhost"), port: Number(target.port) });
+			const socket = new net.Socket();
+			process.nextTick(() => socket.emit("error", Object.assign(new Error("connect refused by recorder"), { code: "ECONNREFUSED" })));
+			return socket;
+		};
+	}
 syncBuiltinESMExports();
 
 const coreSource = process.env.PORTAL_RECORDER_CORE_SOURCE;

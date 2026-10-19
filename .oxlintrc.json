@@ -13,6 +13,25 @@
 	},
 	"overrides": [
 		{
+			"files": ["packages/harnessy-local-host/src/portal/app/**/*.tsx", "packages/harnessy-local-host/src/portal/app/**/*.ts"],
+			"plugins": ["react"],
+			"rules": {
+				"react/no-danger": "error",
+				"react/no-danger-with-children": "error",
+				"eslint-js/no-restricted-syntax": [
+					"error",
+					{
+						"selector": "MemberExpression[property.name=/^(innerHTML|outerHTML)$/]",
+						"message": "The app renders text through React only; never assign markup."
+					},
+					{
+						"selector": "CallExpression[callee.property.name=/^(insertAdjacentHTML|write|writeln)$/]",
+						"message": "The app renders text through React only; never write markup."
+					}
+				]
+			}
+		},
+		{
 			"files": ["packages/harnessy-core/src/**/*.ts"],
 			"rules": {
 				"eslint-js/no-restricted-syntax": [

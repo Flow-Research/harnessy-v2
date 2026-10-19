@@ -115,6 +115,8 @@
 		"packages/coding-agent/examples/extensions/gondolin/**",
 		"packages/harnessy-core/test/engine-smoke.test.ts",
 		"packages/harnessy-core/test/effect-identity-probe.test.ts",
+		"packages/harnessy-local-host/src/portal/app/**",
+		"packages/harnessy-local-host/test/app/**",
 		"packages/harnessy-sdk/src/**",
 		"packages/harnessy-sdk/test/**",
 		"packages/harnessy-engine/src/**",

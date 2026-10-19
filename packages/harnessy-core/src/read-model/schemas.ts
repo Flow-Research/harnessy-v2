@@ -167,8 +167,62 @@ export const CommunityQueueSchema = Type.Object(
 	},
 	strict,
 );
+/** The review service's weekly draft generation record: schedule, failures and recent weeks. Codes only. */
+export const CommunityGenerationSchema = Type.Object(
+	{
+		schedule: nullable(
+			Type.Object(
+				{
+					weekday: Type.Integer({ minimum: 0, maximum: 6 }),
+					hour: Type.Integer({ minimum: 0, maximum: 23 }),
+					minute: Type.Integer({ minimum: 0, maximum: 59 }),
+					timezone: Type.String({ maxLength: 64 }),
+				},
+				strict,
+			),
+		),
+		/** `null` until the review service records its first week. */
+		updatedAt: nullable(Type.String({ maxLength: 40 })),
+		nextRun: nullable(instant),
+		lastFailure: nullable(
+			Type.Object(
+				{
+					weekStart: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
+					at: Type.String({ maxLength: 40 }),
+					code: Type.String({ maxLength: 64 }),
+					attempts: count,
+				},
+				strict,
+			),
+		),
+		standingFault: nullable(
+			Type.Object({ code: Type.String({ maxLength: 64 }), since: Type.String({ maxLength: 40 }) }, strict),
+		),
+		weeks: Type.Array(
+			Type.Object(
+				{
+					weekStart: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
+					status: Type.Union([Type.Literal("created"), Type.Literal("existing"), Type.Literal("failed")]),
+					attempts: count,
+					lastAttemptAt: Type.String({ maxLength: 40 }),
+					code: nullable(Type.String({ maxLength: 64 })),
+					gaveUp: Type.Boolean(),
+					recovered: Type.Boolean(),
+				},
+				strict,
+			),
+			{ maxItems: 12 },
+		),
+	},
+	strict,
+);
+
 export const CommunitySummarySchema = Type.Object(
-	{ config: TileSchema(CommunityConfigSchema), queue: TileSchema(CommunityQueueSchema) },
+	{
+		config: TileSchema(CommunityConfigSchema),
+		queue: TileSchema(CommunityQueueSchema),
+		generation: TileSchema(CommunityGenerationSchema),
+	},
 	strict,
 );
 
@@ -334,6 +388,7 @@ export const PortalSchemas = {
 	FathomSummary: FathomSummarySchema,
 	CommunityConfig: CommunityConfigSchema,
 	CommunityQueue: CommunityQueueSchema,
+	CommunityGeneration: CommunityGenerationSchema,
 	CommunitySummary: CommunitySummarySchema,
 	MeetingConfig: MeetingConfigSchema,
 	MeetingQueue: MeetingQueueSchema,
@@ -358,6 +413,7 @@ export type FathomInboxData = Static<typeof FathomInboxSchema>;
 export type FathomCheckpointData = Static<typeof FathomCheckpointSchema>;
 export type CommunityConfigData = Static<typeof CommunityConfigSchema>;
 export type CommunityQueueData = Static<typeof CommunityQueueSchema>;
+export type CommunityGenerationData = Static<typeof CommunityGenerationSchema>;
 export type MeetingConfigData = Static<typeof MeetingConfigSchema>;
 export type MeetingQueueData = Static<typeof MeetingQueueSchema>;
 export type MeetingProviderHealthData = Static<typeof MeetingProviderHealthSchema>;

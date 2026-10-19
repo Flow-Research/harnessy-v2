@@ -11,9 +11,18 @@ import type { PortalSources } from "./sources.ts";
  */
 export type PortalRouteAuth = "none" | "challenge" | "install" | "code" | "read";
 
+/** One path parameter: the pattern its value must match whole, and an example for the OpenAPI document. */
+export interface PortalRouteParam {
+	readonly pattern: string;
+	readonly description: string;
+	readonly example: string;
+}
+
 export interface PortalRoute {
 	readonly method: "GET" | "POST";
+	/** The path; a `{name}` segment is a parameter listed in `params`. */
 	readonly path: string;
+	readonly params?: Readonly<Record<string, PortalRouteParam>>;
 	readonly operationId: string;
 	readonly summary: string;
 	readonly auth: PortalRouteAuth;
@@ -23,7 +32,7 @@ export interface PortalRoute {
 	readonly data?: { readonly name: string; readonly source: keyof PortalSources };
 }
 
-export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [
+const PORTAL_CORE_ROUTES: ReadonlyArray<PortalRoute> = [
 	{
 		method: "GET",
 		path: "/v1/healthz",
@@ -128,3 +137,109 @@ export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [
 		data: { name: "workspace", source: "workspace" },
 	},
 ];
+
+const DATE_PARAM: PortalRouteParam = {
+	pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+	description: "A day within the last seven days, Africa/Lagos (YYYY-MM-DD)",
+	example: "2026-10-18",
+};
+
+/** The one Harnessy app's read routes (Phase A). */
+export const PORTAL_APP_ROUTES: ReadonlyArray<PortalRoute> = [
+	{
+		method: "GET",
+		path: "/v1/inbox",
+		operationId: "getInbox",
+		summary: "What needs you, across every service, ranked by severity (computed on the server)",
+		auth: "read",
+		schema: "Inbox",
+		data: { name: "inbox", source: "inbox" },
+	},
+	{
+		method: "GET",
+		path: "/v1/life/brief",
+		operationId: "getLifeBrief",
+		summary: "Today's Life brief as bounded text, and the briefs of the last seven days",
+		auth: "read",
+		schema: "LifeBrief",
+		data: { name: "lifeBrief", source: "lifeBrief" },
+	},
+	{
+		method: "GET",
+		path: "/v1/life/brief/{date}",
+		params: { date: DATE_PARAM },
+		operationId: "getLifeBriefForDate",
+		summary: "One recent Life brief as bounded text",
+		auth: "read",
+		schema: "LifeBrief",
+		data: { name: "lifeBrief", source: "lifeBrief" },
+	},
+	{
+		method: "GET",
+		path: "/v1/life/weekly/{runId}/draft",
+		params: {
+			runId: {
+				pattern: "^[a-f0-9]{64}$",
+				description: "The weekly run hash, as `weekly-reconcile --run` takes it",
+				example: "a".repeat(64),
+			},
+		},
+		operationId: "getLifeWeeklyDraft",
+		summary: "One weekly run's draft as bounded text",
+		auth: "read",
+		schema: "LifeWeeklyDraft",
+		data: { name: "lifeWeeklyDraft", source: "lifeWeeklyDraft" },
+	},
+	{
+		method: "GET",
+		path: "/v1/tasks",
+		operationId: "getTasks",
+		summary: "Follow-ups and tasks derived read-only from briefs, reminders, the action register and status files",
+		auth: "read",
+		schema: "Tasks",
+		data: { name: "tasks", source: "tasks" },
+	},
+	{
+		method: "GET",
+		path: "/v1/jobs",
+		operationId: "getJobs",
+		summary: "Jobs and services: schedule, next run, launchd state, loopback liveness and copy-only controls",
+		auth: "read",
+		schema: "Jobs",
+		data: { name: "jobs", source: "jobs" },
+	},
+];
+
+/** Path parameters found in a request path. */
+export type PortalRouteParams = Readonly<Record<string, string>>;
+
+const SEGMENT = /^\{([a-zA-Z]+)\}$/u;
+
+/**
+ * Find the route for `method`-independent `path`. A parameter segment matches one
+ * path segment whose value matches the parameter's whole pattern; nothing else does.
+ */
+export const matchPortalRoute = (
+	routes: ReadonlyArray<PortalRoute>,
+	path: string,
+): { readonly route: PortalRoute; readonly params: PortalRouteParams } | undefined => {
+	const parts = path.split("/");
+	for (const route of routes) {
+		const template = route.path.split("/");
+		if (template.length !== parts.length) continue;
+		const params: Record<string, string> = {};
+		const matched = template.every((segment, index) => {
+			const name = SEGMENT.exec(segment)?.[1];
+			if (name === undefined) return segment === parts[index];
+			const param = route.params?.[name];
+			if (param === undefined || !new RegExp(param.pattern, "u").test(parts[index]!)) return false;
+			params[name] = parts[index]!;
+			return true;
+		});
+		if (matched) return { route, params };
+	}
+	return undefined;
+};
+
+/** Every portal route. The server, the OpenAPI document and the non-writer test all use this table. */
+export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [...PORTAL_CORE_ROUTES, ...PORTAL_APP_ROUTES];

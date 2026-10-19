@@ -1,0 +1,42 @@
+[
+	{
+		"title": "ship the synthetic release",
+		"status": "todo",
+		"owner": "Julian",
+		"due": null,
+		"line": 6,
+		"raw": false
+	},
+	{
+		"title": "Review the synthetic pricing (due 2026-10-22)",
+		"status": "todo",
+		"owner": null,
+		"due": "2026-10-22",
+		"line": 7,
+		"raw": false
+	},
+	{
+		"title": "Done synthetic task",
+		"status": "done",
+		"owner": null,
+		"due": null,
+		"line": 8,
+		"raw": false
+	},
+	{
+		"title": "wait for the synthetic contract",
+		"status": "todo",
+		"owner": "Fola",
+		"due": null,
+		"line": 10,
+		"raw": false
+	},
+	{
+		"title": "A line that is not a bullet.",
+		"status": "todo",
+		"owner": null,
+		"due": null,
+		"line": 11,
+		"raw": true
+	}
+]

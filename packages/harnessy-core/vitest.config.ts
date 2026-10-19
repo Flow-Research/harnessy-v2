@@ -86,6 +86,10 @@ export default defineConfig({
 				// H-10 portal read model: bounded read-only readers and their schemas.
 				// One entry per file: a glob threshold is an aggregate, so a weak file could hide behind strong ones.
 				"src/read-model/api-schemas.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				// One Harnessy app (Phase A): app schemas, schedules and derived tasks.
+				"src/read-model/app-schemas.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/job-schedules.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/read-model/followups.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
 				"src/read-model/community.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/read-model/fathom.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/read-model/files.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },

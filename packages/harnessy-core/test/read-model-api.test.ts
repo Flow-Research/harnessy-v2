@@ -13,7 +13,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { portalCommand, portalHostArgs, runPortalHost } from "../src/cli/portal.ts";
+import { openCommand, portalCommand, portalHostArgs, runPortalHost } from "../src/cli/portal.ts";
 import { rootCommand } from "../src/commands.ts";
 import * as core from "../src/index.ts";
 import {
@@ -294,6 +294,22 @@ describe("harnessy portal", () => {
 		).toEqual(["serve", "--port", "8791", "--home-root", "/home/owner"]);
 		expect(portalHostArgs("open", { print: true, port: Option.none() })).toEqual(["open", "--print"]);
 		expect(portalHostArgs("open", { print: false })).toEqual(["open"]);
+		expect(portalHostArgs("open", { route: Option.some("jobs"), print: true })).toEqual([
+			"open",
+			"--route",
+			"jobs",
+			"--print",
+		]);
+	});
+
+	it("has `harnessy open` as the front door and describes `harnessy web` as the Tools engine", () => {
+		const commands = rootCommand.subcommands.flatMap((group) => group.commands);
+		const open = commands.find((command) => command.name === "open");
+		const web = commands.find((command) => command.name === "web");
+		expect(open?.description).toContain("Harnessy");
+		expect(web?.description).toContain("Tools engine");
+		expect(web?.description).toContain("harnessy open");
+		expect(openCommand.name).toBe("open");
 	});
 });
 
@@ -352,6 +368,21 @@ describe("harnessy portal through the installed host", () => {
 		expect(treeListing(home)).toEqual(tree);
 	});
 
+	it("runs `harnessy open` through the same host and fails as the host fails", async () => {
+		const state = join(tempHome("open-bad-route"), "state");
+		const exit = await Effect.runPromiseExit(
+			Command.runWith(openCommand, { version: "0.0.0-test" })([
+				"--print",
+				"--route",
+				"nowhere",
+				"--state-dir",
+				state,
+			]).pipe(Effect.provide(NodeServices.layer)),
+		);
+		expect(Exit.isFailure(exit)).toBe(true);
+		expect(String(Exit.isFailure(exit) ? exit.cause : "")).toContain("Portal host exited");
+	});
+
 	it("fails when the host exits with an error, for every subcommand", async () => {
 		const state = join(tempHome("portal-bad-port"), "state");
 		for (const args of [
@@ -359,6 +390,7 @@ describe("harnessy portal through the installed host", () => {
 			["serve", "--port", "not-a-port", "--state-dir", state, "--home-root", state, "--workspace-root", state],
 			["status", "--port", "not-a-port", "--state-dir", state],
 			["open", "--print", "--port", "not-a-port", "--state-dir", state],
+			["open", "--print", "--route", "nowhere", "--state-dir", state],
 		]) {
 			const exit = await run(args);
 			expect([args[0], Exit.isFailure(exit)]).toEqual([args[0], true]);

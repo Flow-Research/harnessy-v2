@@ -58,6 +58,31 @@ const invoke = (args: string[]) =>
 
 const port = Flag.string("port").pipe(Flag.optional);
 const stateDir = Flag.string("state-dir").pipe(Flag.optional);
+const route = Flag.string("route").pipe(
+	Flag.withDescription("Screen to open: inbox, today, tasks, jobs, reviews, learning or connections"),
+	Flag.optional,
+);
+const print = Flag.boolean("print").pipe(Flag.withDescription("Print the sign-in link instead of opening it"));
+
+const openHandler = (value: {
+	readonly port: Option.Option<string>;
+	readonly stateDir: Option.Option<string>;
+	readonly route: Option.Option<string>;
+	readonly print: boolean;
+}) =>
+	invoke(
+		portalHostArgs("open", {
+			port: value.port,
+			"state-dir": value.stateDir,
+			route: value.route,
+			print: value.print,
+		}),
+	);
+
+/** `harnessy open`: the one front door. The same as `harnessy portal open`. */
+export const openCommand = Command.make("open", { port, stateDir, route, print }, openHandler).pipe(
+	Command.withDescription("Open Harnessy, the one local app, with a one-time sign-in code"),
+);
 
 export const portalCommand = Command.make("portal").pipe(
 	Command.withSubcommands([
@@ -82,12 +107,12 @@ export const portalCommand = Command.make("portal").pipe(
 		Command.make("status", { port, stateDir }, (value) =>
 			invoke(portalHostArgs("status", { port: value.port, "state-dir": value.stateDir })),
 		).pipe(Command.withDescription("Show the portal's version and service health")),
-		Command.make("open", { port, stateDir, print: Flag.boolean("print") }, (value) =>
-			invoke(portalHostArgs("open", { port: value.port, "state-dir": value.stateDir, print: value.print })),
-		).pipe(Command.withDescription("Open the portal with a one-time sign-in code")),
+		Command.make("open", { port, stateDir, route, print }, openHandler).pipe(
+			Command.withDescription("Open Harnessy with a one-time sign-in code (same as `harnessy open`)"),
+		),
 		Command.make("service-plan", { port, stateDir }, (value) =>
 			invoke(portalHostArgs("service-plan", { port: value.port, "state-dir": value.stateDir })),
 		).pipe(Command.withDescription("Print the planned LaunchAgent; installs nothing")),
 	] as const),
-	Command.withDescription("Read-only local portal API: Today, Health and Connections"),
+	Command.withDescription("The Harnessy app server on 127.0.0.1:8790: read-only Inbox, Today, Tasks, Jobs and more"),
 );
