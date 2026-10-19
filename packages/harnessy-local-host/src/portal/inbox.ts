@@ -101,9 +101,11 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 	/** Index in `items` of the item that holds each problem, so one problem is one item. */
 	const problems = new Map<string, number>();
 	/**
-	 * Add an item. Items that name the same `problem` (for example the same Fathom
-	 * account seen by the poll checkpoint and by Connections) are one item: the one
-	 * with the highest severity is kept, the first on a tie.
+	 * Add an item. Items from different sources that name the same `problem` (the
+	 * same Fathom account seen by the poll checkpoint and by Connections) are one
+	 * item: the one with the highest severity is kept, the first on a tie. Two items
+	 * from one source are never merged: a shared key there means two names were cut
+	 * to the same prefix, not one problem.
 	 */
 	const add = (
 		item: Omit<InboxItemData, "title" | "context" | "detail"> & Record<"title" | "context" | "detail", string>,
@@ -116,8 +118,8 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 			detail: cut(item.detail, 600),
 		};
 		const held = problem === undefined ? undefined : problems.get(problem);
-		if (held === undefined) {
-			if (problem !== undefined) problems.set(problem, items.length);
+		if (held === undefined || items[held]!.source === entry.source) {
+			if (problem !== undefined && held === undefined) problems.set(problem, items.length);
 			items.push(entry);
 		} else if (RANK[entry.severity] < RANK[items[held]!.severity]) items[held] = entry;
 	};

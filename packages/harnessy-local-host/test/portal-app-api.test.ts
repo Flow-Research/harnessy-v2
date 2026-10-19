@@ -655,6 +655,30 @@ describe("inbox problems", () => {
 		// No raw reason code reaches the inbox.
 		expect(JSON.stringify(inbox.items)).not.toMatch(/never_polled|checkpoint_stale|token_expired/u);
 	});
+
+	it("never merges two accounts whose names were cut to the same prefix", () => {
+		// The accounts tile cuts names at 64 characters: two long names can arrive identical.
+		const long = "a".repeat(64);
+		const inbox = deriveInbox({
+			...baseInputs(),
+			fathomAccounts: ok({ intervalSeconds: 300, accounts: [account(long, null), account(long, null)] }),
+			connections: {
+				fathom: ok({
+					omitted: 0,
+					connections: [
+						fathomConnection(`${long}-one`, "never_polled"),
+						fathomConnection(`${long}-two`, "never_polled"),
+					],
+				}),
+			},
+		});
+		expect(keys(inbox.items)).toEqual([
+			`action_required fathom:${long}:stale`,
+			`action_required fathom:${long}:stale`,
+			`attention connection:fathom.${long}-one`,
+			`attention connection:fathom.${long}-two`,
+		]);
+	});
 });
 
 describe("jobs", () => {

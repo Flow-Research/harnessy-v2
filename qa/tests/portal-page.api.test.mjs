@@ -50,7 +50,7 @@ test("PRTP-004 the app adds no writer", () => {
 });
 
 test("PRTP-005 the read routes derive the Inbox, Tasks and Jobs honestly", () => {
-	run("harnessy-local-host", "test/portal-app-api.test.ts", ".", 21);
+	run("harnessy-local-host", "test/portal-app-api.test.ts", ".", 22);
 	run("harnessy-local-host", "test/portal-task-changes.test.ts", ".", 4);
 	run("harnessy-core", "test/read-model-app.test.ts", ".", 21);
 });
