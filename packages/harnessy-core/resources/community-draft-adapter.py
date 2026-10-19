@@ -404,6 +404,9 @@ def serve_native_review(request):
 
 
 REVIEW_RENDEZVOUS = "community-review.rendezvous.json"
+# Serializes one review's publication with another review's withdrawal. Not a
+# staged file: the sweep below never matches it.
+REVIEW_RENDEZVOUS_LOCK = ".community-review.rendezvous.lock"
 # A staged file older than this was left by a review that died while publishing.
 STALE_STAGED_SECONDS = 600
 
@@ -429,6 +432,18 @@ def _sweep_stale_staged(state_root):
             continue
 
 
+@contextmanager
+def _rendezvous_lock(state_root):
+    """Hold the rendezvous lock. The OS releases it if this process dies."""
+    descriptor = os.open(Path(state_root) / REVIEW_RENDEZVOUS_LOCK,
+                         os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def publish_review_rendezvous(state_root, port):
     """Tell harnessy-community-review-open where this listener and its token live.
 
@@ -447,21 +462,24 @@ def publish_review_rendezvous(state_root, port):
         "instance": instance,
     }, sort_keys=True) + "\n").encode()
     _sweep_stale_staged(state_root)
-    previous = _read_rendezvous(path)
-    # A random suffix: a leftover from a crashed review whose PID is reused can
-    # never block startup (which, under KeepAlive, would be a restart loop).
-    staged = state_root / f".{REVIEW_RENDEZVOUS}.{os.getpid()}.{instance}"
-    descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
+    # Under the lock, an exiting review cannot withdraw or overwrite this one
+    # between reading `previous` and replacing the file.
+    with _rendezvous_lock(state_root):
+        previous = _read_rendezvous(path)
+        # A random suffix: a leftover from a crashed review whose PID is reused can
+        # never block startup (which, under KeepAlive, would be a restart loop).
+        staged = state_root / f".{REVIEW_RENDEZVOUS}.{os.getpid()}.{instance}"
+        descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
-            os.write(descriptor, body)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        os.replace(staged, path)
-    except BaseException:
-        staged.unlink(missing_ok=True)
-        raise
+            try:
+                os.write(descriptor, body)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            os.replace(staged, path)
+        except BaseException:
+            staged.unlink(missing_ok=True)
+            raise
     return path, body, previous
 
 
@@ -491,24 +509,29 @@ def withdraw_review_rendezvous(path, published, previous=None):
     review beside the service), that one is restored, so the launcher returns
     to the service. A restored rendezvous whose review has ended is harmless:
     the launcher's identity challenge rejects it.
+
+    The compare and the update run under the rendezvous lock, so a review that
+    publishes meanwhile is never removed or overwritten.
     """
-    if _read_rendezvous(path) != published:
-        return
-    if previous is None or len(previous) > MAX_RENDEZVOUS_BYTES:
-        path.unlink(missing_ok=True)
-        return
-    staged = Path(path).parent / f".{REVIEW_RENDEZVOUS}.{os.getpid()}.{secrets.token_hex(16)}"
-    descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    try:
+    path = Path(path)
+    with _rendezvous_lock(path.parent):
+        if _read_rendezvous(path) != published:
+            return
+        if previous is None or len(previous) > MAX_RENDEZVOUS_BYTES:
+            path.unlink(missing_ok=True)
+            return
+        staged = path.parent / f".{REVIEW_RENDEZVOUS}.{os.getpid()}.{secrets.token_hex(16)}"
+        descriptor = os.open(staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
-            os.write(descriptor, previous)
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-        os.replace(staged, path)
-    except BaseException:
-        staged.unlink(missing_ok=True)
-        raise
+            try:
+                os.write(descriptor, previous)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            os.replace(staged, path)
+        except BaseException:
+            staged.unlink(missing_ok=True)
+            raise
 
 
 def main():

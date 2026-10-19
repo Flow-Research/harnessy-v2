@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, posix, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -56,6 +56,44 @@ const liveProbeRunner: ProcessProbeRunner = (path, args) => {
 	return spawnProcessProbe(executable, args);
 };
 
+/** Core files the reviewer runs that are not ES modules: its Python review adapter. */
+const COMMUNITY_REVIEW_ASSETS = ["resources/community-draft-adapter.py"] as const;
+/**
+ * One relative static `import`/`export … from` statement as tsc emits it, including the
+ * side-effect form (`import "./main.js";`). Bare package specifiers are not followed: those
+ * packages are outside Core and are not part of the compared service tree.
+ */
+const RELATIVE_STATIC_IMPORT = /^(?:import|export)\s+(?:[\w$*{},\s]+?\s+from\s*)?["'](\.\.?\/[^"'\n]+)["'];?[ \t]*$/gmu;
+/** Bounds the walk; the reviewer's real graph is far smaller. */
+const MAX_COMMUNITY_REVIEW_IDENTITY_FILES = 2_000;
+
+/**
+ * @internal The reviewer's identity file set: every Core file the review entry `dist/cli.js` loads
+ * through relative static imports, plus its Python review adapter, each with its SHA-256. It is
+ * derived from the given (trusted) Core tree on every call, so a module the reviewer starts to load
+ * is compared without a list to keep current. A file that cannot be read safely, or an import that
+ * leaves `dist/`, throws, so the exemption fails closed.
+ */
+export const communityReviewIdentityDigests = (coreRoot: string, uid: bigint): ReadonlyMap<string, string> => {
+	const read = (relative: string) =>
+		readStableMeetingPublicationSmokeFile(join(coreRoot, relative), uid, "artifact", 1048576).bytes;
+	const digests = new Map<string, string>();
+	const pending = ["dist/cli.js"];
+	for (let relative = pending.pop(); relative !== undefined; relative = pending.pop()) {
+		if (digests.has(relative)) continue;
+		if (digests.size >= MAX_COMMUNITY_REVIEW_IDENTITY_FILES) throw new Error("probe_failed");
+		const bytes = read(relative);
+		digests.set(relative, sha256MeetingPublicationSmokeBytes(bytes));
+		for (const match of Buffer.from(bytes).toString("utf8").matchAll(RELATIVE_STATIC_IMPORT)) {
+			const target = posix.normalize(posix.join(posix.dirname(relative), match[1]!));
+			if (!target.startsWith("dist/") || !target.endsWith(".js")) throw new Error("probe_failed");
+			pending.push(target);
+		}
+	}
+	for (const asset of COMMUNITY_REVIEW_ASSETS) digests.set(asset, sha256MeetingPublicationSmokeBytes(read(asset)));
+	return digests;
+};
+
 /** @internal Recognize only this installed Core's draft-only review entrypoint.
  * Process text alone is insufficient: the caller also probes its executable.
  * Unknown launch wrappers/options fail closed, rather than guessing at argv.
@@ -95,33 +133,20 @@ export const isNativeCommunityReviewProcess = (
 			realpathSync(entry) !== sibling
 		)
 			return false;
-		for (const relative of [
-			"dist/cli.js",
-			"dist/jarvis/community-briefing/native-draft.js",
-			"dist/jarvis/community-briefing/review-process.js",
-			// The weekly trigger runs in the reviewer: its routing, one-shot generation
-			// child and notification acknowledgements decide what the reviewer writes.
-			"dist/cli/community-draft.js",
-			"dist/cli/jarvis.js",
-			"dist/jarvis/community-briefing/draft-process.js",
-			"dist/jarvis/community-briefing/notification.js",
-			"dist/jarvis/community-briefing/weekly-generation.js",
-			"resources/community-draft-adapter.py",
-		]) {
-			const expected = readStableMeetingPublicationSmokeFile(
-				join(serviceRoot, "node_modules/@harnessy/core", relative),
-				BigInt(uid),
-				"artifact",
-				1048576,
-			);
+		// Everything the reviewer loads decides what it writes: its routing, the weekly
+		// trigger, credentials, provider calls, path resolution and file reads. The set is
+		// the service tree's own import graph, and each file must match byte for byte.
+		for (const [relative, digest] of communityReviewIdentityDigests(
+			join(serviceRoot, "node_modules/@harnessy/core"),
+			BigInt(uid),
+		)) {
 			const observed = readStableMeetingPublicationSmokeFile(
 				join(dirname(serviceRoot), "node_modules/@harnessy/core", relative),
 				BigInt(uid),
 				"artifact",
 				1048576,
 			);
-			if (sha256MeetingPublicationSmokeBytes(expected.bytes) !== sha256MeetingPublicationSmokeBytes(observed.bytes))
-				return false;
+			if (sha256MeetingPublicationSmokeBytes(observed.bytes) !== digest) return false;
 		}
 		return true;
 	}
@@ -143,6 +168,38 @@ export const darwinProcessExecutableFromLsof = (output: string, pid: number): st
 	}
 	return paths[0];
 };
+
+/**
+ * Crash-loop escalation. More than this many launchd starts of the review label within
+ * COMMUNITY_REVIEW_RESTART_HORIZON_MS stop publication (`launchctl_restart_loop`). A crashing
+ * reviewer restarts every ThrottleInterval (10 s), so a loop passes the limit in about a minute,
+ * while an occasional restart (an operation timeout, an owner's kickstart) stays far below it.
+ */
+export const COMMUNITY_REVIEW_RESTART_LIMIT = 5;
+export const COMMUNITY_REVIEW_RESTART_HORIZON_MS = 30 * 60_000;
+
+/**
+ * @internal Counts starts of the review label from launchd's `runs` counter over the horizon.
+ * The no-process pause (`launchctl_no_process`) ends at each verified start; this count does not
+ * reset then, so a reviewer that keeps dying ends in one clear stop. `now` is monotonic milliseconds.
+ */
+export const makeCommunityReviewRestartTracker = (
+	now: () => number = () => Number(process.hrtime.bigint() / 1_000_000n),
+) => {
+	let samples: Array<{ readonly at: number; readonly runs: number }> = [];
+	return {
+		/** Record the counter; returns the starts seen within the horizon. */
+		observe: (runs: number): number => {
+			const at = now();
+			// A lower counter means the label was unloaded and loaded again: count afresh.
+			if (runs < (samples.at(-1)?.runs ?? 0)) samples = [];
+			samples = samples.filter((sample) => at - sample.at <= COMMUNITY_REVIEW_RESTART_HORIZON_MS);
+			if (samples.at(-1)?.runs !== runs) samples.push({ at, runs });
+			return runs - samples[0]!.runs;
+		},
+	};
+};
+export type CommunityReviewRestartTracker = ReturnType<typeof makeCommunityReviewRestartTracker>;
 
 /** A label alone never exempts a legacy or stopped reviewer. */
 export const isNativeCommunityReviewLaunchAgent = (
@@ -194,6 +251,7 @@ const proveCompatibilityAbsentWith = (
 	run: ProcessProbeRunner,
 	platform: NodeJS.Platform,
 	nativeReviewer: { readonly executable: string; readonly entry: string },
+	restarts: CommunityReviewRestartTracker,
 ) => {
 	const command = (check: WriterCheckName, path: string, args: ReadonlyArray<string>) =>
 		runWriterCheckProbe(run, check, path, args);
@@ -296,6 +354,13 @@ const proveCompatibilityAbsentWith = (
 			runAllWriterCheckProbes(
 				COMMUNITY_GUARD_LABELS.map((label) => () => {
 					const result = command("launchctl", "/bin/launchctl", ["print", `gui/${uid}/${label}`]);
+					// A reviewer that keeps restarting stops publication at once, even while its current
+					// start verifies: each verified start would otherwise end the no-process pause.
+					if (result.status === 0 && label === "com.flow-harness.community-review-v2") {
+						const runs = [...result.stdout.matchAll(/^\s*runs = (\d+)\s*$/gmu)];
+						if (runs.length === 1 && restarts.observe(Number(runs[0]![1])) > COMMUNITY_REVIEW_RESTART_LIMIT)
+							throw new Error("launchctl_restart_loop");
+					}
 					if (
 						result.status === 0 &&
 						isNativeCommunityReviewLaunchAgent(label, result.stdout, nativeReviewProcesses)
@@ -351,9 +416,11 @@ export const makeCommunityCompatibilityProof =
 			executable: process.execPath,
 			entry: fileURLToPath(new URL("../../cli.js", import.meta.url)),
 		},
+		// One count per proof; the live proof is built once per process (a cached reference default).
+		restarts: CommunityReviewRestartTracker = makeCommunityReviewRestartTracker(),
 	) =>
 	(): void =>
-		proveCompatibilityAbsentWith(run, platform, nativeReviewer);
+		proveCompatibilityAbsentWith(run, platform, nativeReviewer, restarts);
 
 /** Source-private fixture seam; no observer, bypass or signing key is accepted by the CLI. */
 export const CommunityOperationSystemReference = Context.Reference<{

@@ -25,12 +25,15 @@ import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import { TestClock } from "effect/testing";
 import { Command } from "effect/unstable/cli";
-import { afterEach, describe, expect, it } from "vitest";
-import { jarvisCommunityGenerationRetryCommand } from "../src/cli/jarvis.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { jarvisCommunityGenerationRetryCommand, jarvisCommunityGenerationStatusCommand } from "../src/cli/jarvis.ts";
 import {
 	COMMUNITY_GUARD_LABELS,
+	COMMUNITY_REVIEW_RESTART_HORIZON_MS,
+	COMMUNITY_REVIEW_RESTART_LIMIT,
 	isCommunityCompatibilityWriterCommand,
 	makeCommunityCompatibilityProof,
+	makeCommunityReviewRestartTracker,
 } from "../src/jarvis/community-briefing/operational-runtime.ts";
 import {
 	COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL,
@@ -1099,6 +1102,81 @@ describe("one-writer guard for scheduled generation", () => {
 		}),
 	);
 
+	describe("crash-loop escalation (#127)", () => {
+		/** A reviewer under KeepAlive: launchd's `runs` counter, and a pid only while it is up. */
+		const crashingReviewer = async () => {
+			const { cli, file } = await plannedReview();
+			const state = { runs: 1, up: true, now: 0 };
+			const proof = makeCommunityCompatibilityProof(
+				scheduledOs({
+					reviewCommand: file.programArguments.join(" "),
+					reviewLaunchd: () =>
+						`state = ${state.up ? "running" : "spawn scheduled"}\nruns = ${state.runs}\n${state.up ? "pid = 4100\n" : ""}`,
+				}),
+				"darwin",
+				{ executable: process.execPath, entry: cli },
+				makeCommunityReviewRestartTracker(() => state.now),
+			);
+			/** One crash and its KeepAlive restart ten seconds later, each seen by a probe. */
+			const restart = () => {
+				state.up = false;
+				state.now += 1_000;
+				expect(() => proof()).toThrow("launchctl_no_process");
+				state.up = true;
+				state.runs += 1;
+				state.now += 10_000;
+			};
+			return { proof, state, restart };
+		};
+
+		it("recovers from a single restart", async () => {
+			const { proof, restart } = await crashingReviewer();
+			expect(() => proof()).not.toThrow();
+			restart();
+			expect(() => proof()).not.toThrow();
+		});
+
+		it("stops once the restarts pass the limit, although each start verifies", async () => {
+			const { proof, restart } = await crashingReviewer();
+			expect(() => proof()).not.toThrow();
+			for (let count = 1; count <= COMMUNITY_REVIEW_RESTART_LIMIT; count++) {
+				restart();
+				// The verified start ends the no-process pause, but not the restart count.
+				expect(() => proof(), `restart ${count}`).not.toThrow();
+			}
+			restart();
+			// An observed stop, not an inconclusive pause: the retry policy does not wait it out.
+			let thrown: unknown;
+			try {
+				proof();
+			} catch (error) {
+				thrown = error;
+			}
+			expect(thrown).toBeInstanceOf(Error);
+			expect(thrown).not.toBeInstanceOf(WriterCheckInconclusiveError);
+			expect((thrown as Error).message).toBe("launchctl_restart_loop");
+		});
+
+		it("forgets restarts older than the horizon and counts afresh after a reload", async () => {
+			const { proof, state, restart } = await crashingReviewer();
+			expect(() => proof()).not.toThrow();
+			// Twice the limit, but spread so that no horizon holds more than the limit.
+			const gap = Math.ceil(COMMUNITY_REVIEW_RESTART_HORIZON_MS / COMMUNITY_REVIEW_RESTART_LIMIT);
+			for (let count = 0; count < 2 * COMMUNITY_REVIEW_RESTART_LIMIT; count++) {
+				restart();
+				state.now += gap;
+				expect(() => proof()).not.toThrow();
+			}
+			// `schedule --apply` reloaded the label: launchd's counter starts again at 1.
+			state.runs = 1;
+			expect(() => proof()).not.toThrow();
+			for (let count = 0; count < COMMUNITY_REVIEW_RESTART_LIMIT; count++) restart();
+			expect(() => proof()).not.toThrow();
+			restart();
+			expect(() => proof()).toThrow("launchctl_restart_loop");
+		});
+	});
+
 	effectIt.effect("still stops at once for two reviewer processes or one that fails identity", () =>
 		Effect.gen(function* () {
 			const { cli, file, home } = yield* Effect.promise(plannedReview);
@@ -1646,6 +1724,42 @@ describe("transient provider failures and owner retries", () => {
 		// The second request is taken at once, with no ten-minute wait first; the loop then polls.
 		expect(slept).toEqual([1_000]);
 		expect(run.calls).toEqual(["2026-10-12", "2026-10-05"]);
+	});
+
+	it("generation-status fails on a configuration with YAML errors (#127)", async () => {
+		const root = temporary();
+		const status = async (config: string) => {
+			const path = join(root, "config.yaml");
+			writeFileSync(path, config);
+			const lines: Array<string> = [];
+			const log = vi.spyOn(console, "log").mockImplementation((...values: Array<unknown>) => {
+				lines.push(values.join(" "));
+			});
+			try {
+				const exit = await Effect.runPromiseExit(
+					Command.runWith(jarvisCommunityGenerationStatusCommand, { version: "test" })([
+						"--config",
+						path,
+						"--state-root",
+						root,
+						"--json",
+					]).pipe(Effect.provide(NodeServices.layer)),
+				);
+				return { exit, report: JSON.parse(lines.join("\n")) as { ok: boolean; configIssues: unknown } };
+			} finally {
+				log.mockRestore();
+			}
+		};
+		// The parser recovers a partial document; the review service refuses it, so status must too.
+		const malformed = await status(
+			"community_briefing:\n  enabled: true\n  review_host: 127.0.0.1\n    review_port: 8770\n",
+		);
+		expect(malformed.report.ok).toBe(false);
+		expect(Exit.isFailure(malformed.exit)).toBe(true);
+		expect(malformed.report.configIssues).toEqual(["configuration has invalid YAML"]);
+		const healthy = await status("community_briefing:\n  enabled: true\n");
+		expect(healthy.report).toMatchObject({ ok: true, configIssues: [] });
+		expect(Exit.isSuccess(healthy.exit)).toBe(true);
 	});
 
 	it("generation-retry needs a running scheduler and writes only an owner-only request", async () => {

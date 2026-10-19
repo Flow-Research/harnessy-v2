@@ -120,7 +120,10 @@ and provenance-verification work. No separate configuration file is created.
 Generation leaves
 the draft unapproved. Review never prints its bearer link: the ready event names
 only the listener origin and the owner-only `review.token` path, and the review
-writes an owner-only `community-review.rendezvous.json` beside the token. Open
+writes an owner-only `community-review.rendezvous.json` beside the token. A
+review publishes and withdraws that file while holding an owner-only `flock` on
+`.community-review.rendezvous.lock`, so an exiting review never removes or
+overwrites one that a newer review published meanwhile. Open
 the authenticated page with `harnessy-community-review-open --state-path
 STATE_PATH`, where `STATE_PATH` is the directory of the logged `tokenPath`. It
 checks that both files are owner-owned, mode `0600`, single-link and not

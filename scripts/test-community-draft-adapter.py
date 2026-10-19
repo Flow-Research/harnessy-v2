@@ -12,6 +12,7 @@ import select
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import uuid
@@ -707,6 +708,44 @@ class ReviewRendezvousTests(unittest.TestCase):
         self.adapter.withdraw_review_rendezvous(path, foreground, previous)
         self.assertEqual(path.read_bytes(), service)
         self.assertEqual(path.stat().st_mode & 0o7777, 0o600)
+        self.assertEqual(self.staged(), [])
+
+    def test_publication_and_withdrawal_wait_for_the_rendezvous_lock(self):
+        """#127: an exiting review never removes or overwrites a rendezvous published meanwhile."""
+        path, first, _ = self.adapter.publish_review_rendezvous(self.state, 8872)
+        lock = os.open(self.state / ".community-review.rendezvous.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, lock)
+        # A newer review holds the lock while it publishes.
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        withdrawing = threading.Thread(target=self.adapter.withdraw_review_rendezvous, args=(path, first, None))
+        withdrawing.start()
+        newer = first.replace(b"8872", b"8873")
+        try:
+            withdrawing.join(0.5)
+            self.assertTrue(withdrawing.is_alive(), "withdrawal did not wait for the rendezvous lock")
+            self.assertEqual(path.read_bytes(), first)
+            path.write_bytes(newer)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            withdrawing.join(5)
+        self.assertFalse(withdrawing.is_alive())
+        self.assertEqual(path.read_bytes(), newer)
+        # A publication waits the same way, so it never reads a `previous` that is about to change.
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        published = []
+        publishing = threading.Thread(
+            target=lambda: published.append(self.adapter.publish_review_rendezvous(self.state, 8874)))
+        publishing.start()
+        try:
+            publishing.join(0.5)
+            self.assertTrue(publishing.is_alive(), "publication did not wait for the rendezvous lock")
+            self.assertEqual(path.read_bytes(), newer)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            publishing.join(5)
+        self.assertEqual(published[0][2], newer)
+        self.assertEqual(json.loads(path.read_bytes())["port"], 8874)
+        self.assertEqual(os.stat(self.state / ".community-review.rendezvous.lock").st_mode & 0o7777, 0o600)
         self.assertEqual(self.staged(), [])
 
     def test_a_lock_file_error_never_leaves_the_review_lock_held(self):

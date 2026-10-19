@@ -811,7 +811,9 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 				isCommunityGenerationSchedulerRunning(resolved.stateRoot),
 			);
 			const latestWeek = summary.latestWeek;
-			const ok = issues.length === 0 && fault === null && summary.ok;
+			// The review service refuses a configuration with YAML errors, so status must not report it healthy.
+			const configIssues = resolved.issues;
+			const ok = configIssues.length === 0 && issues.length === 0 && fault === null && summary.ok;
 			if (json)
 				yield* Console.log(
 					JSON.stringify(
@@ -819,6 +821,7 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 							command: "jarvis community generation-status",
 							ok,
 							path,
+							configIssues,
 							schedule: { ...schedule, issues },
 							fault,
 							repair: repaired?.outcome ?? null,
@@ -833,6 +836,8 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 					),
 				);
 			else {
+				for (const issue of configIssues)
+					yield* Console.log(`Configuration issue (the review service refuses it): ${issue}`);
 				for (const issue of issues) yield* Console.log(`Schedule issue (generation is off): ${issue}`);
 				if (quarantined !== null)
 					yield* Console.log(

@@ -223,6 +223,12 @@ for plan in plans:
 				HARNESSY_COMMUNITY_TEST_CLI: join(installedCoreRoot, "dist", "cli.js"),
 			},
 		});
+		// The reviewer identity set must exist in the packed service tree and match the general CLI,
+		// or the native reviewer's exemption fails and stops publication.
+		run(process.execPath, [join(repoRoot, "node_modules/vitest/dist/cli.js"), "--run", "test/community-process-identity.test.ts"], {
+			cwd: join(repoRoot, "packages/harnessy-core"),
+			env: { ...process.env, HARNESSY_COMMUNITY_TEST_RELEASE: consumerRoot },
+		});
 		run(process.execPath, [join(repoRoot, "node_modules/vitest/dist/cli.js"), "--run", "test/fathom-cli.test.ts"], {
 			cwd: join(repoRoot, "packages/harnessy-core"),
 			env: {
