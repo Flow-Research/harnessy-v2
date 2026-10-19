@@ -22,9 +22,7 @@
  * that proves itself.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { isIP } from "node:net";
-
-import { LOCAL_IDENTITY_PATH, localIdentityProof } from "@executor-js/local";
+import { canonicalIpLiteral, LOCAL_IDENTITY_PATH, localIdentityProof } from "@executor-js/local";
 
 type IdentityFetch = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -45,10 +43,16 @@ const parseHttpOrigin = (origin: string): URL | null => {
   }
 };
 
-/** The URL's host as an IP literal without brackets, or `null` for a name. */
+/**
+ * The URL's host as a canonical IP literal without brackets, or `null` for a
+ * name or a non-canonical spelling. Servers publish and prove the canonical
+ * form only (an IPv4-mapped address such as `[::ffff:127.0.0.1]` is published
+ * as `127.0.0.1`), so any other spelling is not a published origin.
+ */
 const literalAddress = (url: URL): string | null => {
   const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
-  return isIP(host) === 0 ? null : host;
+  const canonical = canonicalIpLiteral(host);
+  return canonical !== null && canonical === host ? canonical : null;
 };
 
 const portOf = (url: URL): number =>

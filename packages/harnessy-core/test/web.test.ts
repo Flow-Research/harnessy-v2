@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { engineIdentityProof, registerBundledAnytype, waitForEngineConnection } from "../src/cli/web.ts";
+import {
+	canonicalEngineLiteral,
+	engineIdentityProof,
+	registerBundledAnytype,
+	waitForEngineConnection,
+} from "../src/cli/web.ts";
 
 /** Answer health and the identity challenge as an Executor holding `token`. */
 const engineAnswer = async (input: string | URL | Request, init: RequestInit | undefined, token: string) => {
@@ -202,6 +207,48 @@ describe("bundled AnyType cockpit registration", () => {
 			"did not prove it is the Executor",
 		);
 		expect(authorization.every((value) => value === null)).toBe(true);
+	});
+
+	it("does not hand the token to a wildcard-bound Executor, and says how to fix it", async () => {
+		const dataDir = writeManifest("live-token");
+		const authorization: Array<string | null> = [];
+		const wildcard = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+			authorization.push(new Headers(init?.headers).get("authorization"));
+			return new URL(String(input)).pathname === "/api/local-auth/identity"
+				? Response.json({ error: "identity_unavailable_on_wildcard_bind" }, { status: 403 })
+				: new Response("ok");
+		};
+		await expect(waitForEngineConnection({ dataDir, fetchImpl: wildcard, readyTimeoutMillis: 300 })).rejects.toThrow(
+			"bind 127.0.0.1 or ::1",
+		);
+		expect(authorization.every((value) => value === null)).toBe(true);
+	});
+
+	it("verifies only the canonical literal Executor publishes", async () => {
+		expect(canonicalEngineLiteral("::ffff:0:0")).toBe("0.0.0.0");
+		expect(canonicalEngineLiteral("[::FFFF:127.0.0.1]")).toBe("127.0.0.1");
+		expect(canonicalEngineLiteral("0:0:0:0:0:0:0:1")).toBe("::1");
+		expect(canonicalEngineLiteral("fe80::1%lo0")).toBeUndefined();
+		expect(canonicalEngineLiteral("localhost")).toBeUndefined();
+		const dataDir = writeManifest("live-token");
+		writeFileSync(
+			join(dataDir, "server-control", "server.json"),
+			JSON.stringify({
+				dataDir,
+				scopeDir: null,
+				connection: { origin: "http://[::ffff:0:0]:4788", auth: { kind: "bearer", token: "live-token" } },
+			}),
+		);
+		// A server answering for the mapped spelling still never verifies.
+		const mapped = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+			const url = new URL(String(input));
+			if (url.pathname !== "/api/local-auth/identity") return new Response("ok");
+			const { nonce } = JSON.parse(String(init?.body)) as { nonce: string };
+			return Response.json({ proof: engineIdentityProof("live-token", url.hostname, 4788, nonce) });
+		};
+		await expect(waitForEngineConnection({ dataDir, fetchImpl: mapped, readyTimeoutMillis: 300 })).rejects.toThrow(
+			"did not prove",
+		);
 	});
 
 	it("refuses a proof for another token or another port", async () => {

@@ -154,6 +154,19 @@ describe("verifyLocalServerIdentity", () => {
     ).toBeNull();
   });
 
+  it("refuses a non-canonical spelling of an address the server proves", async () => {
+    const origin = identityServer((nonce, port) =>
+      localIdentityProof(TOKEN, "127.0.0.1", port, nonce),
+    );
+    const port = new URL(origin).port;
+    for (const spelling of ["[::ffff:127.0.0.1]", "[::ffff:7f00:1]"]) {
+      expect(
+        await verifyLocalServerIdentity({ origin: `http://${spelling}:${port}`, token: TOKEN }),
+      ).toBe(false);
+    }
+    expect(await verifyLocalServerIdentity({ origin, token: TOKEN })).toBe(true);
+  });
+
   it("refuses an unreachable or invalid origin", async () => {
     expect(await verifyLocalServerIdentity({ origin: "http://127.0.0.1:1", token: TOKEN })).toBe(
       false,

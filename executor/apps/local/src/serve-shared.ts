@@ -245,43 +245,101 @@ export const makeLocalLoginCodes = (clock: () => number = Date.now): LocalLoginC
 };
 
 /**
- * The literal address a local client reaches a server bound to `bindAddress`
- * at, without IPv6 brackets: a wildcard bind (`0.0.0.0`, `::`) maps to the
- * loopback address of the same family, and `localhost` to `127.0.0.1` (which
- * is what `startServer` binds for it). Local URLs (the server manifest, the
- * CLI target, every opener URL) publish this literal, never the name
- * `localhost`: a client resolving `localhost` may reach `::1` first, where
- * another local user can listen on the same port number as a 127.0.0.1 server.
+ * The canonical form of an IP literal, or `null` when `value` is not one.
+ * Brackets are stripped and IPv6 is compressed and lowercased (WHATWG URL
+ * form). An IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, in any spelling)
+ * becomes its IPv4 form: the kernel delivers `[::ffff:127.0.0.1]:<port>` to
+ * whatever listens on `127.0.0.1:<port>`, and binding `::ffff:0:0` listens on
+ * every IPv4 interface, so only the IPv4 form names the socket honestly. An
+ * IPv6 zone ID (`fe80::1%lo0`) is not a literal here. Servers prove, publish
+ * and clients verify this one string.
  */
-export const localServerAddress = (bindAddress: string): string => {
-  const value = bindAddress
-    .trim()
-    .toLowerCase()
-    .replace(/^\[(.*)\]$/, "$1");
-  if (value === "" || value === "0.0.0.0" || value === "localhost") return "127.0.0.1";
-  if (value === "::") return "::1";
-  return value;
+export const canonicalIpLiteral = (value: string): string | null => {
+  const literal = value.trim().replace(/^\[(.*)\]$/, "$1");
+  if (literal.includes("%")) return null;
+  if (isIP(literal) === 4) return literal;
+  if (isIP(literal) !== 6) return null;
+  const compressed = new URL(`http://[${literal}]/`).hostname.slice(1, -1);
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(compressed);
+  if (mapped === null) return compressed;
+  const high = Number.parseInt(mapped[1]!, 16);
+  const low = Number.parseInt(mapped[2]!, 16);
+  return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
 };
 
 /**
- * Validate a `--hostname` bind value and return the literal to bind: an IP
- * literal (IPv6 with or without brackets) as is, `localhost` as `127.0.0.1`.
- * A DNS name is refused: the server publishes the address it binds and the
- * identity proof is bound to it, and a name can resolve to a different
- * address for the client than for the server. Reach the server under a name
- * with `--allowed-host` instead.
+ * The literal address a local client reaches a server bound to `bindAddress`
+ * at, canonical (see {@link canonicalIpLiteral}) and without IPv6 brackets: a
+ * wildcard bind (`0.0.0.0`, `::`) maps to the loopback address of the same
+ * family, and `localhost` to `127.0.0.1` (which is what `startServer` binds
+ * for it). Local URLs (the server manifest, the CLI target, every opener URL)
+ * publish this literal, never the name `localhost`: a client resolving
+ * `localhost` may reach `::1` first, where another local user can listen on
+ * the same port number as a 127.0.0.1 server.
+ */
+export const localServerAddress = (bindAddress: string): string => {
+  const value = bindAddress.trim().toLowerCase();
+  if (value === "" || value === "localhost") return "127.0.0.1";
+  const literal = canonicalIpLiteral(value) ?? value.replace(/^\[(.*)\]$/, "$1");
+  if (literal === "0.0.0.0") return "127.0.0.1";
+  if (literal === "::") return "::1";
+  return literal;
+};
+
+const refuseBindHostname = (value: string, reason: string): never => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time option validation outside the Effect graph; refusing to start is the intended outcome
+  throw new Error(`Refusing to start: --hostname "${value}" ${reason}`);
+};
+
+/**
+ * Validate a `--hostname` bind value and return the canonical literal to bind
+ * (see {@link canonicalIpLiteral}): an IP literal, IPv6 with or without
+ * brackets, an IPv4-mapped IPv6 address as its IPv4 form, and `localhost` as
+ * `127.0.0.1`. A DNS name is refused: the server publishes the address it
+ * binds and the identity proof is bound to it, and a name can resolve to a
+ * different address for the client than for the server. Reach the server
+ * under a name with `--allowed-host` instead. An IPv6 zone ID is refused too:
+ * a URL origin cannot carry it.
  */
 export const parseBindHostname = (value: string): string => {
   const trimmed = value.trim();
   if (trimmed.toLowerCase() === "localhost") return "127.0.0.1";
-  const literal = trimmed.replace(/^\[(.*)\]$/, "$1");
-  if (isIP(literal) !== 0) return literal.toLowerCase();
-  // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time option validation outside the Effect graph; refusing to start is the intended outcome
-  throw new Error(
-    `Refusing to start: --hostname "${value}" must be an IP address (for example 127.0.0.1, ::1 or 0.0.0.0) or localhost. ` +
+  if (trimmed.includes("%")) {
+    return refuseBindHostname(
+      value,
+      "has an IPv6 zone ID, which a URL origin cannot carry. Bind an address without a zone (for example ::1 or 127.0.0.1).",
+    );
+  }
+  const literal = canonicalIpLiteral(trimmed);
+  if (literal !== null) return literal;
+  return refuseBindHostname(
+    value,
+    "must be an IP address (for example 127.0.0.1, ::1 or 0.0.0.0) or localhost. " +
       "To reach the server under a DNS name, bind an address and pass that name with --allowed-host.",
   );
 };
+
+/**
+ * Whether a bind address listens on every interface: the unspecified address
+ * in any spelling (`0.0.0.0`, `::`, `0:0:…:0`, `::ffff:0:0`, `::ffff:0.0.0.0`).
+ * Such a server cannot prove which address a client reached: another local
+ * user can bind the loopback address on the same port (macOS allows the more
+ * specific bind) and relay the identity challenge to the real server through
+ * a LAN address.
+ */
+export const isWildcardBindAddress = (address: string): boolean => {
+  const literal = canonicalIpLiteral(address);
+  return literal === "0.0.0.0" || literal === "::";
+};
+
+/**
+ * The cockpit origin a server bound to `hostname` on `port` publishes:
+ * {@link localServerOrigin} of the validated bind. The OAuth redirect base
+ * must use the same origin, because the popup reports its result through
+ * same-origin channels (`postMessage`, `BroadcastChannel`, `storage`).
+ */
+export const localWebBaseUrl = (hostname: string, port: number): string =>
+  localServerOrigin(parseBindHostname(hostname), port);
 
 /** `http://<address>:<port>` for a literal address, bracketing IPv6. */
 export const localServerOrigin = (address: string, port: number): string => {

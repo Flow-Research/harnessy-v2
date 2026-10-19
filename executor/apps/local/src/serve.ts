@@ -28,6 +28,7 @@ import {
   localIdentityProof,
   localServerAddress,
   localServerOrigin,
+  isWildcardBindAddress,
   LOGO_PROXY_MAX_BYTES,
   parseBindHostname,
   LOGO_PROXY_PATH,
@@ -481,6 +482,12 @@ async function proxyToVite(req: Request, viteUrl: string): Promise<Response> {
 // Server
 // ---------------------------------------------------------------------------
 
+/** Error code the identity endpoint answers with on a wildcard bind. */
+export const WILDCARD_IDENTITY_ERROR = "identity_unavailable_on_wildcard_bind";
+const WILDCARD_IDENTITY_MESSAGE =
+  "This Executor listens on all interfaces (0.0.0.0 or ::), so it cannot prove its identity. " +
+  "Bind a loopback address (127.0.0.1 or ::1), or pass the token explicitly (EXECUTOR_AUTH_TOKEN with --base-url).";
+
 export interface StartServerOptions {
   port?: number;
   /** Directory containing built client assets (for dev/disk serving). */
@@ -601,6 +608,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   // before anything touches the data directory.
   const hostname = parseBindHostname(opts.hostname ?? "127.0.0.1");
   const boundAddress = localServerAddress(hostname);
+  const wildcardBind = isWildcardBindAddress(hostname);
   // ONE credential, always present: an explicit override or the stable token
   // from auth.json (minted on first run). Auth is unconditionally on — loopback
   // is no longer a free pass, since Executor runs arbitrary code that any local
@@ -766,6 +774,15 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
           const raw = await readCappedBody(req, LOCAL_LOGIN_EXCHANGE_MAX_BYTES);
           const nonce = raw === null ? null : readIdentityNonce(raw);
           if (nonce === null) return jsonNoStore({ error: "invalid_nonce" }, 400);
+          // A wildcard-bound server cannot tell which address the client
+          // reached, so a proof would let a squatter on 127.0.0.1:<port>
+          // relay the challenge through a LAN address. It never proves.
+          if (wildcardBind) {
+            return jsonNoStore(
+              { error: WILDCARD_IDENTITY_ERROR, message: WILDCARD_IDENTITY_MESSAGE },
+              403,
+            );
+          }
           return jsonNoStore({
             proof: localIdentityProof(authToken, boundAddress, boundPort, nonce),
           });
