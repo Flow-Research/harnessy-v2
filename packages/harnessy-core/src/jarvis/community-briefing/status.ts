@@ -46,6 +46,8 @@ export interface CommunityBriefingConfigResolution {
 	readonly reviewPort: number | null;
 	readonly discordChannelConfigured: boolean;
 	readonly issues: ReadonlyArray<string>;
+	/** The parsed `community_briefing` section of this one read; empty when the configuration has issues. */
+	readonly briefing: Readonly<Record<string, unknown>>;
 }
 
 const DEFAULT_QUEUE_TIMEOUT_MS = 10_000;
@@ -151,6 +153,7 @@ export const resolveCommunityBriefingConfig = (
 		reviewPort: integerValue(briefing.review_port),
 		discordChannelConfigured: stringValue(briefing.discord_channel_id) !== null,
 		issues,
+		briefing,
 	};
 };
 

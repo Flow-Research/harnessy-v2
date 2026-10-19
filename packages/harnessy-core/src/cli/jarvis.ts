@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -8,7 +7,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { Command, Flag as Options } from "effect/unstable/cli";
-import { parseDocument } from "yaml";
 import { DEFAULT_CODEX_MODEL } from "../ai/codex-model.ts";
 import {
 	COMMUNITY_REVIEW_PORT,
@@ -774,17 +772,11 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 				stateRoot: Option.getOrUndefined(stateRoot),
 			});
 			// The same lenient reading the review service uses, so a bad setting shows here.
-			const briefing = yield* Effect.try({
-				try: () => {
-					const value: unknown = parseDocument(readFileSync(resolved.configPath, "utf8")).toJS();
-					const section =
-						typeof value === "object" && value !== null
-							? (value as Record<string, unknown>).community_briefing
-							: undefined;
-					return typeof section === "object" && section !== null ? (section as Record<string, unknown>) : {};
-				},
-				catch: () => new Error(`Could not read ${resolved.configPath}.`),
-			});
+			// The review service refuses a configuration with issues (missing, unreadable or YAML errors),
+			// so status reports them and fails, but still shows the record. One read of the file decides
+			// both the state root and the schedule.
+			const configIssues = resolved.issues;
+			const briefing = resolved.briefing;
 			const { schedule, issues } = parseCommunityGenerationSchedule(
 				briefing.enabled,
 				briefing.generation_schedule,
@@ -811,7 +803,7 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 				isCommunityGenerationSchedulerRunning(resolved.stateRoot),
 			);
 			const latestWeek = summary.latestWeek;
-			const ok = issues.length === 0 && fault === null && summary.ok;
+			const ok = configIssues.length === 0 && issues.length === 0 && fault === null && summary.ok;
 			if (json)
 				yield* Console.log(
 					JSON.stringify(
@@ -819,6 +811,7 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 							command: "jarvis community generation-status",
 							ok,
 							path,
+							configIssues,
 							schedule: { ...schedule, issues },
 							fault,
 							repair: repaired?.outcome ?? null,
@@ -833,6 +826,8 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 					),
 				);
 			else {
+				for (const issue of configIssues)
+					yield* Console.log(`Configuration issue (the review service refuses it): ${issue}`);
 				for (const issue of issues) yield* Console.log(`Schedule issue (generation is off): ${issue}`);
 				if (quarantined !== null)
 					yield* Console.log(
@@ -862,6 +857,8 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 				}
 			}
 			if (repaired?.outcome === "busy") yield* Effect.fail(new Error("The record is busy; nothing was moved"));
+			// --repair cannot repair the configuration, so its issues stay fatal.
+			if (configIssues.length > 0) yield* Effect.fail(new Error("The community configuration needs attention"));
 			if (!ok && !repair) yield* Effect.fail(new Error("Weekly community generation needs attention"));
 		}),
 ).pipe(

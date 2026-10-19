@@ -48,13 +48,16 @@ import {
 import { MeetingPublicationSource } from "./notes.ts";
 import {
 	assertMeetingPublicationArtifactInventoryCurrentAsync,
+	assertMeetingPublicationHashedFileCurrent,
 	assertMeetingPublicationReviewDirectoriesCurrent,
+	hashMeetingPublicationImmutableFilesAsync,
 	isMeetingPublicationV1WriterCommand,
 	MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS,
 	MEETING_PUBLICATION_REVIEW_OPERATIONS,
 	MEETING_PUBLICATION_SMOKE_OPERATIONS,
 	MEETING_PUBLICATION_WORKER_OPERATIONS,
 	type MeetingPublicationFullReviewRuntimeInput,
+	type MeetingPublicationHashedFile,
 	type MeetingPublicationReviewArtifactAnchors,
 	type MeetingPublicationReviewRuntimeInput,
 	type MeetingPublicationSmokeProviderArtifactAnchors,
@@ -69,6 +72,7 @@ import {
 	readMeetingPublicationServiceEnrollment,
 	readStableMeetingPublicationSmokeFile,
 	sha256MeetingPublicationSmokeBytes,
+	statStableMeetingPublicationSmokeFile,
 	type VerifiedMeetingPublicationFullReviewInput,
 	type VerifiedMeetingPublicationRuntimeInput,
 	type VerifiedMeetingPublicationSmokeInput,
@@ -503,7 +507,8 @@ export const revokeStoppedMeetingPublicationService = (
 	});
 
 const assertReplayFileIdentity = (verified: VerifiedMeetingPublicationRuntimeInput) => {
-	const current = readStableMeetingPublicationSmokeFile(
+	// Identity only: the replay database's bytes are never read here.
+	const current = statStableMeetingPublicationSmokeFile(
 		verified.replayPath,
 		BigInt(verified.authorization.runtime.uid),
 		"private",
@@ -918,7 +923,26 @@ export class MeetingRuntimeSession {
 		return binding.item?.itemId === expected.item.itemId && binding.item.sourceHash === expected.item.sourceHash;
 	}
 
-	private immutableBindingsCurrent(observation: MeetingPublicationSmokeRuntimeObservation) {
+	/** Signed executables outside the artifact inventory: the optional notifier and its review launcher. */
+	private notifierExecutables() {
+		if (
+			(this.verified.kind !== "worker" && this.verified.kind !== "full_review") ||
+			this.verified.providerBinding.notifier.kind === "unavailable"
+		)
+			return [];
+		const notifier = this.verified.providerBinding.notifier;
+		return [notifier.executable, notifier.reviewOpen?.executable].filter((entry) => entry !== undefined);
+	}
+
+	/**
+	 * The immutable bindings at a grant boundary. The signed files were hashed just before,
+	 * cooperatively (`hashed`); this synchronous half compares their digests and proves each
+	 * file unchanged since, so no whole file is read on the owner's event loop here (#139).
+	 */
+	private immutableBindingsCurrent(
+		observation: MeetingPublicationSmokeRuntimeObservation,
+		hashed: ReadonlyMap<string, MeetingPublicationHashedFile>,
+	) {
 		if (
 			observation.platform !== this.verified.authorization.runtime.platform ||
 			observation.architecture !== this.verified.authorization.runtime.architecture ||
@@ -929,37 +953,23 @@ export class MeetingRuntimeSession {
 		)
 			return false;
 		for (const file of this.verified.immutableFiles) {
-			const current = readStableMeetingPublicationSmokeFile(
-				file.path,
-				observation.uid,
-				file.role,
-				file.maximumBytes,
-			);
-			if (sha256MeetingPublicationSmokeBytes(current.bytes) !== file.sha256) return false;
+			const current = hashed.get(file.path);
+			if (current === undefined || current.sha256 !== file.sha256) return false;
+			assertMeetingPublicationHashedFileCurrent(file.path, observation.uid, current);
 		}
-		if (
-			(this.verified.kind === "worker" || this.verified.kind === "full_review") &&
-			this.verified.providerBinding.notifier.kind !== "unavailable"
-		) {
-			const notifier = this.verified.providerBinding.notifier;
-			// Both signed executables may legitimately live outside the inventory
-			// root. Revalidate the optional launcher at every grant boundary too.
-			for (const expected of [notifier.executable, notifier.reviewOpen?.executable]) {
-				if (expected === undefined) continue;
-				const current = readStableMeetingPublicationSmokeFile(
-					expected.path,
-					observation.uid,
-					"artifact",
-					256 * 1024 * 1024,
-				);
-				if (
-					current.identity.device !== expected.device ||
-					current.identity.inode !== expected.inode ||
-					sha256MeetingPublicationSmokeBytes(current.bytes) !== expected.sha256 ||
-					(current.stat.mode & 0o111n) === 0n
-				)
-					return false;
-			}
+		// Both signed executables may legitimately live outside the inventory
+		// root. Revalidate the optional launcher at every grant boundary too.
+		for (const expected of this.notifierExecutables()) {
+			const current = hashed.get(expected.path);
+			if (
+				current === undefined ||
+				current.stat.dev.toString() !== expected.device ||
+				current.stat.ino.toString() !== expected.inode ||
+				current.sha256 !== expected.sha256 ||
+				(current.stat.mode & 0o111n) === 0n
+			)
+				return false;
+			assertMeetingPublicationHashedFileCurrent(expected.path, observation.uid, current);
 		}
 		if (this.verified.kind === "review") {
 			assertMeetingPublicationReviewDirectoriesCurrent(this.verified.authorization, observation.uid);
@@ -972,7 +982,8 @@ export class MeetingRuntimeSession {
 				state.ino.toString() === this.reviewDatabaseIdentity.inode
 			);
 		}
-		const engineState = readStableMeetingPublicationSmokeFile(
+		// Identity only: the Engine state's bytes are never read here.
+		const engineState = statStableMeetingPublicationSmokeFile(
 			this.verified.authorization.credentials.engineState.path,
 			observation.uid,
 			"private",
@@ -1166,6 +1177,15 @@ export class MeetingRuntimeSession {
 					)
 						return false;
 					await assertMeetingPublicationArtifactInventoryCurrentAsync(this.verified, started, signal);
+					const hashed = await hashMeetingPublicationImmutableFilesAsync(
+						this.verified,
+						started.uid,
+						this.notifierExecutables().map((executable) => ({
+							path: executable.path,
+							maximumBytes: 256 * 1024 * 1024,
+						})),
+						signal,
+					);
 					// No grant or replay transaction spans the cooperative scan. A close,
 					// cancellation, or competing validation may have run while it yielded.
 					// A keep-alive may also have paused this session on an unanswered probe meanwhile.
@@ -1195,7 +1215,8 @@ export class MeetingRuntimeSession {
 								);
 							};
 							const initial = this.system.observe();
-							if (!timeCurrent(initial, started) || !this.immutableBindingsCurrent(initial)) return false;
+							if (!timeCurrent(initial, started) || !this.immutableBindingsCurrent(initial, hashed))
+								return false;
 							if (this.verified.kind !== "review") this.proveWriters();
 							// Immutable control checks and the OS writer proof can still
 							// consume the remaining authority or claim lifetime. Never issue a

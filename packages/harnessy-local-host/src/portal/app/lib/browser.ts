@@ -1,11 +1,14 @@
 /**
- * Small browser helpers: the clipboard, opening a hand-off and the theme. Each
+ * Small browser helpers: the clipboard, opening a hand-off, the theme and the density. Each
  * guards against a browser that refuses the call; none of them ever fails the page.
  */
 import { safeAppRoute, safeHref } from "./safe-href.ts";
 
 export const THEME_KEY = "harnessy.theme";
 export type Theme = "dark" | "light";
+export const DENSITY_KEY = "harnessy.density";
+/** List row density (spec §2.5): comfortable rows are 40 px, compact rows 32 px. */
+export type Density = "comfortable" | "compact";
 
 /** Copy text. Resolves `false` when the browser refuses. */
 export const copyText = async (text: string): Promise<boolean> => {
@@ -52,6 +55,25 @@ export const applyTheme = (theme: Theme, remember: boolean): void => {
 	if (!remember) return;
 	try {
 		window.localStorage.setItem(THEME_KEY, theme);
+	} catch {
+		// The choice still applies to this page.
+	}
+};
+
+/** The density chosen on this device; comfortable unless compact was chosen. */
+export const storedDensity = (): Density => {
+	try {
+		return window.localStorage.getItem(DENSITY_KEY) === "compact" ? "compact" : "comfortable";
+	} catch {
+		return "comfortable";
+	}
+};
+
+export const applyDensity = (density: Density, remember: boolean): void => {
+	document.documentElement.dataset.density = density;
+	if (!remember) return;
+	try {
+		window.localStorage.setItem(DENSITY_KEY, density);
 	} catch {
 		// The choice still applies to this page.
 	}

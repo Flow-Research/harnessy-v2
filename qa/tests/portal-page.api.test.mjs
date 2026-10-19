@@ -62,5 +62,5 @@ test("PRTP-006 harnessy open is the front door", () => {
 
 test("PRTP-007 the app fits a phone screen", () => {
 	run("harnessy-local-host", "test/app/app.test.tsx", "stacked cards at phone width", 1);
-	run("harnessy-local-host", "test/app/layout.test.ts", ".", 3);
+	run("harnessy-local-host", "test/app/layout.test.ts", ".", 4);
 });

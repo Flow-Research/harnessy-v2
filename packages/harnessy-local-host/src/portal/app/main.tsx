@@ -7,13 +7,14 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App.tsx";
-import { applyTheme, storedTheme } from "./lib/browser.ts";
+import { applyDensity, applyTheme, storedDensity, storedTheme } from "./lib/browser.ts";
 import { DataProvider, DataStore } from "./lib/data.tsx";
 import { browserLocation } from "./lib/router.ts";
 import { browserSessionEnvironment, SessionClient } from "./lib/session.ts";
 
 const theme = storedTheme();
 if (theme !== undefined) applyTheme(theme, false);
+applyDensity(storedDensity(), false);
 
 const client = new SessionClient(browserSessionEnvironment());
 const store = new DataStore(client);

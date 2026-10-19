@@ -1,16 +1,36 @@
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import {
 	communityProcessLinePattern,
+	communityReviewIdentityComparisons,
+	communityReviewIdentityDigests,
 	darwinProcessExecutableFromLsof,
 	isNativeCommunityReviewLaunchAgent,
 	isNativeCommunityReviewProcess,
 	parseCommunityProcessConfirmation,
 } from "../src/jarvis/community-briefing/operational-runtime.ts";
+
+/** Files the reviewer must be compared on: the #125 set and the four #127 found missing. */
+const REVIEWER_IDENTITY_FILES = [
+	"dist/cli.js",
+	"dist/cli/community-draft.js",
+	"dist/cli/jarvis.js",
+	"dist/jarvis/community-briefing/native-draft.js",
+	"dist/jarvis/community-briefing/review-process.js",
+	"dist/jarvis/community-briefing/draft-process.js",
+	"dist/jarvis/community-briefing/notification.js",
+	"dist/jarvis/community-briefing/weekly-generation.js",
+	"resources/community-draft-adapter.py",
+	"dist/jarvis/life-orchestrator/codex-provider.js",
+	"dist/jarvis/life-orchestrator/local-credential.js",
+	"dist/jarvis/paths.js",
+	"dist/jarvis/meeting-publication/operational-input.js",
+] as const;
 
 it("parses signed OS UIDs without accepting malformed identities or negative PIDs", () => {
 	for (const uid of [-2, 0, 501]) {
@@ -62,6 +82,73 @@ it("rejects ambiguous or malformed PID confirmation output", () => {
 		expect(parseCommunityProcessConfirmation(output), JSON.stringify(output)).toBeUndefined();
 });
 
+/** A Core tree whose entry loads a small import graph, in the shapes tsc emits. */
+const IDENTITY_FIXTURE: Readonly<Record<string, string>> = {
+	"dist/cli.js": '#!/usr/bin/env node\nimport "./main.js";\n',
+	"dist/main.js":
+		'import { Effect } from "effect";\nimport { jarvis } from "./cli/jarvis.js";\nexport * from "./jarvis/paths.js";\n',
+	"dist/cli/jarvis.js":
+		'import {\n\tprovider,\n\tcredential,\n} from "../jarvis/life-orchestrator/codex-provider.js";\nimport { draft } from "./community-draft.js";\n',
+	"dist/cli/community-draft.js":
+		'export { review } from "../jarvis/community-briefing/review-process.js";\nimport { generate } from "../jarvis/community-briefing/weekly-generation.js";\n',
+	"dist/jarvis/community-briefing/review-process.js":
+		'import { draft } from "./draft-process.js";\nimport { native } from "./native-draft.js";\n',
+	"dist/jarvis/community-briefing/draft-process.js": "// Draft process.\n",
+	"dist/jarvis/community-briefing/native-draft.js": "// Native draft.\n",
+	"dist/jarvis/community-briefing/weekly-generation.js": 'import { notify } from "./notification.js";\n',
+	"dist/jarvis/community-briefing/notification.js": "// Notification.\n",
+	"dist/jarvis/life-orchestrator/codex-provider.js":
+		'export { credential } from "./local-credential.js";\nimport { input } from "../meeting-publication/operational-input.js";\n',
+	"dist/jarvis/life-orchestrator/local-credential.js": "// Credential reads.\n",
+	"dist/jarvis/meeting-publication/operational-input.js": "// File reads.\n",
+	"dist/jarvis/paths.js": "// Path resolution.\n",
+	"resources/community-draft-adapter.py": "# Review adapter.\n",
+};
+
+const writeCoreTree = (core: string, files: Readonly<Record<string, string>>) => {
+	for (const [relative, content] of Object.entries(files)) {
+		mkdirSync(dirname(join(core, relative)), { recursive: true });
+		writeFileSync(join(core, relative), content);
+	}
+};
+
+it("derives the reviewer identity set from the entry's static import graph", () => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "community-identity-graph-")));
+	try {
+		writeCoreTree(root, { ...IDENTITY_FIXTURE, "dist/unrelated.js": "// Not loaded by the reviewer.\n" });
+		const uid = BigInt(process.geteuid?.() ?? 0);
+		expect([...communityReviewIdentityDigests(root, uid).keys()].sort()).toEqual(
+			Object.keys(IDENTITY_FIXTURE).sort(),
+		);
+		// An import that leaves dist/ fails closed.
+		writeFileSync(join(root, "dist/jarvis/paths.js"), 'import "../../outside.js";\n');
+		expect(() => communityReviewIdentityDigests(root, uid)).toThrow("probe_failed");
+		// So does a relative module reference the walk does not parse: import attributes, dynamic import.
+		for (const unparsed of [
+			'import data from "./data.json" with { type: "json" };\n',
+			'export const load = () => import("./lazy.js");\n',
+		]) {
+			writeFileSync(join(root, "dist/jarvis/paths.js"), unparsed);
+			expect(() => communityReviewIdentityDigests(root, uid), unparsed).toThrow("probe_failed");
+		}
+		// So does an imported module that is missing.
+		writeFileSync(join(root, "dist/jarvis/paths.js"), 'import "./missing.js";\n');
+		expect(() => communityReviewIdentityDigests(root, uid)).toThrow();
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+it.skipIf(!existsSync(fileURLToPath(new URL("../dist/cli.js", import.meta.url))))(
+	"compares every module the built reviewer loads, including credentials, providers, paths and file reads",
+	() => {
+		const core = realpathSync(fileURLToPath(new URL("..", import.meta.url)));
+		const digests = communityReviewIdentityDigests(core, BigInt(process.geteuid?.() ?? 0));
+		for (const relative of REVIEWER_IDENTITY_FILES) expect(digests.has(relative), relative).toBe(true);
+		expect(digests.size).toBeGreaterThan(REVIEWER_IDENTITY_FILES.length);
+	},
+);
+
 it("recognizes only the byte-identical installed review sibling of the service tree", () => {
 	const root = mkdtempSync(join(tmpdir(), "community-installed-identity-"));
 	try {
@@ -69,26 +156,8 @@ it("recognizes only the byte-identical installed review sibling of the service t
 		const entry = join(root, "service", relative);
 		const reviewer = join(root, relative);
 		const unrelated = join(root, "other", relative);
-		for (const path of [entry, reviewer, unrelated]) {
-			mkdirSync(dirname(path), { recursive: true });
-			writeFileSync(path, "// Exact installed CLI fixture.\n");
-		}
-		for (const directory of [root, join(root, "service")]) {
-			for (const relative of [
-				"dist/jarvis/community-briefing/native-draft.js",
-				"dist/jarvis/community-briefing/review-process.js",
-				"dist/cli/community-draft.js",
-				"dist/cli/jarvis.js",
-				"dist/jarvis/community-briefing/draft-process.js",
-				"dist/jarvis/community-briefing/notification.js",
-				"dist/jarvis/community-briefing/weekly-generation.js",
-				"resources/community-draft-adapter.py",
-			]) {
-				const path = join(directory, "node_modules/@harnessy/core", relative);
-				mkdirSync(dirname(path), { recursive: true });
-				writeFileSync(path, "// Matching review implementation.\n");
-			}
-		}
+		for (const directory of [root, join(root, "service"), join(root, "other")])
+			writeCoreTree(join(directory, "node_modules/@harnessy/core"), IDENTITY_FIXTURE);
 		const matches = (path: string) =>
 			isNativeCommunityReviewProcess(
 				`${process.execPath} ${path} jarvis community briefing review serve --port 8872`,
@@ -99,24 +168,31 @@ it("recognizes only the byte-identical installed review sibling of the service t
 			);
 		expect(matches(reviewer)).toBe(true);
 		expect(matches(unrelated)).toBe(false);
-		const adapter = join(root, "node_modules/@harnessy/core/resources/community-draft-adapter.py");
-		writeFileSync(adapter, "// Missing native lease fencing.\n");
-		expect(matches(reviewer)).toBe(false);
-		writeFileSync(adapter, "// Matching review implementation.\n");
-		// A stale sibling scheduler must not inherit the reviewer exemption.
-		for (const relative of [
-			"dist/cli/community-draft.js",
-			"dist/cli/jarvis.js",
-			"dist/jarvis/community-briefing/draft-process.js",
-			"dist/jarvis/community-briefing/notification.js",
-			"dist/jarvis/community-briefing/weekly-generation.js",
-		]) {
-			const scheduler = join(root, "node_modules/@harnessy/core", relative);
-			writeFileSync(scheduler, "// Older scheduler.\n");
-			expect(matches(reviewer), relative).toBe(false);
-			writeFileSync(scheduler, "// Matching review implementation.\n");
+		// Every file the reviewer loads must match, however deep in its import graph (#127).
+		for (const file of Object.keys(IDENTITY_FIXTURE)) {
+			const sibling = join(root, "node_modules/@harnessy/core", file);
+			writeFileSync(sibling, "// Older or modified reviewer code.\n");
+			expect(matches(reviewer), file).toBe(false);
+			writeFileSync(sibling, IDENTITY_FIXTURE[file]!);
 		}
+		// A file the reviewer does not load may differ.
+		writeFileSync(join(root, "node_modules/@harnessy/core/dist/unrelated.js"), "// Not loaded.\n");
 		expect(matches(reviewer)).toBe(true);
+		// A module the service tree's reviewer newly loads is compared with no list to update.
+		for (const directory of [join(root, "service"), root])
+			writeFileSync(
+				join(directory, "node_modules/@harnessy/core/dist/jarvis/paths.js"),
+				'import "./new-module.js";\n',
+			);
+		writeFileSync(join(root, "service/node_modules/@harnessy/core/dist/jarvis/new-module.js"), "// New.\n");
+		writeFileSync(join(root, "node_modules/@harnessy/core/dist/jarvis/new-module.js"), "// Stale.\n");
+		expect(matches(reviewer)).toBe(false);
+		writeFileSync(join(root, "node_modules/@harnessy/core/dist/jarvis/new-module.js"), "// New.\n");
+		expect(matches(reviewer)).toBe(true);
+		// The sibling lacks a file the reviewer loads: the exemption fails closed.
+		rmSync(join(root, "node_modules/@harnessy/core/dist/jarvis/new-module.js"));
+		expect(() => matches(reviewer)).toThrow();
+		writeFileSync(join(root, "node_modules/@harnessy/core/dist/jarvis/new-module.js"), "// New.\n");
 		writeFileSync(reviewer, "// Older compatibility reviewer.\n");
 		expect(matches(reviewer)).toBe(false);
 		rmSync(reviewer);
@@ -126,6 +202,63 @@ it("recognizes only the byte-identical installed review sibling of the service t
 		rmSync(root, { recursive: true, force: true });
 	}
 });
+
+it("reuses a positive identity comparison until a compared file changes", () => {
+	const root = mkdtempSync(join(tmpdir(), "community-identity-cache-"));
+	try {
+		const relative = "node_modules/@harnessy/core/dist/cli.js";
+		for (const directory of [root, join(root, "service")])
+			writeCoreTree(join(directory, "node_modules/@harnessy/core"), IDENTITY_FIXTURE);
+		const matches = () =>
+			isNativeCommunityReviewProcess(
+				`${process.execPath} ${join(root, relative)} jarvis community briefing review serve`,
+				process.execPath,
+				process.execPath,
+				process.execPath,
+				join(root, "service", relative),
+			);
+		const before = communityReviewIdentityComparisons();
+		expect(matches()).toBe(true);
+		expect(matches()).toBe(true);
+		expect(matches()).toBe(true);
+		// One full comparison; the repeated checks only stat the compared files.
+		expect(communityReviewIdentityComparisons() - before).toBe(1);
+		// Any write to a compared file, even of the same bytes, compares again.
+		const credential = join(root, "node_modules/@harnessy/core/dist/jarvis/life-orchestrator/local-credential.js");
+		writeFileSync(credential, IDENTITY_FIXTURE["dist/jarvis/life-orchestrator/local-credential.js"]!);
+		expect(matches()).toBe(true);
+		expect(communityReviewIdentityComparisons() - before).toBe(2);
+		writeFileSync(credential, "// Changed credential reads.\n");
+		expect(matches()).toBe(false);
+		expect(matches()).toBe(false);
+		expect(communityReviewIdentityComparisons() - before).toBe(4);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+it.skipIf(process.env.HARNESSY_COMMUNITY_TEST_RELEASE === undefined)(
+	"accepts the general CLI reviewer of a packed release beside its service tree",
+	() => {
+		const release = realpathSync(process.env.HARNESSY_COMMUNITY_TEST_RELEASE!);
+		const relative = "node_modules/@harnessy/core/dist/cli.js";
+		// Every identity file exists in the packed release's service tree and matches the general CLI.
+		const digests = communityReviewIdentityDigests(
+			join(release, "service/node_modules/@harnessy/core"),
+			BigInt(process.geteuid?.() ?? 0),
+		);
+		for (const file of REVIEWER_IDENTITY_FILES) expect(digests.has(file), file).toBe(true);
+		expect(
+			isNativeCommunityReviewProcess(
+				`${process.execPath} ${join(release, relative)} jarvis community briefing review serve --port 8872`,
+				process.execPath,
+				process.execPath,
+				process.execPath,
+				join(release, "service", relative),
+			),
+		).toBe(true);
+	},
+);
 
 it("requires a loaded native review job to own an independently verified process", () => {
 	const label = "com.flow-harness.community-review-v2";

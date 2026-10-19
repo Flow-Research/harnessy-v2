@@ -581,7 +581,10 @@ Constraints the implementation keeps:
   counts, and the queue check still prevents a second draft. A record that is
   a link, not owner-only or unreadable may be tampering. It stops generation
   until the owner runs `harnessy jarvis community generation-status --repair`,
-  which moves it aside, never deleting it.
+  which moves it aside, never deleting it. `generation-status` also reports
+  `ok: false`, with `configIssues`, and exits non-zero (also with `--repair`)
+  for a configuration the review service refuses: missing, unreadable, or YAML
+  with syntax errors (#127).
 - **Schedule.** The default is Sunday 23:00 Africa/Lagos for the Monday–Sunday
   week ending that day, which is V1's boundary. Times are local wall-clock
   times. Across a daylight-saving change a skipped minute fires at the next
@@ -590,10 +593,23 @@ Constraints the implementation keeps:
   its Node and CLI are the release the publication service runs. It reads that
   release from the loaded `org.harnessy.meeting-publication` plist or
   `--publication-plist`, or takes `--without-publication` explicitly. The
-  reviewer exemption compares executables and artifact hashes, and the hash
-  set now includes the scheduler's code: `dist/cli/community-draft.js`,
-  `dist/cli/jarvis.js`, `draft-process.js`, `notification.js` and
-  `weekly-generation.js`.
+  reviewer exemption compares executables and artifact hashes. Since #127 the
+  hash set is derived on every check from the service tree's own static import
+  graph of `dist/cli.js` (relative `import`/`export … from` statements, about
+  130 modules), plus `resources/community-draft-adapter.py`. It therefore covers
+  the scheduler's code, credentials (`local-credential.js`), provider calls
+  (`codex-provider.js`), path resolution (`paths.js`) and file reads
+  (`operational-input.js`), and a new Core module cannot be left out. Bare
+  package imports (`effect`, `yaml` and the other dependencies) and the Jarvis
+  Python environment's site-packages are not compared; only Core's own files
+  are. A module that is missing or unreadable, an import from outside `dist/`,
+  and any relative module reference the walk does not parse (an import with
+  attributes such as `with { type: "json" }`, or a dynamic `import()`) fail the
+  exemption closed. A positive comparison is reused while every compared file in
+  both trees keeps its stat identity (device, inode, mode, size, mtime, ctime),
+  so repeated checks only stat the files. The installed-product release test
+  checks that every file exists in a packed release's service tree and matches
+  the general CLI.
 - **Restart.** The plist sets `KeepAlive` with a 10-second `ThrottleInterval`.
   Without it, a crashed reviewer left its label loaded with no process, which
   the guard treated as an observed writer, so community publication stayed
@@ -623,7 +639,36 @@ Constraints the implementation keeps:
       is awaiting verification. That process cannot be the label's own, so it
       is an immediate stop;
     - more than one pid, or one pid that is not a verified reviewer: an
-      immediate stop.
+      immediate stop;
+    - more than five starts (launchd's `runs` counter) within 30 minutes of
+      monotonic time: an immediate stop (`launchctl_restart_loop`, #127). A
+      verified start ends the no-process pause but not this count, so a
+      reviewer that keeps dying ends in one clear stop instead of repeated
+      pauses and uncertain publications. A lower counter (the label was
+      reloaded between two samples) keeps the count: every start of the new
+      load is added. A first observation cannot tell how fast the reviewer has
+      been restarting, so a verified reviewer is exempt only when its process
+      has run for two minutes (`ps -o etime`) or the guard has watched the
+      label for two minutes; otherwise it pauses publication
+      (`launchctl_restart_baseline`), and a loop already under way passes the
+      limit in that time. A stable reviewer is therefore exempt at once, also
+      for a one-shot run (which fails fast on a pause) and at meeting-service
+      startup. Times come from the Effect clock (monotonic; sleep does not
+      advance it). If launchd prints no single `runs` line, the count is off
+      and the guard writes `{"warning":"community_review_runs_unavailable"}`
+      once per process.
+    - recovery: a `launchctl_restart_loop` rejection happens before any lease,
+      so the meeting service's community worker starts again after a 30-minute
+      cool-down (one horizon), logging `community_publication_paused`, at most
+      three times for the life of the meeting service; a successful run does
+      not reset that bound. A probe after a gap longer than the horizon has no
+      sample to count from, so it starts a new baseline: the reviewer must have
+      run two minutes, or the guard must watch it for two minutes, before it
+      is exempt again. After the third recovery, or for a loop seen
+      during a publication (`publication_uncertain`), the stop is final: fix
+      the reviewer (`harnessy jarvis community schedule`, the review log), then
+      restart the meeting publication service to resume community
+      publication.
   - **Any other guarded label** loaded, or any other observed writer: an
     immediate stop.
 

@@ -21,7 +21,7 @@ import { Deferred, Effect, Layer } from "effect";
 import type * as Scope from "effect/Scope";
 import { startCommunityBackground } from "./community-background.ts";
 import { enrollCommunityBeforeEngine, runCommunityPublicationCommand } from "./community-publication-command.ts";
-import { makeCommunityStopReporter } from "./community-stop-event.ts";
+import { communityRestartLoopRecovery, makeCommunityStopReporter } from "./community-stop-event.ts";
 import { notifyMeetingFullReviewStopped } from "./meeting-full-review-stop-notification.ts";
 
 type OnEngine = (
@@ -159,6 +159,7 @@ export const runLocalHostMeetingFullReview: (
 										if (!(await notifyMeetingFullReviewStopped(undefined, undefined, "community")))
 											process.stderr.write('{"warning":"community_stop_notification_unavailable"}\n');
 									}),
+									communityRestartLoopRecovery(communityStop),
 								);
 							});
 			yield* runAuthorizedMeetingPublicationFullReview(

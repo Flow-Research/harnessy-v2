@@ -645,66 +645,166 @@ const directoryChain = (path: string, uid: bigint, inventoryDirectories?: Map<st
 /** @internal Shared read-only filesystem binding check; grants no write authority. */
 export const meetingPublicationDirectoryChain = (path: string, uid: bigint) => directoryChain(path, uid);
 
+/** A stable-file check maps any unexpected failure to `unsafe_input`, keeping its own codes. */
+const stableFileCheck = <A>(run: () => A): A => {
+	const result = Result.try({ try: run, catch: (cause) => cause });
+	if (Result.isSuccess(result)) return result.success;
+	if (result.failure instanceof MeetingPublicationSmokeRuntimeError) throw result.failure;
+	return fail("unsafe_input");
+};
+
+/**
+ * Open `path` for a stable read: an absolute, unlinked, regular file with one link,
+ * owned and moded for its role, within `maximumBytes`, under a safe directory chain,
+ * and unchanged between `lstat` and the opened descriptor.
+ */
+const openStableFile = (
+	path: string,
+	uid: bigint,
+	role: "private" | "artifact",
+	maximumBytes: number,
+	inventoryDirectories?: Map<string, BigIntStats>,
+) => {
+	if (!absolutePath(path)) fail("unsafe_input");
+	const parents = directoryChain(dirname(path), uid, inventoryDirectories);
+	const before = lstatSync(path, { bigint: true });
+	const mode = before.mode & 0o7777n;
+	if (
+		!before.isFile() ||
+		before.nlink !== 1n ||
+		realpathSync(path) !== path ||
+		(before.uid !== uid && (role === "private" || before.uid !== 0n)) ||
+		(mode & 0o7022n) !== 0n ||
+		(mode & 0o400n) === 0n ||
+		(role === "private" && mode !== 0o400n && mode !== 0o600n) ||
+		before.size > BigInt(maximumBytes)
+	)
+		fail("unsafe_input");
+	const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+	const opened = Result.try({
+		try: () => {
+			if (!sameFile(before, fstatSync(descriptor, { bigint: true }))) fail("unsafe_input");
+		},
+		catch: (cause) => cause,
+	});
+	if (Result.isFailure(opened)) {
+		closeSync(descriptor);
+		throw opened.failure;
+	}
+	return { parents, before, descriptor } as const;
+};
+
+/** After a stable read of `length` bytes: the file, its path and (outside an inventory) its parents are unchanged. */
+const assertStableFileUnchanged = (
+	path: string,
+	opened: ReturnType<typeof openStableFile>,
+	length: number,
+	inventoryDirectories?: Map<string, BigIntStats>,
+) => {
+	if (
+		BigInt(length) !== opened.before.size ||
+		!sameFile(opened.before, fstatSync(opened.descriptor, { bigint: true })) ||
+		!sameFile(opened.before, lstatSync(path, { bigint: true })) ||
+		realpathSync(path) !== path
+	)
+		fail("unsafe_input");
+	for (const [parent, stat] of inventoryDirectories === undefined ? opened.parents : []) {
+		if (!sameIdentity(stat, lstatSync(parent, { bigint: true })) || realpathSync(parent) !== parent)
+			fail("unsafe_input");
+	}
+};
+
+const stableIdentity = (path: string, stat: BigIntStats) =>
+	({ path, device: stat.dev.toString(), inode: stat.ino.toString() }) as const;
+
 const readStableFile = (
 	path: string,
 	uid: bigint,
 	role: "private" | "artifact",
 	maximumBytes = MAX_INPUT_BYTES,
 	inventoryDirectories?: Map<string, BigIntStats>,
-) => {
-	const result = Result.try({
-		try: () => {
-			if (!absolutePath(path)) fail("unsafe_input");
-			const parents = directoryChain(dirname(path), uid, inventoryDirectories);
-			const before = lstatSync(path, { bigint: true });
-			const mode = before.mode & 0o7777n;
-			if (
-				!before.isFile() ||
-				before.nlink !== 1n ||
-				realpathSync(path) !== path ||
-				(before.uid !== uid && (role === "private" || before.uid !== 0n)) ||
-				(mode & 0o7022n) !== 0n ||
-				(mode & 0o400n) === 0n ||
-				(role === "private" && mode !== 0o400n && mode !== 0o600n) ||
-				before.size > BigInt(maximumBytes)
-			)
-				fail("unsafe_input");
-			const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-			try {
-				if (!sameFile(before, fstatSync(descriptor, { bigint: true }))) fail("unsafe_input");
-				const bytes = Buffer.alloc(Number(before.size) + 1);
-				let length = 0;
-				while (length < bytes.length) {
-					const count = readSync(descriptor, bytes, length, bytes.length - length, null);
-					if (count === 0) break;
-					length += count;
-				}
-				if (
-					BigInt(length) !== before.size ||
-					!sameFile(before, fstatSync(descriptor, { bigint: true })) ||
-					!sameFile(before, lstatSync(path, { bigint: true })) ||
-					realpathSync(path) !== path
-				)
-					fail("unsafe_input");
-				for (const [parent, stat] of inventoryDirectories === undefined ? parents : []) {
-					if (!sameIdentity(stat, lstatSync(parent, { bigint: true })) || realpathSync(parent) !== parent)
-						fail("unsafe_input");
-				}
-				return {
-					bytes: bytes.subarray(0, length),
-					stat: before,
-					identity: { path, device: before.dev.toString(), inode: before.ino.toString() },
-				} as const;
-			} finally {
-				closeSync(descriptor);
+) =>
+	stableFileCheck(() => {
+		const opened = openStableFile(path, uid, role, maximumBytes, inventoryDirectories);
+		try {
+			const bytes = Buffer.alloc(Number(opened.before.size) + 1);
+			let length = 0;
+			while (length < bytes.length) {
+				const count = readSync(opened.descriptor, bytes, length, bytes.length - length, null);
+				if (count === 0) break;
+				length += count;
 			}
-		},
-		catch: (cause) => cause,
+			assertStableFileUnchanged(path, opened, length, inventoryDirectories);
+			return {
+				bytes: bytes.subarray(0, length),
+				stat: opened.before,
+				identity: stableIdentity(path, opened.before),
+			} as const;
+		} finally {
+			closeSync(opened.descriptor);
+		}
 	});
-	if (Result.isSuccess(result)) return result.success;
-	if (result.failure instanceof MeetingPublicationSmokeRuntimeError) throw result.failure;
-	return fail("unsafe_input");
-};
+
+/** Bytes hashed between two yields of {@link hashStableFileSteps}. */
+export const MEETING_PUBLICATION_HASH_CHUNK_BYTES = 1024 * 1024;
+
+/**
+ * The same checks as a stable read, but the file is hashed in chunks of
+ * {@link MEETING_PUBLICATION_HASH_CHUNK_BYTES} with a yield after each chunk, so a
+ * cooperative caller can serve its event loop while a large file (the Node
+ * executable, a bundled native binary) is hashed (#139). The descriptor stays open
+ * across the yields and is closed when the steps finish or are abandoned. Returns
+ * the digest and the checked stat, never the bytes.
+ */
+function* hashStableFileSteps(
+	path: string,
+	uid: bigint,
+	role: "private" | "artifact",
+	maximumBytes: number,
+	inventoryDirectories?: Map<string, BigIntStats>,
+): Generator<
+	void,
+	{ readonly sha256: string; readonly stat: BigIntStats; readonly identity: ReturnType<typeof stableIdentity> }
+> {
+	const opened = stableFileCheck(() => openStableFile(path, uid, role, maximumBytes, inventoryDirectories));
+	try {
+		const hash = createHash("sha256");
+		const chunk = Buffer.alloc(Math.min(MEETING_PUBLICATION_HASH_CHUNK_BYTES, Number(opened.before.size) + 1));
+		let length = 0;
+		for (;;) {
+			const count = stableFileCheck(() => readSync(opened.descriptor, chunk, 0, chunk.length, null));
+			if (count === 0) break;
+			length += count;
+			if (BigInt(length) > opened.before.size) fail("unsafe_input");
+			hash.update(chunk.subarray(0, count));
+			yield;
+		}
+		stableFileCheck(() => assertStableFileUnchanged(path, opened, length, inventoryDirectories));
+		return { sha256: hash.digest("hex"), stat: opened.before, identity: stableIdentity(path, opened.before) };
+	} finally {
+		closeSync(opened.descriptor);
+	}
+}
+
+/**
+ * The checks of a stable read without reading the bytes, for a binding that compares
+ * identity only (device and inode), such as the Engine state or the replay database.
+ */
+export const statStableMeetingPublicationSmokeFile = (
+	path: string,
+	uid: bigint,
+	role: "private" | "artifact",
+	maximumBytes: number,
+) =>
+	stableFileCheck(() => {
+		const opened = openStableFile(path, uid, role, maximumBytes);
+		try {
+			assertStableFileUnchanged(path, opened, Number(opened.before.size));
+			return { stat: opened.before, identity: stableIdentity(path, opened.before) } as const;
+		} finally {
+			closeSync(opened.descriptor);
+		}
+	});
 
 export const readStableMeetingPublicationSmokeFile = (
 	path: string,
@@ -917,10 +1017,11 @@ export function* artifactInventorySteps(
 	let totalBytes = 0;
 	const files = new Map<string, BigIntStats>();
 	for (const file of manifest.files) {
-		const checked = readStableFile(file.path, uid, "artifact", MAX_ARTIFACT_BYTES, directories);
-		totalBytes += checked.bytes.length;
-		if (totalBytes > MAX_ARTIFACT_BYTES || sha256MeetingPublicationSmokeBytes(checked.bytes) !== file.sha256)
-			fail("artifact_drift");
+		// Hashed in chunks: one large file (such as a bundled native binary) never fills one step.
+		// Only this file's descriptor survives its chunk checkpoints; no database transaction does.
+		const checked = yield* hashStableFileSteps(file.path, uid, "artifact", MAX_ARTIFACT_BYTES, directories);
+		totalBytes += Number(checked.stat.size);
+		if (totalBytes > MAX_ARTIFACT_BYTES || checked.sha256 !== file.sha256) fail("artifact_drift");
 		files.set(file.path, checked.stat);
 		// No file descriptor or database transaction survives this checkpoint.
 		yield;
@@ -2000,22 +2101,87 @@ export const assertMeetingPublicationSmokeArtifactInventoryCurrent = (
 	observation: MeetingPublicationSmokeRuntimeObservation,
 ) => validateArtifactInventory(verified.artifactManifest, observation.uid, verified.kind);
 
+/** Longest synchronous run of steps before a cooperative check yields to the event loop. */
+const COOPERATIVE_SLICE_MS = 8;
+
+/** Run `steps` to completion, yielding to the event loop every {@link COOPERATIVE_SLICE_MS}. */
+const runCooperatively = async <A>(steps: Generator<void, A>, signal?: AbortSignal): Promise<A> => {
+	try {
+		await yieldToEventLoop(undefined, { signal });
+		let deadline = performance.now() + COOPERATIVE_SLICE_MS;
+		for (;;) {
+			const step = steps.next();
+			if (step.done === true) return step.value;
+			signal?.throwIfAborted();
+			if (performance.now() >= deadline) {
+				await yieldToEventLoop(undefined, { signal });
+				deadline = performance.now() + COOPERATIVE_SLICE_MS;
+			}
+		}
+	} finally {
+		// An abandoned check closes any descriptor it still holds.
+		steps.return(undefined as A);
+	}
+};
+
 /** @internal Same complete inventory proof, allowing the review server to service I/O between checks. */
-export const assertMeetingPublicationArtifactInventoryCurrentAsync = async (
+export const assertMeetingPublicationArtifactInventoryCurrentAsync = (
 	verified: VerifiedMeetingPublicationRuntimeInput,
 	observation: MeetingPublicationSmokeRuntimeObservation,
 	signal?: AbortSignal,
-) => {
-	await yieldToEventLoop(undefined, { signal });
-	let deadline = performance.now() + 8;
-	for (const _step of artifactInventorySteps(verified.artifactManifest, observation.uid, verified.kind)) {
-		signal?.throwIfAborted();
-		if (performance.now() >= deadline) {
-			await yieldToEventLoop(undefined, { signal });
-			deadline = performance.now() + 8;
-		}
-	}
-};
+) => runCooperatively(artifactInventorySteps(verified.artifactManifest, observation.uid, verified.kind), signal);
+
+/** One signed file hashed by {@link hashMeetingPublicationImmutableFilesAsync}. */
+export interface MeetingPublicationHashedFile {
+	readonly sha256: string;
+	readonly stat: BigIntStats;
+}
+
+/**
+ * @internal Hash each signed immutable file (the Node executable, the trusted keyring,
+ * the authorization, the artifact manifest) and each `extra` file cooperatively,
+ * before a grant's synchronous validation. That validation then compares the digests and
+ * proves with `lstat` that each file is unchanged since it was hashed, so the owner never
+ * reads a whole executable in one turn of its event loop (#139).
+ */
+export const hashMeetingPublicationImmutableFilesAsync = (
+	verified: VerifiedMeetingPublicationRuntimeInput,
+	uid: bigint,
+	extra: ReadonlyArray<{ readonly path: string; readonly maximumBytes: number }>,
+	signal?: AbortSignal,
+) =>
+	runCooperatively(
+		(function* (): Generator<void, ReadonlyMap<string, MeetingPublicationHashedFile>> {
+			const hashed = new Map<string, MeetingPublicationHashedFile>();
+			for (const file of [
+				...verified.immutableFiles,
+				...extra.map((entry) => ({ ...entry, role: "artifact" as const })),
+			]) {
+				if (hashed.has(file.path)) continue;
+				const checked = yield* hashStableFileSteps(file.path, uid, file.role, file.maximumBytes);
+				hashed.set(file.path, { sha256: checked.sha256, stat: checked.stat });
+			}
+			return hashed;
+		})(),
+		signal,
+	);
+
+/**
+ * @internal The synchronous half of an immutable-file check: the file hashed by
+ * {@link hashMeetingPublicationImmutableFilesAsync} is still the same file (same
+ * identity, links, size, modification and change times) at the same unlinked path,
+ * under a safe directory chain. Throws `unsafe_input` otherwise.
+ */
+export const assertMeetingPublicationHashedFileCurrent = (
+	path: string,
+	uid: bigint,
+	hashed: MeetingPublicationHashedFile,
+) =>
+	stableFileCheck(() => {
+		directoryChain(dirname(path), uid);
+		if (!sameFile(hashed.stat, lstatSync(path, { bigint: true })) || realpathSync(path) !== path)
+			fail("unsafe_input");
+	});
 
 /** @internal Exact signed anchors expected from the acquired provider implementation. */
 export const meetingPublicationSmokeArtifactAnchors = (

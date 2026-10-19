@@ -1,4 +1,6 @@
+import { it as effectIt } from "@effect/vitest";
 import { Deferred, Effect, Fiber } from "effect";
+import { TestClock } from "effect/testing";
 import { expect, it } from "vitest";
 import { startCommunityBackground } from "../src/community-background.ts";
 
@@ -86,5 +88,68 @@ it("awaits publication cleanup and reports interruption when the owning scope cl
 		),
 	);
 	expect(cleaned).toBe(true);
+	expect(alerts).toBe(1);
+});
+
+effectIt.effect(
+	"starts again after a cool-down for a retryable failure, at most the bounded number of times in all",
+	() =>
+		Effect.gen(function* () {
+			let calls = 0,
+				alerts = 0;
+			const recoveries: Array<number> = [];
+			const outcomes = ["loop", "loop", "ok", "loop", "loop"];
+			yield* Effect.scoped(
+				Effect.gen(function* () {
+					const reported = yield* Deferred.make<void>();
+					const stop = yield* startCommunityBackground(
+						Effect.suspend(() => (outcomes[calls++] === "ok" ? Effect.void : Effect.fail(new Error("loop")))),
+						Effect.sync(() => {
+							alerts++;
+						}).pipe(Effect.andThen(Deferred.succeed(reported, undefined))),
+						{
+							retryable: (cause) => cause instanceof Error && cause.message === "loop",
+							coolDownMs: 30 * 60_000,
+							maxRecoveries: 3,
+							onRecovering: (attempt) => Effect.sync(() => recoveries.push(attempt)),
+						},
+					);
+					// Each cool-down (and the five-minute wait after the success) passes on the test clock.
+					for (let step = 0; step < 12 && !Deferred.isDoneUnsafe(reported); step++)
+						yield* TestClock.adjust("30 minutes");
+					yield* Deferred.await(reported);
+					yield* stop;
+				}),
+			);
+			// A success between them does not reset the bound: three recoveries, then the final stop.
+			expect(recoveries).toEqual([1, 2, 3]);
+			expect(calls).toBe(5);
+			expect(alerts).toBe(1);
+		}),
+);
+
+it("never retries a failure the recovery does not mark retryable", async () => {
+	let calls = 0,
+		alerts = 0;
+	await Effect.runPromise(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const reported = yield* Deferred.make<void>();
+				const stop = yield* startCommunityBackground(
+					Effect.suspend(() => {
+						calls++;
+						return Effect.fail(new Error("publication_uncertain"));
+					}),
+					Effect.sync(() => {
+						alerts++;
+					}).pipe(Effect.andThen(Deferred.succeed(reported, undefined))),
+					{ retryable: () => false, coolDownMs: 1, maxRecoveries: 3, onRecovering: () => Effect.void },
+				);
+				yield* Deferred.await(reported);
+				yield* stop;
+			}),
+		),
+	);
+	expect(calls).toBe(1);
 	expect(alerts).toBe(1);
 });
