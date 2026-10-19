@@ -82,6 +82,12 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 export interface OpenAICodexResponsesOptions extends StreamOptions {
 	/** SSE fetch redirect policy. Omitted preserves fetch's existing default. */
 	redirect?: "error" | "follow" | "manual";
+	/**
+	 * Receives the raw error when the SSE fetch itself throws (no HTTP response), before
+	 * it is normalized into the error event. Lets a caller classify network failures by
+	 * `cause.code`. Exceptions from the callback are ignored.
+	 */
+	onFetchError?: (error: unknown) => void;
 	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 	reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
@@ -369,6 +375,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							signal: combinedSignal.signal,
 						});
 					} catch (error) {
+						try {
+							options?.onFetchError?.(error);
+						} catch {}
 						if (headerTimeoutSignal?.aborted && !options?.signal?.aborted) {
 							throw new Error(`Codex SSE response headers timed out after ${httpTimeoutMs}ms`);
 						}

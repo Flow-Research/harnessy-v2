@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Console, Effect, Option, Schema } from "effect";
@@ -14,6 +15,7 @@ import {
 import { notifyCommunityDraft } from "../jarvis/community-briefing/notification.ts";
 import {
 	acquireCommunityGenerationLock,
+	COMMUNITY_GENERATION_RETRY_REQUEST_FILE,
 	COMMUNITY_GENERATION_STATUS_FILE,
 	COMMUNITY_QUEUE_FILE,
 	type CommunityGenerationScheduleSettings,
@@ -21,6 +23,7 @@ import {
 	parseCommunityGenerationSchedule,
 	runWeeklyCommunityGeneration,
 	sqliteQueuedWeeks,
+	takeCommunityGenerationRetryRequest,
 } from "../jarvis/community-briefing/weekly-generation.ts";
 import { readStableMeetingPublicationSmokeFile } from "../jarvis/meeting-publication/operational-input.ts";
 import { resolveJarvisConfigPath } from "../jarvis/paths.ts";
@@ -150,10 +153,12 @@ export const serveCommunityReview = async (options: CommunityReviewServiceOption
 			(error: unknown): CommunityWeekGenerationResult => {
 				if (scheduler.signal.aborted) return { status: "cancelled" };
 				const code = error instanceof CommunityDraftProcessError ? error.code : undefined;
+				const subCode = error instanceof CommunityDraftProcessError ? error.subCode : undefined;
 				if (code === "native_draft_busy") return { status: "busy" };
 				return {
 					status: "failed",
 					code: code === "deadline_exceeded" ? "adapter_timeout" : (code ?? "generation_failed"),
+					...(subCode === undefined ? {} : { subCode }),
 				};
 			},
 		);
@@ -180,6 +185,13 @@ export const serveCommunityReview = async (options: CommunityReviewServiceOption
 			generateWeek,
 			report: options.log,
 			acquireLock: () => acquireCommunityGenerationLock(options.config.state_path),
+			// `harnessy jarvis community generation-retry` signals this process through the state
+			// directory; the CLI itself never generates, so it can never trip the writer guard.
+			retryRequests: {
+				pending: () => existsSync(join(options.config.state_path, COMMUNITY_GENERATION_RETRY_REQUEST_FILE)),
+				take: () =>
+					takeCommunityGenerationRetryRequest(options.config.state_path, (options.now ?? (() => new Date()))()),
+			},
 			signal: scheduler.signal,
 			...(options.tickMs === undefined ? {} : { tickMs: options.tickMs }),
 			...(options.notifications === "desktop"

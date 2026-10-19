@@ -2020,5 +2020,519 @@ describe("meeting publication authorized full-review runtime", () => {
 				expect(result.provider.calls.google).toEqual([]);
 			}),
 		);
+
+		describe("lease and clock currency", () => {
+			/** The service's single lease row, read from the replay ledger. */
+			const leaseRow = (fixture: Awaited<ReturnType<typeof setup>>) => {
+				const database = new DatabaseSync(fixture.authorization.replayPath, { readOnly: true });
+				try {
+					return database.prepare("SELECT lease_id,pid,boot_id,last_wall_time FROM active_lease").all();
+				} finally {
+					database.close();
+				}
+			};
+
+			it.effect("re-anchors a bounded backward wall-clock step under a pause, without stopping the service", () =>
+				Effect.gen(function* () {
+					let before: ReturnType<typeof leaseRow> = [];
+					const result = yield* runService(18_810, ({ elapsedMs, fixture }) => {
+						if (elapsedMs === 10_000) {
+							before = leaseRow(fixture);
+							// An NTP correction when the network returns: 90 seconds back.
+							fixture.authorization.stepWallClockBy(-90_000);
+						}
+						return elapsedMs >= 75_000 ? true : undefined;
+					});
+					expect(result.exit).toBeUndefined();
+					const lease = result.fixture.authorization.leaseCurrencyEvents;
+					expect(lease).toEqual([
+						{
+							event: "lease_clock_reanchored",
+							service: "meeting",
+							code: "clock_stepped_back",
+							stepMs: expect.any(Number),
+						},
+					]);
+					expect(lease[0]?.stepMs).toBeGreaterThan(1_000);
+					expect(lease[0]?.stepMs).toBeLessThanOrEqual(90_000);
+					expect(events(result.fixture)).toEqual(["writer_check_inconclusive", "writer_check_recovered"]);
+					expect(result.fixture.authorization.writerCheckEvents[0]).toMatchObject({
+						service: "meeting",
+						reason: "clock_stepped_back",
+					});
+					// The same lease row, PID and boot, now anchored at the corrected wall time.
+					const after = leaseRow(result.fixture);
+					expect(after).toHaveLength(1);
+					expect(after[0]).toMatchObject({
+						lease_id: before[0]?.lease_id,
+						pid: process.pid,
+						boot_id: before[0]?.boot_id,
+					});
+					expect(Number(after[0]?.last_wall_time)).toBeLessThan(Number(before[0]?.last_wall_time) + 75_000);
+					yield* Fiber.interrupt(result.fiber);
+				}),
+			);
+
+			it.effect("stops with clock_stepped_back, not revoked, on a step beyond the five-minute bound", () =>
+				Effect.gen(function* () {
+					const result = yield* runService(18_811, ({ elapsedMs, fixture }) => {
+						if (elapsedMs === 10_000) fixture.authorization.stepWallClockBy(-6 * 60_000);
+						return undefined;
+					});
+					const exit = yield* Fiber.await(result.fiber);
+					expect(Exit.isFailure(exit)).toBe(true);
+					expect(JSON.stringify(exit)).toContain("clock_stepped_back");
+					expect(JSON.stringify(exit)).not.toContain("revoked");
+					expect(result.elapsedMs).toBeLessThanOrEqual(15_000);
+					expect(result.fixture.authorization.leaseCurrencyEvents).toEqual([
+						expect.objectContaining({ event: "lease_currency_failed", code: "clock_stepped_back" }),
+					]);
+					expect(result.fixture.authorization.leaseCurrencyEvents[0]?.stepMs).toBeGreaterThan(5 * 60_000);
+					expect(events(result.fixture)).toEqual([]);
+				}),
+			);
+
+			it.effect("stops at once with boot_changed when the boot identity changes", () =>
+				Effect.gen(function* () {
+					const result = yield* runService(18_812, ({ elapsedMs, fixture }) => {
+						if (elapsedMs === 10_000) fixture.authorization.simulateReboot();
+						return undefined;
+					});
+					const exit = yield* Fiber.await(result.fiber);
+					expect(Exit.isFailure(exit)).toBe(true);
+					expect(JSON.stringify(exit)).toContain("boot_changed");
+					expect(result.elapsedMs).toBeLessThanOrEqual(15_000);
+					expect(result.fixture.authorization.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "meeting", code: "boot_changed" },
+					]);
+				}),
+			);
+
+			it.effect("stops at once with lease_row_changed when another writer changes the lease row", () =>
+				Effect.gen(function* () {
+					const result = yield* runService(18_813, ({ elapsedMs, fixture }) => {
+						if (elapsedMs === 10_000) {
+							const database = new DatabaseSync(fixture.authorization.replayPath, { timeout: 5_000 });
+							try {
+								database.prepare("UPDATE active_lease SET lease_id='another-writer' WHERE singleton=1").run();
+							} finally {
+								database.close();
+							}
+						}
+						return undefined;
+					});
+					const exit = yield* Fiber.await(result.fiber);
+					expect(Exit.isFailure(exit)).toBe(true);
+					expect(JSON.stringify(exit)).toContain("lease_row_changed");
+					expect(result.elapsedMs).toBeLessThanOrEqual(15_000);
+					expect(result.fixture.authorization.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "meeting", code: "lease_row_changed" },
+					]);
+				}),
+			);
+
+			it("issues no grant while a bounded step is re-anchoring, then resumes on the same lease", async () => {
+				const fixture = await setup({ approved: true, reviewPort: 18_814 });
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				const system = { ...base, proveNoKnownV1Writers: () => undefined };
+				const session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+					system,
+				);
+				try {
+					const binding = new MeetingPublicationWriteBinding({
+						sourcePath: fixture.config.sourcePath as string,
+						statePath: fixture.config.statePath as string,
+					});
+					const grant = () => Effect.runPromise(session.validator.validate("store_claim", binding));
+					expect(await grant()).toBe(true);
+					const [before] = leaseRow(fixture);
+					fixture.authorization.stepWallClockBy(-120_000);
+					// Detection pauses the session: this grant and every later one are denied.
+					expect(await grant()).toBe(false);
+					expect(session.writerCheckPaused).toBe(true);
+					expect(session.writerCheckPause?.error.reason).toBe("clock_stepped_back");
+					expect(await grant()).toBe(false);
+					expect(() => session.assertReviewAlive(0)).toThrow(WriterCheckInconclusiveError);
+					expect(leaseRow(fixture)).toEqual([before]);
+					// The paused retry re-anchors the same lease under a fresh writer proof.
+					session.recheckWriters();
+					expect(session.writerCheckPaused).toBe(false);
+					const [after] = leaseRow(fixture);
+					expect(after).toMatchObject({ lease_id: before?.lease_id, pid: process.pid, boot_id: before?.boot_id });
+					expect(Number(after?.last_wall_time)).toBeLessThan(Number(before?.last_wall_time));
+					expect(await grant()).toBe(true);
+					expect(session.leaseStopCode).toBeUndefined();
+					expect(fixture.authorization.leaseCurrencyEvents.map((event) => event.event)).toEqual([
+						"lease_clock_reanchored",
+					]);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("never re-anchors a finite authorization: any backward step stops it", async () => {
+				const fixture = await setup({ approved: true, reviewPort: 18_815 });
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				const system = { ...base, proveNoKnownV1Writers: () => undefined };
+				const session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+					system,
+				);
+				try {
+					const binding = new MeetingPublicationWriteBinding({
+						sourcePath: fixture.config.sourcePath as string,
+						statePath: fixture.config.statePath as string,
+					});
+					expect(await Effect.runPromise(session.validator.validate("store_claim", binding))).toBe(true);
+					fixture.authorization.stepWallClockBy(-30_000);
+					expect(await Effect.runPromise(session.validator.validate("store_claim", binding))).toBe(false);
+					expect(session.writerCheckPaused).toBe(false);
+					expect(session.leaseStopCode).toBe("clock_stepped_back");
+					expect(() => session.assertLeaseCurrent()).toThrow(
+						expect.objectContaining({ code: "clock_stepped_back" }),
+					);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("stops with lease_update_failed when the lease transaction cannot run", async () => {
+				const fixture = await setup({ approved: true, reviewPort: 18_816 });
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				const session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, base.observe()),
+					{ ...base, proveNoKnownV1Writers: () => undefined },
+				);
+				const blocker = new DatabaseSync(fixture.authorization.replayPath, { timeout: 0 });
+				try {
+					blocker.exec("BEGIN EXCLUSIVE;");
+					expect(() => session.assertLeaseCurrent()).toThrow(
+						expect.objectContaining({ code: "lease_update_failed" }),
+					);
+					expect(fixture.authorization.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "meeting", code: "lease_update_failed" },
+					]);
+				} finally {
+					blocker.exec("ROLLBACK;");
+					blocker.close();
+					session.close();
+				}
+			});
+
+			/** A service session over the fixture, with a replaceable writer proof. */
+			const serviceSession = async (port: number) => {
+				const fixture = await setup({ approved: true, reviewPort: port });
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				let proof: () => void = () => undefined;
+				let proofs = 0;
+				const system = {
+					...base,
+					proveNoKnownV1Writers: () => {
+						proofs += 1;
+						proof();
+					},
+				};
+				const session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+					system,
+				);
+				const binding = new MeetingPublicationWriteBinding({
+					sourcePath: fixture.config.sourcePath as string,
+					statePath: fixture.config.statePath as string,
+				});
+				return {
+					fixture,
+					session,
+					grant: () => Effect.runPromise(session.validator.validate("store_claim", binding)),
+					setProof: (next: () => void) => {
+						proof = next;
+					},
+					proofs: () => proofs,
+				};
+			};
+
+			it("reports no lease failure when a finalizer closes the session during a validation", async () => {
+				const { fixture, session, grant, setProof } = await serviceSession(18_817);
+				// An interruption delivered inside the writer proof runs the session finalizer at once.
+				setProof(() => session.close());
+				expect(await grant()).toBe(false);
+				expect(fixture.authorization.leaseCurrencyEvents).toEqual([]);
+				expect(session.leaseStopCode).toBeUndefined();
+			});
+
+			it("treats sleep as no step, and bounds a step against the monotonic time since the last check", async () => {
+				const { fixture, session, grant } = await serviceSession(18_818);
+				try {
+					expect(await grant()).toBe(true);
+					// Sleep: the wall clock moves ten minutes, the monotonic clock does not.
+					fixture.authorization.stepWallClockBy(10 * 60_000);
+					expect(await grant()).toBe(true);
+					expect(session.writerCheckPaused).toBe(false);
+					// One awake minute, then a 30-second correction: still ahead of the last wall time,
+					// but 30 seconds behind the last wall time plus the monotonic minute.
+					fixture.authorization.advanceTimeBy(60_000);
+					fixture.authorization.stepWallClockBy(-30_000);
+					expect(await grant()).toBe(false);
+					expect(session.writerCheckPause?.error.reason).toBe("clock_stepped_back");
+					session.recheckWriters();
+					expect(fixture.authorization.leaseCurrencyEvents).toEqual([
+						expect.objectContaining({ event: "lease_clock_reanchored", stepMs: expect.any(Number) }),
+					]);
+					expect(fixture.authorization.leaseCurrencyEvents[0]?.stepMs).toBeGreaterThanOrEqual(29_000);
+					expect(fixture.authorization.leaseCurrencyEvents[0]?.stepMs).toBeLessThanOrEqual(31_000);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("caps re-anchors at five minutes in total per lease", async () => {
+				const { fixture, session, grant } = await serviceSession(18_819);
+				try {
+					expect(await grant()).toBe(true);
+					for (const _ of [1, 2]) {
+						fixture.authorization.stepWallClockBy(-120_000);
+						expect(await grant()).toBe(false);
+						session.recheckWriters();
+						expect(await grant()).toBe(true);
+					}
+					fixture.authorization.stepWallClockBy(-120_000);
+					expect(await grant()).toBe(false);
+					expect(() => session.recheckWriters()).toThrow(expect.objectContaining({ code: "clock_stepped_back" }));
+					expect(fixture.authorization.leaseCurrencyEvents.map((event) => event.event)).toEqual([
+						"lease_clock_reanchored",
+						"lease_clock_reanchored",
+						"lease_currency_failed",
+					]);
+					expect(fixture.authorization.leaseCurrencyEvents.at(-1)?.stepMs).toBeGreaterThan(5 * 60_000);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("never re-anchors without a fresh writer proof, leaving the lease row unchanged", async () => {
+				const { fixture, session, grant, setProof, proofs } = await serviceSession(18_820);
+				try {
+					expect(await grant()).toBe(true);
+					fixture.authorization.stepWallClockBy(-60_000);
+					expect(await grant()).toBe(false);
+					const [before] = leaseRow(fixture);
+					// An unanswered proof: no re-anchor, the session stays paused.
+					setProof(() => {
+						throw new WriterCheckInconclusiveError("ps", "timeout");
+					});
+					expect(() => session.recheckWriters()).toThrow(WriterCheckInconclusiveError);
+					expect(leaseRow(fixture)).toEqual([before]);
+					expect(session.writerCheckPaused).toBe(true);
+					// The drain path also re-anchors only through a writer proof.
+					const drainProofs = proofs();
+					expect(() => session.assertDrainedLeaseCurrent()).toThrow(WriterCheckInconclusiveError);
+					expect(proofs()).toBe(drainProofs + 1);
+					expect(leaseRow(fixture)).toEqual([before]);
+					// A writer found by the proof stops the owner, still without touching the lease.
+					setProof(() => {
+						throw new Error("A fixture writer is present.");
+					});
+					expect(() => session.recheckWriters()).toThrow(expect.objectContaining({ code: "writer_present" }));
+					expect(leaseRow(fixture)).toEqual([before]);
+					expect(fixture.authorization.leaseCurrencyEvents).toEqual([]);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("re-anchors a clean drain only after a fresh writer proof", async () => {
+				const { fixture, session, grant, proofs } = await serviceSession(18_821);
+				try {
+					expect(await grant()).toBe(true);
+					fixture.authorization.stepWallClockBy(-60_000);
+					const before = proofs();
+					session.assertDrainedLeaseCurrent();
+					expect(proofs()).toBe(before + 1);
+					expect(fixture.authorization.leaseCurrencyEvents.map((event) => event.event)).toEqual([
+						"lease_clock_reanchored",
+					]);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("reports boot_changed, not the clock step, for a restored VM", async () => {
+				const { fixture, session, grant } = await serviceSession(18_822);
+				try {
+					expect(await grant()).toBe(true);
+					fixture.authorization.simulateReboot();
+					fixture.authorization.stepWallClockBy(-10 * 60_000);
+					expect(() => session.assertLeaseCurrent()).toThrow(expect.objectContaining({ code: "boot_changed" }));
+					expect(fixture.authorization.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "meeting", code: "boot_changed" },
+					]);
+				} finally {
+					session.close();
+				}
+			});
+
+			/** Another writer's change to the replay ledger. */
+			const mutateReplay = (fixture: Awaited<ReturnType<typeof setup>>, sql: string) => {
+				const database = new DatabaseSync(fixture.authorization.replayPath, { timeout: 5_000 });
+				try {
+					database.exec(sql);
+				} finally {
+					database.close();
+				}
+			};
+
+			it.each([
+				["a boot id rewritten in the lease row", "UPDATE active_lease SET boot_id='another-boot'", "boot_changed"],
+				[
+					"an unreadable monotonic anchor",
+					"UPDATE active_lease SET last_monotonic_ns='not-a-number'",
+					"lease_row_changed",
+				],
+				[
+					"a wall anchor ten minutes ahead",
+					"UPDATE active_lease SET last_wall_time=last_wall_time+600000",
+					"clock_stepped_back",
+				],
+				[
+					"a monotonic anchor ahead of the clock",
+					"UPDATE active_lease SET last_monotonic_ns='999999999999999999999'",
+					"clock_stepped_back",
+				],
+			] as const)("stops with its own code for %s", async (_name, sql, code) => {
+				const { fixture, session, grant } = await serviceSession(18_823);
+				try {
+					expect(await grant()).toBe(true);
+					mutateReplay(fixture, sql);
+					expect(() => session.assertLeaseCurrent()).toThrow(expect.objectContaining({ code }));
+					expect(session.leaseStopCode).toBe(code);
+					expect(fixture.authorization.leaseCurrencyEvents).toEqual([
+						expect.objectContaining({ event: "lease_currency_failed", service: "meeting", code }),
+					]);
+					// A stopped session keeps reporting its own code, never revoked.
+					expect(() => session.assertLeaseCurrent()).toThrow(expect.objectContaining({ code }));
+					expect(() => session.recheckWriters()).toThrow(expect.objectContaining({ code }));
+				} finally {
+					session.close();
+				}
+			});
+
+			it("pauses on a bounded step seen only against the lease row, then re-anchors it", async () => {
+				const { fixture, session, grant } = await serviceSession(18_824);
+				try {
+					expect(await grant()).toBe(true);
+					mutateReplay(fixture, "UPDATE active_lease SET last_wall_time=last_wall_time+60000");
+					expect(() => session.assertReviewAlive(0)).toThrow(WriterCheckInconclusiveError);
+					expect(session.writerCheckPause?.error.reason).toBe("clock_stepped_back");
+					expect(await grant()).toBe(false);
+					session.recheckWriters();
+					expect(await grant()).toBe(true);
+					expect(fixture.authorization.leaseCurrencyEvents.map((event) => event.event)).toEqual([
+						"lease_clock_reanchored",
+					]);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("reports replay_unavailable, not a lease code, for missing replay metadata", async () => {
+				const { fixture, session, grant } = await serviceSession(18_825);
+				try {
+					expect(await grant()).toBe(true);
+					mutateReplay(fixture, "DELETE FROM runtime_metadata");
+					expect(() => session.assertLeaseCurrent()).toThrow(
+						expect.objectContaining({ code: "replay_unavailable" }),
+					);
+					expect(fixture.authorization.leaseCurrencyEvents).toEqual([]);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("stops a grant with boot_changed or clock_stepped_back seen during the validation itself", async () => {
+				const rebooted = await serviceSession(18_826);
+				try {
+					expect(await rebooted.grant()).toBe(true);
+					rebooted.fixture.authorization.simulateReboot();
+					expect(await rebooted.grant()).toBe(false);
+					expect(rebooted.session.leaseStopCode).toBe("boot_changed");
+				} finally {
+					rebooted.session.close();
+				}
+				// The monotonic clock goes backwards between two readings of one validation.
+				const fixture = await setup({ approved: true, reviewPort: 18_827 });
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				let readings = 0;
+				let regress = false;
+				const system = {
+					...base,
+					observe: () => {
+						const observation = base.observe();
+						if (!regress) return observation;
+						readings += 1;
+						return readings === 2
+							? { ...observation, monotonic: observation.monotonic - 60_000_000_000n }
+							: observation;
+					},
+					proveNoKnownV1Writers: () => undefined,
+				};
+				const session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+					system,
+				);
+				try {
+					const binding = new MeetingPublicationWriteBinding({
+						sourcePath: fixture.config.sourcePath as string,
+						statePath: fixture.config.statePath as string,
+					});
+					regress = true;
+					expect(await Effect.runPromise(session.validator.validate("store_claim", binding))).toBe(false);
+					expect(session.leaseStopCode).toBe("clock_stepped_back");
+				} finally {
+					session.close();
+				}
+			});
+
+			it("reports nothing for a session closed while its lease check observes the clock", async () => {
+				const fixture = await setup({ approved: true, reviewPort: 18_828 });
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				let closeOnObserve = false;
+				let session: MeetingRuntimeSession | undefined;
+				const system = {
+					...base,
+					observe: () => {
+						if (closeOnObserve) session?.close();
+						return base.observe();
+					},
+					proveNoKnownV1Writers: () => undefined,
+				};
+				session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+					system,
+				);
+				fixture.authorization.simulateReboot();
+				closeOnObserve = true;
+				expect(() => session?.assertLeaseCurrent()).toThrow(expect.objectContaining({ code: "revoked" }));
+				expect(fixture.authorization.leaseCurrencyEvents).toEqual([]);
+				expect(() => session?.assertLeaseCurrent()).toThrow(expect.objectContaining({ code: "revoked" }));
+			});
+		});
 	});
 });

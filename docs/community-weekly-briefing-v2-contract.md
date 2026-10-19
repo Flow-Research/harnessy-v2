@@ -158,12 +158,35 @@ repaired, with:
 ```sh
 harnessy jarvis community schedule --cli-entry CLI --node-path NODE --python-path PYTHON [--apply]
 harnessy jarvis community generation-status [--json] [--repair]
+harnessy jarvis community generation-retry --week-start YYYY-MM-DD [--json]
 ```
 
 `--apply` refuses unless `NODE` and `CLI` belong to the release the publication
-service runs. Both commands are deliberately outside `community briefing`: the
-guard treats every other `jarvis community briefing …` process as a rival
+service runs. All three commands are deliberately outside `community briefing`:
+the guard treats every other `jarvis community briefing …` process as a rival
 writer.
+
+A failed week is retried at most three times, at least an hour apart. Transient
+provider failures do not count toward those three: `provider_network` (no
+response) and `provider_unavailable` (HTTP 502, 503 or 504). Any other failure
+after the provider answered, including an in-stream failure after HTTP 200, is
+`provider_failed` and counts. Transient failures are retried with a backoff of
+10, 20 and 40 minutes, then hourly, for at most 12 per week, and raise a desktop
+notice only when the trigger gives up. Automatic runs are capped at 15 per week
+whatever their outcome, so at most 45 paid calls; a crash mid-run still counts. A network failure records the fetch
+error's allow-listed sub-code (`ENOTFOUND`, `EAI_AGAIN`, `ECONNRESET`,
+`ETIMEDOUT`, `UND_ERR_*`, `ERR_TLS_*`, `unexpected_redirect` and similar) in the
+log event and the record, never provider text.
+
+`generation-retry` asks the running review service to retry one week now, also
+after it gave up. The command never generates: it writes an owner-only request
+file, `community-weekly-generation.retry-request.json`, in the state directory,
+and refuses when no review service holds the scheduler lock. The service that
+holds the lock takes the request within about 15 seconds and runs that week as
+its own one-shot child. A request not taken within ten minutes expires, so a
+service started later never runs a stale paid retry. It still checks the queue first, so a drafted week is
+never generated twice. Only Mondays of the last twelve weeks, up to the week due
+now, are accepted.
 
 The preserved V1 capability remains the compatibility oracle, not an instruction
 to reactivate V1 writers. See `PORT_MAP.md` for current verified implementation

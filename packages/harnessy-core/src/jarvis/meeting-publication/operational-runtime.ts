@@ -11,6 +11,14 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import type * as Scope from "effect/Scope";
 import {
+	assessLeaseClock,
+	LEASE_CLOCK_MAX_REANCHOR_STEP_MS,
+	type LeaseCurrencyCode,
+	type LeaseCurrencyReporter,
+	leaseCurrencyEvent,
+	stderrLeaseCurrencyReporter,
+} from "../lease-clock.ts";
+import {
 	type ProcessProbeRunner,
 	retryWhileWriterCheckInconclusive,
 	runAllWriterCheckProbes,
@@ -120,7 +128,12 @@ export interface MeetingPublicationSmokeRuntimeSystem {
 	readonly proveNoKnownV1Writers: () => void;
 	/** Receives allow-listed writer-check events; defaults to one JSON line on stderr. */
 	readonly reportWriterCheck?: WriterCheckReporter;
+	/** Receives lease re-anchor and lease currency stop events; defaults to one JSON line on stderr. */
+	readonly reportLeaseCurrency?: LeaseCurrencyReporter;
 }
+
+/** Wall-clock slack between two readings before a lease check treats the clock as stepped back. */
+const LEASE_CLOCK_TOLERANCE_MS = 1_000;
 
 interface ReplayRow {
 	readonly instance_id?: unknown;
@@ -666,11 +679,34 @@ export class MeetingRuntimeSession {
 	/** Set once a writer was observed: the session stops with `writer_present`. */
 	private writerObserved = false;
 	readonly reportWriterCheck: WriterCheckReporter;
+	private readonly reportLeaseCurrency: LeaseCurrencyReporter;
+	/** The lease currency failure that stopped this session, reported instead of `revoked`. */
+	private leaseStop: LeaseCurrencyCode | undefined;
+	/**
+	 * Wall and monotonic anchor for the projected-time check. A service re-anchors it, with
+	 * its lease row, after a bounded backward wall-clock step (lease-clock.ts).
+	 */
+	private wallAnchor: number;
+	private monotonicAnchor: bigint;
+	/** Only a service (no signed wall-clock expiry) may re-anchor; a step cannot extend its authority. */
+	private readonly reanchorable: boolean;
+	/**
+	 * Total backward wall-clock time re-anchored over this lease. It is capped at
+	 * LEASE_CLOCK_MAX_REANCHOR_STEP_MS, so repeated steps cannot add up, and it is added
+	 * back to the wall clock for claim expiry, so a step never extends a claim.
+	 */
+	private reanchoredMs = 0;
+	/** Set by `close()`: a later lease failure is the shutdown, not a lease currency failure. */
+	private closed = false;
 
 	constructor(verified: VerifiedMeetingPublicationRuntimeInput, system: MeetingPublicationSmokeRuntimeSystem) {
 		this.verified = verified;
 		this.system = system;
 		this.reportWriterCheck = system.reportWriterCheck ?? stderrWriterCheckReporter;
+		this.reportLeaseCurrency = system.reportLeaseCurrency ?? stderrLeaseCurrencyReporter;
+		this.wallAnchor = verified.startedAt;
+		this.monotonicAnchor = verified.startedMonotonic;
+		this.reanchorable = verified.authorization.expiresAt === null;
 		this.bootId = verified.authorization.runtime.bootId ?? system.observe().bootId;
 		if (verified.kind === "review" && verified.authorization.stateDatabase.kind === "existing") {
 			this.reviewDatabaseIdentity = verified.authorization.stateDatabase;
@@ -954,16 +990,76 @@ export class MeetingRuntimeSession {
 		);
 	}
 
-	private replayCurrent(observation: MeetingPublicationSmokeRuntimeObservation) {
+	/** Stop the session with a lease currency code: logged once, then thrown. */
+	private stopLease(code: LeaseCurrencyCode, stepMs?: number): never {
+		// A finalizer can close the session while a validation is still running (for example an
+		// interruption delivered inside the writer proof). The closed database is not a lease failure.
+		if (this.closed) {
+			this.active = false;
+			return fail("revoked");
+		}
+		if (this.leaseStop === undefined) {
+			this.leaseStop = code;
+			this.reportLeaseCurrency(leaseCurrencyEvent("lease_currency_failed", "meeting", code, stepMs));
+		}
+		this.active = false;
+		return fail(code);
+	}
+
+	/** The lease currency failure that stopped this session, if one did. */
+	get leaseStopCode() {
+		return this.leaseStop;
+	}
+
+	/**
+	 * Projected wall-clock check against the anchor of the last successful lease check: the
+	 * anchor's wall time plus the monotonic time since. A bounded backward step of a service
+	 * throws a `clock_stepped_back` pause unless `reanchor` (a paused retry) allows it; the
+	 * returned step is then re-anchored by `replayCurrent`. Any other step stops the owner.
+	 * The monotonic clock stalls during sleep, so a sleep only moves the wall clock ahead of
+	 * the expectation: it is never a step, and only a backward delta is bounded.
+	 */
+	private assertClockCurrent(observation: MeetingPublicationSmokeRuntimeObservation, reanchor: boolean) {
+		const elapsed = observation.monotonic - this.monotonicAnchor;
+		const clock = assessLeaseClock({
+			expectedWallMs: this.wallAnchor + Number(elapsed / 1_000_000n),
+			nowMs: observation.now,
+			toleranceMs: LEASE_CLOCK_TOLERANCE_MS,
+			monotonicRegressed: elapsed < 0n,
+			reanchorable: this.reanchorable,
+		});
+		if (clock.kind === "stepped_back") return this.stopLease("clock_stepped_back", clock.stepMs);
+		if (clock.kind === "reanchor" && !reanchor) throw new WriterCheckInconclusiveError("clock", "stepped_back");
+		return clock.kind === "reanchor" ? clock.stepMs : undefined;
+	}
+
+	/**
+	 * Revalidate and advance this owner's lease row. Every failure has its own code:
+	 * `boot_changed`, `lease_row_changed` (another writer changed or removed the row),
+	 * `clock_stepped_back`, `lease_update_failed`, or `revoked` for an actual revocation.
+	 * With `reanchor` (a paused retry), a bounded backward step of a service re-anchors the
+	 * same lease row, PID and boot; without it, the step pauses the session.
+	 */
+	private replayCurrent(
+		observation: MeetingPublicationSmokeRuntimeObservation,
+		reanchor = false,
+		projectedStepMs?: number,
+	) {
+		if (this.closed) fail("revoked");
+		if (observation.bootId !== this.bootId) this.stopLease("boot_changed");
 		assertReplayFileIdentity(this.verified);
+		type Outcome =
+			| { readonly kind: "current"; readonly stepMs: number | undefined }
+			| { readonly kind: "pause" }
+			| { readonly kind: "revoked" }
+			| { readonly kind: "replay_unavailable" }
+			| { readonly kind: "stop"; readonly code: LeaseCurrencyCode; readonly stepMs?: number };
 		const checked = Result.try({
-			try: () => {
+			try: (): Outcome => {
 				this.database.exec("BEGIN IMMEDIATE;");
 				const lease = this.database.prepare("SELECT * FROM active_lease WHERE singleton=1").get() as
 					| ReplayRow
 					| undefined;
-				const lastWallTime = Number(lease?.last_wall_time);
-				const lastMonotonic = BigInt(String(lease?.last_monotonic_ns));
 				if (
 					lease === undefined ||
 					lease.lease_id !== this.leaseId ||
@@ -973,24 +1069,47 @@ export class MeetingRuntimeSession {
 					lease.key_id !== this.verified.authorization.keyId ||
 					lease.owner_uid !== observation.uid.toString() ||
 					Number(lease.pid) !== process.pid ||
-					lease.boot_id !== observation.bootId ||
 					lease.expires_at !== (this.verified.authorization.expiresAt ?? "service") ||
-					Number(lease.revocation_sequence) !== this.revocationSequence ||
-					!Number.isSafeInteger(lastWallTime) ||
-					observation.now + 1_000 < lastWallTime ||
-					observation.monotonic < lastMonotonic
-				) {
-					this.database.exec("ROLLBACK;");
-					return false;
-				}
+					Number(lease.revocation_sequence) !== this.revocationSequence
+				)
+					return { kind: "stop", code: "lease_row_changed" };
+				if (lease.boot_id !== this.bootId) return { kind: "stop", code: "boot_changed" };
+				const lastWallTime = Number(lease.last_wall_time);
+				const lastMonotonic = /^\d{1,30}$/u.test(String(lease.last_monotonic_ns))
+					? BigInt(String(lease.last_monotonic_ns))
+					: undefined;
+				if (!Number.isSafeInteger(lastWallTime) || lastMonotonic === undefined)
+					return { kind: "stop", code: "lease_row_changed" };
+				const clock = assessLeaseClock({
+					// Projected by the monotonic time since the lease was last advanced.
+					expectedWallMs:
+						lastWallTime +
+						(observation.monotonic >= lastMonotonic
+							? Number((observation.monotonic - lastMonotonic) / 1_000_000n)
+							: 0),
+					nowMs: observation.now,
+					toleranceMs: LEASE_CLOCK_TOLERANCE_MS,
+					monotonicRegressed: observation.monotonic < lastMonotonic,
+					reanchorable: this.reanchorable,
+				});
+				if (clock.kind === "stepped_back")
+					return {
+						kind: "stop",
+						code: "clock_stepped_back",
+						...(clock.stepMs === undefined ? {} : { stepMs: clock.stepMs }),
+					};
+				if (clock.kind === "reanchor" && !reanchor) return { kind: "pause" };
+				const stepMs = Math.max(clock.kind === "reanchor" ? clock.stepMs : 0, projectedStepMs ?? 0);
+				// Re-anchors add up per lease; past the bound the clock is not drift any more.
+				if (stepMs > 0 && this.reanchoredMs + stepMs > LEASE_CLOCK_MAX_REANCHOR_STEP_MS)
+					return { kind: "stop", code: "clock_stepped_back", stepMs: this.reanchoredMs + stepMs };
 				const metadata = this.database
 					.prepare("SELECT revocation_sequence FROM runtime_metadata WHERE singleton=1")
 					.get();
 				const sequence = Number(metadata?.revocation_sequence);
-				if (!Number.isSafeInteger(sequence) || sequence < this.revocationSequence || this.isRevoked()) {
-					this.database.exec("ROLLBACK;");
-					return false;
-				}
+				if (!Number.isSafeInteger(sequence) || sequence < this.revocationSequence)
+					return { kind: "replay_unavailable" };
+				if (this.isRevoked()) return { kind: "revoked" };
 				const updated = this.database
 					.prepare(
 						"UPDATE active_lease SET last_wall_time=?,last_monotonic_ns=?,revocation_sequence=? WHERE singleton=1 AND lease_id=? AND last_wall_time=? AND last_monotonic_ns=? AND revocation_sequence=?",
@@ -1004,19 +1123,34 @@ export class MeetingRuntimeSession {
 						lastMonotonic.toString(),
 						this.revocationSequence,
 					);
-				if (Number(updated.changes) !== 1) {
-					this.database.exec("ROLLBACK;");
-					return false;
-				}
+				if (Number(updated.changes) !== 1) return { kind: "stop", code: "lease_update_failed" };
 				this.database.exec("COMMIT;");
 				this.revocationSequence = sequence;
-				return true;
+				return { kind: "current", stepMs: stepMs > 0 ? stepMs : undefined };
 			},
 			catch: (cause) => cause,
 		});
-		if (Result.isSuccess(checked)) return checked.success;
-		void Result.try({ try: () => this.database.exec("ROLLBACK;"), catch: () => undefined });
-		throw checked.failure;
+		if (Result.isFailure(checked) || checked.success.kind !== "current")
+			void Result.try({ try: () => this.database.exec("ROLLBACK;"), catch: () => undefined });
+		// A lease transaction that could not run or commit (for example a busy or failing database).
+		if (Result.isFailure(checked)) return this.stopLease("lease_update_failed");
+		const outcome = checked.success;
+		if (outcome.kind === "stop") return this.stopLease(outcome.code, outcome.stepMs);
+		if (outcome.kind === "pause") throw new WriterCheckInconclusiveError("clock", "stepped_back");
+		if (outcome.kind === "revoked" || outcome.kind === "replay_unavailable") {
+			this.active = false;
+			return fail(outcome.kind);
+		}
+		// Every successful check advances the anchor, so the next check bounds only the new interval.
+		this.wallAnchor = observation.now;
+		this.monotonicAnchor = observation.monotonic;
+		if (outcome.stepMs !== undefined) {
+			// Same lease row, PID and boot; the paused retry already proved writers absent.
+			this.reanchoredMs += outcome.stepMs;
+			this.reportLeaseCurrency(
+				leaseCurrencyEvent("lease_clock_reanchored", "meeting", "clock_stepped_back", outcome.stepMs),
+			);
+		}
 	}
 
 	readonly validator: MeetingPublicationWriteGrantValidator = {
@@ -1044,34 +1178,31 @@ export class MeetingRuntimeSession {
 						return false;
 					const validation = Result.try({
 						try: () => {
-							const timeCurrent = (observation: MeetingPublicationSmokeRuntimeObservation) => {
-								const elapsed = observation.monotonic - this.verified.startedMonotonic;
-								if (elapsed < 0n) return false;
-								const expectedWall = this.verified.startedAt + Number(elapsed / 1_000_000n);
+							/**
+							 * Boot, clock and expiry. A changed boot or an unbounded clock step stops the
+							 * owner with its own code; a bounded step of a service pauses it (no grant).
+							 */
+							const timeCurrent = (
+								observation: MeetingPublicationSmokeRuntimeObservation,
+								previous: MeetingPublicationSmokeRuntimeObservation,
+							) => {
+								if (observation.bootId !== this.bootId) this.stopLease("boot_changed");
+								if (observation.monotonic < previous.monotonic) this.stopLease("clock_stepped_back");
+								this.assertClockCurrent(observation, false);
 								return (
-									observation.now + 1_000 >= expectedWall &&
-									(this.verified.authorization.expiresAt === null ||
-										observation.now < Date.parse(this.verified.authorization.expiresAt))
+									this.verified.authorization.expiresAt === null ||
+									observation.now < Date.parse(this.verified.authorization.expiresAt)
 								);
 							};
 							const initial = this.system.observe();
-							if (
-								!timeCurrent(initial) ||
-								initial.monotonic < started.monotonic ||
-								!this.immutableBindingsCurrent(initial)
-							)
-								return false;
+							if (!timeCurrent(initial, started) || !this.immutableBindingsCurrent(initial)) return false;
 							if (this.verified.kind !== "review") this.proveWriters();
 							// Immutable control checks and the OS writer proof can still
 							// consume the remaining authority or claim lifetime. Never issue a
 							// grant using their earlier time, lease, or revocation observation.
 							const observation = this.system.observe();
-							if (
-								!timeCurrent(observation) ||
-								observation.monotonic < initial.monotonic ||
-								!this.replayCurrent(observation)
-							)
-								return false;
+							if (!timeCurrent(observation, initial)) return false;
+							this.replayCurrent(observation);
 							if (this.verified.kind === "smoke") {
 								assertCurrentItem(
 									this.verified,
@@ -1081,7 +1212,7 @@ export class MeetingRuntimeSession {
 										operation === "store_claim"
 										? "eligible"
 										: "claimed",
-									observation.now,
+									observation.now + this.reanchoredMs,
 								);
 							} else if (this.verified.kind === "worker" || this.verified.kind === "full_review") {
 								if (
@@ -1097,7 +1228,7 @@ export class MeetingRuntimeSession {
 									assertCurrentWorkerItem(
 										this.verified,
 										item,
-										observation.now,
+										observation.now + this.reanchoredMs,
 										operation === "store_auth_resume",
 									);
 								}
@@ -1258,29 +1389,55 @@ export class MeetingRuntimeSession {
 		throw checked.failure;
 	}
 
-	/** One retry while paused: a fresh observation, writer proof and lease check. Success resumes grants. */
+	/**
+	 * One retry while paused: a fresh observation, writer proof and lease check. A bounded
+	 * backward wall-clock step is re-anchored here, under the same lease and this fresh proof,
+	 * before the pause clears. Success resumes grants.
+	 */
 	recheckWriters() {
 		if (this.writerObserved) fail("writer_present");
-		if (!this.active) fail("revoked");
+		if (!this.active) fail(this.leaseStop ?? "revoked");
 		this.system.observe();
+		// A re-anchor needs this fresh writer proof. A review session has no writer proof, and
+		// as a finite authorization it can never re-anchor.
 		if (this.verified.kind !== "review") this.proveWriters();
-		this.assertLeaseCurrent();
+		this.leaseCurrent(this.verified.kind !== "review");
 		this.writerCheckPending = undefined;
 	}
 
-	/** Lease, expiry and revocation check without writer-check pause handling. */
+	/** Lease, clock, expiry and revocation check without writer-check pause handling. Never re-anchors. */
 	assertLeaseCurrent() {
+		this.leaseCurrent(false);
+	}
+
+	/**
+	 * The final check of a graceful drain. A bounded clock step found here is re-anchored only
+	 * through `recheckWriters`, after a fresh writer proof.
+	 */
+	assertDrainedLeaseCurrent() {
+		const checked = Result.try({ try: () => this.leaseCurrent(false), catch: (cause) => cause });
+		if (Result.isSuccess(checked)) return;
+		if (checked.failure instanceof WriterCheckInconclusiveError && checked.failure.check === "clock")
+			return this.recheckWriters();
+		throw checked.failure;
+	}
+
+	/** Boot first, so a restored VM reports `boot_changed` rather than its clock step. */
+	private leaseCurrent(reanchor: boolean) {
+		if (!this.active) fail(this.leaseStop ?? "revoked");
 		const observation = this.system.observe();
+		if (observation.bootId !== this.bootId) this.stopLease("boot_changed");
 		if (
-			!this.active ||
-			(this.verified.authorization.expiresAt !== null &&
-				observation.now >= Date.parse(this.verified.authorization.expiresAt)) ||
-			!this.replayCurrent(observation)
+			this.verified.authorization.expiresAt !== null &&
+			observation.now >= Date.parse(this.verified.authorization.expiresAt)
 		)
 			fail("revoked");
+		const projectedStepMs = this.assertClockCurrent(observation, reanchor);
+		this.replayCurrent(observation, reanchor, projectedStepMs);
 	}
 
 	close() {
+		this.closed = true;
 		this.active = false;
 		const closed = Result.try({
 			try: () => {
@@ -1307,7 +1464,11 @@ export class MeetingRuntimeSession {
  * writer probes; an unanswered boot-identity observation is not reported as a writer.
  */
 const inconclusiveStopCode = (cause: WriterCheckInconclusiveError): MeetingPublicationSmokeRuntimeErrorCode =>
-	cause.check === "sysctl" ? "unsupported_platform" : "writer_present";
+	cause.check === "sysctl"
+		? "unsupported_platform"
+		: cause.check === "clock"
+			? "clock_stepped_back"
+			: "writer_present";
 
 const runtimeFailure = (cause: unknown, fallback: MeetingPublicationSmokeRuntimeErrorCode) =>
 	cause instanceof MeetingPublicationSmokeRuntimeError
@@ -1616,7 +1777,7 @@ export const runAuthorizedMeetingPublicationFullReview = (
 						// Never turn revocation during that cleanup into a successful graceful stop.
 						if (drainCompleted) {
 							const current = Result.try({
-								try: () => resource.assertLeaseCurrent(),
+								try: () => resource.assertDrainedLeaseCurrent(),
 								catch: (cause) => runtimeFailure(cause, "revoked"),
 							});
 							if (Result.isFailure(current)) cleanupFailure = current.failure;
@@ -1681,7 +1842,11 @@ export const runAuthorizedMeetingPublicationFullReview = (
 														: Effect.fail(
 																session.writerWasObserved
 																	? new MeetingPublicationSmokeRuntimeError({ code: "writer_present" })
-																	: cause,
+																	: session.leaseStopCode !== undefined
+																		? new MeetingPublicationSmokeRuntimeError({
+																				code: session.leaseStopCode,
+																			})
+																		: cause,
 															),
 												),
 											);

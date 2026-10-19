@@ -106,6 +106,16 @@ export default defineConfig({
 				"src/cli/portal.ts": { statements: 95, branches: 95, functions: 90, lines: 95 },
 				// One-writer guard probe classification and bounded inconclusive retry.
 				"src/jarvis/writer-check.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				// Lease and wall-clock currency classification shared by the meeting and community owners.
+				"src/jarvis/lease-clock.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				// Meeting owner lease, clock, writer-check pause and grant validation: CI's measured
+				// coverage at b6b50c75 (86.88/82.83/88.29/90.65), rounded down.
+				"src/jarvis/meeting-publication/operational-runtime.ts": {
+					statements: 86,
+					branches: 82,
+					functions: 88,
+					lines: 90,
+				},
 				// Weekly community generation inside the review service, and its LaunchAgent plan.
 				"src/jarvis/community-briefing/weekly-generation.ts": {
 					statements: 95,

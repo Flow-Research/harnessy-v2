@@ -34,6 +34,7 @@ import {
 	runAuthorizedCommunityBriefing,
 } from "../../harnessy-core/src/jarvis/community-briefing/operational-runtime.ts";
 import { runCommunityReviewProcess } from "../../harnessy-core/src/jarvis/community-briefing/review-process.ts";
+import type { LeaseCurrencyEvent } from "../../harnessy-core/src/jarvis/lease-clock.ts";
 import { canonicalMeetingPublicationSmokeJson } from "../../harnessy-core/src/jarvis/meeting-publication/operational-input.ts";
 import { MeetingPublicationSmokeRuntimeSystemReference } from "../../harnessy-core/src/jarvis/meeting-publication/operational-runtime.ts";
 import {
@@ -219,13 +220,15 @@ const fixture = async (reviewPython?: string, service = false) => {
 	let onProof: (() => void) | undefined;
 	let proofOverride: (() => void) | undefined;
 	const writerCheckEvents: Array<WriterCheckEvent> = [];
+	const leaseCurrencyEvents: Array<LeaseCurrencyEvent> = [];
 	const run = (enrollOnly = false) =>
 		runAuthorizedCommunityBriefing(input, {
 			artifactAnchors: { host: paths.host, sdk: paths.sdk, dependencies: paths.dependencies },
 			...(enrollOnly ? { enrollOnly: true as const } : { publish: runNativeCommunityBriefing }),
 		}).pipe(
 			Effect.provideService(MeetingPublicationSmokeRuntimeSystemReference, {
-				observe: () => observation,
+				// A snapshot per reading, as the OS gives: a later change is seen as a change.
+				observe: () => ({ ...observation }),
 				proveNoKnownV1Writers: () => {
 					throw new Error("wrong workflow proof");
 				},
@@ -239,6 +242,9 @@ const fixture = async (reviewPython?: string, service = false) => {
 				},
 				reportWriterCheck: (event) => {
 					writerCheckEvents.push(event);
+				},
+				reportLeaseCurrency: (event) => {
+					leaseCurrencyEvents.push(event);
 				},
 			}),
 		);
@@ -305,6 +311,7 @@ const fixture = async (reviewPython?: string, service = false) => {
 			proofOverride = proof;
 		},
 		writerCheckEvents,
+		leaseCurrencyEvents,
 	};
 };
 
@@ -1507,6 +1514,190 @@ describe("community operational consumer", () => {
 			} finally {
 				await f.cleanup();
 			}
+		});
+
+		describe("lease and clock currency", () => {
+			const reason = (exit: Exit.Exit<unknown, unknown>) =>
+				Exit.isFailure(exit) ? JSON.parse(JSON.stringify(exit)) : undefined;
+
+			it("re-anchors a bounded backward step before the lease under a pause, then publishes", async () => {
+				const f = await fixture(undefined, true);
+				try {
+					let stepped = false;
+					let leaseDuringPause = false;
+					// The service was enrolled earlier; the step must not cross its signed notBefore.
+					f.observation.now += 10 * 60_000;
+					f.setOnProof(() => {
+						if (stepped) return;
+						stepped = true;
+						// An NTP correction when the network returns: 90 seconds back, same boot.
+						f.observation.now -= 90_000;
+					});
+					const { exit } = await runWithClock(f.run(), (elapsed) => {
+						if (elapsed === 0) {
+							leaseDuringPause =
+								f.rows("SELECT name FROM sqlite_master WHERE name='community_briefing_lease'").length > 0 &&
+								f.rows("SELECT * FROM community_briefing_lease").length > 0;
+							if (f.wire.requests.length !== 0) throw new Error("provider called while re-anchoring");
+						}
+					});
+					expect(leaseDuringPause).toBe(false);
+					expect(Exit.isSuccess(exit) && exit.value).toMatchObject({ status: "published" });
+					expect(f.leaseCurrencyEvents).toEqual([
+						{ event: "lease_clock_reanchored", service: "community", code: "clock_stepped_back", stepMs: 90_000 },
+					]);
+					expect(f.writerCheckEvents.map((event) => event.event)).toEqual([
+						"writer_check_inconclusive",
+						"writer_check_recovered",
+					]);
+					expect(f.writerCheckEvents[0]).toMatchObject({ service: "community", reason: "clock_stepped_back" });
+				} finally {
+					await f.cleanup();
+				}
+			});
+
+			it("stops with clock_stepped_back, never a re-anchor, on a step beyond the bound", async () => {
+				const f = await fixture(undefined, true);
+				try {
+					f.setOnProof(() => {
+						f.observation.now -= 6 * 60_000;
+					});
+					const { exit, elapsed } = await runWithClock(f.run(), () => undefined);
+					expect(Exit.isFailure(exit)).toBe(true);
+					expect(JSON.stringify(reason(exit))).toContain('"code":"runtime_rejected"');
+					expect(JSON.stringify(reason(exit))).toContain('"reason":"clock_stepped_back"');
+					expect(elapsed).toBeLessThanOrEqual(1_000);
+					expect(f.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "community", code: "clock_stepped_back", stepMs: 360_000 },
+					]);
+					expect(f.wire.requests).toHaveLength(0);
+					expect(f.rows("SELECT * FROM community_briefing_grants")).toHaveLength(0);
+				} finally {
+					await f.cleanup();
+				}
+			});
+
+			it("never re-anchors a one-shot authorization", async () => {
+				const f = await fixture();
+				try {
+					f.setOnProof(() => {
+						f.observation.now -= 5_000;
+					});
+					const { exit } = await runWithClock(f.run(), () => undefined);
+					expect(JSON.stringify(reason(exit))).toContain('"reason":"clock_stepped_back"');
+					expect(f.leaseCurrencyEvents.map((event) => event.event)).toEqual(["lease_currency_failed"]);
+					expect(f.wire.requests).toHaveLength(0);
+				} finally {
+					await f.cleanup();
+				}
+			});
+
+			it("stops at once with boot_changed, not runtime_changed, when the boot changes", async () => {
+				const f = await fixture(undefined, true);
+				try {
+					f.setOnProof(() => {
+						f.observation.bootId = "another-boot";
+					});
+					const { exit } = await runWithClock(f.run(), () => undefined);
+					expect(JSON.stringify(reason(exit))).toContain('"reason":"boot_changed"');
+					expect(f.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "community", code: "boot_changed" },
+					]);
+					expect(f.wire.requests).toHaveLength(0);
+				} finally {
+					await f.cleanup();
+				}
+			});
+
+			it("ends a publication as uncertain with lease_row_changed when another writer changes the lease row", async () => {
+				const f = await fixture(undefined, true);
+				try {
+					f.wire.onRequest = (request) => {
+						if (request.method !== "POST" || !request.path.endsWith("/permissions")) return;
+						const ledger = new DatabaseSync(f.payload.operational.ledger.path);
+						try {
+							ledger.exec("UPDATE community_briefing_lease SET lease_id='another-writer'");
+						} finally {
+							ledger.close();
+						}
+					};
+					const exit = await Effect.runPromiseExit(f.run());
+					expect(JSON.stringify(reason(exit))).toContain('"code":"publication_uncertain"');
+					expect(JSON.stringify(reason(exit))).toContain('"reason":"lease_row_changed"');
+					expect(f.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "community", code: "lease_row_changed" },
+					]);
+					expect(f.wire.messagesByNonce.size).toBe(0);
+				} finally {
+					await f.cleanup();
+				}
+			});
+
+			it("does not re-anchor a step while a publication holds the lease", async () => {
+				const f = await fixture(undefined, true);
+				try {
+					f.wire.onRequest = (request) => {
+						if (request.method === "POST" && request.path.endsWith("/permissions")) f.observation.now -= 60_000;
+					};
+					const exit = await Effect.runPromiseExit(f.run());
+					expect(JSON.stringify(reason(exit))).toContain('"code":"publication_uncertain"');
+					expect(JSON.stringify(reason(exit))).toContain('"reason":"clock_stepped_back"');
+					expect(f.leaseCurrencyEvents.map((event) => event.event)).not.toContain("lease_clock_reanchored");
+					expect(f.rows("SELECT * FROM community_briefing_lease")).toHaveLength(1);
+					expect(f.wire.messagesByNonce.size).toBe(0);
+				} finally {
+					await f.cleanup();
+				}
+			});
+
+			it("bounds a step against the monotonic time since the last check, not only the last wall time", async () => {
+				const f = await fixture(undefined, true);
+				try {
+					f.observation.now += 10 * 60_000;
+					let stepped = false;
+					f.setOnProof(() => {
+						if (stepped) return;
+						stepped = true;
+						// One awake minute passes, but the wall clock moves only 30 seconds.
+						f.observation.monotonic += 60_000_000_000n;
+						f.observation.now += 30_000;
+					});
+					const { exit } = await runWithClock(f.run(), () => undefined);
+					expect(Exit.isSuccess(exit) && exit.value).toMatchObject({ status: "published" });
+					expect(f.leaseCurrencyEvents).toEqual([
+						{ event: "lease_clock_reanchored", service: "community", code: "clock_stepped_back", stepMs: 30_000 },
+					]);
+				} finally {
+					await f.cleanup();
+				}
+			});
+
+			it("stops once re-anchored steps in one run exceed five minutes in total", async () => {
+				const f = await fixture(undefined, true);
+				try {
+					f.observation.now += 30 * 60_000;
+					let proofs = 0;
+					f.setOnProof(() => {
+						proofs += 1;
+						// The first check and its retry each meet a three-minute step.
+						if (proofs === 1 || proofs === 3) f.observation.now -= 3 * 60_000;
+					});
+					const { exit } = await runWithClock(f.run(), () => undefined);
+					expect(JSON.stringify(reason(exit))).toContain('"reason":"clock_stepped_back"');
+					expect(f.leaseCurrencyEvents).toEqual([
+						{
+							event: "lease_clock_reanchored",
+							service: "community",
+							code: "clock_stepped_back",
+							stepMs: 180_000,
+						},
+						{ event: "lease_currency_failed", service: "community", code: "clock_stepped_back", stepMs: 360_000 },
+					]);
+					expect(f.wire.requests).toHaveLength(0);
+				} finally {
+					await f.cleanup();
+				}
+			});
 		});
 	});
 });

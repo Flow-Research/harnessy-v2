@@ -84,6 +84,24 @@ class CommunityDraftAdapterTests(unittest.TestCase):
         self.assertTrue(events[0]["existing"])
         self.assertEqual(self.queue(), [row])
 
+    def test_start_marks_runs_orphaned_by_a_killed_adapter_interrupted(self):
+        result, _ = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        database = self.root / "state/weekly-briefings.sqlite3"
+        with sqlite3.connect(database) as db:
+            # What a SIGKILLed adapter leaves behind: a run that never recorded its outcome.
+            db.execute(
+                "INSERT INTO community_draft_runs(run_id,request_hash,status,calls) VALUES ('killed-run',?,'running',2)",
+                ("0" * 64,),
+            )
+        result, _ = self.run_adapter(week_start="2026-09-21")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with sqlite3.connect(database) as db:
+            runs = {run_id: (status, calls) for run_id, status, calls in db.execute(
+                "SELECT run_id,status,calls FROM community_draft_runs")}
+        self.assertEqual(runs.pop("killed-run"), ("interrupted", 2))
+        self.assertEqual(sorted(runs.values()), [("completed", 0), ("completed", 0)])
+
     def test_classifier_uses_parent_only_and_exclusion_produces_quiet_draft(self):
         source_id = self.add_source()
         response = {"sequence": 1, "provider": "codex", "data": {"decisions": [{

@@ -4,7 +4,11 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Effect, Schema } from "effect";
 
-import { type CodexProviderFailureCode, codexProviderFailureCode } from "../../ai/codex-failure.ts";
+import {
+	type CodexProviderFailureCode,
+	codexProviderFailureCode,
+	codexProviderFailureSubCode,
+} from "../../ai/codex-failure.ts";
 
 const Result = Schema.Struct({
 	type: Schema.Literal("result"),
@@ -24,9 +28,12 @@ const REFUSALS = new Set(["native_draft_busy", "orphan_artifacts"]);
 /** The fixed, content-free failure. `code` names a known cause when there is one. */
 export class CommunityDraftProcessError extends Error {
 	readonly code: "native_draft_busy" | "orphan_artifacts" | "deadline_exceeded" | CodexProviderFailureCode | undefined;
-	constructor(code: CommunityDraftProcessError["code"]) {
+	/** The allow-listed network sub-code of a provider failure (for example `ENOTFOUND`). */
+	readonly subCode: string | undefined;
+	constructor(code: CommunityDraftProcessError["code"], subCode?: string) {
 		super("Community draft did not complete safely; inspect its local state before retrying.");
 		this.code = code;
+		this.subCode = subCode;
 	}
 }
 
@@ -123,6 +130,7 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 	let timedOut = false;
 	let refusal: "native_draft_busy" | "orphan_artifacts" | undefined;
 	let providerFailure: CodexProviderFailureCode | undefined;
+	let providerSubCode: string | undefined;
 	const timer = setTimeout(() => {
 		timedOut = true;
 		controller.abort();
@@ -221,6 +229,7 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 						const data = await callWhileActive(signal, () => options.generate(prompt, calls, signal)).catch(
 							(error: unknown) => {
 								providerFailure = codexProviderFailureCode(error);
+								providerSubCode = codexProviderFailureSubCode(error);
 								throw error;
 							},
 						);
@@ -236,7 +245,10 @@ export const runCommunityDraftProcess = async (options: CommunityDraftProcessOpt
 					if (code !== 0 || !result) throw new Error("Adapter did not complete.");
 					return result;
 				},
-				catch: () => new CommunityDraftProcessError(timedOut ? "deadline_exceeded" : (refusal ?? providerFailure)),
+				catch: () =>
+					timedOut || refusal !== undefined
+						? new CommunityDraftProcessError(timedOut ? "deadline_exceeded" : refusal)
+						: new CommunityDraftProcessError(providerFailure, providerSubCode),
 			}),
 		);
 	} finally {

@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { NodeServices } from "@effect/platform-node";
 import { it as effectIt } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -23,7 +24,9 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import { TestClock } from "effect/testing";
+import { Command } from "effect/unstable/cli";
 import { afterEach, describe, expect, it } from "vitest";
+import { jarvisCommunityGenerationRetryCommand } from "../src/cli/jarvis.ts";
 import {
 	COMMUNITY_GUARD_LABELS,
 	isCommunityCompatibilityWriterCommand,
@@ -37,12 +40,17 @@ import {
 } from "../src/jarvis/community-briefing/schedule.ts";
 import {
 	acquireCommunityGenerationLock,
+	COMMUNITY_GENERATION_LOCK_FILE,
+	COMMUNITY_GENERATION_MAX_RUNS_PER_WEEK,
+	COMMUNITY_GENERATION_MAX_TRANSIENT_ATTEMPTS,
+	COMMUNITY_GENERATION_RETRY_REQUEST_FILE,
 	COMMUNITY_GENERATION_STATUS_FILE,
 	type CommunityGenerationEvent,
 	type CommunityGenerationMemory,
 	type CommunityGenerationSchedule,
 	type CommunityQueuedWeeks,
 	type CommunityWeekGenerationResult,
+	communityGenerationTransientBackoffMs,
 	DEFAULT_COMMUNITY_GENERATION_SCHEDULE,
 	dueCommunityGenerationWeek,
 	isCommunityGenerationSchedulerRunning,
@@ -50,12 +58,16 @@ import {
 	quarantineCommunityGenerationStatus,
 	readCommunityGenerationStatus,
 	repairCommunityGenerationStatus,
+	requestCommunityGenerationRetry,
 	runCommunityGenerationTick,
 	runWeeklyCommunityGeneration,
 	sqliteQueuedWeeks,
 	summarizeCommunityGenerationStatus,
+	takeCommunityGenerationRetryRequest,
 	type WeeklyCommunityGenerationOptions,
 } from "../src/jarvis/community-briefing/weekly-generation.ts";
+import { isMeetingPublicationV1WriterCommand } from "../src/jarvis/meeting-publication/operational-input.ts";
+import { makeMeetingPublicationWriterProof } from "../src/jarvis/meeting-publication/operational-runtime.ts";
 import { JarvisPathResolver, JarvisRuntimeRoots } from "../src/jarvis/paths.ts";
 import {
 	type ProcessProbeResult,
@@ -1125,6 +1137,58 @@ describe("one-writer guard for scheduled generation", () => {
 		expect(isCommunityCompatibilityWriterCommand(`${node} ${cli} jarvis community briefing status`)).toBe(true);
 	});
 
+	it("keeps generation-retry outside both guards, with known writers as controls", async () => {
+		const { cli, file, config } = await plannedReview();
+		const node = process.execPath;
+		const reviewCommand = file.programArguments.join(" ");
+		const retries = [
+			`${node} ${cli} jarvis community generation-retry --config ${config} --week-start 2026-10-12`,
+			`${node} ${cli} jarvis community generation-retry --week-start 2026-10-12 --json`,
+			// The installed `harnessy` launcher, as ps shows it.
+			`${node} /opt/release/bin/harnessy jarvis community generation-retry --week-start 2026-10-12`,
+		];
+		const generator = `${node} ${cli} jarvis community briefing generate --config ${config} --week-start 2026-10-12`;
+		const meetingWorker = `${node} ${cli} jarvis meeting publish worker`;
+		for (const retry of retries) {
+			expect(isCommunityCompatibilityWriterCommand(retry), retry).toBe(false);
+			expect(isMeetingPublicationV1WriterCommand(retry), retry).toBe(false);
+		}
+		expect(isCommunityCompatibilityWriterCommand(generator)).toBe(true);
+		expect(isMeetingPublicationV1WriterCommand(meetingWorker)).toBe(true);
+		// The full community proof, with the retry CLI running beside the review service.
+		const nativeReviewer = { executable: process.execPath, entry: cli };
+		expect(() =>
+			makeCommunityCompatibilityProof(
+				scheduledOs({ reviewCommand, extraProcesses: retries }),
+				"darwin",
+				nativeReviewer,
+			)(),
+		).not.toThrow();
+		expect(() =>
+			makeCommunityCompatibilityProof(
+				scheduledOs({ reviewCommand, extraProcesses: [...retries, generator] }),
+				"darwin",
+				nativeReviewer,
+			)(),
+		).toThrow("compatibility_writer_present");
+		// The full meeting proof over the same process table.
+		const meetingOs =
+			(processes: ReadonlyArray<string>) =>
+			(command: string, args: ReadonlyArray<string>): ProcessProbeResult => {
+				if (command === "/bin/ps")
+					return answer({
+						stdout: `${processes.map((value, index) => `${uid} ${6000 + index} ${value}`).join("\n")}\n`,
+					});
+				if (command === "/bin/launchctl")
+					return answer({ status: 113, stderr: `Could not find service "${args[1]}" in domain` });
+				throw new Error(`unexpected probe ${command}`);
+			};
+		expect(() => makeMeetingPublicationWriterProof(meetingOs([reviewCommand, ...retries]), "darwin")()).not.toThrow();
+		expect(() =>
+			makeMeetingPublicationWriterProof(meetingOs([reviewCommand, ...retries, meetingWorker]), "darwin")(),
+		).toThrow(expect.objectContaining({ code: "writer_present" }));
+	});
+
 	it("renders a self-restarting review LaunchAgent that alone runs the weekly trigger", async () => {
 		const { file, config, python } = await plannedReview();
 		expect(file.programArguments.slice(2)).toEqual([
@@ -1230,6 +1294,389 @@ describe("one-writer guard for scheduled generation", () => {
 		chmodSync(launchAgents, 0o500);
 		await expect(install({})).rejects.toThrow();
 		chmodSync(launchAgents, 0o700);
+	});
+});
+
+describe("transient provider failures and owner retries", () => {
+	const minutes = (value: number) => value * 60_000;
+	const sunday = wat("2026-10-18T23:00:00").getTime();
+
+	it("does not count network failures toward the attempt limit, backs off 10 minutes to an hour, and keeps the sub-code", async () => {
+		let failures = 6;
+		const run = harness((week) =>
+			failures-- > 0
+				? { status: "failed", code: "provider_network", subCode: "ENOTFOUND" }
+				: { status: "created", briefingId: briefingId(week) },
+		);
+		const callTimes: number[] = [];
+		for (let tick = 0; tick <= 48; tick++) {
+			run.at(new Date(sunday + tick * minutes(10)));
+			const before = run.calls.length;
+			await run.tick();
+			if (run.calls.length > before) callTimes.push(tick * 10);
+			if (tick === 0) {
+				const record = readCommunityGenerationStatus(run.statusPath);
+				expect(record?.weeks["2026-10-12"]).toMatchObject({
+					status: "failed",
+					attempts: 0,
+					transientAttempts: 1,
+					code: "provider_network",
+					subCode: "ENOTFOUND",
+				});
+				expect(record?.weeks["2026-10-12"]?.gaveUp).toBeUndefined();
+				expect(record?.lastFailure).toMatchObject({ code: "provider_network", subCode: "ENOTFOUND", attempts: 0 });
+			}
+		}
+		// Six outage failures and the success: never stopped by the three-attempt limit.
+		expect(callTimes).toEqual([0, 10, 30, 70, 130, 190, 250]);
+		const failed = run.events.filter((event) => event.status === "failed");
+		expect(failed.map((event) => event.retryInMs)).toEqual([
+			minutes(10),
+			minutes(20),
+			minutes(40),
+			minutes(60),
+			minutes(60),
+			minutes(60),
+		]);
+		for (const event of failed)
+			expect(event).toMatchObject({ code: "provider_network", subCode: "ENOTFOUND", transient: true });
+		expect(failed.some((event) => event.gaveUp === true)).toBe(false);
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
+			status: "created",
+			attempts: 1,
+			transientAttempts: 6,
+		});
+		// An outage that recovers on its own raises no error notice.
+		expect(run.notifications).toEqual(["pending:1"]);
+	});
+
+	it("gives up after the bounded number of transient failures and notifies once", async () => {
+		const run = harness(() => ({ status: "failed", code: "provider_unavailable" }));
+		for (let hour = 0; hour < 8; hour++) {
+			run.at(new Date(sunday + hour * minutes(60)));
+			await run.tick({ maxTransientAttempts: 3 });
+		}
+		expect(run.calls).toHaveLength(3);
+		expect(run.events.at(-1)).toMatchObject({
+			status: "failed",
+			code: "provider_unavailable",
+			transient: true,
+			gaveUp: true,
+		});
+		expect(run.events.at(-1)?.retryInMs).toBeUndefined();
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
+			attempts: 0,
+			transientAttempts: 3,
+			gaveUp: true,
+		});
+		expect(run.notifications).toEqual(["error:0"]);
+		expect(COMMUNITY_GENERATION_MAX_TRANSIENT_ATTEMPTS).toBe(12);
+		expect(communityGenerationTransientBackoffMs(0)).toBe(minutes(10));
+		expect(communityGenerationTransientBackoffMs(12)).toBe(minutes(60));
+	});
+
+	it("still gives up after three non-transient failures between outage failures", async () => {
+		const answers = [
+			"generation_failed",
+			"provider_network",
+			"generation_failed",
+			"provider_network",
+			"adapter_timeout",
+		];
+		const run = harness((_week, call) => ({ status: "failed", code: answers[call - 1] ?? "generation_failed" }));
+		for (let hour = 0; hour < 10; hour++) {
+			run.at(new Date(sunday + hour * minutes(61)));
+			await run.tick();
+		}
+		expect(run.calls).toHaveLength(5);
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
+			status: "failed",
+			attempts: 3,
+			transientAttempts: 2,
+			code: "adapter_timeout",
+			gaveUp: true,
+		});
+	});
+
+	it("records only allow-listed sub-codes, never provider text", async () => {
+		for (const [subCode, expected] of [
+			["getaddrinfo ENOTFOUND chatgpt.com", undefined],
+			["/Users/x/secret", undefined],
+			["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_CONNECT_TIMEOUT"],
+			["ERR_TLS_CERT_ALTNAME_INVALID", "ERR_TLS_CERT_ALTNAME_INVALID"],
+			["EAI_AGAIN", "EAI_AGAIN"],
+			["unexpected_redirect", "unexpected_redirect"],
+		] as const) {
+			const run = harness(() => ({ status: "failed", code: "provider_network", subCode }));
+			await run.tick();
+			expect(run.events.at(-1)?.subCode, subCode).toBe(expected);
+			expect(JSON.stringify(readCommunityGenerationStatus(run.statusPath))).not.toContain("chatgpt");
+		}
+	});
+
+	it("keeps the transient budget, sub-code and run count across a crash mid-run", async () => {
+		const seen: Array<unknown> = [];
+		let crash = false;
+		const run = harness(() => {
+			if (!crash) return { status: "failed", code: "provider_network", subCode: "EAI_AGAIN" };
+			seen.push(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]);
+			// The process is killed or restarted while this run is in flight.
+			return new Promise<CommunityWeekGenerationResult>(() => undefined);
+		});
+		for (const minute of [0, 10]) {
+			run.at(new Date(sunday + minutes(minute)));
+			await run.tick();
+		}
+		crash = true;
+		run.at(new Date(sunday + minutes(40)));
+		void run.tick({ memory: { notified: new Set(), weeks: new Map() } });
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(seen).toEqual([
+			expect.objectContaining({
+				code: "attempt_interrupted",
+				attempts: 1,
+				transientAttempts: 2,
+				subCode: "EAI_AGAIN",
+				runs: 3,
+			}),
+		]);
+	});
+
+	it("caps automatic runs per week whatever their outcome", async () => {
+		const run = harness(() => ({ status: "failed", code: "provider_network" }));
+		for (let hour = 0; hour < 12; hour++) {
+			run.at(new Date(sunday + hour * minutes(61)));
+			await run.tick({ maxRuns: 4 });
+		}
+		expect(run.calls).toHaveLength(4);
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
+			runs: 4,
+			transientAttempts: 4,
+			gaveUp: true,
+		});
+		expect(COMMUNITY_GENERATION_MAX_RUNS_PER_WEEK).toBe(15);
+	});
+
+	it("does not treat an in-stream provider failure as transient", async () => {
+		const run = harness(() => ({ status: "failed", code: "provider_failed" }));
+		for (let hour = 0; hour < 6; hour++) {
+			run.at(new Date(sunday + hour * minutes(61)));
+			await run.tick();
+		}
+		expect(run.calls).toHaveLength(3);
+		expect(run.events.some((event) => event.transient === true)).toBe(false);
+	});
+
+	it("reports a consumed request when the schedule is disabled or the queue is unreadable", async () => {
+		const run = harness(() => ({ status: "created" }));
+		await runCommunityGenerationTick({ ...run.options, schedule: { ...schedule, enabled: false } }, "2026-10-12");
+		expect(run.events.at(-1)).toEqual({
+			event: "weekly-generation",
+			weekStart: "2026-10-12",
+			status: "skipped",
+			code: "schedule_disabled",
+			requested: true,
+			publication: false,
+		});
+		run.queued.break(true);
+		await runCommunityGenerationTick(run.options, "2026-10-12");
+		expect(run.events.at(-1)).toMatchObject({ status: "failed", code: "queue_unreadable", requested: true });
+		expect(run.calls).toEqual([]);
+	});
+
+	it("runs an owner-requested retry of a given-up week once, and refuses weeks it cannot retry", async () => {
+		let fail = true;
+		const run = harness((week) =>
+			fail ? { status: "failed", code: "provider_network" } : { status: "created", briefingId: briefingId(week) },
+		);
+		// The 2026-10-19 incident: three network failures under the old policy left a given-up week.
+		writeFileSync(
+			run.statusPath,
+			`${JSON.stringify({
+				kind: "harnessy.community.briefing.weekly-generation.v1",
+				publication: false,
+				updatedAt: "2026-10-19T04:00:00.000Z",
+				schedule: { weekday: 0, hour: 23, minute: 0, timezone: "Africa/Lagos" },
+				lastFailure: {
+					weekStart: "2026-10-12",
+					at: "2026-10-19T04:00:00.000Z",
+					code: "provider_network",
+					attempts: 3,
+				},
+				weeks: {
+					"2026-10-12": {
+						status: "failed",
+						attempts: 3,
+						lastAttemptAt: "2026-10-19T04:00:00.000Z",
+						code: "provider_network",
+						gaveUp: true,
+					},
+				},
+			})}\n`,
+			{ mode: 0o600 },
+		);
+		run.at(wat("2026-10-19T09:00:00"));
+		await run.tick();
+		expect(run.calls).toEqual([]);
+		fail = false;
+		await runCommunityGenerationTick(run.options, "2026-10-12");
+		expect(run.calls).toEqual(["2026-10-12"]);
+		expect(run.events.at(-1)).toMatchObject({ status: "created", attempt: 4, requested: true });
+		// Already drafted: nothing to retry.
+		await runCommunityGenerationTick(run.options, "2026-10-12");
+		expect(run.events.at(-1)).toMatchObject({ status: "skipped", code: "retry_not_needed", requested: true });
+		// Not a Monday, a week not yet due, a week older than the retained record, a malformed date.
+		for (const week of ["2026-10-13", "2026-10-19", "2026-07-06", "2026-02-30", "next-week"]) {
+			await runCommunityGenerationTick(run.options, week);
+			expect(run.events.at(-1), week).toMatchObject({ status: "skipped", code: "retry_rejected" });
+		}
+		expect(run.calls).toEqual(["2026-10-12"]);
+	});
+
+	it("restarts the transient count on an owner retry, so automatic backoff resumes", async () => {
+		const run = harness(() => ({ status: "failed", code: "provider_network" }));
+		for (let hour = 0; hour < 4; hour++) {
+			run.at(new Date(sunday + hour * minutes(61)));
+			await run.tick({ maxTransientAttempts: 2 });
+		}
+		expect(run.calls).toHaveLength(2);
+		await runCommunityGenerationTick({ ...run.options, maxTransientAttempts: 2 }, "2026-10-12");
+		expect(run.calls).toHaveLength(3);
+		expect(run.events.at(-1)).toMatchObject({ transient: true, attempt: 1, retryInMs: minutes(10), requested: true });
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]?.gaveUp).toBeUndefined();
+	});
+
+	it("consumes a request file in the loop, wakes early for it, and refuses unsafe or invalid requests", async () => {
+		const run = harness((week) => ({ status: "created", briefingId: briefingId(week) }));
+		// Settle the due week first, so the loop has nothing else to do.
+		run.at(wat("2026-10-19T09:00:00"));
+		run.queued.weeks.set("2026-10-05", briefingId("2026-10-05"));
+		const requestPath = join(run.root, COMMUNITY_GENERATION_RETRY_REQUEST_FILE);
+		const loop = async (onSleep: (ms: number, sleeps: number) => void) => {
+			const controller = new AbortController();
+			const slept: number[] = [];
+			await runWeeklyCommunityGeneration({
+				...run.options,
+				acquireLock: () => ({ release: () => undefined }),
+				signal: controller.signal,
+				tickMs: minutes(10),
+				retryRequests: {
+					pending: () => existsSync(requestPath),
+					take: () => takeCommunityGenerationRetryRequest(run.root, run.options.now()),
+					pollMs: 1_000,
+				},
+				sleep: async (ms) => {
+					slept.push(ms);
+					onSleep(ms, slept.length);
+					if (slept.length >= 3) controller.abort();
+				},
+			});
+			return slept;
+		};
+		// The first tick generates the due week 2026-10-12; a request written meanwhile wakes the loop at once.
+		const slept = await loop((_ms, sleeps) => {
+			if (sleeps === 1) requestCommunityGenerationRetry(run.root, "2026-10-05", new Date("2026-10-19T08:00:00Z"));
+		});
+		expect(slept[0]).toBe(1_000);
+		expect(slept[1]).toBe(1_000);
+		expect(existsSync(requestPath)).toBe(false);
+		// 2026-10-05 is already queued: the request is consumed, recorded and generates nothing.
+		expect(run.calls).toEqual(["2026-10-12"]);
+		expect(run.events).toContainEqual(expect.objectContaining({ weekStart: "2026-10-05", requested: true }));
+
+		// Unsafe (group-readable, a link) and malformed requests are removed and reported, never run.
+		writeFileSync(requestPath, "{}", { mode: 0o644 });
+		chmodSync(requestPath, 0o644);
+		expect(takeCommunityGenerationRetryRequest(run.root)).toEqual({ invalid: "retry_request_unsafe" });
+		expect(existsSync(requestPath)).toBe(false);
+		const target = join(run.root, "elsewhere.json");
+		writeFileSync(target, "{}", { mode: 0o600 });
+		symlinkSync(target, requestPath);
+		expect(takeCommunityGenerationRetryRequest(run.root)).toEqual({ invalid: "retry_request_unsafe" });
+		expect(existsSync(target)).toBe(true);
+		writeFileSync(requestPath, "not json", { mode: 0o600 });
+		await loop(() => undefined);
+		expect(run.events).toContainEqual(
+			expect.objectContaining({ status: "skipped", code: "retry_request_invalid", requested: true }),
+		);
+		expect(existsSync(requestPath)).toBe(false);
+		expect(takeCommunityGenerationRetryRequest(run.root)).toBeUndefined();
+		writeFileSync(requestPath, " ".repeat(5_000), { mode: 0o600 });
+		expect(takeCommunityGenerationRetryRequest(run.root)).toEqual({ invalid: "retry_request_invalid" });
+		expect(() => requestCommunityGenerationRetry(run.root, "2026-10-13")).toThrow("Monday");
+		// A normalized impossible date (2026-02-30 parses as Monday 2026-03-02) is refused.
+		expect(() => requestCommunityGenerationRetry(run.root, "2026-02-30")).toThrow("Monday");
+		// A request the service did not take within ten minutes, or dated in the future, is never run.
+		const at = new Date("2026-10-19T08:00:00Z");
+		requestCommunityGenerationRetry(run.root, "2026-10-12", new Date(at.getTime() - 11 * 60_000));
+		expect(takeCommunityGenerationRetryRequest(run.root, at)).toEqual({ invalid: "retry_request_expired" });
+		requestCommunityGenerationRetry(run.root, "2026-10-12", new Date(at.getTime() + 2 * 60_000));
+		expect(takeCommunityGenerationRetryRequest(run.root, at)).toEqual({ invalid: "retry_request_expired" });
+		requestCommunityGenerationRetry(run.root, "2026-10-12", new Date(at.getTime() - 9 * 60_000));
+		expect(takeCommunityGenerationRetryRequest(run.root, at)).toEqual({ weekStart: "2026-10-12" });
+	});
+
+	it("wakes early for a request written while a requested run is in flight", async () => {
+		const run = harness((week) => {
+			// The owner asks again while this run is still generating.
+			if (week === "2026-10-12")
+				requestCommunityGenerationRetry(run.root, "2026-10-05", new Date("2026-10-19T08:00:00Z"));
+			return { status: "failed", code: "generation_failed" };
+		});
+		run.at(wat("2026-10-19T09:00:00"));
+		const requestPath = join(run.root, COMMUNITY_GENERATION_RETRY_REQUEST_FILE);
+		requestCommunityGenerationRetry(run.root, "2026-10-12", new Date("2026-10-19T08:00:00Z"));
+		const controller = new AbortController();
+		const slept: number[] = [];
+		await runWeeklyCommunityGeneration({
+			...run.options,
+			acquireLock: () => ({ release: () => undefined }),
+			signal: controller.signal,
+			tickMs: minutes(10),
+			retryRequests: {
+				pending: () => existsSync(requestPath),
+				take: () => takeCommunityGenerationRetryRequest(run.root, run.options.now()),
+				pollMs: 1_000,
+			},
+			sleep: async (ms) => {
+				slept.push(ms);
+				controller.abort();
+			},
+		});
+		// The second request is taken at once, with no ten-minute wait first; the loop then polls.
+		expect(slept).toEqual([1_000]);
+		expect(run.calls).toEqual(["2026-10-12", "2026-10-05"]);
+	});
+
+	it("generation-retry needs a running scheduler and writes only an owner-only request", async () => {
+		const root = temporary();
+		const command = (args: ReadonlyArray<string>) =>
+			Effect.runPromiseExit(
+				Command.runWith(jarvisCommunityGenerationRetryCommand, { version: "test" })([
+					"--config",
+					join(root, "absent-config.yaml"),
+					"--state-root",
+					root,
+					"--json",
+					...args,
+				]).pipe(Effect.provide(NodeServices.layer)),
+			);
+		const requestPath = join(root, COMMUNITY_GENERATION_RETRY_REQUEST_FILE);
+		// No review service holds the scheduler lock: nothing is requested.
+		expect(Exit.isFailure(await command(["--week-start", "2026-10-12"]))).toBe(true);
+		expect(existsSync(requestPath)).toBe(false);
+		const scheduler = acquireCommunityGenerationLock(root);
+		try {
+			expect(Exit.isSuccess(await command(["--week-start", "2026-10-12"]))).toBe(true);
+			expect(statSync(requestPath).mode & 0o777).toBe(0o600);
+			expect(takeCommunityGenerationRetryRequest(root)).toEqual({ weekStart: "2026-10-12" });
+			expect(Exit.isFailure(await command(["--week-start", "2026-10-13"]))).toBe(true);
+			expect(existsSync(requestPath)).toBe(false);
+			// Only the scheduler lock (and its SQLite journal): no queue, record or draft was touched.
+			expect(readdirSync(root).filter((name) => !name.startsWith(COMMUNITY_GENERATION_LOCK_FILE))).toEqual([]);
+		} finally {
+			scheduler?.release();
+		}
 	});
 });
 

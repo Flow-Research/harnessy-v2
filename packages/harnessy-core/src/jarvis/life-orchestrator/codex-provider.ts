@@ -3,7 +3,7 @@ import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-code
 import { createDefaultAuthFileCipher } from "@earendil-works/pi-coding-agent/auth-storage";
 import * as Effect from "effect/Effect";
 
-import { CodexProviderError, classifyCodexProviderFailure } from "../../ai/codex-failure.ts";
+import { CodexProviderError, classifyCodexProviderFailure, codexNetworkSubCode } from "../../ai/codex-failure.ts";
 import { resolveCodexModel } from "../../ai/codex-model.ts";
 
 import { readStableMeetingPublicationSmokeFile } from "../meeting-publication/operational-input.ts";
@@ -114,6 +114,8 @@ export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, p
 			let abortListener: (() => void) | undefined;
 			// The final HTTP status, read only to classify a failure. maxRetries is 0, so it is the one answer.
 			let responseStatus: number | undefined;
+			// The allow-listed `cause.code` of a fetch that threw before any response, if any.
+			let fetchSubCode: string | undefined;
 			// Set once the request is about to leave: earlier failures are local, never a provider code.
 			let dispatched = false;
 			try {
@@ -129,6 +131,9 @@ export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, p
 						apiKey: access,
 						transport: "sse",
 						redirect: "error",
+						onFetchError: (error) => {
+							fetchSubCode ??= codexNetworkSubCode(error);
+						},
 						maxRetries: 0,
 						reasoningEffort: "high",
 						signal: controller.signal,
@@ -169,6 +174,7 @@ export const createCodexDraftProvider = (input: CodexLifeDraftProviderOptions, p
 							if (!dispatched) throw new Error("Codex generation failed; reconcile before retrying.");
 							throw new CodexProviderError(
 								classifyCodexProviderFailure(responseStatus, event.error.errorMessage),
+								responseStatus === undefined ? fetchSubCode : undefined,
 							);
 						}
 						if (event.type === "done") result = event.message;
