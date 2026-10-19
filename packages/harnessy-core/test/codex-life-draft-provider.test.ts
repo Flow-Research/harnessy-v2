@@ -202,7 +202,7 @@ describe("text-only Codex Life draft provider", () => {
 		[401, { error: { message: "synthetic-sensitive-response" } }, "provider_auth"],
 		[403, { error: { message: "synthetic-sensitive-response" } }, "provider_auth"],
 		[429, { error: { message: "synthetic-sensitive-response" } }, "provider_rate_limited"],
-		[500, { error: { message: "synthetic-sensitive-response" } }, "provider_unavailable"],
+		[500, { error: { message: "synthetic-sensitive-response" } }, "provider_failed"],
 		[503, { error: { message: "synthetic-sensitive-response" } }, "provider_unavailable"],
 	] as const)(
 		"maps HTTP %s to an allow-listed code without retrying or leaking details",

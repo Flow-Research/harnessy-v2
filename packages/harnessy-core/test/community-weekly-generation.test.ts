@@ -41,6 +41,7 @@ import {
 import {
 	acquireCommunityGenerationLock,
 	COMMUNITY_GENERATION_LOCK_FILE,
+	COMMUNITY_GENERATION_MAX_RUNS_PER_WEEK,
 	COMMUNITY_GENERATION_MAX_TRANSIENT_ATTEMPTS,
 	COMMUNITY_GENERATION_RETRY_REQUEST_FILE,
 	COMMUNITY_GENERATION_STATUS_FILE,
@@ -1413,6 +1414,76 @@ describe("transient provider failures and owner retries", () => {
 		}
 	});
 
+	it("keeps the transient budget, sub-code and run count across a crash mid-run", async () => {
+		const seen: Array<unknown> = [];
+		let crash = false;
+		const run = harness(() => {
+			if (!crash) return { status: "failed", code: "provider_network", subCode: "EAI_AGAIN" };
+			seen.push(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]);
+			// The process is killed or restarted while this run is in flight.
+			return new Promise<CommunityWeekGenerationResult>(() => undefined);
+		});
+		for (const minute of [0, 10]) {
+			run.at(new Date(sunday + minutes(minute)));
+			await run.tick();
+		}
+		crash = true;
+		run.at(new Date(sunday + minutes(40)));
+		void run.tick({ memory: { notified: new Set(), weeks: new Map() } });
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(seen).toEqual([
+			expect.objectContaining({
+				code: "attempt_interrupted",
+				attempts: 1,
+				transientAttempts: 2,
+				subCode: "EAI_AGAIN",
+				runs: 3,
+			}),
+		]);
+	});
+
+	it("caps automatic runs per week whatever their outcome", async () => {
+		const run = harness(() => ({ status: "failed", code: "provider_network" }));
+		for (let hour = 0; hour < 12; hour++) {
+			run.at(new Date(sunday + hour * minutes(61)));
+			await run.tick({ maxRuns: 4 });
+		}
+		expect(run.calls).toHaveLength(4);
+		expect(readCommunityGenerationStatus(run.statusPath)?.weeks["2026-10-12"]).toMatchObject({
+			runs: 4,
+			transientAttempts: 4,
+			gaveUp: true,
+		});
+		expect(COMMUNITY_GENERATION_MAX_RUNS_PER_WEEK).toBe(15);
+	});
+
+	it("does not treat an in-stream provider failure as transient", async () => {
+		const run = harness(() => ({ status: "failed", code: "provider_failed" }));
+		for (let hour = 0; hour < 6; hour++) {
+			run.at(new Date(sunday + hour * minutes(61)));
+			await run.tick();
+		}
+		expect(run.calls).toHaveLength(3);
+		expect(run.events.some((event) => event.transient === true)).toBe(false);
+	});
+
+	it("reports a consumed request when the schedule is disabled or the queue is unreadable", async () => {
+		const run = harness(() => ({ status: "created" }));
+		await runCommunityGenerationTick({ ...run.options, schedule: { ...schedule, enabled: false } }, "2026-10-12");
+		expect(run.events.at(-1)).toEqual({
+			event: "weekly-generation",
+			weekStart: "2026-10-12",
+			status: "skipped",
+			code: "schedule_disabled",
+			requested: true,
+			publication: false,
+		});
+		run.queued.break(true);
+		await runCommunityGenerationTick(run.options, "2026-10-12");
+		expect(run.events.at(-1)).toMatchObject({ status: "failed", code: "queue_unreadable", requested: true });
+		expect(run.calls).toEqual([]);
+	});
+
 	it("runs an owner-requested retry of a given-up week once, and refuses weeks it cannot retry", async () => {
 		let fail = true;
 		const run = harness((week) =>
@@ -1543,6 +1614,38 @@ describe("transient provider failures and owner retries", () => {
 		expect(takeCommunityGenerationRetryRequest(run.root, at)).toEqual({ invalid: "retry_request_expired" });
 		requestCommunityGenerationRetry(run.root, "2026-10-12", new Date(at.getTime() - 9 * 60_000));
 		expect(takeCommunityGenerationRetryRequest(run.root, at)).toEqual({ weekStart: "2026-10-12" });
+	});
+
+	it("wakes early for a request written while a requested run is in flight", async () => {
+		const run = harness((week) => {
+			// The owner asks again while this run is still generating.
+			if (week === "2026-10-12")
+				requestCommunityGenerationRetry(run.root, "2026-10-05", new Date("2026-10-19T08:00:00Z"));
+			return { status: "failed", code: "generation_failed" };
+		});
+		run.at(wat("2026-10-19T09:00:00"));
+		const requestPath = join(run.root, COMMUNITY_GENERATION_RETRY_REQUEST_FILE);
+		requestCommunityGenerationRetry(run.root, "2026-10-12", new Date("2026-10-19T08:00:00Z"));
+		const controller = new AbortController();
+		const slept: number[] = [];
+		await runWeeklyCommunityGeneration({
+			...run.options,
+			acquireLock: () => ({ release: () => undefined }),
+			signal: controller.signal,
+			tickMs: minutes(10),
+			retryRequests: {
+				pending: () => existsSync(requestPath),
+				take: () => takeCommunityGenerationRetryRequest(run.root, run.options.now()),
+				pollMs: 1_000,
+			},
+			sleep: async (ms) => {
+				slept.push(ms);
+				controller.abort();
+			},
+		});
+		// The second request is taken at once, with no ten-minute wait first; the loop then polls.
+		expect(slept).toEqual([1_000]);
+		expect(run.calls).toEqual(["2026-10-12", "2026-10-05"]);
 	});
 
 	it("generation-retry needs a running scheduler and writes only an owner-only request", async () => {

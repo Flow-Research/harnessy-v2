@@ -7,6 +7,7 @@ import { Context, Effect, Result, Schema } from "effect";
 import {
 	assessLeaseClock,
 	isLeaseCurrencyCode,
+	LEASE_CLOCK_MAX_REANCHOR_STEP_MS,
 	type LeaseCurrencyCode,
 	type LeaseCurrencyReporter,
 	leaseCurrencyEvent,
@@ -544,7 +545,9 @@ export const runAuthorizedCommunityBriefing = (
 				// A service may re-anchor a bounded backward step only before it holds a lease:
 				// the step pauses the pre-lease check, which reruns in full. A step during an
 				// in-flight publication ends it as uncertain, like any other revalidation failure.
-				reanchorable = verified.service;
+				reanchorable = verified.service,
+				// Backward time re-anchored in this run; capped so repeated steps cannot add up.
+				reanchoredMs = 0;
 			/**
 			 * Each failure has its own allow-listed reason: `boot_changed`, `clock_stepped_back`,
 			 * `expired_authorization`, or `runtime_changed` for another runtime identity change.
@@ -562,13 +565,19 @@ export const runAuthorizedCommunityBriefing = (
 				)
 					throw new Error("runtime_changed");
 				const clock = assessLeaseClock({
-					expectedWallMs: lastWall,
+					// The last wall time plus the monotonic time since. Sleep stalls the monotonic
+					// clock, so it only moves the wall clock ahead: never a step.
+					expectedWallMs:
+						lastWall +
+						(current.monotonic >= lastMonotonic ? Number((current.monotonic - lastMonotonic) / 1_000_000n) : 0),
 					nowMs: current.now,
 					toleranceMs: 0,
 					monotonicRegressed: current.monotonic < lastMonotonic,
 					reanchorable,
 				});
 				if (clock.kind === "stepped_back") throw leaseFailure("clock_stepped_back", clock.stepMs);
+				if (clock.kind === "reanchor" && reanchoredMs + clock.stepMs > LEASE_CLOCK_MAX_REANCHOR_STEP_MS)
+					throw leaseFailure("clock_stepped_back", reanchoredMs + clock.stepMs);
 				if (
 					current.now >= verified.expiry ||
 					current.monotonic - initial.monotonic >= BigInt(verified.expiry - initial.now) * 1_000_000n
@@ -577,6 +586,7 @@ export const runAuthorizedCommunityBriefing = (
 				lastWall = current.now;
 				lastMonotonic = current.monotonic;
 				if (clock.kind === "reanchor") {
+					reanchoredMs += clock.stepMs;
 					// Same boot and monotonic continuity. No lease or grant exists yet: pause, and
 					// let the retry rerun every check, including a fresh writer proof.
 					reportLeaseCurrency(

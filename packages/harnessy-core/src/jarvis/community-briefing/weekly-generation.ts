@@ -180,6 +180,8 @@ const WeekRecord = Schema.Struct({
 	subCode: Schema.optional(Schema.String),
 	/** Transient failures (network, provider unavailable). They do not count toward `attempts`. */
 	transientAttempts: Schema.optional(Schema.Int),
+	/** Generation runs started for the week, of any outcome. Each run makes at most three paid calls. */
+	runs: Schema.optional(Schema.Int),
 	gaveUp: Schema.optional(Schema.Boolean),
 	/** A failed attempt whose draft was found in the queue later (for example after a deadline). */
 	recovered: Schema.optional(Schema.Boolean),
@@ -584,6 +586,8 @@ export interface WeeklyCommunityGenerationOptions {
 	readonly retryAfterMs?: number;
 	/** Transient failures per week before giving up. Default COMMUNITY_GENERATION_MAX_TRANSIENT_ATTEMPTS. */
 	readonly maxTransientAttempts?: number;
+	/** Automatic generation runs per week, of any outcome. Default COMMUNITY_GENERATION_MAX_RUNS_PER_WEEK. */
+	readonly maxRuns?: number;
 	/** Per-process memory: notified faults, and week records even when the file cannot be written. */
 	readonly memory?: CommunityGenerationMemory;
 }
@@ -607,6 +611,14 @@ const safeSubCode = (value: unknown) => (typeof value === "string" && SUB_CODE.t
  * given-up week with `harnessy jarvis community generation-retry`.
  */
 export const COMMUNITY_GENERATION_MAX_TRANSIENT_ATTEMPTS = 12;
+/**
+ * The hard cap on automatic generation runs per week, whatever their outcome: the three
+ * attempts plus the twelve transient retries. A run makes at most three Codex calls, so
+ * automatic generation pays for at most 45 calls per week. A run interrupted by a crash
+ * or restart still counts. Each owner `generation-retry` request allows one more run.
+ */
+export const COMMUNITY_GENERATION_MAX_RUNS_PER_WEEK = 15;
+
 /** Backoff after the n-th transient failure: 10 minutes, doubling, at most one hour. */
 export const communityGenerationTransientBackoffMs = (failures: number): number =>
 	Math.min(60 * 60 * 1000, 10 * 60 * 1000 * 2 ** Math.max(0, failures - 1));
@@ -637,10 +649,23 @@ export const runCommunityGenerationTick = async (
 	/** An owner's request to retry this week now (generation-retry), bypassing backoff and give-up once. */
 	requestedWeek?: string,
 ): Promise<CommunityGenerationEvent | undefined> => {
-	if (!options.schedule.enabled) return undefined;
+	if (!options.schedule.enabled) {
+		// A consumed owner request is never dropped silently.
+		if (requestedWeek !== undefined)
+			options.report({
+				event: "weekly-generation",
+				weekStart: requestedWeek,
+				status: "skipped",
+				code: "schedule_disabled",
+				requested: true,
+				publication: false,
+			});
+		return undefined;
+	}
 	const maxAttempts = options.maxAttempts ?? 3;
 	const retryAfterMs = options.retryAfterMs ?? 60 * 60 * 1000;
 	const maxTransientAttempts = options.maxTransientAttempts ?? COMMUNITY_GENERATION_MAX_TRANSIENT_ATTEMPTS;
+	const maxRuns = options.maxRuns ?? COMMUNITY_GENERATION_MAX_RUNS_PER_WEEK;
 	const started = options.now();
 	const dueWeek = dueCommunityGenerationWeek(started, options.schedule);
 	const requested = requestedWeek !== undefined;
@@ -656,7 +681,9 @@ export const runCommunityGenerationTick = async (
 		return undefined;
 	}
 	const weekStart = requestedWeek ?? dueWeek;
-	const finish = async (event: CommunityGenerationEvent, notify: "pending" | "error" | undefined) => {
+	const finish = async (decision: CommunityGenerationEvent, notify: "pending" | "error" | undefined) => {
+		// Every decision of an owner-requested tick says so, including faults such as an unreadable queue.
+		const event = requested ? { ...decision, requested } : decision;
 		options.report(event);
 		const repeated = isStandingFault(event.code) && options.memory?.notified.has(event.code!) === true;
 		if (isStandingFault(event.code)) options.memory?.notified.add(event.code!);
@@ -842,7 +869,9 @@ export const runCommunityGenerationTick = async (
 	const transientBefore = previous?.transientAttempts ?? 0;
 	const lastWasTransient = previous?.code !== undefined && isTransientCode(previous.code);
 	const gap = lastWasTransient ? communityGenerationTransientBackoffMs(transientBefore) : retryAfterMs;
-	if (!requested && previous?.gaveUp) return undefined;
+	// Records written before `runs` existed count their attempts and transient failures.
+	const runsBefore = previous?.runs ?? (previous?.attempts ?? 0) + transientBefore;
+	if (!requested && (previous?.gaveUp || runsBefore >= maxRuns)) return undefined;
 	if (!requested && previous && started.getTime() - Date.parse(previous.lastAttemptAt) < gap) return undefined;
 
 	const attempt = (previous?.attempts ?? 0) + 1;
@@ -850,12 +879,19 @@ export const runCommunityGenerationTick = async (
 	// KeepAlive restarts it, the attempt still counts. If the record cannot be
 	// written, nothing is generated: attempts kept only in memory would reset
 	// with every restart.
+	// The transient count, last sub-code and run count survive a crash in this run: a restart
+	// must not reset the transient budget or the run cap.
+	const runs = runsBefore + 1;
+	const carriedTransient = requested ? 0 : transientBefore;
 	const reservation: WeekRecord = {
 		status: "failed",
 		attempts: attempt,
 		lastAttemptAt: options.now().toISOString(),
 		code: "attempt_interrupted",
-		...(attempt >= maxAttempts ? { gaveUp: true } : {}),
+		...(previous?.subCode === undefined ? {} : { subCode: previous.subCode }),
+		...(carriedTransient > 0 ? { transientAttempts: carriedTransient } : {}),
+		runs,
+		...(attempt >= maxAttempts || runs >= maxRuns ? { gaveUp: true } : {}),
 	};
 	const reserved = store(statusFor({ ...current.weeks, [weekStart]: reservation }, current.lastFailure));
 	if (Result.isFailure(reserved))
@@ -897,13 +933,14 @@ export const runCommunityGenerationTick = async (
 	if (failed && isTransientCode(code!)) {
 		// Not an attempt toward the limit: the reservation is replaced by the previous count.
 		// An owner's request resets the transient count, so automatic backoff resumes.
-		const transientAttempts = (requested ? 0 : transientBefore) + 1;
-		const transientGaveUp = transientAttempts >= maxTransientAttempts;
+		const transientAttempts = carriedTransient + 1;
+		const transientGaveUp = transientAttempts >= maxTransientAttempts || runs >= maxRuns;
 		const retryInMs = transientGaveUp ? undefined : communityGenerationTransientBackoffMs(transientAttempts);
 		const week: WeekRecord = {
 			status: "failed",
 			attempts: previous?.attempts ?? 0,
 			transientAttempts,
+			runs,
 			lastAttemptAt: options.now().toISOString(),
 			code: code!,
 			...(subCode === undefined ? {} : { subCode }),
@@ -928,7 +965,7 @@ export const runCommunityGenerationTick = async (
 			transientGaveUp ? "error" : undefined,
 		);
 	}
-	const gaveUp = failed && (attempt >= maxAttempts || FINAL_CODES.has(code!));
+	const gaveUp = failed && (attempt >= maxAttempts || runs >= maxRuns || FINAL_CODES.has(code!));
 	const briefingId =
 		!failed && typeof result.briefingId === "string" && /^[a-f0-9]{24}$/u.test(result.briefingId)
 			? result.briefingId
@@ -940,7 +977,8 @@ export const runCommunityGenerationTick = async (
 		...(briefingId === undefined ? {} : { briefingId }),
 		...(code === undefined ? {} : { code }),
 		...(subCode === undefined ? {} : { subCode }),
-		...(transientBefore > 0 && !requested ? { transientAttempts: transientBefore } : {}),
+		...(carriedTransient > 0 ? { transientAttempts: carriedTransient } : {}),
+		runs,
 		...(gaveUp ? { gaveUp } : {}),
 	};
 	return record(
@@ -1037,7 +1075,9 @@ export const runWeeklyCommunityGeneration = async (
 					{ ...options, memory },
 					request !== undefined && "weekStart" in request ? request.weekStart : undefined,
 				);
-				if (request !== undefined) {
+				// A successful take removed its file, so a file present now is a new request. Only a
+				// failed take can leave the same request behind.
+				if (Result.isFailure(taken)) {
 					const remaining = Result.try(() => options.retryRequests?.pending() === true);
 					stuckRequest = Result.isFailure(remaining) || remaining.success;
 				}

@@ -167,10 +167,13 @@ the guard treats every other `jarvis community briefing …` process as a rival
 writer.
 
 A failed week is retried at most three times, at least an hour apart. Transient
-provider failures (`provider_network`, `provider_unavailable`) do not count
-toward those three. They are retried with a backoff of 10, 20 and 40 minutes,
-then hourly, for at most 12 transient failures per week, and raise a desktop
-notice only when the trigger gives up. A network failure records the fetch
+provider failures do not count toward those three: `provider_network` (no
+response) and `provider_unavailable` (HTTP 502, 503 or 504). Any other failure
+after the provider answered, including an in-stream failure after HTTP 200, is
+`provider_failed` and counts. Transient failures are retried with a backoff of
+10, 20 and 40 minutes, then hourly, for at most 12 per week, and raise a desktop
+notice only when the trigger gives up. Automatic runs are capped at 15 per week
+whatever their outcome, so at most 45 paid calls; a crash mid-run still counts. A network failure records the fetch
 error's allow-listed sub-code (`ENOTFOUND`, `EAI_AGAIN`, `ECONNRESET`,
 `ETIMEDOUT`, `UND_ERR_*`, `ERR_TLS_*`, `unexpected_redirect` and similar) in the
 log event and the record, never provider text.

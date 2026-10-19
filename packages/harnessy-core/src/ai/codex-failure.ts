@@ -9,11 +9,18 @@ export const CODEX_PROVIDER_FAILURE_CODES = [
 	"provider_rejected",
 	"provider_unavailable",
 	"provider_network",
+	// Any other failure after the provider answered, including an in-stream error after HTTP 200.
+	"provider_failed",
 ] as const;
 
 export type CodexProviderFailureCode = (typeof CODEX_PROVIDER_FAILURE_CODES)[number];
 
-/** Transient failures: retrying the same request later may succeed. */
+/**
+ * Transient failures: retrying the same request later may succeed. Only a request that got
+ * no response (`provider_network`) or a gateway or availability answer (502, 503, 504:
+ * `provider_unavailable`). A failure inside a 200 stream may already have been billed and
+ * repeats for the same input, so it is `provider_failed` and not transient.
+ */
 export const CODEX_TRANSIENT_FAILURE_CODES: ReadonlySet<CodexProviderFailureCode> = new Set([
 	"provider_network",
 	"provider_unavailable",
@@ -92,7 +99,8 @@ export const classifyCodexProviderFailure = (
 	if (status === 401 || status === 403) return "provider_auth";
 	if (status === 429) return "provider_rate_limited";
 	if (status >= 400 && status < 500) return "provider_rejected";
-	return "provider_unavailable";
+	if (status === 502 || status === 503 || status === 504) return "provider_unavailable";
+	return "provider_failed";
 };
 
 /** The allow-listed code of a provider failure, or undefined for any other error. */

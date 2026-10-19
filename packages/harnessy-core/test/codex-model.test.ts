@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	CODEX_PROVIDER_FAILURE_CODES,
+	CODEX_TRANSIENT_FAILURE_CODES,
 	CodexProviderError,
 	classifyCodexProviderFailure,
 	codexProviderFailureCode,
@@ -59,6 +60,12 @@ describe("Codex model resolution", () => {
 });
 
 describe("Codex provider failure codes", () => {
+	it("treats only a missing response and 502/503/504 as transient", () => {
+		expect([...CODEX_TRANSIENT_FAILURE_CODES].sort()).toEqual(["provider_network", "provider_unavailable"]);
+		expect(CODEX_TRANSIENT_FAILURE_CODES.has(classifyCodexProviderFailure(200, "response.failed"))).toBe(false);
+		expect(CODEX_TRANSIENT_FAILURE_CODES.has(classifyCodexProviderFailure(500, undefined))).toBe(false);
+		expect(CODEX_TRANSIENT_FAILURE_CODES.has(classifyCodexProviderFailure(503, undefined))).toBe(true);
+	});
 	it.each([
 		[
 			400,
@@ -70,9 +77,14 @@ describe("Codex provider failure codes", () => {
 		[403, "forbidden", "provider_auth"],
 		[404, "missing", "provider_rejected"],
 		[429, "You have hit your ChatGPT usage limit", "provider_rate_limited"],
-		[500, "boom", "provider_unavailable"],
+		[500, "boom", "provider_failed"],
+		[501, undefined, "provider_failed"],
+		[502, undefined, "provider_unavailable"],
 		[503, undefined, "provider_unavailable"],
-		[200, "stream failed", "provider_unavailable"],
+		[504, undefined, "provider_unavailable"],
+		// An in-stream failure after HTTP 200 (response.failed) is not transient.
+		[200, "stream failed", "provider_failed"],
+		[302, undefined, "provider_failed"],
 		[undefined, "fetch failed", "provider_network"],
 	] as const)("maps HTTP %s to its allow-listed code", (status, detail, code) => {
 		expect(classifyCodexProviderFailure(status, detail)).toBe(code);

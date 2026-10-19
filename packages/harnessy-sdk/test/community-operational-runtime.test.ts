@@ -1649,6 +1649,55 @@ describe("community operational consumer", () => {
 					await f.cleanup();
 				}
 			});
+
+			it("bounds a step against the monotonic time since the last check, not only the last wall time", async () => {
+				const f = await fixture(undefined, true);
+				try {
+					f.observation.now += 10 * 60_000;
+					let stepped = false;
+					f.setOnProof(() => {
+						if (stepped) return;
+						stepped = true;
+						// One awake minute passes, but the wall clock moves only 30 seconds.
+						f.observation.monotonic += 60_000_000_000n;
+						f.observation.now += 30_000;
+					});
+					const { exit } = await runWithClock(f.run(), () => undefined);
+					expect(Exit.isSuccess(exit) && exit.value).toMatchObject({ status: "published" });
+					expect(f.leaseCurrencyEvents).toEqual([
+						{ event: "lease_clock_reanchored", service: "community", code: "clock_stepped_back", stepMs: 30_000 },
+					]);
+				} finally {
+					await f.cleanup();
+				}
+			});
+
+			it("stops once re-anchored steps in one run exceed five minutes in total", async () => {
+				const f = await fixture(undefined, true);
+				try {
+					f.observation.now += 30 * 60_000;
+					let proofs = 0;
+					f.setOnProof(() => {
+						proofs += 1;
+						// The first check and its retry each meet a three-minute step.
+						if (proofs === 1 || proofs === 3) f.observation.now -= 3 * 60_000;
+					});
+					const { exit } = await runWithClock(f.run(), () => undefined);
+					expect(JSON.stringify(reason(exit))).toContain('"reason":"clock_stepped_back"');
+					expect(f.leaseCurrencyEvents).toEqual([
+						{
+							event: "lease_clock_reanchored",
+							service: "community",
+							code: "clock_stepped_back",
+							stepMs: 180_000,
+						},
+						{ event: "lease_currency_failed", service: "community", code: "clock_stepped_back", stepMs: 360_000 },
+					]);
+					expect(f.wire.requests).toHaveLength(0);
+				} finally {
+					await f.cleanup();
+				}
+			});
 		});
 	});
 });
