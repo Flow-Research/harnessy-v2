@@ -102,6 +102,8 @@ export default defineConfig({
 				"src/cli/portal.ts": { statements: 95, branches: 95, functions: 90, lines: 95 },
 				// One-writer guard probe classification and bounded inconclusive retry.
 				"src/jarvis/writer-check.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				// Lease and wall-clock currency classification shared by the meeting and community owners.
+				"src/jarvis/lease-clock.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
 				// Weekly community generation inside the review service, and its LaunchAgent plan.
 				"src/jarvis/community-briefing/weekly-generation.ts": {
 					statements: 95,

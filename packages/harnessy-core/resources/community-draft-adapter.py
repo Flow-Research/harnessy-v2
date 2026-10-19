@@ -138,6 +138,13 @@ def validate_paths(settings, week_start=None):
 
 
 def start_run(store, run_id, request):
+    """Record a new run. Callers hold the native draft lock (acquire_native_draft_lock).
+
+    That lock admits one native draft per state directory across processes, so any
+    row still `running` here belongs to an adapter that died (killed at its deadline,
+    SIGKILLed or crashed) before it could record an outcome. Mark those `interrupted`,
+    keeping their calls and receipts, so no stale run looks in flight.
+    """
     # Reuse the queue database, not another authority store or signing key.
     with store.connect() as connection:
         connection.execute("PRAGMA synchronous=FULL")
@@ -149,6 +156,7 @@ def start_run(store, run_id, request):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(community_draft_runs)")}
         if "receipts_json" not in columns:
             connection.execute("ALTER TABLE community_draft_runs ADD COLUMN receipts_json TEXT NOT NULL DEFAULT '[]'")
+        connection.execute("UPDATE community_draft_runs SET status='interrupted' WHERE status='running'")
         connection.execute(
             "INSERT INTO community_draft_runs(run_id,request_hash,status) VALUES (?,?,'running')",
             (run_id, hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()),

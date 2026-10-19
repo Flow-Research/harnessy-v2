@@ -205,6 +205,52 @@ it("reports the provider code and lets the adapter mark its run failed instead o
 	}
 });
 
+it("carries the provider's allow-listed network sub-code, never its text", async () => {
+	const options = fixture(true);
+	const failure = await runCommunityDraftProcess({
+		...options,
+		generate: async () => {
+			throw new CodexProviderError("provider_network", "ENOTFOUND");
+		},
+	}).then(
+		() => undefined,
+		(error: unknown) => error,
+	);
+	expect(failure).toBeInstanceOf(CommunityDraftProcessError);
+	expect(failure).toMatchObject({ code: "provider_network", subCode: "ENOTFOUND" });
+	expect((failure as Error).message).not.toContain("ENOTFOUND");
+});
+
+it("marks a run orphaned by a killed adapter interrupted when the next adapter starts", async () => {
+	const options = fixture();
+	expect(await runCommunityDraftProcess(options)).toMatchObject({ status: "pending_review" });
+	const path = join(options.config.state_path, "weekly-briefings.sqlite3");
+	const writer = new DatabaseSync(path);
+	try {
+		// What a SIGKILLed adapter leaves: a run that never recorded its outcome.
+		writer
+			.prepare(
+				"INSERT INTO community_draft_runs(run_id,request_hash,status,calls) VALUES ('killed-run',?,'running',2)",
+			)
+			.run("0".repeat(64));
+	} finally {
+		writer.close();
+	}
+	expect(await runCommunityDraftProcess({ ...options, runId: "next-run", week_start: "2026-09-21" })).toMatchObject({
+		status: "pending_review",
+	});
+	const db = new DatabaseSync(path, { readOnly: true });
+	try {
+		expect(db.prepare("SELECT run_id,status,calls FROM community_draft_runs ORDER BY run_id").all()).toEqual([
+			{ run_id: "fixture-run", status: "completed", calls: 0 },
+			{ run_id: "killed-run", status: "interrupted", calls: 2 },
+			{ run_id: "next-run", status: "completed", calls: 0 },
+		]);
+	} finally {
+		db.close();
+	}
+});
+
 it("cancels an unresponsive provider callback and awaits child shutdown", async () => {
 	const options = fixture(true);
 	let observed: AbortSignal | undefined;

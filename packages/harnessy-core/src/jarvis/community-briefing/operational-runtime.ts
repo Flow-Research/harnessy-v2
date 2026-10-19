@@ -5,6 +5,13 @@ import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Context, Effect, Result, Schema } from "effect";
 import {
+	assessLeaseClock,
+	type LeaseCurrencyCode,
+	type LeaseCurrencyReporter,
+	leaseCurrencyEvent,
+	stderrLeaseCurrencyReporter,
+} from "../lease-clock.ts";
+import {
 	artifactInventorySteps,
 	type MeetingPublicationSmokeRuntimeInput,
 	readStableMeetingPublicationSmokeFile,
@@ -352,6 +359,8 @@ export const CommunityOperationSystemReference = Context.Reference<{
 	readonly coreAnchor: string;
 	/** Receives allow-listed writer-check events; defaults to one JSON line on stderr. */
 	readonly reportWriterCheck?: WriterCheckReporter;
+	/** Receives lease re-anchor and lease currency stop events; defaults to one JSON line on stderr. */
+	readonly reportLeaseCurrency?: LeaseCurrencyReporter;
 }>("@harnessy/core/CommunityOperationSystem", {
 	defaultValue: () => ({
 		proveCompatibilityAbsent: makeCommunityCompatibilityProof(liveProbeRunner),
@@ -377,9 +386,11 @@ export class CommunityOperationError extends Schema.TaggedErrorClass<CommunityOp
 const rejectionReason = (cause: unknown): string | undefined =>
 	cause instanceof WriterCheckInconclusiveError
 		? cause.reason
-		: cause instanceof Error && /^[a-z][a-z_]{0,63}$/u.test(cause.message)
-			? cause.message
-			: undefined;
+		: cause instanceof CommunityOperationError
+			? cause.reason
+			: cause instanceof Error && /^[a-z][a-z_]{0,63}$/u.test(cause.message)
+				? cause.message
+				: undefined;
 
 export interface CommunityOperationConsumer {
 	readonly artifactAnchors: { readonly host: string; readonly sdk: string; readonly dependencies: string };
@@ -509,19 +520,27 @@ export const runAuthorizedCommunityBriefing = (
 				if (!verified.manifest.anchors.some((anchor) => anchor.role === role && anchor.path === path))
 					return yield* new CommunityOperationError({ code: "runtime_rejected" });
 			}
+			const reportLeaseCurrency = system.reportLeaseCurrency ?? stderrLeaseCurrencyReporter;
+			const leaseFailure = (code: LeaseCurrencyCode, stepMs?: number) => {
+				reportLeaseCurrency(leaseCurrencyEvent("lease_currency_failed", "community", code, stepMs));
+				return new Error(code);
+			};
 			let active = true,
 				lastWall = initial.now,
-				lastMonotonic = initial.monotonic;
+				lastMonotonic = initial.monotonic,
+				// A service may re-anchor a bounded backward step only before it holds a lease:
+				// the step pauses the pre-lease check, which reruns in full. A step during an
+				// in-flight publication ends it as uncertain, like any other revalidation failure.
+				reanchorable = verified.service;
+			/**
+			 * Each failure has its own allow-listed reason: `boot_changed`, `clock_stepped_back`,
+			 * `expired_authorization`, or `runtime_changed` for another runtime identity change.
+			 */
 			const assertTime = () => {
 				const current = observationSystem.observe();
+				if (!active) throw new Error("runtime_changed");
+				if (current.bootId !== initial.bootId) throw leaseFailure("boot_changed");
 				if (
-					!active ||
-					!Number.isFinite(current.now) ||
-					current.now < lastWall ||
-					current.monotonic < lastMonotonic ||
-					current.now >= verified.expiry ||
-					current.monotonic - initial.monotonic >= BigInt(verified.expiry - initial.now) * 1_000_000n ||
-					current.bootId !== initial.bootId ||
 					current.uid !== initial.uid ||
 					current.hostname !== initial.hostname ||
 					current.platform !== initial.platform ||
@@ -529,8 +548,29 @@ export const runAuthorizedCommunityBriefing = (
 					current.executablePath !== initial.executablePath
 				)
 					throw new Error("runtime_changed");
+				const clock = assessLeaseClock({
+					expectedWallMs: lastWall,
+					nowMs: current.now,
+					toleranceMs: 0,
+					monotonicRegressed: current.monotonic < lastMonotonic,
+					reanchorable,
+				});
+				if (clock.kind === "stepped_back") throw leaseFailure("clock_stepped_back", clock.stepMs);
+				if (
+					current.now >= verified.expiry ||
+					current.monotonic - initial.monotonic >= BigInt(verified.expiry - initial.now) * 1_000_000n
+				)
+					throw new Error("expired_authorization");
 				lastWall = current.now;
 				lastMonotonic = current.monotonic;
+				if (clock.kind === "reanchor") {
+					// Same boot and monotonic continuity. No lease or grant exists yet: pause, and
+					// let the retry rerun every check, including a fresh writer proof.
+					reportLeaseCurrency(
+						leaseCurrencyEvent("lease_clock_reanchored", "community", "clock_stepped_back", clock.stepMs),
+					);
+					throw new WriterCheckInconclusiveError("clock", "stepped_back");
+				}
 				verified.assertLedger();
 				verified.assertMutable();
 			};
@@ -638,25 +678,37 @@ export const runAuthorizedCommunityBriefing = (
 			});
 			if (item === undefined)
 				return { kind: "harnessy.community.briefing.publication-result" as const, status: "idle" as const };
+			/** The first allow-listed reason a grant revalidation was denied for, if any. */
+			let deniedReason: string | undefined;
 			const binding = host.bind(envelope, {
 				check,
 				assertLedger: verified.assertLedger,
+				denied: (cause) => {
+					deniedReason ??= rejectionReason(cause);
+				},
 				...(verified.service
 					? { serviceItem: item, bootId: initial.bootId, deadline: new Date(verified.expiry).toISOString() }
 					: {}),
 			});
 			const grant = yield* beforeLease(binding.authorize());
+			reanchorable = false;
 			const monitor = Effect.forever(
 				Effect.andThen(
 					Effect.sleep("250 millis"),
-					Effect.andThen(Effect.try(assertTime), binding.revalidate(grant)),
+					Effect.andThen(Effect.try({ try: assertTime, catch: (cause) => cause }), binding.revalidate(grant)),
 				),
 			);
 			// On interruption/failure the durable lease and consumed nonce remain.
 			// Only confirmed completion releases this process's exact lease.
 			const result = yield* consumer.publish(grant).pipe(
 				Effect.raceFirst(monitor),
-				Effect.mapError(() => new CommunityOperationError({ code: "publication_uncertain" })),
+				Effect.mapError((cause) => {
+					const reason = deniedReason ?? rejectionReason(cause);
+					return new CommunityOperationError({
+						code: "publication_uncertain",
+						...(reason === undefined ? {} : { reason }),
+					});
+				}),
 			);
 			if (result.briefingId !== item.briefingId || !result.googleDocId || !result.discordMessageId)
 				return yield* new CommunityOperationError({ code: "publication_uncertain" });

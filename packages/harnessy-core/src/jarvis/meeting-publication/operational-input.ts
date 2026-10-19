@@ -118,6 +118,11 @@ export const MeetingPublicationSmokeRuntimeErrorCode = Schema.Literals([
 	"replayed",
 	"lease_unavailable",
 	"revoked",
+	// Lease currency failures (lease-clock.ts): never reported as `revoked`.
+	"clock_stepped_back",
+	"boot_changed",
+	"lease_row_changed",
+	"lease_update_failed",
 	"writer_present",
 	"provider_setup_failed",
 	"publication_failed",

@@ -14,14 +14,19 @@ import * as Result from "effect/Result";
  * WRITER_CHECK_INCONCLUSIVE_WINDOW_MS.
  */
 
-/** The OS commands a guard runs. */
-export const WRITER_CHECK_NAMES = ["ps", "launchctl", "crontab", "lsof", "sysctl"] as const;
+/**
+ * The OS commands a guard runs. `clock` is not a command: a running service pauses
+ * under the same policy while it re-anchors its lease after a bounded backward
+ * wall-clock step (`clock_stepped_back`, see lease-clock.ts).
+ */
+export const WRITER_CHECK_NAMES = ["ps", "launchctl", "crontab", "lsof", "sysctl", "clock"] as const;
 export type WriterCheckName = (typeof WRITER_CHECK_NAMES)[number];
 
 /**
  * Why a probe was inconclusive. `no_process`: the native community review label
  * is loaded but runs no process, as while launchd restarts it. No process exists
  * to write, but the reviewer is not back yet, so publication pauses.
+ * `stepped_back`: the wall clock stepped back within the re-anchor bound.
  */
 export const WRITER_CHECK_FAILURES = [
 	"timeout",
@@ -30,6 +35,7 @@ export const WRITER_CHECK_FAILURES = [
 	"output_overflow",
 	"exit_status",
 	"no_process",
+	"stepped_back",
 ] as const;
 export type WriterCheckFailure = (typeof WRITER_CHECK_FAILURES)[number];
 

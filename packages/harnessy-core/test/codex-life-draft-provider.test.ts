@@ -21,7 +21,7 @@ import { zstdDecompressSync } from "node:zlib";
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { CodexProviderError } from "../src/ai/codex-failure.ts";
+import { CodexProviderError, codexNetworkSubCode, codexProviderFailureSubCode } from "../src/ai/codex-failure.ts";
 import { createCodexLifeDraftProvider } from "../src/jarvis/life-orchestrator/codex-provider.ts";
 import type { LifeDraftRequest } from "../src/jarvis/life-orchestrator/draft-provider.ts";
 
@@ -229,13 +229,45 @@ describe("text-only Codex Life draft provider", () => {
 			test.assertUnchanged();
 		},
 	);
-	it("maps a dropped connection to provider_network", async () => {
+	it("maps a dropped connection to provider_network with the fetch error's allow-listed sub-code", async () => {
 		const test = await fixture((response) => response.socket?.destroy());
-		await expect(test.create().generate(request, new AbortController().signal)).rejects.toMatchObject({
-			code: "provider_network",
-		});
+		const failure = await test
+			.create()
+			.generate(request, new AbortController().signal)
+			.catch((error: unknown) => error);
+		expect(failure).toMatchObject({ code: "provider_network", subCode: "UND_ERR_SOCKET" });
+		expect(codexProviderFailureSubCode(failure)).toBe("UND_ERR_SOCKET");
 		expect(test.calls).toHaveLength(1);
 		test.assertUnchanged();
+	});
+	it("extracts only allow-listed network codes from a fetch failure's cause chain", () => {
+		const fetchFailed = (cause: unknown) => new TypeError("fetch failed", { cause });
+		const coded = (code: string, message = `getaddrinfo ${code} chatgpt.com`) =>
+			Object.assign(new Error(message), { code });
+		expect(codexNetworkSubCode(fetchFailed(coded("ENOTFOUND")))).toBe("ENOTFOUND");
+		expect(codexNetworkSubCode(fetchFailed(coded("EAI_AGAIN")))).toBe("EAI_AGAIN");
+		expect(codexNetworkSubCode(fetchFailed(coded("ECONNRESET")))).toBe("ECONNRESET");
+		expect(codexNetworkSubCode(fetchFailed(coded("ETIMEDOUT")))).toBe("ETIMEDOUT");
+		expect(codexNetworkSubCode(fetchFailed(coded("UND_ERR_CONNECT_TIMEOUT")))).toBe("UND_ERR_CONNECT_TIMEOUT");
+		expect(codexNetworkSubCode(fetchFailed(coded("ERR_TLS_CERT_ALTNAME_INVALID")))).toBe(
+			"ERR_TLS_CERT_ALTNAME_INVALID",
+		);
+		// Happy-eyeballs connection failures arrive as an AggregateError.
+		expect(
+			codexNetworkSubCode(fetchFailed(new AggregateError([new Error("x"), coded("ECONNREFUSED")], "connect"))),
+		).toBe("ECONNREFUSED");
+		expect(codexNetworkSubCode(fetchFailed(new Error("unexpected redirect")))).toBe("unexpected_redirect");
+		expect(codexNetworkSubCode(new DOMException("signal timed out", "TimeoutError"))).toBe("timeout");
+		// Unknown codes, plain text and non-errors are never reported.
+		expect(codexNetworkSubCode(fetchFailed(coded("EWHATEVER_SECRET_HOST")))).toBeUndefined();
+		expect(codexNetworkSubCode(fetchFailed(coded("lowercase")))).toBeUndefined();
+		expect(codexNetworkSubCode(new Error("getaddrinfo ENOTFOUND chatgpt.com"))).toBeUndefined();
+		expect(codexNetworkSubCode("ENOTFOUND")).toBeUndefined();
+		let deep: unknown = coded("ENOTFOUND");
+		for (let level = 0; level < 8; level++) deep = new Error("wrapped", { cause: deep });
+		expect(codexNetworkSubCode(deep)).toBeUndefined();
+		expect(new CodexProviderError("provider_network", "ENOTFOUND").message).not.toContain("ENOTFOUND");
+		expect(codexProviderFailureSubCode(new Error("ENOTFOUND"))).toBeUndefined();
 	});
 	it("sends an id pi-ai does not list, built from the documented base entry", async () => {
 		const test = await fixture();

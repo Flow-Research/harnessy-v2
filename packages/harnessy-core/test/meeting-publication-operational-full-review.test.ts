@@ -2020,5 +2020,213 @@ describe("meeting publication authorized full-review runtime", () => {
 				expect(result.provider.calls.google).toEqual([]);
 			}),
 		);
+
+		describe("lease and clock currency", () => {
+			/** The service's single lease row, read from the replay ledger. */
+			const leaseRow = (fixture: Awaited<ReturnType<typeof setup>>) => {
+				const database = new DatabaseSync(fixture.authorization.replayPath, { readOnly: true });
+				try {
+					return database.prepare("SELECT lease_id,pid,boot_id,last_wall_time FROM active_lease").all();
+				} finally {
+					database.close();
+				}
+			};
+
+			it.effect("re-anchors a bounded backward wall-clock step under a pause, without stopping the service", () =>
+				Effect.gen(function* () {
+					let before: ReturnType<typeof leaseRow> = [];
+					const result = yield* runService(18_810, ({ elapsedMs, fixture }) => {
+						if (elapsedMs === 10_000) {
+							before = leaseRow(fixture);
+							// An NTP correction when the network returns: 90 seconds back.
+							fixture.authorization.stepWallClockBy(-90_000);
+						}
+						return elapsedMs >= 75_000 ? true : undefined;
+					});
+					expect(result.exit).toBeUndefined();
+					const lease = result.fixture.authorization.leaseCurrencyEvents;
+					expect(lease).toEqual([
+						{
+							event: "lease_clock_reanchored",
+							service: "meeting",
+							code: "clock_stepped_back",
+							stepMs: expect.any(Number),
+						},
+					]);
+					expect(lease[0]?.stepMs).toBeGreaterThan(1_000);
+					expect(lease[0]?.stepMs).toBeLessThanOrEqual(90_000);
+					expect(events(result.fixture)).toEqual(["writer_check_inconclusive", "writer_check_recovered"]);
+					expect(result.fixture.authorization.writerCheckEvents[0]).toMatchObject({
+						service: "meeting",
+						reason: "clock_stepped_back",
+					});
+					// The same lease row, PID and boot, now anchored at the corrected wall time.
+					const after = leaseRow(result.fixture);
+					expect(after).toHaveLength(1);
+					expect(after[0]).toMatchObject({
+						lease_id: before[0]?.lease_id,
+						pid: process.pid,
+						boot_id: before[0]?.boot_id,
+					});
+					expect(Number(after[0]?.last_wall_time)).toBeLessThan(Number(before[0]?.last_wall_time) + 75_000);
+					yield* Fiber.interrupt(result.fiber);
+				}),
+			);
+
+			it.effect("stops with clock_stepped_back, not revoked, on a step beyond the five-minute bound", () =>
+				Effect.gen(function* () {
+					const result = yield* runService(18_811, ({ elapsedMs, fixture }) => {
+						if (elapsedMs === 10_000) fixture.authorization.stepWallClockBy(-6 * 60_000);
+						return undefined;
+					});
+					const exit = yield* Fiber.await(result.fiber);
+					expect(Exit.isFailure(exit)).toBe(true);
+					expect(JSON.stringify(exit)).toContain("clock_stepped_back");
+					expect(JSON.stringify(exit)).not.toContain("revoked");
+					expect(result.elapsedMs).toBeLessThanOrEqual(15_000);
+					expect(result.fixture.authorization.leaseCurrencyEvents).toEqual([
+						expect.objectContaining({ event: "lease_currency_failed", code: "clock_stepped_back" }),
+					]);
+					expect(result.fixture.authorization.leaseCurrencyEvents[0]?.stepMs).toBeGreaterThan(5 * 60_000);
+					expect(events(result.fixture)).toEqual([]);
+				}),
+			);
+
+			it.effect("stops at once with boot_changed when the boot identity changes", () =>
+				Effect.gen(function* () {
+					const result = yield* runService(18_812, ({ elapsedMs, fixture }) => {
+						if (elapsedMs === 10_000) fixture.authorization.simulateReboot();
+						return undefined;
+					});
+					const exit = yield* Fiber.await(result.fiber);
+					expect(Exit.isFailure(exit)).toBe(true);
+					expect(JSON.stringify(exit)).toContain("boot_changed");
+					expect(result.elapsedMs).toBeLessThanOrEqual(15_000);
+					expect(result.fixture.authorization.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "meeting", code: "boot_changed" },
+					]);
+				}),
+			);
+
+			it.effect("stops at once with lease_row_changed when another writer changes the lease row", () =>
+				Effect.gen(function* () {
+					const result = yield* runService(18_813, ({ elapsedMs, fixture }) => {
+						if (elapsedMs === 10_000) {
+							const database = new DatabaseSync(fixture.authorization.replayPath, { timeout: 5_000 });
+							try {
+								database.prepare("UPDATE active_lease SET lease_id='another-writer' WHERE singleton=1").run();
+							} finally {
+								database.close();
+							}
+						}
+						return undefined;
+					});
+					const exit = yield* Fiber.await(result.fiber);
+					expect(Exit.isFailure(exit)).toBe(true);
+					expect(JSON.stringify(exit)).toContain("lease_row_changed");
+					expect(result.elapsedMs).toBeLessThanOrEqual(15_000);
+					expect(result.fixture.authorization.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "meeting", code: "lease_row_changed" },
+					]);
+				}),
+			);
+
+			it("issues no grant while a bounded step is re-anchoring, then resumes on the same lease", async () => {
+				const fixture = await setup({ approved: true, reviewPort: 18_814 });
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				const system = { ...base, proveNoKnownV1Writers: () => undefined };
+				const session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+					system,
+				);
+				try {
+					const binding = new MeetingPublicationWriteBinding({
+						sourcePath: fixture.config.sourcePath as string,
+						statePath: fixture.config.statePath as string,
+					});
+					const grant = () => Effect.runPromise(session.validator.validate("store_claim", binding));
+					expect(await grant()).toBe(true);
+					const [before] = leaseRow(fixture);
+					fixture.authorization.stepWallClockBy(-120_000);
+					// Detection pauses the session: this grant and every later one are denied.
+					expect(await grant()).toBe(false);
+					expect(session.writerCheckPaused).toBe(true);
+					expect(session.writerCheckPause?.error.reason).toBe("clock_stepped_back");
+					expect(await grant()).toBe(false);
+					expect(() => session.assertReviewAlive(0)).toThrow(WriterCheckInconclusiveError);
+					expect(leaseRow(fixture)).toEqual([before]);
+					// The paused retry re-anchors the same lease under a fresh writer proof.
+					session.recheckWriters();
+					expect(session.writerCheckPaused).toBe(false);
+					const [after] = leaseRow(fixture);
+					expect(after).toMatchObject({ lease_id: before?.lease_id, pid: process.pid, boot_id: before?.boot_id });
+					expect(Number(after?.last_wall_time)).toBeLessThan(Number(before?.last_wall_time));
+					expect(await grant()).toBe(true);
+					expect(session.leaseStopCode).toBeUndefined();
+					expect(fixture.authorization.leaseCurrencyEvents.map((event) => event.event)).toEqual([
+						"lease_clock_reanchored",
+					]);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("never re-anchors a finite authorization: any backward step stops it", async () => {
+				const fixture = await setup({ approved: true, reviewPort: 18_815 });
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				const system = { ...base, proveNoKnownV1Writers: () => undefined };
+				const session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+					system,
+				);
+				try {
+					const binding = new MeetingPublicationWriteBinding({
+						sourcePath: fixture.config.sourcePath as string,
+						statePath: fixture.config.statePath as string,
+					});
+					expect(await Effect.runPromise(session.validator.validate("store_claim", binding))).toBe(true);
+					fixture.authorization.stepWallClockBy(-30_000);
+					expect(await Effect.runPromise(session.validator.validate("store_claim", binding))).toBe(false);
+					expect(session.writerCheckPaused).toBe(false);
+					expect(session.leaseStopCode).toBe("clock_stepped_back");
+					expect(() => session.assertLeaseCurrent()).toThrow(
+						expect.objectContaining({ code: "clock_stepped_back" }),
+					);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("stops with lease_update_failed when the lease transaction cannot run", async () => {
+				const fixture = await setup({ approved: true, reviewPort: 18_816 });
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				const session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, base.observe()),
+					{ ...base, proveNoKnownV1Writers: () => undefined },
+				);
+				const blocker = new DatabaseSync(fixture.authorization.replayPath, { timeout: 0 });
+				try {
+					blocker.exec("BEGIN EXCLUSIVE;");
+					expect(() => session.assertLeaseCurrent()).toThrow(
+						expect.objectContaining({ code: "lease_update_failed" }),
+					);
+					expect(fixture.authorization.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "meeting", code: "lease_update_failed" },
+					]);
+				} finally {
+					blocker.exec("ROLLBACK;");
+					blocker.close();
+					session.close();
+				}
+			});
+		});
 	});
 });

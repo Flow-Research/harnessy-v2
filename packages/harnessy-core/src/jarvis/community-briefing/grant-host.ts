@@ -219,6 +219,8 @@ VALUES (?,?,?) ON CONFLICT(grant_id) DO NOTHING`)
 			readonly serviceItem?: { readonly briefingId: string; readonly sourceHash: string };
 			readonly bootId?: string;
 			readonly deadline?: string;
+			/** Told why a grant revalidation was denied; the grant itself only answers false. */
+			readonly denied?: (cause: unknown) => void;
 		},
 	): {
 		readonly authorize: () => Effect.Effect<CommunityBriefingWriteGrant, Error>;
@@ -253,14 +255,15 @@ VALUES (?,?,?) ON CONFLICT(grant_id) DO NOTHING`)
 			const row = this.#database
 				.prepare("SELECT lease_id,grant_id,pid,boot_id,expires_at FROM community_briefing_lease WHERE singleton=1")
 				.get();
+			// Allow-listed reasons: another writer changed or removed the row, or the boot changed.
 			if (
 				row?.lease_id !== leaseId ||
 				row.grant_id !== signed.grantId ||
 				row.pid !== process.pid ||
-				row.boot_id !== bootId ||
 				row.expires_at !== deadline
 			)
-				throw new Error("Community lease lost.");
+				throw new Error("lease_row_changed");
+			if (row.boot_id !== bootId) throw new Error("boot_changed");
 		};
 		const binding: CommunityBriefingWriteBinding = {
 			queuePath: this.#queuePath,
@@ -352,9 +355,17 @@ VALUES (?,?,?) ON CONFLICT(grant_id) DO NOTHING`)
 													return false;
 												return true;
 											},
-											catch: () => false,
+											catch: (cause) => {
+												operation?.denied?.(cause);
+												return false;
+											},
 										}),
-									).pipe(Effect.catch(() => Effect.succeed(false))),
+									).pipe(
+										Effect.catch((cause) => {
+											operation?.denied?.(cause);
+											return Effect.succeed(false);
+										}),
+									),
 							});
 							return issued;
 						},

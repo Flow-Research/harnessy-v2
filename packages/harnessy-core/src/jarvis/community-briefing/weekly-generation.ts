@@ -12,9 +12,10 @@ import {
 	rmSync,
 	writeSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Result, Schema } from "effect";
+import { CODEX_TRANSIENT_FAILURE_CODES } from "../../ai/codex-failure.ts";
 
 /**
  * Weekly community draft generation, owned by the native review service.
@@ -34,6 +35,12 @@ export const COMMUNITY_GENERATION_LOCK_FILE = "community-weekly-generation.lock"
 /** Held briefly around each record write and around a repair's read-and-move-aside. */
 export const COMMUNITY_GENERATION_RECORD_LOCK_FILE = "community-weekly-generation.record.lock";
 export const COMMUNITY_QUEUE_FILE = "weekly-briefings.sqlite3";
+/**
+ * An owner's request to retry one week, written by `harnessy jarvis community
+ * generation-retry` and consumed by the running scheduler. The CLI never generates:
+ * only the exempt review process that holds the scheduler lock acts on it.
+ */
+export const COMMUNITY_GENERATION_RETRY_REQUEST_FILE = "community-weekly-generation.retry-request.json";
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
 
@@ -157,6 +164,8 @@ export interface CommunityWeekGenerationResult {
 	readonly status: "created" | "existing" | "busy" | "cancelled" | "failed";
 	readonly briefingId?: string;
 	readonly code?: string;
+	/** Allow-listed network sub-code of a provider failure, such as `ENOTFOUND`. */
+	readonly subCode?: string;
 	/** True when the generation already delivered its own "pending review" notice. */
 	readonly notified?: boolean;
 }
@@ -167,6 +176,10 @@ const WeekRecord = Schema.Struct({
 	lastAttemptAt: Schema.String,
 	briefingId: Schema.optional(Schema.String),
 	code: Schema.optional(Schema.String),
+	/** Allow-listed network sub-code of the last provider failure. */
+	subCode: Schema.optional(Schema.String),
+	/** Transient failures (network, provider unavailable). They do not count toward `attempts`. */
+	transientAttempts: Schema.optional(Schema.Int),
 	gaveUp: Schema.optional(Schema.Boolean),
 	/** A failed attempt whose draft was found in the queue later (for example after a deadline). */
 	recovered: Schema.optional(Schema.Boolean),
@@ -184,7 +197,13 @@ const StatusRecord = Schema.Struct({
 		timezone: Schema.String,
 	}),
 	lastFailure: Schema.NullOr(
-		Schema.Struct({ weekStart: Schema.String, at: Schema.String, code: Schema.String, attempts: Schema.Int }),
+		Schema.Struct({
+			weekStart: Schema.String,
+			at: Schema.String,
+			code: Schema.String,
+			subCode: Schema.optional(Schema.String),
+			attempts: Schema.Int,
+		}),
 	),
 	/** A failure that repeats every tick until it clears, such as an unreadable queue. */
 	standingFault: Schema.optional(Schema.NullOr(Schema.Struct({ code: Schema.String, since: Schema.String }))),
@@ -294,9 +313,9 @@ const repairUnlocked = (path: string, now: Date): CommunityGenerationRepair => {
 	return movedTo === undefined ? { outcome: "missing" } : { outcome: "quarantined", fault: read.failure, movedTo };
 };
 
-/** Atomic owner-only replacement; a crash leaves the previous record intact. */
-const writeStatus = (path: string, status: CommunityGenerationStatus) => {
-	const temporary = join(dirname(path), `.${COMMUNITY_GENERATION_STATUS_FILE}.${randomBytes(6).toString("hex")}.tmp`);
+/** Atomic owner-only replacement; a crash leaves the previous file intact. */
+const writeOwnerOnlyJson = (path: string, value: unknown) => {
+	const temporary = join(dirname(path), `.${basename(path)}.${randomBytes(6).toString("hex")}.tmp`);
 	const fd = openSync(
 		temporary,
 		constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
@@ -304,7 +323,7 @@ const writeStatus = (path: string, status: CommunityGenerationStatus) => {
 	);
 	const written = Result.try({
 		try: () => {
-			writeSync(fd, `${JSON.stringify(status, null, 2)}\n`);
+			writeSync(fd, `${JSON.stringify(value, null, 2)}\n`);
 			fsyncSync(fd);
 		},
 		catch: (cause) => cause,
@@ -442,6 +461,71 @@ export const summarizeCommunityGenerationStatus = (
 	};
 };
 
+const RetryRequest = Schema.Struct({
+	kind: Schema.Literal("harnessy.community.briefing.generation-retry.v1"),
+	weekStart: Schema.String,
+	requestedAt: Schema.String,
+});
+
+/**
+ * `generation-retry`: ask the running review service to retry one week. Writes only an
+ * owner-only request file in the state directory (atomically; a newer request replaces
+ * an unconsumed one). It never opens the queue, runs the adapter or calls a provider.
+ */
+export const requestCommunityGenerationRetry = (
+	statePath: string,
+	weekStart: string,
+	now: Date = new Date(),
+): string => {
+	if (!/^\d{4}-\d{2}-\d{2}$/u.test(weekStart) || new Date(`${weekStart}T00:00:00Z`).getUTCDay() !== 1)
+		throw new Error("--week-start must be a Monday in YYYY-MM-DD format");
+	const path = join(statePath, COMMUNITY_GENERATION_RETRY_REQUEST_FILE);
+	const request: typeof RetryRequest.Type = {
+		kind: "harnessy.community.briefing.generation-retry.v1",
+		weekStart,
+		requestedAt: now.toISOString(),
+	};
+	writeOwnerOnlyJson(path, request);
+	return path;
+};
+
+/** A consumed request: the week to retry, or the allow-listed reason it was refused. */
+export type CommunityGenerationRetryRequest =
+	| { readonly weekStart: string }
+	| { readonly invalid: "retry_request_invalid" | "retry_request_unsafe" };
+
+/**
+ * Take (read and remove) a pending retry request, if any. A request that is a link, not
+ * owner-only, oversized or malformed is removed and reported, never acted on.
+ */
+export const takeCommunityGenerationRetryRequest = (statePath: string): CommunityGenerationRetryRequest | undefined => {
+	const path = join(statePath, COMMUNITY_GENERATION_RETRY_REQUEST_FILE);
+	if (lstatSync(path, { throwIfNoEntry: false }) === undefined) return undefined;
+	const read = Result.try((): CommunityGenerationRetryRequest => {
+		const opened = Result.try(() => openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW));
+		if (Result.isFailure(opened)) return { invalid: "retry_request_unsafe" };
+		const fd = opened.success;
+		try {
+			const stat = fstatSync(fd);
+			const uid = process.geteuid?.();
+			if (!stat.isFile() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o077) !== 0)
+				return { invalid: "retry_request_unsafe" };
+			if (stat.size > 4096) return { invalid: "retry_request_invalid" };
+			const bytes = Buffer.alloc(stat.size);
+			if (readSync(fd, bytes, 0, stat.size, 0) !== stat.size) return { invalid: "retry_request_invalid" };
+			const decoded = Result.try(() => Schema.decodeUnknownSync(RetryRequest)(JSON.parse(bytes.toString("utf8"))));
+			return Result.isSuccess(decoded)
+				? { weekStart: decoded.success.weekStart }
+				: { invalid: "retry_request_invalid" };
+		} finally {
+			closeSync(fd);
+		}
+	});
+	// Removes a link itself, never its target. A request is acted on at most once.
+	rmSync(path, { force: true });
+	return Result.isSuccess(read) ? read.success : { invalid: "retry_request_invalid" };
+};
+
 /** One allow-listed, content-free event per decision, for the service log. */
 export interface CommunityGenerationEvent {
 	readonly event: "weekly-generation";
@@ -449,6 +533,12 @@ export interface CommunityGenerationEvent {
 	readonly status: "created" | "existing" | "busy" | "failed" | "skipped" | "repaired";
 	readonly attempt?: number;
 	readonly code?: string;
+	readonly subCode?: string;
+	/** A transient failure: not counted toward the attempt limit; retried after `retryInMs`. */
+	readonly transient?: boolean;
+	readonly retryInMs?: number;
+	/** This attempt was requested by the owner (`generation-retry`). */
+	readonly requested?: boolean;
 	readonly briefingId?: string;
 	readonly gaveUp?: boolean;
 	readonly recovered?: boolean;
@@ -468,10 +558,12 @@ export interface WeeklyCommunityGenerationOptions {
 	readonly report: (event: CommunityGenerationEvent) => void;
 	/** Desktop notification; returns whether it was delivered. */
 	readonly notify?: (kind: "pending" | "error", count: number) => Promise<boolean>;
-	/** Automatic attempts per week, including the first. Default 3. */
+	/** Automatic attempts per week, including the first. Default 3. Transient failures do not count. */
 	readonly maxAttempts?: number;
 	/** Minimum time between attempts for one week. Default one hour. */
 	readonly retryAfterMs?: number;
+	/** Transient failures per week before giving up. Default COMMUNITY_GENERATION_MAX_TRANSIENT_ATTEMPTS. */
+	readonly maxTransientAttempts?: number;
 	/** Per-process memory: notified faults, and week records even when the file cannot be written. */
 	readonly memory?: CommunityGenerationMemory;
 }
@@ -483,8 +575,35 @@ export interface CommunityGenerationMemory {
 
 const CODE = /^[a-z][a-z_]{0,63}$/u;
 const safeCode = (code: unknown) => (typeof code === "string" && CODE.test(code) ? code : "generation_failed");
+/** A network sub-code is an allow-listed identifier (codexNetworkSubCode); anything else is dropped. */
+const SUB_CODE = /^(?:E[A-Z][A-Z_]{1,15}|(?:UND_ERR|ERR_TLS)_[A-Z0-9_]{1,48}|unexpected_redirect|timeout)$/u;
+const safeSubCode = (value: unknown) => (typeof value === "string" && SUB_CODE.test(value) ? value : undefined);
+
+/**
+ * Transient failures per week before the trigger gives up: 12. With the backoff below
+ * the retries span about ten hours (10 + 20 + 40 minutes, then hourly), which outlasts
+ * an overnight network outage. Each retry can repeat at most the run's earlier paid
+ * calls, so the bound also caps what an outage can cost. The owner can still retry a
+ * given-up week with `harnessy jarvis community generation-retry`.
+ */
+export const COMMUNITY_GENERATION_MAX_TRANSIENT_ATTEMPTS = 12;
+/** Backoff after the n-th transient failure: 10 minutes, doubling, at most one hour. */
+export const communityGenerationTransientBackoffMs = (failures: number): number =>
+	Math.min(60 * 60 * 1000, 10 * 60 * 1000 * 2 ** Math.max(0, failures - 1));
 /** Codes that the same request cannot fix: retrying would only repeat the failure. */
 const FINAL_CODES = new Set(["orphan_artifacts"]);
+const isTransientCode = (code: string) => (CODEX_TRANSIENT_FAILURE_CODES as ReadonlySet<string>).has(code);
+
+const DAY_MS = 86_400_000;
+/** A Monday from the last RETAINED_WEEKS weeks, no later than the week due now. */
+const isRetryableCommunityWeek = (weekStart: string, dueWeek: string) => {
+	if (!/^\d{4}-\d{2}-\d{2}$/u.test(weekStart)) return false;
+	const day = Date.parse(`${weekStart}T00:00:00Z`);
+	if (!Number.isFinite(day) || isoDate(new Date(day)) !== weekStart || new Date(day).getUTCDay() !== 1) return false;
+	const due = Date.parse(`${dueWeek}T00:00:00Z`);
+	return day <= due && day > due - RETAINED_WEEKS * 7 * DAY_MS;
+};
+
 /** Faults that repeat every tick until someone acts; each is notified once per process. */
 const isStandingFault = (code: string | undefined) =>
 	code !== undefined && (code.startsWith("status_record_") || code === "queue_unreadable");
@@ -495,12 +614,28 @@ const isStandingFault = (code: string | undefined) =>
  */
 export const runCommunityGenerationTick = async (
 	options: WeeklyCommunityGenerationOptions,
+	/** An owner's request to retry this week now (generation-retry), bypassing backoff and give-up once. */
+	requestedWeek?: string,
 ): Promise<CommunityGenerationEvent | undefined> => {
 	if (!options.schedule.enabled) return undefined;
 	const maxAttempts = options.maxAttempts ?? 3;
 	const retryAfterMs = options.retryAfterMs ?? 60 * 60 * 1000;
+	const maxTransientAttempts = options.maxTransientAttempts ?? COMMUNITY_GENERATION_MAX_TRANSIENT_ATTEMPTS;
 	const started = options.now();
-	const weekStart = dueCommunityGenerationWeek(started, options.schedule);
+	const dueWeek = dueCommunityGenerationWeek(started, options.schedule);
+	const requested = requestedWeek !== undefined;
+	if (requested && !isRetryableCommunityWeek(requestedWeek, dueWeek)) {
+		options.report({
+			event: "weekly-generation",
+			weekStart: dueWeek,
+			status: "skipped",
+			code: "retry_rejected",
+			requested,
+			publication: false,
+		});
+		return undefined;
+	}
+	const weekStart = requestedWeek ?? dueWeek;
 	const finish = async (event: CommunityGenerationEvent, notify: "pending" | "error" | undefined) => {
 		options.report(event);
 		const repeated = isStandingFault(event.code) && options.memory?.notified.has(event.code!) === true;
@@ -518,7 +653,7 @@ export const runCommunityGenerationTick = async (
 			try: () => {
 				// A busy record lock (a repair in progress) counts as unwritable: nothing is generated.
 				const done = withCommunityGenerationRecordLock(dirname(options.statusPath), 2_000, () =>
-					writeStatus(options.statusPath, record),
+					writeOwnerOnlyJson(options.statusPath, record),
 				);
 				if (done === undefined) throw new Error("status_record_unwritable");
 			},
@@ -606,7 +741,18 @@ export const runCommunityGenerationTick = async (
 	const remembered = options.memory?.weeks.get(weekStart);
 	// An unwritable record must not reset the attempt limit within this process.
 	const previous = remembered && remembered.attempts > (persisted?.attempts ?? 0) ? remembered : persisted;
-	if (previous && previous.status !== "failed") return undefined;
+	if (previous && previous.status !== "failed") {
+		if (requested)
+			options.report({
+				event: "weekly-generation",
+				weekStart,
+				status: "skipped",
+				code: "retry_not_needed",
+				requested,
+				publication: false,
+			});
+		return undefined;
+	}
 
 	const record = async (
 		week: WeekRecord,
@@ -616,7 +762,13 @@ export const runCommunityGenerationTick = async (
 		options.memory?.weeks.set(weekStart, week);
 		const failure =
 			week.status === "failed"
-				? { weekStart, at: week.lastAttemptAt, code: week.code ?? "generation_failed", attempts: week.attempts }
+				? {
+						weekStart,
+						at: week.lastAttemptAt,
+						code: week.code ?? "generation_failed",
+						...(week.subCode === undefined ? {} : { subCode: week.subCode }),
+						attempts: week.attempts,
+					}
 				: current.lastFailure;
 		const written = store(statusFor({ ...current.weeks, [weekStart]: week }, failure));
 		if (Result.isFailure(written)) return finish({ ...event, status: "failed", code: written.failure }, "error");
@@ -666,8 +818,12 @@ export const runCommunityGenerationTick = async (
 			recovered ? "pending" : undefined,
 		);
 	}
-	if (previous?.gaveUp) return undefined;
-	if (previous && started.getTime() - Date.parse(previous.lastAttemptAt) < retryAfterMs) return undefined;
+	// A transient failure backs off from 10 minutes to an hour; any other waits retryAfterMs.
+	const transientBefore = previous?.transientAttempts ?? 0;
+	const lastWasTransient = previous?.code !== undefined && isTransientCode(previous.code);
+	const gap = lastWasTransient ? communityGenerationTransientBackoffMs(transientBefore) : retryAfterMs;
+	if (!requested && previous?.gaveUp) return undefined;
+	if (!requested && previous && started.getTime() - Date.parse(previous.lastAttemptAt) < gap) return undefined;
 
 	const attempt = (previous?.attempts ?? 0) + 1;
 	// Persist the attempt before any paid call. If the process dies mid-run, or
@@ -717,6 +873,41 @@ export const runCommunityGenerationTick = async (
 		);
 	const failed = result.status === "failed";
 	const code = failed ? safeCode(result.code) : undefined;
+	const subCode = failed ? safeSubCode(result.subCode) : undefined;
+	if (failed && isTransientCode(code!)) {
+		// Not an attempt toward the limit: the reservation is replaced by the previous count.
+		// An owner's request resets the transient count, so automatic backoff resumes.
+		const transientAttempts = (requested ? 0 : transientBefore) + 1;
+		const transientGaveUp = transientAttempts >= maxTransientAttempts;
+		const retryInMs = transientGaveUp ? undefined : communityGenerationTransientBackoffMs(transientAttempts);
+		const week: WeekRecord = {
+			status: "failed",
+			attempts: previous?.attempts ?? 0,
+			transientAttempts,
+			lastAttemptAt: options.now().toISOString(),
+			code: code!,
+			...(subCode === undefined ? {} : { subCode }),
+			...(transientGaveUp ? { gaveUp: true } : {}),
+		};
+		return record(
+			week,
+			{
+				event: "weekly-generation",
+				weekStart,
+				status: "failed",
+				attempt: transientAttempts,
+				code: code!,
+				...(subCode === undefined ? {} : { subCode }),
+				transient: true,
+				...(retryInMs === undefined ? {} : { retryInMs }),
+				...(transientGaveUp ? { gaveUp: true } : {}),
+				...(requested ? { requested } : {}),
+				publication: false,
+			},
+			// An outage retries on its own: notify only when the trigger gives up.
+			transientGaveUp ? "error" : undefined,
+		);
+	}
 	const gaveUp = failed && (attempt >= maxAttempts || FINAL_CODES.has(code!));
 	const briefingId =
 		!failed && typeof result.briefingId === "string" && /^[a-f0-9]{24}$/u.test(result.briefingId)
@@ -728,6 +919,8 @@ export const runCommunityGenerationTick = async (
 		lastAttemptAt: options.now().toISOString(),
 		...(briefingId === undefined ? {} : { briefingId }),
 		...(code === undefined ? {} : { code }),
+		...(subCode === undefined ? {} : { subCode }),
+		...(transientBefore > 0 && !requested ? { transientAttempts: transientBefore } : {}),
 		...(gaveUp ? { gaveUp } : {}),
 	};
 	return record(
@@ -738,8 +931,10 @@ export const runCommunityGenerationTick = async (
 			status: week.status,
 			attempt,
 			...(code === undefined ? {} : { code }),
+			...(subCode === undefined ? {} : { subCode }),
 			...(briefingId === undefined ? {} : { briefingId }),
 			...(gaveUp ? { gaveUp } : {}),
+			...(requested ? { requested } : {}),
 			publication: false,
 		},
 		failed ? "error" : week.status === "created" && result.notified !== true ? "pending" : undefined,
@@ -760,6 +955,15 @@ export const runWeeklyCommunityGeneration = async (
 		readonly acquireLock: () => CommunityGenerationLock | undefined;
 		readonly tickMs?: number;
 		readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+		/**
+		 * Owner retry requests (`generation-retry`). While it holds the scheduler lock, the
+		 * loop checks for one every `pollMs` (default 15 seconds) and runs it at once.
+		 */
+		readonly retryRequests?: {
+			readonly pending: () => boolean;
+			readonly take: () => CommunityGenerationRetryRequest | undefined;
+			readonly pollMs?: number;
+		};
 	},
 ): Promise<void> => {
 	const sleep =
@@ -795,9 +999,42 @@ export const runWeeklyCommunityGeneration = async (
 					});
 				waiting = lock === undefined;
 			}
-			if (lock !== undefined) await runCommunityGenerationTick({ ...options, memory });
+			// A request the loop could not remove must not wake it again at once.
+			let stuckRequest = false;
+			if (lock !== undefined) {
+				const taken = Result.try(() => options.retryRequests?.take());
+				const request = Result.isSuccess(taken) ? taken.success : { invalid: "retry_request_invalid" as const };
+				if (request !== undefined && "invalid" in request)
+					options.report({
+						event: "weekly-generation",
+						weekStart: dueCommunityGenerationWeek(options.now(), options.schedule),
+						status: "skipped",
+						code: request.invalid,
+						requested: true,
+						publication: false,
+					});
+				await runCommunityGenerationTick(
+					{ ...options, memory },
+					request !== undefined && "weekStart" in request ? request.weekStart : undefined,
+				);
+				if (request !== undefined) {
+					const remaining = Result.try(() => options.retryRequests?.pending() === true);
+					stuckRequest = Result.isFailure(remaining) || remaining.success;
+				}
+			}
 			if (options.signal.aborted) return;
-			await sleep(options.tickMs ?? COMMUNITY_GENERATION_TICK_MS, options.signal);
+			const tickMs = options.tickMs ?? COMMUNITY_GENERATION_TICK_MS;
+			const retryRequests = options.retryRequests;
+			if (retryRequests === undefined || lock === undefined || stuckRequest) await sleep(tickMs, options.signal);
+			else {
+				// Wake early for an owner's retry request; otherwise wait the full tick.
+				const pollMs = Math.max(1, retryRequests.pollMs ?? 15_000);
+				for (let waited = 0; waited < tickMs && !options.signal.aborted; waited += pollMs) {
+					const pending = Result.try(retryRequests.pending);
+					if (Result.isSuccess(pending) && pending.success) break;
+					await sleep(Math.min(pollMs, tickMs - waited), options.signal);
+				}
+			}
 		}
 	} finally {
 		lock?.release();

@@ -28,6 +28,7 @@ import {
 	parseCommunityGenerationSchedule,
 	readCommunityGenerationStatus,
 	repairCommunityGenerationStatus,
+	requestCommunityGenerationRetry,
 	summarizeCommunityGenerationStatus,
 } from "../jarvis/community-briefing/weekly-generation.ts";
 import { JarvisConfigReader } from "../jarvis/config.ts";
@@ -856,7 +857,7 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 						yield* Console.log(`Standing fault: ${summary.standingFault} (generation is paused until it clears)`);
 					if (record.lastFailure !== null)
 						yield* Console.log(
-							`Last failure: week ${record.lastFailure.weekStart}, ${record.lastFailure.code}, ${record.lastFailure.at}`,
+							`Last failure: week ${record.lastFailure.weekStart}, ${record.lastFailure.code}${record.lastFailure.subCode === undefined ? "" : ` (${record.lastFailure.subCode})`}, ${record.lastFailure.at}`,
 						);
 				}
 			}
@@ -869,11 +870,72 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 	),
 );
 
+/**
+ * Outside `community briefing` for the same one-writer reason as `schedule`: this process
+ * never generates. It writes an owner-only request file that the running review service
+ * (the only exempt draft writer) consumes, so the guard never sees a second writer.
+ */
+export const jarvisCommunityGenerationRetryCommand = Command.make(
+	"generation-retry",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		weekStart: Options.string("week-start").pipe(Options.withDescription("Monday of the week, YYYY-MM-DD.")),
+		json: jsonOption,
+	},
+	({ config, stateRoot, weekStart, json }) =>
+		Effect.gen(function* () {
+			const resolved = resolveCommunityBriefingConfig({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+			});
+			// A request with no scheduler to consume it would wait for a later, unexpected paid run.
+			if (!isCommunityGenerationSchedulerRunning(resolved.stateRoot))
+				return yield* Effect.fail(
+					new Error(
+						"No running review service holds the weekly generation scheduler for this state directory; nothing was requested.",
+					),
+				);
+			const path = yield* Effect.try({
+				try: () => requestCommunityGenerationRetry(resolved.stateRoot, weekStart),
+				catch: (cause) =>
+					new Error(
+						cause instanceof Error && cause.message.startsWith("--week-start")
+							? cause.message
+							: "Could not write the retry request.",
+					),
+			});
+			if (json)
+				yield* Console.log(
+					JSON.stringify(
+						{
+							command: "jarvis community generation-retry",
+							requested: true,
+							weekStart,
+							path,
+							publication: false,
+						},
+						null,
+						2,
+					),
+				);
+			else
+				yield* Console.log(
+					`Requested a retry of week ${weekStart}; the review service runs it within a minute. Check \`harnessy jarvis community generation-status\`.`,
+				);
+		}),
+).pipe(
+	Command.withDescription(
+		"Ask the running review service to retry one week's draft now (drafts only; never publishes)",
+	),
+);
+
 export const jarvisCommunityCommand = Command.make("community").pipe(
 	Command.withSubcommands([
 		jarvisCommunityBriefingCommand,
 		jarvisCommunityScheduleCommand,
 		jarvisCommunityGenerationStatusCommand,
+		jarvisCommunityGenerationRetryCommand,
 	] as const),
 	Command.withDescription("Run V2-owned community workflow inspections"),
 );

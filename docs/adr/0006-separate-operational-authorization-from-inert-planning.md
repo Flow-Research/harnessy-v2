@@ -630,6 +630,64 @@ Constraints the implementation keeps:
   The meeting guard does not check this label (it checks only its V1 labels),
   so it needs no change.
 
+### Accepted amendment — lease currency codes and bounded clock re-anchor, 19 October 2026
+
+On 19 October 2026 the Mac lost network and DNS from about 00:00 to 05:00 WAT
+and slept with dark wakes. The meeting service paused on inconclusive `ps`
+probes and recovered, as the #117/#119 policy intends. At 05:28 WAT it then
+exited with `revoked`, although nothing was revoked. Every failed lease
+currency check was reported as `revoked`. The most likely trigger was a
+backward wall-clock correction when the network returned. The community
+service had already stopped with `runtime_changed` for the same reason.
+
+Each lease currency failure now has its own allow-listed code, logged once as a
+`lease_currency_failed` stderr event:
+
+- `clock_stepped_back`: the wall clock is behind the lease's last recorded time
+  by more than the tolerance (meeting 1 second, community 0), or the monotonic
+  clock went backwards;
+- `boot_changed`: the boot identity differs from the lease's;
+- `lease_row_changed`: the lease row is missing or another writer changed it;
+- `lease_update_failed`: the lease transaction could not run or commit.
+
+`revoked` remains only for an actual revocation. The community runtime reports
+the same identifiers as the `reason` of `runtime_rejected` or
+`publication_uncertain`, and keeps `runtime_changed` for other runtime identity
+changes and `expired_authorization` for expiry.
+
+A running service tolerates one bounded backward step. If the boot is unchanged,
+the monotonic clock has not regressed and the step is at most five minutes, the
+service re-anchors its lease: the same lease row, PID and boot, with the
+corrected wall time. Five minutes is the writer-check inconclusive window. A
+drift correction after hours of sleep or lost network is seconds, at most tens
+of seconds. A larger step is a manual change, a restored snapshot or replay,
+and still stops the owner. Only services re-anchor. They have no signed
+wall-clock expiry, so a step cannot extend their authority. Finite smoke,
+worker and supervised authorizations still stop on any step.
+
+Detection never re-anchors silently. The meeting session enters the existing
+writer-check pause (reason `clock_stepped_back`), so it denies every grant and
+skips scheduled cycles. The next keep-alive retry re-anchors under a fresh
+writer proof before the pause clears, and logs `lease_clock_reanchored` with the
+step. The community service re-anchors only before it holds a lease. The step
+throws the same inconclusive reason into the pre-lease retry, which reruns every
+check. A step while a publication holds the lease ends it as
+`publication_uncertain` with reason `clock_stepped_back`, like any other
+revalidation failure. A boot change or a lease row changed by another writer
+stops at once.
+
+Weekly generation now treats `provider_network` and `provider_unavailable` as
+transient. They do not count toward the three attempts and back off from 10
+minutes to an hour, for at most 12 per week. Network failures record the fetch
+error's allow-listed `cause.code` as `subCode`. `harnessy jarvis community
+generation-retry --week-start` lets the owner retry one week through the
+running reviewer. The command only writes an owner-only request file in the
+state directory, so the guard never sees a second writer. Both guards classify
+its argv as a non-writer. The adapter marks `running` rows in
+`community_draft_runs` `interrupted` when it starts a run under the
+native-draft lock. That lock admits one run per state directory, so any such
+row belongs to an adapter that died.
+
 ### Continuing consequences
 
 - A valid planning receipt remains non-authorizing evidence. It still contains

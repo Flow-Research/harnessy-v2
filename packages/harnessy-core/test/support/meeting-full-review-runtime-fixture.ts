@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import * as Effect from "effect/Effect";
 
 import type { JarvisMeetingPublicationConfig } from "../../src/jarvis/config-model.ts";
+import type { LeaseCurrencyEvent } from "../../src/jarvis/lease-clock.ts";
 import {
 	canonicalMeetingPublicationSmokeJson,
 	MEETING_PUBLICATION_FULL_REVIEW_AUDIENCE,
@@ -262,8 +263,11 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 	let writerProof: (() => void) | undefined;
 	let observeFailure: Error | undefined;
 	const writerCheckEvents: Array<WriterCheckEvent> = [];
+	const leaseCurrencyEvents: Array<LeaseCurrencyEvent> = [];
 	let observationStep = 0n;
 	let observationOffsetMillis = 0;
+	/** Wall-clock-only offset: a step of the system clock that the monotonic clock does not see. */
+	let wallStepMillis = 0;
 	let bootId = observation.bootId;
 	const system: MeetingPublicationSmokeRuntimeSystem = {
 		observe: () => {
@@ -273,7 +277,7 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 			return {
 				...observation,
 				bootId,
-				now: observation.now + observationOffsetMillis + Number(step / 1_000_000n),
+				now: observation.now + observationOffsetMillis + wallStepMillis + Number(step / 1_000_000n),
 				monotonic: observation.monotonic + BigInt(observationOffsetMillis) * 1_000_000n + step,
 			};
 		},
@@ -283,6 +287,9 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 		},
 		reportWriterCheck: (event) => {
 			writerCheckEvents.push(event);
+		},
+		reportLeaseCurrency: (event) => {
+			leaseCurrencyEvents.push(event);
 		},
 	};
 	const input: MeetingPublicationFullReviewRuntimeInput = {
@@ -318,8 +325,13 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 			observeFailure = failure;
 		},
 		writerCheckEvents,
+		leaseCurrencyEvents,
 		advanceTimeBy: (milliseconds: number) => {
 			observationOffsetMillis += milliseconds;
+		},
+		/** Step only the wall clock (negative: backwards), as an NTP correction does. */
+		stepWallClockBy: (milliseconds: number) => {
+			wallStepMillis += milliseconds;
 		},
 		simulateReboot: () => {
 			bootId = `fixture-${randomBytes(16).toString("hex")}`;
