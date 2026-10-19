@@ -2382,6 +2382,157 @@ describe("meeting publication authorized full-review runtime", () => {
 					session.close();
 				}
 			});
+
+			/** Another writer's change to the replay ledger. */
+			const mutateReplay = (fixture: Awaited<ReturnType<typeof setup>>, sql: string) => {
+				const database = new DatabaseSync(fixture.authorization.replayPath, { timeout: 5_000 });
+				try {
+					database.exec(sql);
+				} finally {
+					database.close();
+				}
+			};
+
+			it.each([
+				["a boot id rewritten in the lease row", "UPDATE active_lease SET boot_id='another-boot'", "boot_changed"],
+				[
+					"an unreadable monotonic anchor",
+					"UPDATE active_lease SET last_monotonic_ns='not-a-number'",
+					"lease_row_changed",
+				],
+				[
+					"a wall anchor ten minutes ahead",
+					"UPDATE active_lease SET last_wall_time=last_wall_time+600000",
+					"clock_stepped_back",
+				],
+				[
+					"a monotonic anchor ahead of the clock",
+					"UPDATE active_lease SET last_monotonic_ns='999999999999999999999'",
+					"clock_stepped_back",
+				],
+			] as const)("stops with its own code for %s", async (_name, sql, code) => {
+				const { fixture, session, grant } = await serviceSession(18_823);
+				try {
+					expect(await grant()).toBe(true);
+					mutateReplay(fixture, sql);
+					expect(() => session.assertLeaseCurrent()).toThrow(expect.objectContaining({ code }));
+					expect(session.leaseStopCode).toBe(code);
+					expect(fixture.authorization.leaseCurrencyEvents).toEqual([
+						expect.objectContaining({ event: "lease_currency_failed", service: "meeting", code }),
+					]);
+					// A stopped session keeps reporting its own code, never revoked.
+					expect(() => session.assertLeaseCurrent()).toThrow(expect.objectContaining({ code }));
+					expect(() => session.recheckWriters()).toThrow(expect.objectContaining({ code }));
+				} finally {
+					session.close();
+				}
+			});
+
+			it("pauses on a bounded step seen only against the lease row, then re-anchors it", async () => {
+				const { fixture, session, grant } = await serviceSession(18_824);
+				try {
+					expect(await grant()).toBe(true);
+					mutateReplay(fixture, "UPDATE active_lease SET last_wall_time=last_wall_time+60000");
+					expect(() => session.assertReviewAlive(0)).toThrow(WriterCheckInconclusiveError);
+					expect(session.writerCheckPause?.error.reason).toBe("clock_stepped_back");
+					expect(await grant()).toBe(false);
+					session.recheckWriters();
+					expect(await grant()).toBe(true);
+					expect(fixture.authorization.leaseCurrencyEvents.map((event) => event.event)).toEqual([
+						"lease_clock_reanchored",
+					]);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("reports replay_unavailable, not a lease code, for missing replay metadata", async () => {
+				const { fixture, session, grant } = await serviceSession(18_825);
+				try {
+					expect(await grant()).toBe(true);
+					mutateReplay(fixture, "DELETE FROM runtime_metadata");
+					expect(() => session.assertLeaseCurrent()).toThrow(
+						expect.objectContaining({ code: "replay_unavailable" }),
+					);
+					expect(fixture.authorization.leaseCurrencyEvents).toEqual([]);
+				} finally {
+					session.close();
+				}
+			});
+
+			it("stops a grant with boot_changed or clock_stepped_back seen during the validation itself", async () => {
+				const rebooted = await serviceSession(18_826);
+				try {
+					expect(await rebooted.grant()).toBe(true);
+					rebooted.fixture.authorization.simulateReboot();
+					expect(await rebooted.grant()).toBe(false);
+					expect(rebooted.session.leaseStopCode).toBe("boot_changed");
+				} finally {
+					rebooted.session.close();
+				}
+				// The monotonic clock goes backwards between two readings of one validation.
+				const fixture = await setup({ approved: true, reviewPort: 18_827 });
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				let readings = 0;
+				let regress = false;
+				const system = {
+					...base,
+					observe: () => {
+						const observation = base.observe();
+						if (!regress) return observation;
+						readings += 1;
+						return readings === 2
+							? { ...observation, monotonic: observation.monotonic - 60_000_000_000n }
+							: observation;
+					},
+					proveNoKnownV1Writers: () => undefined,
+				};
+				const session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+					system,
+				);
+				try {
+					const binding = new MeetingPublicationWriteBinding({
+						sourcePath: fixture.config.sourcePath as string,
+						statePath: fixture.config.statePath as string,
+					});
+					regress = true;
+					expect(await Effect.runPromise(session.validator.validate("store_claim", binding))).toBe(false);
+					expect(session.leaseStopCode).toBe("clock_stepped_back");
+				} finally {
+					session.close();
+				}
+			});
+
+			it("reports nothing for a session closed while its lease check observes the clock", async () => {
+				const fixture = await setup({ approved: true, reviewPort: 18_828 });
+				fixture.authorization.input = fixture.authorization.createServiceInput();
+				const base = Effect.runSync(
+					fixture.authorization.withSystem(MeetingPublicationSmokeRuntimeSystemReference),
+				);
+				let closeOnObserve = false;
+				let session: MeetingRuntimeSession | undefined;
+				const system = {
+					...base,
+					observe: () => {
+						if (closeOnObserve) session?.close();
+						return base.observe();
+					},
+					proveNoKnownV1Writers: () => undefined,
+				};
+				session = new MeetingRuntimeSession(
+					verifyMeetingPublicationFullReviewInput(fixture.authorization.input, system.observe()),
+					system,
+				);
+				fixture.authorization.simulateReboot();
+				closeOnObserve = true;
+				expect(() => session?.assertLeaseCurrent()).toThrow(expect.objectContaining({ code: "revoked" }));
+				expect(fixture.authorization.leaseCurrencyEvents).toEqual([]);
+				expect(() => session?.assertLeaseCurrent()).toThrow(expect.objectContaining({ code: "revoked" }));
+			});
 		});
 	});
 });
