@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, posix, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,7 @@ import {
 	WriterCheckInconclusiveError,
 	type WriterCheckName,
 	type WriterCheckReporter,
+	writerCheckMonotonicMillis,
 } from "../writer-check.ts";
 import type { CommunityBriefingWriteGrant } from "./authority.ts";
 import { CommunityBriefingGrantHost } from "./grant-host.ts";
@@ -54,6 +55,99 @@ const liveProbeRunner: ProcessProbeRunner = (path, args) => {
 		stat = lstatSync(executable);
 	if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) throw new Error("unsafe_probe");
 	return spawnProcessProbe(executable, args);
+};
+
+/** Core files the reviewer runs that are not ES modules: its Python review adapter. */
+const COMMUNITY_REVIEW_ASSETS = ["resources/community-draft-adapter.py"] as const;
+/**
+ * One relative static `import`/`export … from` statement as tsc emits it, including the
+ * side-effect form (`import "./main.js";`). Bare package specifiers are not followed: those
+ * packages are outside Core and are not part of the compared service tree.
+ */
+const RELATIVE_STATIC_IMPORT = /^(?:import|export)\s+(?:[\w$*{},\s]+?\s+from\s*)?["'](\.\.?\/[^"'\n]+)["'];?[ \t]*$/gmu;
+/**
+ * Any relative module reference in any syntax: `from "./x"`, `import "./x"` and `import("./x")`.
+ * Each one must also be a statement the walk parses, or the walk fails closed: an import with
+ * attributes (`with { type: "json" }`) or a dynamic import would otherwise go uncompared.
+ */
+const RELATIVE_MODULE_REFERENCE =
+	/\bfrom\s*["'](\.\.?\/[^"'\n]+)["']|^\s*import\s*["'](\.\.?\/[^"'\n]+)["']|\bimport\s*\(\s*["'`](\.\.?\/[^"'`\n]+)/gmu;
+/** Bounds the walk; the reviewer's real graph is far smaller. */
+const MAX_COMMUNITY_REVIEW_IDENTITY_FILES = 2_000;
+
+/**
+ * @internal The reviewer's identity file set: every Core file the review entry `dist/cli.js` loads
+ * through relative static imports, plus its Python review adapter, each with its SHA-256. It is
+ * derived from the given (trusted) Core tree on every call, so a module the reviewer starts to load
+ * is compared without a list to keep current. A file that cannot be read safely, or an import that
+ * leaves `dist/`, throws, so the exemption fails closed.
+ */
+export const communityReviewIdentityDigests = (coreRoot: string, uid: bigint): ReadonlyMap<string, string> => {
+	const read = (relative: string) =>
+		readStableMeetingPublicationSmokeFile(join(coreRoot, relative), uid, "artifact", 1048576).bytes;
+	const digests = new Map<string, string>();
+	const pending = ["dist/cli.js"];
+	for (let relative = pending.pop(); relative !== undefined; relative = pending.pop()) {
+		if (digests.has(relative)) continue;
+		if (digests.size >= MAX_COMMUNITY_REVIEW_IDENTITY_FILES) throw new Error("probe_failed");
+		const bytes = read(relative);
+		digests.set(relative, sha256MeetingPublicationSmokeBytes(bytes));
+		const source = Buffer.from(bytes).toString("utf8");
+		const parsed = [...source.matchAll(RELATIVE_STATIC_IMPORT)];
+		if ([...source.matchAll(RELATIVE_MODULE_REFERENCE)].length !== parsed.length) throw new Error("probe_failed");
+		for (const match of parsed) {
+			const target = posix.normalize(posix.join(posix.dirname(relative), match[1]!));
+			if (!target.startsWith("dist/") || !target.endsWith(".js")) throw new Error("probe_failed");
+			pending.push(target);
+		}
+	}
+	for (const asset of COMMUNITY_REVIEW_ASSETS) digests.set(asset, sha256MeetingPublicationSmokeBytes(read(asset)));
+	return digests;
+};
+
+/** Stat identity of each file in each tree; any replacement or write changes it. */
+const treeSignature = (roots: ReadonlyArray<string>, files: ReadonlyArray<string>) =>
+	roots
+		.flatMap((root) =>
+			files.map((relative) => {
+				const stat = lstatSync(join(root, relative), { bigint: true });
+				return `${stat.dev}:${stat.ino}:${stat.mode}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+			}),
+		)
+		.join("|");
+
+/**
+ * The last positive identity comparison. Each guard check would otherwise read and hash about
+ * 130 files in each tree; while no compared file's stat identity changed, the answer stands.
+ */
+let identityCache:
+	| { readonly key: string; readonly files: ReadonlyArray<string>; readonly signature: string }
+	| undefined;
+let identityComparisons = 0;
+/** @internal Full identity comparisons run so far (cache misses). */
+export const communityReviewIdentityComparisons = (): number => identityComparisons;
+
+/** Every file the service tree's reviewer loads matches the sibling tree byte for byte. */
+const reviewerTreesMatch = (expectedRoot: string, observedRoot: string, uid: bigint): boolean => {
+	const key = `${uid}\0${expectedRoot}\0${observedRoot}`;
+	const cached = identityCache?.key === key ? identityCache : undefined;
+	if (cached !== undefined) {
+		const current = Result.try(() => treeSignature([expectedRoot, observedRoot], cached.files));
+		if (Result.isSuccess(current) && current.success === cached.signature) return true;
+	}
+	identityCache = undefined;
+	identityComparisons += 1;
+	const digests = communityReviewIdentityDigests(expectedRoot, uid);
+	const files = [...digests.keys()];
+	const before = treeSignature([expectedRoot, observedRoot], files);
+	for (const [relative, digest] of digests) {
+		const observed = readStableMeetingPublicationSmokeFile(join(observedRoot, relative), uid, "artifact", 1048576);
+		if (sha256MeetingPublicationSmokeBytes(observed.bytes) !== digest) return false;
+	}
+	// Cache only an answer no write could have raced: the trees were unchanged across the comparison.
+	const signature = treeSignature([expectedRoot, observedRoot], files);
+	if (signature === before) identityCache = { key, files, signature };
+	return true;
 };
 
 /** @internal Recognize only this installed Core's draft-only review entrypoint.
@@ -95,35 +189,14 @@ export const isNativeCommunityReviewProcess = (
 			realpathSync(entry) !== sibling
 		)
 			return false;
-		for (const relative of [
-			"dist/cli.js",
-			"dist/jarvis/community-briefing/native-draft.js",
-			"dist/jarvis/community-briefing/review-process.js",
-			// The weekly trigger runs in the reviewer: its routing, one-shot generation
-			// child and notification acknowledgements decide what the reviewer writes.
-			"dist/cli/community-draft.js",
-			"dist/cli/jarvis.js",
-			"dist/jarvis/community-briefing/draft-process.js",
-			"dist/jarvis/community-briefing/notification.js",
-			"dist/jarvis/community-briefing/weekly-generation.js",
-			"resources/community-draft-adapter.py",
-		]) {
-			const expected = readStableMeetingPublicationSmokeFile(
-				join(serviceRoot, "node_modules/@harnessy/core", relative),
-				BigInt(uid),
-				"artifact",
-				1048576,
-			);
-			const observed = readStableMeetingPublicationSmokeFile(
-				join(dirname(serviceRoot), "node_modules/@harnessy/core", relative),
-				BigInt(uid),
-				"artifact",
-				1048576,
-			);
-			if (sha256MeetingPublicationSmokeBytes(expected.bytes) !== sha256MeetingPublicationSmokeBytes(observed.bytes))
-				return false;
-		}
-		return true;
+		// Everything the reviewer loads decides what it writes: its routing, the weekly
+		// trigger, credentials, provider calls, path resolution and file reads. The set is
+		// the service tree's own import graph, and each file must match byte for byte.
+		return reviewerTreesMatch(
+			join(serviceRoot, "node_modules/@harnessy/core"),
+			join(dirname(serviceRoot), "node_modules/@harnessy/core"),
+			BigInt(uid),
+		);
 	}
 	return false;
 };
@@ -143,6 +216,83 @@ export const darwinProcessExecutableFromLsof = (output: string, pid: number): st
 	}
 	return paths[0];
 };
+
+/**
+ * Crash-loop escalation. More than this many launchd starts of the review label within
+ * COMMUNITY_REVIEW_RESTART_HORIZON_MS stop publication (`launchctl_restart_loop`). A crashing
+ * reviewer restarts every ThrottleInterval (10 s), so a loop passes the limit in about a minute,
+ * while an occasional restart (an operation timeout, an owner's kickstart) stays far below it.
+ */
+export const COMMUNITY_REVIEW_RESTART_LIMIT = 5;
+export const COMMUNITY_REVIEW_RESTART_HORIZON_MS = 30 * 60_000;
+/**
+ * A first observation cannot tell how fast the reviewer has been restarting. A verified reviewer
+ * is exempt when its process has run this long (`ps -o etime`), or when this guard has watched the
+ * label this long. Otherwise it pauses publication (`launchctl_restart_baseline`) while starts are
+ * counted, so a tight loop (one start per 10 s ThrottleInterval) passes the limit first. A stable
+ * long-running reviewer is therefore exempt at once, also for a one-shot run or a fresh service.
+ */
+export const COMMUNITY_REVIEW_RESTART_BASELINE_MS = 2 * 60_000;
+
+/** @internal Parse `ps -o etime=` (`[[dd-]hh:]mm:ss`) into milliseconds; undefined when malformed. */
+export const parseProcessElapsedMs = (output: string): number | undefined => {
+	const match = /^\s*(?:(\d+)-)?(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s*$/u.exec(output);
+	if (match === null) return undefined;
+	const [days, hours, minutes, seconds] = [match[1], match[2], match[3], match[4]].map((value) => Number(value ?? 0));
+	return (((days! * 24 + hours!) * 60 + minutes!) * 60 + seconds!) * 1000;
+};
+
+/** Default warning sink: one content-free JSON line on stderr. */
+const stderrRestartWarning = (warning: "community_review_runs_unavailable") => {
+	process.stderr.write(`${JSON.stringify({ warning })}\n`);
+};
+
+/**
+ * @internal Counts starts of the review label from launchd's `runs` counter over the horizon.
+ * The no-process pause (`launchctl_no_process`) ends at each verified start; this count does not
+ * reset then, so a reviewer that keeps dying ends in one clear stop. Times are monotonic
+ * milliseconds from the Effect clock (writerCheckMonotonicMillis), which does not advance while
+ * the Mac sleeps; `now` is only the fallback for callers without one.
+ */
+export const makeCommunityReviewRestartTracker = (
+	options: {
+		readonly now?: () => number;
+		readonly warn?: (warning: "community_review_runs_unavailable") => void;
+	} = {},
+) => {
+	const now = options.now ?? (() => Number(process.hrtime.bigint() / 1_000_000n));
+	/** Starts as one counter across loads: a reload restarts launchd's `runs`, never this total. */
+	let samples: Array<{ readonly at: number; readonly total: number }> = [];
+	let offset = 0;
+	let lastRuns: number | undefined;
+	/** When the guard first observed the label. */
+	let since: number | undefined;
+	let warned = false;
+	return {
+		/** Record the counter; returns the starts seen within the horizon and how long the label was watched. */
+		observe: (runs: number, at: number = now()): { readonly starts: number; readonly observedForMs: number } => {
+			// A lower counter means the label was reloaded between samples: every start of the new load counts.
+			if (lastRuns !== undefined && runs < lastRuns) offset += lastRuns;
+			lastRuns = runs;
+			// No sample inside the horizon: the starts since the last one happened at unknown times, so
+			// the count starts again and so does the baseline (process age or a fresh two-minute watch).
+			const last = samples.at(-1);
+			if (last !== undefined && at - last.at > COMMUNITY_REVIEW_RESTART_HORIZON_MS) since = at;
+			since ??= at;
+			const total = offset + runs;
+			samples = samples.filter((sample) => at - sample.at <= COMMUNITY_REVIEW_RESTART_HORIZON_MS);
+			if (samples.at(-1)?.total !== total) samples.push({ at, total });
+			return { starts: total - samples[0]!.total, observedForMs: at - since };
+		},
+		/** launchd printed no single `runs` line: the count is off. Warned once per tracker. */
+		unavailable: () => {
+			if (warned) return;
+			warned = true;
+			(options.warn ?? stderrRestartWarning)("community_review_runs_unavailable");
+		},
+	};
+};
+export type CommunityReviewRestartTracker = ReturnType<typeof makeCommunityReviewRestartTracker>;
 
 /** A label alone never exempts a legacy or stopped reviewer. */
 export const isNativeCommunityReviewLaunchAgent = (
@@ -194,6 +344,8 @@ const proveCompatibilityAbsentWith = (
 	run: ProcessProbeRunner,
 	platform: NodeJS.Platform,
 	nativeReviewer: { readonly executable: string; readonly entry: string },
+	restarts: CommunityReviewRestartTracker,
+	nowMs: number | undefined,
 ) => {
 	const command = (check: WriterCheckName, path: string, args: ReadonlyArray<string>) =>
 		runWriterCheckProbe(run, check, path, args);
@@ -296,11 +448,34 @@ const proveCompatibilityAbsentWith = (
 			runAllWriterCheckProbes(
 				COMMUNITY_GUARD_LABELS.map((label) => () => {
 					const result = command("launchctl", "/bin/launchctl", ["print", `gui/${uid}/${label}`]);
+					// A reviewer that keeps restarting stops publication at once, even while its current
+					// start verifies: each verified start would otherwise end the no-process pause.
+					let restartBaseline = false;
+					if (result.status === 0 && label === "com.flow-harness.community-review-v2") {
+						const runs = [...result.stdout.matchAll(/^\s*runs = (\d+)\s*$/gmu)];
+						if (runs.length === 1) {
+							const observed = restarts.observe(Number(runs[0]![1]), nowMs);
+							if (observed.starts > COMMUNITY_REVIEW_RESTART_LIMIT) throw new Error("launchctl_restart_loop");
+							restartBaseline = observed.observedForMs < COMMUNITY_REVIEW_RESTART_BASELINE_MS;
+						} else restarts.unavailable();
+					}
 					if (
 						result.status === 0 &&
 						isNativeCommunityReviewLaunchAgent(label, result.stdout, nativeReviewProcesses)
-					)
+					) {
+						// Before the guard has its own baseline, the verified process's age is the evidence:
+						// a reviewer that has run for the baseline period is not in a tight loop.
+						if (restartBaseline) {
+							const pid = /^\s*pid = (\d+)\s*$/mu.exec(result.stdout)![1]!;
+							const elapsed = command("ps", "/bin/ps", ["-p", pid, "-o", "etime="]);
+							if (elapsed.status !== 0)
+								throw new WriterCheckInconclusiveError("ps", "exit_status", elapsed.status);
+							const age = parseProcessElapsedMs(elapsed.stdout);
+							if (age === undefined || age < COMMUNITY_REVIEW_RESTART_BASELINE_MS)
+								throw new WriterCheckInconclusiveError("launchctl", "restart_baseline");
+						}
 						return;
+					}
 					// Only the native review agent can be exempt, and only while it runs exactly one
 					// process. That process's exemption is inconclusive when its own check could not
 					// answer, or when the process listing could not answer so it could not be checked.
@@ -351,13 +526,17 @@ export const makeCommunityCompatibilityProof =
 			executable: process.execPath,
 			entry: fileURLToPath(new URL("../../cli.js", import.meta.url)),
 		},
+		// One count per proof; the live proof is built once per process (a cached reference default).
+		restarts: CommunityReviewRestartTracker = makeCommunityReviewRestartTracker(),
 	) =>
-	(): void =>
-		proveCompatibilityAbsentWith(run, platform, nativeReviewer);
+	/** `nowMs`: monotonic milliseconds from the Effect clock (writerCheckMonotonicMillis). */
+	(nowMs?: number): void =>
+		proveCompatibilityAbsentWith(run, platform, nativeReviewer, restarts, nowMs);
 
 /** Source-private fixture seam; no observer, bypass or signing key is accepted by the CLI. */
 export const CommunityOperationSystemReference = Context.Reference<{
-	readonly proveCompatibilityAbsent: () => void;
+	/** `nowMs`: monotonic milliseconds from the Effect clock, used for the restart count. */
+	readonly proveCompatibilityAbsent: (nowMs?: number) => void;
 	readonly coreAnchor: string;
 	/** Receives allow-listed writer-check events; defaults to one JSON line on stderr. */
 	readonly reportWriterCheck?: WriterCheckReporter;
@@ -598,37 +777,39 @@ export const runAuthorizedCommunityBriefing = (
 				verified.assertMutable();
 			};
 			const check = () =>
-				Effect.tryPromise({
-					try: async (signal) => {
-						assertTime();
-						verified.assertImmutable();
-						system.proveCompatibilityAbsent();
-						let deadline = performance.now() + 8;
-						for (const _step of artifactInventorySteps(
-							verified.manifest,
-							initial.uid,
-							"smoke",
-							system.coreAnchor,
-						)) {
-							signal.throwIfAborted();
-							if (performance.now() >= deadline) {
-								await yieldToEventLoop(undefined, { signal });
-								deadline = performance.now() + 8;
+				Effect.flatMap(writerCheckMonotonicMillis, (nowMs) =>
+					Effect.tryPromise({
+						try: async (signal) => {
+							assertTime();
+							verified.assertImmutable();
+							system.proveCompatibilityAbsent(nowMs);
+							let deadline = performance.now() + 8;
+							for (const _step of artifactInventorySteps(
+								verified.manifest,
+								initial.uid,
+								"smoke",
+								system.coreAnchor,
+							)) {
+								signal.throwIfAborted();
+								if (performance.now() >= deadline) {
+									await yieldToEventLoop(undefined, { signal });
+									deadline = performance.now() + 8;
+								}
 							}
-						}
-						assertTime();
-						system.proveCompatibilityAbsent();
-					},
-					catch: (cause) => {
-						// Keep the typed probe error so the pre-lease retry can recognize it.
-						if (cause instanceof WriterCheckInconclusiveError) return cause;
-						const reason = rejectionReason(cause);
-						return new CommunityOperationError({
-							code: "runtime_rejected",
-							...(reason === undefined ? {} : { reason }),
-						});
-					},
-				});
+							assertTime();
+							system.proveCompatibilityAbsent(nowMs);
+						},
+						catch: (cause) => {
+							// Keep the typed probe error so the pre-lease retry can recognize it.
+							if (cause instanceof WriterCheckInconclusiveError) return cause;
+							const reason = rejectionReason(cause);
+							return new CommunityOperationError({
+								code: "runtime_rejected",
+								...(reason === undefined ? {} : { reason }),
+							});
+						},
+					}),
+				);
 			/**
 			 * Before any lease exists, an unanswered probe skips publication. A service run retries
 			 * it with bounded backoff and escalates to the existing rejection after the window; a

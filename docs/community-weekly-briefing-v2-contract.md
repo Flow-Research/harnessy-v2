@@ -120,7 +120,10 @@ and provenance-verification work. No separate configuration file is created.
 Generation leaves
 the draft unapproved. Review never prints its bearer link: the ready event names
 only the listener origin and the owner-only `review.token` path, and the review
-writes an owner-only `community-review.rendezvous.json` beside the token. Open
+writes an owner-only `community-review.rendezvous.json` beside the token. A
+review publishes and withdraws that file while holding an owner-only `flock` on
+`.community-review.rendezvous.lock`, so an exiting review never removes or
+overwrites one that a newer review published meanwhile. Open
 the authenticated page with `harnessy-community-review-open --state-path
 STATE_PATH`, where `STATE_PATH` is the directory of the logged `tokenPath`. It
 checks that both files are owner-owned, mode `0600`, single-link and not
@@ -160,6 +163,14 @@ harnessy jarvis community schedule --cli-entry CLI --node-path NODE --python-pat
 harnessy jarvis community generation-status [--json] [--repair]
 harnessy jarvis community generation-retry --week-start YYYY-MM-DD [--json]
 ```
+
+If the reviewer LaunchAgent keeps restarting (more than five starts in 30
+minutes), community publication stops before any lease with
+`launchctl_restart_loop`. The meeting service logs
+`community_publication_paused` and starts community publication again after 30
+minutes, at most three times while it runs. After that the stop is final
+(`community_publication_stopped`): fix the reviewer from its log, then restart
+the meeting publication service.
 
 `--apply` refuses unless `NODE` and `CLI` belong to the release the publication
 service runs. All three commands are deliberately outside `community briefing`:
