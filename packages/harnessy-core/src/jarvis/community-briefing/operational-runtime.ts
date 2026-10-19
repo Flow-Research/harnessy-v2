@@ -274,6 +274,10 @@ export const makeCommunityReviewRestartTracker = (
 			// A lower counter means the label was reloaded between samples: every start of the new load counts.
 			if (lastRuns !== undefined && runs < lastRuns) offset += lastRuns;
 			lastRuns = runs;
+			// No sample inside the horizon: the starts since the last one happened at unknown times, so
+			// the count starts again and so does the baseline (process age or a fresh two-minute watch).
+			const last = samples.at(-1);
+			if (last !== undefined && at - last.at > COMMUNITY_REVIEW_RESTART_HORIZON_MS) since = at;
 			since ??= at;
 			const total = offset + runs;
 			samples = samples.filter((sample) => at - sample.at <= COMMUNITY_REVIEW_RESTART_HORIZON_MS);

@@ -1233,9 +1233,10 @@ describe("one-writer guard for scheduled generation", () => {
 			state.runs = 1;
 			state.startedAt = state.now;
 			state.now += 1_000;
-			expect(() => proof()).not.toThrow();
+			// The just-reloaded reviewer is young, so it pauses for its baseline; the count goes on.
+			expect(() => proof()).toThrow("launchctl_restart_baseline");
 			for (let count = 0; count < COMMUNITY_REVIEW_RESTART_LIMIT - 1; count++) restart();
-			expect(() => proof()).not.toThrow();
+			expect(() => proof()).toThrow("launchctl_restart_baseline");
 			restart();
 			expect(() => proof()).toThrow("launchctl_restart_loop");
 		});
@@ -1326,6 +1327,18 @@ describe("one-writer guard for scheduled generation", () => {
 				});
 			}),
 		);
+
+		it("starts a new baseline after a gap longer than the horizon", async () => {
+			const { proof, state, baseline } = await crashingReviewer();
+			baseline();
+			expect(() => proof()).not.toThrow();
+			// No probe for a whole horizon (a restart-loop cool-down); the reviewer kept looping and
+			// has just started again. The count since the last sample is unknown: pause, never exempt.
+			state.now += COMMUNITY_REVIEW_RESTART_HORIZON_MS + 1;
+			state.runs += 30;
+			state.startedAt = state.now - 5_000;
+			expect(() => proof()).toThrow("launchctl_restart_baseline");
+		});
 
 		it("counts every start of a reload that happened between two samples", async () => {
 			const { proof, state, baseline } = await crashingReviewer();

@@ -168,7 +168,7 @@ If the reviewer LaunchAgent keeps restarting (more than five starts in 30
 minutes), community publication stops before any lease with
 `launchctl_restart_loop`. The meeting service logs
 `community_publication_paused` and starts community publication again after 30
-minutes, at most three times in a row. If it still loops, the stop is final
+minutes, at most three times while it runs. After that the stop is final
 (`community_publication_stopped`): fix the reviewer from its log, then restart
 the meeting publication service.
 

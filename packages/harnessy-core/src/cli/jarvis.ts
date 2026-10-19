@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -8,7 +7,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { Command, Flag as Options } from "effect/unstable/cli";
-import { parseDocument } from "yaml";
 import { DEFAULT_CODEX_MODEL } from "../ai/codex-model.ts";
 import {
 	COMMUNITY_REVIEW_PORT,
@@ -775,19 +773,10 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 			});
 			// The same lenient reading the review service uses, so a bad setting shows here.
 			// The review service refuses a configuration with issues (missing, unreadable or YAML errors),
-			// so status reports them and fails, but still shows the record.
-			const configIssues = [...resolved.issues];
-			const configRead = Result.try(() => {
-				const value: unknown = parseDocument(readFileSync(resolved.configPath, "utf8")).toJS();
-				const section =
-					typeof value === "object" && value !== null
-						? (value as Record<string, unknown>).community_briefing
-						: undefined;
-				return typeof section === "object" && section !== null ? (section as Record<string, unknown>) : {};
-			});
-			if (Result.isFailure(configRead) && configIssues.length === 0)
-				configIssues.push("configuration could not be read");
-			const briefing: Record<string, unknown> = Result.isSuccess(configRead) ? configRead.success : {};
+			// so status reports them and fails, but still shows the record. One read of the file decides
+			// both the state root and the schedule.
+			const configIssues = resolved.issues;
+			const briefing = resolved.briefing;
 			const { schedule, issues } = parseCommunityGenerationSchedule(
 				briefing.enabled,
 				briefing.generation_schedule,

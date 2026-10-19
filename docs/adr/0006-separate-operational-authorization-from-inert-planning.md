@@ -659,9 +659,12 @@ Constraints the implementation keeps:
       once per process.
     - recovery: a `launchctl_restart_loop` rejection happens before any lease,
       so the meeting service's community worker starts again after a 30-minute
-      cool-down (one horizon, so the counted starts age out), logging
-      `community_publication_paused`, at most three times in a row; a
-      successful run resets that count. After the third, or for a loop seen
+      cool-down (one horizon), logging `community_publication_paused`, at most
+      three times for the life of the meeting service; a successful run does
+      not reset that bound. A probe after a gap longer than the horizon has no
+      sample to count from, so it starts a new baseline: the reviewer must have
+      run two minutes, or the guard must watch it for two minutes, before it
+      is exempt again. After the third recovery, or for a loop seen
       during a publication (`publication_uncertain`), the stop is final: fix
       the reviewer (`harnessy jarvis community schedule`, the review log), then
       restart the meeting publication service to resume community

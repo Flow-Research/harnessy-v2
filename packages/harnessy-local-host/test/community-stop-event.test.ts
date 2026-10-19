@@ -40,7 +40,7 @@ describe("restart-loop recovery", () => {
 		const lines: Array<string> = [];
 		const recovery = communityRestartLoopRecovery(reporter, (line) => lines.push(line));
 		expect(recovery.coolDownMs).toBe(COMMUNITY_RESTART_LOOP_COOL_DOWN_MS);
-		expect(recovery.maxConsecutive).toBe(COMMUNITY_RESTART_LOOP_MAX_RECOVERIES);
+		expect(recovery.maxRecoveries).toBe(COMMUNITY_RESTART_LOOP_MAX_RECOVERIES);
 		const stopped = reporter.stopped({ code: "runtime_rejected", reason: "launchctl_restart_loop" });
 		expect(recovery.retryable(stopped)).toBe(true);
 		Effect.runSync(recovery.onRecovering(1));

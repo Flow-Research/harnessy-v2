@@ -92,13 +92,13 @@ it("awaits publication cleanup and reports interruption when the owning scope cl
 });
 
 effectIt.effect(
-	"starts again after a cool-down for a retryable failure, at most the bounded number of times in a row",
+	"starts again after a cool-down for a retryable failure, at most the bounded number of times in all",
 	() =>
 		Effect.gen(function* () {
 			let calls = 0,
 				alerts = 0;
 			const recoveries: Array<number> = [];
-			const outcomes = ["loop", "loop", "ok", "loop", "loop", "loop", "loop"];
+			const outcomes = ["loop", "loop", "ok", "loop", "loop"];
 			yield* Effect.scoped(
 				Effect.gen(function* () {
 					const reported = yield* Deferred.make<void>();
@@ -110,7 +110,7 @@ effectIt.effect(
 						{
 							retryable: (cause) => cause instanceof Error && cause.message === "loop",
 							coolDownMs: 30 * 60_000,
-							maxConsecutive: 3,
+							maxRecoveries: 3,
 							onRecovering: (attempt) => Effect.sync(() => recoveries.push(attempt)),
 						},
 					);
@@ -121,9 +121,9 @@ effectIt.effect(
 					yield* stop;
 				}),
 			);
-			// Two recoveries, a success that resets the count, then three recoveries and the final stop.
-			expect(recoveries).toEqual([1, 2, 1, 2, 3]);
-			expect(calls).toBe(7);
+			// A success between them does not reset the bound: three recoveries, then the final stop.
+			expect(recoveries).toEqual([1, 2, 3]);
+			expect(calls).toBe(5);
 			expect(alerts).toBe(1);
 		}),
 );
@@ -143,7 +143,7 @@ it("never retries a failure the recovery does not mark retryable", async () => {
 					Effect.sync(() => {
 						alerts++;
 					}).pipe(Effect.andThen(Deferred.succeed(reported, undefined))),
-					{ retryable: () => false, coolDownMs: 1, maxConsecutive: 3, onRecovering: () => Effect.void },
+					{ retryable: () => false, coolDownMs: 1, maxRecoveries: 3, onRecovering: () => Effect.void },
 				);
 				yield* Deferred.await(reported);
 				yield* stop;
