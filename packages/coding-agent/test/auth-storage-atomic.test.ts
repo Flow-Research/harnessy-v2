@@ -80,7 +80,7 @@ await new FileAuthStorageBackend(${JSON.stringify(path)}).withLockAsync(async ()
 		const child = spawnSync(process.execPath, ["--experimental-strip-types", entry], {
 			encoding: "utf8",
 			timeout: 10000,
-			env: { PATH: process.env.PATH, PI_AUTH_ENCRYPTION: "off" },
+			env: { PATH: process.env.PATH, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 		});
 		expect(child.signal, child.stderr).toBe("SIGKILL");
 		expect(readFileSync(path, "utf8")).toBe('{"old":"synthetic"}');

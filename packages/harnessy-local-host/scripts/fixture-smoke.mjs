@@ -68,7 +68,7 @@ const run = (command, args, cwd, expectedStatus = 0) => {
 			HARNESSY_FIXTURE_SECRET_CANARY: "must-not-leak",
 			NODE_NO_WARNINGS: "1",
 			npm_config_update_notifier: "false",
-			PI_AUTH_ENCRYPTION: "off",
+			PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off",
 		},
 	});
 	assert(result.status === expectedStatus, `${command} exited ${String(result.status)}: ${result.stderr}`);

@@ -149,7 +149,11 @@ const runCli = (root: string, args: readonly string[]) =>
 			"--compatibility-root",
 			join(root, "absent"),
 		],
-		{ encoding: "utf8", env: { PI_AUTH_ENCRYPTION: "off", PATH: process.env.PATH, HOME: root }, timeout: 60_000 },
+		{
+			encoding: "utf8",
+			env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off", PATH: process.env.PATH, HOME: root },
+			timeout: 60_000,
+		},
 	);
 
 describe("weekly consumed-grant reconciliation", () => {
@@ -527,7 +531,7 @@ describe("weekly consumed-grant reconciliation", () => {
 						now.toISOString(),
 					],
 					{
-						env: { PI_AUTH_ENCRYPTION: "off", PATH: process.env.PATH, HOME: f.root },
+						env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off", PATH: process.env.PATH, HOME: f.root },
 						stdio: ["pipe", "pipe", "inherit"],
 					},
 				),

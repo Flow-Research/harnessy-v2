@@ -4,18 +4,24 @@ import { describe, expect, it } from "vitest";
 
 /**
  * No test may let a child process reach the macOS keychain. The auth store
- * uses the platform keychain unless PI_AUTH_ENCRYPTION is "off", and a child
+ * uses the platform keychain unless its encryption mode is "off", and a child
  * that runs with a temporary HOME makes macOS ask the owner to reset the
- * keychain. The vitest configurations set PI_AUTH_ENCRYPTION=off for the test
- * process, but a child given an explicit environment does not inherit it.
+ * keychain. The mode is read from the app-specific HSY_AUTH_ENCRYPTION first
+ * (Harnessy runs with app name `hsy`) and from PI_AUTH_ENCRYPTION second, so an
+ * inherited HSY_AUTH_ENCRYPTION=auto would win over PI_AUTH_ENCRYPTION=off.
+ * Both must therefore be "off". The vitest configurations set both for the test
+ * process, but a child given an explicit environment does not inherit them.
  *
  * Rule: in a test file that starts child processes, every `env: { … }` object,
  * and every object literal bound to an env-named variable (`const env = { … }`),
- * must set PI_AUTH_ENCRYPTION, spread `process.env`, or spread
+ * must set both variables to "off", spread `process.env`, or spread
  * `fixtureEnvironment()`. An `env` object that is not a child-process
  * environment carries the marker comment on the line above it.
  */
 const NOT_A_CHILD_ENV_MARKER = "harnessy-test-env: configuration, not a child process environment";
+
+/** The app-specific name is read before the PI_ fallback; each must be "off". */
+const AUTH_ENCRYPTION_VARIABLES = ["HSY_AUTH_ENCRYPTION", "PI_AUTH_ENCRYPTION"] as const;
 
 const CHILD_PROCESS_CALLS = /\b(?:spawn|spawnSync|execFile|execFileSync|fork|exec|execSync)\s*\(/gu;
 const CHILD_PROCESS_CALL = /\b(?:spawn|spawnSync|execFile|execFileSync|fork|exec|execSync)\s*\(/u;
@@ -24,25 +30,27 @@ const ENV_OBJECT = /\benv\s*:\s*\{|\b(?:const|let|var)\s+(?:env|\w+Env)\s*(?::[^
 
 /**
  * Spreads that keep the setting off: `fixtureEnvironment()` always, and `process.env` only in a
- * package whose vitest configuration sets PI_AUTH_ENCRYPTION to "off" for the test process.
+ * package whose vitest configuration sets both variables to "off" for the test process.
  */
 const safeSpread = (spread: string, trustProcessEnv: boolean) =>
 	/^\.\.\.\s*fixtureEnvironment\(\)/u.test(spread) || (trustProcessEnv && /^\.\.\.\s*process\.env\b/u.test(spread));
 
 /**
- * The effective value must be "off": an explicit `PI_AUTH_ENCRYPTION: "off"` that no later spread
+ * The effective value of each variable must be "off": an explicit `NAME: "off"` that no later spread
  * can overwrite, or only safe spreads with no other value for it. Comments never count.
  */
 const guarded = (literal: string, trustProcessEnv: boolean): boolean => {
 	const body = literal.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/\/\/[^\n]*/gu, "");
-	const settings = [...body.matchAll(/\bPI_AUTH_ENCRYPTION\s*:\s*(["'`])([^"'`]*)\1/gu)];
-	if (settings.some((setting) => setting[2] !== "off")) return false;
-	if (/\bPI_AUTH_ENCRYPTION\s*:\s*[^"'`\s]/u.test(body)) return false;
 	const spreads = [...body.matchAll(/\.\.\.\s*[^,}\n]+/gu)];
-	const last = settings.at(-1);
-	if (last !== undefined)
-		return spreads.every((spread) => spread.index < last.index || safeSpread(spread[0], trustProcessEnv));
-	return spreads.length > 0 && spreads.every((spread) => safeSpread(spread[0], trustProcessEnv));
+	return AUTH_ENCRYPTION_VARIABLES.every((name) => {
+		const settings = [...body.matchAll(new RegExp(`\\b${name}\\s*:\\s*(["'\`])([^"'\`]*)\\1`, "gu"))];
+		if (settings.some((setting) => setting[2] !== "off")) return false;
+		if (new RegExp(`\\b${name}\\s*:\\s*[^"'\`\\s]`, "u").test(body)) return false;
+		const last = settings.at(-1);
+		if (last !== undefined)
+			return spreads.every((spread) => spread.index < last.index || safeSpread(spread[0], trustProcessEnv));
+		return spreads.length > 0 && spreads.every((spread) => safeSpread(spread[0], trustProcessEnv));
+	});
 };
 
 const findUnguardedChildEnvironments = (source: string, trustProcessEnv = true): ReadonlyArray<number> => {
@@ -103,17 +111,16 @@ const testFiles = (directory: string): string[] =>
 		return /\.(?:ts|mts|js|mjs)$/u.test(name) ? [path] : [];
 	});
 
-/** True when the package's vitest configuration sets PI_AUTH_ENCRYPTION to "off" for its tests. */
+/** True when the package's vitest configuration sets both variables to "off" for its tests. */
 const vitestDisablesKeychain = (packageName: string) => {
 	const config = join(packagesRoot, packageName, "vitest.config.ts");
-	return (
-		statSync(config, { throwIfNoEntry: false })?.isFile() === true &&
-		/\benv\s*:\s*\{[^}]*\bPI_AUTH_ENCRYPTION\s*:\s*["']off["']/u.test(readFileSync(config, "utf8"))
-	);
+	if (statSync(config, { throwIfNoEntry: false })?.isFile() !== true) return false;
+	const env = /\benv\s*:\s*\{[^}]*\}/u.exec(readFileSync(config, "utf8"))?.[0] ?? "";
+	return AUTH_ENCRYPTION_VARIABLES.every((name) => new RegExp(`\\b${name}\\s*:\\s*["']off["']`, "u").test(env));
 };
 
 /**
- * Only files vitest runs inherit its PI_AUTH_ENCRYPTION setting through `process.env`.
+ * Only files vitest runs inherit its encryption settings through `process.env`.
  * Support scripts and package scripts run by plain node do not.
  */
 const runByVitest = (path: string) => /\.test\.m?ts$/u.test(path) && !path.includes(join("test", "support"));
@@ -137,7 +144,10 @@ describe("test child-process environments", () => {
 					),
 				);
 		});
-		expect(offenders, 'add PI_AUTH_ENCRYPTION: "off" to these child environments').toEqual([]);
+		expect(
+			offenders,
+			'add PI_AUTH_ENCRYPTION: "off" and HSY_AUTH_ENCRYPTION: "off" to these child environments',
+		).toEqual([]);
 	});
 
 	it("recognizes guarded, inherited and marked environments", () => {
@@ -145,9 +155,30 @@ describe("test child-process environments", () => {
 			`import { spawnSync } from "node:child_process";\nspawnSync("x", [], {\n${body}\n});\n`;
 		expect(findUnguardedChildEnvironments(spawning('env: { HOME: "/tmp/x" },'))).toEqual([3]);
 		expect(findUnguardedChildEnvironments(spawning("env: {},"))).toEqual([3]);
-		expect(findUnguardedChildEnvironments(spawning('env: { HOME: "/tmp/x", PI_AUTH_ENCRYPTION: "off" },'))).toEqual(
-			[],
-		);
+		expect(
+			findUnguardedChildEnvironments(
+				spawning('env: { HOME: "/tmp/x", PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },'),
+			),
+		).toEqual([]);
+		// #132: the app-specific HSY_AUTH_ENCRYPTION is read first, so PI_AUTH_ENCRYPTION alone is not enough.
+		expect(findUnguardedChildEnvironments(spawning('env: { HOME: "/tmp/x", PI_AUTH_ENCRYPTION: "off" },'))).toEqual([
+			3,
+		]);
+		expect(findUnguardedChildEnvironments(spawning('env: { HOME: "/tmp/x", HSY_AUTH_ENCRYPTION: "off" },'))).toEqual([
+			3,
+		]);
+		expect(
+			findUnguardedChildEnvironments(spawning('env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "auto" },')),
+		).toEqual([3]);
+		expect(
+			findUnguardedChildEnvironments(spawning('env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },'), false),
+		).toEqual([3]);
+		expect(
+			findUnguardedChildEnvironments(
+				spawning('env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },'),
+				false,
+			),
+		).toEqual([]);
 		expect(findUnguardedChildEnvironments(spawning('env: { ...process.env, HOME: "/tmp/x" },'))).toEqual([]);
 		expect(findUnguardedChildEnvironments(spawning("env: { ...fixtureEnvironment(), X: '1' },"))).toEqual([]);
 		expect(findUnguardedChildEnvironments(spawning(`// ${NOT_A_CHILD_ENV_MARKER}\nenv: { A: "1" },`))).toEqual([]);
@@ -162,7 +193,9 @@ describe("test child-process environments", () => {
 			2, 3,
 		]);
 		expect(
-			findUnguardedChildEnvironments(byName('const env = { PI_AUTH_ENCRYPTION: "off", PATH: "/usr/bin" };')),
+			findUnguardedChildEnvironments(
+				byName('const env = { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off", PATH: "/usr/bin" };'),
+			),
 		).toEqual([]);
 		// Only an effective "off" counts: not a comment, another value, or a value a later spread can replace.
 		expect(findUnguardedChildEnvironments(spawning('env: { // PI_AUTH_ENCRYPTION: "off"\nHOME: "/tmp" },'))).toEqual([
@@ -170,15 +203,29 @@ describe("test child-process environments", () => {
 		]);
 		expect(findUnguardedChildEnvironments(spawning('env: { PI_AUTH_ENCRYPTION: "on" },'))).toEqual([3]);
 		expect(findUnguardedChildEnvironments(spawning("env: { PI_AUTH_ENCRYPTION: mode },"))).toEqual([3]);
-		expect(findUnguardedChildEnvironments(spawning('env: { PI_AUTH_ENCRYPTION: "off", ...extra },'))).toEqual([3]);
-		expect(findUnguardedChildEnvironments(spawning('env: { ...extra, PI_AUTH_ENCRYPTION: "off" },'))).toEqual([]);
+		expect(
+			findUnguardedChildEnvironments(
+				spawning('env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off", ...extra },'),
+			),
+		).toEqual([3]);
+		expect(
+			findUnguardedChildEnvironments(
+				spawning('env: { ...extra, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },'),
+			),
+		).toEqual([]);
+		expect(
+			findUnguardedChildEnvironments(
+				spawning('env: { PI_AUTH_ENCRYPTION: "off", ...extra, HSY_AUTH_ENCRYPTION: "off" },'),
+			),
+		).toEqual([3]);
 		expect(findUnguardedChildEnvironments(spawning('env: { ...process.env, PI_AUTH_ENCRYPTION: "on" },'))).toEqual([
 			3,
 		]);
 		expect(findUnguardedChildEnvironments(spawning("env: { ...process.env, ...extra },"))).toEqual([3]);
 		// process.env keeps it off only where the package's vitest configuration sets it off.
 		expect(findUnguardedChildEnvironments(spawning('env: { ...process.env, HOME: "/tmp/x" },'), false)).toEqual([3]);
-		expect(vitestDisablesKeychain("harnessy-core")).toBe(true);
+		for (const name of ["harnessy-core", "harnessy-local-host", "harnessy-sdk"])
+			expect(vitestDisablesKeychain(name), name).toBe(true);
 		expect(vitestDisablesKeychain("harnessy-engine")).toBe(false);
 		expect(runByVitest(join(packagesRoot, "harnessy-core/test/x.test.ts"))).toBe(true);
 		expect(runByVitest(join(packagesRoot, "harnessy-local-host/test/support/smoke.mjs"))).toBe(false);

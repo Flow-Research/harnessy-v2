@@ -867,7 +867,7 @@ try {
 	const adoptionRequests = wire.requests.length;
 	const adoptionArgs = [join(installedHost, "dist/meeting-full-review-cli.js"), "--setup-service", "--input", adoptionPath];
 	const adopted = spawnSync(process.execPath, adoptionArgs, {
-		cwd: root, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+		cwd: root, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 	});
 	assert(adopted.status === 0 && adopted.stderr === "", `Installed trust adoption failed: ${adopted.stderr}`);
 	const adoptionResult = JSON.parse(adopted.stdout);
@@ -880,7 +880,7 @@ try {
 		audience: "harnessy.meeting-publication.service.v1",
 	});
 	const repeatedAdoption = spawnSync(process.execPath, adoptionArgs, {
-		cwd: root, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+		cwd: root, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 	});
 	assert(repeatedAdoption.status === 1 && repeatedAdoption.stdout === "", "Adoption overwrote existing service trust.");
 	assertStrict.deepEqual(readFileSync(adoptionResult.trustedKeyring.path), adoptedBytes);
@@ -909,7 +909,7 @@ try {
 	const serviceRequestOffset = wire.requests.length;
 	const inspectInstalledService = () => {
 		const result = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"), "--service-status", ...serviceArgs.slice(1)], {
-			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 		});
 		assert(result.status === 0 && result.stderr === "", "Installed service status command failed.");
 		return JSON.parse(result.stdout);
@@ -949,7 +949,7 @@ try {
 	}
 	for (const attempt of [0, 1]) {
 		const revokedCommand = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"), "--service-revoke", ...serviceArgs.slice(1)], {
-			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 		});
 		assert(revokedCommand.status === 0 && revokedCommand.stderr === "", `Installed service revocation failed on attempt ${attempt}.`);
 		assertStrict.deepEqual(JSON.parse(revokedCommand.stdout), { kind: "harnessy.meeting-publication.service-revoked", revoked: true });
@@ -993,7 +993,7 @@ try {
 	const setupArgs = [join(installedHost, "dist/meeting-full-review-cli.js"), "--setup-service", "--input", setupPath];
 	const beforeSetupRequests = wire.requests.length;
 	const setup = spawnSync(process.execPath, setupArgs, {
-		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 	});
 	assert(setup.status === 0 && setup.stderr === "", "Installed first-run service setup failed.");
 	const fixtureFreshInput = JSON.parse(setup.stdout);
@@ -1003,7 +1003,7 @@ try {
 	const provisionedReplayPath = JSON.parse(provisionedTrust.toString()).replay.path;
 	assert(sha256(provisionedTrust) === fixtureFreshInput.trustedKeyring.sha256, "Setup returned an incorrect trust pin.");
 	const repeatedSetup = spawnSync(process.execPath, setupArgs, {
-		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 	});
 	assert(repeatedSetup.status === 1 && repeatedSetup.stdout === "", "Installed setup accepted an existing installation.");
 	assertStrict.deepEqual(readFileSync(fixtureFreshInput.trustedKeyring.path), provisionedTrust, "Repeated setup replaced trust.");
@@ -1030,7 +1030,7 @@ try {
 	// Both unsigned bindings and the consumed signature must come from shipped commands.
 	const prepared = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"),
 		"--prepare-service", "--input", preparationPath, "--output-directory", preparedDirectory], {
-		cwd: installationRoot, encoding: "utf8", timeout: 30_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+		cwd: installationRoot, encoding: "utf8", timeout: 30_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 	});
 	assert(prepared.status === 0 && prepared.stderr === "", "Installed service preparation command failed.");
 	const requestPath = join(preparedDirectory, "request.json");
@@ -1061,7 +1061,7 @@ try {
 	const requestsBeforeEnrollment = wire.requests.length;
 	const ownerKeyBefore = readFileSync(ownerKeyPath);
 	const enrolled = spawnSync(process.execPath, enrollmentArgs, {
-		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 	});
 	assert(enrolled.status === 0 && enrolled.stderr === "", "Installed owner enrollment command failed.");
 	assertStrict.deepEqual(JSON.parse(enrolled.stdout), { kind: "harnessy.meeting-publication.service-enrollment-created", activated: false });
@@ -1070,7 +1070,7 @@ try {
 	assert(!existsSync(join(freshConfig.statePath, "meeting-publication-v2-review.rendezvous.json")), "Enrollment activated review.");
 	const signedBytes = readFileSync(freshInput.authorizationPath);
 	const repeatedEnrollment = spawnSync(process.execPath, enrollmentArgs, {
-		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+		cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 	});
 	assert(repeatedEnrollment.status === 1 && repeatedEnrollment.stdout === "", "Installed enrollment overwrote an existing output.");
 	assertStrict.deepEqual(readFileSync(freshInput.authorizationPath), signedBytes, "Rejected enrollment changed the existing envelope.");
@@ -1081,7 +1081,7 @@ try {
 		const requestCount = wire.requests.length;
 		const planned = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"),
 			"--service-launch-agent", "--input", savedServicePath], {
-			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 		});
 		assert(planned.status === (expectedSuccess ? 0 : 1), "Installed launch-agent planning status drifted.");
 		if (expectedSuccess) {
@@ -1090,7 +1090,7 @@ try {
 			assert(plan.kind === "harnessy.meeting-publication.launch-agent" && plan.label === "org.harnessy.meeting-publication",
 				"Installed launch-agent plan identity drifted.");
 			const parsed = spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", "--", "-"], {
-				input: plan.plist, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+				input: plan.plist, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 			});
 			assert(parsed.status === 0, "Installed launch-agent plan is not a valid plist.");
 			assertStrict.deepEqual(JSON.parse(parsed.stdout), {
@@ -1104,7 +1104,7 @@ try {
 		const installArgs = [join(installedHost, "dist/meeting-full-review-cli.js"),
 			"--service-install", "--input", savedServicePath, "--directory", serviceDirectory];
 		const installed = spawnSync(process.execPath, installArgs, {
-			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 		});
 		assert(installed.status === (expectedSuccess ? 0 : 1), "Installed service-file command status drifted.");
 		const plistPath = join(serviceDirectory, "org.harnessy.meeting-publication.plist");
@@ -1114,7 +1114,7 @@ try {
 				kind: "harnessy.meeting-publication.service-files-installed", activated: false,
 			});
 			const parsed = spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", "--", plistPath], {
-				encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+				encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 			});
 			assert(parsed.status === 0, "Installed service file is not a valid plist.");
 			assertStrict.deepEqual(JSON.parse(parsed.stdout), {
@@ -1131,7 +1131,7 @@ try {
 			writeFileSync(files[1], "preserved log evidence");
 			const bytes = files.map((path) => readFileSync(path));
 			const repeated = spawnSync(process.execPath, installArgs, {
-				cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+				cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 			});
 			assert(repeated.status === 1 && repeated.stdout === "", "Service installation overwrote existing files.");
 			assertStrict.deepEqual(files.map((path) => readFileSync(path)), bytes, "Rejected service installation changed logs or configuration.");
@@ -1140,7 +1140,7 @@ try {
 			assert(!existsSync(join(serviceDirectory, "stdout.log")) && !existsSync(join(serviceDirectory, "stderr.log")), "Revoked installation wrote logs.");
 			const enabled = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"),
 				"--service-enable", "--input", savedServicePath, "--directory", serviceDirectory], {
-				cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+				cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 			});
 			assert(enabled.status === 1 && enabled.stdout === "", "Revoked enrollment accepted service enablement.");
 			assertStrict.deepEqual(JSON.parse(enabled.stderr), { error: "meeting_full_review_failed", code: "invalid_input" });
@@ -1182,7 +1182,7 @@ try {
 	for (const command of ["--service-status", "--service-revoke", "--service-status"]) {
 		const controlled = spawnSync(process.execPath, [join(installedHost, "dist/meeting-full-review-cli.js"),
 			command, "--input", savedServicePath], {
-			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off" },
+			cwd: installationRoot, encoding: "utf8", timeout: 10_000, env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 		});
 		assert(controlled.status === 0 && controlled.stderr === "", "Saved service configuration control failed.");
 		const result = JSON.parse(controlled.stdout);

@@ -35,7 +35,13 @@ const status = (home: string) => {
 		["--experimental-strip-types", cliEntry, "jarvis", "meeting", "fathom", "status", "--json"],
 		{
 			cwd: packageRoot,
-			env: { PI_AUTH_ENCRYPTION: "off", HOME: home, USERPROFILE: home, NODE_NO_WARNINGS: "1" },
+			env: {
+				PI_AUTH_ENCRYPTION: "off",
+				HSY_AUTH_ENCRYPTION: "off",
+				HOME: home,
+				USERPROFILE: home,
+				NODE_NO_WARNINGS: "1",
+			},
 			encoding: "utf8",
 			timeout: 30_000,
 		},

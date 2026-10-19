@@ -5,7 +5,7 @@ import { notifyCommunityDraft } from "../src/jarvis/community-briefing/notificat
 /** The production options for a real test child, with the test-only keychain switch added last. */
 const keychainOff = (options: ExecFileOptions): ExecFileOptions => ({
 	...options,
-	env: { ...options.env, PI_AUTH_ENCRYPTION: "off" },
+	env: { ...options.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 });
 
 it.each(["pending", "error"] as const)(
@@ -39,7 +39,7 @@ it.each(["pending", "error"] as const)(
 					process.execPath,
 					[
 						"-e",
-						"if (Object.keys(process.env).some(k => k !== 'PI_AUTH_ENCRYPTION' && /TOKEN|SECRET|AUTH/.test(k))) process.exit(9);",
+						"if (Object.keys(process.env).some(k => k !== 'PI_AUTH_ENCRYPTION' && k !== 'HSY_AUTH_ENCRYPTION' && /TOKEN|SECRET|AUTH/.test(k))) process.exit(9);",
 					],
 					keychainOff(options),
 					completed,

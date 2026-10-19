@@ -30,7 +30,7 @@ await build({
 	}}],
 });
 const result = spawnSync(process.execPath, [outputPath, installationRoot, privateRoot], {
-	cwd: installationRoot, encoding: "utf8", env: {...process.env, NODE_NO_WARNINGS: "1", PI_AUTH_ENCRYPTION: "off" }, timeout: 120_000,
+	cwd: installationRoot, encoding: "utf8", env: {...process.env, NODE_NO_WARNINGS: "1", PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" }, timeout: 120_000,
 });
 if (result.status !== 0) throw new Error(`Packed review failed: ${result.stdout}\n${result.stderr}`);
 process.stdout.write(result.stdout);
