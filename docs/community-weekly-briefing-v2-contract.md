@@ -180,7 +180,8 @@ after it gave up. The command never generates: it writes an owner-only request
 file, `community-weekly-generation.retry-request.json`, in the state directory,
 and refuses when no review service holds the scheduler lock. The service that
 holds the lock takes the request within about 15 seconds and runs that week as
-its own one-shot child. It still checks the queue first, so a drafted week is
+its own one-shot child. A request not taken within ten minutes expires, so a
+service started later never runs a stale paid retry. It still checks the queue first, so a drafted week is
 never generated twice. Only Mondays of the last twelve weeks, up to the week due
 now, are accepted.
 

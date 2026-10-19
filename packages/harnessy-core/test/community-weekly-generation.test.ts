@@ -1491,7 +1491,7 @@ describe("transient provider failures and owner retries", () => {
 				tickMs: minutes(10),
 				retryRequests: {
 					pending: () => existsSync(requestPath),
-					take: () => takeCommunityGenerationRetryRequest(run.root),
+					take: () => takeCommunityGenerationRetryRequest(run.root, run.options.now()),
 					pollMs: 1_000,
 				},
 				sleep: async (ms) => {
@@ -1533,6 +1533,16 @@ describe("transient provider failures and owner retries", () => {
 		writeFileSync(requestPath, " ".repeat(5_000), { mode: 0o600 });
 		expect(takeCommunityGenerationRetryRequest(run.root)).toEqual({ invalid: "retry_request_invalid" });
 		expect(() => requestCommunityGenerationRetry(run.root, "2026-10-13")).toThrow("Monday");
+		// A normalized impossible date (2026-02-30 parses as Monday 2026-03-02) is refused.
+		expect(() => requestCommunityGenerationRetry(run.root, "2026-02-30")).toThrow("Monday");
+		// A request the service did not take within ten minutes, or dated in the future, is never run.
+		const at = new Date("2026-10-19T08:00:00Z");
+		requestCommunityGenerationRetry(run.root, "2026-10-12", new Date(at.getTime() - 11 * 60_000));
+		expect(takeCommunityGenerationRetryRequest(run.root, at)).toEqual({ invalid: "retry_request_expired" });
+		requestCommunityGenerationRetry(run.root, "2026-10-12", new Date(at.getTime() + 2 * 60_000));
+		expect(takeCommunityGenerationRetryRequest(run.root, at)).toEqual({ invalid: "retry_request_expired" });
+		requestCommunityGenerationRetry(run.root, "2026-10-12", new Date(at.getTime() - 9 * 60_000));
+		expect(takeCommunityGenerationRetryRequest(run.root, at)).toEqual({ weekStart: "2026-10-12" });
 	});
 
 	it("generation-retry needs a running scheduler and writes only an owner-only request", async () => {

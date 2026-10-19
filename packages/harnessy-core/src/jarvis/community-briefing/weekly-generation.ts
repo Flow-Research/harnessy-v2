@@ -477,7 +477,14 @@ export const requestCommunityGenerationRetry = (
 	weekStart: string,
 	now: Date = new Date(),
 ): string => {
-	if (!/^\d{4}-\d{2}-\d{2}$/u.test(weekStart) || new Date(`${weekStart}T00:00:00Z`).getUTCDay() !== 1)
+	const day = new Date(`${weekStart}T00:00:00Z`);
+	// A round trip rejects dates the parser normalizes, such as 2026-02-30.
+	if (
+		!/^\d{4}-\d{2}-\d{2}$/u.test(weekStart) ||
+		!Number.isFinite(day.getTime()) ||
+		isoDate(day) !== weekStart ||
+		day.getUTCDay() !== 1
+	)
 		throw new Error("--week-start must be a Monday in YYYY-MM-DD format");
 	const path = join(statePath, COMMUNITY_GENERATION_RETRY_REQUEST_FILE);
 	const request: typeof RetryRequest.Type = {
@@ -492,13 +499,23 @@ export const requestCommunityGenerationRetry = (
 /** A consumed request: the week to retry, or the allow-listed reason it was refused. */
 export type CommunityGenerationRetryRequest =
 	| { readonly weekStart: string }
-	| { readonly invalid: "retry_request_invalid" | "retry_request_unsafe" };
+	| { readonly invalid: "retry_request_invalid" | "retry_request_unsafe" | "retry_request_expired" };
+
+/**
+ * A request is honoured only for ten minutes. The CLI checks that a scheduler is running,
+ * but that service may stop before it takes the request; a later start must not run a
+ * paid retry the owner asked for long ago.
+ */
+export const COMMUNITY_GENERATION_RETRY_REQUEST_TTL_MS = 10 * 60_000;
 
 /**
  * Take (read and remove) a pending retry request, if any. A request that is a link, not
  * owner-only, oversized or malformed is removed and reported, never acted on.
  */
-export const takeCommunityGenerationRetryRequest = (statePath: string): CommunityGenerationRetryRequest | undefined => {
+export const takeCommunityGenerationRetryRequest = (
+	statePath: string,
+	now: Date = new Date(),
+): CommunityGenerationRetryRequest | undefined => {
 	const path = join(statePath, COMMUNITY_GENERATION_RETRY_REQUEST_FILE);
 	if (lstatSync(path, { throwIfNoEntry: false }) === undefined) return undefined;
 	const read = Result.try((): CommunityGenerationRetryRequest => {
@@ -514,9 +531,12 @@ export const takeCommunityGenerationRetryRequest = (statePath: string): Communit
 			const bytes = Buffer.alloc(stat.size);
 			if (readSync(fd, bytes, 0, stat.size, 0) !== stat.size) return { invalid: "retry_request_invalid" };
 			const decoded = Result.try(() => Schema.decodeUnknownSync(RetryRequest)(JSON.parse(bytes.toString("utf8"))));
-			return Result.isSuccess(decoded)
-				? { weekStart: decoded.success.weekStart }
-				: { invalid: "retry_request_invalid" };
+			if (Result.isFailure(decoded)) return { invalid: "retry_request_invalid" };
+			const age = now.getTime() - Date.parse(decoded.success.requestedAt);
+			// Expired, or dated in the future beyond clock slack: never acted on.
+			if (!Number.isFinite(age) || age > COMMUNITY_GENERATION_RETRY_REQUEST_TTL_MS || age < -60_000)
+				return { invalid: "retry_request_expired" };
+			return { weekStart: decoded.success.weekStart };
 		} finally {
 			closeSync(fd);
 		}

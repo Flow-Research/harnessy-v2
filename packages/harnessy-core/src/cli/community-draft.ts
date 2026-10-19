@@ -189,7 +189,8 @@ export const serveCommunityReview = async (options: CommunityReviewServiceOption
 			// directory; the CLI itself never generates, so it can never trip the writer guard.
 			retryRequests: {
 				pending: () => existsSync(join(options.config.state_path, COMMUNITY_GENERATION_RETRY_REQUEST_FILE)),
-				take: () => takeCommunityGenerationRetryRequest(options.config.state_path),
+				take: () =>
+					takeCommunityGenerationRetryRequest(options.config.state_path, (options.now ?? (() => new Date()))()),
 			},
 			signal: scheduler.signal,
 			...(options.tickMs === undefined ? {} : { tickMs: options.tickMs }),

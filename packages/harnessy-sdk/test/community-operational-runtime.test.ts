@@ -1624,6 +1624,9 @@ describe("community operational consumer", () => {
 					const exit = await Effect.runPromiseExit(f.run());
 					expect(JSON.stringify(reason(exit))).toContain('"code":"publication_uncertain"');
 					expect(JSON.stringify(reason(exit))).toContain('"reason":"lease_row_changed"');
+					expect(f.leaseCurrencyEvents).toEqual([
+						{ event: "lease_currency_failed", service: "community", code: "lease_row_changed" },
+					]);
 					expect(f.wire.messagesByNonce.size).toBe(0);
 				} finally {
 					await f.cleanup();

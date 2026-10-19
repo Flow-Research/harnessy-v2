@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Context, Effect, Result, Schema } from "effect";
 import {
 	assessLeaseClock,
+	isLeaseCurrencyCode,
 	type LeaseCurrencyCode,
 	type LeaseCurrencyReporter,
 	leaseCurrencyEvent,
@@ -521,9 +522,21 @@ export const runAuthorizedCommunityBriefing = (
 					return yield* new CommunityOperationError({ code: "runtime_rejected" });
 			}
 			const reportLeaseCurrency = system.reportLeaseCurrency ?? stderrLeaseCurrencyReporter;
-			const leaseFailure = (code: LeaseCurrencyCode, stepMs?: number) => {
+			let leaseFailureReported = false;
+			const reportLeaseFailure = (code: LeaseCurrencyCode, stepMs?: number) => {
+				if (leaseFailureReported) return;
+				leaseFailureReported = true;
 				reportLeaseCurrency(leaseCurrencyEvent("lease_currency_failed", "community", code, stepMs));
+			};
+			const leaseFailure = (code: LeaseCurrencyCode, stepMs?: number) => {
+				reportLeaseFailure(code, stepMs);
 				return new Error(code);
+			};
+			/** The grant host's lease checks (`lease_row_changed`, `boot_changed`) are logged here. */
+			const noteDenial = (cause: unknown) => {
+				const reason = rejectionReason(cause);
+				if (isLeaseCurrencyCode(reason)) reportLeaseFailure(reason);
+				return reason;
 			};
 			let active = true,
 				lastWall = initial.now,
@@ -684,7 +697,7 @@ export const runAuthorizedCommunityBriefing = (
 				check,
 				assertLedger: verified.assertLedger,
 				denied: (cause) => {
-					deniedReason ??= rejectionReason(cause);
+					deniedReason ??= noteDenial(cause);
 				},
 				...(verified.service
 					? { serviceItem: item, bootId: initial.bootId, deadline: new Date(verified.expiry).toISOString() }
@@ -703,7 +716,7 @@ export const runAuthorizedCommunityBriefing = (
 			const result = yield* consumer.publish(grant).pipe(
 				Effect.raceFirst(monitor),
 				Effect.mapError((cause) => {
-					const reason = deniedReason ?? rejectionReason(cause);
+					const reason = deniedReason ?? noteDenial(cause);
 					return new CommunityOperationError({
 						code: "publication_uncertain",
 						...(reason === undefined ? {} : { reason }),
