@@ -4,7 +4,7 @@
  * index.html can load nothing the CSP would block or the manifest does not list.
  */
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -128,6 +128,27 @@ describe("app bundle loader", () => {
 		rmSync(script);
 		symlinkSync(target, script);
 		expect(code(() => loadPortalPageAssets(linked))).toBe("portal_asset_unsafe");
+		// Replace the assets directory with a link to a directory of identical files: refused too,
+		// although O_NOFOLLOW on each file sees no link in the final component.
+		const linkedDir = bundle();
+		const elsewhere = join(tempDir("elsewhere-assets"), "assets");
+		cpSync(join(linkedDir, "assets"), elsewhere, { recursive: true });
+		rmSync(join(linkedDir, "assets"), { recursive: true });
+		symlinkSync(elsewhere, join(linkedDir, "assets"));
+		expect(code(() => loadPortalPageAssets(linkedDir))).toBe("portal_asset_unsafe");
+		// A file where the assets directory belongs, and no assets directory at all.
+		const fileDir = bundle();
+		rmSync(join(fileDir, "assets"), { recursive: true });
+		writeFileSync(join(fileDir, "assets"), "not a directory");
+		expect(code(() => loadPortalPageAssets(fileDir))).toBe("portal_asset_unsafe");
+		const noDir = bundle();
+		rmSync(join(noDir, "assets"), { recursive: true });
+		expect(code(() => loadPortalPageAssets(noDir))).toBe("portal_asset_missing");
+		// The bundle directory itself may be reached through a link (for example a linked install).
+		const real = bundle();
+		const viaLink = join(tempDir("app-link"), "portal-app");
+		symlinkSync(real, viaLink);
+		expect(code(() => loadPortalPageAssets(viaLink))).toBe("loaded");
 		const directory = bundle();
 		rmSync(join(directory, "THIRD_PARTY_NOTICES.txt"));
 		mkdirSync(join(directory, "THIRD_PARTY_NOTICES.txt"));

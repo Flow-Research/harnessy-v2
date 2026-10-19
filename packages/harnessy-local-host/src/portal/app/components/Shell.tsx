@@ -12,6 +12,8 @@ import {
 	Moon,
 	Plug,
 	RefreshCw,
+	Rows3,
+	Rows4,
 	Search,
 	Sun,
 	SunMedium,
@@ -183,6 +185,8 @@ export const TopBar = ({
 	sessionExpiresAt,
 	theme,
 	onToggleTheme,
+	density,
+	onToggleDensity,
 	onOpenPalette,
 	onRefresh,
 }: {
@@ -193,6 +197,8 @@ export const TopBar = ({
 	sessionExpiresAt: number | undefined;
 	theme: "dark" | "light";
 	onToggleTheme: () => void;
+	density: "comfortable" | "compact";
+	onToggleDensity: () => void;
 	onOpenPalette: () => void;
 	onRefresh: () => void;
 }) => (
@@ -226,6 +232,16 @@ export const TopBar = ({
 			<Search size={14} strokeWidth={1.5} aria-hidden="true" />
 			<span>Search or copy…</span>
 			<kbd>⌘K</kbd>
+		</button>
+		<button
+			type="button"
+			className="icon-button"
+			onClick={onToggleDensity}
+			aria-label="Compact rows"
+			aria-pressed={density === "compact"}
+			title={density === "compact" ? "Rows are compact (32 px)" : "Rows are comfortable (40 px)"}
+		>
+			{density === "compact" ? <Rows4 size={16} strokeWidth={1.5} /> : <Rows3 size={16} strokeWidth={1.5} />}
 		</button>
 		<button
 			type="button"

@@ -77,11 +77,31 @@ export const plural = (count: number, one: string, many = `${one}s`): string => 
  */
 const FORMAT_CONTROLS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
+const escapeControl = (control: string): string =>
+	`⟨U+${control.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`;
+
 /** `text` with every hidden character shown as `⟨U+202E⟩`. */
-export const visibleText = (text: string): string =>
-	text.replace(
-		FORMAT_CONTROLS,
-		(control) => `⟨U+${control.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`,
+export const visibleText = (text: string): string => text.replace(FORMAT_CONTROLS, escapeControl);
+
+/** An emoji, with an optional variation selector or skin-tone modifier, that ends the text before a joiner. */
+const EMOJI_BEFORE = /\p{Extended_Pictographic}[\u{FE0F}\p{Emoji_Modifier}]?$/u;
+/** An emoji that starts the text after a joiner. */
+const EMOJI_AFTER = /^\p{Extended_Pictographic}/u;
+
+/**
+ * {@link visibleText} for a title shown as text, where a zero-width joiner
+ * (U+200D) between two emoji is kept, so a family or profession emoji shows as one
+ * picture. A joiner anywhere else, and every other hidden character (bidi controls
+ * included), is still escaped. Never use this for a command or anything copied:
+ * copy checks keep using {@link hasFormatControls}, which refuses every joiner.
+ */
+export const visibleTitle = (text: string): string =>
+	text.replace(FORMAT_CONTROLS, (control: string, offset: number) =>
+		control === "\u{200D}" &&
+		EMOJI_BEFORE.test(text.slice(Math.max(0, offset - 4), offset)) &&
+		EMOJI_AFTER.test(text.slice(offset + 1, offset + 3))
+			? control
+			: escapeControl(control),
 	);
 
 /** Whether `text` holds a hidden character. */

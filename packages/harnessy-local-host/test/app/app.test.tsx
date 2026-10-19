@@ -18,13 +18,18 @@ import { ErrorBoundary, ScreenFailed } from "../../src/portal/app/components/Err
 import { filterEntries, Palette, screenEntries } from "../../src/portal/app/components/Palette.tsx";
 import { TILE_STATE_TONE, TileState, tileStateText } from "../../src/portal/app/components/primitives.tsx";
 import { SafeMarkdown } from "../../src/portal/app/components/SafeMarkdown.tsx";
+import { BottomBar } from "../../src/portal/app/components/Shell.tsx";
 import { DataProvider, DataStore } from "../../src/portal/app/lib/data.tsx";
 import { PHONE_LAYOUT_QUERY } from "../../src/portal/app/lib/media.ts";
 import { browserLocation } from "../../src/portal/app/lib/router.ts";
 import { browserSessionEnvironment, SessionClient, type SessionEnvironment } from "../../src/portal/app/lib/session.ts";
-import { emptyInboxTitle, inboxKeyAction } from "../../src/portal/app/screens/Inbox.tsx";
-import { openerOf } from "../../src/portal/app/screens/Reviews.tsx";
-import { projectGroups, tasksForTab } from "../../src/portal/app/screens/Tasks.tsx";
+import { ConnectionsScreen } from "../../src/portal/app/screens/Connections.tsx";
+import { emptyInboxTitle, InboxScreen, inboxKeyAction } from "../../src/portal/app/screens/Inbox.tsx";
+import { JobsScreen } from "../../src/portal/app/screens/Jobs.tsx";
+import { LearningScreen } from "../../src/portal/app/screens/Learning.tsx";
+import { openerOf, ReviewsScreen } from "../../src/portal/app/screens/Reviews.tsx";
+import { projectGroups, TasksScreen, tasksForTab } from "../../src/portal/app/screens/Tasks.tsx";
+import { TodayScreen } from "../../src/portal/app/screens/Today.tsx";
 import type { PortalServer } from "../../src/portal/server.ts";
 import { startPortalServer } from "../../src/portal/server.ts";
 import { createPortalSources } from "../../src/portal/sources.ts";
@@ -56,6 +61,7 @@ beforeEach(() => {
 	window.sessionStorage.clear();
 	window.localStorage.clear();
 	delete document.documentElement.dataset.theme;
+	delete document.documentElement.dataset.density;
 	copied.splice(0);
 	opened.splice(0);
 	Object.defineProperty(navigator, "clipboard", {
@@ -393,6 +399,18 @@ describe("the app against a real portal", () => {
 		expect(document.documentElement.dataset.theme).toBe("light");
 		expect(window.localStorage.getItem("harnessy.theme")).toBe("light");
 
+		// The density toggle switches list rows to compact (32 px) and remembers it on this device.
+		expect(document.documentElement.dataset.density).toBe("comfortable");
+		const density = container.querySelector<HTMLButtonElement>('button[aria-label="Compact rows"]')!;
+		expect(density.getAttribute("aria-pressed")).toBe("false");
+		await act(async () => density.click());
+		expect(document.documentElement.dataset.density).toBe("compact");
+		expect(window.localStorage.getItem("harnessy.density")).toBe("compact");
+		expect(density.getAttribute("aria-pressed")).toBe("true");
+		await act(async () => density.click());
+		expect(document.documentElement.dataset.density).toBe("comfortable");
+		expect(window.localStorage.getItem("harnessy.density")).toBe("comfortable");
+
 		expect(document.body.innerHTML).not.toContain(CANARY);
 		expect(document.body.innerHTML).not.toContain("owner@example.test");
 	});
@@ -656,6 +674,66 @@ describe("app pieces", () => {
 		await waitFor(() => expect(copied).toEqual(["harnessy web"]));
 	});
 
+	it("shows an emoji joined in a title but never copies it, and escapes the joiner in a command", async () => {
+		const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+		await mount(
+			<>
+				<Palette
+					entries={[{ id: "task:family", title: `Call ${family}`, group: "Tasks", command: `Call ${family}` }]}
+					onClose={() => undefined}
+				/>
+				<CommandChip command={`echo ${family}`} />
+			</>,
+		);
+		expect(container.querySelector(".palette-title")?.textContent).toBe(`Call ${family}`);
+		expect(container.querySelector(".command-text")?.textContent).toBe(
+			"echo \u{1F468}⟨U+200D⟩\u{1F469}⟨U+200D⟩\u{1F467}",
+		);
+		await pressOn(container.querySelector(".palette-input")!, "Enter");
+		expect(text()).toContain("Not copied: it holds hidden characters");
+		expect(copied).toEqual([]);
+	});
+
+	it("moves through palette results with the mouse and arrows, and closes on Escape", async () => {
+		let closed = 0;
+		const entries = [
+			{ id: "screen:jobs", title: "Jobs", group: "Screens", target: "#/jobs" },
+			{ id: "cmd:web", title: "Web", group: "Commands", command: "harnessy web" },
+		] as const;
+		await mount(<Palette entries={entries} onClose={() => void closed++} />);
+		const input = container.querySelector<HTMLInputElement>(".palette-input")!;
+		const options = () => [...container.querySelectorAll<HTMLElement>('[role="option"]')];
+		await pressOn(input, "ArrowDown");
+		await pressOn(input, "ArrowDown");
+		expect(options()[1]!.getAttribute("aria-selected")).toBe("true");
+		await pressOn(input, "ArrowUp");
+		await pressOn(input, "ArrowUp");
+		expect(options()[0]!.getAttribute("aria-selected")).toBe("true");
+		await act(async () => {
+			options()[1]!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+		});
+		expect(options()[1]!.getAttribute("aria-selected")).toBe("true");
+		await pressOn(options()[1]!, "Enter");
+		await waitFor(() => expect(copied).toEqual(["harnessy web"]));
+		await act(async () => options()[0]!.click());
+		expect(window.location.hash).toBe("#/jobs");
+		expect(closed).toBe(1);
+		await pressOn(input, "Escape");
+		expect(closed).toBe(2);
+	});
+
+	it("opens the phone bar's More sheet with the other screens and closes it on a choice", async () => {
+		await mount(<BottomBar current="learning" badges={{ inbox: 0, jobs: 0 }} />);
+		const more = [...container.querySelectorAll("button")].find((button) => button.textContent === "More")!;
+		expect(more.className).toContain("nav-current");
+		expect(more.getAttribute("aria-expanded")).toBe("false");
+		await act(async () => more.click());
+		const links = [...container.querySelectorAll<HTMLAnchorElement>(".more-link")];
+		expect(links.map((link) => link.textContent)).toContain("Learning");
+		await act(async () => links[0]!.click());
+		expect(container.querySelector(".more-sheet")).toBeNull();
+	});
+
 	it("colours and words each tile state as the spec maps them", async () => {
 		expect(TILE_STATE_TONE).toEqual({
 			missing: "idle",
@@ -823,6 +901,40 @@ describe("app pieces", () => {
 			await navigate(hash);
 			await waitFor(() => expect(`${hash} ${text()}`).toContain(expected));
 		}
+	});
+
+	it("renders every screen while loading and after the portal refuses every read, without a crash or a made-up value", async () => {
+		const reads: string[] = [];
+		let answer: "pending" | "refused" = "pending";
+		const waiting = new Promise<never>(() => undefined);
+		const store = new DataStore({
+			get: async (path: string) => {
+				reads.push(path);
+				return answer === "pending" ? waiting : { kind: "error" as const, message: "the portal refused" };
+			},
+		});
+		const screens = [
+			<InboxScreen key="inbox" selectedKey={undefined} now={FIXTURE_NOW.getTime()} />,
+			<TodayScreen key="today" rest={[]} now={FIXTURE_NOW.getTime()} />,
+			<TasksScreen key="tasks" rest={[]} />,
+			<JobsScreen key="jobs" rest={["learning-research"]} now={FIXTURE_NOW.getTime()} />,
+			<ReviewsScreen key="reviews" rest={[]} />,
+			<LearningScreen key="learning" now={FIXTURE_NOW.getTime()} />,
+			<ConnectionsScreen key="connections" rest={["fathom.missing"]} />,
+		];
+		await mount(<DataProvider store={store}>{screens}</DataProvider>);
+		expect(text()).toContain("Loading");
+		expect(text()).toContain("No job data");
+		await act(async () => root?.unmount());
+		answer = "refused";
+		await mount(
+			<DataProvider store={new DataStore({ get: async () => ({ kind: "error", message: "the portal refused" }) })}>
+				{screens}
+			</DataProvider>,
+		);
+		await waitFor(() => expect(text()).toContain("the portal refused"));
+		expect(reads).toContain("/v1/inbox");
+		expect(text()).not.toMatch(/undefined|NaN|\[object Object\]/u);
 	});
 
 	it("never says 'Nothing needs you.' when a source could not be read", async () => {

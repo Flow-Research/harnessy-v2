@@ -9,7 +9,15 @@ import { ErrorBoundary, ScreenFailed } from "./components/ErrorBoundary.tsx";
 import { Palette, type PaletteEntry, screenEntries } from "./components/Palette.tsx";
 import { BottomBar, NAV, Rail, TopBar } from "./components/Shell.tsx";
 import type { InboxResponse, JobsResponse, TasksResponse } from "./lib/api-types.ts";
-import { applyTheme, effectiveTheme, storedTheme, type Theme } from "./lib/browser.ts";
+import {
+	applyDensity,
+	applyTheme,
+	type Density,
+	effectiveTheme,
+	storedDensity,
+	storedTheme,
+	type Theme,
+} from "./lib/browser.ts";
 import { type DataStore, useDataStore, useResource } from "./lib/data.tsx";
 import { isTyping, type ScreenKeyHandler, ScreenKeysProvider } from "./lib/keys.tsx";
 import { type HashLocation, routeHref, type Screen, useRoute } from "./lib/router.ts";
@@ -101,6 +109,7 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 	const route = useRoute(location);
 	const [now, setNow] = useState(() => Date.now());
 	const [theme, setTheme] = useState<Theme>(() => effectiveTheme());
+	const [density, setDensity] = useState<Density>(() => storedDensity());
 	const [palette, setPalette] = useState(false);
 	const inbox = useResource<InboxResponse>("/v1/inbox");
 	const jobs = useResource<JobsResponse>("/v1/jobs");
@@ -115,6 +124,9 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 	useEffect(() => {
 		if (storedTheme() !== undefined) applyTheme(theme, false);
 	}, [theme]);
+	useEffect(() => {
+		applyDensity(density, false);
+	}, [density]);
 	// The only window key listener: global shortcuts first, then the current screen's handler.
 	const screenKeys = useRef<ScreenKeyHandler | null>(null);
 	const paletteOpen = useRef(palette);
@@ -183,6 +195,12 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 						const next = theme === "dark" ? "light" : "dark";
 						applyTheme(next, true);
 						setTheme(next);
+					}}
+					density={density}
+					onToggleDensity={() => {
+						const next = density === "compact" ? "comfortable" : "compact";
+						applyDensity(next, true);
+						setDensity(next);
 					}}
 					onOpenPalette={() => setPalette(true)}
 					onRefresh={() => void store.refreshAll()}

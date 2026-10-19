@@ -12,7 +12,8 @@
  * also fails on any horizontal overflow on every screen, page or element, on a
  * table where stacked cards belong, on a title squeezed narrower than 200 px, on
  * a command chip's copy button wrapped onto more than one line, and on two inbox
- * items for one Fathom account.
+ * items for one Fathom account. At 1280 px it fails unless inbox rows are 40 px,
+ * and 32 px after the density toggle.
  *
  * It refuses to run outside CI unless HARNESSY_BROWSER_SMOKE=1 is set, so it
  * never opens a browser on a developer machine by accident. The browser runs
@@ -277,6 +278,19 @@ try {
 		if (aa.length !== 1) failures.push(`inbox at ${width}px: ${aa.length} items for Fathom account aa ${JSON.stringify(aa)}`);
 		if (await evaluate("document.body.innerText.includes('never_polled')"))
 			failures.push(`inbox at ${width}px: shows the raw code never_polled`);
+		if (!mobile) {
+			// Inbox rows are 40 px, or 32 px in compact density (spec §2.5); the toggle is in the top bar.
+			const rowHeights = () => evaluate("[...document.querySelectorAll('.list .row')].map((el) => Math.round(el.getBoundingClientRect().height))");
+			const comfortable = await rowHeights();
+			if (comfortable.length === 0 || comfortable.some((height) => height !== 40))
+				failures.push(`inbox rows at ${width}px are not 40 px: ${JSON.stringify(comfortable)}`);
+			await evaluate(`document.querySelector('button[aria-label="Compact rows"]').click()`);
+			await wait(100);
+			const compact = await rowHeights();
+			if (compact.length === 0 || compact.some((height) => height !== 32))
+				failures.push(`compact inbox rows at ${width}px are not 32 px: ${JSON.stringify(compact)}`);
+			await evaluate(`document.querySelector('button[aria-label="Compact rows"]').click()`);
+		}
 		// Each long command sits in a chip beside its copy button: the Fathom poll in the inbox detail and a task's source.
 		await evaluate(`location.hash = '#/inbox/${encodeURIComponent("fathom:aa:stale")}'`);
 		await until(`the Fathom detail at ${width}px`, () => evaluate("document.querySelector('.detail .command-row') !== null"));

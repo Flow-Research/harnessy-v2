@@ -217,10 +217,14 @@ const MAX_STATUS_BYTES = 256 * 1024;
 /** Retained week records; older weeks cannot become due again. */
 const RETAINED_WEEKS = 12;
 
-/** Read the owner-only status record; `undefined` when none exists yet. */
+/**
+ * Read the owner-only status record; `undefined` when none exists yet. The open is
+ * non-blocking, so a FIFO in its place is refused by the regular-file check below
+ * instead of blocking the caller's event loop until a writer appears.
+ */
 export const readCommunityGenerationStatus = (path: string): CommunityGenerationStatus | undefined => {
 	const opened = Result.try({
-		try: () => openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW),
+		try: () => openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK),
 		catch: () => new Error("status_record_unreadable"),
 	});
 	if (Result.isFailure(opened)) {

@@ -3,7 +3,7 @@
  * Africa/Lagos, derived tasks (golden files on redacted fixtures), the community
  * generation record, the weekly draft and brief dates, and the new schemas.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -390,6 +390,51 @@ const GENERATION = {
 	},
 };
 
+/** A FIFO read must finish well inside this; a blocked open is killed and fails the test. */
+const CHILD_READ_LIMIT_MS = 10_000;
+const COMMUNITY_MODULE = fileURLToPath(new URL("../src/read-model/community.ts", import.meta.url));
+const STATUS_MODULE = fileURLToPath(new URL("../src/jarvis/community-briefing/weekly-generation.ts", import.meta.url));
+
+/** Run one community record read in a child process with a time limit; returns its JSON result or thrown message. */
+const readInChild = (reader: "readCommunityGeneration" | "readCommunityGenerationStatus", path: string): unknown => {
+	const script = `
+const [, kind, module, path] = process.argv;
+const loaded = await import(module);
+let result;
+try {
+	result = kind === "readCommunityGeneration" ? loaded.readCommunityGeneration(path, new Date(0)) : loaded.readCommunityGenerationStatus(path);
+} catch (error) {
+	result = { thrown: error instanceof Error ? error.message : String(error) };
+}
+process.stdout.write(JSON.stringify(result ?? null));
+`;
+	const child = spawnSync(
+		process.execPath,
+		[
+			"--experimental-strip-types",
+			"--no-warnings",
+			"--input-type=module",
+			"-e",
+			script,
+			reader,
+			reader === "readCommunityGeneration" ? COMMUNITY_MODULE : STATUS_MODULE,
+			path,
+		],
+		{
+			encoding: "utf8",
+			timeout: CHILD_READ_LIMIT_MS,
+			killSignal: "SIGKILL",
+			env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
+		},
+	);
+	if (child.error !== undefined || child.signal !== null)
+		throw new Error(
+			`${reader} did not finish within ${CHILD_READ_LIMIT_MS} ms (${child.signal ?? child.error?.message}): it blocked on the FIFO`,
+		);
+	expect(child.status, child.stderr).toBe(0);
+	return JSON.parse(child.stdout);
+};
+
 describe("community weekly generation", () => {
 	const write = (record: unknown, mode = 0o600) => {
 		const state = tempHome("generation");
@@ -492,10 +537,19 @@ describe("community weekly generation", () => {
 			join(linked, "community-weekly-generation.json"),
 		);
 		expect(readCommunityGeneration(linked, NOW)).toMatchObject({ state: "error", reason: "read_failed" });
-		// A FIFO would block a plain open (and the portal's event loop with it): it is refused before opening.
+		// A FIFO would block a plain open (and the portal's event loop with it): it is refused before opening,
+		// and the status reader's own open is non-blocking. Both reads run in a child process with a time
+		// limit, so a regression fails this test instead of blocking the test worker, which vitest's
+		// timeout cannot interrupt.
 		const fifo = tempHome("fifo-record");
 		execFileSync("mkfifo", [join(fifo, "community-weekly-generation.json")]);
-		expect(readCommunityGeneration(fifo, NOW)).toMatchObject({ state: "unsafe", reason: "status_record_unsafe" });
+		expect(readInChild("readCommunityGeneration", fifo)).toMatchObject({
+			state: "unsafe",
+			reason: "status_record_unsafe",
+		});
+		expect(readInChild("readCommunityGenerationStatus", join(fifo, "community-weekly-generation.json"))).toEqual({
+			thrown: "status_record_unsafe",
+		});
 		const directory = tempHome("directory-record");
 		mkdirSync(join(directory, "community-weekly-generation.json"));
 		expect(readCommunityGeneration(directory, NOW)).toMatchObject({
