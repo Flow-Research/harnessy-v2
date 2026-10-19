@@ -392,17 +392,19 @@ const GENERATION = {
 
 /** A FIFO read must finish well inside this; a blocked open is killed and fails the test. */
 const CHILD_READ_LIMIT_MS = 10_000;
-const COMMUNITY_MODULE = fileURLToPath(new URL("../src/read-model/community.ts", import.meta.url));
-const STATUS_MODULE = fileURLToPath(new URL("../src/jarvis/community-briefing/weekly-generation.ts", import.meta.url));
+const COMMUNITY_MODULE = new URL("../src/read-model/community.ts", import.meta.url).href;
+const STATUS_MODULE = new URL("../src/jarvis/community-briefing/weekly-generation.ts", import.meta.url).href;
 
 /** Run one community record read in a child process with a time limit; returns its JSON result or thrown message. */
 const readInChild = (reader: "readCommunityGeneration" | "readCommunityGenerationStatus", path: string): unknown => {
+	// Static imports only; the reader is chosen at run time.
 	const script = `
-const [, kind, module, path] = process.argv;
-const loaded = await import(module);
+import { readCommunityGeneration } from ${JSON.stringify(COMMUNITY_MODULE)};
+import { readCommunityGenerationStatus } from ${JSON.stringify(STATUS_MODULE)};
+const [, kind, path] = process.argv;
 let result;
 try {
-	result = kind === "readCommunityGeneration" ? loaded.readCommunityGeneration(path, new Date(0)) : loaded.readCommunityGenerationStatus(path);
+	result = kind === "readCommunityGeneration" ? readCommunityGeneration(path, new Date(0)) : readCommunityGenerationStatus(path);
 } catch (error) {
 	result = { thrown: error instanceof Error ? error.message : String(error) };
 }
@@ -410,16 +412,7 @@ process.stdout.write(JSON.stringify(result ?? null));
 `;
 	const child = spawnSync(
 		process.execPath,
-		[
-			"--experimental-strip-types",
-			"--no-warnings",
-			"--input-type=module",
-			"-e",
-			script,
-			reader,
-			reader === "readCommunityGeneration" ? COMMUNITY_MODULE : STATUS_MODULE,
-			path,
-		],
+		["--experimental-strip-types", "--no-warnings", "--input-type=module", "-e", script, reader, path],
 		{
 			encoding: "utf8",
 			timeout: CHILD_READ_LIMIT_MS,
