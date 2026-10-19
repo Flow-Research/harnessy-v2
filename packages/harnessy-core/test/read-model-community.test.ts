@@ -246,7 +246,10 @@ describe("community read model", () => {
 					"import sys; from pathlib import Path; from jarvis.community_briefing.store import BriefingStore; BriefingStore(Path(sys.argv[1]))",
 					state,
 				],
-				{ encoding: "utf8", env: { PI_AUTH_ENCRYPTION: "off", HOME: home, PATH: "/usr/bin:/bin" } },
+				{
+					encoding: "utf8",
+					env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off", HOME: home, PATH: "/usr/bin:/bin" },
+				},
 			);
 			expect(created.status, created.stderr).toBe(0);
 			insertBriefings(join(state, "weekly-briefings.sqlite3"), 2);

@@ -8,3 +8,4 @@ process.env.HARNESSY_ENGINE = "0";
 
 /** Fixture auth.json files stay plaintext and never touch the owner's OS keychain. */
 process.env.PI_AUTH_ENCRYPTION = "off";
+process.env.HSY_AUTH_ENCRYPTION = "off";

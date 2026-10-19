@@ -64,7 +64,7 @@ export default defineConfig({
 	},
 	test: {
 		// Fixture auth.json files stay plaintext and never touch the owner's OS keychain.
-		env: { PI_AUTH_ENCRYPTION: "off" },
+		env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 		// Heavy `it.live` tests (e.g. materializing the full v1 source surface) run
 		// well past vitest's 5s default under full-suite load; give them headroom so
 		// they don't flake on slow/cold runs.
