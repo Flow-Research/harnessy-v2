@@ -244,6 +244,7 @@ describe("proxiedLogoSrc", () => {
     expect(proxiedLogoSrc("https://cdn.provider.example/logo.png")).toBeNull();
     expect(proxiedLogoSrc("http://integrations.sh/logo/a.com")).toBeNull();
     expect(proxiedLogoSrc("//integrations.sh/logo/a.com")).toBeNull();
+    expect(proxiedLogoSrc("/\\example.org/logo.png")).toBeNull();
     expect(proxiedLogoSrc(null)).toBeNull();
     expect(
       integrationFaviconSrc({

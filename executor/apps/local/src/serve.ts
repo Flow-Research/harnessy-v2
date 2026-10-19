@@ -175,6 +175,7 @@ interface CachedLogo {
 const LOGO_CACHE_MAX = 256;
 const LOGO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const LOGO_FETCH_TIMEOUT_MS = 5_000;
+const LOGO_MAX_REDIRECTS = 3;
 /** An SVG opened directly must not run script in this origin. */
 const LOGO_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
@@ -203,11 +204,27 @@ const makeLogoProxy = (fetchLogo: typeof fetch) => {
     if (cached !== undefined && cached.expiresAt > Date.now()) return logoResponse(cached);
     // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: an unreachable or misbehaving logo host degrades to the UI's fallback icon
     try {
-      const upstream = await fetchLogo(key, {
-        redirect: "follow",
-        signal: AbortSignal.timeout(LOGO_FETCH_TIMEOUT_MS),
-        headers: { accept: "image/*" },
-      });
+      // Redirects are followed by hand so every hop is checked against the
+      // same host allowlist: an open redirect on a logo host must not turn
+      // this unauthenticated route into a fetch of an arbitrary address.
+      const signal = AbortSignal.timeout(LOGO_FETCH_TIMEOUT_MS);
+      let next: URL | null = target;
+      let upstream: Response | null = null;
+      for (let hop = 0; next !== null && hop <= LOGO_MAX_REDIRECTS; hop++) {
+        const response: Response = await fetchLogo(next.href, {
+          redirect: "manual",
+          signal,
+          headers: { accept: "image/*" },
+        });
+        if (response.status < 300 || response.status >= 400) {
+          upstream = response;
+          break;
+        }
+        await response.body?.cancel();
+        const location = response.headers.get("location");
+        next = location === null ? null : logoProxyTarget(new URL(location, next).href);
+      }
+      if (upstream === null) return logoNotFound();
       const contentType = (upstream.headers.get("content-type") ?? "").split(";")[0]!.trim();
       if (!upstream.ok || !/^image\/[a-z0-9.+-]+$/i.test(contentType) || upstream.body === null) {
         await upstream.body?.cancel();

@@ -122,7 +122,8 @@ try {
 
 	const port = await freePort();
 	const origin = `http://127.0.0.1:${port}`;
-	const daemon = spawn("bun", ["run", executorCli, "daemon", "run", "--port", String(port), "--hostname", "127.0.0.1"], {
+	// --foreground: this process is the daemon, so cleanup stops it.
+	const daemon = spawn("bun", ["run", executorCli, "daemon", "run", "--foreground", "--port", String(port), "--hostname", "127.0.0.1"], {
 		cwd: scopeDir,
 		env: childEnv,
 		detached: true,

@@ -36,8 +36,9 @@ const LOGO_PROXY_HOSTS = new Set(["integrations.sh", "svgl.app"]);
 export function proxiedLogoSrc(src: string | null | undefined): string | null {
   if (!src) return null;
   if (src.startsWith("data:") || src.startsWith("blob:")) return src;
-  if (src.startsWith("/") && !src.startsWith("//")) return src;
-  if (!URL.canParse(src)) return null;
+  // A same-origin path only: `//host` and `/\\host` resolve to another origin.
+  if (src.startsWith("/") && !src.startsWith("//") && !src.includes("\\")) return src;
+  if (src.startsWith("/") || !URL.canParse(src)) return null;
   const url = new URL(src);
   if (url.protocol !== "https:" || url.port !== "" || !LOGO_PROXY_HOSTS.has(url.hostname)) {
     return null;

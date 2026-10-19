@@ -846,6 +846,39 @@ describe("startServer logo proxy", () => {
     expect(requested).toEqual(["https://svgl.app/library/a.svg"]);
   });
 
+  it("checks every redirect hop against the logo host allowlist", async () => {
+    const requested: string[] = [];
+    const logoFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${url} ${init?.redirect}`);
+      if (url === "https://svgl.app/library/open-redirect.svg") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/latest/meta-data" },
+        });
+      }
+      if (url === "https://svgl.app/library/moved.svg") {
+        return new Response(null, {
+          status: 301,
+          headers: { location: "https://integrations.sh/logo/a.com" },
+        });
+      }
+      return new Response(PNG, { headers: { "content-type": "image/png" } });
+    }) as typeof fetch;
+    const baseUrl = await startTestServer({ logoFetch });
+    const proxied = (target: string) =>
+      fetch(`${baseUrl}/api/logo?url=${encodeURIComponent(target)}`);
+
+    expect((await proxied("https://svgl.app/library/open-redirect.svg")).status).toBe(404);
+    expect(requested).toEqual(["https://svgl.app/library/open-redirect.svg manual"]);
+
+    expect((await proxied("https://svgl.app/library/moved.svg")).status).toBe(200);
+    expect(requested.slice(1)).toEqual([
+      "https://svgl.app/library/moved.svg manual",
+      "https://integrations.sh/logo/a.com manual",
+    ]);
+  });
+
   it("refuses an oversized logo", async () => {
     const logoFetch = (async (_input: string | URL | Request) =>
       new Response(new Uint8Array(600 * 1024), {
@@ -916,10 +949,27 @@ describe("secureLocalStateDir data directory placement", () => {
     expect(modeOf(shared)).toBe(0o755);
   });
 
+  it("does not take a server-control file or link as proof the directory is Executor's", () => {
+    const shared = join(homeDir, "project");
+    mkdirSync(shared, { mode: 0o755 });
+    chmodSync(shared, 0o755);
+    writeFileSync(join(shared, "README.md"), "shared\n");
+    writeFileSync(join(shared, "server-control"), "not a directory\n");
+    expect(() => secureLocalStateDir(shared)).toThrow(/files Executor did not create/);
+    expect(modeOf(shared)).toBe(0o755);
+
+    rmSync(join(shared, "server-control"));
+    mkdirSync(join(homeDir, "elsewhere"));
+    symlinkSync(join(homeDir, "elsewhere"), join(shared, "server-control"), "dir");
+    expect(() => secureLocalStateDir(shared)).toThrow(/files Executor did not create/);
+    expect(modeOf(shared)).toBe(0o755);
+  });
+
   it("still repairs its own loose data directory", () => {
     chmodSync(dataDir, 0o755);
-    // What the CLI writes before the server's first start.
+    // What the CLI and `service install` write before the server's first start.
     mkdirSync(join(dataDir, "cache"));
+    mkdirSync(join(dataDir, "logs"));
     writeFileSync(join(dataDir, "daemon-active-localhost-abc.json.lock"), "{}");
     writeFileSync(join(dataDir, "data.db"), "");
     secureLocalStateDir(dataDir);

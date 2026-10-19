@@ -189,7 +189,8 @@ overlay above (the `img-src https:` allowance and the meta-refresh redirect to
   - `POST /api/local-auth/identity {"nonce"}` (no bearer) returns
     `HMAC-SHA256(token, "executor-local-identity-v1|<bound port>|<nonce>")`.
   - `GET /api/logo?url=` proxies logos from `integrations.sh` and `svgl.app`
-    only (https, no port or userinfo, `image/*`, at most 512 KiB, cached in
+    only (https, no port or userinfo, every redirect hop rechecked against
+    the same hosts, at most 3 hops, `image/*`, at most 512 KiB, cached in
     memory for a day, served with `sandbox` CSP and
     `Cross-Origin-Resource-Policy: same-origin`). The UI CSP is now
     `img-src 'self' data: blob:`. `StartServerOptions.logoFetch` is a test hook.
@@ -202,7 +203,8 @@ overlay above (the `img-src https:` allowance and the meta-refresh redirect to
   - Before tightening an existing data directory, it must be Executor's own:
     not the home directory; outside the home only when it holds nothing but
     Executor's entries (`EXECUTOR_DATA_ENTRY`); inside the home not holding
-    other files unless an earlier run left `server-control/` there.
+    other files unless an earlier run left `server-control/` there (a real
+    directory owned by the user, not a file or a link).
   - macOS: an ACL `allow` entry on a state path is removed (`chmod -N`) and
     startup is refused if it survives. Deny entries are left alone.
 - `apps/cli/src/sign-in-page.ts`, `apps/cli/src/main.ts` — the `file:` page

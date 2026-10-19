@@ -255,10 +255,22 @@ export const hasAllowAclEntry = (listing: string): boolean =>
 /**
  * Names Executor itself keeps in its data directory: `server-control/`, the
  * database and its sidecars, the integrations cache, server profiles and the
- * daemon records and start locks (`daemon-*.json`, `*.json.lock`).
+ * daemon records and start locks (`daemon-*.json`, `*.json.lock`), and the
+ * service logs (`logs/`, created by `executor service install`).
  */
 const EXECUTOR_DATA_ENTRY =
-  /^(?:server-control|data\.db.*|cache|server-connections\.json(?:\.lock)?|daemon-.*\.json(?:\.lock)?|\.DS_Store)$/;
+  /^(?:server-control|data\.db.*|cache|logs|server-connections\.json(?:\.lock)?|daemon-.*\.json(?:\.lock)?|\.DS_Store)$/;
+
+/**
+ * Whether `<dataDir>/server-control` is evidence of an earlier Executor run:
+ * a real directory (not a symlink, not a file) owned by the current user.
+ */
+const hasOwnServerControl = (dataDir: string, checks: Required<StateDirChecks>): boolean => {
+  const stat = lstatSyncOrNull(serverControlDir(dataDir));
+  if (stat === null || stat.isSymbolicLink() || !stat.isDirectory()) return false;
+  const uid = checks.getuid();
+  return uid === undefined || stat.uid === uid;
+};
 
 /**
  * Before tightening an existing data directory's mode, make sure it is
@@ -295,7 +307,7 @@ const assertOwnDataDir = (dataDir: string, checks: Required<StateDirChecks>): vo
   if (outsideHome && (entries.length === 0 || unrelated.length > 0)) {
     refuse("is outside your home directory");
   }
-  if (unrelated.length > 0 && !entries.includes("server-control")) {
+  if (unrelated.length > 0 && !hasOwnServerControl(dataDir, checks)) {
     refuse(
       `holds files Executor did not create (${unrelated.slice(0, 3).join(", ")}${unrelated.length > 3 ? ", ..." : ""})`,
     );
