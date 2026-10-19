@@ -198,7 +198,7 @@ overlay above (the `img-src https:` allowance and the meta-refresh redirect to
     another local user can listen on the same port and relay to the real
     server.
   - `startServer` (and so `--hostname` for `daemon run` and `web
-    --foreground`) accepts only an IP literal or `localhost`; a DNS name is
+--foreground`) accepts only an IP literal or `localhost`; a DNS name is
     refused at startup (`parseBindHostname`), because the published origin
     and the identity proof carry the bound address, which a name cannot pin.
     To reach the server under a DNS name, bind an address and add the name
