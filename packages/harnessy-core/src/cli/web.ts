@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -160,16 +161,36 @@ export interface WaitForEngineConnectionOptions {
 }
 
 const ENGINE_IDENTITY_PATH = "/api/local-auth/identity";
-const ENGINE_IDENTITY_PURPOSE = "executor-local-identity-v1";
+const ENGINE_IDENTITY_PURPOSE = "executor-local-identity-v2";
 
-/** The proof an Executor holding `token` and listening on `port` returns for `nonce`. */
-export const engineIdentityProof = (token: string, port: number, nonce: string): string =>
-	createHmac("sha256", token).update(`${ENGINE_IDENTITY_PURPOSE}|${port}|${nonce}`).digest("base64url");
+/** A literal address without IPv6 brackets, lowercased. */
+const normalizeEngineAddress = (address: string): string =>
+	address
+		.trim()
+		.toLowerCase()
+		.replace(/^\[(.*)\]$/, "$1");
+
+/**
+ * The proof an Executor holding `token` and listening on `address`:`port`
+ * returns for `nonce`. Mirrors `localIdentityProof` in
+ * executor/apps/local/src/serve-shared.ts.
+ */
+export const engineIdentityProof = (token: string, address: string, port: number, nonce: string): string =>
+	createHmac("sha256", token)
+		.update(`${ENGINE_IDENTITY_PURPOSE}|${normalizeEngineAddress(address)}|${port}|${nonce}`)
+		.digest("base64url");
+
+const enginePort = (url: URL): number => (url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port));
 
 /**
  * Ask the server at `origin` to prove it holds `token` (an HMAC over a fresh
- * nonce and the port connected to) before anything sends it the bearer. A
- * process that took over a stale manifest's port cannot answer.
+ * nonce and the literal address and port connected to) before anything sends
+ * it the bearer. A process that took over a stale manifest's port cannot
+ * answer, and one on the same port in the other IP family that relays the
+ * challenge to the real server gets a proof for the real server's address,
+ * which does not verify. A host name never verifies: `localhost` can resolve
+ * to the other family first. Use {@link resolveVerifiedEngineOrigin} for a
+ * manifest that names `localhost`.
  */
 export async function verifyEngineIdentity(
 	origin: string,
@@ -179,7 +200,9 @@ export async function verifyEngineIdentity(
 ): Promise<boolean> {
 	const url = URL.canParse(origin) ? new URL(origin) : undefined;
 	if (url === undefined || (url.protocol !== "http:" && url.protocol !== "https:")) return false;
-	const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+	const address = normalizeEngineAddress(url.hostname);
+	if (isIP(address) === 0) return false;
+	const port = enginePort(url);
 	const nonce = randomBytes(32).toString("base64url");
 	const response = await fetchImpl(`${url.origin}${ENGINE_IDENTITY_PATH}`, {
 		method: "POST",
@@ -201,9 +224,33 @@ export async function verifyEngineIdentity(
 		() => undefined,
 	)) as { readonly proof?: unknown } | undefined;
 	if (typeof body?.proof !== "string") return false;
-	const expected = Buffer.from(engineIdentityProof(token, port, nonce));
+	const expected = Buffer.from(engineIdentityProof(token, address, port, nonce));
 	const actual = Buffer.from(body.proof);
 	return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+/**
+ * The literal origin of the server that proves it holds `token`, or
+ * `undefined`. A literal origin is checked as is; a `localhost` origin (from
+ * an Executor that published the name) is re-resolved to `127.0.0.1`, then
+ * `[::1]`, on the same port. The bearer must go only to the returned origin.
+ */
+export async function resolveVerifiedEngineOrigin(
+	origin: string,
+	token: string,
+	fetchImpl: WebFetch,
+	signal: AbortSignal,
+): Promise<string | undefined> {
+	const url = URL.canParse(origin) ? new URL(origin) : undefined;
+	if (url === undefined) return undefined;
+	const candidates =
+		url.hostname.toLowerCase() === "localhost"
+			? ["127.0.0.1", "[::1]"].map((host) => `${url.protocol}//${host}:${enginePort(url)}`)
+			: [url.origin];
+	for (const candidate of candidates) {
+		if (await verifyEngineIdentity(candidate, token, fetchImpl, signal)) return candidate;
+	}
+	return undefined;
 }
 
 /**
@@ -250,7 +297,7 @@ export async function waitForEngineConnection({
 							`The running Executor daemon is scoped to ${manifestScopeDir ?? "global state"}, but ${expectedScopeDir ?? "global state"} was requested. Stop the existing daemon before opening this scope.`,
 						);
 					}
-					const verified = await verifyEngineIdentity(
+					const verifiedOrigin = await resolveVerifiedEngineOrigin(
 						manifest.connection.origin,
 						manifest.connection.auth.token,
 						fetchImpl,
@@ -259,9 +306,9 @@ export async function waitForEngineConnection({
 							Math.min(COCKPIT_HEALTH_REQUEST_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
 						),
 					);
-					if (verified) {
+					if (verifiedOrigin !== undefined) {
 						return {
-							cockpitUrl: manifest.connection.origin,
+							cockpitUrl: verifiedOrigin,
 							token: manifest.connection.auth.token,
 						};
 					}

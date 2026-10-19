@@ -88,4 +88,29 @@ describe("daemon host and scope identity", () => {
       }
     }).pipe(Effect.provide(BunServices.layer)),
   );
+
+  it.effect("records the daemon's literal address beside the loopback file key", () =>
+    Effect.gen(function* () {
+      const dataDir = mkdtempSync(join(tmpdir(), "executor-daemon-state-"));
+      process.env.EXECUTOR_DATA_DIR = dataDir;
+
+      try {
+        const scopeId = "scope:/workspace/v6";
+        yield* writeDaemonPointer({
+          hostname: "::1",
+          port: 4790,
+          pid: process.pid,
+          scopeId,
+          scopeDir: null,
+          token: "pointer-token",
+          address: "::1",
+        });
+        const pointer = yield* readDaemonPointer({ hostname: "localhost", scopeId });
+        expect(pointer?.hostname).toBe("localhost");
+        expect(pointer?.address).toBe("::1");
+      } finally {
+        rmSync(dataDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

@@ -245,21 +245,56 @@ export const makeLocalLoginCodes = (clock: () => number = Date.now): LocalLoginC
 };
 
 /**
+ * The literal address a local client reaches a server bound to `bindAddress`
+ * at, without IPv6 brackets: a wildcard bind (`0.0.0.0`, `::`) maps to the
+ * loopback address of the same family, and `localhost` to `127.0.0.1` (which
+ * is what `startServer` binds for it). Local URLs (the server manifest, the
+ * CLI target, every opener URL) publish this literal, never the name
+ * `localhost`: a client resolving `localhost` may reach `::1` first, where
+ * another local user can listen on the same port number as a 127.0.0.1 server.
+ */
+export const localServerAddress = (bindAddress: string): string => {
+  const value = bindAddress
+    .trim()
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, "$1");
+  if (value === "" || value === "0.0.0.0" || value === "localhost") return "127.0.0.1";
+  if (value === "::") return "::1";
+  return value;
+};
+
+/** `http://<address>:<port>` for a literal address, bracketing IPv6. */
+export const localServerOrigin = (address: string, port: number): string => {
+  const literal = localServerAddress(address);
+  return `http://${isIP(literal) === 6 ? `[${literal}]` : literal}:${port}`;
+};
+
+/**
  * `POST {"nonce"}` without a bearer: the server proves it holds the bearer for
- * this data directory by returning `HMAC(token, purpose | port | nonce)`. The
- * CLI checks it before sending the bearer to the port a manifest names, so a
+ * this data directory by returning
+ * `HMAC(token, purpose | address | port | nonce)`, where `address` and `port`
+ * are what the server listens on (see {@link localServerAddress}). The CLI
+ * checks it before sending the bearer to the address a manifest names, so a
  * process that took over a stale manifest's port never receives the token.
- * Binding the port stops a squatter relaying the challenge to the real
- * server on another port.
+ * Binding the port stops a squatter relaying the challenge to the real server
+ * on another port; binding the address stops a squatter on the same port in
+ * the other IP family (`[::1]:<port>` beside `127.0.0.1:<port>`) relaying it
+ * to the real server. Clients must connect to the literal address: a name
+ * such as `localhost` can resolve to the squatter's family first.
  */
 export const LOCAL_IDENTITY_PATH = "/api/local-auth/identity";
 
-const LOCAL_IDENTITY_PURPOSE = "executor-local-identity-v1";
+const LOCAL_IDENTITY_PURPOSE = "executor-local-identity-v2";
 
-/** The identity proof for `nonce` from a server listening on `port`. */
-export const localIdentityProof = (token: string, port: number, nonce: string): string =>
+/** The identity proof for `nonce` from a server listening on `address`:`port`. */
+export const localIdentityProof = (
+  token: string,
+  address: string,
+  port: number,
+  nonce: string,
+): string =>
   createHmac("sha256", token)
-    .update(`${LOCAL_IDENTITY_PURPOSE}|${port}|${nonce}`)
+    .update(`${LOCAL_IDENTITY_PURPOSE}|${localServerAddress(address)}|${port}|${nonce}`)
     .digest("base64url");
 
 /** A client nonce: 32 random bytes, base64url (43 characters). */

@@ -147,7 +147,7 @@ try {
 		throw new Error(`${error.message}\n${daemonOutput.slice(-4000)}`);
 	});
 	const token = manifest.connection.auth.token;
-	// The origin the daemon advertises (and the CLI signs in to), e.g. http://localhost:<port>.
+	// The origin the daemon advertises (and the CLI signs in to): its literal bind address, e.g. http://127.0.0.1:<port>.
 	const origin = new URL(manifest.connection.origin).origin;
 
 	const opened = spawnSync("bun", ["run", executorCli, "open"], { cwd: scopeDir, env: childEnv, encoding: "utf8", timeout: 60_000 });

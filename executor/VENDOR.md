@@ -187,7 +187,16 @@ overlay above (the `img-src https:` allowance and the meta-refresh redirect to
     reached through an IP outside the CORS list), and refuses a browser
     request that has no `Origin` but is `cross-site` or `same-site`.
   - `POST /api/local-auth/identity {"nonce"}` (no bearer) returns
-    `HMAC-SHA256(token, "executor-local-identity-v1|<bound port>|<nonce>")`.
+    `HMAC-SHA256(token, "executor-local-identity-v2|<bound address>|<bound port>|<nonce>")`,
+    where the address is the literal bind address (IPv6 without brackets; a
+    wildcard bind maps to the loopback literal of its family).
+  - `startServer` binds `127.0.0.1` for `localhost` and returns the literal
+    `address` and `origin` it listens on. The CLI publishes that origin
+    (`http://127.0.0.1:<port>` or `http://[::1]:<port>`) in the manifest, the
+    daemon pointer, its targets and every opener URL, never
+    `http://localhost:<port>`: Bun resolves `localhost` to `::1` first, where
+    another local user can listen on the same port and relay to the real
+    server.
   - `GET /api/logo?url=` proxies logos from `integrations.sh` and `svgl.app`
     only (https, no port or userinfo, every redirect hop rechecked against
     the same hosts, at most 3 hops, `image/*`, at most 512 KiB, cached in
@@ -216,7 +225,12 @@ overlay above (the `img-src https:` allowance and the meta-refresh redirect to
   list; Safari when none), not the `.html` handler.
 - `apps/cli/src/local-identity.ts`, `apps/cli/src/main.ts` — before the CLI
   uses a reachable manifest's bearer it verifies the identity proof for the
-  port it connected to; on failure it does not send the bearer and says so.
+  literal address and port it connected to, and sends the bearer only there;
+  a host name never verifies. A `localhost` manifest (from an older server) is
+  re-resolved to `127.0.0.1`, then `[::1]`, and the first literal that proves
+  itself is used. On failure it does not send the bearer and says so. The
+  OAuth redirect base (`EXECUTOR_WEB_BASE_URL` default) keeps `localhost` so
+  registered redirect URIs still match; it carries no bearer.
 - `apps/cli/src/rotate-token-report.ts`, `apps/cli/src/main.ts` —
   `server rotate-token` no longer prints the token; it names `auth.json`.
 - `apps/cli/src/state-refusal.ts`, `apps/cli/src/main.ts`,

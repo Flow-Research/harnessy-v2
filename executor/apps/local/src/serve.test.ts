@@ -26,7 +26,12 @@ import {
   startServer,
   type ServerInstance,
 } from "./serve";
-import { localIdentityProof, signInPageName } from "./serve-shared";
+import {
+  localIdentityProof,
+  localServerAddress,
+  localServerOrigin,
+  signInPageName,
+} from "./serve-shared";
 
 let clientDir: string;
 let homeDir: string;
@@ -68,6 +73,17 @@ const startTestServer = async (
   });
   return `http://127.0.0.1:${server.port}`;
 };
+
+/** Whether this host can listen on [::1] (some CI containers have no IPv6). */
+const ipv6Loopback = (() => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: probing for an IPv6 loopback
+  try {
+    Bun.serve({ hostname: "::1", port: 0, fetch: () => new Response("") }).stop(true);
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 const modeOf = (path: string): number => statSync(path).mode & 0o777;
 
@@ -767,7 +783,7 @@ describe("startServer sign-in exchange page", () => {
 });
 
 describe("startServer identity proof", () => {
-  it("proves the bearer it holds, bound to its port, without receiving it", async () => {
+  it("proves the bearer it holds, bound to its address and port, without receiving it", async () => {
     const baseUrl = await startTestServer();
     const nonce = "n".repeat(43);
     const response = await fetch(`${baseUrl}/api/local-auth/identity`, {
@@ -777,10 +793,55 @@ describe("startServer identity proof", () => {
     });
     expect(response.status).toBe(200);
     const { proof } = (await response.json()) as { proof: string };
-    expect(proof).toBe(localIdentityProof(TOKEN, server!.port, nonce));
-    expect(proof).not.toBe(localIdentityProof(TOKEN, server!.port + 1, nonce));
-    expect(proof).not.toBe(localIdentityProof("other-token", server!.port, nonce));
+    expect(proof).toBe(localIdentityProof(TOKEN, "127.0.0.1", server!.port, nonce));
+    expect(proof).not.toBe(localIdentityProof(TOKEN, "127.0.0.1", server!.port + 1, nonce));
+    // A relay on [::1]:<same port> gets this proof, which does not verify there.
+    expect(proof).not.toBe(localIdentityProof(TOKEN, "::1", server!.port, nonce));
+    expect(proof).not.toBe(localIdentityProof("other-token", "127.0.0.1", server!.port, nonce));
     expect(proof).not.toContain(TOKEN);
+  });
+
+  it("publishes its literal bind address, never localhost", async () => {
+    await startTestServer();
+    expect(server!.address).toBe("127.0.0.1");
+    expect(server!.origin).toBe(`http://127.0.0.1:${server!.port}`);
+    await server!.stop();
+    server = null;
+    // `localhost` binds 127.0.0.1 rather than whichever family resolves first.
+    await startTestServer({ hostname: "localhost" });
+    expect(server!.address).toBe("127.0.0.1");
+    expect(server!.origin).toBe(`http://127.0.0.1:${server!.port}`);
+    const health = await fetch(`${server!.origin}/api/health`);
+    expect(health.status).toBe(200);
+  });
+
+  it.skipIf(!ipv6Loopback)(
+    "on an IPv6 loopback bind publishes [::1], passes that Host and binds ::1 into the proof",
+    async () => {
+      await startTestServer({ hostname: "::1" });
+      expect(server!.address).toBe("::1");
+      expect(server!.origin).toBe(`http://[::1]:${server!.port}`);
+      const nonce = "m".repeat(43);
+      const response = await fetch(`${server!.origin}/api/local-auth/identity`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce }),
+      });
+      expect(response.status).toBe(200);
+      const { proof } = (await response.json()) as { proof: string };
+      expect(proof).toBe(localIdentityProof(TOKEN, "::1", server!.port, nonce));
+      expect(proof).not.toBe(localIdentityProof(TOKEN, "127.0.0.1", server!.port, nonce));
+    },
+  );
+
+  it("maps wildcard and named binds to the loopback literal clients use", () => {
+    expect(localServerAddress("0.0.0.0")).toBe("127.0.0.1");
+    expect(localServerAddress("::")).toBe("::1");
+    expect(localServerAddress("[::1]")).toBe("::1");
+    expect(localServerAddress("LOCALHOST")).toBe("127.0.0.1");
+    expect(localServerOrigin("::1", 4788)).toBe("http://[::1]:4788");
+    expect(localServerOrigin("0.0.0.0", 4788)).toBe("http://127.0.0.1:4788");
+    expect(localServerOrigin("192.168.1.5", 4788)).toBe("http://192.168.1.5:4788");
   });
 
   it("rejects a malformed nonce", async () => {

@@ -22,6 +22,8 @@ export {
 export {
   LOCAL_IDENTITY_PATH,
   localIdentityProof,
+  localServerAddress,
+  localServerOrigin,
   LOGO_PROXY_PATH,
   signInPageName,
 } from "./serve-shared";

@@ -7,10 +7,19 @@ import {
   chooseCliServerConnectionWithActiveLocal,
   describeUnauthorizedCliServer,
   parseCliExecutorServerConnection,
+  sameLocalServerOrigin,
   withCliServerAuthFallback,
 } from "./server-connection";
 
 describe("CLI server connection", () => {
+  it("treats loopback spellings on the same port as the same local server", () => {
+    expect(sameLocalServerOrigin("http://localhost:4788", "http://127.0.0.1:4788")).toBe(true);
+    expect(sameLocalServerOrigin("http://[::1]:4788", "http://127.0.0.1:4788/")).toBe(true);
+    expect(sameLocalServerOrigin("http://127.0.0.1:4788", "http://127.0.0.1:4789")).toBe(false);
+    expect(sameLocalServerOrigin("https://localhost:4788", "http://127.0.0.1:4788")).toBe(false);
+    expect(sameLocalServerOrigin("http://box.lan:4788", "http://127.0.0.1:4788")).toBe(false);
+  });
+
   it("treats localhost HTTP servers as auto-startable daemon targets", () => {
     const connection = parseCliExecutorServerConnection("localhost:4788", {});
 

@@ -26,6 +26,8 @@ import {
   LOCAL_IDENTITY_PATH,
   LOCAL_LOGIN_EXCHANGE_MAX_BYTES,
   localIdentityProof,
+  localServerAddress,
+  localServerOrigin,
   LOGO_PROXY_MAX_BYTES,
   LOGO_PROXY_PATH,
   logoProxyTarget,
@@ -484,7 +486,11 @@ export interface StartServerOptions {
   clientDir?: string;
   /** Embedded web UI map from compiled binary (path → bunfs path). Overrides clientDir. */
   embeddedWebUI?: Record<string, string> | null;
-  /** Bind address. Defaults to 127.0.0.1. Use 0.0.0.0 to listen on all interfaces. */
+  /**
+   * Bind address. Defaults to 127.0.0.1. Use 0.0.0.0 to listen on all
+   * interfaces. `localhost` binds 127.0.0.1 (not whichever family the name
+   * resolves to first), so the published literal is predictable.
+   */
   hostname?: string;
   /**
    * Extra hosts granted credentialed CORS access, on top of the server's own
@@ -517,6 +523,18 @@ export interface StartServerOptions {
 
 export interface ServerInstance {
   port: number;
+  /**
+   * The literal address local clients reach this server at (IPv6 without
+   * brackets): the bind address, with a wildcard bind mapped to loopback.
+   * The identity proof is bound to it.
+   */
+  address: string;
+  /**
+   * `http://<address>:<port>`. Publish this (manifest, CLI target, opener
+   * URLs), never `http://localhost:<port>`: `localhost` can resolve to the
+   * other IP family, where another local user may hold the same port.
+   */
+  origin: string;
   /** The effective bearer token this server validates. Callers publish it in the
    * owner-only manifest and hand it to MCP clients; it is never printed. */
   authToken: string;
@@ -577,7 +595,12 @@ const ignoreCleanupFailure = async (cleanup: () => Promise<unknown>): Promise<vo
 
 export async function startServer(opts: StartServerOptions = {}): Promise<ServerInstance> {
   const port = opts.port ?? parseInt(process.env.PORT ?? "4788", 10);
-  const hostname = opts.hostname ?? "127.0.0.1";
+  const requestedHostname = (opts.hostname ?? "127.0.0.1").trim();
+  const hostname =
+    requestedHostname.toLowerCase() === "localhost"
+      ? "127.0.0.1"
+      : requestedHostname.replace(/^\[(.*)\]$/, "$1");
+  const boundAddress = localServerAddress(hostname);
   // ONE credential, always present: an explicit override or the stable token
   // from auth.json (minted on first run). Auth is unconditionally on — loopback
   // is no longer a free pass, since Executor runs arbitrary code that any local
@@ -743,7 +766,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
           const raw = await readCappedBody(req, LOCAL_LOGIN_EXCHANGE_MAX_BYTES);
           const nonce = raw === null ? null : readIdentityNonce(raw);
           if (nonce === null) return jsonNoStore({ error: "invalid_nonce" }, 400);
-          return jsonNoStore({ proof: localIdentityProof(authToken, boundPort, nonce) });
+          return jsonNoStore({
+            proof: localIdentityProof(authToken, boundAddress, boundPort, nonce),
+          });
         }
 
         // Same-origin integration logos (an <img> cannot carry the bearer).
@@ -845,6 +870,8 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
     let stopped = false;
     return {
       port: server.port!,
+      address: boundAddress,
+      origin: localServerOrigin(boundAddress, server.port!),
       authToken,
       async stop() {
         if (stopped) return;
@@ -862,5 +889,5 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
 if (import.meta.main) {
   const server = await startServer();
-  console.log(`Executor listening on http://localhost:${server.port}`);
+  console.log(`Executor listening on ${server.origin}`);
 }

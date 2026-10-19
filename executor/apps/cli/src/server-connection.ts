@@ -112,9 +112,29 @@ export type ActiveLocalServerDecision =
   | { readonly kind: "use-active"; readonly connection: ExecutorServerConnection }
   | { readonly kind: "conflict"; readonly active: ExecutorLocalServerManifest };
 
-const sameOrigin = (left: string, right: string): boolean =>
-  normalizeExecutorServerConnection({ origin: left }).origin ===
-  normalizeExecutorServerConnection({ origin: right }).origin;
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Whether two origins name the same local server: equal after normalization,
+ * or both plain-http loopback spellings (`localhost`, `127.0.0.1`, `[::1]`) on
+ * the same port. Use it only to pick the active manifest's connection, whose
+ * literal address has been verified; never to choose where a bearer goes.
+ */
+export const sameLocalServerOrigin = (left: string, right: string): boolean => {
+  const a = normalizeExecutorServerConnection({ origin: left }).origin;
+  const b = normalizeExecutorServerConnection({ origin: right }).origin;
+  if (a === b) return true;
+  const [urlA, urlB] = [new URL(a), new URL(b)];
+  return (
+    urlA.protocol === "http:" &&
+    urlB.protocol === "http:" &&
+    LOOPBACK_HOSTNAMES.has(urlA.hostname) &&
+    LOOPBACK_HOSTNAMES.has(urlB.hostname) &&
+    (urlA.port || "80") === (urlB.port || "80")
+  );
+};
+
+const sameOrigin = sameLocalServerOrigin;
 
 export const chooseCliServerConnectionWithActiveLocal = (input: {
   readonly requested: ExecutorServerConnection;

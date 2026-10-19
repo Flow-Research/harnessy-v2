@@ -6,11 +6,23 @@
  * that port, sending it `Authorization: Bearer <token>` would hand it the
  * credential. The CLI sends a fresh nonce to `POST /api/local-auth/identity`
  * (no bearer) and accepts the server only if it answers with
- * `HMAC(token, purpose | port | nonce)`, which only a holder of the token can
- * compute. The port in the MAC is the one the CLI connected to, so a squatter
- * cannot relay the challenge to the real server on another port.
+ * `HMAC(token, purpose | address | port | nonce)`, which only a holder of the
+ * token can compute.
+ *
+ * The address and port in the MAC are the literal ones the CLI connected to,
+ * and the real server proves for the address and port it listens on. A
+ * squatter relaying the challenge to the real server on another port, or on
+ * the same port in the other IP family (`[::1]:<port>` beside
+ * `127.0.0.1:<port>`), therefore gets a proof that does not verify. That only
+ * holds when the CLI connects to a literal address: a name such as
+ * `localhost` may resolve to the squatter's family first, so
+ * {@link verifyLocalServerIdentity} refuses names, and
+ * {@link resolveVerifiedLocalOrigin} turns a `localhost` manifest (written
+ * before servers published their literal address) into the loopback literal
+ * that proves itself.
  */
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 
 import { LOCAL_IDENTITY_PATH, localIdentityProof } from "@executor-js/local";
 
@@ -18,21 +30,44 @@ type IdentityFetch = (input: string, init: RequestInit) => Promise<Response>;
 
 export const LOCAL_IDENTITY_TIMEOUT_MS = 3_000;
 
-export const verifyLocalServerIdentity = async (input: {
-  readonly origin: string;
+interface IdentityCheck {
   readonly token: string;
   readonly fetchImpl?: IdentityFetch;
   readonly timeoutMs?: number;
-}): Promise<boolean> => {
-  const url = (() => {
-    try {
-      return new URL(input.origin);
-    } catch {
-      return null;
-    }
-  })();
-  if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) return false;
-  const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+}
+
+const parseHttpOrigin = (origin: string): URL | null => {
+  try {
+    const url = new URL(origin);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+};
+
+/** The URL's host as an IP literal without brackets, or `null` for a name. */
+const literalAddress = (url: URL): string | null => {
+  const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
+  return isIP(host) === 0 ? null : host;
+};
+
+const portOf = (url: URL): number =>
+  url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+
+/**
+ * Whether the server at `origin` proves it holds `token` for the literal
+ * address and port in `origin`. A host name (not an IP literal) never
+ * verifies, because the connection could land on another address than the
+ * name suggests.
+ */
+export const verifyLocalServerIdentity = async (
+  input: IdentityCheck & { readonly origin: string },
+): Promise<boolean> => {
+  const url = parseHttpOrigin(input.origin);
+  if (url === null) return false;
+  const address = literalAddress(url);
+  if (address === null) return false;
+  const port = portOf(url);
   const nonce = randomBytes(32).toString("base64url");
   const fetchImpl = input.fetchImpl ?? fetch;
   try {
@@ -50,10 +85,33 @@ export const verifyLocalServerIdentity = async (input: {
     const body = (await response.json()) as { readonly proof?: unknown } | null;
     const proof = body?.proof;
     if (typeof proof !== "string") return false;
-    const expected = Buffer.from(localIdentityProof(input.token, port, nonce));
+    const expected = Buffer.from(localIdentityProof(input.token, address, port, nonce));
     const actual = Buffer.from(proof);
     return actual.length === expected.length && timingSafeEqual(actual, expected);
   } catch {
     return false;
   }
+};
+
+/**
+ * The literal origin to use for a manifest's server, or `null` when no
+ * candidate proves it holds `token`. A literal origin is checked as is. A
+ * `localhost` origin (from a server that published the name) is re-resolved:
+ * `127.0.0.1` and then `[::1]` on the same port, and the first that proves
+ * itself for its own address wins. Any other name is refused. Callers must
+ * send the bearer only to the returned origin.
+ */
+export const resolveVerifiedLocalOrigin = async (
+  input: IdentityCheck & { readonly origin: string },
+): Promise<string | null> => {
+  const url = parseHttpOrigin(input.origin);
+  if (url === null) return null;
+  const candidates =
+    url.hostname.toLowerCase() === "localhost"
+      ? ["127.0.0.1", "[::1]"].map((host) => `${url.protocol}//${host}:${portOf(url)}`)
+      : [url.origin];
+  for (const candidate of candidates) {
+    if (await verifyLocalServerIdentity({ ...input, origin: candidate })) return candidate;
+  }
+  return null;
 };
