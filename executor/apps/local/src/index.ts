@@ -13,8 +13,18 @@ export {
   type LocalExecutor,
 } from "./executor";
 export { createMcpRequestHandler, runMcpStdioServer, type McpRequestHandler } from "./mcp";
-export { startServer, type StartServerOptions, type ServerInstance } from "./serve";
-export { signInPageName } from "./serve-shared";
+export {
+  SIGN_IN_PAGE_PATH,
+  startServer,
+  type StartServerOptions,
+  type ServerInstance,
+} from "./serve";
+export {
+  LOCAL_IDENTITY_PATH,
+  localIdentityProof,
+  LOGO_PROXY_PATH,
+  signInPageName,
+} from "./serve-shared";
 export {
   DataDirOwnershipHeld,
   findDataDirOwnershipHeld,
@@ -25,5 +35,7 @@ export {
   rotateLocalAuthToken,
   localAuthTokenPath,
   secureLocalStateDir,
+  isLocalStateRefusal,
+  LocalStateRefusal,
   type StateDirChecks,
 } from "./auth";

@@ -18,6 +18,7 @@
  * during boot without a runtime.
  */
 
+import { execFileSync } from "node:child_process";
 import {
   closeSync,
   constants as fsConstants,
@@ -27,18 +28,58 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
+  realpathSync,
   type Stats,
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 
-const refuseToStart = (message: string): never => {
+/**
+ * Startup refused because the local state cannot be made safe. Carries a
+ * recovery command so the operator (or a supervisor log) sees what to do.
+ * The CLI recognizes it with {@link isLocalStateRefusal} and, under a
+ * supervisor, backs off instead of crash-looping.
+ */
+export class LocalStateRefusal extends Error {
+  readonly recovery: string;
+  constructor(reason: string, recovery: string) {
+    super(`Refusing to start: ${reason}\nTo recover: ${recovery}`);
+    this.name = "LocalStateRefusal";
+    this.recovery = recovery;
+  }
+}
+
+/** Whether `cause`, or any error in its `cause` chain, is a {@link LocalStateRefusal}. */
+export const isLocalStateRefusal = (cause: unknown): boolean => {
+  let current: unknown = cause;
+  for (let depth = 0; depth < 8 && typeof current === "object" && current !== null; depth++) {
+    if ("name" in current && current.name === "LocalStateRefusal") return true;
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return false;
+};
+
+/** Quote a path for a copy-pasteable POSIX shell command. */
+const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
+
+const refuseToStart = (message: string, recovery?: string): never => {
+  if (recovery !== undefined) {
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: plain boot-time check outside the Effect graph; refusing to start is the intended outcome
+    throw new LocalStateRefusal(message, recovery);
+  }
   // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time check outside the Effect graph; refusing to start is the intended outcome
   throw new Error(`Refusing to start: ${message}`);
 };
+
+/** Recovery for a symlinked state path: replace the link with a real entry. */
+const symlinkRecovery = (path: string, kind: "directory" | "file"): string =>
+  kind === "directory"
+    ? `use the real directory instead of the link: export EXECUTOR_DATA_DIR="$(realpath ${shellQuote(path)})"`
+    : `remove the link so a fresh owner-only file is written: rm ${shellQuote(path)} (for auth.json a new token is minted; reconnect MCP clients afterwards)`;
 
 /**
  * Resolve the executor data directory — `EXECUTOR_DATA_DIR` or `~/.executor`.
@@ -76,6 +117,13 @@ const O_DIRECTORY = fsConstants.O_DIRECTORY ?? 0;
 const isErrnoCode = (cause: unknown, code: string): boolean =>
   typeof cause === "object" && cause !== null && "code" in cause && cause.code === code;
 
+const readMacAcl = (path: string): string =>
+  execFileSync("/bin/ls", ["-lde", path], { encoding: "utf8", timeout: 5_000 });
+
+const removeMacAcl = (path: string): void => {
+  execFileSync("/bin/chmod", ["-N", path], { stdio: "ignore", timeout: 5_000 });
+};
+
 /**
  * System calls the state checks use, injectable so tests can simulate a
  * foreign owner or a mode that cannot be repaired.
@@ -83,11 +131,22 @@ const isErrnoCode = (cause: unknown, code: string): boolean =>
 export interface StateDirChecks {
   readonly getuid?: () => number | undefined;
   readonly fchmod?: (fd: number, mode: number) => void;
+  /** The user's home directory; `HOME` (read on every call) by default. */
+  readonly homedir?: () => string;
+  readonly platform?: NodeJS.Platform;
+  /** `ls -lde` output for a path (macOS ACL listing). */
+  readonly readAcl?: (path: string) => string;
+  /** Remove every ACL entry from a path (`chmod -N`). */
+  readonly removeAcl?: (path: string) => void;
 }
 
 const defaultChecks: Required<StateDirChecks> = {
   getuid: () => process.getuid?.(),
   fchmod: fchmodSync,
+  homedir: () => process.env.HOME || homedir(),
+  platform: process.platform,
+  readAcl: readMacAcl,
+  removeAcl: removeMacAcl,
 };
 
 /**
@@ -104,14 +163,26 @@ const assertOwned = (
 ): Stats => {
   const stat = fstatSync(fd);
   if (kind === "directory" ? !stat.isDirectory() : !stat.isFile()) {
-    refuseToStart(`${path} is not a ${kind === "directory" ? "directory" : "regular file"}.`);
+    refuseToStart(
+      `${path} is not a ${kind === "directory" ? "directory" : "regular file"}.`,
+      `move it aside so it is recreated: mv ${shellQuote(path)} ${shellQuote(`${path}.bad`)}`,
+    );
   }
   const uid = checks.getuid();
   if (uid !== undefined && stat.uid !== uid) {
-    refuseToStart(`${path} is owned by uid ${stat.uid}, not the current user (uid ${uid}).`);
+    refuseToStart(
+      `${path} is owned by uid ${stat.uid}, not the current user (uid ${uid}).`,
+      `if this is your state, take it back: sudo chown -R ${uid} ${shellQuote(path)}; otherwise set EXECUTOR_DATA_DIR to a directory you own.`,
+    );
   }
   if (kind === "file" && stat.nlink !== 1) {
-    refuseToStart(`${path} has ${stat.nlink} hard links; expected exactly one.`);
+    // A backup tool (rsnapshot, `cp -al`) can leave a second link. Copying the
+    // file and renaming the copy over it gives this name its own inode and
+    // leaves the other link untouched.
+    refuseToStart(
+      `${path} has ${stat.nlink} hard links; expected exactly one.`,
+      `give it its own copy: cp -p ${shellQuote(path)} ${shellQuote(`${path}.tmp`)} && mv -f ${shellQuote(`${path}.tmp`)} ${shellQuote(path)}`,
+    );
   }
   return stat;
 };
@@ -127,9 +198,12 @@ const enforceMode = (
   kind: "directory" | "file",
   mode: number,
   checks: Required<StateDirChecks>,
+  beforeRepair?: () => void,
 ): void => {
   const link = lstatSync(path);
-  if (link.isSymbolicLink()) refuseToStart(`${path} is a symbolic link.`);
+  if (link.isSymbolicLink()) {
+    refuseToStart(`${path} is a symbolic link.`, symlinkRecovery(path, kind));
+  }
   const fd = openSync(
     path,
     fsConstants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK | (kind === "directory" ? O_DIRECTORY : 0),
@@ -140,13 +214,91 @@ const enforceMode = (
     if (stat.dev !== link.dev || stat.ino !== link.ino) {
       refuseToStart(`${path} changed while its permissions were checked.`);
     }
-    if ((stat.mode & 0o777) === mode) return;
-    checks.fchmod(fd, mode);
-    if ((fstatSync(fd).mode & 0o777) !== mode) {
-      refuseToStart(`could not set ${path} to mode ${mode.toString(8)}.`);
+    if ((stat.mode & 0o777) !== mode) {
+      beforeRepair?.();
+      checks.fchmod(fd, mode);
+      if ((fstatSync(fd).mode & 0o777) !== mode) {
+        refuseToStart(
+          `could not set ${path} to mode ${mode.toString(8)}.`,
+          `set it yourself: chmod ${mode.toString(8)} ${shellQuote(path)}`,
+        );
+      }
     }
   } finally {
     closeSync(fd);
+  }
+  enforceNoAcl(path, checks);
+};
+
+/**
+ * macOS access control lists can grant other users access that the mode bits
+ * do not show. An `allow` entry on a state path is removed (`chmod -N`, the
+ * ACL counterpart of the mode repair); a deny entry grants nothing and is
+ * left alone. Startup is refused if an allow entry survives the repair.
+ */
+const enforceNoAcl = (path: string, checks: Required<StateDirChecks>): void => {
+  if (checks.platform !== "darwin") return;
+  if (!hasAllowAclEntry(checks.readAcl(path))) return;
+  checks.removeAcl(path);
+  if (hasAllowAclEntry(checks.readAcl(path))) {
+    refuseToStart(
+      `${path} has an access control list that grants other users access.`,
+      `remove it yourself: chmod -N ${shellQuote(path)}`,
+    );
+  }
+};
+
+/** `ls -lde` prints one ACL entry per line as ` 0: group:staff allow read,...`. */
+export const hasAllowAclEntry = (listing: string): boolean =>
+  listing.split("\n").some((line) => /^\s*\d+:\s+\S.*\sallow\s/.test(line));
+
+/**
+ * Names Executor itself keeps in its data directory: `server-control/`, the
+ * database and its sidecars, the integrations cache, server profiles and the
+ * daemon records and start locks (`daemon-*.json`, `*.json.lock`).
+ */
+const EXECUTOR_DATA_ENTRY =
+  /^(?:server-control|data\.db.*|cache|server-connections\.json(?:\.lock)?|daemon-.*\.json(?:\.lock)?|\.DS_Store)$/;
+
+/**
+ * Before tightening an existing data directory's mode, make sure it is
+ * Executor's own: a `chmod 700` on a shared or project directory would lock
+ * other people (or other tools) out of it. Refused: the home directory
+ * itself; a directory outside the user's home unless it holds only entries
+ * Executor creates (an empty one may be a shared directory made for other
+ * users); and a directory holding entries Executor does not create, unless an
+ * earlier run already keeps its `server-control/` there. The operator can
+ * tighten it by hand or pick another directory.
+ */
+const assertOwnDataDir = (dataDir: string, checks: Required<StateDirChecks>): void => {
+  const realDir = realpathSync(dataDir);
+  const home = checks.homedir();
+  const realHome = (() => {
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: a missing home directory just means nothing is inside it
+    try {
+      return realpathSync(home);
+    } catch {
+      return resolve(home);
+    }
+  })();
+  const inside = relative(realHome, realDir);
+  const entries = readdirSync(dataDir);
+  const unrelated = entries.filter((name) => !EXECUTOR_DATA_ENTRY.test(name));
+  const recovery = `pick a new directory under your home (for example EXECUTOR_DATA_DIR=~/.executor), or, if this directory really is only for Executor, tighten it yourself: chmod 700 ${shellQuote(dataDir)}`;
+  const refuse = (why: string): never =>
+    refuseToStart(
+      `${dataDir} ${why} and is readable by other users; Executor will not change its permissions.`,
+      recovery,
+    );
+  if (inside === "") refuse("is your home directory");
+  const outsideHome = inside.startsWith("..") || isAbsolute(inside);
+  if (outsideHome && (entries.length === 0 || unrelated.length > 0)) {
+    refuse("is outside your home directory");
+  }
+  if (unrelated.length > 0 && !entries.includes("server-control")) {
+    refuse(
+      `holds files Executor did not create (${unrelated.slice(0, 3).join(", ")}${unrelated.length > 3 ? ", ..." : ""})`,
+    );
   }
 };
 
@@ -183,7 +335,9 @@ export const secureLocalStateDir = (
     return;
   }
   ensureDirectory(dataDir, true);
-  enforceMode(dataDir, "directory", PRIVATE_DIR_MODE, checks);
+  enforceMode(dataDir, "directory", PRIVATE_DIR_MODE, checks, () =>
+    assertOwnDataDir(dataDir, checks),
+  );
   ensureDirectory(controlDir, false);
   enforceMode(controlDir, "directory", PRIVATE_DIR_MODE, checks);
   for (const name of SECRET_FILES) {
@@ -198,7 +352,9 @@ const readToken = (path: string): string | null => {
   try {
     fd = openSync(path, fsConstants.O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
   } catch (cause) {
-    if (isErrnoCode(cause, "ELOOP")) refuseToStart(`${path} is a symbolic link.`);
+    if (isErrnoCode(cause, "ELOOP")) {
+      refuseToStart(`${path} is a symbolic link.`, symlinkRecovery(path, "file"));
+    }
     return null;
   }
   // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: the descriptor must be closed whether or not the ownership check refuses
@@ -235,7 +391,9 @@ const writeToken = (dataDir: string, token: string): string => {
       SECRET_FILE_MODE,
     );
   } catch (cause) {
-    if (isErrnoCode(cause, "ELOOP")) refuseToStart(`${path} is a symbolic link.`);
+    if (isErrnoCode(cause, "ELOOP")) {
+      refuseToStart(`${path} is a symbolic link.`, symlinkRecovery(path, "file"));
+    }
     // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: other open failures propagate unchanged
     throw cause;
   }

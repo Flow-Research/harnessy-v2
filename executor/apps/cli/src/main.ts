@@ -4,6 +4,7 @@ import "./native-bindings";
 
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 // Make sibling binaries and standard GUI-missing CLI install locations
@@ -91,6 +92,7 @@ import {
   type ExecutorServerConnectionInput,
 } from "@executor-js/sdk/shared";
 import {
+  browserOpenCommand,
   decodeAccessTokenClaims,
   discoverCliLogin,
   launchOpenCommand,
@@ -109,7 +111,18 @@ import {
   type StartServerOptions,
 } from "@executor-js/local";
 import { fetchIntegrations } from "./integrations";
-import { isLoopbackHttpOrigin, signInPageOpenCommand, writeSignInPage } from "./sign-in-page";
+import { verifyLocalServerIdentity } from "./local-identity";
+import { rotateTokenReport } from "./rotate-token-report";
+import { backOffOnSupervisedStateRefusal } from "./state-refusal";
+import {
+  chooseSignInDelivery,
+  isLoopbackHttpOrigin,
+  loopbackSignInUrl,
+  macDefaultBrowserBundleId,
+  readLaunchServicesJson,
+  signInPageOpenCommand,
+  writeSignInPage,
+} from "./sign-in-page";
 import {
   buildDaemonSpawnSpec,
   chooseDaemonPort,
@@ -240,7 +253,16 @@ const readReachableLocalServerHint = (): Effect.Effect<
     if (!manifest) return null;
 
     if (yield* isServerReachable(manifest.connection.origin)) {
-      return manifest;
+      const auth = manifest.connection.auth;
+      if (auth?.kind !== "bearer") return manifest;
+      // Never hand the bearer to whatever now listens on a stale manifest's
+      // port: the server must first prove it holds the same token.
+      const verified = yield* Effect.promise(() =>
+        verifyLocalServerIdentity({ origin: manifest.connection.origin, token: auth.token }),
+      );
+      if (verified) return manifest;
+      warnUnverifiedLocalServer(manifest.connection.origin);
+      return null;
     }
 
     if (!isPidAlive(manifest.pid)) {
@@ -252,6 +274,18 @@ const readReachableLocalServerHint = (): Effect.Effect<
   });
 
 const readActiveLocalServerManifest = readReachableLocalServerHint;
+
+let warnedUnverifiedOrigin: string | null = null;
+const warnUnverifiedLocalServer = (origin: string): void => {
+  if (warnedUnverifiedOrigin === origin) return;
+  warnedUnverifiedOrigin = origin;
+  console.error(
+    [
+      `The server at ${origin} did not prove it is the Executor for this data directory, so it was not sent the token.`,
+      "If it is an Executor from before this check, restart it (executor daemon stop, then start it again); otherwise another program now uses that port.",
+    ].join("\n"),
+  );
+};
 
 const normalizeDaemonScopeDir = (dir: string): string => {
   const resolved = resolve(dir);
@@ -1143,7 +1177,7 @@ const runForegroundSession = (input: {
             `\n⚠  Listening on ${input.hostname}. Executor runs arbitrary commands — only expose on trusted networks.`,
           );
           if (input.allowedHosts.length > 0) {
-            console.log(`   Extra CORS origins: ${input.allowedHosts.join(", ")}`);
+            console.log(`   Extra CORS origins and Host names: ${input.allowedHosts.join(", ")}`);
           }
         }
 
@@ -1245,7 +1279,15 @@ const runDaemonSession = (input: {
         allowedHosts: input.allowedHosts,
         authToken: input.authToken,
         embeddedWebUI,
-      });
+      }).pipe(
+        // Unsafe local state does not fix itself: under a supervisor, back off
+        // and exit with EX_CONFIG instead of crash-looping.
+        Effect.tapError((cause) =>
+          Effect.promise(() =>
+            backOffOnSupervisedStateRefusal(cause, Boolean(process.env.EXECUTOR_SUPERVISED)),
+          ),
+        ),
+      );
       if (startResult.kind === "attached") {
         if (shouldEmitDesktopSidecarSentinels()) {
           console.log(DESKTOP_SIDECAR_ATTACHED_SENTINEL);
@@ -2278,19 +2320,18 @@ const serverRemoveCommand = Command.make(
 
 const serverRotateTokenCommand = Command.make("rotate-token", {}, () =>
   Effect.gen(function* () {
-    const token = rotateLocalAuthToken();
-    console.log("Rotated the local server bearer token.");
-    console.log(`Stored in ${localAuthTokenPath()}`);
-
+    rotateLocalAuthToken();
     const manifest = yield* readLocalServerManifest();
-    if (manifest && isPidAlive(manifest.pid)) {
-      console.log(
-        `\n⚠  A local server is running at ${manifest.connection.origin} (pid ${manifest.pid}).`,
-      );
-      console.log("   Restart it to apply the new token.");
+    for (const line of rotateTokenReport({
+      tokenPath: localAuthTokenPath(),
+      runningServer:
+        manifest && isPidAlive(manifest.pid)
+          ? { origin: manifest.connection.origin, pid: manifest.pid }
+          : null,
+      cliPrefix,
+    })) {
+      console.log(line);
     }
-    console.log(`\nNew token: ${token}`);
-    console.log("Re-run your MCP client connect command with the new token.");
   }),
 ).pipe(Command.withDescription("Rotate the local server's bearer token (auth.json)"));
 
@@ -2600,7 +2641,7 @@ const webCommand = Command.make(
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
-          "For --foreground, grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there. Not needed to reach the server from another host (the bearer token is the gate). The server's own localhost origins are always allowed.",
+          "For --foreground, grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there, and lets the server answer requests whose Host is that name: a DNS name other than localhost or the bind name is refused (DNS-rebinding defense), so reaching the server under a tailnet or LAN name needs it; IP addresses need nothing. The server's own localhost origins are always allowed.",
         ),
       ),
     authToken: Options.string("auth-token")
@@ -2652,7 +2693,7 @@ const daemonRunCommand = Command.make(
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
-          "Grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there. Not needed to reach the server from another host (the bearer token is the gate). The server's own localhost origins are always allowed.",
+          "Grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there, and lets the server answer requests whose Host is that name: a DNS name other than localhost or the bind name is refused (DNS-rebinding defense), so reaching the server under a tailnet or LAN name needs it; IP addresses need nothing. The server's own localhost origins are always allowed.",
         ),
       ),
     authToken: Options.string("auth-token")
@@ -3186,6 +3227,19 @@ const openRunningLocalWebApp = (): Effect.Effect<
       token && isLoopbackHttpOrigin(origin) ? yield* mintLocalLoginCode(origin, token) : null;
     console.log(`Opening ${origin}/`);
     if (code !== null) {
+      const delivery = chooseSignInDelivery({ platform: process.platform, env: process.env });
+      const url = delivery === "loopback-url" ? loopbackSignInUrl(origin, code) : undefined;
+      const urlCommand = url === undefined ? undefined : browserOpenCommand(url);
+      if (urlCommand) {
+        // The browser cannot open a file page (snap/flatpak). The opener gets
+        // a loopback URL to the daemon's exchange page; the single-use code is
+        // only in the fragment, is not printed, and expires in 60 seconds.
+        yield* Effect.sync(() => launchOpenCommand(urlCommand));
+        console.log(
+          `If no browser opened, run \`${cliPrefix} open\` again; the sign-in link is single-use and is not printed.`,
+        );
+        return;
+      }
       // The single-use code is not printed and not passed to the opener: it goes
       // into an owner-only redirect page in server-control/, and the opener only
       // sees that page's path.
@@ -3201,13 +3255,23 @@ const openRunningLocalWebApp = (): Effect.Effect<
         },
         catch: (cause) => cause,
       }).pipe(Effect.orElseSucceed(() => undefined));
-      const openCommand = page === undefined ? undefined : signInPageOpenCommand(page);
+      const browserBundleId =
+        process.platform === "darwin"
+          ? macDefaultBrowserBundleId(readLaunchServicesJson(process.env.HOME || homedir()))
+          : undefined;
+      const openCommand =
+        page === undefined
+          ? undefined
+          : signInPageOpenCommand(page, process.platform, browserBundleId);
       if (page !== undefined && openCommand) {
         yield* Effect.sync(() => launchOpenCommand(openCommand));
         // The opener fails silently on headless hosts. The page path is no
         // secret (an owner-only file in server-control/), so offer it by hand.
         console.log(
           `If no browser opened, open ${pathToFileURL(page).href} within 60 seconds, or run \`${cliPrefix} open\` again.`,
+        );
+        console.log(
+          `If your browser cannot open that file (a snap or flatpak browser), run \`EXECUTOR_SIGN_IN=url ${cliPrefix} open\`.`,
         );
         return;
       }

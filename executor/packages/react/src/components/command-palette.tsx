@@ -5,7 +5,11 @@ import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { PlusIcon } from "lucide-react";
 import { trackEvent } from "../api/analytics";
 import type { Integration } from "@executor-js/sdk/shared";
-import { IntegrationFavicon, integrationPresetIconUrl } from "./integration-favicon";
+import {
+  IntegrationFavicon,
+  integrationPresetIconUrl,
+  proxiedLogoSrc,
+} from "./integration-favicon";
 import { integrationsOptimisticAtom } from "../api/atoms";
 import { useIntegrationPlugins } from "@executor-js/sdk/client";
 import {
@@ -193,9 +197,9 @@ export function CommandPalette(props: { open: boolean; onOpenChange: (open: bool
                 value={`preset ${e.presetName} ${e.presetSummary ?? ""} ${e.pluginLabel}`}
                 onSelect={() => goToPreset(e.pluginKey, e.presetId, e.presetUrl)}
               >
-                {e.presetIcon ? (
+                {proxiedLogoSrc(e.presetIcon) ? (
                   <img
-                    src={e.presetIcon}
+                    src={proxiedLogoSrc(e.presetIcon)!}
                     alt=""
                     className="size-4 shrink-0 object-contain"
                     loading="lazy"

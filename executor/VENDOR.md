@@ -165,6 +165,113 @@ Known gaps, not fixed by this overlay:
 - An operator-supplied `--auth-token` stays visible in the process list.
 - Windows gets no mode, owner or link enforcement.
 
+### Cockpit hardening follow-up overlay — 2026-10-19
+
+Follow-ups from the #124 security review, tracked in issue #128. Same reason
+as the overlay above: the server, the token store, the CLI opener and the SPA
+bootstrap exist only in these vendored files. On an upstream sync, reapply it
+unless upstream ships an equivalent. Some items supersede parts of the
+overlay above (the `img-src https:` allowance and the meta-refresh redirect to
+`/#_code=`).
+
+- `apps/local/src/serve-shared.ts`, `apps/local/src/serve.ts` —
+  - Host gate (DNS rebinding): every request, static assets included, needs a
+    `Host` that is an IP literal, `localhost` / `*.localhost`, the bind
+    hostname or an `--allowed-host` name; anything else gets `421`. A tailnet
+    or LAN DNS name now needs `--allowed-host` (IP literals need nothing).
+  - Sign-in exchange page `GET /auth/sign-in` plus `GET /auth/sign-in.js`
+    (same CSP, no inline script): the script replaces the fragment out of the
+    URL first, spends the code, stores the bearer under `executor.authToken`
+    and leaves with `location.replace("/")`.
+  - The code exchange also accepts `Sec-Fetch-Site: same-origin` (a page
+    reached through an IP outside the CORS list), and refuses a browser
+    request that has no `Origin` but is `cross-site` or `same-site`.
+  - `POST /api/local-auth/identity {"nonce"}` (no bearer) returns
+    `HMAC-SHA256(token, "executor-local-identity-v1|<bound port>|<nonce>")`.
+  - `GET /api/logo?url=` proxies logos from `integrations.sh` and `svgl.app`
+    only (https, no port or userinfo, `image/*`, at most 512 KiB, cached in
+    memory for a day, served with `sandbox` CSP and
+    `Cross-Origin-Resource-Policy: same-origin`). The UI CSP is now
+    `img-src 'self' data: blob:`. `StartServerOptions.logoFetch` is a test hook.
+- `apps/local/src/auth.ts`, `apps/local/src/index.ts` —
+  - Refusals carry a recovery command (`LocalStateRefusal`,
+    `isLocalStateRefusal`): copy-and-rename for a hard-linked file, `rm` for a
+    symlinked file, `realpath` for a symlinked data directory, `chown` for a
+    foreign owner, `chmod` / `chmod -N` when a repair fails. Unsafe state is
+    still refused, never repaired through a link.
+  - Before tightening an existing data directory, it must be Executor's own:
+    not the home directory; outside the home only when it holds nothing but
+    Executor's entries (`EXECUTOR_DATA_ENTRY`); inside the home not holding
+    other files unless an earlier run left `server-control/` there.
+  - macOS: an ACL `allow` entry on a state path is removed (`chmod -N`) and
+    startup is refused if it survives. Deny entries are left alone.
+- `apps/cli/src/sign-in-page.ts`, `apps/cli/src/main.ts` — the `file:` page
+  now uses `location.replace` (meta refresh only in `<noscript>`) and targets
+  `/auth/sign-in#_code=`. On Linux, a snap or flatpak default browser gets the
+  loopback URL `http://<loopback>:<port>/auth/sign-in#_code=<code>` instead of
+  the file page (`EXECUTOR_SIGN_IN=url|file` overrides). On macOS the file page
+  is opened with `open -b <default browser>` (from the LaunchServices handler
+  list; Safari when none), not the `.html` handler.
+- `apps/cli/src/local-identity.ts`, `apps/cli/src/main.ts` — before the CLI
+  uses a reachable manifest's bearer it verifies the identity proof for the
+  port it connected to; on failure it does not send the bearer and says so.
+- `apps/cli/src/rotate-token-report.ts`, `apps/cli/src/main.ts` —
+  `server rotate-token` no longer prints the token; it names `auth.json`.
+- `apps/cli/src/state-refusal.ts`, `apps/cli/src/main.ts`,
+  `apps/cli/src/service.ts` — a supervised daemon (`EXECUTOR_SUPERVISED`) that
+  refuses unsafe state logs the recovery command, waits 60 s and exits 78
+  (`EX_CONFIG`); the systemd unit sets `RestartPreventExitStatus=78`.
+- `packages/react/src/api/local-auth.tsx` — `applyBearer` attaches the token
+  only when the active connection is the serving (issuing) origin.
+- `packages/react/src/components/integration-favicon.tsx`,
+  `components/command-palette.tsx`, `pages/integrations.tsx` — logos go
+  through `/api/logo` (`proxiedLogoSrc`); icons on other hosts fall back to
+  the domain-derived integrations.sh logo.
+- Tests: `apps/local/src/serve.test.ts`, `apps/cli/src/sign-in-page.test.ts`,
+  `apps/cli/src/local-identity.test.ts`, `apps/cli/src/cli-secret-handling.test.ts`,
+  `apps/cli/src/state-refusal.test.ts`,
+  `packages/react/src/api/local-auth.test.ts`,
+  `packages/react/src/components/integration-favicon.test.tsx`; the
+  CI-only real-browser check `../scripts/check-executor-cockpit-browser.mjs`.
+  Harnessy-owned: `harnessy web` verifies the same identity proof
+  (`packages/harnessy-core/src/cli/web.ts`).
+
+Known gaps, not fixed by this overlay:
+
+- Global browser history. The exchange page removes the code from the URL
+  before anything else runs, and every hop uses `location.replace`, so session
+  history (back/forward) never keeps it. A browser may still record the
+  visited URL, fragment included, in its global history database when the
+  page commits, before any script runs; a page cannot prevent that. By then
+  the code is spent, and it expires after 60 s either way.
+- The loopback-URL fallback puts the code in the opener's argument list, so
+  on Linux another local user can see it with `ps` until the browser spends
+  it, and could race to spend it first. It is used only for snap or flatpak
+  default browsers (or `EXECUTOR_SIGN_IN=url`); the code is single-use and
+  lives 60 s, and a lost race leaves the user at the sign-in gate rather than
+  signed in.
+- Linux POSIX ACLs are not inspected: `chmod 700` sets the ACL mask to none,
+  which already removes the access named entries grant. macOS ACLs are
+  checked through `/bin/ls -lde`, so they are read by path, after the
+  descriptor checks.
+- launchd cannot stop restarting on an exit status; the 60 s wait before
+  exiting bounds it to one attempt a minute. The Windows Scheduled Task keeps
+  its RestartOnFailure policy (Windows has no state refusals).
+- The data-directory check recognizes Executor's own entries by name
+  (`EXECUTOR_DATA_ENTRY`). If upstream starts writing a new entry before the
+  first server start, add it there; the check only runs when a mode repair
+  is needed.
+- An Executor daemon from before this overlay has no identity endpoint, so a
+  newer CLI or `harnessy web` refuses to send it the bearer until it is
+  restarted.
+- The logo proxy is unauthenticated (an `<img>` cannot carry the bearer). Any
+  local client can make the server fetch logos from the two allowed hosts.
+  The Host gate keeps rebinding pages away from it.
+- The real-browser check covers headless Chromium on Linux in CI only, not
+  Firefox or Safari.
+- `/api/logo` exists only in `apps/local`; the excluded cloud and desktop
+  apps would need it before using these `packages/react` components.
+
 ### Existing migration deltas — 2026-09-05
 
 These are observed uncommitted changes against the V2 checkout baseline,
@@ -222,8 +329,9 @@ separate preservation boundary above:
 
 `npm run build` produces `apps/local/dist`; then `npm run hsy:web` starts the
 vendored daemon on `127.0.0.1:4788`, serves those static assets, and opens the
-browser on a one-time `#_code=` sign-in URL (see the local cockpit hardening
-overlay above). Normal Harnessy usage does not keep a Vite development server running.
+browser on the one-time sign-in page, which hands the daemon's
+`/auth/sign-in#_code=` exchange page a single-use code (see the cockpit
+hardening overlays above). Normal Harnessy usage does not keep a Vite development server running.
 
 ### Runtime-split guard
 

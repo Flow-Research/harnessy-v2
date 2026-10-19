@@ -1,3 +1,4 @@
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -158,7 +159,57 @@ export interface WaitForEngineConnectionOptions {
 	readonly signal?: AbortSignal;
 }
 
-/** Follow Executor's live manifest until it advertises this data directory and answers health checks. */
+const ENGINE_IDENTITY_PATH = "/api/local-auth/identity";
+const ENGINE_IDENTITY_PURPOSE = "executor-local-identity-v1";
+
+/** The proof an Executor holding `token` and listening on `port` returns for `nonce`. */
+export const engineIdentityProof = (token: string, port: number, nonce: string): string =>
+	createHmac("sha256", token).update(`${ENGINE_IDENTITY_PURPOSE}|${port}|${nonce}`).digest("base64url");
+
+/**
+ * Ask the server at `origin` to prove it holds `token` (an HMAC over a fresh
+ * nonce and the port connected to) before anything sends it the bearer. A
+ * process that took over a stale manifest's port cannot answer.
+ */
+export async function verifyEngineIdentity(
+	origin: string,
+	token: string,
+	fetchImpl: WebFetch,
+	signal: AbortSignal,
+): Promise<boolean> {
+	const url = URL.canParse(origin) ? new URL(origin) : undefined;
+	if (url === undefined || (url.protocol !== "http:" && url.protocol !== "https:")) return false;
+	const port = url.port === "" ? (url.protocol === "https:" ? 443 : 80) : Number(url.port);
+	const nonce = randomBytes(32).toString("base64url");
+	const response = await fetchImpl(`${url.origin}${ENGINE_IDENTITY_PATH}`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ nonce }),
+		redirect: "error",
+		signal,
+	}).then(
+		(value) => value,
+		() => undefined,
+	);
+	if (response === undefined) return false;
+	if (!response.ok) {
+		await response.body?.cancel();
+		return false;
+	}
+	const body = (await response.json().then(
+		(value: unknown) => value,
+		() => undefined,
+	)) as { readonly proof?: unknown } | undefined;
+	if (typeof body?.proof !== "string") return false;
+	const expected = Buffer.from(engineIdentityProof(token, port, nonce));
+	const actual = Buffer.from(body.proof);
+	return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+/**
+ * Follow Executor's live manifest until it advertises this data directory,
+ * answers health checks and proves it holds the manifest's token.
+ */
 export async function waitForEngineConnection({
 	dataDir,
 	fetchImpl = globalThis.fetch,
@@ -169,6 +220,7 @@ export async function waitForEngineConnection({
 	const resolvedDataDir = resolve(dataDir);
 	const manifestPath = join(resolvedDataDir, "server-control", "server.json");
 	const deadline = Date.now() + readyTimeoutMillis;
+	let unverifiedOrigin: string | undefined;
 	for (;;) {
 		if (signal?.aborted) throw signal.reason;
 		const manifest = await readFile(manifestPath, "utf8")
@@ -198,16 +250,33 @@ export async function waitForEngineConnection({
 							`The running Executor daemon is scoped to ${manifestScopeDir ?? "global state"}, but ${expectedScopeDir ?? "global state"} was requested. Stop the existing daemon before opening this scope.`,
 						);
 					}
-					return {
-						cockpitUrl: manifest.connection.origin,
-						token: manifest.connection.auth.token,
-					};
+					const verified = await verifyEngineIdentity(
+						manifest.connection.origin,
+						manifest.connection.auth.token,
+						fetchImpl,
+						requestSignal(
+							signal,
+							Math.min(COCKPIT_HEALTH_REQUEST_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
+						),
+					);
+					if (verified) {
+						return {
+							cockpitUrl: manifest.connection.origin,
+							token: manifest.connection.auth.token,
+						};
+					}
+					unverifiedOrigin = manifest.connection.origin;
 				}
 			} else {
 				await response?.body?.cancel();
 			}
 		}
 		if (Date.now() >= deadline) {
+			if (unverifiedOrigin !== undefined) {
+				throw new Error(
+					`The server at ${unverifiedOrigin} did not prove it is the Executor for ${resolvedDataDir}, so Harnessy did not send it the token. If it is an Executor from before this check, restart it; otherwise another program uses that port.`,
+				);
+			}
 			throw new Error(`Executor did not publish a reachable server manifest within ${readyTimeoutMillis}ms.`);
 		}
 		await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));

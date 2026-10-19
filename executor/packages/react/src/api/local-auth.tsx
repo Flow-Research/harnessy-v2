@@ -51,10 +51,28 @@ const persistToken = (token: string): void => {
   }
 };
 
+const originOf = (value: string | undefined): string | null => {
+  if (value === undefined) return null;
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: an unparseable origin matches nothing
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Attach the local bearer to the active connection only when that connection
+ * is the server that issued it: the origin serving this page. With the server
+ * selector pointed at another Executor, the local token must not be sent
+ * there.
+ */
 const applyBearer = (token: string): void => {
   const current = getExecutorServerConnection();
   // Only standalone web carries the token in the client; desktop injects it.
   if (current.kind !== "http") return;
+  const issuer = originOf(globalThis.window?.location?.href);
+  if (issuer === null || originOf(current.origin) !== issuer) return;
   setExecutorServerConnection({ ...current, auth: { kind: "bearer", token } });
 };
 

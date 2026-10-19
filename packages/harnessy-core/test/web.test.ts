@@ -3,7 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { registerBundledAnytype, waitForEngineConnection } from "../src/cli/web.ts";
+import { engineIdentityProof, registerBundledAnytype, waitForEngineConnection } from "../src/cli/web.ts";
+
+/** Answer health and the identity challenge as an Executor holding `token`. */
+const engineAnswer = async (input: string | URL | Request, init: RequestInit | undefined, token: string) => {
+	const url = new URL(String(input));
+	if (url.pathname === "/api/local-auth/identity") {
+		const { nonce } = JSON.parse(String(init?.body)) as { nonce: string };
+		return Response.json({ proof: engineIdentityProof(token, Number(url.port), nonce) });
+	}
+	return new Response("ok");
+};
 
 describe("bundled AnyType cockpit registration", () => {
 	const tempDirs: string[] = [];
@@ -112,7 +122,7 @@ describe("bundled AnyType cockpit registration", () => {
 				},
 			}),
 		);
-		const fetchImpl = async (input: string | URL | Request): Promise<Response> => {
+		const fetchImpl = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
 			if (String(input).startsWith("http://127.0.0.1:44759")) {
 				writeFileSync(
 					manifestPath,
@@ -127,7 +137,7 @@ describe("bundled AnyType cockpit registration", () => {
 				);
 				throw new Error("stale daemon");
 			}
-			return new Response("ok");
+			return engineAnswer(input, init, "live-token");
 		};
 
 		await expect(waitForEngineConnection({ dataDir, fetchImpl, readyTimeoutMillis: 1_000 })).resolves.toEqual({
@@ -160,5 +170,53 @@ describe("bundled AnyType cockpit registration", () => {
 				expectedScopeDir: "/work/project-b",
 			}),
 		).rejects.toThrow("Stop the existing daemon before opening this scope");
+	});
+
+	const writeManifest = (token: string): string => {
+		const dataDir = join(tmpdir(), `harnessy-web-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		tempDirs.push(dataDir);
+		mkdirSync(join(dataDir, "server-control"), { recursive: true });
+		writeFileSync(
+			join(dataDir, "server-control", "server.json"),
+			JSON.stringify({
+				dataDir,
+				scopeDir: null,
+				connection: { origin: "http://127.0.0.1:4788", auth: { kind: "bearer", token } },
+			}),
+		);
+		return dataDir;
+	};
+
+	it("does not hand the token to a process squatting on a stale manifest's port", async () => {
+		const dataDir = writeManifest("live-token");
+		const authorization: Array<string | null> = [];
+		const squatter = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+			authorization.push(new Headers(init?.headers).get("authorization"));
+			return new URL(String(input)).pathname === "/api/health"
+				? new Response("ok")
+				: new Response("Not Found", { status: 404 });
+		};
+
+		await expect(waitForEngineConnection({ dataDir, fetchImpl: squatter, readyTimeoutMillis: 300 })).rejects.toThrow(
+			"did not prove it is the Executor",
+		);
+		expect(authorization.every((value) => value === null)).toBe(true);
+	});
+
+	it("refuses a proof for another token or another port", async () => {
+		const dataDir = writeManifest("live-token");
+		const wrongToken = (input: string | URL | Request, init?: RequestInit) => engineAnswer(input, init, "other");
+		await expect(
+			waitForEngineConnection({ dataDir, fetchImpl: wrongToken, readyTimeoutMillis: 300 }),
+		).rejects.toThrow("did not prove");
+		const relayed = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+			const url = new URL(String(input));
+			if (url.pathname !== "/api/local-auth/identity") return new Response("ok");
+			const { nonce } = JSON.parse(String(init?.body)) as { nonce: string };
+			return Response.json({ proof: engineIdentityProof("live-token", 4789, nonce) });
+		};
+		await expect(waitForEngineConnection({ dataDir, fetchImpl: relayed, readyTimeoutMillis: 300 })).rejects.toThrow(
+			"did not prove",
+		);
 	});
 });

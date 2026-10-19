@@ -46,7 +46,8 @@ beforeEach(() => {
   events = [];
   fetchCalls = [];
   storage = new Map();
-  setExecutorServerConnection(initialConnection);
+  // In a browser the initial connection is the serving origin.
+  setExecutorServerConnection({ kind: "http", origin: "http://localhost:4788" });
 });
 
 afterEach(() => {
@@ -113,6 +114,39 @@ describe("bootstrapLocalAuthToken sign-in code", () => {
     await bootstrapLocalAuthToken();
 
     expect(fetchCalls).toEqual([]);
+    expect(bearerToken()).toBe("stored-token");
+  });
+});
+
+describe("bootstrapLocalAuthToken issuing origin", () => {
+  it("does not attach the local token to another selected server", async () => {
+    setExecutorServerConnection({ kind: "http", origin: "https://other-executor.example" });
+    install(`http://localhost:4788/#_code=${CODE}`, async () => Response.json({ token: "local" }));
+
+    await bootstrapLocalAuthToken();
+
+    expect(getExecutorServerConnection().origin).toBe("https://other-executor.example");
+    expect(bearerToken()).toBeUndefined();
+    // The token is still kept for the serving origin.
+    expect(storage.get(STORAGE_KEY)).toBe("local");
+  });
+
+  it("does not attach a stored token to another selected server either", async () => {
+    setExecutorServerConnection({ kind: "http", origin: "http://localhost:9999" });
+    install("http://localhost:4788/", async () => Response.json({}));
+    storage.set(STORAGE_KEY, "stored-token");
+
+    await bootstrapLocalAuthToken();
+
+    expect(bearerToken()).toBeUndefined();
+  });
+
+  it("attaches it to the serving origin", async () => {
+    install("http://localhost:4788/tools", async () => Response.json({}));
+    storage.set(STORAGE_KEY, "stored-token");
+
+    await bootstrapLocalAuthToken();
+
     expect(bearerToken()).toBe("stored-token");
   });
 });

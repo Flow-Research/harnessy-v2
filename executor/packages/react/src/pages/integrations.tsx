@@ -39,6 +39,7 @@ import {
   IntegrationFavicon,
   integrationInferredUrl,
   integrationPresetIconUrl,
+  proxiedLogoSrc,
 } from "../components/integration-favicon";
 import { groupIntegrations, type IntegrationFamilyGroup } from "../lib/integration-grouping";
 import { IntegrationHealthSummary } from "../components/integration-health-summary";
@@ -447,9 +448,9 @@ function PresetGrid(props: {
                     }}
                   >
                     <CardStackEntryMedia>
-                      {preset.icon ? (
+                      {proxiedLogoSrc(preset.icon) ? (
                         <img
-                          src={preset.icon}
+                          src={proxiedLogoSrc(preset.icon)!}
                           alt=""
                           className="size-5 object-contain"
                           loading="lazy"

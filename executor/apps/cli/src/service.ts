@@ -455,6 +455,8 @@ StandardOutput=${systemdQuote(`append:${options.stdoutPath}`)}
 StandardError=${systemdQuote(`append:${options.stderrPath}`)}
 Restart=on-failure
 RestartSec=5s
+# Exit 78 (EX_CONFIG): unsafe local state that a restart cannot fix.
+RestartPreventExitStatus=78
 
 [Install]
 WantedBy=default.target

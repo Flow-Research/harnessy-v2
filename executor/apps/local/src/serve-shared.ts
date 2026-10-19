@@ -1,17 +1,21 @@
 /**
- * Auth, CORS, and static-route helpers for the local Bun listener (serve.ts).
+ * Auth, CORS, Host and static-route helpers for the local Bun listener
+ * (serve.ts).
  *
- * Local has ONE credential: the locally-minted bearer token (see auth.ts), and
- * that is the entire security boundary. There is deliberately no Host allowlist
- * (DNS-rebinding defense): a cross-origin page can't read the token — it lives
- * in the real origin's storage and is sent as an explicit header, never an
- * ambient cookie — so it can't forge an authenticated request no matter which
- * host it connects through. Dropping the Host gate is what lets a local
- * instance be reached over a tailnet (or any hostname) with no extra flag.
- * These helpers express the bearer gate, the CORS origin allowlist, the
- * one-time sign-in codes, and the unauthenticated OAuth carve-outs.
+ * Local has ONE credential: the locally-minted bearer token (see auth.ts). A
+ * cross-origin page can't read the token — it lives in the real origin's
+ * storage and is sent as an explicit header, never an ambient cookie. The
+ * Host gate (`isAllowedHostHeader`) closes DNS rebinding, where a page on an
+ * attacker's name re-resolves to 127.0.0.1 and becomes same-origin with the
+ * unauthenticated routes (the UI shell, health, the code exchange). IP
+ * literals, `localhost` names and the bind name pass; any other name (for
+ * example a tailnet DNS name) needs `--allowed-host`. These helpers express
+ * the bearer gate, the Host gate, the CORS origin allowlist, the one-time
+ * sign-in codes, the identity proof, the logo proxy targets, and the
+ * unauthenticated OAuth carve-outs.
  */
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 
 /**
  * The exact loopback origins a server listening on `port` serves its own web
@@ -101,6 +105,50 @@ export const isAllowedOrigin = (
   const hostname = parsed.hostname.replace(/^\[(.*)\]$/, "$1");
   const port = parsed.port === "" ? (parsed.protocol === "https:" ? 443 : 80) : Number(parsed.port);
   return extraHosts.some((entry) => entry.host === hostname && (entry.port ?? port) === port);
+};
+
+/**
+ * DNS-rebinding gate: whether a request's `Host` header names this server in a
+ * way an attacker cannot re-point. IP literals pass (a rebinding page is on a
+ * DNS name, never on an IP literal), as do `localhost` and `*.localhost`
+ * (browsers resolve them to loopback themselves), the bind hostname, and
+ * `--allowed-host` names. A missing Host header (a non-browser HTTP/1.0
+ * client) passes; browsers always send one.
+ */
+export const isAllowedHostHeader = (
+  host: string | null,
+  bindHostname: string,
+  extraHosts: ReadonlyArray<AllowedHost> = [],
+): boolean => {
+  if (host === null) return true;
+  const value = host.trim().toLowerCase();
+  const bracketed = /^\[([0-9a-f:.]+)\](?::\d{1,5})?$/.exec(value);
+  const named = /^([a-z0-9.-]+?)\.?(?::\d{1,5})?$/.exec(value);
+  const hostname = bracketed?.[1] ?? named?.[1];
+  if (hostname === undefined || hostname === "") return false;
+  if (isIP(hostname) !== 0) return true;
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) return true;
+  if (hostname === bindHostname.toLowerCase()) return true;
+  return extraHosts.some((entry) => entry.host === hostname);
+};
+
+/**
+ * Whether a sign-in code exchange may proceed. The browser marks a request
+ * from the server's own page with `Sec-Fetch-Site: same-origin`, which a page
+ * cannot forge; that is accepted even when the page was reached through an
+ * address outside the CORS allowlist (a LAN or tailnet IP). Otherwise an
+ * `Origin` must be allowed, and a browser request without one must be a
+ * direct navigation (`none`), not a cross-site or same-site subresource.
+ */
+export const isAllowedExchangeRequest = (
+  origin: string | null,
+  secFetchSite: string | null,
+  selfOrigins: ReadonlySet<string>,
+  extraHosts: ReadonlyArray<AllowedHost> = [],
+): boolean => {
+  if (secFetchSite === "same-origin") return true;
+  if (origin !== null) return isAllowedOrigin(origin, selfOrigins, extraHosts);
+  return secFetchSite === null || secFetchSite === "none";
 };
 
 /**
@@ -194,6 +242,58 @@ export const makeLocalLoginCodes = (clock: () => number = Date.now): LocalLoginC
       return expiresAt !== undefined && expiresAt > clock();
     },
   };
+};
+
+/**
+ * `POST {"nonce"}` without a bearer: the server proves it holds the bearer for
+ * this data directory by returning `HMAC(token, purpose | port | nonce)`. The
+ * CLI checks it before sending the bearer to the port a manifest names, so a
+ * process that took over a stale manifest's port never receives the token.
+ * Binding the port stops a squatter relaying the challenge to the real
+ * server on another port.
+ */
+export const LOCAL_IDENTITY_PATH = "/api/local-auth/identity";
+
+const LOCAL_IDENTITY_PURPOSE = "executor-local-identity-v1";
+
+/** The identity proof for `nonce` from a server listening on `port`. */
+export const localIdentityProof = (token: string, port: number, nonce: string): string =>
+  createHmac("sha256", token)
+    .update(`${LOCAL_IDENTITY_PURPOSE}|${port}|${nonce}`)
+    .digest("base64url");
+
+/** A client nonce: 32 random bytes, base64url (43 characters). */
+export const readIdentityNonce = (raw: string): string | null => {
+  const match = /^\s*\{\s*"nonce"\s*:\s*"([A-Za-z0-9_-]{43})"\s*\}\s*$/.exec(raw);
+  return match?.[1] ?? null;
+};
+
+/**
+ * Integration logos are fetched by the server and served same-origin, so the
+ * web UI's CSP can drop `img-src https:` (an exfiltration channel). Only these
+ * logo hosts are proxied; any other icon URL falls back to the domain-derived
+ * integrations.sh logo in the UI.
+ */
+export const LOGO_PROXY_PATH = "/api/logo";
+export const LOGO_PROXY_HOSTS: ReadonlySet<string> = new Set(["integrations.sh", "svgl.app"]);
+export const LOGO_PROXY_MAX_BYTES = 512 * 1024;
+
+/** The upstream URL for a logo-proxy request, or `null` when it is not allowed. */
+export const logoProxyTarget = (raw: string | null): URL | null => {
+  if (raw === null || raw.length > 1024) return null;
+  const target = parseOrigin(raw);
+  if (
+    target === null ||
+    target.protocol !== "https:" ||
+    target.username !== "" ||
+    target.password !== "" ||
+    target.port !== "" ||
+    !LOGO_PROXY_HOSTS.has(target.hostname)
+  ) {
+    return null;
+  }
+  target.hash = "";
+  return target;
 };
 
 export const hasBearerToken = (request: Request, token: string): boolean => {
