@@ -35,6 +35,7 @@ import {
 	isCommunityCompatibilityWriterCommand,
 	makeCommunityCompatibilityProof,
 	makeCommunityReviewRestartTracker,
+	parseProcessElapsedMs,
 } from "../src/jarvis/community-briefing/operational-runtime.ts";
 import {
 	COMMUNITY_REVIEW_LAUNCH_AGENT_LABEL,
@@ -79,6 +80,7 @@ import {
 	WRITER_CHECK_INCONCLUSIVE_WINDOW_MS,
 	type WriterCheckEvent,
 	WriterCheckInconclusiveError,
+	writerCheckMonotonicMillis,
 } from "../src/jarvis/writer-check.ts";
 
 const roots: string[] = [];
@@ -935,6 +937,8 @@ describe("one-writer guard for scheduled generation", () => {
 		readonly reviewExecutable?: string;
 		readonly extraProcesses?: ReadonlyArray<string>;
 		readonly loadedLabels?: ReadonlyArray<string>;
+		/** `ps -o etime=` of the review PID; an hour by default. */
+		readonly reviewElapsed?: () => string;
 	}) => {
 		const adapter =
 			"/opt/release/jarvis-runtime/bin/python -I /opt/release/node_modules/@harnessy/core/resources/community-draft-adapter.py";
@@ -949,6 +953,8 @@ describe("one-writer guard for scheduled generation", () => {
 		return (command: string, args: ReadonlyArray<string>): ProcessProbeResult => {
 			if (command === "/bin/ps" && args[0] === "-axo") return answer({ stdout: `${processes.join("\n")}\n` });
 			if (command === "/bin/ps" && args.at(-1) === "comm=") return answer({ stdout: `${process.execPath}\n` });
+			if (command === "/bin/ps" && args.at(-1) === "etime=")
+				return answer({ stdout: `${input.reviewElapsed?.() ?? "01:00:00"}\n` });
 			if (command === "/bin/ps") {
 				const line = processes.find((value) => value.split(" ")[1] === args[1]);
 				return answer({ stdout: `${line}\n` });
@@ -1104,19 +1110,28 @@ describe("one-writer guard for scheduled generation", () => {
 	);
 
 	describe("crash-loop escalation (#127)", () => {
+		/** `ps -o etime=` text for an age in milliseconds. */
+		const elapsed = (ms: number) => {
+			const seconds = Math.floor(Math.max(0, ms) / 1000);
+			const pad = (value: number) => String(value).padStart(2, "0");
+			return `${pad(Math.floor(seconds / 3600))}:${pad(Math.floor(seconds / 60) % 60)}:${pad(seconds % 60)}`;
+		};
 		/** A reviewer under KeepAlive: launchd's `runs` counter, and a pid only while it is up. */
 		const crashingReviewer = async () => {
 			const { cli, file } = await plannedReview();
-			const state = { runs: 1, up: true, now: 0 };
+			/** `startedAt`: when the current reviewer process started (0: as the guard first looks). */
+			const state = { runs: 1, up: true, now: 0, startedAt: 0 };
+			const warnings: Array<string> = [];
 			const proof = makeCommunityCompatibilityProof(
 				scheduledOs({
 					reviewCommand: file.programArguments.join(" "),
 					reviewLaunchd: () =>
 						`state = ${state.up ? "running" : "spawn scheduled"}\nruns = ${state.runs}\n${state.up ? "pid = 4100\n" : ""}`,
+					reviewElapsed: () => elapsed(state.now - state.startedAt),
 				}),
 				"darwin",
 				{ executable: process.execPath, entry: cli },
-				makeCommunityReviewRestartTracker(() => state.now),
+				makeCommunityReviewRestartTracker({ now: () => state.now, warn: (warning) => warnings.push(warning) }),
 			);
 			/** One crash and its KeepAlive restart ten seconds later, each seen by a probe. */
 			const restart = () => {
@@ -1126,13 +1141,14 @@ describe("one-writer guard for scheduled generation", () => {
 				state.up = true;
 				state.runs += 1;
 				state.now += 10_000;
+				state.startedAt = state.now;
 			};
 			/** The first probes pause while the start count gets its baseline; then the reviewer is exempt. */
 			const baseline = () => {
 				expect(() => proof()).toThrow("launchctl_restart_baseline");
 				state.now += COMMUNITY_REVIEW_RESTART_BASELINE_MS;
 			};
-			return { proof, state, restart, baseline };
+			return { proof, state, restart, baseline, warnings };
 		};
 
 		it("does not exempt the reviewer before the start count has a baseline", async () => {
@@ -1164,7 +1180,7 @@ describe("one-writer guard for scheduled generation", () => {
 				}),
 				"darwin",
 				{ executable: process.execPath, entry: (await plannedReview()).cli },
-				makeCommunityReviewRestartTracker(() => 0),
+				makeCommunityReviewRestartTracker({ now: () => 0 }),
 			);
 			expect(() => twoPids()).toThrow("compatibility_writer_present");
 		});
@@ -1199,7 +1215,7 @@ describe("one-writer guard for scheduled generation", () => {
 			expect((thrown as Error).message).toBe("launchctl_restart_loop");
 		});
 
-		it("forgets restarts older than the horizon and counts afresh after a reload", async () => {
+		it("forgets restarts older than the horizon and keeps counting across a reload", async () => {
 			const { proof, state, restart, baseline } = await crashingReviewer();
 			baseline();
 			expect(() => proof()).not.toThrow();
@@ -1210,14 +1226,136 @@ describe("one-writer guard for scheduled generation", () => {
 				state.now += gap;
 				expect(() => proof()).not.toThrow();
 			}
-			// `schedule --apply` reloaded the label: launchd's counter starts again at 1.
-			state.runs = 1;
-			baseline();
+			// Quiet for a whole horizon, then `schedule --apply` reloads the label: launchd's counter
+			// starts again at 1, and that start counts as one.
+			state.now += COMMUNITY_REVIEW_RESTART_HORIZON_MS + 1;
 			expect(() => proof()).not.toThrow();
-			for (let count = 0; count < COMMUNITY_REVIEW_RESTART_LIMIT; count++) restart();
+			state.runs = 1;
+			state.startedAt = state.now;
+			state.now += 1_000;
+			expect(() => proof()).not.toThrow();
+			for (let count = 0; count < COMMUNITY_REVIEW_RESTART_LIMIT - 1; count++) restart();
 			expect(() => proof()).not.toThrow();
 			restart();
 			expect(() => proof()).toThrow("launchctl_restart_loop");
+		});
+
+		it("parses ps elapsed times", () => {
+			expect(parseProcessElapsedMs("  05:07\n")).toBe(307_000);
+			expect(parseProcessElapsedMs("01:02:03")).toBe(3_723_000);
+			expect(parseProcessElapsedMs("2-01:02:03")).toBe(176_523_000);
+			for (const text of ["", "5", "1:2:3:4", "x5:07", "05:7"])
+				expect(parseProcessElapsedMs(text), text).toBeUndefined();
+		});
+
+		it("exempts a long-running reviewer at once, so a one-shot run or a fresh service never waits", async () => {
+			const { proof, state } = await crashingReviewer();
+			state.runs = 40;
+			state.startedAt = -60 * 60_000; // up for an hour
+			expect(() => proof()).not.toThrow();
+			// A one-shot run fails fast on any pause; with a stable reviewer it passes at once.
+			const events: Array<WriterCheckEvent> = [];
+			const oneShot = await Effect.runPromiseExit(
+				retryWhileWriterCheckInconclusive(Effect.try({ try: () => proof(), catch: (cause) => cause }), {
+					service: "community",
+					inconclusive: (cause) => (cause instanceof WriterCheckInconclusiveError ? cause : undefined),
+					escalate: (cause) => new Error(`runtime_rejected:${cause.reason}`),
+					report: (event) => events.push(event),
+					failFast: true,
+				}),
+			);
+			expect(Exit.isSuccess(oneShot)).toBe(true);
+			expect(events).toEqual([]);
+		});
+
+		it("fails a one-shot run while a just-restarted reviewer has no baseline", async () => {
+			const { proof, state } = await crashingReviewer();
+			state.startedAt = state.now - 15_000;
+			const oneShot = await Effect.runPromiseExit(
+				retryWhileWriterCheckInconclusive(Effect.try({ try: () => proof(), catch: (cause) => cause }), {
+					service: "community",
+					inconclusive: (cause) => (cause instanceof WriterCheckInconclusiveError ? cause : undefined),
+					escalate: (cause) => new Error(`runtime_rejected:${cause.reason}`),
+					report: () => undefined,
+					failFast: true,
+				}),
+			);
+			expect(failure(oneShot)).toBe("runtime_rejected:launchctl_restart_baseline");
+		});
+
+		effectIt.effect("starts a service run with a stable reviewer without waiting", () =>
+			Effect.gen(function* () {
+				const { proof, state } = yield* Effect.promise(crashingReviewer);
+				state.startedAt = -60 * 60_000;
+				const events: Array<WriterCheckEvent> = [];
+				const fiber = yield* Effect.forkChild(guarded(() => proof(), events));
+				// No clock time passes: enrollment and the first publication check are not delayed.
+				yield* TestClock.adjust(0);
+				const done = fiber.pollUnsafe();
+				expect(done !== undefined && Exit.isSuccess(done)).toBe(true);
+				expect(events).toEqual([]);
+			}),
+		);
+
+		effectIt.effect("measures the baseline on the Effect clock", () =>
+			Effect.gen(function* () {
+				const { proof, state } = yield* Effect.promise(crashingReviewer);
+				// The reviewer restarted 30 s ago and stays up; only the guard's own baseline can admit it.
+				state.startedAt = -30_000;
+				const events: Array<WriterCheckEvent> = [];
+				const fiber = yield* Effect.forkChild(
+					retryWhileWriterCheckInconclusive(
+						Effect.flatMap(writerCheckMonotonicMillis, (nowMs) =>
+							Effect.try({ try: () => proof(nowMs), catch: (cause) => cause }),
+						),
+						{
+							service: "community",
+							inconclusive: (cause) => (cause instanceof WriterCheckInconclusiveError ? cause : undefined),
+							escalate: (cause) => new Error(`runtime_rejected:${cause.reason}`),
+							report: (event) => events.push(event),
+						},
+					),
+				);
+				yield* TestClock.adjust(COMMUNITY_REVIEW_RESTART_BASELINE_MS - 30_000);
+				expect(fiber.pollUnsafe()).toBeUndefined();
+				yield* TestClock.adjust(60_000);
+				expect(Exit.isSuccess(yield* Fiber.await(fiber))).toBe(true);
+				expect(events.at(-1)).toMatchObject({
+					event: "writer_check_recovered",
+					reason: "launchctl_restart_baseline",
+				});
+			}),
+		);
+
+		it("counts every start of a reload that happened between two samples", async () => {
+			const { proof, state, baseline } = await crashingReviewer();
+			state.runs = 10;
+			baseline();
+			expect(() => proof()).not.toThrow();
+			// The owner reloaded the label, and the reviewer then started four times: runs is 4 < 10.
+			state.runs = 4;
+			state.now += 60_000;
+			expect(() => proof()).not.toThrow();
+			// Two more starts make six since the last sample before the reload.
+			state.runs = 6;
+			state.now += 20_000;
+			expect(() => proof()).toThrow("launchctl_restart_loop");
+		});
+
+		it("warns once when launchd prints no single runs line", async () => {
+			const { cli, file } = await plannedReview();
+			for (const output of ["pid = 4100\n", "runs = 1\nruns = 2\npid = 4100\n"]) {
+				const warnings: Array<string> = [];
+				const proof = makeCommunityCompatibilityProof(
+					scheduledOs({ reviewCommand: file.programArguments.join(" "), reviewLaunchd: output }),
+					"darwin",
+					{ executable: process.execPath, entry: cli },
+					makeCommunityReviewRestartTracker({ warn: (warning) => warnings.push(warning) }),
+				);
+				expect(() => proof()).not.toThrow();
+				expect(() => proof()).not.toThrow();
+				expect(warnings, output).toEqual(["community_review_runs_unavailable"]);
+			}
 		});
 	});
 

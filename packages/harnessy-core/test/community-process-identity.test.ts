@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import {
 	communityProcessLinePattern,
+	communityReviewIdentityComparisons,
 	communityReviewIdentityDigests,
 	darwinProcessExecutableFromLsof,
 	isNativeCommunityReviewLaunchAgent,
@@ -122,6 +123,14 @@ it("derives the reviewer identity set from the entry's static import graph", () 
 		// An import that leaves dist/ fails closed.
 		writeFileSync(join(root, "dist/jarvis/paths.js"), 'import "../../outside.js";\n');
 		expect(() => communityReviewIdentityDigests(root, uid)).toThrow("probe_failed");
+		// So does a relative module reference the walk does not parse: import attributes, dynamic import.
+		for (const unparsed of [
+			'import data from "./data.json" with { type: "json" };\n',
+			'export const load = () => import("./lazy.js");\n',
+		]) {
+			writeFileSync(join(root, "dist/jarvis/paths.js"), unparsed);
+			expect(() => communityReviewIdentityDigests(root, uid), unparsed).toThrow("probe_failed");
+		}
 		// So does an imported module that is missing.
 		writeFileSync(join(root, "dist/jarvis/paths.js"), 'import "./missing.js";\n');
 		expect(() => communityReviewIdentityDigests(root, uid)).toThrow();
@@ -189,6 +198,40 @@ it("recognizes only the byte-identical installed review sibling of the service t
 		rmSync(reviewer);
 		symlinkSync(entry, reviewer);
 		expect(matches(reviewer)).toBe(true); // Exact realpath identity remains accepted.
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+it("reuses a positive identity comparison until a compared file changes", () => {
+	const root = mkdtempSync(join(tmpdir(), "community-identity-cache-"));
+	try {
+		const relative = "node_modules/@harnessy/core/dist/cli.js";
+		for (const directory of [root, join(root, "service")])
+			writeCoreTree(join(directory, "node_modules/@harnessy/core"), IDENTITY_FIXTURE);
+		const matches = () =>
+			isNativeCommunityReviewProcess(
+				`${process.execPath} ${join(root, relative)} jarvis community briefing review serve`,
+				process.execPath,
+				process.execPath,
+				process.execPath,
+				join(root, "service", relative),
+			);
+		const before = communityReviewIdentityComparisons();
+		expect(matches()).toBe(true);
+		expect(matches()).toBe(true);
+		expect(matches()).toBe(true);
+		// One full comparison; the repeated checks only stat the compared files.
+		expect(communityReviewIdentityComparisons() - before).toBe(1);
+		// Any write to a compared file, even of the same bytes, compares again.
+		const credential = join(root, "node_modules/@harnessy/core/dist/jarvis/life-orchestrator/local-credential.js");
+		writeFileSync(credential, IDENTITY_FIXTURE["dist/jarvis/life-orchestrator/local-credential.js"]!);
+		expect(matches()).toBe(true);
+		expect(communityReviewIdentityComparisons() - before).toBe(2);
+		writeFileSync(credential, "// Changed credential reads.\n");
+		expect(matches()).toBe(false);
+		expect(matches()).toBe(false);
+		expect(communityReviewIdentityComparisons() - before).toBe(4);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

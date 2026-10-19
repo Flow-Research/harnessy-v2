@@ -599,10 +599,17 @@ Constraints the implementation keeps:
   130 modules), plus `resources/community-draft-adapter.py`. It therefore covers
   the scheduler's code, credentials (`local-credential.js`), provider calls
   (`codex-provider.js`), path resolution (`paths.js`) and file reads
-  (`operational-input.js`), and a new module cannot be left out. A module that
-  is missing, unreadable or imported from outside `dist/` fails the exemption
-  closed. The installed-product release test checks that every file exists in
-  a packed release's service tree and matches the general CLI.
+  (`operational-input.js`), and a new Core module cannot be left out. Bare
+  package imports (`effect`, `yaml` and the other dependencies) and the Jarvis
+  Python environment's site-packages are not compared; only Core's own files
+  are. A module that is missing or unreadable, an import from outside `dist/`,
+  and any relative module reference the walk does not parse (an import with
+  attributes such as `with { type: "json" }`, or a dynamic `import()`) fail the
+  exemption closed. A positive comparison is reused while every compared file in
+  both trees keeps its stat identity (device, inode, mode, size, mtime, ctime),
+  so repeated checks only stat the files. The installed-product release test
+  checks that every file exists in a packed release's service tree and matches
+  the general CLI.
 - **Restart.** The plist sets `KeepAlive` with a 10-second `ThrottleInterval`.
   Without it, a crashed reviewer left its label loaded with no process, which
   the guard treated as an observed writer, so community publication stayed
@@ -638,11 +645,27 @@ Constraints the implementation keeps:
       verified start ends the no-process pause but not this count, so a
       reviewer that keeps dying ends in one clear stop instead of repeated
       pauses and uncertain publications. A lower counter (the label was
-      reloaded) starts the count afresh. The first observation cannot tell
-      how fast the reviewer has been restarting, so for two minutes after it
-      a verified reviewer pauses publication (`launchctl_restart_baseline`)
-      instead of being exempt; a loop already under way passes the limit in
-      that time.
+      reloaded between two samples) keeps the count: every start of the new
+      load is added. A first observation cannot tell how fast the reviewer has
+      been restarting, so a verified reviewer is exempt only when its process
+      has run for two minutes (`ps -o etime`) or the guard has watched the
+      label for two minutes; otherwise it pauses publication
+      (`launchctl_restart_baseline`), and a loop already under way passes the
+      limit in that time. A stable reviewer is therefore exempt at once, also
+      for a one-shot run (which fails fast on a pause) and at meeting-service
+      startup. Times come from the Effect clock (monotonic; sleep does not
+      advance it). If launchd prints no single `runs` line, the count is off
+      and the guard writes `{"warning":"community_review_runs_unavailable"}`
+      once per process.
+    - recovery: a `launchctl_restart_loop` rejection happens before any lease,
+      so the meeting service's community worker starts again after a 30-minute
+      cool-down (one horizon, so the counted starts age out), logging
+      `community_publication_paused`, at most three times in a row; a
+      successful run resets that count. After the third, or for a loop seen
+      during a publication (`publication_uncertain`), the stop is final: fix
+      the reviewer (`harnessy jarvis community schedule`, the review log), then
+      restart the meeting publication service to resume community
+      publication.
   - **Any other guarded label** loaded, or any other observed writer: an
     immediate stop.
 

@@ -407,6 +407,8 @@ REVIEW_RENDEZVOUS = "community-review.rendezvous.json"
 # Serializes one review's publication with another review's withdrawal. Not a
 # staged file: the sweep below never matches it.
 REVIEW_RENDEZVOUS_LOCK = ".community-review.rendezvous.lock"
+# Publication and withdrawal take milliseconds; a holder this slow is stuck.
+RENDEZVOUS_LOCK_TIMEOUT_SECONDS = 10
 # A staged file older than this was left by a review that died while publishing.
 STALE_STAGED_SECONDS = 600
 
@@ -432,13 +434,38 @@ def _sweep_stale_staged(state_root):
             continue
 
 
-@contextmanager
-def _rendezvous_lock(state_root):
-    """Hold the rendezvous lock. The OS releases it if this process dies."""
+def _acquire_rendezvous_lock(state_root, timeout=None):
+    """Take the rendezvous lock; returns its descriptor. The OS releases it if this process dies.
+
+    The lock must be an owner-owned, owner-only regular file (OSError otherwise).
+    Waiting longer than the timeout raises TimeoutError instead of blocking forever.
+    """
+    timeout = RENDEZVOUS_LOCK_TIMEOUT_SECONDS if timeout is None else timeout
     descriptor = os.open(Path(state_root) / REVIEW_RENDEZVOUS_LOCK,
                          os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o600):
+            raise PermissionError("unsafe review rendezvous lock")
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return descriptor
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("review rendezvous lock is busy") from None
+                time.sleep(0.05)
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+@contextmanager
+def _rendezvous_lock(state_root, timeout=None):
+    descriptor = _acquire_rendezvous_lock(state_root, timeout)
+    try:
         yield
     finally:
         os.close(descriptor)
@@ -514,7 +541,13 @@ def withdraw_review_rendezvous(path, published, previous=None):
     publishes meanwhile is never removed or overwritten.
     """
     path = Path(path)
-    with _rendezvous_lock(path.parent):
+    try:
+        lock = _acquire_rendezvous_lock(path.parent)
+    except OSError:
+        # A busy or unsafe lock: leave the rendezvous. That is harmless, because the
+        # launcher's identity challenge rejects a rendezvous whose review has ended.
+        return
+    try:
         if _read_rendezvous(path) != published:
             return
         if previous is None or len(previous) > MAX_RENDEZVOUS_BYTES:
@@ -532,6 +565,8 @@ def withdraw_review_rendezvous(path, published, previous=None):
         except BaseException:
             staged.unlink(missing_ok=True)
             raise
+    finally:
+        os.close(lock)
 
 
 def main():

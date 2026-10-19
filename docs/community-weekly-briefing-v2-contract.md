@@ -164,6 +164,14 @@ harnessy jarvis community generation-status [--json] [--repair]
 harnessy jarvis community generation-retry --week-start YYYY-MM-DD [--json]
 ```
 
+If the reviewer LaunchAgent keeps restarting (more than five starts in 30
+minutes), community publication stops before any lease with
+`launchctl_restart_loop`. The meeting service logs
+`community_publication_paused` and starts community publication again after 30
+minutes, at most three times in a row. If it still loops, the stop is final
+(`community_publication_stopped`): fix the reviewer from its log, then restart
+the meeting publication service.
+
 `--apply` refuses unless `NODE` and `CLI` belong to the release the publication
 service runs. All three commands are deliberately outside `community briefing`:
 the guard treats every other `jarvis community briefing …` process as a rival
