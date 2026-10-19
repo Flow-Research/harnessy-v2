@@ -49,10 +49,38 @@ describe("links", () => {
 			`http://127.0.0.1:8770/${"a".repeat(300)}`,
 			"not a url",
 			"http//127.0.0.1:8770/",
+			"http://127.0.0.1:8770/?",
+			"http://127.0.0.1:8770/#",
 			42,
 			null,
 		])
 			expect([value, safeHref(value)]).toEqual([value, undefined]);
+		// Only the empty path's "/" may be added; the result is what the URL parser gives.
+		expect(safeHref("http://127.0.0.1:8770")).toBe("http://127.0.0.1:8770/");
+		// A value the browser's URL parser would rewrite is refused, never normalised, so the
+		// string judged is the string followed.
+		for (const value of [
+			"\u0001http://127.0.0.1:8770/",
+			"http://127.0.0.1:8770/\u001F",
+			" http://127.0.0.1:8770/",
+			"http://127.0.0.1:8770/\u00A0",
+			"http://127.0.0.1:8770/a\tb",
+			"HTTP://127.0.0.1:8770/",
+			"http://LOCALHOST:8770/",
+			"http://127.1:8770/",
+			"http://0x7f.0.0.1:8770/",
+			"http://2130706433:8770/",
+			"http://127.0.0.1:08770/",
+			"http://[0:0:0:0:0:0:0:1]:8770/",
+			"http://127.0.0.1:8770/a/../b",
+			"http://127.0.0.1:8770/%2e%2e/b",
+			"http:\\\\127.0.0.1:8770\\",
+			"http:/127.0.0.1:8770/",
+			"http://127.0.0.1:8770/é",
+		])
+			expect([value, safeHref(value)]).toEqual([value, undefined]);
+		for (const value of ["http://127.0.0.1:8770/a/b-c_d.e~f", "http://localhost:4788/%E2%9C%93", "http://[::1]:1/x/"])
+			expect([value, safeHref(value)]).toEqual([value, new URL(value).href]);
 		expect(safeAppRoute("#/jobs/fathom-poll")).toBe("#/jobs/fathom-poll");
 		for (const value of ["#/../x", "javascript:x", "#/a?b", "/jobs", 1]) expect(safeAppRoute(value)).toBeUndefined();
 	});

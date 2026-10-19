@@ -15,7 +15,7 @@ import { App, paletteEntries } from "../../src/portal/app/App.tsx";
 import { CommandChip, HandoffButton } from "../../src/portal/app/components/actions.tsx";
 import { DetailPane } from "../../src/portal/app/components/DetailPane.tsx";
 import { ErrorBoundary, ScreenFailed } from "../../src/portal/app/components/ErrorBoundary.tsx";
-import { filterEntries, screenEntries } from "../../src/portal/app/components/Palette.tsx";
+import { filterEntries, Palette, screenEntries } from "../../src/portal/app/components/Palette.tsx";
 import { TILE_STATE_TONE, TileState, tileStateText } from "../../src/portal/app/components/primitives.tsx";
 import { SafeMarkdown } from "../../src/portal/app/components/SafeMarkdown.tsx";
 import { DataProvider, DataStore } from "../../src/portal/app/lib/data.tsx";
@@ -555,6 +555,58 @@ describe("app pieces", () => {
 		expect(container.querySelector("button")).toBeNull();
 		expect(text()).toContain("Not copied: it holds hidden characters");
 		expect(copied).toEqual([]);
+	});
+
+	it("shows every hidden character class escaped, and never copies one from a chip or a hand-off text", async () => {
+		// Soft hyphen, Mongolian vowel separator, a tag character (ASCII smuggling), a newline that
+		// would run a pasted command, and the line separator: none of them is in the bidi range.
+		const cases = [
+			["\u00AD", "⟨U+00AD⟩"],
+			["\u180E", "⟨U+180E⟩"],
+			["\u{E0041}", "⟨U+E0041⟩"],
+			["\n", "⟨U+000A⟩"],
+			["\u2028", "⟨U+2028⟩"],
+		] as const;
+		await mount(
+			<>
+				{cases.map(([hidden], index) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: a fixed list
+					<div key={index}>
+						<CommandChip command={`harnessy web${hidden} --evil`} />
+						<HandoffButton
+							action={{ kind: "handoff", label: "Bad", target: `javascript:x${hidden}`, note: null }}
+						/>
+					</div>
+				))}
+			</>,
+		);
+		expect([...container.querySelectorAll(".command-text")].map((node) => node.textContent)).toEqual(
+			cases.map(([, shown]) => `harnessy web${shown} --evil`),
+		);
+		expect([...container.querySelectorAll(".mono.muted")].map((node) => node.textContent)).toEqual(
+			cases.map(([, shown]) => `javascript:x${shown}`),
+		);
+		expect(container.querySelector("button")).toBeNull();
+		expect(copied).toEqual([]);
+	});
+
+	it("never copies a palette command or task title that holds hidden characters", async () => {
+		const entries = [
+			{ id: "task:evil", title: "Pay\u202Eredro", group: "Tasks", command: "Pay\u202Eredro" },
+			{ id: "cmd:ok", title: "Web", group: "Commands", command: "harnessy web" },
+		] as const;
+		await mount(<Palette entries={entries} onClose={() => undefined} />);
+		const input = container.querySelector<HTMLInputElement>(".palette-input")!;
+		// Enter copies a task title (it has no target); Shift+Enter copies too: both are refused.
+		await pressOn(input, "Enter");
+		await act(async () => {
+			input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }));
+		});
+		expect(text()).toContain("Not copied: it holds hidden characters: Pay⟨U+202E⟩redro");
+		expect(container.querySelector(".palette-title")?.textContent).toBe("Pay⟨U+202E⟩redro");
+		await pressOn(input, "ArrowDown");
+		await pressOn(input, "Enter");
+		await waitFor(() => expect(copied).toEqual(["harnessy web"]));
 	});
 
 	it("colours and words each tile state as the spec maps them", async () => {

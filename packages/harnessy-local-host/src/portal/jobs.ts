@@ -102,7 +102,7 @@ const link = (label: string, target: string, note: string | null = null): AppAct
 });
 
 /** Control and invisible format characters: a copied command must show every byte it holds. */
-export const HIDDEN_CHARACTERS = /[\p{Cc}\p{Cf}]/u;
+export const HIDDEN_CHARACTERS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
 /**
  * Quote a path for a copied shell command when it holds anything but plain

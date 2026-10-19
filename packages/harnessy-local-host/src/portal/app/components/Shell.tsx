@@ -136,7 +136,7 @@ export const Rail = ({ current, sub, badges }: { current: Screen; sub?: string |
 			<Plug size={16} strokeWidth={1.5} aria-hidden="true" />
 			Tools &amp; integrations
 		</a>
-		<p className="rail-note">Opens the cockpit (harnessy web) in a new tab. Agent tools, OAuth, secrets.</p>
+		<p className="rail-note">The cockpit (harnessy web): agent tools, OAuth, secrets.</p>
 	</nav>
 );
 

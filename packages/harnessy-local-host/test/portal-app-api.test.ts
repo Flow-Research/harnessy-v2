@@ -535,6 +535,9 @@ describe("inbox derivation", () => {
 		expect(targets.some((target) => /[\u202A-\u202E\u2066-\u2069]/u.test(target))).toBe(false);
 		expect(shellPath("/a/\u200Bb", "<p>")).toBe("<p>");
 		expect(shellPath("/a\nb")).toBe("<path>");
+		// A line or paragraph separator breaks a pasted line like a newline does.
+		expect(shellPath("/a\u2028b")).toBe("<path>");
+		expect(shellPath("/a\u2029b")).toBe("<path>");
 	});
 
 	it("keeps singular wording and drops a recovered generation failure", () => {

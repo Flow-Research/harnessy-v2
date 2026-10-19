@@ -66,19 +66,23 @@ export const greeting = (now: number): string => {
 export const plural = (count: number, one: string, many = `${one}s`): string => `${count} ${count === 1 ? one : many}`;
 
 /**
- * Invisible format controls: bidi embeddings, overrides and isolates, zero-width
- * characters, the Arabic letter mark and the byte-order mark. In a command or a
- * title they can make what is shown differ from the bytes that are there
- * (Trojan Source), so they are shown as a visible escape instead.
+ * Hidden characters: every Unicode format character (Cf: bidi embeddings,
+ * overrides and isolates, zero-width characters, the soft hyphen, tag
+ * characters and the like), every control character (Cc: tab, newline, escape
+ * and the rest) and the line and paragraph separators. In a command or a title
+ * they can make what is shown differ from the bytes that are there (Trojan
+ * Source, ASCII smuggling, a newline that runs a pasted command), so they are
+ * shown as a visible escape instead. The server refuses the same set in copy
+ * targets (`HIDDEN_CHARACTERS` in `jobs.ts`).
  */
-const FORMAT_CONTROLS = /[؜​-‏‪-‮⁠-⁩﻿]/gu;
+const FORMAT_CONTROLS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
-/** `text` with every invisible format control shown as `⟨U+202E⟩`. */
+/** `text` with every hidden character shown as `⟨U+202E⟩`. */
 export const visibleText = (text: string): string =>
 	text.replace(
 		FORMAT_CONTROLS,
 		(control) => `⟨U+${control.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`,
 	);
 
-/** Whether `text` holds an invisible format control. */
+/** Whether `text` holds a hidden character. */
 export const hasFormatControls = (text: string): boolean => text.search(FORMAT_CONTROLS) !== -1;

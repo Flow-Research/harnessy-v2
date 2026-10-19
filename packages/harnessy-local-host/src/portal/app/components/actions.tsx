@@ -61,7 +61,8 @@ export const CommandChip = ({ command, note }: { command: string; note?: string 
 export const HandoffButton = ({ action, primary = false }: { action: AppAction; primary?: boolean }) => {
 	const route = safeAppRoute(action.target);
 	const href = safeHref(action.target);
-	if (route === undefined && href === undefined) return <span className="mono muted">{action.target}</span>;
+	if (route === undefined && href === undefined)
+		return <span className="mono muted">{visibleText(action.target)}</span>;
 	return (
 		<button
 			type="button"

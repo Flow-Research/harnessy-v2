@@ -109,9 +109,12 @@ names the owner of the credential and how to reconnect it:
   their SHA-256 in an asset manifest; the portal serves only those files and
   refuses to start if one was changed.
 - Text from your data is always shown as text. Markdown is parsed into a tree,
-  never into HTML, and only loopback links become links. Invisible bidi and
-  zero-width characters in titles and commands are shown as `⟨U+202E⟩`, and a
-  command that holds one is never offered for copying.
+  never into HTML, and only loopback links become links. A link is judged as
+  the browser's URL parser reads it, and a link the parser would rewrite is
+  shown as text. Hidden characters (format characters such as bidi and
+  zero-width controls, control characters such as a newline, and line or
+  paragraph separators) in titles and commands are shown as `⟨U+202E⟩`, and a
+  command that holds one is never copied, from a chip or from the palette.
 - The app holds only its own read-only sign-in. It never sees the install
   token, the cockpit (Executor) token or any provider credential, and it sends
   no cookies.

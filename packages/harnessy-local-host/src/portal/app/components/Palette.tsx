@@ -7,7 +7,7 @@ import { X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { copyText, followHandoff } from "../lib/browser.ts";
-import { visibleText } from "../lib/format.ts";
+import { hasFormatControls, visibleText } from "../lib/format.ts";
 import { trapTab } from "../lib/keys.tsx";
 import { routeHref, SCREEN_TITLES, SCREENS } from "../lib/router.ts";
 import { COPY_GLYPH, HANDOFF_GLYPH } from "./actions.tsx";
@@ -65,6 +65,11 @@ export const Palette = ({ entries, onClose }: { entries: ReadonlyArray<PaletteEn
 	const run = (entry: PaletteEntry | undefined, copyOnly: boolean) => {
 		if (entry === undefined) return;
 		if (entry.command !== undefined && (copyOnly || entry.target === undefined)) {
+			// What is shown must be what is copied: a command with hidden characters is never copied.
+			if (hasFormatControls(entry.command)) {
+				setNotice(`Not copied: it holds hidden characters: ${visibleText(entry.command)}`);
+				return;
+			}
 			void copyText(entry.command).then((ok) =>
 				setNotice(ok ? `Copied: ${visibleText(entry.command!)}` : "The browser refused to copy."),
 			);
