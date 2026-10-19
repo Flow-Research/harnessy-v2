@@ -1055,6 +1055,21 @@ describe("secureLocalStateDir macOS ACLs", () => {
     ).toThrow(/access control list .*To recover: remove it yourself: chmod -N/s);
   });
 
+  it("does not strip the ACL of an owner-only directory holding unrelated files", () => {
+    const shared = join(homeDir, "team");
+    mkdirSync(shared, { mode: 0o700 });
+    writeFileSync(join(shared, "notes.md"), "shared\n");
+    const removed: string[] = [];
+    expect(() =>
+      secureLocalStateDir(shared, {
+        platform: "darwin",
+        readAcl: () => listing([" 0: group:staff allow list,search,readattr"]),
+        removeAcl: (path) => removed.push(path),
+      }),
+    ).toThrow(/files Executor did not create/);
+    expect(removed).toEqual([]);
+  });
+
   it("leaves deny-only entries alone", () => {
     const removed: string[] = [];
     secureLocalStateDir(dataDir, {

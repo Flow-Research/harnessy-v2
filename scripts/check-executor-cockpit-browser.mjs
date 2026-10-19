@@ -335,7 +335,8 @@ try {
 	await signedIn(second, "loopback URL");
 	if (second.violations().length > 0) failures.push(`loopback URL: CSP violations during sign-in: ${second.violations().join("; ")}`);
 
-	await send("Browser.close").catch(() => undefined);
+	// Chromium may drop the socket before it acknowledges; never wait for that.
+	await Promise.race([send("Browser.close").catch(() => undefined), wait(3_000)]);
 	socket.close();
 
 	if (failures.length > 0) {

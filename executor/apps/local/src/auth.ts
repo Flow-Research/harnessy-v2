@@ -227,7 +227,7 @@ const enforceMode = (
   } finally {
     closeSync(fd);
   }
-  enforceNoAcl(path, checks);
+  enforceNoAcl(path, checks, beforeRepair);
 };
 
 /**
@@ -236,9 +236,16 @@ const enforceMode = (
  * ACL counterpart of the mode repair); a deny entry grants nothing and is
  * left alone. Startup is refused if an allow entry survives the repair.
  */
-const enforceNoAcl = (path: string, checks: Required<StateDirChecks>): void => {
+const enforceNoAcl = (
+  path: string,
+  checks: Required<StateDirChecks>,
+  beforeRepair?: () => void,
+): void => {
   if (checks.platform !== "darwin") return;
   if (!hasAllowAclEntry(checks.readAcl(path))) return;
+  // Removing an ACL is a repair like a chmod: the data directory must first
+  // pass the same ownership and placement checks.
+  beforeRepair?.();
   checks.removeAcl(path);
   if (hasAllowAclEntry(checks.readAcl(path))) {
     refuseToStart(
