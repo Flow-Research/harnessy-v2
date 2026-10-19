@@ -188,8 +188,15 @@ overlay above (the `img-src https:` allowance and the meta-refresh redirect to
     request that has no `Origin` but is `cross-site` or `same-site`.
   - `POST /api/local-auth/identity {"nonce"}` (no bearer) returns
     `HMAC-SHA256(token, "executor-local-identity-v2|<bound address>|<bound port>|<nonce>")`,
-    where the address is the literal bind address (IPv6 without brackets; a
-    wildcard bind maps to the loopback literal of its family).
+    where the address is the literal bind address (IPv6 without brackets).
+    A wildcard bind (`0.0.0.0`, `::`) never proves: it answers `403`
+    `{"error":"identity_unavailable_on_wildcard_bind"}` with a message to
+    bind `127.0.0.1` or `::1`, or to pass the token explicitly
+    (`EXECUTOR_AUTH_TOKEN` with `--base-url`). Such a server cannot tell
+    which address a client reached, and on macOS another local user can bind
+    `127.0.0.1:<port>` beside it and relay the challenge through a LAN
+    address. So neither the CLI nor `harnessy web` hands the bearer to a
+    wildcard-bound server automatically.
   - `startServer` binds `127.0.0.1` for `localhost` and returns the literal
     `address` and `origin` it listens on. The CLI publishes that origin
     (`http://127.0.0.1:<port>` or `http://[::1]:<port>`) in the manifest, the
@@ -234,9 +241,16 @@ overlay above (the `img-src https:` allowance and the meta-refresh redirect to
   literal address and port it connected to, and sends the bearer only there;
   a host name never verifies. A `localhost` manifest (from an older server) is
   re-resolved to `127.0.0.1`, then `[::1]`, and the first literal that proves
-  itself is used. On failure it does not send the bearer and says so. The
-  OAuth redirect base (`EXECUTOR_WEB_BASE_URL` default) keeps `localhost` so
-  registered redirect URIs still match; it carries no bearer.
+  itself is used. On failure it does not send the bearer and says so.
+- `apps/cli/src/main.ts`, `apps/local/src/executor.ts`,
+  `apps/local/executor.config.ts` — the OAuth redirect base
+  (`EXECUTOR_WEB_BASE_URL` default) is the published cockpit origin
+  (`localWebBaseUrl`, the same literal as `server.origin`) for the daemon and
+  `web --foreground`, and `http://127.0.0.1:$PORT` when unset. The OAuth
+  popup reports its result through same-origin channels (`postMessage`,
+  `BroadcastChannel`, `storage`), so a `localhost` redirect never reached a
+  cockpit opened at `127.0.0.1`. The client metadata document already lists
+  the `127.0.0.1`, `localhost` and `[::1]` loopback redirect URIs.
 - `apps/cli/src/rotate-token-report.ts`, `apps/cli/src/main.ts` —
   `server rotate-token` no longer prints the token; it names `auth.json`.
 - `apps/cli/src/state-refusal.ts`, `apps/cli/src/main.ts`,

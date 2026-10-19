@@ -54,8 +54,10 @@ export default defineExecutorConfig({
       fileSecretsPlugin(),
       onepasswordHttpPlugin(),
       desktopSettingsPlugin({
+        // Same default as resolveLocalWebBaseUrl in src/executor.ts: the
+        // published literal origin, never localhost.
         webBaseUrl:
-          process.env.EXECUTOR_WEB_BASE_URL ?? `http://localhost:${process.env.PORT ?? "4788"}`,
+          process.env.EXECUTOR_WEB_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? "4788"}`,
       }),
     ] as const,
 });

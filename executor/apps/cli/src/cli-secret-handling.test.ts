@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { startServer } from "@executor-js/local";
+
+import { verifyLocalServerIdentity } from "./local-identity";
 
 const mainScript = resolve(import.meta.dirname, "main.ts");
 
@@ -229,4 +231,78 @@ describe("executor open against a squatter on the other IP family", () => {
     },
     90_000,
   );
+});
+
+/** A non-loopback IPv4 address of this host, or undefined. */
+const lanAddress = (): string | undefined =>
+  Object.values(networkInterfaces())
+    .flat()
+    .find((entry) => entry !== undefined && entry.family === "IPv4" && !entry.internal)?.address;
+
+// Regression for the wildcard relay: the real Executor listens on 0.0.0.0:<port>
+// and another local user binds 127.0.0.1:<same port> (macOS allows the more
+// specific bind), relaying the challenge to the real server through a LAN
+// address. A wildcard-bound server used to prove 127.0.0.1, so the relay
+// verified and the CLI would then send the bearer to the squatter.
+describe("identity proof against a squatter beside a wildcard bind", () => {
+  it("never verifies a relay to a server bound to 0.0.0.0", async (context) => {
+    const lan = lanAddress();
+    if (lan === undefined) return context.skip();
+    const dataDir = join(home, ".executor");
+    const clientDir = join(home, "client");
+    mkdirSync(clientDir);
+    writeFileSync(join(clientDir, "index.html"), "<!doctype html><title>t</title>");
+    const token = "wildcard-test-bearer-token-0123456789abcdefg";
+    const savedEnv = { HOME: process.env.HOME, EXECUTOR_DATA_DIR: process.env.EXECUTOR_DATA_DIR };
+    process.env.HOME = home;
+    process.env.EXECUTOR_DATA_DIR = dataDir;
+    const real = await startServer({
+      port: 0,
+      hostname: "0.0.0.0",
+      clientDir,
+      authToken: token,
+      handlers: {
+        api: { handler: async () => new Response("ok"), dispose: async () => {} },
+        mcp: {
+          handleRequest: async () => new Response("ok"),
+          handleApprovalRequest: async () => new Response("ok"),
+          handlePausedRequest: async () => new Response("ok"),
+          close: async () => {},
+        },
+      },
+    });
+    const relayed: string[] = [];
+    let squatter: ReturnType<typeof Bun.serve> | undefined;
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: always stop both servers
+    try {
+      // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: Linux refuses the overlapping bind, which already stops this squatter
+      try {
+        squatter = Bun.serve({
+          hostname: "127.0.0.1",
+          port: real.port,
+          async fetch(req) {
+            const url = new URL(req.url);
+            relayed.push(url.pathname);
+            return fetch(`http://${lan}:${real.port}${url.pathname}`, {
+              method: req.method,
+              headers: { "content-type": "application/json" },
+              body: req.method === "POST" ? await req.text() : undefined,
+            });
+          },
+        });
+      } catch {
+        return context.skip();
+      }
+      expect(
+        await verifyLocalServerIdentity({ origin: `http://127.0.0.1:${real.port}`, token }),
+      ).toBe(false);
+      expect(relayed).toEqual(["/api/local-auth/identity"]);
+    } finally {
+      squatter?.stop(true);
+      await real.stop();
+      process.env.HOME = savedEnv.HOME;
+      if (savedEnv.EXECUTOR_DATA_DIR === undefined) delete process.env.EXECUTOR_DATA_DIR;
+      else process.env.EXECUTOR_DATA_DIR = savedEnv.EXECUTOR_DATA_DIR;
+    }
+  }, 30_000);
 });

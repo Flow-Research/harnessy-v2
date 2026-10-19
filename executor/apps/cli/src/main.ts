@@ -109,6 +109,7 @@ import {
   findDataDirOwnershipHeld,
   localServerAddress,
   localServerOrigin,
+  localWebBaseUrl,
   type ServerInstance,
   type StartServerOptions,
 } from "@executor-js/local";
@@ -302,6 +303,7 @@ const warnUnverifiedLocalServer = (origin: string): void => {
     [
       `The server at ${origin} did not prove it is the Executor for this data directory, so it was not sent the token.`,
       "If it is an Executor from before this check, restart it (executor daemon stop, then start it again); otherwise another program now uses that port.",
+      "An Executor bound to all interfaces (0.0.0.0 or ::) never proves its identity: bind 127.0.0.1 or ::1, or pass the token explicitly (EXECUTOR_AUTH_TOKEN with --base-url).",
     ].join("\n"),
   );
 };
@@ -511,8 +513,20 @@ const publishLocalServerManifest = (input: {
     yield* writeLocalServerManifest(manifest);
   });
 
-const installDefaultExecutorWebBaseUrl = (baseUrl: string): (() => void) => {
-  if (process.env.EXECUTOR_WEB_BASE_URL !== undefined) {
+/**
+ * The cockpit origin `startServer` will publish for this bind, or `undefined`
+ * for a refused `--hostname` (startServer then reports the error).
+ */
+const cockpitWebBaseUrl = (hostname: string, port: number): string | undefined => {
+  try {
+    return localWebBaseUrl(hostname, port);
+  } catch {
+    return undefined;
+  }
+};
+
+const installDefaultExecutorWebBaseUrl = (baseUrl: string | undefined): (() => void) => {
+  if (baseUrl === undefined || process.env.EXECUTOR_WEB_BASE_URL !== undefined) {
     return () => {};
   }
 
@@ -1171,10 +1185,10 @@ const runForegroundSession = (input: {
   authToken: string | undefined;
 }) =>
   Effect.gen(function* () {
-    const displayHost =
-      input.hostname === "0.0.0.0" || input.hostname === "::" ? "localhost" : input.hostname;
+    // The OAuth redirect base is the published cockpit origin, so the popup's
+    // same-origin result channels reach the page the user opened.
     const restoreWebBaseUrl = installDefaultExecutorWebBaseUrl(
-      `http://${displayHost}:${input.port}`,
+      cockpitWebBaseUrl(input.hostname, input.port),
     );
 
     try {
@@ -1254,11 +1268,12 @@ const runDaemonSession = (input: {
 }) =>
   Effect.gen(function* () {
     const daemonHost = canonicalDaemonHost(input.hostname);
-    // The OAuth redirect base keeps its existing `localhost` form so redirect
-    // URIs registered with providers keep matching. It carries no bearer; the
-    // manifest and opener URLs below use the literal bind address.
+    // The OAuth redirect base is the published cockpit origin (the same
+    // literal as server.origin below), so the popup's same-origin result
+    // channels reach the cockpit. The loopback redirect URIs (127.0.0.1,
+    // localhost, [::1]) are all in the client metadata document.
     const restoreWebBaseUrl = installDefaultExecutorWebBaseUrl(
-      `http://${daemonHost}:${input.port}`,
+      cockpitWebBaseUrl(input.hostname, input.port),
     );
     const scopeId = currentDaemonScopeId();
 

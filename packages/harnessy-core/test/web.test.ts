@@ -204,6 +204,21 @@ describe("bundled AnyType cockpit registration", () => {
 		expect(authorization.every((value) => value === null)).toBe(true);
 	});
 
+	it("does not hand the token to a wildcard-bound Executor, and says how to fix it", async () => {
+		const dataDir = writeManifest("live-token");
+		const authorization: Array<string | null> = [];
+		const wildcard = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+			authorization.push(new Headers(init?.headers).get("authorization"));
+			return new URL(String(input)).pathname === "/api/local-auth/identity"
+				? Response.json({ error: "identity_unavailable_on_wildcard_bind" }, { status: 403 })
+				: new Response("ok");
+		};
+		await expect(waitForEngineConnection({ dataDir, fetchImpl: wildcard, readyTimeoutMillis: 300 })).rejects.toThrow(
+			"bind 127.0.0.1 or ::1",
+		);
+		expect(authorization.every((value) => value === null)).toBe(true);
+	});
+
 	it("refuses a proof for another token or another port", async () => {
 		const dataDir = writeManifest("live-token");
 		const wrongToken = (input: string | URL | Request, init?: RequestInit) => engineAnswer(input, init, "other");

@@ -283,6 +283,29 @@ export const parseBindHostname = (value: string): string => {
   );
 };
 
+/**
+ * Whether a bind address listens on every interface (`0.0.0.0`, `::` or
+ * another spelling of the unspecified address). Such a server cannot prove
+ * which address a client reached: another local user can bind the loopback
+ * address on the same port (macOS allows the more specific bind) and relay
+ * the identity challenge to the real server through a LAN address.
+ */
+export const isWildcardBindAddress = (address: string): boolean => {
+  const literal = address.trim().replace(/^\[(.*)\]$/, "$1");
+  if (isIP(literal) === 4) return literal === "0.0.0.0";
+  if (isIP(literal) === 6) return new URL(`http://[${literal}]/`).hostname === "[::]";
+  return false;
+};
+
+/**
+ * The cockpit origin a server bound to `hostname` on `port` publishes:
+ * {@link localServerOrigin} of the validated bind. The OAuth redirect base
+ * must use the same origin, because the popup reports its result through
+ * same-origin channels (`postMessage`, `BroadcastChannel`, `storage`).
+ */
+export const localWebBaseUrl = (hostname: string, port: number): string =>
+  localServerOrigin(parseBindHostname(hostname), port);
+
 /** `http://<address>:<port>` for a literal address, bracketing IPv6. */
 export const localServerOrigin = (address: string, port: number): string => {
   const literal = localServerAddress(address);

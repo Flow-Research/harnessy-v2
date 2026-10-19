@@ -321,7 +321,7 @@ export async function waitForEngineConnection({
 		if (Date.now() >= deadline) {
 			if (unverifiedOrigin !== undefined) {
 				throw new Error(
-					`The server at ${unverifiedOrigin} did not prove it is the Executor for ${resolvedDataDir}, so Harnessy did not send it the token. If it is an Executor from before this check, restart it; otherwise another program uses that port.`,
+					`The server at ${unverifiedOrigin} did not prove it is the Executor for ${resolvedDataDir}, so Harnessy did not send it the token. If it is an Executor from before this check, restart it; otherwise another program uses that port. An Executor bound to all interfaces (0.0.0.0 or ::) never proves its identity: bind 127.0.0.1 or ::1.`,
 				);
 			}
 			throw new Error(`Executor did not publish a reachable server manifest within ${readyTimeoutMillis}ms.`);

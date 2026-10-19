@@ -19,6 +19,7 @@ import type { McpPluginExtension } from "@executor-js/plugin-mcp";
 import executorConfig from "../executor.config";
 import { localDataMigrations } from "./db/data-migrations";
 import { openOwnedLocalDatabase } from "./db/owned-database";
+import { localServerOrigin } from "./serve-shared";
 
 interface ResolvedStorage {
   readonly dataDir: string;
@@ -52,6 +53,22 @@ const resolvePluginConfigPath = (scopeDir: string): string => join(scopeDir, "ex
 //   - `executor.jsonc#plugins` loaded at boot
 // Static config wins on conflict, matching the Vite plugin.
 type LocalPlugins = readonly AnyPlugin[];
+
+/**
+ * Where the local web UI listens: `EXECUTOR_WEB_BASE_URL` (the CLI sets it to
+ * the published cockpit origin), else the default bind
+ * `http://127.0.0.1:$PORT`. Never `localhost`: the OAuth popup reports its
+ * result through same-origin channels, so the redirect must land on the
+ * origin the cockpit was opened at.
+ */
+export const resolveLocalWebBaseUrl = (
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string =>
+  env.EXECUTOR_WEB_BASE_URL ?? localServerOrigin("127.0.0.1", Number(env.PORT ?? "4788"));
+
+/** The OAuth callback the local server serves under `webBaseUrl`. */
+export const localOAuthRedirectUri = (webBaseUrl: string): string =>
+  new URL("/api/oauth/callback", webBaseUrl).toString();
 
 export interface LocalExecutorOptions {
   readonly activeToolkitSlug?: string;
@@ -183,8 +200,7 @@ const createLocalExecutorLayer = (options: LocalExecutorOptions = {}) => {
       // daemon API since the daemon serves both. Mirrors serve.ts's port
       // resolution so a custom $PORT flows through. EXECUTOR_WEB_BASE_URL
       // overrides entirely for deployments where the UI is on a different host.
-      const webBaseUrl =
-        process.env.EXECUTOR_WEB_BASE_URL ?? `http://localhost:${process.env.PORT ?? "4788"}`;
+      const webBaseUrl = resolveLocalWebBaseUrl();
 
       const executor = yield* createExecutor({
         tenant: Tenant.make(tenantId),
@@ -195,9 +211,9 @@ const createLocalExecutorLayer = (options: LocalExecutorOptions = {}) => {
         oauthEndpointUrlPolicy: { allowHttp: true },
         // EXPLICIT OAuth callback — the daemon serves the v2 `/api/oauth/callback`
         // route on the same origin as the web UI. Derived from `webBaseUrl`
-        // (loopback localhost is correct + intended for the local CLI, but it
-        // is wired explicitly here rather than relying on a hidden default).
-        redirectUri: new URL("/api/oauth/callback", webBaseUrl).toString(),
+        // (the published cockpit origin, so the popup's same-origin result
+        // channels reach the cockpit; wired explicitly, no hidden default).
+        redirectUri: localOAuthRedirectUri(webBaseUrl),
         // Built-in agent-facing tools (integrations / connections / policies).
         coreTools: {
           webBaseUrl,

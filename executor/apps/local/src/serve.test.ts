@@ -24,12 +24,16 @@ import {
   SIGN_IN_PAGE_PATH,
   SIGN_IN_SCRIPT,
   startServer,
+  WILDCARD_IDENTITY_ERROR,
   type ServerInstance,
 } from "./serve";
+import { localOAuthRedirectUri, resolveLocalWebBaseUrl } from "./executor";
 import {
+  isWildcardBindAddress,
   localIdentityProof,
   localServerAddress,
   localServerOrigin,
+  localWebBaseUrl,
   parseBindHostname,
   signInPageName,
 } from "./serve-shared";
@@ -845,6 +849,66 @@ describe("startServer identity proof", () => {
     expect(parseBindHostname(" LocalHost ")).toBe("127.0.0.1");
     expect(parseBindHostname("0.0.0.0")).toBe("0.0.0.0");
     expect(() => parseBindHostname("box.lan")).toThrow("--allowed-host");
+  });
+
+  it("never proves its identity on a wildcard bind", async () => {
+    const binds = ipv6Loopback ? ["0.0.0.0", "::"] : ["0.0.0.0"];
+    for (const hostname of binds) {
+      await startTestServer({ hostname });
+      const response = await fetch(`${server!.origin}/api/local-auth/identity`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: "w".repeat(43) }),
+      });
+      expect({ hostname, status: response.status }).toEqual({ hostname, status: 403 });
+      const body = (await response.json()) as { error?: string; message?: string; proof?: string };
+      expect(body.proof).toBeUndefined();
+      expect(body.error).toBe(WILDCARD_IDENTITY_ERROR);
+      expect(body.message).toContain("Bind a loopback address");
+      await server!.stop();
+      server = null;
+    }
+  });
+
+  it("recognizes every spelling of the unspecified address as a wildcard bind", () => {
+    for (const address of ["0.0.0.0", "::", "[::]", "0:0:0:0:0:0:0:0", "::0"]) {
+      expect({ address, wildcard: isWildcardBindAddress(address) }).toEqual({
+        address,
+        wildcard: true,
+      });
+    }
+    for (const address of ["127.0.0.1", "::1", "192.168.1.5", "localhost"]) {
+      expect({ address, wildcard: isWildcardBindAddress(address) }).toEqual({
+        address,
+        wildcard: false,
+      });
+    }
+  });
+
+  // The OAuth popup reports its result through same-origin channels, so the
+  // redirect must land on the origin the cockpit is opened at.
+  it("derives the OAuth redirect from the published cockpit origin", async () => {
+    const binds = ipv6Loopback ? ["127.0.0.1", "localhost", "::1"] : ["127.0.0.1", "localhost"];
+    for (const hostname of binds) {
+      await startTestServer({ hostname });
+      const webBaseUrl = localWebBaseUrl(hostname, server!.port);
+      expect({ hostname, webBaseUrl }).toEqual({ hostname, webBaseUrl: server!.origin });
+      const redirect = new URL(
+        localOAuthRedirectUri(resolveLocalWebBaseUrl({ EXECUTOR_WEB_BASE_URL: webBaseUrl })),
+      );
+      expect(redirect.origin).toBe(server!.origin);
+      expect(redirect.pathname).toBe("/api/oauth/callback");
+      await server!.stop();
+      server = null;
+    }
+    // Without EXECUTOR_WEB_BASE_URL the default matches the default bind.
+    await startTestServer();
+    expect(
+      new URL(localOAuthRedirectUri(resolveLocalWebBaseUrl({ PORT: String(server!.port) }))).origin,
+    ).toBe(server!.origin);
+    // A wildcard bind publishes the loopback literal; so does its redirect.
+    expect(localWebBaseUrl("0.0.0.0", 4788)).toBe("http://127.0.0.1:4788");
+    expect(localWebBaseUrl("::", 4788)).toBe("http://[::1]:4788");
   });
 
   it("maps wildcard and named binds to the loopback literal clients use", () => {

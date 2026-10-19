@@ -8,7 +8,9 @@ export {
   createExecutorHandle,
   disposeExecutor,
   getExecutor,
+  localOAuthRedirectUri,
   reloadExecutor,
+  resolveLocalWebBaseUrl,
   type ExecutorHandle,
   type LocalExecutor,
 } from "./executor";
@@ -16,6 +18,7 @@ export { createMcpRequestHandler, runMcpStdioServer, type McpRequestHandler } fr
 export {
   SIGN_IN_PAGE_PATH,
   startServer,
+  WILDCARD_IDENTITY_ERROR,
   type StartServerOptions,
   type ServerInstance,
 } from "./serve";
@@ -24,6 +27,8 @@ export {
   localIdentityProof,
   localServerAddress,
   localServerOrigin,
+  localWebBaseUrl,
+  isWildcardBindAddress,
   LOGO_PROXY_PATH,
   parseBindHostname,
   signInPageName,
