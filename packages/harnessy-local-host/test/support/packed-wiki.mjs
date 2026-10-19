@@ -24,7 +24,7 @@ process.stdin.on("end", () => {
 // directory instead of resolving that package.
 const v1Scripts = join(root, "v1-scripts");
 mkdirSync(v1Scripts);
-const env = { ...process.env, HARNESSY_LIFE_V1_SCRIPTS: v1Scripts, HARNESSY_WIKI_EXECUTOR: process.execPath, HARNESSY_WIKI_EXECUTOR_ARGS: JSON.stringify([model]), HARNESSY_AI_PROVIDER: "codex", NODE_NO_WARNINGS: "1", PI_AUTH_ENCRYPTION: "off" };
+const env = { ...process.env, HARNESSY_LIFE_V1_SCRIPTS: v1Scripts, HARNESSY_WIKI_EXECUTOR: process.execPath, HARNESSY_WIKI_EXECUTOR_ARGS: JSON.stringify([model]), HARNESSY_AI_PROVIDER: "codex", NODE_NO_WARNINGS: "1", PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" };
 function run(args, status = 0) {
 	const result = spawnSync(process.execPath, [cli, ...args, "--home-root", root], { cwd: consumer, env, encoding: "utf8", timeout: 20_000, maxBuffer: 2_000_000 });
 	assert.equal(result.status, status, result.stderr);

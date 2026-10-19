@@ -92,7 +92,7 @@ const child = spawn(process.execPath, [
 	"--authorization", fixture.input.authorizationPath,
 	"--trusted-keyring", pin.path, "--trusted-keyring-device", pin.device,
 	"--trusted-keyring-inode", pin.inode, "--trusted-keyring-sha256", pin.sha256,
-], {cwd: installationRoot, env: {...process.env, NODE_NO_WARNINGS: "1", PI_AUTH_ENCRYPTION: "off" }, stdio: ["ignore", "pipe", "pipe"]});
+], {cwd: installationRoot, env: {...process.env, NODE_NO_WARNINGS: "1", PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" }, stdio: ["ignore", "pipe", "pipe"]});
 let stdout = "";
 let stderr = "";
 let outputError;

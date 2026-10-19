@@ -86,7 +86,7 @@ export default defineConfig({
 	},
 	test: {
 		// Fixture auth.json files stay plaintext and never touch the owner's OS keychain.
-		env: { PI_AUTH_ENCRYPTION: "off" },
+		env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 		include: ["test/**/*.test.ts"],
 		testTimeout: 30_000,
 		hookTimeout: 30_000,

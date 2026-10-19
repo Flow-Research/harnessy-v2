@@ -85,6 +85,7 @@ globalThis.fetch = (input, init) => {
 					env: {
 						// Never reach the OS keychain from a test child.
 						PI_AUTH_ENCRYPTION: "off",
+						HSY_AUTH_ENCRYPTION: "off",
 						HOME: root,
 						NODE_NO_WARNINGS: "1",
 						SYNTHETIC_PERSONAL: "synthetic-personal",
