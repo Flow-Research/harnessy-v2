@@ -29,6 +29,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { jarvisCommunityGenerationRetryCommand, jarvisCommunityGenerationStatusCommand } from "../src/cli/jarvis.ts";
 import {
 	COMMUNITY_GUARD_LABELS,
+	COMMUNITY_REVIEW_RESTART_BASELINE_MS,
 	COMMUNITY_REVIEW_RESTART_HORIZON_MS,
 	COMMUNITY_REVIEW_RESTART_LIMIT,
 	isCommunityCompatibilityWriterCommand,
@@ -1126,18 +1127,59 @@ describe("one-writer guard for scheduled generation", () => {
 				state.runs += 1;
 				state.now += 10_000;
 			};
-			return { proof, state, restart };
+			/** The first probes pause while the start count gets its baseline; then the reviewer is exempt. */
+			const baseline = () => {
+				expect(() => proof()).toThrow("launchctl_restart_baseline");
+				state.now += COMMUNITY_REVIEW_RESTART_BASELINE_MS;
+			};
+			return { proof, state, restart, baseline };
 		};
 
+		it("does not exempt the reviewer before the start count has a baseline", async () => {
+			const { proof, state, restart } = await crashingReviewer();
+			// The publication service starts while the reviewer has already restarted 40 times.
+			state.runs = 40;
+			expect(() => proof()).toThrow("launchctl_restart_baseline");
+			// A loop already under way passes the limit within the baseline period.
+			for (let count = 0; count < COMMUNITY_REVIEW_RESTART_LIMIT; count++) restart();
+			expect(() => proof()).toThrow("launchctl_restart_baseline");
+			restart();
+			expect(state.now).toBeLessThan(COMMUNITY_REVIEW_RESTART_BASELINE_MS);
+			expect(() => proof()).toThrow("launchctl_restart_loop");
+		});
+
+		it("exempts a reviewer with a high but steady start count after the baseline", async () => {
+			const { proof, state } = await crashingReviewer();
+			state.runs = 40;
+			expect(() => proof()).toThrow("launchctl_restart_baseline");
+			state.now += COMMUNITY_REVIEW_RESTART_BASELINE_MS - 1;
+			expect(() => proof()).toThrow("launchctl_restart_baseline");
+			state.now += 1;
+			expect(() => proof()).not.toThrow();
+			// A real writer still stops at once, even before the baseline.
+			const twoPids = makeCommunityCompatibilityProof(
+				scheduledOs({
+					reviewCommand: (await plannedReview()).file.programArguments.join(" "),
+					reviewLaunchd: "runs = 3\npid = 4100\npid = 4101\n",
+				}),
+				"darwin",
+				{ executable: process.execPath, entry: (await plannedReview()).cli },
+				makeCommunityReviewRestartTracker(() => 0),
+			);
+			expect(() => twoPids()).toThrow("compatibility_writer_present");
+		});
+
 		it("recovers from a single restart", async () => {
-			const { proof, restart } = await crashingReviewer();
+			const { proof, restart, baseline } = await crashingReviewer();
+			baseline();
 			expect(() => proof()).not.toThrow();
 			restart();
 			expect(() => proof()).not.toThrow();
 		});
 
 		it("stops once the restarts pass the limit, although each start verifies", async () => {
-			const { proof, restart } = await crashingReviewer();
+			const { proof, restart, baseline } = await crashingReviewer();
+			baseline();
 			expect(() => proof()).not.toThrow();
 			for (let count = 1; count <= COMMUNITY_REVIEW_RESTART_LIMIT; count++) {
 				restart();
@@ -1158,7 +1200,8 @@ describe("one-writer guard for scheduled generation", () => {
 		});
 
 		it("forgets restarts older than the horizon and counts afresh after a reload", async () => {
-			const { proof, state, restart } = await crashingReviewer();
+			const { proof, state, restart, baseline } = await crashingReviewer();
+			baseline();
 			expect(() => proof()).not.toThrow();
 			// Twice the limit, but spread so that no horizon holds more than the limit.
 			const gap = Math.ceil(COMMUNITY_REVIEW_RESTART_HORIZON_MS / COMMUNITY_REVIEW_RESTART_LIMIT);
@@ -1169,6 +1212,7 @@ describe("one-writer guard for scheduled generation", () => {
 			}
 			// `schedule --apply` reloaded the label: launchd's counter starts again at 1.
 			state.runs = 1;
+			baseline();
 			expect(() => proof()).not.toThrow();
 			for (let count = 0; count < COMMUNITY_REVIEW_RESTART_LIMIT; count++) restart();
 			expect(() => proof()).not.toThrow();
@@ -1728,9 +1772,10 @@ describe("transient provider failures and owner retries", () => {
 
 	it("generation-status fails on a configuration with YAML errors (#127)", async () => {
 		const root = temporary();
-		const status = async (config: string) => {
+		const status = async (config: string | undefined, ...extra: Array<string>) => {
 			const path = join(root, "config.yaml");
-			writeFileSync(path, config);
+			if (config === undefined) rmSync(path, { force: true });
+			else writeFileSync(path, config);
 			const lines: Array<string> = [];
 			const log = vi.spyOn(console, "log").mockImplementation((...values: Array<unknown>) => {
 				lines.push(values.join(" "));
@@ -1743,6 +1788,7 @@ describe("transient provider failures and owner retries", () => {
 						"--state-root",
 						root,
 						"--json",
+						...extra,
 					]).pipe(Effect.provide(NodeServices.layer)),
 				);
 				return { exit, report: JSON.parse(lines.join("\n")) as { ok: boolean; configIssues: unknown } };
@@ -1757,6 +1803,18 @@ describe("transient provider failures and owner retries", () => {
 		expect(malformed.report.ok).toBe(false);
 		expect(Exit.isFailure(malformed.exit)).toBe(true);
 		expect(malformed.report.configIssues).toEqual(["configuration has invalid YAML"]);
+		// --repair repairs only the record: configuration issues stay fatal.
+		const repaired = await status(
+			"community_briefing:\n  enabled: true\n  review_host: 127.0.0.1\n    review_port: 8770\n",
+			"--repair",
+		);
+		expect(repaired.report.ok).toBe(false);
+		expect(Exit.isFailure(repaired.exit)).toBe(true);
+		// A missing configuration is reported as structured status, not only as an error.
+		const missing = await status(undefined);
+		expect(missing.report.ok).toBe(false);
+		expect(missing.report.configIssues).toEqual([`configuration is missing: ${join(root, "config.yaml")}`]);
+		expect(Exit.isFailure(missing.exit)).toBe(true);
 		const healthy = await status("community_briefing:\n  enabled: true\n");
 		expect(healthy.report).toMatchObject({ ok: true, configIssues: [] });
 		expect(Exit.isSuccess(healthy.exit)).toBe(true);

@@ -582,8 +582,9 @@ Constraints the implementation keeps:
   a link, not owner-only or unreadable may be tampering. It stops generation
   until the owner runs `harnessy jarvis community generation-status --repair`,
   which moves it aside, never deleting it. `generation-status` also reports
-  `ok: false`, with `configIssues`, for a configuration the review service
-  refuses, such as YAML with syntax errors (#127).
+  `ok: false`, with `configIssues`, and exits non-zero (also with `--repair`)
+  for a configuration the review service refuses: missing, unreadable, or YAML
+  with syntax errors (#127).
 - **Schedule.** The default is Sunday 23:00 Africa/Lagos for the Monday–Sunday
   week ending that day, which is V1's boundary. Times are local wall-clock
   times. Across a daylight-saving change a skipped minute fires at the next
@@ -637,7 +638,11 @@ Constraints the implementation keeps:
       verified start ends the no-process pause but not this count, so a
       reviewer that keeps dying ends in one clear stop instead of repeated
       pauses and uncertain publications. A lower counter (the label was
-      reloaded) starts the count afresh.
+      reloaded) starts the count afresh. The first observation cannot tell
+      how fast the reviewer has been restarting, so for two minutes after it
+      a verified reviewer pauses publication (`launchctl_restart_baseline`)
+      instead of being exempt; a loop already under way passes the limit in
+      that time.
   - **Any other guarded label** loaded, or any other observed writer: an
     immediate stop.
 

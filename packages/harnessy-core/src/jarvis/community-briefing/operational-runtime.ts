@@ -177,6 +177,13 @@ export const darwinProcessExecutableFromLsof = (output: string, pid: number): st
  */
 export const COMMUNITY_REVIEW_RESTART_LIMIT = 5;
 export const COMMUNITY_REVIEW_RESTART_HORIZON_MS = 30 * 60_000;
+/**
+ * The first observation cannot tell how fast the reviewer has been restarting. Until the guard
+ * has watched the label this long, a verified reviewer pauses publication
+ * (`launchctl_restart_baseline`) instead of being exempt, while starts are counted. A tight loop
+ * (one start per 10 s ThrottleInterval) passes the limit within this period.
+ */
+export const COMMUNITY_REVIEW_RESTART_BASELINE_MS = 2 * 60_000;
 
 /**
  * @internal Counts starts of the review label from launchd's `runs` counter over the horizon.
@@ -187,15 +194,23 @@ export const makeCommunityReviewRestartTracker = (
 	now: () => number = () => Number(process.hrtime.bigint() / 1_000_000n),
 ) => {
 	let samples: Array<{ readonly at: number; readonly runs: number }> = [];
+	/** When this load of the label was first observed. */
+	let since: number | undefined;
+	let lastRuns = 0;
 	return {
-		/** Record the counter; returns the starts seen within the horizon. */
-		observe: (runs: number): number => {
+		/** Record the counter; returns the starts seen within the horizon and how long this load was watched. */
+		observe: (runs: number): { readonly starts: number; readonly observedForMs: number } => {
 			const at = now();
 			// A lower counter means the label was unloaded and loaded again: count afresh.
-			if (runs < (samples.at(-1)?.runs ?? 0)) samples = [];
+			if (runs < lastRuns) {
+				samples = [];
+				since = undefined;
+			}
+			since ??= at;
+			lastRuns = runs;
 			samples = samples.filter((sample) => at - sample.at <= COMMUNITY_REVIEW_RESTART_HORIZON_MS);
 			if (samples.at(-1)?.runs !== runs) samples.push({ at, runs });
-			return runs - samples[0]!.runs;
+			return { starts: runs - samples[0]!.runs, observedForMs: at - since };
 		},
 	};
 };
@@ -356,16 +371,23 @@ const proveCompatibilityAbsentWith = (
 					const result = command("launchctl", "/bin/launchctl", ["print", `gui/${uid}/${label}`]);
 					// A reviewer that keeps restarting stops publication at once, even while its current
 					// start verifies: each verified start would otherwise end the no-process pause.
+					let restartBaseline = false;
 					if (result.status === 0 && label === "com.flow-harness.community-review-v2") {
 						const runs = [...result.stdout.matchAll(/^\s*runs = (\d+)\s*$/gmu)];
-						if (runs.length === 1 && restarts.observe(Number(runs[0]![1])) > COMMUNITY_REVIEW_RESTART_LIMIT)
-							throw new Error("launchctl_restart_loop");
+						if (runs.length === 1) {
+							const observed = restarts.observe(Number(runs[0]![1]));
+							if (observed.starts > COMMUNITY_REVIEW_RESTART_LIMIT) throw new Error("launchctl_restart_loop");
+							restartBaseline = observed.observedForMs < COMMUNITY_REVIEW_RESTART_BASELINE_MS;
+						}
 					}
 					if (
 						result.status === 0 &&
 						isNativeCommunityReviewLaunchAgent(label, result.stdout, nativeReviewProcesses)
-					)
+					) {
+						// Exempt only once the start count has a baseline; until then, pause.
+						if (restartBaseline) throw new WriterCheckInconclusiveError("launchctl", "restart_baseline");
 						return;
+					}
 					// Only the native review agent can be exempt, and only while it runs exactly one
 					// process. That process's exemption is inconclusive when its own check could not
 					// answer, or when the process listing could not answer so it could not be checked.

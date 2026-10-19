@@ -774,17 +774,20 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 				stateRoot: Option.getOrUndefined(stateRoot),
 			});
 			// The same lenient reading the review service uses, so a bad setting shows here.
-			const briefing = yield* Effect.try({
-				try: () => {
-					const value: unknown = parseDocument(readFileSync(resolved.configPath, "utf8")).toJS();
-					const section =
-						typeof value === "object" && value !== null
-							? (value as Record<string, unknown>).community_briefing
-							: undefined;
-					return typeof section === "object" && section !== null ? (section as Record<string, unknown>) : {};
-				},
-				catch: () => new Error(`Could not read ${resolved.configPath}.`),
+			// The review service refuses a configuration with issues (missing, unreadable or YAML errors),
+			// so status reports them and fails, but still shows the record.
+			const configIssues = [...resolved.issues];
+			const configRead = Result.try(() => {
+				const value: unknown = parseDocument(readFileSync(resolved.configPath, "utf8")).toJS();
+				const section =
+					typeof value === "object" && value !== null
+						? (value as Record<string, unknown>).community_briefing
+						: undefined;
+				return typeof section === "object" && section !== null ? (section as Record<string, unknown>) : {};
 			});
+			if (Result.isFailure(configRead) && configIssues.length === 0)
+				configIssues.push("configuration could not be read");
+			const briefing: Record<string, unknown> = Result.isSuccess(configRead) ? configRead.success : {};
 			const { schedule, issues } = parseCommunityGenerationSchedule(
 				briefing.enabled,
 				briefing.generation_schedule,
@@ -811,8 +814,6 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 				isCommunityGenerationSchedulerRunning(resolved.stateRoot),
 			);
 			const latestWeek = summary.latestWeek;
-			// The review service refuses a configuration with YAML errors, so status must not report it healthy.
-			const configIssues = resolved.issues;
 			const ok = configIssues.length === 0 && issues.length === 0 && fault === null && summary.ok;
 			if (json)
 				yield* Console.log(
@@ -867,6 +868,8 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 				}
 			}
 			if (repaired?.outcome === "busy") yield* Effect.fail(new Error("The record is busy; nothing was moved"));
+			// --repair cannot repair the configuration, so its issues stay fatal.
+			if (configIssues.length > 0) yield* Effect.fail(new Error("The community configuration needs attention"));
 			if (!ok && !repair) yield* Effect.fail(new Error("Weekly community generation needs attention"));
 		}),
 ).pipe(
