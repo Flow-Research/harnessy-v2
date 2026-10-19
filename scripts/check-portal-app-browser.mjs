@@ -17,7 +17,7 @@
  * It refuses to run outside CI unless HARNESSY_BROWSER_SMOKE=1 is set, so it
  * never opens a browser on a developer machine by accident. The browser runs
  * headless with a throwaway profile; the portal runs with a temporary HOME and
- * PI_AUTH_ENCRYPTION=off, so no keychain, live service or real state is touched.
+ * PI_AUTH_ENCRYPTION=off and HSY_AUTH_ENCRYPTION=off, so no keychain, live service or real state is touched.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -72,7 +72,7 @@ const childEnv = {
 	PATH: process.env.PATH,
 	USER: "owner",
 	// Never reach an OS keychain from the smoke.
-	PI_AUTH_ENCRYPTION: "off",
+	PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off",
 };
 
 try {

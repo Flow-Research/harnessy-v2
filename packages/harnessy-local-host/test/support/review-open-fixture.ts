@@ -136,6 +136,7 @@ if (mode === "redeem" && exchange !== undefined) fs.unlinkSync(exchange);
 					PATH: `${bin}:${process.env.PATH ?? ""}`,
 					NODE_NO_WARNINGS: "1",
 					PI_AUTH_ENCRYPTION: "off",
+					HSY_AUTH_ENCRYPTION: "off",
 					REVIEW_OPEN_TEST_PROFILE: profileName,
 					REVIEW_OPEN_TEST_OPENER: opener,
 					REVIEW_OPEN_TEST_WAIT_MS: String(options.waitMs ?? 30_000),

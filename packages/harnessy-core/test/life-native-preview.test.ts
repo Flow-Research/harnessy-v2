@@ -275,6 +275,7 @@ describe("native Life preview consumer", () => {
 				env: {
 					// Never reach the OS keychain from a test child.
 					PI_AUTH_ENCRYPTION: "off",
+					HSY_AUTH_ENCRYPTION: "off",
 					PATH: process.env.PATH,
 					FLOW_PROJECT_ROOT: root,
 					AGENTS_LIFE_DIR: join(root, "life"),

@@ -159,6 +159,7 @@ it.each([
 			timeout: 10000,
 			env: {
 				PI_AUTH_ENCRYPTION: "off",
+				HSY_AUTH_ENCRYPTION: "off",
 				PATH: process.env.PATH,
 				USER: "fixture",
 				HSY_CODING_AGENT_DIR: join(f.root, "absent-auth"),

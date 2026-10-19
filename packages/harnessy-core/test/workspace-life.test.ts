@@ -38,7 +38,7 @@ const fixture = () => {
 	const privateContext = join(root, ".jarvis/context/private/tester");
 	mkdirSync(privateContext, { recursive: true });
 	writeFileSync(join(privateContext, "priorities.md"), "# Priorities\nShip the portable workspace.\n");
-	// Input to prepareWorkspaceLifeCommand; `execute` sets PI_AUTH_ENCRYPTION on the child.
+	// Input to prepareWorkspaceLifeCommand; `execute` sets PI_AUTH_ENCRYPTION and HSY_AUTH_ENCRYPTION on the child.
 	// harnessy-test-env: configuration, not a child process environment
 	const env = {
 		HOME: home,
@@ -54,7 +54,7 @@ const fixture = () => {
 const execute = (command: ExternalCommand) =>
 	execFileSync("python3", [...command.args], {
 		cwd: command.cwd,
-		env: { PATH: process.env.PATH, ...command.env, PI_AUTH_ENCRYPTION: "off" },
+		env: { PATH: process.env.PATH, ...command.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 		encoding: "utf8",
 		stdio: "pipe",
 		timeout: 30_000,
@@ -169,7 +169,7 @@ describe("workspace Life adapter", () => {
 			executable: "python3",
 			args: [join(scripts, "daily-brief")],
 			cwd: home,
-			env: { PI_AUTH_ENCRYPTION: "off", HOME: home },
+			env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off", HOME: home },
 		};
 		expect(prepareWorkspaceLifeCommand(command)).toEqual({ command, snapshotPath: null });
 		const unrelated = { ...command, args: ["other.py"] };

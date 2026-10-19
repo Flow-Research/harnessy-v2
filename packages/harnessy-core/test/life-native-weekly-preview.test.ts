@@ -150,6 +150,7 @@ describe("signed weekly Life draft consumer", () => {
 									...command.env,
 									// Last, so no spread can switch it back on: never reach the OS keychain.
 									PI_AUTH_ENCRYPTION: "off",
+									HSY_AUTH_ENCRYPTION: "off",
 								},
 							});
 							expect(child.status, child.stderr).toBe(0);
@@ -231,6 +232,7 @@ describe("signed weekly Life draft consumer", () => {
 									PYTHONDONTWRITEBYTECODE: "1",
 									...command.env,
 									PI_AUTH_ENCRYPTION: "off",
+									HSY_AUTH_ENCRYPTION: "off",
 								},
 							});
 							expect(child.status, child.stderr).toBe(0);

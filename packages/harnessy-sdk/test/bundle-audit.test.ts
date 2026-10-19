@@ -55,6 +55,7 @@ function audit(
 				NODE_NO_WARNINGS: "1",
 				...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
 				PI_AUTH_ENCRYPTION: "off",
+				HSY_AUTH_ENCRYPTION: "off",
 			},
 			encoding: "utf8",
 			timeout: 10000,

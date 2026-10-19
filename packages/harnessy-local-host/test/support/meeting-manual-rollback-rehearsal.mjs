@@ -207,7 +207,7 @@ try {
 	// Remove only additional synthetic notes not represented in the executable candidate.
 	rmSync(approved.note_path);
 	const run = spawnSync(python, [join(support, "meeting-manual-rollback-oracle.py"), oracleSource, root, output, notes], {
-		env: { PI_AUTH_ENCRYPTION: "off", HOME: root, PATH: "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8", timeout: 30_000,
+		env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off", HOME: root, PATH: "/usr/bin:/bin", PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8", timeout: 30_000,
 	});
 	assert.equal(run.status, 0, `Isolated worker oracle failed: ${run.stderr}`);
 	const result = JSON.parse(run.stdout);

@@ -112,6 +112,7 @@ const startChild = async (home: string, stateDir: string, log: string) => {
 			env: {
 				// Never reach the OS keychain from a test child.
 				PI_AUTH_ENCRYPTION: "off",
+				HSY_AUTH_ENCRYPTION: "off",
 				HOME: home,
 				PATH: process.env.PATH,
 				USER: "owner",
