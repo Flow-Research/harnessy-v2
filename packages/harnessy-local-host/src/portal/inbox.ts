@@ -25,6 +25,7 @@ import type {
 	TileResult,
 } from "@harnessy/core/read-model";
 
+import { fathomConnectionId } from "./connections.ts";
 import { HIDDEN_CHARACTERS, LAUNCHD_UNAVAILABLE, reviewUrl, shellPath } from "./jobs.ts";
 
 export interface InboxInputs {
@@ -66,6 +67,21 @@ const instantOrNull = (value: string | null | undefined): string | null =>
 
 const cut = (value: string, max: number): string => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
 
+/** Plain words for the reason codes a connection carries in `detail`. */
+const CONNECTION_DETAIL_TEXT: Readonly<Record<string, string>> = {
+	never_polled: "No successful poll recorded",
+	checkpoint_stale: "No successful poll recently",
+	not_checked: "Not checked yet",
+	not_configured: "Not set up yet",
+};
+
+/** A connection's `detail` in plain words: a known code is translated, any other snake_case code is spelled out. */
+export const connectionDetailText = (detail: string): string =>
+	CONNECTION_DETAIL_TEXT[detail] ??
+	(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u.test(detail)
+		? `${detail.charAt(0).toUpperCase()}${detail.slice(1).replaceAll("_", " ")}`
+		: detail);
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 
 /** `24 Aug` for `2026-08-24`, independent of the runtime's locale data. */
@@ -82,15 +98,31 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 	const note = (name: string, tile: TileResult<unknown>) => {
 		if (tile.state !== "ok" && tile.state !== "missing") unreadable.push(`${name}:${tile.reason ?? tile.state}`);
 	};
+	/** Index in `items` of the item that holds each problem, so one problem is one item. */
+	const problems = new Map<string, number>();
+	/**
+	 * Add an item. Items from different sources that name the same `problem` (the
+	 * same Fathom account seen by the poll checkpoint and by Connections) are one
+	 * item: the one with the highest severity is kept, the first on a tie. Two items
+	 * from one source are never merged: a shared key there means two names were cut
+	 * to the same prefix, not one problem.
+	 */
 	const add = (
 		item: Omit<InboxItemData, "title" | "context" | "detail"> & Record<"title" | "context" | "detail", string>,
-	) =>
-		items.push({
+		problem?: string,
+	) => {
+		const entry: InboxItemData = {
 			...item,
 			title: cut(item.title, 160),
 			context: cut(item.context, 300),
 			detail: cut(item.detail, 600),
-		});
+		};
+		const held = problem === undefined ? undefined : problems.get(problem);
+		if (held === undefined || items[held]!.source === entry.source) {
+			if (problem !== undefined && held === undefined) problems.set(problem, items.length);
+			items.push(entry);
+		} else if (RANK[entry.severity] < RANK[items[held]!.severity]) items[held] = entry;
+	};
 
 	// Community briefings waiting for review.
 	note("community.queue", inputs.communityQueue);
@@ -290,21 +322,24 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 		for (const account of fathom.accounts) {
 			pending += account.pending ?? 0;
 			if (account.stale)
-				add({
-					key: `fathom:${account.account}:stale`,
-					severity: "action_required",
-					source: "fathom",
-					title: `Fathom (${account.account}) has not polled recently`,
-					context:
-						account.ageSeconds === null
-							? "No successful poll recorded"
-							: `Last successful poll ${Math.round(account.ageSeconds / 60)} min ago (every ${Math.round(fathom.intervalSeconds / 60)} min)`,
-					detail:
-						"The poll checkpoint is older than two intervals. Run a poll to see the error. Reauthorisation has no command yet.",
-					since: account.updatedAt,
-					owner,
-					actions: [poll],
-				});
+				add(
+					{
+						key: `fathom:${account.account}:stale`,
+						severity: "action_required",
+						source: "fathom",
+						title: `Fathom (${account.account}) has not polled recently`,
+						context:
+							account.ageSeconds === null
+								? "No successful poll recorded"
+								: `Last successful poll ${Math.round(account.ageSeconds / 60)} min ago (every ${Math.round(fathom.intervalSeconds / 60)} min)`,
+						detail:
+							"The poll checkpoint is older than two intervals. Run a poll to see the error. Reauthorisation has no command yet.",
+						since: account.updatedAt,
+						owner,
+						actions: [poll],
+					},
+					`connection:${fathomConnectionId(account.account)}`,
+				);
 			if ((account.invalid ?? 0) > 0)
 				add({
 					key: `fathom:${account.account}:invalid`,
@@ -361,25 +396,31 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 		for (const connection of tile.data!.connections) {
 			if (connection.status !== "attention") continue;
 			const action = connection.action;
-			add({
-				key: `connection:${connection.id}`,
-				severity: "attention",
-				source: "connections",
-				title: `${connection.label} needs attention`,
-				context: connection.detail ?? "Reconnect it in the owning service",
-				detail: `Owned by ${connection.owner}. Harnessy never signs in for you.${action?.note ? ` ${action.note}` : ""}`,
-				since: instantOrNull(connection.checkedAt),
-				owner: { service: connection.owner, port: null, label: connection.owner },
-				actions:
-					action === null
-						? [handoff("Open Connections", "#/connections")]
-						: action.kind === "link"
-							? [handoff("Open owner", action.value)]
-							: // A command with hidden characters would not copy what it shows.
-								HIDDEN_CHARACTERS.test(action.value)
-								? [handoff("Open Connections", "#/connections")]
-								: [copy("Copy command", action.value)],
-			});
+			add(
+				{
+					key: `connection:${connection.id}`,
+					severity: "attention",
+					source: "connections",
+					title: `${connection.label} needs attention`,
+					context:
+						connection.detail === null
+							? "Reconnect it in the owning service"
+							: connectionDetailText(connection.detail),
+					detail: `Owned by ${connection.owner}. Harnessy never signs in for you.${action?.note ? ` ${action.note}` : ""}`,
+					since: instantOrNull(connection.checkedAt),
+					owner: { service: connection.owner, port: null, label: connection.owner },
+					actions:
+						action === null
+							? [handoff("Open Connections", "#/connections")]
+							: action.kind === "link"
+								? [handoff("Open owner", action.value)]
+								: // A command with hidden characters would not copy what it shows.
+									HIDDEN_CHARACTERS.test(action.value)
+									? [handoff("Open Connections", "#/connections")]
+									: [copy("Copy command", action.value)],
+				},
+				`connection:${connection.id}`,
+			);
 		}
 	}
 

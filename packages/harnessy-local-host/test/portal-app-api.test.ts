@@ -600,6 +600,87 @@ describe("inbox derivation", () => {
 	});
 });
 
+describe("inbox problems", () => {
+	const fathomConnection = (account: string, detail: string | null) => ({
+		id: `fathom.${account}`,
+		label: `Fathom: ${account}`,
+		owner: "fathom-poll",
+		status: "attention" as const,
+		detail,
+		checkedAt: null,
+		action: { kind: "command" as const, value: "harnessy jarvis meeting fathom status", note: null },
+	});
+	const account = (name: string, updatedAt: string | null) => ({
+		account: name,
+		pending: 0,
+		processed: 0,
+		invalid: 0,
+		updatedAt,
+		ageSeconds: updatedAt === null ? null : 90_000,
+		stale: true,
+	});
+
+	it("shows one item per Fathom account problem, at the highest severity, in plain words", () => {
+		const inbox = deriveInbox({
+			...baseInputs(),
+			fathomAccounts: ok({ intervalSeconds: 300, accounts: [account("aa", null)] }),
+			connections: {
+				fathom: ok({
+					omitted: 0,
+					connections: [fathomConnection("aa", "never_polled"), fathomConnection("bb", "checkpoint_stale")],
+				}),
+				gws: ok({
+					omitted: 0,
+					connections: [
+						{ ...fathomConnection("x", "token_expired"), id: "gws.x", label: "gws x", owner: "gws" },
+						{ ...fathomConnection("y", "Signed out."), id: "gws.y", label: "gws y", owner: "gws" },
+					],
+				}),
+			},
+		});
+		// The poll checkpoint and Connections both see account aa: one item, the action_required one.
+		expect(keys(inbox.items)).toEqual([
+			"action_required fathom:aa:stale",
+			"attention connection:fathom.bb",
+			"attention connection:gws.x",
+			"attention connection:gws.y",
+		]);
+		expect(inbox.counts).toEqual({ action_required: 1, attention: 3, info: 0 });
+		expect(inbox.items.map((item) => [item.title, item.context])).toEqual([
+			["Fathom (aa) has not polled recently", "No successful poll recorded"],
+			["Fathom: bb needs attention", "No successful poll recently"],
+			["gws x needs attention", "Token expired"],
+			["gws y needs attention", "Signed out."],
+		]);
+		// No raw reason code reaches the inbox.
+		expect(JSON.stringify(inbox.items)).not.toMatch(/never_polled|checkpoint_stale|token_expired/u);
+	});
+
+	it("never merges two accounts whose names were cut to the same prefix", () => {
+		// The accounts tile cuts names at 64 characters: two long names can arrive identical.
+		const long = "a".repeat(64);
+		const inbox = deriveInbox({
+			...baseInputs(),
+			fathomAccounts: ok({ intervalSeconds: 300, accounts: [account(long, null), account(long, null)] }),
+			connections: {
+				fathom: ok({
+					omitted: 0,
+					connections: [
+						fathomConnection(`${long}-one`, "never_polled"),
+						fathomConnection(`${long}-two`, "never_polled"),
+					],
+				}),
+			},
+		});
+		expect(keys(inbox.items)).toEqual([
+			`action_required fathom:${long}:stale`,
+			`action_required fathom:${long}:stale`,
+			`attention connection:fathom.${long}-one`,
+			`attention connection:fathom.${long}-two`,
+		]);
+	});
+});
+
 describe("jobs", () => {
 	const context = (overrides: Partial<JobsContext> = {}): JobsContext => ({
 		now: NOW,
@@ -926,6 +1007,8 @@ describe("app routes over a real server", () => {
 				"attention community-generation:2026-09-28",
 			]),
 		);
+		// The research account's stale checkpoint is one item, not a second "needs attention" one from Connections.
+		expect(items.map((item) => item.key)).not.toContain("connection:fathom.research");
 		const tasks = await get("/v1/tasks");
 		expect(checkPortalValue(PortalApiSchemas.Tasks, tasks.json)).toBe(true);
 		const taskList = (

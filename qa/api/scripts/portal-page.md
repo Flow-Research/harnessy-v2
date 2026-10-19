@@ -7,7 +7,7 @@ Layer: api
 Status: implemented
 Test File: qa/tests/portal-page.api.test.mjs
 Linked Refs: packages/harnessy-local-host/test/portal-assets.test.ts, packages/harnessy-local-host/src/portal/page-assets.ts, packages/harnessy-local-host/src/portal/server.ts, packages/harnessy-local-host/src/portal/app/vite.config.ts
-Expected: Only files listed in `asset-manifest.json` are served, each checked for length and SHA-256 at start; a tampered, resized, missing, linked, non-regular or oversize file, a malformed manifest, a path that leaves the bundle or an unknown file type stops the portal; `index.html` with an inline script, a `<style>` element, a `style` or `on…` attribute, or a reference outside the manifest is refused; hashed files are cached immutable and `index.html` is `no-store`; every file and every refusal carries the unchanged CSP and security headers; without a bundle a script-free page is served; the real build has one stylesheet, self-hosted fonts and no `data:` URL or `eval`.
+Expected: Only files listed in `asset-manifest.json` are served, each checked for length and SHA-256 at start; a tampered, resized, missing, linked, non-regular or oversize file, a malformed manifest, a path that leaves the bundle or an unknown file type stops the portal; `index.html` with an inline script, a `<style>` element, a `style` or `on…` attribute, or a reference outside the manifest is refused; hashed files are cached immutable and `index.html` is `no-store`; every file and every refusal carries the unchanged CSP and security headers; without a bundle a script-free page is served; the real build has one stylesheet, self-hosted fonts, a favicon declared in `index.html` from the manifest (so no browser requests an unlisted `/favicon.ico`) and no `data:` URL or `eval`.
 
 - Execute the bundle loader and HTTP cases.
 
@@ -43,7 +43,7 @@ Layer: api
 Status: implemented
 Test File: qa/tests/portal-page.api.test.mjs
 Linked Refs: packages/harnessy-local-host/test/portal-app-api.test.ts, packages/harnessy-local-host/test/portal-task-changes.test.ts, packages/harnessy-local-host/src/portal/task-changes.ts, packages/harnessy-local-host/src/portal/inbox.ts, packages/harnessy-local-host/src/portal/jobs.ts, packages/harnessy-local-host/src/portal/liveness.ts, packages/harnessy-local-host/src/portal/routes.ts, packages/harnessy-core/test/read-model-app.test.ts, packages/harnessy-core/src/read-model/followups.ts, packages/harnessy-core/src/read-model/job-schedules.ts
-Expected: The Inbox ranks items by server-computed severity with stable keys and offers only hand-offs and copied commands, none writer-shaped; Tasks come from the brief, reminders, register and status files with content-hash ids, unique ids for repeated lines, unparsed lines kept raw and edited lines flagged with their old title for a day (line shifts and insertions are not edits); an unreadable source is never reported as "nothing needs you"; Jobs report launchd state, a Lagos next run that mirrors each schedule, last activity labelled log mtime and loopback liveness on both families for the cockpit and on the configured host for review services, no next run for an unloaded job and redacted program arguments; community review is never offered a pause; the brief, its dates and a weekly draft are bounded text; parameters are validated before any read.
+Expected: The Inbox ranks items by server-computed severity with stable keys and offers only hand-offs and copied commands, none writer-shaped; one account problem seen by two sources (a Fathom poll checkpoint and its Connections row) is one item at the highest severity, and connection reason codes are shown in plain words; Tasks come from the brief, reminders, register and status files with content-hash ids, unique ids for repeated lines, unparsed lines kept raw and edited lines flagged with their old title for a day (line shifts and insertions are not edits); an unreadable source is never reported as "nothing needs you"; Jobs report launchd state, a Lagos next run that mirrors each schedule, last activity labelled log mtime and loopback liveness on both families for the cockpit and on the configured host for review services, no next run for an unloaded job and redacted program arguments; community review is never offered a pause; the brief, its dates and a weekly draft are bounded text; parameters are validated before any read.
 
 - Execute the route, derivation, schedule and golden-file cases.
 
@@ -55,3 +55,12 @@ Linked Refs: packages/harnessy-local-host/test/portal-command.test.ts, packages/
 Expected: `harnessy open [--route <screen>] [--print]` runs the same host as `harnessy portal open`, which keeps working; `--route` accepts only the seven screens and lands there after sign-in; `harnessy web` is described as the Tools engine.
 
 - Execute the command cases.
+
+## PRTP-007 The app fits a phone screen
+Layer: api
+Status: implemented
+Test File: qa/tests/portal-page.api.test.mjs
+Linked Refs: packages/harnessy-local-host/test/app/app.test.tsx, packages/harnessy-local-host/test/app/layout.test.ts, packages/harnessy-local-host/src/portal/app/lib/media.ts, packages/harnessy-local-host/src/portal/app/screens/Tasks.tsx, packages/harnessy-local-host/src/portal/app/screens/Jobs.tsx, packages/harnessy-local-host/src/portal/app/styles/app.css, scripts/check-portal-app-browser.mjs
+Expected: At the stylesheet's phone breakpoint (`max-width: 760px`) Tasks and Jobs render as stacked cards, the title on top and then owner, due, status and source (tasks) or kind, schedule, next run and state (jobs), with no table to squeeze the title column; grouped tasks keep their project headings; a command chip's copy button keeps its own width (`flex: none; white-space: nowrap`) while a long command scrolls inside the chip; card text wraps instead of widening the page. The CI browser smoke checks the same at 390 px in headless Chrome, together with no element overflow and no console error or failed request on any screen.
+
+- Execute the phone layout cases.

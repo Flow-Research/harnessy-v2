@@ -105,7 +105,7 @@
       "specs": [
         "qa/api/scripts/portal-page.md"
       ],
-      "scenario_count": 6
+      "scenario_count": 7
     },
     {
       "slug": "v1-reconciliation",

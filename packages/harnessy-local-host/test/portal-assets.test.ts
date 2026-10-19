@@ -228,6 +228,15 @@ describe("app bundle loader", () => {
 			expect(index).toMatch(
 				/<script type="module" crossorigin src="\/assets\/index-[A-Za-z0-9_-]{8,}\.js"><\/script>/u,
 			);
+			// The page declares its icon from the manifest, so no browser asks for an unlisted /favicon.ico.
+			const icon = index.match(
+				/<link rel="icon" type="image\/svg\+xml" href="(\/assets\/favicon-[A-Za-z0-9_-]{8,}\.svg)">/u,
+			);
+			expect(icon, "index.html must declare a manifest-pinned favicon").not.toBeNull();
+			expect(assets.get(icon![1]!)?.contentType).toBe("image/svg+xml");
+			expect(assets.get(icon![1]!)?.body.toString("utf8")).toMatch(
+				/^<svg [^>]*xmlns="http:\/\/www\.w3\.org\/2000\/svg"/u,
+			);
 			const css = [...assets]
 				.filter(([path]) => path.endsWith(".css"))
 				.map(([, asset]) => asset.body.toString("utf8"));
@@ -245,7 +254,7 @@ describe("app bundle loader", () => {
 			for (const [path, asset] of assets)
 				expect([path, asset.cacheControl]).toEqual([
 					path,
-					/-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2)$/u.test(path) ? PORTAL_IMMUTABLE : PORTAL_NO_STORE,
+					/-[A-Za-z0-9_-]{8,}\.(?:js|css|woff2|svg)$/u.test(path) ? PORTAL_IMMUTABLE : PORTAL_NO_STORE,
 				]);
 		},
 	);

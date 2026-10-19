@@ -19,6 +19,7 @@ import { filterEntries, Palette, screenEntries } from "../../src/portal/app/comp
 import { TILE_STATE_TONE, TileState, tileStateText } from "../../src/portal/app/components/primitives.tsx";
 import { SafeMarkdown } from "../../src/portal/app/components/SafeMarkdown.tsx";
 import { DataProvider, DataStore } from "../../src/portal/app/lib/data.tsx";
+import { PHONE_LAYOUT_QUERY } from "../../src/portal/app/lib/media.ts";
 import { browserLocation } from "../../src/portal/app/lib/router.ts";
 import { browserSessionEnvironment, SessionClient, type SessionEnvironment } from "../../src/portal/app/lib/session.ts";
 import { emptyInboxTitle, inboxKeyAction } from "../../src/portal/app/screens/Inbox.tsx";
@@ -394,6 +395,52 @@ describe("the app against a real portal", () => {
 
 		expect(document.body.innerHTML).not.toContain(CANARY);
 		expect(document.body.innerHTML).not.toContain("owner@example.test");
+	});
+
+	it("shows tasks and jobs as stacked cards at phone width, with no table to crush the title", async () => {
+		// jsdom has no matchMedia: a 390 px phone matches the phone query and not the wide one.
+		Object.defineProperty(window, "matchMedia", {
+			configurable: true,
+			value: (query: string) =>
+				({
+					media: query,
+					matches: query === PHONE_LAYOUT_QUERY,
+					addEventListener: () => undefined,
+					removeEventListener: () => undefined,
+				}) as unknown as MediaQueryList,
+		});
+		onTestFinished(() => {
+			delete (window as { matchMedia?: unknown }).matchMedia;
+		});
+		const { code, env } = await startPortal();
+		window.location.hash = `#code=${code}&route=tasks`;
+		await render(env);
+		await waitFor(() => expect(text()).toContain("Settle the mandate"));
+		expect(container.querySelector("table")).toBeNull();
+		const card = [...container.querySelectorAll<HTMLElement>('ul[aria-label="Tasks"] > li.stack-card')].find((item) =>
+			item.textContent?.includes("Settle the mandate"),
+		)!;
+		// The title is on top, alone on its line; owner, due, status and source follow as chips.
+		expect(card.firstElementChild?.className).toBe("stack-card-title");
+		expect(card.firstElementChild?.querySelector("button")?.textContent).toContain("Settle the mandate");
+		const meta = card.querySelector(".stack-card-meta")!;
+		expect(meta.textContent).toMatch(/^Julian/u);
+		expect(meta.textContent).toContain("Due ");
+		expect(meta.querySelector(".status")).not.toBeNull();
+		expect(meta.querySelector(".source-chip")).not.toBeNull();
+		await act(async () => card.querySelector<HTMLButtonElement>(".stack-card-title button")!.click());
+		expect(card.querySelector(".stack-card-detail")?.textContent).toMatch(/\.md:\d+/u);
+		await navigate("#/tasks/project");
+		await waitFor(() => expect(container.querySelectorAll(".stack-group-title").length).toBeGreaterThan(1));
+		expect(container.querySelector("table")).toBeNull();
+		expect([...container.querySelectorAll(".stack-group-title")].at(-1)?.firstChild?.textContent).toBe("No project");
+
+		await navigate("#/jobs");
+		await waitFor(() => expect(container.querySelector('ul[aria-label="Jobs"] > li.stack-card')).not.toBeNull());
+		expect(container.querySelector("table")).toBeNull();
+		const job = container.querySelector('ul[aria-label="Jobs"] > li.stack-card')!;
+		expect(job.firstElementChild?.tagName).toBe("A");
+		expect(job.querySelector(".stack-card-meta .status")).not.toBeNull();
 	});
 
 	it("shows sign-in help without a session and after the server refuses the token", async () => {
