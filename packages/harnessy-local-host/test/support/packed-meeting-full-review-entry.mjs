@@ -77,6 +77,8 @@ let attributableStallMs;
 const heartbeatPeriodMs = 20;
 const epochNow = () => performance.timeOrigin + performance.now();
 const ownerHeartbeatGaps = [];
+// The longest owner stalls, each with the last request started before it ended, for the failure report (#139).
+const ownerStalls = [];
 // An idle heartbeat on a second thread of this process. It stalls only when the runner
 // stops the whole process, so its gaps separate runner starvation from synchronous work
 // on the review owner's thread (#118). Started before the owner so it covers readiness.
@@ -405,6 +407,10 @@ try {
 						const now = epochNow();
 						maximumHeartbeatStallMs = Math.max(maximumHeartbeatStallMs, now - previousHeartbeat - heartbeatPeriodMs);
 						if (now - previousHeartbeat > 2 * heartbeatPeriodMs) ownerHeartbeatGaps.push([previousHeartbeat, now]);
+						if (now - previousHeartbeat > 250) {
+							ownerStalls.push({ phase: requestPhase, stallMs: Math.round(now - previousHeartbeat - heartbeatPeriodMs) });
+							ownerStalls.sort((left, right) => right.stallMs - left.stallMs).splice(5);
+						}
 						previousHeartbeat = now;
 					}, heartbeatPeriodMs);
 					assert(new URL(address.origin).port === "18773", "Long-running review did not bind the signed fixed port.");
@@ -625,6 +631,7 @@ try {
 			requests: wire.requests.slice(-12).map(({ method, path }) => ({ method, path })),
 			maximumHeartbeatStallMs: Math.round(maximumHeartbeatStallMs),
 			attributableHeartbeatStallMs: attributableStallMs === undefined ? null : Math.round(attributableStallMs),
+			ownerStalls,
 			dispatchOutcomes,
 			requestTimings,
 		})}\n`);
