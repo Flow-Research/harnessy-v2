@@ -11,6 +11,7 @@ export const fixtureEnvironment = (source = process.env) => {
 		NODE_NO_WARNINGS: "1",
 		// Fixture credentials stay plaintext and never touch the owner's OS keychain.
 		PI_AUTH_ENCRYPTION: "off",
+		HSY_AUTH_ENCRYPTION: "off",
 		npm_config_update_notifier: "false",
 		npm_config_offline: "true",
 	};

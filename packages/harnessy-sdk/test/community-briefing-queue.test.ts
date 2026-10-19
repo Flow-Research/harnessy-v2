@@ -104,7 +104,7 @@ describe("native community queue", () => {
 							new URL("../../harnessy-local-host/test/support/fixture-network-guard.mjs", import.meta.url),
 						),
 					],
-					env: { PI_AUTH_ENCRYPTION: "off" },
+					env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 					stdio: ["ignore", "ignore", "inherit", "ipc"],
 				});
 				children.push({ child, exited: new Promise((resolve) => child.once("exit", resolve)) });

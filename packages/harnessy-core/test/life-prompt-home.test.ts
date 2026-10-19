@@ -50,6 +50,7 @@ it.each(["daily", "weekly"] as const)("%s prompt subprocesses read only the conf
 									PYTHONDONTWRITEBYTECODE: "1",
 									...command.env,
 									PI_AUTH_ENCRYPTION: "off",
+									HSY_AUTH_ENCRYPTION: "off",
 								},
 							});
 							expect(child.status, child.stderr).toBe(0);

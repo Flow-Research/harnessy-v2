@@ -84,7 +84,7 @@ export const checkPackedServiceLaunchd = async ({ directory, servicePath, stateP
 			assert.equal(launchctl(["disable", target]).status, 0);
 			assert.equal(launchctl(["bootout", target]).status, 0);
 			await waitAbsent();
-			const status = spawnSync(job.ProgramArguments[0], [job.ProgramArguments[1], "--service-status", "--input", servicePath], { env: { ...process.env, PI_AUTH_ENCRYPTION: "off" }, encoding: "utf8", timeout: 10_000 });
+			const status = spawnSync(job.ProgramArguments[0], [job.ProgramArguments[1], "--service-status", "--input", servicePath], { env: { ...process.env, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" }, encoding: "utf8", timeout: 10_000 });
 			assert.equal(status.status, 0, status.stderr);
 			assert.equal(JSON.parse(status.stdout).activation, "cleanly_stopped");
 			assert.notEqual(launchctl(["bootstrap", domain, fixturePlist]).status, 0, "Disabled job restarted");
