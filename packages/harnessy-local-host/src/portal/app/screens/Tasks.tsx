@@ -11,6 +11,7 @@ import { ScreenHeader } from "../components/Shell.tsx";
 import type { Task, TasksResponse } from "../lib/api-types.ts";
 import { useResource } from "../lib/data.tsx";
 import { dayLabel, visibleText } from "../lib/format.ts";
+import { usePhoneLayout } from "../lib/media.ts";
 import { routeHref } from "../lib/router.ts";
 
 export type TaskTab = "mine" | "waiting" | "project" | "done";
@@ -70,25 +71,43 @@ export const projectGroups = (
 	return groups;
 };
 
+/** The task's title as a toggle for its detail, with its markers. */
+const TaskTitle = ({ task, expanded, onToggle }: { task: Task; expanded: boolean; onToggle: () => void }) => (
+	<>
+		<button type="button" className="link-button" aria-expanded={expanded} onClick={onToggle}>
+			{visibleText(task.title)}
+		</button>
+		{task.raw ? <span className="pill">unparsed line</span> : null}
+		{task.sourceChanged ? (
+			<span className="pill pill-attention" title="The line in the source file changed since an earlier read.">
+				source changed
+			</span>
+		) : null}
+		{task.sourceChanged && task.previousTitle !== null ? (
+			<span className="task-previous muted">was: {visibleText(task.previousTitle)}</span>
+		) : null}
+	</>
+);
+
+const TaskDetail = ({ task }: { task: Task }) => (
+	<>
+		<p className="label">Open the source</p>
+		<CommandChip command={`${task.source.path}:${task.source.line}`} note="Path and line; open it in your editor." />
+		<p className="label">Copy the task</p>
+		<CommandChip command={task.title} />
+	</>
+);
+
+const dueText = (task: Task): string => (task.due === null ? "–" : dayLabel(task.due));
+
 const TaskRow = ({ task, expanded, onToggle }: { task: Task; expanded: boolean; onToggle: () => void }) => (
 	<>
 		<tr className={task.raw ? "task-raw" : undefined}>
 			<td>
-				<button type="button" className="link-button" aria-expanded={expanded} onClick={onToggle}>
-					{visibleText(task.title)}
-				</button>
-				{task.raw ? <span className="pill">unparsed line</span> : null}
-				{task.sourceChanged ? (
-					<span className="pill pill-attention" title="The line in the source file changed since an earlier read.">
-						source changed
-					</span>
-				) : null}
-				{task.sourceChanged && task.previousTitle !== null ? (
-					<span className="task-previous muted">was: {visibleText(task.previousTitle)}</span>
-				) : null}
+				<TaskTitle task={task} expanded={expanded} onToggle={onToggle} />
 			</td>
 			<td className="text-2">{task.owner ?? "Julian"}</td>
-			<td className="text-2">{task.due === null ? "–" : dayLabel(task.due)}</td>
+			<td className="text-2">{dueText(task)}</td>
 			<td>
 				<StatusDot tone={STATUS_TONE[task.status]} label={task.status} />
 			</td>
@@ -99,23 +118,73 @@ const TaskRow = ({ task, expanded, onToggle }: { task: Task; expanded: boolean; 
 		{expanded ? (
 			<tr className="task-detail">
 				<td colSpan={5}>
-					<p className="label">Open the source</p>
-					<CommandChip
-						command={`${task.source.path}:${task.source.line}`}
-						note="Path and line; open it in your editor."
-					/>
-					<p className="label">Copy the task</p>
-					<CommandChip command={task.title} />
+					<TaskDetail task={task} />
 				</td>
 			</tr>
 		) : null}
 	</>
 );
 
+/** At phone width a task is a stacked card: the title on top, then owner, due, status and source. */
+const TaskCard = ({ task, expanded, onToggle }: { task: Task; expanded: boolean; onToggle: () => void }) => (
+	<li className={task.raw ? "stack-card task-raw" : "stack-card"}>
+		<div className="stack-card-title">
+			<TaskTitle task={task} expanded={expanded} onToggle={onToggle} />
+		</div>
+		<div className="stack-card-meta">
+			<span className="text-2">{task.owner ?? "Julian"}</span>
+			<span className="text-2">Due {dueText(task)}</span>
+			<StatusDot tone={STATUS_TONE[task.status]} label={task.status} />
+			<span className="source-chip">{task.source.displayRef}</span>
+		</div>
+		{expanded ? (
+			<div className="stack-card-detail">
+				<TaskDetail task={task} />
+			</div>
+		) : null}
+	</li>
+);
+
+const TaskCards = ({
+	tasks,
+	grouped,
+	expanded,
+	onToggle,
+}: {
+	tasks: ReadonlyArray<Task>;
+	grouped: boolean;
+	expanded: string | undefined;
+	onToggle: (id: string) => void;
+}) => {
+	const cards = (list: ReadonlyArray<Task>, label: string) => (
+		<ul className="stack-cards" aria-label={label}>
+			{list.map((task) => (
+				<TaskCard key={task.id} task={task} expanded={expanded === task.id} onToggle={() => onToggle(task.id)} />
+			))}
+		</ul>
+	);
+	if (!grouped) return cards(tasks, "Tasks");
+	return (
+		<div className="stack-groups">
+			{projectGroups(tasks).map((group) => (
+				<section key={group.project === null ? "no-project" : `project:${group.project}`}>
+					<h2 className="stack-group-title">
+						{group.project ?? "No project"}
+						<span className="tab-count"> {group.tasks.length}</span>
+					</h2>
+					{cards(group.tasks, group.project ?? "No project")}
+				</section>
+			))}
+		</div>
+	);
+};
+
 export const TasksScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
 	const tasks = useResource<TasksResponse>("/v1/tasks");
 	const tab: TaskTab = (["mine", "waiting", "project", "done"] as const).find((id) => id === rest[0]) ?? "mine";
 	const [expanded, setExpanded] = useState<string | undefined>(undefined);
+	const toggle = (id: string) => setExpanded(expanded === id ? undefined : id);
+	const phone = usePhoneLayout();
 	const tile = tasks.data?.tiles.tasks;
 	const all = tile?.state === "ok" ? (tile.data?.tasks ?? []) : [];
 	return (
@@ -139,6 +208,8 @@ export const TasksScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
 						<>
 							{shown.length === 0 ? (
 								<EmptyState title="No tasks here." />
+							) : phone ? (
+								<TaskCards tasks={shown} grouped={tab === "project"} expanded={expanded} onToggle={toggle} />
 							) : (
 								<div className="table-scroll card">
 									<table className="table">
@@ -165,7 +236,7 @@ export const TasksScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
 															key={task.id}
 															task={task}
 															expanded={expanded === task.id}
-															onToggle={() => setExpanded(expanded === task.id ? undefined : task.id)}
+															onToggle={() => toggle(task.id)}
 														/>
 													))}
 												</tbody>
@@ -177,7 +248,7 @@ export const TasksScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
 														key={task.id}
 														task={task}
 														expanded={expanded === task.id}
-														onToggle={() => setExpanded(expanded === task.id ? undefined : task.id)}
+														onToggle={() => toggle(task.id)}
 													/>
 												))}
 											</tbody>

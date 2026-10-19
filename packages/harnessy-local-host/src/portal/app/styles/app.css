@@ -801,6 +801,12 @@ h6 {
 	white-space: nowrap;
 }
 
+/* The copy button keeps its own width; a long command scrolls inside the chip instead. */
+.command-row > .icon-button {
+	flex: none;
+	white-space: nowrap;
+}
+
 .command-note {
 	margin: 0;
 	font-size: 12px;
@@ -898,6 +904,73 @@ h6 {
 
 .task-detail td {
 	background: var(--raised);
+}
+
+/* Stacked cards: how tables show at phone width */
+.stack-cards {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+.stack-card {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+	padding: 12px 14px;
+	background: var(--panel);
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius-panel);
+	overflow-wrap: anywhere;
+}
+
+.stack-card.row-selected {
+	background: var(--raised);
+}
+
+.stack-card-title {
+	font-weight: 500;
+}
+
+.stack-card-meta {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 12px;
+	font-size: 13px;
+	line-height: 18px;
+}
+
+.stack-card-meta .source-chip {
+	white-space: normal;
+}
+
+.stack-card-detail {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--hairline);
+}
+
+.stack-groups {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.stack-group-title {
+	margin: 0 0 8px;
+	font-size: 12px;
+	font-weight: 500;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--text-2);
 }
 
 .task-detail td > * + * {

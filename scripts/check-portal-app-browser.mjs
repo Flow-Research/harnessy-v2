@@ -6,9 +6,13 @@
  * signs in through `open --print`, and drives headless Chrome over the DevTools
  * protocol. Before any page script runs, a `securitypolicyviolation` listener is
  * installed; the smoke fails on any CSP violation (which is how an injected
- * `<style>` element or inline script would show), any uncaught exception or
- * console error, any `<style>` element in the document, and any horizontal page
- * scroll at phone width.
+ * `<style>` element or inline script would show), any uncaught exception, any
+ * console error at all (a 404 for `/favicon.ico` included), any failed or 4xx/5xx
+ * request, and any `<style>` element in the document. At 390 px (phone width) it
+ * also fails on any horizontal overflow on every screen, page or element, on a
+ * table where stacked cards belong, on a title squeezed narrower than 200 px, on
+ * a command chip's copy button wrapped onto more than one line, and on two inbox
+ * items for one Fathom account.
  *
  * It refuses to run outside CI unless HARNESSY_BROWSER_SMOKE=1 is set, so it
  * never opens a browser on a developer machine by accident. The browser runs
@@ -91,7 +95,19 @@ try {
 			"",
 		].join("\n"),
 	);
-	await writeFile(join(home, ".agents", "life", "reminders.md"), "## Current Follow-Ups\n\n- [ ] A reminder\n");
+	await writeFile(
+		join(home, ".agents", "life", "reminders.md"),
+		[
+			"## Current Follow-Ups",
+			"",
+			"- [ ] A reminder",
+			"- [ ] Team lead deep dive on the onboarding plan with the research group before the quarterly review",
+			"",
+		].join("\n"),
+	);
+	// One Fathom account that has never polled: the poll checkpoint and Connections both report it.
+	await mkdir(join(home, ".jarvis"), { recursive: true });
+	await writeFile(join(home, ".jarvis", "config.yaml"), "fathom:\n  default_account: aa\n  accounts:\n    aa: {}\n");
 
 	const server = spawn(process.execPath, [portalCli, "serve", "--port", "0", "--state-dir", stateDir, "--home-root", home], {
 		env: childEnv,
@@ -167,6 +183,7 @@ try {
 	await page("Page.enable");
 	await page("Runtime.enable");
 	await page("Log.enable");
+	await page("Network.enable");
 	await page("Page.addScriptToEvaluateOnNewDocument", {
 		source:
 			"window.__csp = []; document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(`${e.violatedDirective} ${e.blockedURI} ${e.sourceFile}:${e.lineNumber}`));",
@@ -192,10 +209,50 @@ try {
 		if (report.overflow > 0) failures.push(`${label}: horizontal page scroll of ${report.overflow}px`);
 		return report;
 	};
+	/** Phone-width layout: nothing overflows sideways, no table, no squeezed title, no wrapped copy button. */
+	const checkPhone = async (label) => {
+		const report = await evaluate(`(() => {
+			const describe = (el) => el.tagName.toLowerCase() + (el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\\s+/).join('.') : '');
+			const overflowing = [];
+			// What a scroll container holds may scroll inside it (a command, a code block); the container itself may not
+			// stick out of the page, and a sheet, detail pane or list may not scroll sideways at all.
+			const clips = (el) => getComputedStyle(el).overflowX !== 'visible';
+			const insideScroller = (el) => {
+				for (let node = el.parentElement; node !== null; node = node.parentElement) if (clips(node)) return true;
+				return false;
+			};
+			for (const el of document.querySelectorAll('.app *')) {
+				const style = getComputedStyle(el);
+				if (style.display === 'none' || style.display === 'inline' || style.display === 'contents') continue;
+				// The skip link waits off screen until it has the focus.
+				if (el.closest('.skip-link') !== null || insideScroller(el)) continue;
+				const rect = el.getBoundingClientRect();
+				if (rect.width === 0) continue;
+				const sideways = !clips(el) || el.matches('.sheet, .detail, .list');
+				if ((sideways && el.scrollWidth > el.clientWidth + 1) || rect.right > window.innerWidth + 1 || rect.left < -1)
+					overflowing.push(describe(el) + ' ' + Math.round(rect.left) + '..' + Math.round(rect.right) + ' scroll ' + el.scrollWidth + '/' + el.clientWidth);
+			}
+			return {
+				overflowing: overflowing.slice(0, 5),
+				tables: document.querySelectorAll('.screen table').length,
+				narrowTitles: [...document.querySelectorAll('.stack-card-title')]
+					.filter((el) => el.getBoundingClientRect().width < 200)
+					.map((el) => el.textContent.slice(0, 40)),
+				wrappedButtons: [...document.querySelectorAll('.command-row > .icon-button')]
+					.filter((el) => el.getBoundingClientRect().height > 40 || el.scrollWidth > el.clientWidth + 1)
+					.map((el) => el.textContent + ' ' + Math.round(el.getBoundingClientRect().width) + 'x' + Math.round(el.getBoundingClientRect().height)),
+			};
+		})()`);
+		if (report.overflowing.length > 0) failures.push(`${label}: horizontal overflow ${JSON.stringify(report.overflowing)}`);
+		if (report.tables > 0) failures.push(`${label}: ${report.tables} table(s) at phone width; stacked cards belong here`);
+		if (report.narrowTitles.length > 0) failures.push(`${label}: titles squeezed below 200 px ${JSON.stringify(report.narrowTitles)}`);
+		if (report.wrappedButtons.length > 0) failures.push(`${label}: copy button wrapped ${JSON.stringify(report.wrappedButtons)}`);
+		return report;
+	};
 
 	for (const [width, height, mobile] of [
 		[1280, 860, false],
-		[375, 812, true],
+		[390, 844, true],
 	]) {
 		await page("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
 		await page("Page.navigate", { url: width === 1280 ? signInUrl : `http://127.0.0.1:${port}/#/inbox` });
@@ -206,7 +263,35 @@ try {
 			await until(`${screen} at ${width}px`, () => evaluate("document.querySelector('.screen') !== null && !document.body.innerText.includes('Loading')"));
 			await wait(300);
 			await check(`${screen} at ${width}px`);
+			if (mobile) await checkPhone(`${screen} at ${width}px`);
 		}
+		// One inbox item per Fathom account problem, in plain words.
+		await evaluate("location.hash = '#/inbox'");
+		await until(`the inbox at ${width}px`, () => evaluate("document.querySelector('.row-title') !== null"));
+		const fathomItems = await evaluate("[...document.querySelectorAll('.row-title')].map((el) => el.textContent)");
+		const aa = fathomItems.filter((title) => /\baa\b/u.test(title));
+		if (aa.length !== 1) failures.push(`inbox at ${width}px: ${aa.length} items for Fathom account aa ${JSON.stringify(aa)}`);
+		if (await evaluate("document.body.innerText.includes('never_polled')"))
+			failures.push(`inbox at ${width}px: shows the raw code never_polled`);
+		// Each long command sits in a chip beside its copy button: the Fathom poll in the inbox detail and a task's source.
+		await evaluate(`location.hash = '#/inbox/${encodeURIComponent("fathom:aa:stale")}'`);
+		await until(`the Fathom detail at ${width}px`, () => evaluate("document.querySelector('.detail .command-row') !== null"));
+		await wait(300);
+		await check(`inbox detail at ${width}px`);
+		if (mobile) await checkPhone(`inbox detail at ${width}px`);
+		const buttons = await evaluate(
+			"[...document.querySelectorAll('.detail .command-row > .icon-button')].map((el) => [el.textContent, Math.round(el.getBoundingClientRect().height)])",
+		);
+		if (buttons.length === 0 || buttons.some(([, height]) => height > 40))
+			failures.push(`inbox detail at ${width}px: copy buttons ${JSON.stringify(buttons)}`);
+		await evaluate("location.hash = '#/tasks/mine'");
+		await until(`tasks at ${width}px`, () => evaluate("document.body.innerText.includes('Team lead deep dive')"));
+		await evaluate("[...document.querySelectorAll('button.link-button')].find((el) => el.textContent.startsWith('Team lead deep dive')).click()");
+		await until(`the task detail at ${width}px`, () => evaluate("document.querySelector('.screen .command-row') !== null"));
+		await wait(300);
+		await check(`task detail at ${width}px`);
+		if (mobile) await checkPhone(`task detail at ${width}px`);
+
 		if (mobile) {
 			const bar = await evaluate("getComputedStyle(document.querySelector('.bottom-bar')).display");
 			if (bar === "none") failures.push("phone width: the bottom bar is hidden");
@@ -227,8 +312,12 @@ try {
 	for (const event of events) {
 		if (event.method === "Runtime.exceptionThrown")
 			failures.push(`uncaught exception: ${event.params.exceptionDetails?.exception?.description ?? event.params.exceptionDetails?.text}`);
-		if (event.method === "Log.entryAdded" && event.params.entry.level === "error" && !/favicon\.ico/u.test(event.params.entry.url ?? ""))
-			failures.push(`console error: ${event.params.entry.text}`);
+		if (event.method === "Log.entryAdded" && event.params.entry.level === "error")
+			failures.push(`console error: ${event.params.entry.text} ${event.params.entry.url ?? ""}`);
+		if (event.method === "Network.responseReceived" && event.params.response.status >= 400)
+			failures.push(`request failed: ${event.params.response.status} ${event.params.response.url}`);
+		if (event.method === "Network.loadingFailed" && !event.params.canceled)
+			failures.push(`request failed: ${event.params.errorText} (${event.params.type})`);
 		if (event.method === "Runtime.consoleAPICalled" && event.params.type === "error")
 			failures.push(`console.error: ${JSON.stringify(event.params.args.map((arg) => arg.value ?? arg.description))}`);
 	}
@@ -243,4 +332,6 @@ if (failures.length > 0) {
 	process.stderr.write(`Harnessy app browser smoke failed:\n${failures.map((failure) => `  - ${failure}`).join("\n")}\n`);
 	process.exit(1);
 }
-process.stdout.write("Harnessy app browser smoke passed: no CSP violation, no <style> element, no page overflow at 375 px.\n");
+process.stdout.write(
+	"Harnessy app browser smoke passed: no CSP violation, console error or failed request, no <style> element, no overflow at 390 px.\n",
+);

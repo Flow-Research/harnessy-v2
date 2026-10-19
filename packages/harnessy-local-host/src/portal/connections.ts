@@ -86,12 +86,15 @@ export const meetingConnections = (summary: MeetingSummary, now: Date): Connecti
 	);
 };
 
+/** The connection id of a Fathom account; the inbox uses it to merge that account's problems into one item. */
+export const fathomConnectionId = (account: string): string => `fathom.${account}`.slice(0, 96);
+
 export const fathomConnections = (summary: FathomSummary, now: Date): ConnectionTile => {
 	if (summary.checkpoint.state !== "ok") return passState(summary.checkpoint, now);
 	const accounts = summary.checkpoint.data!.accounts;
 	return list(
 		accounts.slice(0, MAX_CONNECTIONS).map((account) => ({
-			id: `fathom.${account.account}`.slice(0, 96),
+			id: fathomConnectionId(account.account),
 			label: `Fathom: ${account.account}`.slice(0, 96),
 			owner: "fathom-poll",
 			status: account.stale ? "attention" : "connected",

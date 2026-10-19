@@ -10,6 +10,7 @@ import { ScreenHeader } from "../components/Shell.tsx";
 import type { Job, JobsResponse } from "../lib/api-types.ts";
 import { useResource } from "../lib/data.tsx";
 import { dateTime, relativeTime } from "../lib/format.ts";
+import { usePhoneLayout } from "../lib/media.ts";
 import { routeHref } from "../lib/router.ts";
 import { JOB_TONE } from "./Today.tsx";
 
@@ -87,8 +88,31 @@ const JobDetail = ({ job, now }: { job: Job; now: number }) => (
 	</>
 );
 
+const scheduleText = (job: Job): string => job.schedule ?? (job.port === null ? "–" : `port ${job.port}`);
+const nextRunText = (job: Job, now: number): string => (job.nextRun === null ? "–" : relativeTime(job.nextRun, now));
+
+/** At phone width each job is a stacked card: the name on top, then kind, schedule, next run and state. */
+const JobCards = ({ jobs, selected, now }: { jobs: ReadonlyArray<Job>; selected: string | undefined; now: number }) => (
+	<ul className="stack-cards" aria-label="Jobs">
+		{jobs.map((job) => (
+			<li key={job.id} className={job.id === selected ? "stack-card row-selected" : "stack-card"}>
+				<a className="stack-card-title" href={routeHref("jobs", job.id)}>
+					{job.name}
+				</a>
+				<div className="stack-card-meta">
+					<span className="text-2">{KIND_LABEL[job.kind]}</span>
+					<span className="mono text-2">{scheduleText(job)}</span>
+					<span className="text-2">Next {nextRunText(job, now)}</span>
+					<StatusDot tone={JOB_TONE[job.health]} label={job.healthReason} />
+				</div>
+			</li>
+		))}
+	</ul>
+);
+
 export const JobsScreen = ({ rest, now }: { rest: ReadonlyArray<string>; now: number }) => {
 	const jobs = useResource<JobsResponse>("/v1/jobs");
+	const phone = usePhoneLayout();
 	return (
 		<div className="screen">
 			<ScreenHeader title="Jobs">
@@ -102,38 +126,38 @@ export const JobsScreen = ({ rest, now }: { rest: ReadonlyArray<string>; now: nu
 					const selected = data.jobs.find((job) => job.id === rest[0]) ?? data.jobs[0];
 					return (
 						<div className="split">
-							<div className="table-scroll card">
-								<table className="table">
-									<thead>
-										<tr>
-											<th scope="col">Job</th>
-											<th scope="col">Kind</th>
-											<th scope="col">Schedule / port</th>
-											<th scope="col">Next run</th>
-											<th scope="col">State</th>
-										</tr>
-									</thead>
-									<tbody>
-										{data.jobs.map((job) => (
-											<tr key={job.id} className={job.id === selected?.id ? "row-selected" : undefined}>
-												<td>
-													<a href={routeHref("jobs", job.id)}>{job.name}</a>
-												</td>
-												<td className="text-2">{KIND_LABEL[job.kind]}</td>
-												<td className="mono text-2">
-													{job.schedule ?? (job.port === null ? "–" : `port ${job.port}`)}
-												</td>
-												<td className="text-2">
-													{job.nextRun === null ? "–" : relativeTime(job.nextRun, now)}
-												</td>
-												<td>
-													<StatusDot tone={JOB_TONE[job.health]} label={job.healthReason} />
-												</td>
+							{phone ? (
+								<JobCards jobs={data.jobs} selected={selected?.id} now={now} />
+							) : (
+								<div className="table-scroll card">
+									<table className="table">
+										<thead>
+											<tr>
+												<th scope="col">Job</th>
+												<th scope="col">Kind</th>
+												<th scope="col">Schedule / port</th>
+												<th scope="col">Next run</th>
+												<th scope="col">State</th>
 											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
+										</thead>
+										<tbody>
+											{data.jobs.map((job) => (
+												<tr key={job.id} className={job.id === selected?.id ? "row-selected" : undefined}>
+													<td>
+														<a href={routeHref("jobs", job.id)}>{job.name}</a>
+													</td>
+													<td className="text-2">{KIND_LABEL[job.kind]}</td>
+													<td className="mono text-2">{scheduleText(job)}</td>
+													<td className="text-2">{nextRunText(job, now)}</td>
+													<td>
+														<StatusDot tone={JOB_TONE[job.health]} label={job.healthReason} />
+													</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+							)}
 							{selected === undefined ? null : (
 								<DetailPane
 									label={`${selected.name} detail`}

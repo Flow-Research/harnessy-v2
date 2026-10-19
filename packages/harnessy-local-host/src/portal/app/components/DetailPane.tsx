@@ -5,27 +5,10 @@
  * the backdrop close it, and focus returns to the row that opened it.
  */
 import { X } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 import { trapTab } from "../lib/keys.tsx";
-
-export const WIDE_LAYOUT_QUERY = "(min-width: 1100px)";
-
-const wideNow = (): boolean =>
-	typeof window.matchMedia === "function" ? window.matchMedia(WIDE_LAYOUT_QUERY).matches : true;
-
-/** Whether the window is wide enough for the side-by-side detail; follows resizes. */
-export const useWideLayout = (): boolean => {
-	const [wide, setWide] = useState(wideNow);
-	useEffect(() => {
-		if (typeof window.matchMedia !== "function") return undefined;
-		const query = window.matchMedia(WIDE_LAYOUT_QUERY);
-		const onChange = () => setWide(query.matches);
-		query.addEventListener("change", onChange);
-		return () => query.removeEventListener("change", onChange);
-	}, []);
-	return wide;
-};
+import { useWideLayout } from "../lib/media.ts";
 
 const DetailSheet = ({ label, onClose, children }: { label: string; onClose: () => void; children: ReactNode }) => {
 	const sheet = useRef<HTMLDivElement>(null);
