@@ -26,6 +26,7 @@ export {
   LOCAL_IDENTITY_PATH,
   localIdentityProof,
   localServerAddress,
+  canonicalIpLiteral,
   localServerOrigin,
   localWebBaseUrl,
   isWildcardBindAddress,

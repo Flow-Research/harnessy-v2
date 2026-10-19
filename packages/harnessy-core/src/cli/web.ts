@@ -171,6 +171,25 @@ const normalizeEngineAddress = (address: string): string =>
 		.replace(/^\[(.*)\]$/, "$1");
 
 /**
+ * The canonical IP literal Executor publishes and proves, or `undefined`.
+ * Mirrors `canonicalIpLiteral` in executor/apps/local/src/serve-shared.ts:
+ * IPv6 compressed and lowercased, an IPv4-mapped address as its IPv4 form,
+ * no zone ID.
+ */
+export const canonicalEngineLiteral = (value: string): string | undefined => {
+	const literal = normalizeEngineAddress(value);
+	if (literal.includes("%")) return undefined;
+	if (isIP(literal) === 4) return literal;
+	if (isIP(literal) !== 6) return undefined;
+	const compressed = new URL(`http://[${literal}]/`).hostname.slice(1, -1);
+	const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(compressed);
+	if (mapped === null) return compressed;
+	const high = Number.parseInt(mapped[1] as string, 16);
+	const low = Number.parseInt(mapped[2] as string, 16);
+	return [high >> 8, high & 0xff, low >> 8, low & 0xff].join(".");
+};
+
+/**
  * The proof an Executor holding `token` and listening on `address`:`port`
  * returns for `nonce`. Mirrors `localIdentityProof` in
  * executor/apps/local/src/serve-shared.ts.
@@ -200,8 +219,11 @@ export async function verifyEngineIdentity(
 ): Promise<boolean> {
 	const url = URL.canParse(origin) ? new URL(origin) : undefined;
 	if (url === undefined || (url.protocol !== "http:" && url.protocol !== "https:")) return false;
-	const address = normalizeEngineAddress(url.hostname);
-	if (isIP(address) === 0) return false;
+	// Only the canonical literal Executor publishes: a name, or another
+	// spelling such as [::ffff:127.0.0.1], never verifies.
+	const host = normalizeEngineAddress(url.hostname);
+	const address = canonicalEngineLiteral(host);
+	if (address === undefined || address !== host) return false;
 	const port = enginePort(url);
 	const nonce = randomBytes(32).toString("base64url");
 	const response = await fetchImpl(`${url.origin}${ENGINE_IDENTITY_PATH}`, {

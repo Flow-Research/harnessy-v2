@@ -29,6 +29,7 @@ import {
 } from "./serve";
 import { localOAuthRedirectUri, resolveLocalWebBaseUrl } from "./executor";
 import {
+  canonicalIpLiteral,
   isWildcardBindAddress,
   localIdentityProof,
   localServerAddress,
@@ -851,6 +852,51 @@ describe("startServer identity proof", () => {
     expect(() => parseBindHostname("box.lan")).toThrow("--allowed-host");
   });
 
+  it("canonicalizes IPv4-mapped binds and refuses zone IDs", async () => {
+    expect(parseBindHostname("::ffff:0:0")).toBe("0.0.0.0");
+    expect(parseBindHostname("::ffff:0.0.0.0")).toBe("0.0.0.0");
+    expect(parseBindHostname("::ffff:127.0.0.1")).toBe("127.0.0.1");
+    expect(parseBindHostname("[::FFFF:7F00:1]")).toBe("127.0.0.1");
+    expect(parseBindHostname("0:0:0:0:0:0:0:1")).toBe("::1");
+    expect(canonicalIpLiteral("::ffff:192.168.1.5")).toBe("192.168.1.5");
+    expect(canonicalIpLiteral("fe80::1%lo0")).toBeNull();
+    expect(localServerOrigin("::ffff:127.0.0.1", 4788)).toBe("http://127.0.0.1:4788");
+    for (const hostname of ["fe80::1%lo0", "[fe80::1%25en0]"]) {
+      expect(() => parseBindHostname(hostname)).toThrow("zone ID");
+      await expect(
+        startServer({ port: 0, hostname, clientDir, authToken: TOKEN, handlers: testHandlers() }),
+      ).rejects.toThrow("zone ID");
+    }
+
+    // A mapped wildcard binds every IPv4 interface: it publishes 127.0.0.1
+    // and never proves.
+    for (const hostname of ["::ffff:0:0", "::ffff:0.0.0.0"]) {
+      await startTestServer({ hostname });
+      expect(server!.address).toBe("127.0.0.1");
+      expect(server!.origin).toBe(`http://127.0.0.1:${server!.port}`);
+      const refused = await fetch(`${server!.origin}/api/local-auth/identity`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce: "z".repeat(43) }),
+      });
+      expect({ hostname, status: refused.status }).toEqual({ hostname, status: 403 });
+      await server!.stop();
+      server = null;
+    }
+
+    // A mapped loopback is 127.0.0.1: published and proved as such.
+    await startTestServer({ hostname: "::ffff:127.0.0.1" });
+    expect(server!.address).toBe("127.0.0.1");
+    const nonce = "q".repeat(43);
+    const response = await fetch(`${server!.origin}/api/local-auth/identity`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ nonce }),
+    });
+    const { proof } = (await response.json()) as { proof: string };
+    expect(proof).toBe(localIdentityProof(TOKEN, "127.0.0.1", server!.port, nonce));
+  });
+
   it("never proves its identity on a wildcard bind", async () => {
     const binds = ipv6Loopback ? ["0.0.0.0", "::"] : ["0.0.0.0"];
     for (const hostname of binds) {
@@ -871,13 +917,22 @@ describe("startServer identity proof", () => {
   });
 
   it("recognizes every spelling of the unspecified address as a wildcard bind", () => {
-    for (const address of ["0.0.0.0", "::", "[::]", "0:0:0:0:0:0:0:0", "::0"]) {
+    for (const address of [
+      "0.0.0.0",
+      "::",
+      "[::]",
+      "0:0:0:0:0:0:0:0",
+      "::0",
+      "::ffff:0:0",
+      "::ffff:0.0.0.0",
+      "[::FFFF:0:0]",
+    ]) {
       expect({ address, wildcard: isWildcardBindAddress(address) }).toEqual({
         address,
         wildcard: true,
       });
     }
-    for (const address of ["127.0.0.1", "::1", "192.168.1.5", "localhost"]) {
+    for (const address of ["127.0.0.1", "::1", "192.168.1.5", "localhost", "::ffff:127.0.0.1"]) {
       expect({ address, wildcard: isWildcardBindAddress(address) }).toEqual({
         address,
         wildcard: false,

@@ -109,7 +109,9 @@ import {
   findDataDirOwnershipHeld,
   localServerAddress,
   localServerOrigin,
+  localOAuthRedirectUri,
   localWebBaseUrl,
+  resolveLocalWebBaseUrl,
   type ServerInstance,
   type StartServerOptions,
 } from "@executor-js/local";
@@ -1229,6 +1231,7 @@ const runForegroundSession = (input: {
         console.log(`Web:     ${baseUrl}`);
         console.log(`MCP:     ${baseUrl}/mcp`);
         console.log(`OpenAPI: ${baseUrl}/api/docs`);
+        console.log(`OAuth:   ${localOAuthRedirectUri(resolveLocalWebBaseUrl())}`);
         if (input.hostname !== "127.0.0.1" && input.hostname !== "localhost") {
           console.log(
             `\n⚠  Listening on ${input.hostname}. Executor runs arbitrary commands — only expose on trusted networks.`,
@@ -1391,6 +1394,9 @@ const runDaemonSession = (input: {
           console.log(`${DESKTOP_SIDECAR_READY_SENTINEL}:${daemonPort}`);
         }
         console.log(`Daemon ready on ${daemonUrl}`);
+        // The OAuth callback the executor registers; it must share the
+        // cockpit's origin for the popup to report back.
+        console.log(`OAuth callback: ${localOAuthRedirectUri(resolveLocalWebBaseUrl())}`);
 
         yield* waitForShutdownSignal();
       } finally {

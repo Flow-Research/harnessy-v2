@@ -210,6 +210,14 @@ overlay above (the `img-src https:` allowance and the meta-refresh redirect to
     and the identity proof carry the bound address, which a name cannot pin.
     To reach the server under a DNS name, bind an address and add the name
     with `--allowed-host`.
+  - Addresses are canonical everywhere (`canonicalIpLiteral`): IPv6 is
+    compressed and lowercased, and an IPv4-mapped address (`::ffff:a.b.c.d` in
+    any spelling) becomes its IPv4 form, so `--hostname ::ffff:0:0` is the
+    wildcard `0.0.0.0` (it binds every IPv4 interface) and
+    `::ffff:127.0.0.1` is `127.0.0.1`. The server binds, publishes and proves
+    that one string; the CLI and `harnessy web` verify only an origin whose
+    host is already canonical. An IPv6 zone ID (`fe80::1%lo0`) is refused at
+    startup, because a URL origin cannot carry it.
   - `GET /api/logo?url=` proxies logos from `integrations.sh` and `svgl.app`
     only (https, no port or userinfo, every redirect hop rechecked against
     the same hosts, at most 3 hops, `image/*`, at most 512 KiB, cached in
@@ -303,6 +311,14 @@ Known gaps, not fixed by this overlay:
 - The logo proxy is unauthenticated (an `<img>` cannot carry the bearer). Any
   local client can make the server fetch logos from the two allowed hosts.
   The Host gate keeps rebinding pages away from it.
+- A dynamically registered OAuth client (DCR) is reused per issuer
+  (`decideDcrClientReuse` in `packages/core/sdk/src/oauth-service.ts`), and
+  the stored registration does not record its redirect URIs. A client
+  registered before the redirect base moved from `http://localhost:<port>` to
+  the published `http://127.0.0.1:<port>` is therefore reused with the new
+  redirect URI. A provider that matches redirect URIs exactly rejects the
+  authorization; removing that connection's OAuth client (or the
+  `dcr-<host>` client row) makes the next connect register a fresh client.
 - The real-browser check covers headless Chromium on Linux in CI only, not
   Firefox or Safari.
 - `/api/logo` exists only in `apps/local`; the excluded cloud and desktop
