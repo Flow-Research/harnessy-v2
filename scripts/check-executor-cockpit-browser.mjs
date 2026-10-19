@@ -121,7 +121,7 @@ try {
 	await writeFile(join(stubDir, "open"), stub, { mode: 0o755 });
 
 	const port = await freePort();
-	const origin = `http://127.0.0.1:${port}`;
+	const healthOrigin = `http://127.0.0.1:${port}`;
 	// --foreground: this process is the daemon, so cleanup stops it.
 	const daemon = spawn("bun", ["run", executorCli, "daemon", "run", "--foreground", "--port", String(port), "--hostname", "127.0.0.1"], {
 		cwd: scopeDir,
@@ -141,12 +141,14 @@ try {
 		const raw = await readFile(join(dataDir, "server-control", "server.json"), "utf8").catch(() => "");
 		if (raw === "") return undefined;
 		const parsed = JSON.parse(raw);
-		const health = await fetch(`${origin}/api/health`).catch(() => undefined);
+		const health = await fetch(`${healthOrigin}/api/health`).catch(() => undefined);
 		return health?.ok ? parsed : undefined;
 	}, 60_000).catch((error) => {
 		throw new Error(`${error.message}\n${daemonOutput.slice(-4000)}`);
 	});
 	const token = manifest.connection.auth.token;
+	// The origin the daemon advertises (and the CLI signs in to), e.g. http://localhost:<port>.
+	const origin = new URL(manifest.connection.origin).origin;
 
 	const opened = spawnSync("bun", ["run", executorCli, "open"], { cwd: scopeDir, env: childEnv, encoding: "utf8", timeout: 60_000 });
 	if (opened.status !== 0) throw new Error(`executor open failed: ${opened.stdout}\n${opened.stderr}`);
