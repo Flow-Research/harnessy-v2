@@ -4,7 +4,8 @@
  * The app is built by Vite into `dist/portal-app/` (see `app/vite.config.ts`).
  * The build writes a manifest that lists every file it emitted with its byte
  * length and SHA-256. At start the portal reads the manifest, reads each listed
- * file once (never following a symbolic link), checks its length and digest and
+ * file once (never following a symbolic link, for the file or for a directory on
+ * its path inside the bundle), checks its length and digest and
  * serves it from memory. A file on disk that the manifest does not list is never
  * served, and any mismatch stops the portal from starting.
  *
@@ -18,7 +19,7 @@
  * page without any script says so instead.
  */
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -105,6 +106,22 @@ const readNoFollow = (path: string, maxBytes: number): Buffer | undefined => {
 		return body;
 	} finally {
 		closeSync(descriptor);
+	}
+};
+
+/**
+ * Refuse a directory segment of `path` (inside `appDir`) that is a symbolic link or
+ * not a directory. `O_NOFOLLOW` covers only the final component, so without this a
+ * linked `assets/` would be followed. `appDir` itself may be reached through a link.
+ */
+const assertDirectoriesNoFollow = (appDir: string, path: string): void => {
+	const segments = path.split("/").slice(0, -1);
+	let current = appDir;
+	for (const segment of segments) {
+		current = join(current, segment);
+		const stat = lstatSync(current, { throwIfNoEntry: false });
+		if (stat === undefined) throw new PortalAssetError("portal_asset_missing", path);
+		if (stat.isSymbolicLink() || !stat.isDirectory()) throw new PortalAssetError("portal_asset_unsafe", path);
 	}
 };
 
@@ -204,6 +221,7 @@ export const loadPortalPageAssets = (appDir: string = defaultPortalAppDir()): Po
 	const assets = new Map<string, PortalPageAsset>();
 	let total = 0;
 	for (const [path, entry] of manifest) {
+		assertDirectoriesNoFollow(appDir, path);
 		const body = readNoFollow(join(appDir, path), MAX_ASSET_BYTES);
 		if (body === undefined) throw new PortalAssetError("portal_asset_missing", path);
 		if (body.byteLength !== entry.bytes || createHash("sha256").update(body).digest("hex") !== entry.sha256)

@@ -39,6 +39,8 @@
 	--radius-control: 6px;
 	--radius-panel: 10px;
 	--row: 40px;
+	/* List rows (spec §2.5): 40 px, or 32 px in compact density. Controls keep --row. */
+	--list-row: var(--row);
 	--motion: 120ms ease-out;
 	color-scheme: dark;
 }
@@ -83,4 +85,9 @@
 	--idle-text: #5f6670;
 	--on-accent: #ffffff;
 	color-scheme: light;
+}
+
+/* Compact density, chosen with the top bar's density toggle (`data-density` on <html>). */
+:root[data-density="compact"] {
+	--list-row: 32px;
 }

@@ -10,7 +10,7 @@ import { EmptyState, StatusDot, type TabItem, Tabs, type Tone, WithTile } from "
 import { ScreenHeader } from "../components/Shell.tsx";
 import type { Task, TasksResponse } from "../lib/api-types.ts";
 import { useResource } from "../lib/data.tsx";
-import { dayLabel, visibleText } from "../lib/format.ts";
+import { dayLabel, visibleTitle } from "../lib/format.ts";
 import { usePhoneLayout } from "../lib/media.ts";
 import { routeHref } from "../lib/router.ts";
 
@@ -75,7 +75,7 @@ export const projectGroups = (
 const TaskTitle = ({ task, expanded, onToggle }: { task: Task; expanded: boolean; onToggle: () => void }) => (
 	<>
 		<button type="button" className="link-button" aria-expanded={expanded} onClick={onToggle}>
-			{visibleText(task.title)}
+			{visibleTitle(task.title)}
 		</button>
 		{task.raw ? <span className="pill">unparsed line</span> : null}
 		{task.sourceChanged ? (
@@ -84,7 +84,7 @@ const TaskTitle = ({ task, expanded, onToggle }: { task: Task; expanded: boolean
 			</span>
 		) : null}
 		{task.sourceChanged && task.previousTitle !== null ? (
-			<span className="task-previous muted">was: {visibleText(task.previousTitle)}</span>
+			<span className="task-previous muted">was: {visibleTitle(task.previousTitle)}</span>
 		) : null}
 	</>
 );

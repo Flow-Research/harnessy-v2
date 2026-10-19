@@ -6,7 +6,16 @@
 import { describe, expect, it } from "vitest";
 
 import { DataStore } from "../../src/portal/app/lib/data.tsx";
-import { dateTime, dayLabel, greeting, plural, relativeTime } from "../../src/portal/app/lib/format.ts";
+import {
+	dateTime,
+	dayLabel,
+	greeting,
+	hasFormatControls,
+	plural,
+	relativeTime,
+	visibleText,
+	visibleTitle,
+} from "../../src/portal/app/lib/format.ts";
 import {
 	type Block,
 	inlineText,
@@ -222,6 +231,26 @@ describe("markdown", () => {
 
 describe("format", () => {
 	const now = Date.parse("2026-10-17T08:00:00.000Z");
+	it("keeps a zero-width joiner inside an emoji sequence in a title, and escapes every other hidden character", () => {
+		const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+		const rainbow = "\u{1F3F3}\uFE0F\u200D\u{1F308}";
+		const coder = "\u{1F469}\u{1F3FD}\u200D\u{1F4BB}";
+		expect(visibleTitle(`Call ${family} tonight`)).toBe(`Call ${family} tonight`);
+		expect(visibleTitle(rainbow)).toBe(rainbow);
+		expect(visibleTitle(coder)).toBe(coder);
+		// A joiner that does not join two emoji, a doubled joiner and a joiner at either end stay escaped.
+		expect(visibleTitle("a\u200Db")).toBe("a⟨U+200D⟩b");
+		expect(visibleTitle("\u{1F468}\u200D\u200D\u{1F469}")).toBe("\u{1F468}⟨U+200D⟩⟨U+200D⟩\u{1F469}");
+		expect(visibleTitle("\u200D\u{1F468}\u200D")).toBe("⟨U+200D⟩\u{1F468}⟨U+200D⟩");
+		expect(visibleTitle("\u{1F468}\u200Dx")).toBe("\u{1F468}⟨U+200D⟩x");
+		// Bidi controls, other zero-width characters and controls are escaped even between emoji.
+		expect(visibleTitle("\u{1F468}\u202E\u{1F469}")).toBe("\u{1F468}⟨U+202E⟩\u{1F469}");
+		expect(visibleTitle("\u{1F468}\u200B\u{1F469}\u2066x\n")).toBe("\u{1F468}⟨U+200B⟩\u{1F469}⟨U+2066⟩x⟨U+000A⟩");
+		// Commands and copy checks never allow a joiner, emoji or not.
+		expect(visibleText(family)).toBe("\u{1F468}⟨U+200D⟩\u{1F469}⟨U+200D⟩\u{1F467}");
+		expect(hasFormatControls(family)).toBe(true);
+	});
+
 	it("shows relative and Lagos times without locale surprises", () => {
 		expect(relativeTime("2026-10-17T07:59:56.000Z", now)).toBe("4 s ago");
 		expect(relativeTime("2026-10-17T07:48:00.000Z", now)).toBe("12 min ago");

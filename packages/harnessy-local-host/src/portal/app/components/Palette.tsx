@@ -7,7 +7,7 @@ import { X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { copyText, followHandoff } from "../lib/browser.ts";
-import { hasFormatControls, visibleText } from "../lib/format.ts";
+import { hasFormatControls, visibleText, visibleTitle } from "../lib/format.ts";
 import { trapTab } from "../lib/keys.tsx";
 import { routeHref, SCREEN_TITLES, SCREENS } from "../lib/router.ts";
 import { COPY_GLYPH, HANDOFF_GLYPH } from "./actions.tsx";
@@ -156,7 +156,7 @@ export const Palette = ({ entries, onClose }: { entries: ReadonlyArray<PaletteEn
 							}}
 						>
 							<span className="palette-group">{entry.group}</span>
-							<span className="palette-title">{visibleText(entry.title)}</span>
+							<span className="palette-title">{visibleTitle(entry.title)}</span>
 							{entry.command === undefined ? (
 								<span className="glyph">
 									{HANDOFF_GLYPH}

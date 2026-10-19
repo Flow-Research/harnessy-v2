@@ -58,7 +58,8 @@ const isoDay = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/u.test(value);
  */
 export const readCommunityGeneration = (stateRoot: string, now: Date): TileResult<CommunityGenerationData> => {
 	const path = join(stateRoot, COMMUNITY_GENERATION_STATUS_FILE);
-	// The status reader opens without O_NONBLOCK: a FIFO here would block the portal's event loop. Refuse it first.
+	// A FIFO here must never block the portal's event loop: refuse anything but a file or link before
+	// opening, and the status reader's open is non-blocking as well.
 	const entry = Result.try(() => lstatSync(path, { throwIfNoEntry: false }));
 	if (Result.isFailure(entry)) return stateTile("error", "read_failed", now);
 	// A symbolic link is left to the reader's O_NOFOLLOW, which refuses it.

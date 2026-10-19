@@ -76,7 +76,7 @@ export default defineConfig({
 				"src/portal/jobs.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
 				"src/portal/liveness.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/task-changes.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
-				// The app's browser code: pure libraries at the portal floor, React screens at 80.
+				// The app's browser code: pure libraries at the portal floor.
 				"src/portal/app/lib/safe-href.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/app/lib/session.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
 				"src/portal/app/lib/markdown.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
@@ -85,7 +85,24 @@ export default defineConfig({
 				"src/portal/app/lib/format.ts": { statements: 90, branches: 85, functions: 90, lines: 90 },
 				"src/portal/app/lib/browser.ts": { statements: 85, branches: 80, functions: 100, lines: 90 },
 				"src/portal/app/lib/keys.tsx": { statements: 90, branches: 75, functions: 100, lines: 90 },
-				"src/portal/app/**/*.tsx": { statements: 80, branches: 70, functions: 75, lines: 80 },
+				// Each screen and component has its own floor (test/coverage-floors.test.ts checks that every
+				// .tsx file has one), set just under what the app tests reach. Jobs and Today sit at 65 branches:
+				// their uncovered branches are absent-field fallbacks in detail panes and brief sections.
+				"src/portal/app/App.tsx": { statements: 95, branches: 85, functions: 90, lines: 95 },
+				"src/portal/app/components/actions.tsx": { statements: 95, branches: 90, functions: 90, lines: 95 },
+				"src/portal/app/components/DetailPane.tsx": { statements: 95, branches: 75, functions: 100, lines: 95 },
+				"src/portal/app/components/ErrorBoundary.tsx": { statements: 85, branches: 95, functions: 80, lines: 85 },
+				"src/portal/app/components/Palette.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
+				"src/portal/app/components/primitives.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
+				"src/portal/app/components/SafeMarkdown.tsx": { statements: 85, branches: 70, functions: 100, lines: 85 },
+				"src/portal/app/components/Shell.tsx": { statements: 95, branches: 90, functions: 100, lines: 95 },
+				"src/portal/app/screens/Connections.tsx": { statements: 95, branches: 70, functions: 100, lines: 95 },
+				"src/portal/app/screens/Inbox.tsx": { statements: 90, branches: 80, functions: 90, lines: 95 },
+				"src/portal/app/screens/Jobs.tsx": { statements: 95, branches: 65, functions: 90, lines: 95 },
+				"src/portal/app/screens/Learning.tsx": { statements: 95, branches: 75, functions: 100, lines: 95 },
+				"src/portal/app/screens/Reviews.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
+				"src/portal/app/screens/Tasks.tsx": { statements: 95, branches: 90, functions: 95, lines: 95 },
+				"src/portal/app/screens/Today.tsx": { statements: 95, branches: 65, functions: 100, lines: 95 },
 				"src/portal/process.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/routes.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/server.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },

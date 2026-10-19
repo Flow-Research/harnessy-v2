@@ -13,7 +13,7 @@ import { ScreenHeader } from "../components/Shell.tsx";
 import type { InboxItem, InboxResponse, JobsResponse } from "../lib/api-types.ts";
 import { copyText, followHandoff } from "../lib/browser.ts";
 import { useResource } from "../lib/data.tsx";
-import { dateTime, greeting, plural, relativeTime, visibleText } from "../lib/format.ts";
+import { dateTime, greeting, plural, relativeTime, visibleText, visibleTitle } from "../lib/format.ts";
 import { isPageFocus, useScreenKeys } from "../lib/keys.tsx";
 import { routeHref } from "../lib/router.ts";
 
@@ -57,7 +57,7 @@ const Detail = ({ item }: { item: InboxItem }) => (
 		<p className="label">
 			{item.source} · owned by {item.owner.label}
 		</p>
-		<h2 className="detail-title">{visibleText(item.title)}</h2>
+		<h2 className="detail-title">{visibleTitle(item.title)}</h2>
 		<p className="text-2">{visibleText(item.detail)}</p>
 		{item.context === "" ? null : <p className="muted">{visibleText(item.context)}</p>}
 		<ActionList actions={item.actions} />
@@ -179,7 +179,7 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 													<StatusDot tone={severity.tone} label={severity.label} />
 												</span>
 												<span className="row-main">
-													<span className="row-title">{visibleText(item.title)}</span>
+													<span className="row-title">{visibleTitle(item.title)}</span>
 													<span className="row-context">{visibleText(item.context)}</span>
 												</span>
 												<span className="row-meta">
