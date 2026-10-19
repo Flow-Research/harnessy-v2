@@ -12,9 +12,15 @@ import {
 } from "./server-connection";
 
 describe("CLI server connection", () => {
-  it("treats loopback spellings on the same port as the same local server", () => {
+  it("treats localhost and 127.0.0.1 on one port as one server, but not [::1]", () => {
     expect(sameLocalServerOrigin("http://localhost:4788", "http://127.0.0.1:4788")).toBe(true);
-    expect(sameLocalServerOrigin("http://[::1]:4788", "http://127.0.0.1:4788/")).toBe(true);
+    expect(sameLocalServerOrigin("http://localhost:4788/", "http://127.0.0.1:4788")).toBe(true);
+    expect(sameLocalServerOrigin("http://[::1]:4788", "http://[::1]:4788/")).toBe(true);
+    // IPv4 and IPv6 loopback on one port can be two servers (two data
+    // directories, or a squatter): never the same.
+    expect(sameLocalServerOrigin("http://[::1]:4788", "http://127.0.0.1:4788/")).toBe(false);
+    expect(sameLocalServerOrigin("http://127.0.0.1:4788", "http://[::1]:4788")).toBe(false);
+    expect(sameLocalServerOrigin("http://localhost:4788", "http://[::1]:4788")).toBe(false);
     expect(sameLocalServerOrigin("http://127.0.0.1:4788", "http://127.0.0.1:4789")).toBe(false);
     expect(sameLocalServerOrigin("https://localhost:4788", "http://127.0.0.1:4788")).toBe(false);
     expect(sameLocalServerOrigin("http://box.lan:4788", "http://127.0.0.1:4788")).toBe(false);

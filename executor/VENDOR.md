@@ -197,6 +197,12 @@ overlay above (the `img-src https:` allowance and the meta-refresh redirect to
     `http://localhost:<port>`: Bun resolves `localhost` to `::1` first, where
     another local user can listen on the same port and relay to the real
     server.
+  - `startServer` (and so `--hostname` for `daemon run` and `web
+    --foreground`) accepts only an IP literal or `localhost`; a DNS name is
+    refused at startup (`parseBindHostname`), because the published origin
+    and the identity proof carry the bound address, which a name cannot pin.
+    To reach the server under a DNS name, bind an address and add the name
+    with `--allowed-host`.
   - `GET /api/logo?url=` proxies logos from `integrations.sh` and `svgl.app`
     only (https, no port or userinfo, every redirect hop rechecked against
     the same hosts, at most 3 hops, `image/*`, at most 512 KiB, cached in

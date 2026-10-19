@@ -2682,7 +2682,7 @@ const webCommand = Command.make(
       .pipe(Options.withDefault("127.0.0.1"))
       .pipe(
         Options.withDescription(
-          "Bind address for the temporary --foreground server. Use 0.0.0.0 to listen on all interfaces.",
+          "Bind address for the temporary --foreground server: an IP address or localhost (DNS names are refused; use --allowed-host). Use 0.0.0.0 to listen on all interfaces.",
         ),
       ),
     allowedHost: Options.string("allowed-host")
@@ -2736,7 +2736,11 @@ const daemonRunCommand = Command.make(
     port: Options.integer("port").pipe(Options.withDefault(DEFAULT_PORT)),
     hostname: Options.string("hostname")
       .pipe(Options.withDefault("127.0.0.1"))
-      .pipe(Options.withDescription("Bind address. Keep this local unless you trust the network.")),
+      .pipe(
+        Options.withDescription(
+          "Bind address: an IP address or localhost (DNS names are refused; use --allowed-host). Keep this local unless you trust the network.",
+        ),
+      ),
     allowedHost: Options.string("allowed-host")
       .pipe(Options.atLeast(0))
       .pipe(

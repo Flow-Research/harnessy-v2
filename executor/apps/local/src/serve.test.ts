@@ -30,6 +30,7 @@ import {
   localIdentityProof,
   localServerAddress,
   localServerOrigin,
+  parseBindHostname,
   signInPageName,
 } from "./serve-shared";
 
@@ -833,6 +834,18 @@ describe("startServer identity proof", () => {
       expect(proof).not.toBe(localIdentityProof(TOKEN, "127.0.0.1", server!.port, nonce));
     },
   );
+
+  it("refuses a DNS --hostname before touching the data directory", async () => {
+    for (const hostname of ["box.lan", "example.com", "localhost.evil.example"]) {
+      await expect(
+        startServer({ port: 0, hostname, clientDir, authToken: TOKEN, handlers: testHandlers() }),
+      ).rejects.toThrow(`--hostname "${hostname}" must be an IP address`);
+    }
+    expect(parseBindHostname("[::1]")).toBe("::1");
+    expect(parseBindHostname(" LocalHost ")).toBe("127.0.0.1");
+    expect(parseBindHostname("0.0.0.0")).toBe("0.0.0.0");
+    expect(() => parseBindHostname("box.lan")).toThrow("--allowed-host");
+  });
 
   it("maps wildcard and named binds to the loopback literal clients use", () => {
     expect(localServerAddress("0.0.0.0")).toBe("127.0.0.1");

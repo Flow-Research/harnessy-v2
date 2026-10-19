@@ -25,6 +25,7 @@ export {
   localServerAddress,
   localServerOrigin,
   LOGO_PROXY_PATH,
+  parseBindHostname,
   signInPageName,
 } from "./serve-shared";
 export {

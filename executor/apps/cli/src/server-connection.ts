@@ -112,12 +112,20 @@ export type ActiveLocalServerDecision =
   | { readonly kind: "use-active"; readonly connection: ExecutorServerConnection }
   | { readonly kind: "conflict"; readonly active: ExecutorLocalServerManifest };
 
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+/**
+ * The loopback literal a plain-http origin host stands for: `localhost` means
+ * `127.0.0.1`, which is what `daemonBindAddress` binds for it. IPv4 and IPv6
+ * loopback stay distinct: `127.0.0.1:<port>` and `[::1]:<port>` can be two
+ * different servers (two data directories, or a squatter), so neither may
+ * stand in for the other.
+ */
+const loopbackKey = (hostname: string): string =>
+  hostname === "localhost" ? "127.0.0.1" : hostname;
 
 /**
  * Whether two origins name the same local server: equal after normalization,
- * or both plain-http loopback spellings (`localhost`, `127.0.0.1`, `[::1]`) on
- * the same port. Use it only to pick the active manifest's connection, whose
+ * or plain-http `localhost` and `127.0.0.1` on the same port. `[::1]` only
+ * equals `[::1]`. Use it only to pick the active manifest's connection, whose
  * literal address has been verified; never to choose where a bearer goes.
  */
 export const sameLocalServerOrigin = (left: string, right: string): boolean => {
@@ -128,9 +136,8 @@ export const sameLocalServerOrigin = (left: string, right: string): boolean => {
   return (
     urlA.protocol === "http:" &&
     urlB.protocol === "http:" &&
-    LOOPBACK_HOSTNAMES.has(urlA.hostname) &&
-    LOOPBACK_HOSTNAMES.has(urlB.hostname) &&
-    (urlA.port || "80") === (urlB.port || "80")
+    (urlA.port || "80") === (urlB.port || "80") &&
+    loopbackKey(urlA.hostname) === loopbackKey(urlB.hostname)
   );
 };
 

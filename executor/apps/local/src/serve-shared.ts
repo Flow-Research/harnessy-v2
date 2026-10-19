@@ -263,6 +263,26 @@ export const localServerAddress = (bindAddress: string): string => {
   return value;
 };
 
+/**
+ * Validate a `--hostname` bind value and return the literal to bind: an IP
+ * literal (IPv6 with or without brackets) as is, `localhost` as `127.0.0.1`.
+ * A DNS name is refused: the server publishes the address it binds and the
+ * identity proof is bound to it, and a name can resolve to a different
+ * address for the client than for the server. Reach the server under a name
+ * with `--allowed-host` instead.
+ */
+export const parseBindHostname = (value: string): string => {
+  const trimmed = value.trim();
+  if (trimmed.toLowerCase() === "localhost") return "127.0.0.1";
+  const literal = trimmed.replace(/^\[(.*)\]$/, "$1");
+  if (isIP(literal) !== 0) return literal.toLowerCase();
+  // oxlint-disable-next-line executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: plain boot-time option validation outside the Effect graph; refusing to start is the intended outcome
+  throw new Error(
+    `Refusing to start: --hostname "${value}" must be an IP address (for example 127.0.0.1, ::1 or 0.0.0.0) or localhost. ` +
+      "To reach the server under a DNS name, bind an address and pass that name with --allowed-host.",
+  );
+};
+
 /** `http://<address>:<port>` for a literal address, bracketing IPv6. */
 export const localServerOrigin = (address: string, port: number): string => {
   const literal = localServerAddress(address);

@@ -29,6 +29,7 @@ import {
   localServerAddress,
   localServerOrigin,
   LOGO_PROXY_MAX_BYTES,
+  parseBindHostname,
   LOGO_PROXY_PATH,
   logoProxyTarget,
   readIdentityNonce,
@@ -487,9 +488,10 @@ export interface StartServerOptions {
   /** Embedded web UI map from compiled binary (path → bunfs path). Overrides clientDir. */
   embeddedWebUI?: Record<string, string> | null;
   /**
-   * Bind address. Defaults to 127.0.0.1. Use 0.0.0.0 to listen on all
-   * interfaces. `localhost` binds 127.0.0.1 (not whichever family the name
-   * resolves to first), so the published literal is predictable.
+   * Bind address: an IP literal or `localhost`. Defaults to 127.0.0.1. Use
+   * 0.0.0.0 to listen on all interfaces. `localhost` binds 127.0.0.1 (not
+   * whichever family the name resolves to first), so the published literal
+   * is predictable. Any other DNS name is refused (see `parseBindHostname`).
    */
   hostname?: string;
   /**
@@ -595,11 +597,9 @@ const ignoreCleanupFailure = async (cleanup: () => Promise<unknown>): Promise<vo
 
 export async function startServer(opts: StartServerOptions = {}): Promise<ServerInstance> {
   const port = opts.port ?? parseInt(process.env.PORT ?? "4788", 10);
-  const requestedHostname = (opts.hostname ?? "127.0.0.1").trim();
-  const hostname =
-    requestedHostname.toLowerCase() === "localhost"
-      ? "127.0.0.1"
-      : requestedHostname.replace(/^\[(.*)\]$/, "$1");
+  // An IP literal or localhost (bound as 127.0.0.1); a DNS name is refused
+  // before anything touches the data directory.
+  const hostname = parseBindHostname(opts.hostname ?? "127.0.0.1");
   const boundAddress = localServerAddress(hostname);
   // ONE credential, always present: an explicit override or the stable token
   // from auth.json (minted on first run). Auth is unconditionally on — loopback
