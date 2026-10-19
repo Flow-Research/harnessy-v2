@@ -229,23 +229,49 @@ try {
 		const ofSession = (method) => events.filter((event) => event.sessionId === sessionId && event.method === method);
 		const violations = () => ofSession("Runtime.bindingCalled").map((event) => event.params.payload);
 		const responses = () => ofSession("Network.responseReceived").map((event) => event.params.response);
-		return { page, evaluate, violations, responses };
+		const diagnostics = () => [
+			...ofSession("Runtime.exceptionThrown").map(
+				(event) => `exception: ${event.params.exceptionDetails.exception?.description ?? event.params.exceptionDetails.text}`,
+			),
+			...ofSession("Runtime.consoleAPICalled")
+				.filter((event) => event.params.type === "error" || event.params.type === "warning")
+				.map((event) => `console.${event.params.type}: ${event.params.args.map((arg) => arg.value ?? arg.description).join(" ")}`),
+			...ofSession("Network.loadingFailed").map((event) => `loading failed: ${event.params.errorText} ${event.params.blockedReason ?? ""}`),
+			...ofSession("Page.frameNavigated").map((event) => `navigated: ${event.params.frame.url.replace(/_code=[^&]+/, "_code=[redacted]")}`),
+		];
+		return { page, evaluate, violations, responses, diagnostics };
 	};
 
 	const header = (response, name) =>
 		Object.entries(response.headers).find(([key]) => key.toLowerCase() === name)?.[1] ?? null;
 
-	const signedIn = async ({ page, evaluate, responses }, label) => {
+	const signedIn = async ({ page, evaluate, responses, violations, diagnostics }, label) => {
+		let lastState;
 		await until(`${label}: signed-in cockpit`, async () => {
 			const state = await evaluate(
 				"({ href: location.href, token: localStorage.getItem('executor.authToken'), rendered: (document.getElementById('root')?.children.length ?? 0) > 0, gate: document.body?.innerText.includes('Authentication required') ?? false })",
 			).catch(() => undefined);
+			lastState = state;
 			const apiOk = responses().some((response) => {
 				const url = new URL(response.url);
 				return url.origin === origin && url.pathname.startsWith("/api/") && !url.pathname.startsWith("/api/local-auth/") && response.status === 200;
 			});
 			const landed = state !== undefined && state.href.startsWith(`${origin}/`) && !state.href.includes("#") && !state.href.includes("/auth/sign-in");
 			return landed && state.token === token && state.rendered && !state.gate && apiOk ? state : undefined;
+		}).catch((error) => {
+			const seen = responses()
+				.slice(-25)
+				.map((response) => `${response.status} ${response.url.replace(/_code=[^&]+/, "_code=[redacted]")}`);
+			throw new Error(
+				[
+					error.message,
+					`state: ${JSON.stringify({ ...lastState, token: lastState?.token === token ? "<bearer>" : lastState?.token ? "<other>" : null })}`,
+					`responses:\n  ${seen.join("\n  ")}`,
+					`csp: ${violations().join("; ") || "none"}`,
+					`page: ${diagnostics().join("\n  ") || "none"}`,
+					`daemon: ${daemonOutput.slice(-1500)}`,
+				].join("\n"),
+			);
 		});
 		const unauthorized = responses().filter((response) => response.url.startsWith(`${origin}/api/`) && response.status === 401);
 		if (unauthorized.length > 0) failures.push(`${label}: API answered 401 after sign-in (${unauthorized.map((r) => new URL(r.url).pathname).join(", ")})`);
