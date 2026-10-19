@@ -20,8 +20,19 @@ import {
   allowedHostConnectSources,
   type AllowedHost,
   hasFileExtension,
+  isAllowedExchangeRequest,
+  isAllowedHostHeader,
   isAllowedOrigin,
+  LOCAL_IDENTITY_PATH,
   LOCAL_LOGIN_EXCHANGE_MAX_BYTES,
+  localIdentityProof,
+  localServerAddress,
+  localServerOrigin,
+  LOGO_PROXY_MAX_BYTES,
+  parseBindHostname,
+  LOGO_PROXY_PATH,
+  logoProxyTarget,
+  readIdentityNonce,
   parseAllowedHost,
   parseWebConnectSources,
   signInPageName,
@@ -43,13 +54,14 @@ type StaticHandler = () => Response | Promise<Response>;
 
 /**
  * Content-Security-Policy for the built web UI shell. The production bundle has
- * no inline script, eval or WebAssembly, so scripts are `'self'` only. Two
- * deliberate allowances:
+ * no inline script, eval or WebAssembly, so scripts are `'self'` only. One
+ * deliberate allowance:
  * - `style-src 'unsafe-inline'`: the chart component and UI primitives inject
  *   `<style>` elements at runtime. Inline style cannot run script; the script
  *   policy stays strict.
- * - `img-src https:`: integration logos come from integrations.sh, svgl.app
- *   and arbitrary provider hosts. Images cannot run script.
+ * Integration logos are proxied through `/api/logo` (integrations.sh and
+ * svgl.app only), so `img-src` is same-origin plus `data:`/`blob:` and cannot
+ * carry data to an arbitrary host.
  * `connect-src` is `'self'` plus the `--allowed-host` hosts and any origins in
  * `EXECUTOR_WEB_CONNECT_SRC` (`any` opts in to every http(s) origin). The
  * server selector can only reach another Executor that is listed there.
@@ -63,7 +75,7 @@ export const cockpitContentSecurityPolicy = (connectSources: ReadonlyArray<strin
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' data: https://fonts.gstatic.com",
-    "img-src 'self' data: blob: https:",
+    "img-src 'self' data: blob:",
     ["connect-src 'self'", ...new Set(connectSources)].join(" "),
     "object-src 'none'",
     "base-uri 'none'",
@@ -90,6 +102,169 @@ const jsonNoStore = (body: unknown, status = 200): Response =>
     status,
     headers: { "content-type": "application/json", "cache-control": "no-store" },
   });
+
+/**
+ * The sign-in exchange page the CLI opens (`/auth/sign-in#_code=<code>`). Its
+ * only script is a parser-blocking same-origin file, so the fragment is
+ * replaced out of the URL before anything else on the page runs or loads. The
+ * script then spends the code, stores the bearer where the web UI reads it
+ * (`executor.authToken`, see packages/react local-auth) and `location.replace`s
+ * to `/`, so no history entry keeps the code.
+ */
+export const SIGN_IN_PAGE_PATH = "/auth/sign-in";
+const SIGN_IN_SCRIPT_PATH = "/auth/sign-in.js";
+
+const SIGN_IN_PAGE_HTML = [
+  "<!doctype html>",
+  '<html lang="en">',
+  "<head>",
+  '<meta charset="utf-8">',
+  '<meta name="referrer" content="no-referrer">',
+  "<title>Signing in</title>",
+  `<script src="${SIGN_IN_SCRIPT_PATH}"></script>`,
+  "</head>",
+  "<body>Signing in...</body>",
+  "</html>",
+  "",
+].join("\n");
+
+export const SIGN_IN_SCRIPT = `"use strict";
+(function () {
+  var code = new URLSearchParams(location.hash.slice(1)).get("_code");
+  history.replaceState(null, "", location.pathname);
+  var done = function () { location.replace("/"); };
+  if (!code) { done(); return; }
+  var controller = new AbortController();
+  var timer = setTimeout(function () { controller.abort(); }, 10000);
+  fetch("${LOCAL_LOGIN_EXCHANGE_PATH}", {
+    method: "POST",
+    cache: "no-store",
+    credentials: "omit",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: code }),
+    signal: controller.signal
+  })
+    .then(function (response) { return response.ok ? response.json() : null; })
+    .then(function (body) {
+      if (body && typeof body.token === "string" && body.token.length > 0) {
+        try { localStorage.setItem("executor.authToken", body.token); } catch (_) {}
+      }
+    })
+    .catch(function () {})
+    .then(function () { clearTimeout(timer); done(); });
+})();
+`;
+
+const secureHeaders = (contentType: string, policy: string): Record<string, string> => ({
+  "content-type": contentType,
+  "cache-control": "no-store",
+  "content-security-policy": policy,
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+});
+
+const hostNotAllowed = (): Response =>
+  new Response(
+    "Misdirected request: this Host is not allowed. Start Executor with --allowed-host <name> to serve it under that name.\n",
+    { status: 421, headers: { "content-type": "text/plain", "cache-control": "no-store" } },
+  );
+
+interface CachedLogo {
+  readonly body: Uint8Array<ArrayBuffer>;
+  readonly contentType: string;
+  readonly expiresAt: number;
+}
+
+const LOGO_CACHE_MAX = 256;
+const LOGO_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const LOGO_FETCH_TIMEOUT_MS = 5_000;
+const LOGO_MAX_REDIRECTS = 3;
+/** An SVG opened directly must not run script in this origin. */
+const LOGO_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+
+const logoResponse = (logo: CachedLogo): Response =>
+  new Response(logo.body, {
+    headers: {
+      "content-type": logo.contentType,
+      "cache-control": "public, max-age=86400",
+      "content-security-policy": LOGO_CONTENT_SECURITY_POLICY,
+      "cross-origin-resource-policy": "same-origin",
+      "x-content-type-options": "nosniff",
+    },
+  });
+
+const logoNotFound = (): Response =>
+  new Response("Not Found", { status: 404, headers: { "cache-control": "no-store" } });
+
+/** Fetch an allowed logo once, cap its size and keep only image responses. */
+const makeLogoProxy = (fetchLogo: typeof fetch) => {
+  const cache = new Map<string, CachedLogo>();
+  return async (rawTarget: string | null): Promise<Response> => {
+    const target = logoProxyTarget(rawTarget);
+    if (target === null) return logoNotFound();
+    const key = target.href;
+    const cached = cache.get(key);
+    if (cached !== undefined && cached.expiresAt > Date.now()) return logoResponse(cached);
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: an unreachable or misbehaving logo host degrades to the UI's fallback icon
+    try {
+      // Redirects are followed by hand so every hop is checked against the
+      // same host allowlist: an open redirect on a logo host must not turn
+      // this unauthenticated route into a fetch of an arbitrary address.
+      const signal = AbortSignal.timeout(LOGO_FETCH_TIMEOUT_MS);
+      let next: URL | null = target;
+      let upstream: Response | null = null;
+      for (let hop = 0; next !== null && hop <= LOGO_MAX_REDIRECTS; hop++) {
+        const response: Response = await fetchLogo(next.href, {
+          redirect: "manual",
+          signal,
+          headers: { accept: "image/*" },
+        });
+        if (response.status < 300 || response.status >= 400) {
+          upstream = response;
+          break;
+        }
+        await response.body?.cancel();
+        const location = response.headers.get("location");
+        next = location === null ? null : logoProxyTarget(new URL(location, next).href);
+      }
+      if (upstream === null) return logoNotFound();
+      const contentType = (upstream.headers.get("content-type") ?? "").split(";")[0]!.trim();
+      if (!upstream.ok || !/^image\/[a-z0-9.+-]+$/i.test(contentType) || upstream.body === null) {
+        await upstream.body?.cancel();
+        return logoNotFound();
+      }
+      const reader = upstream.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > LOGO_PROXY_MAX_BYTES) {
+          await reader.cancel();
+          return logoNotFound();
+        }
+        chunks.push(value);
+      }
+      const body = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        body.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      const logo = {
+        body,
+        contentType,
+        expiresAt: Date.now() + LOGO_CACHE_TTL_MS,
+      };
+      if (cache.size >= LOGO_CACHE_MAX) cache.delete(cache.keys().next().value!);
+      cache.set(key, logo);
+      return logoResponse(logo);
+    } catch {
+      return logoNotFound();
+    }
+  };
+};
 
 /** Read at most `limit` bytes of the body; `null` when it is longer. */
 const readCappedBody = async (req: Request, limit: number): Promise<string | null> => {
@@ -312,16 +487,21 @@ export interface StartServerOptions {
   clientDir?: string;
   /** Embedded web UI map from compiled binary (path → bunfs path). Overrides clientDir. */
   embeddedWebUI?: Record<string, string> | null;
-  /** Bind address. Defaults to 127.0.0.1. Use 0.0.0.0 to listen on all interfaces. */
+  /**
+   * Bind address: an IP literal or `localhost`. Defaults to 127.0.0.1. Use
+   * 0.0.0.0 to listen on all interfaces. `localhost` binds 127.0.0.1 (not
+   * whichever family the name resolves to first), so the published literal
+   * is predictable. Any other DNS name is refused (see `parseBindHostname`).
+   */
   hostname?: string;
   /**
    * Extra hosts granted credentialed CORS access, on top of the server's own
    * exact loopback origins: `host` (any port), `host:port`, `[v6]` or
    * `[v6]:port`. A loopback host must name a port. They are also added to the
-   * web UI's CSP `connect-src`. There is no Host allowlist — the
-   * bearer token is the security boundary — so reaching the server from
-   * another host (e.g. over a tailnet) needs nothing here; this only widens
-   * cross-origin CORS.
+   * web UI's CSP `connect-src` and accepted as `Host` names. Requests whose
+   * `Host` is a DNS name other than `localhost`, the bind name or one of these
+   * are refused (DNS rebinding), so reaching the server under a tailnet or
+   * LAN DNS name needs that name here; IP literals need nothing.
    */
   allowedHosts?: ReadonlyArray<string>;
   /**
@@ -339,10 +519,24 @@ export interface StartServerOptions {
   webConnectSources?: ReadonlyArray<string>;
   /** Test hook for supplying API/MCP handlers without loading the local server graph. */
   handlers?: ServerHandlers;
+  /** Test hook: the fetch the logo proxy uses for integrations.sh / svgl.app. */
+  logoFetch?: typeof fetch;
 }
 
 export interface ServerInstance {
   port: number;
+  /**
+   * The literal address local clients reach this server at (IPv6 without
+   * brackets): the bind address, with a wildcard bind mapped to loopback.
+   * The identity proof is bound to it.
+   */
+  address: string;
+  /**
+   * `http://<address>:<port>`. Publish this (manifest, CLI target, opener
+   * URLs), never `http://localhost:<port>`: `localhost` can resolve to the
+   * other IP family, where another local user may hold the same port.
+   */
+  origin: string;
   /** The effective bearer token this server validates. Callers publish it in the
    * owner-only manifest and hand it to MCP clients; it is never printed. */
   authToken: string;
@@ -403,7 +597,10 @@ const ignoreCleanupFailure = async (cleanup: () => Promise<unknown>): Promise<vo
 
 export async function startServer(opts: StartServerOptions = {}): Promise<ServerInstance> {
   const port = opts.port ?? parseInt(process.env.PORT ?? "4788", 10);
-  const hostname = opts.hostname ?? "127.0.0.1";
+  // An IP literal or localhost (bound as 127.0.0.1); a DNS name is refused
+  // before anything touches the data directory.
+  const hostname = parseBindHostname(opts.hostname ?? "127.0.0.1");
+  const boundAddress = localServerAddress(hostname);
   // ONE credential, always present: an explicit override or the stable token
   // from auth.json (minted on first run). Auth is unconditionally on — loopback
   // is no longer a free pass, since Executor runs arbitrary code that any local
@@ -414,7 +611,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   const authToken = normalizeCredential(opts.authToken) ?? loadOrMintLocalAuthToken();
   const isAuthorized = makeIsAuthorized(authToken);
   const loginCodes = makeLocalLoginCodes();
-  // CORS-only origin allowlist (no Host gate — the bearer is the boundary).
+  // CORS origin allowlist; `--allowed-host` names also pass the Host gate.
   // `selfOrigins` is filled in once Bun reports the bound port.
   const extraHosts = (opts.allowedHosts ?? []).map(parseAllowedHost);
   const corsPolicy: {
@@ -428,6 +625,10 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
     ),
   ]);
   const clientDir = opts.clientDir ?? resolve(import.meta.dirname, "../dist");
+  const hostOk = (req: Request): boolean =>
+    isAllowedHostHeader(req.headers.get("host"), hostname, extraHosts);
+  const proxyLogo = makeLogoProxy(opts.logoFetch ?? fetch);
+  let boundPort = 0;
 
   startIntegrationsRefresh();
 
@@ -490,8 +691,17 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
       // Disable Bun's default 10s idle timeout. MCP elicitation and pause/resume
       // can idle longer during human approval; `0` disables the socket timeout.
       idleTimeout: 0,
-      routes: { ...staticRoutes },
+      routes: Object.fromEntries(
+        Object.entries(staticRoutes).map(([route, handler]) => [
+          route,
+          (req: Request) => (hostOk(req) ? handler() : hostNotAllowed()),
+        ]),
+      ),
       async fetch(req) {
+        // DNS rebinding: refuse a Host an attacker's DNS name could produce
+        // before anything else, unauthenticated routes included.
+        if (!hostOk(req)) return hostNotAllowed();
+
         const withCors = (response: Response): Response =>
           withCorsHeaders(req, response, corsPolicy);
 
@@ -512,10 +722,13 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
         // Only this server's own UI (or an --allowed-host page) may call it, and
         // the body is capped before it is read.
         if (url.pathname === LOCAL_LOGIN_EXCHANGE_PATH && req.method === "POST") {
-          const origin = req.headers.get("origin");
           if (
-            origin !== null &&
-            !isAllowedOrigin(origin, corsPolicy.selfOrigins, corsPolicy.extraHosts)
+            !isAllowedExchangeRequest(
+              req.headers.get("origin"),
+              req.headers.get("sec-fetch-site"),
+              corsPolicy.selfOrigins,
+              corsPolicy.extraHosts,
+            )
           ) {
             return jsonNoStore({ error: "forbidden_origin" }, 403);
           }
@@ -533,6 +746,34 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
           }
           removeSignInPage(code);
           return withCors(jsonNoStore({ token: authToken }));
+        }
+
+        // The sign-in exchange page and its script (no secret in either; the
+        // code stays in the fragment, which never reaches the server).
+        if (url.pathname === SIGN_IN_PAGE_PATH && req.method === "GET") {
+          return new Response(SIGN_IN_PAGE_HTML, {
+            headers: secureHeaders("text/html; charset=utf-8", cspPolicy),
+          });
+        }
+        if (url.pathname === SIGN_IN_SCRIPT_PATH && req.method === "GET") {
+          return new Response(SIGN_IN_SCRIPT, {
+            headers: secureHeaders("text/javascript; charset=utf-8", cspPolicy),
+          });
+        }
+
+        // Identity proof for the CLI (no bearer: proving it is the point).
+        if (url.pathname === LOCAL_IDENTITY_PATH && req.method === "POST") {
+          const raw = await readCappedBody(req, LOCAL_LOGIN_EXCHANGE_MAX_BYTES);
+          const nonce = raw === null ? null : readIdentityNonce(raw);
+          if (nonce === null) return jsonNoStore({ error: "invalid_nonce" }, 400);
+          return jsonNoStore({
+            proof: localIdentityProof(authToken, boundAddress, boundPort, nonce),
+          });
+        }
+
+        // Same-origin integration logos (an <img> cannot carry the bearer).
+        if (url.pathname === LOGO_PROXY_PATH && req.method === "GET") {
+          return proxyLogo(url.searchParams.get("url"));
         }
 
         // OAuth callbacks and CIMD documents are reached by the external
@@ -624,10 +865,13 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
     });
 
     corsPolicy.selfOrigins = selfLoopbackOrigins(server.port!);
+    boundPort = server.port!;
 
     let stopped = false;
     return {
       port: server.port!,
+      address: boundAddress,
+      origin: localServerOrigin(boundAddress, server.port!),
       authToken,
       async stop() {
         if (stopped) return;
@@ -645,5 +889,5 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
 
 if (import.meta.main) {
   const server = await startServer();
-  console.log(`Executor listening on http://localhost:${server.port}`);
+  console.log(`Executor listening on ${server.origin}`);
 }

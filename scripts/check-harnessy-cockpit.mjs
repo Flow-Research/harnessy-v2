@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -290,6 +291,35 @@ const verifyCors = async (origin) => {
 	}
 };
 
+/** GET `path` with a raw Host header (fetch cannot override Host). */
+const statusWithHost = (origin, path, host) =>
+	new Promise((resolvePromise, reject) => {
+		const url = new URL(path, origin);
+		const req = httpRequest(
+			{ hostname: url.hostname.replace(/^\[|\]$/g, ""), port: url.port, path: url.pathname, headers: { host }, timeout: 10_000 },
+			(response) => {
+				response.resume();
+				resolvePromise(response.statusCode);
+			},
+		);
+		req.once("error", reject);
+		req.once("timeout", () => req.destroy(new Error("Host gate request timed out.")));
+		req.end();
+	});
+
+/** DNS rebinding: a page on an attacker's name must not reach even the unauthenticated routes. */
+const verifyHostGate = async (origin) => {
+	const port = new URL(origin).port;
+	for (const path of ["/api/health", "/", "/auth/sign-in"]) {
+		const rebound = await statusWithHost(origin, path, `rebind.attacker.example:${port}`);
+		if (rebound !== 421) {
+			throw new Error(`Cockpit served ${path} to a foreign Host (HTTP ${rebound}); expected 421.`);
+		}
+	}
+	const own = await statusWithHost(origin, "/api/health", `localhost:${port}`);
+	if (own !== 200) throw new Error(`Cockpit refused its own localhost Host (HTTP ${own}).`);
+};
+
 const verifyCockpit = async ({ manifest, expectedDataDir, commandOutput, browserLog, temporaryRoot }) => {
 	assertIsolatedRuntimeScope({
 		manifest,
@@ -317,6 +347,11 @@ const verifyCockpit = async ({ manifest, expectedDataDir, commandOutput, browser
 		throw new Error("The sign-in page was not deleted after its code was spent.");
 	}
 	await verifyCors(origin);
+	await verifyHostGate(origin);
+	const exchangePage = await fetchWithTimeout(`${origin}/auth/sign-in`);
+	await exchangePage.body?.cancel();
+	if (!exchangePage.ok) throw new Error(`Cockpit sign-in exchange page failed with HTTP ${exchangePage.status}.`);
+	assertStrictCockpitCsp(exchangePage.headers.get("content-security-policy"));
 
 	const health = await fetchWithTimeout(`${origin}/api/health`);
 	if (!health.ok || (await health.text()).trim() !== "ok") {
@@ -398,9 +433,10 @@ const main = async () => {
 	const browserStubDir = join(temporaryRoot, "bin");
 	await mkdir(browserStubDir, { recursive: true });
 	const browserStub = join(browserStubDir, "xdg-open");
-	// The stub records the argument the CLI hands the browser opener.
+	// The stub records the argument the CLI hands the browser opener (the last
+	// one: macOS passes `-b <default browser>` first).
 	const browserLog = join(temporaryRoot, "browser-urls.txt");
-	const stubScript = `#!/bin/sh\nprintf '%s\\n' "$1" >> '${browserLog}'\nexit 0\n`;
+	const stubScript = `#!/bin/sh\nfor arg in "$@"; do last="$arg"; done\nprintf '%s\\n' "$last" >> '${browserLog}'\nexit 0\n`;
 	await writeFile(browserStub, stubScript, { mode: 0o755 });
 	await writeFile(join(browserStubDir, "open"), stubScript, { mode: 0o755 });
 	// A pre-existing, group/world-readable data directory must be repaired to 0700.
@@ -411,6 +447,10 @@ const main = async () => {
 		BROWSER: browserStub,
 		EXECUTOR_DATA_DIR: dataDir,
 		EXECUTOR_SCOPE_DIR: smokeScope,
+		// The smoke checks the file page; the loopback URL is covered by unit tests.
+		EXECUTOR_SIGN_IN: "file",
+		PI_AUTH_ENCRYPTION: "off",
+		HSY_AUTH_ENCRYPTION: "off",
 		HOME: temporaryRoot,
 		PATH: `${browserStubDir}${delimiter}${process.env.PATH ?? ""}`,
 		USERPROFILE: temporaryRoot,

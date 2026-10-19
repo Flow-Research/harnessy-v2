@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isIP } from "node:net";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { FileSystem, Path } from "effect";
@@ -41,6 +42,12 @@ export interface DaemonPointer {
   readonly scopeId: string;
   readonly scopeDir: string | null;
   readonly token: string;
+  /**
+   * The literal address the daemon listens on (IPv6 without brackets). The
+   * CLI reaches the daemon there; `hostname` is only the file key. Absent in
+   * pointers written before daemons recorded it.
+   */
+  readonly address?: string;
 }
 
 export interface DaemonStartLock {
@@ -55,6 +62,11 @@ export interface DaemonStartLock {
 
 const LOCAL_HOST_ALIASES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
+/**
+ * The key daemon record and pointer files use for `hostname`: every loopback
+ * spelling maps to `localhost`. A key only — never put it in a URL the bearer
+ * or a browser goes to; use the daemon's literal address for that.
+ */
 export const canonicalDaemonHost = (hostname: string): string => {
   const normalized = hostname.trim().toLowerCase();
   return LOCAL_HOST_ALIASES.has(normalized) ? "localhost" : normalized;
@@ -208,6 +220,7 @@ const parsePointer = (raw: string): DaemonPointer | null => {
     scopeId: r.scopeId,
     scopeDir: r.scopeDir,
     token: r.token,
+    ...(typeof r.address === "string" && isIP(r.address) !== 0 ? { address: r.address } : {}),
   };
 };
 
@@ -242,6 +255,7 @@ export const writeDaemonPointer = (input: {
   scopeId: string;
   scopeDir: string | null;
   token: string;
+  address?: string;
 }): Effect.Effect<void, PlatformError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -258,6 +272,7 @@ export const writeDaemonPointer = (input: {
       scopeId: input.scopeId,
       scopeDir: input.scopeDir,
       token: input.token,
+      ...(input.address !== undefined ? { address: input.address } : {}),
     };
 
     yield* fs.writeFileString(

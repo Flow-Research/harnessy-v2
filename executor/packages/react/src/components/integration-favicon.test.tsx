@@ -6,6 +6,7 @@ import {
   integrationInferredUrl,
   integrationLocalIconUrl,
   integrationPresetIconUrl,
+  proxiedLogoSrc,
 } from "./integration-favicon";
 
 describe("IntegrationFavicon", () => {
@@ -29,7 +30,9 @@ describe("IntegrationFavicon", () => {
   it("falls through to the placeholder when the proxy fails", () => {
     const url = "https://api.github.com/graphql";
     const primary = integrationFaviconSrc({ url, size: 20 });
-    expect(primary).toBe("https://integrations.sh/logo/github.com?sz=40");
+    expect(primary).toBe(
+      `/api/logo?url=${encodeURIComponent("https://integrations.sh/logo/github.com?sz=40")}`,
+    );
     expect(integrationFaviconSrc({ url, size: 20, failedSrcs: [primary ?? ""] })).toBeNull();
   });
 
@@ -122,7 +125,7 @@ describe("IntegrationFavicon", () => {
     const inferred = integrationInferredUrl({ id: "mcp_posthog_com", name: "mcp.posthog.com" });
     expect(inferred).toBe("https://mcp.posthog.com");
     expect(integrationFaviconSrc({ url: inferred ?? undefined, size: 16 })).toBe(
-      "https://integrations.sh/logo/posthog.com?sz=32",
+      `/api/logo?url=${encodeURIComponent("https://integrations.sh/logo/posthog.com?sz=32")}`,
     );
   });
 
@@ -225,5 +228,30 @@ describe("IntegrationFavicon", () => {
       "https://mcp.pscale.dev",
     );
     expect(integrationInferredUrl({ id: "stripe_api", name: "Stripe API" })).toBeNull();
+  });
+});
+
+describe("proxiedLogoSrc", () => {
+  it("loads remote logos through the same-origin proxy, so img-src stays 'self'", () => {
+    expect(proxiedLogoSrc("https://svgl.app/library/sentry.svg")).toBe(
+      `/api/logo?url=${encodeURIComponent("https://svgl.app/library/sentry.svg")}`,
+    );
+    expect(proxiedLogoSrc("/favicon-32.png")).toBe("/favicon-32.png");
+    expect(proxiedLogoSrc("data:image/png;base64,AAAA")).toBe("data:image/png;base64,AAAA");
+  });
+
+  it("drops logos on other hosts so the cascade falls back to the domain logo", () => {
+    expect(proxiedLogoSrc("https://cdn.provider.example/logo.png")).toBeNull();
+    expect(proxiedLogoSrc("http://integrations.sh/logo/a.com")).toBeNull();
+    expect(proxiedLogoSrc("//integrations.sh/logo/a.com")).toBeNull();
+    expect(proxiedLogoSrc("/\\example.org/logo.png")).toBeNull();
+    expect(proxiedLogoSrc(null)).toBeNull();
+    expect(
+      integrationFaviconSrc({
+        icon: "https://cdn.provider.example/logo.png",
+        url: "https://api.github.com/graphql",
+        size: 20,
+      }),
+    ).toBe(`/api/logo?url=${encodeURIComponent("https://integrations.sh/logo/github.com?sz=40")}`);
   });
 });

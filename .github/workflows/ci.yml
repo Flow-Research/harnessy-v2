@@ -102,6 +102,9 @@ jobs:
       - name: Smoke the Harnessy app in headless Chrome (fails on any CSP violation)
         run: node scripts/check-portal-app-browser.mjs
 
+      - name: Check the Executor cockpit CSP, sign-in redirect and code exchange in headless Chrome
+        run: node scripts/check-executor-cockpit-browser.mjs
+
       - name: Check
         run: npm run check
 

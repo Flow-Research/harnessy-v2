@@ -14,18 +14,30 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadOrMintLocalAuthToken, secureLocalStateDir } from "./auth";
+import { execFileSync } from "node:child_process";
+
+import { isLocalStateRefusal, loadOrMintLocalAuthToken, secureLocalStateDir } from "./auth";
 import { acquireDataDirOwnership } from "./db/data-dir-ownership";
 import {
   COCKPIT_CONTENT_SECURITY_POLICY,
   cockpitContentSecurityPolicy,
+  SIGN_IN_PAGE_PATH,
+  SIGN_IN_SCRIPT,
   startServer,
   type ServerInstance,
 } from "./serve";
-import { signInPageName } from "./serve-shared";
+import {
+  localIdentityProof,
+  localServerAddress,
+  localServerOrigin,
+  parseBindHostname,
+  signInPageName,
+} from "./serve-shared";
 
 let clientDir: string;
+let homeDir: string;
 let dataDir: string;
+const savedHome = process.env.HOME;
 let server: ServerInstance | null = null;
 
 const TOKEN = "test-token";
@@ -44,7 +56,12 @@ const testHandlers = () => ({
 });
 
 const startTestServer = async (
-  opts: { authToken?: string; hostname?: string; allowedHosts?: ReadonlyArray<string> } = {},
+  opts: {
+    authToken?: string;
+    hostname?: string;
+    allowedHosts?: ReadonlyArray<string>;
+    logoFetch?: typeof fetch;
+  } = {},
 ): Promise<string> => {
   server = await startServer({
     port: 0,
@@ -53,15 +70,32 @@ const startTestServer = async (
     authToken: opts.authToken ?? TOKEN,
     allowedHosts: opts.allowedHosts,
     handlers: testHandlers(),
+    logoFetch: opts.logoFetch,
   });
   return `http://127.0.0.1:${server.port}`;
 };
+
+/** Whether this host can listen on [::1] (some CI containers have no IPv6). */
+const ipv6Loopback = (() => {
+  // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: probing for an IPv6 loopback
+  try {
+    Bun.serve({ hostname: "::1", port: 0, fetch: () => new Response("") }).stop(true);
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 const modeOf = (path: string): number => statSync(path).mode & 0o777;
 
 beforeEach(() => {
   clientDir = mkdtempSync(join(tmpdir(), "exec-local-serve-"));
-  dataDir = mkdtempSync(join(tmpdir(), "exec-local-data-"));
+  // The data directory sits inside a temporary HOME: Executor only repairs the
+  // mode of a data directory under the user's home.
+  homeDir = mkdtempSync(join(tmpdir(), "exec-local-home-"));
+  process.env.HOME = homeDir;
+  dataDir = join(homeDir, ".executor");
+  mkdirSync(dataDir, { mode: 0o700 });
   // Isolate auth.json writes and dynamic plugin lookup from the real ~/.executor/workspace.
   process.env.EXECUTOR_DATA_DIR = dataDir;
   process.env.EXECUTOR_SCOPE_DIR = dataDir;
@@ -81,8 +115,9 @@ afterEach(async () => {
   delete process.env.EXECUTOR_DATA_DIR;
   delete process.env.EXECUTOR_WEB_CONNECT_SRC;
   delete process.env.EXECUTOR_SCOPE_DIR;
+  process.env.HOME = savedHome;
   rmSync(clientDir, { recursive: true, force: true });
-  rmSync(dataDir, { recursive: true, force: true });
+  rmSync(homeDir, { recursive: true, force: true });
 });
 
 describe("startServer static/SPA routing (unauthenticated)", () => {
@@ -636,5 +671,493 @@ describe("startServer one-time sign-in codes", () => {
       expect(response.status).toBe(401);
       expect(await response.text()).not.toContain(TOKEN);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #128 follow-ups
+// ---------------------------------------------------------------------------
+
+const mintSignInCode = async (baseUrl: string): Promise<string> => {
+  const response = await fetch(`${baseUrl}/api/local-auth/code`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOKEN}` },
+  });
+  return ((await response.json()) as { code: string }).code;
+};
+
+describe("startServer Host gate (DNS rebinding)", () => {
+  const withHost = (baseUrl: string, path: string, host: string) =>
+    fetch(`${baseUrl}${path}`, { headers: { host } });
+
+  it("refuses a DNS name it does not serve, on unauthenticated routes too", async () => {
+    const baseUrl = await startTestServer();
+    const port = server!.port;
+    for (const path of ["/api/health", "/", "/index.html", SIGN_IN_PAGE_PATH]) {
+      const response = await withHost(baseUrl, path, `rebind.evil.example:${port}`);
+      expect(response.status).toBe(421);
+      expect(await response.text()).toContain("--allowed-host");
+    }
+    const exchange = await fetch(`${baseUrl}/api/local-auth/exchange`, {
+      method: "POST",
+      headers: { host: `rebind.evil.example:${port}`, "content-type": "application/json" },
+      body: JSON.stringify({ code: "A".repeat(43) }),
+    });
+    expect(exchange.status).toBe(421);
+  });
+
+  it("accepts IP literals, localhost names and --allowed-host names", async () => {
+    const baseUrl = await startTestServer({ allowedHosts: ["box.tail1234.ts.net"] });
+    const port = server!.port;
+    for (const host of [
+      `127.0.0.1:${port}`,
+      `[::1]:${port}`,
+      `100.64.0.7:${port}`,
+      `localhost:${port}`,
+      `executor.localhost:${port}`,
+      `box.tail1234.ts.net:${port}`,
+      `BOX.tail1234.ts.net.:${port}`,
+    ]) {
+      const response = await withHost(baseUrl, "/api/health", host);
+      expect({ host, status: response.status }).toEqual({ host, status: 200 });
+    }
+  });
+});
+
+describe("startServer sign-in exchange accept paths", () => {
+  const exchangeWith = (baseUrl: string, code: string, headers: Record<string, string>) =>
+    fetch(`${baseUrl}/api/local-auth/exchange`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify({ code }),
+    });
+
+  it("accepts a same-origin browser request reached through an IP outside the CORS list", async () => {
+    const baseUrl = await startTestServer();
+    const code = await mintSignInCode(baseUrl);
+    const response = await exchangeWith(baseUrl, code, {
+      host: `100.64.0.7:${server!.port}`,
+      origin: `http://100.64.0.7:${server!.port}`,
+      "sec-fetch-site": "same-origin",
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ token: TOKEN });
+  });
+
+  it("refuses a cross-site browser request that omits Origin, before spending the code", async () => {
+    const baseUrl = await startTestServer();
+    const code = await mintSignInCode(baseUrl);
+    for (const site of ["cross-site", "same-site"]) {
+      const response = await exchangeWith(baseUrl, code, { "sec-fetch-site": site });
+      expect(response.status).toBe(403);
+    }
+    expect((await exchangeWith(baseUrl, code, {})).status).toBe(200);
+  });
+});
+
+describe("startServer sign-in exchange page", () => {
+  it("serves a script-only page under the cockpit CSP", async () => {
+    const baseUrl = await startTestServer();
+    const page = await fetch(`${baseUrl}${SIGN_IN_PAGE_PATH}`);
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-security-policy")).toBe(COCKPIT_CONTENT_SECURITY_POLICY);
+    expect(page.headers.get("cache-control")).toBe("no-store");
+    expect(page.headers.get("referrer-policy")).toBe("no-referrer");
+    const html = await page.text();
+    expect(html).toContain('<script src="/auth/sign-in.js"></script>');
+    // No inline script: the strict script-src must allow everything on it.
+    expect(html.match(/<script/g)).toHaveLength(1);
+
+    const script = await fetch(`${baseUrl}/auth/sign-in.js`);
+    expect(script.headers.get("content-type")).toContain("text/javascript");
+    expect(await script.text()).toBe(SIGN_IN_SCRIPT);
+  });
+
+  it("strips the fragment before any other step and leaves with location.replace", () => {
+    const strip = SIGN_IN_SCRIPT.indexOf("history.replaceState(null");
+    expect(strip).toBeGreaterThan(SIGN_IN_SCRIPT.indexOf("location.hash"));
+    expect(strip).toBeLessThan(SIGN_IN_SCRIPT.indexOf("fetch("));
+    expect(SIGN_IN_SCRIPT).toContain('location.replace("/")');
+    expect(SIGN_IN_SCRIPT).not.toContain("location.href =");
+    expect(SIGN_IN_SCRIPT).not.toContain("location.assign");
+  });
+});
+
+describe("startServer identity proof", () => {
+  it("proves the bearer it holds, bound to its address and port, without receiving it", async () => {
+    const baseUrl = await startTestServer();
+    const nonce = "n".repeat(43);
+    const response = await fetch(`${baseUrl}/api/local-auth/identity`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ nonce }),
+    });
+    expect(response.status).toBe(200);
+    const { proof } = (await response.json()) as { proof: string };
+    expect(proof).toBe(localIdentityProof(TOKEN, "127.0.0.1", server!.port, nonce));
+    expect(proof).not.toBe(localIdentityProof(TOKEN, "127.0.0.1", server!.port + 1, nonce));
+    // A relay on [::1]:<same port> gets this proof, which does not verify there.
+    expect(proof).not.toBe(localIdentityProof(TOKEN, "::1", server!.port, nonce));
+    expect(proof).not.toBe(localIdentityProof("other-token", "127.0.0.1", server!.port, nonce));
+    expect(proof).not.toContain(TOKEN);
+  });
+
+  it("publishes its literal bind address, never localhost", async () => {
+    await startTestServer();
+    expect(server!.address).toBe("127.0.0.1");
+    expect(server!.origin).toBe(`http://127.0.0.1:${server!.port}`);
+    await server!.stop();
+    server = null;
+    // `localhost` binds 127.0.0.1 rather than whichever family resolves first.
+    await startTestServer({ hostname: "localhost" });
+    expect(server!.address).toBe("127.0.0.1");
+    expect(server!.origin).toBe(`http://127.0.0.1:${server!.port}`);
+    const health = await fetch(`${server!.origin}/api/health`);
+    expect(health.status).toBe(200);
+  });
+
+  it.skipIf(!ipv6Loopback)(
+    "on an IPv6 loopback bind publishes [::1], passes that Host and binds ::1 into the proof",
+    async () => {
+      await startTestServer({ hostname: "::1" });
+      expect(server!.address).toBe("::1");
+      expect(server!.origin).toBe(`http://[::1]:${server!.port}`);
+      const nonce = "m".repeat(43);
+      const response = await fetch(`${server!.origin}/api/local-auth/identity`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ nonce }),
+      });
+      expect(response.status).toBe(200);
+      const { proof } = (await response.json()) as { proof: string };
+      expect(proof).toBe(localIdentityProof(TOKEN, "::1", server!.port, nonce));
+      expect(proof).not.toBe(localIdentityProof(TOKEN, "127.0.0.1", server!.port, nonce));
+    },
+  );
+
+  it("refuses a DNS --hostname before touching the data directory", async () => {
+    for (const hostname of ["box.lan", "example.com", "localhost.evil.example"]) {
+      await expect(
+        startServer({ port: 0, hostname, clientDir, authToken: TOKEN, handlers: testHandlers() }),
+      ).rejects.toThrow(`--hostname "${hostname}" must be an IP address`);
+    }
+    expect(parseBindHostname("[::1]")).toBe("::1");
+    expect(parseBindHostname(" LocalHost ")).toBe("127.0.0.1");
+    expect(parseBindHostname("0.0.0.0")).toBe("0.0.0.0");
+    expect(() => parseBindHostname("box.lan")).toThrow("--allowed-host");
+  });
+
+  it("maps wildcard and named binds to the loopback literal clients use", () => {
+    expect(localServerAddress("0.0.0.0")).toBe("127.0.0.1");
+    expect(localServerAddress("::")).toBe("::1");
+    expect(localServerAddress("[::1]")).toBe("::1");
+    expect(localServerAddress("LOCALHOST")).toBe("127.0.0.1");
+    expect(localServerOrigin("::1", 4788)).toBe("http://[::1]:4788");
+    expect(localServerOrigin("0.0.0.0", 4788)).toBe("http://127.0.0.1:4788");
+    expect(localServerOrigin("192.168.1.5", 4788)).toBe("http://192.168.1.5:4788");
+  });
+
+  it("rejects a malformed nonce", async () => {
+    const baseUrl = await startTestServer();
+    for (const body of [JSON.stringify({ nonce: "short" }), "not json", JSON.stringify({})]) {
+      const response = await fetch(`${baseUrl}/api/local-auth/identity`, { method: "POST", body });
+      expect(response.status).toBe(400);
+    }
+  });
+});
+
+describe("startServer logo proxy", () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+  it("keeps img-src same-origin: no https: wildcard", () => {
+    const imgSrc = COCKPIT_CONTENT_SECURITY_POLICY.split("; ").find((d) => d.startsWith("img-src"));
+    expect(imgSrc).toBe("img-src 'self' data: blob:");
+  });
+
+  it("serves an allowed logo same-origin with a sandboxing CSP and caches it", async () => {
+    const requested: string[] = [];
+    const logoFetch = (async (input: string | URL | Request) => {
+      requested.push(String(input));
+      return new Response(PNG, { headers: { "content-type": "image/png" } });
+    }) as typeof fetch;
+    const baseUrl = await startTestServer({ logoFetch });
+    const target = "https://integrations.sh/logo/stripe.com?sz=32";
+    const url = `${baseUrl}/api/logo?url=${encodeURIComponent(target)}`;
+
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    expect(first.headers.get("content-type")).toBe("image/png");
+    expect(first.headers.get("content-security-policy")).toContain("sandbox");
+    expect(first.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(new Uint8Array(await first.arrayBuffer())).toEqual(PNG);
+    expect((await fetch(url)).status).toBe(200);
+    expect(requested).toEqual([target]);
+  });
+
+  it("refuses other hosts, other schemes and non-image responses", async () => {
+    const requested: string[] = [];
+    const logoFetch = (async (input: string | URL | Request) => {
+      requested.push(String(input));
+      return new Response("<html>", { headers: { "content-type": "text/html" } });
+    }) as typeof fetch;
+    const baseUrl = await startTestServer({ logoFetch });
+    for (const target of [
+      "https://evil.example/x.png",
+      "http://integrations.sh/logo/a.com",
+      "https://integrations.sh:8443/logo/a.com",
+      "https://user@svgl.app/library/a.svg",
+      "not a url",
+    ]) {
+      const response = await fetch(`${baseUrl}/api/logo?url=${encodeURIComponent(target)}`);
+      expect({ target, status: response.status }).toEqual({ target, status: 404 });
+    }
+    expect(requested).toEqual([]);
+
+    const html = await fetch(
+      `${baseUrl}/api/logo?url=${encodeURIComponent("https://svgl.app/library/a.svg")}`,
+    );
+    expect(html.status).toBe(404);
+    expect(requested).toEqual(["https://svgl.app/library/a.svg"]);
+  });
+
+  it("checks every redirect hop against the logo host allowlist", async () => {
+    const requested: string[] = [];
+    const logoFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(`${url} ${init?.redirect}`);
+      if (url === "https://svgl.app/library/open-redirect.svg") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "http://169.254.169.254/latest/meta-data" },
+        });
+      }
+      if (url === "https://svgl.app/library/moved.svg") {
+        return new Response(null, {
+          status: 301,
+          headers: { location: "https://integrations.sh/logo/a.com" },
+        });
+      }
+      return new Response(PNG, { headers: { "content-type": "image/png" } });
+    }) as typeof fetch;
+    const baseUrl = await startTestServer({ logoFetch });
+    const proxied = (target: string) =>
+      fetch(`${baseUrl}/api/logo?url=${encodeURIComponent(target)}`);
+
+    expect((await proxied("https://svgl.app/library/open-redirect.svg")).status).toBe(404);
+    expect(requested).toEqual(["https://svgl.app/library/open-redirect.svg manual"]);
+
+    expect((await proxied("https://svgl.app/library/moved.svg")).status).toBe(200);
+    expect(requested.slice(1)).toEqual([
+      "https://svgl.app/library/moved.svg manual",
+      "https://integrations.sh/logo/a.com manual",
+    ]);
+  });
+
+  it("refuses an oversized logo", async () => {
+    const logoFetch = (async (_input: string | URL | Request) =>
+      new Response(new Uint8Array(600 * 1024), {
+        headers: { "content-type": "image/png" },
+      })) as typeof fetch;
+    const baseUrl = await startTestServer({ logoFetch });
+    const response = await fetch(
+      `${baseUrl}/api/logo?url=${encodeURIComponent("https://svgl.app/library/big.png")}`,
+    );
+    expect(response.status).toBe(404);
+  });
+});
+
+describe("secureLocalStateDir data directory placement", () => {
+  it("refuses to tighten a loose data directory outside the user's home", () => {
+    const outside = mkdtempSync(join(tmpdir(), "exec-shared-"));
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: always remove the directory outside the temp home
+    try {
+      chmodSync(outside, 0o755);
+      expect(() => secureLocalStateDir(outside)).toThrow(/outside your home directory/);
+      expect(modeOf(outside)).toBe(0o755);
+      expect(existsSync(join(outside, "server-control"))).toBe(false);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("tightens a directory outside the home that holds only Executor's own entries", () => {
+    const outside = mkdtempSync(join(tmpdir(), "exec-own-"));
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: always remove the directory outside the temp home
+    try {
+      // The integrations cache is written before the server starts.
+      mkdirSync(join(outside, "cache"));
+      chmodSync(outside, 0o755);
+      secureLocalStateDir(outside);
+      expect(modeOf(outside)).toBe(0o700);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts an owner-only data directory outside the home without changing it", () => {
+    const outside = mkdtempSync(join(tmpdir(), "exec-private-"));
+    // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: always remove the directory outside the temp home
+    try {
+      chmodSync(outside, 0o700);
+      secureLocalStateDir(outside);
+      expect(modeOf(join(outside, "server-control"))).toBe(0o700);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to tighten the home directory itself", () => {
+    chmodSync(homeDir, 0o755);
+    expect(() => secureLocalStateDir(homeDir)).toThrow(/your home directory/);
+    expect(modeOf(homeDir)).toBe(0o755);
+  });
+
+  it("refuses to tighten a loose directory holding unrelated files", () => {
+    const shared = join(homeDir, "project");
+    mkdirSync(shared, { mode: 0o755 });
+    chmodSync(shared, 0o755);
+    writeFileSync(join(shared, "README.md"), "shared\n");
+    expect(() => secureLocalStateDir(shared)).toThrow(
+      /files Executor did not create \(README\.md\)/,
+    );
+    expect(modeOf(shared)).toBe(0o755);
+  });
+
+  it("does not take a server-control file or link as proof the directory is Executor's", () => {
+    const shared = join(homeDir, "project");
+    mkdirSync(shared, { mode: 0o755 });
+    chmodSync(shared, 0o755);
+    writeFileSync(join(shared, "README.md"), "shared\n");
+    writeFileSync(join(shared, "server-control"), "not a directory\n");
+    expect(() => secureLocalStateDir(shared)).toThrow(/files Executor did not create/);
+    expect(modeOf(shared)).toBe(0o755);
+
+    rmSync(join(shared, "server-control"));
+    mkdirSync(join(homeDir, "elsewhere"));
+    symlinkSync(join(homeDir, "elsewhere"), join(shared, "server-control"), "dir");
+    expect(() => secureLocalStateDir(shared)).toThrow(/files Executor did not create/);
+    expect(modeOf(shared)).toBe(0o755);
+  });
+
+  it("still repairs its own loose data directory", () => {
+    chmodSync(dataDir, 0o755);
+    // What the CLI and `service install` write before the server's first start.
+    mkdirSync(join(dataDir, "cache"));
+    mkdirSync(join(dataDir, "logs"));
+    writeFileSync(join(dataDir, "daemon-active-localhost-abc.json.lock"), "{}");
+    writeFileSync(join(dataDir, "data.db"), "");
+    secureLocalStateDir(dataDir);
+    expect(modeOf(dataDir)).toBe(0o700);
+  });
+});
+
+describe("secureLocalStateDir refusal guidance", () => {
+  it("names a recovery command for a hard-linked token file", () => {
+    const control = join(dataDir, "server-control");
+    mkdirSync(control, { recursive: true });
+    const target = join(homeDir, "snapshot.json");
+    writeFileSync(target, `${JSON.stringify({ token: "t" })}\n`, { mode: 0o600 });
+    linkSync(target, join(control, "auth.json"));
+    const refusal = (() => {
+      // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: capture the refusal to inspect it
+      try {
+        secureLocalStateDir(dataDir);
+        return null;
+      } catch (cause) {
+        return cause;
+      }
+    })();
+    expect(isLocalStateRefusal(refusal)).toBe(true);
+    expect(String(refusal)).toMatch(
+      /To recover: give it its own copy: cp -p '.*auth\.json' '.*auth\.json\.tmp' && mv -f/,
+    );
+  });
+
+  it("names a recovery command for symlinked state and foreign owners", () => {
+    const target = join(homeDir, "elsewhere");
+    mkdirSync(target, { mode: 0o700 });
+    const link = join(homeDir, "linked");
+    symlinkSync(target, link, "dir");
+    expect(() => secureLocalStateDir(link)).toThrow(/To recover: use the real directory/);
+    const uid = process.getuid?.() ?? 0;
+    expect(() => secureLocalStateDir(dataDir, { getuid: () => uid + 1 })).toThrow(
+      /To recover: if this is your state, take it back: sudo chown -R/,
+    );
+  });
+
+  it("finds a refusal wrapped in another error's cause", () => {
+    const uid = process.getuid?.() ?? 0;
+    const refusal = (() => {
+      // oxlint-disable-next-line executor/no-try-catch-or-throw -- test boundary: capture the refusal to inspect it
+      try {
+        secureLocalStateDir(dataDir, { getuid: () => uid + 1 });
+        return null;
+      } catch (cause) {
+        return cause;
+      }
+    })();
+    expect(isLocalStateRefusal({ cause: { cause: refusal } })).toBe(true);
+    expect(isLocalStateRefusal({ name: "Error", message: "Refusing to start: other" })).toBe(false);
+  });
+});
+
+describe("secureLocalStateDir macOS ACLs", () => {
+  const listing = (entries: ReadonlyArray<string>) =>
+    ["drwx------+ 2 me staff 64 Oct 19 10:00 dir", ...entries].join("\n");
+
+  it("removes an ACL that grants other users access", () => {
+    const removed: string[] = [];
+    secureLocalStateDir(dataDir, {
+      platform: "darwin",
+      readAcl: (path) =>
+        listing(removed.includes(path) ? [] : [" 0: group:everyone allow list,search,readattr"]),
+      removeAcl: (path) => {
+        removed.push(path);
+      },
+    });
+    expect(removed).toContain(dataDir);
+    expect(removed).toContain(join(dataDir, "server-control"));
+  });
+
+  it("refuses when the ACL cannot be removed", () => {
+    expect(() =>
+      secureLocalStateDir(dataDir, {
+        platform: "darwin",
+        readAcl: () => listing([" 0: user:other allow read,write"]),
+        removeAcl: () => {},
+      }),
+    ).toThrow(/access control list .*To recover: remove it yourself: chmod -N/s);
+  });
+
+  it("does not strip the ACL of an owner-only directory holding unrelated files", () => {
+    const shared = join(homeDir, "team");
+    mkdirSync(shared, { mode: 0o700 });
+    writeFileSync(join(shared, "notes.md"), "shared\n");
+    const removed: string[] = [];
+    expect(() =>
+      secureLocalStateDir(shared, {
+        platform: "darwin",
+        readAcl: () => listing([" 0: group:staff allow list,search,readattr"]),
+        removeAcl: (path) => removed.push(path),
+      }),
+    ).toThrow(/files Executor did not create/);
+    expect(removed).toEqual([]);
+  });
+
+  it("leaves deny-only entries alone", () => {
+    const removed: string[] = [];
+    secureLocalStateDir(dataDir, {
+      platform: "darwin",
+      readAcl: () => listing([" 0: group:everyone deny delete"]),
+      removeAcl: (path) => removed.push(path),
+    });
+    expect(removed).toEqual([]);
+  });
+
+  it.runIf(process.platform === "darwin")("removes a real ACL entry on macOS", () => {
+    execFileSync("/bin/chmod", ["+a", "group:everyone allow list,search,readattr", dataDir]);
+    expect(execFileSync("/bin/ls", ["-lde", dataDir], { encoding: "utf8" })).toContain("allow");
+    secureLocalStateDir(dataDir);
+    expect(execFileSync("/bin/ls", ["-lde", dataDir], { encoding: "utf8" })).not.toContain("allow");
   });
 });

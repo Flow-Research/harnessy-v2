@@ -28,16 +28,17 @@ export const assertNoSecretsInOutput = (output, secrets, message) => {
 };
 
 /**
- * The single-use sign-in code from the URL the CLI handed the browser opener.
- * It must be the cockpit origin with the code in the fragment, which browsers
- * never send to a server, and no `_token` anywhere.
+ * The single-use sign-in code from the URL the CLI's sign-in page redirects
+ * to. It must be the cockpit's exchange page (`/auth/sign-in`) with the code in
+ * the fragment, which browsers never send to a server, and no `_token`
+ * anywhere.
  */
 export const signInCodeFromBrowserUrl = (url, origin) => {
 	const parsed = new URL(url);
 	const code = new URLSearchParams(parsed.hash.slice(1)).get("_code");
 	if (
 		parsed.origin !== origin ||
-		parsed.pathname !== "/" ||
+		parsed.pathname !== "/auth/sign-in" ||
 		parsed.search !== "" ||
 		url.includes("_token") ||
 		code === null ||
@@ -52,6 +53,8 @@ const REQUIRED_CSP = {
 	"default-src": ["'self'"],
 	"script-src": ["'self'"],
 	"connect-src": ["'self'"],
+	// Logos are proxied same-origin: no https: (or any remote) image source.
+	"img-src": ["'self'", "data:", "blob:"],
 	"object-src": ["'none'"],
 	"base-uri": ["'none'"],
 	"frame-ancestors": ["'none'"],
@@ -98,7 +101,13 @@ export const signInTargetFromOpenerArg = (arg, controlDir, secrets = []) => {
 	if (process.platform !== "win32" && (statSync(page).mode & 0o777) !== 0o600) {
 		throw new Error("The sign-in page is not owner-only (0600).");
 	}
-	const match = /<meta http-equiv="refresh" content="0;url=([^"]+)">/.exec(readFileSync(page, "utf8"));
-	if (match === null) throw new Error("The sign-in page has no redirect.");
-	return match[1].replaceAll("&quot;", '"').replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+	// The page must replace itself in history (location.replace), not push an
+	// entry with a meta refresh; the meta refresh is only the no-script fallback.
+	const html = readFileSync(page, "utf8");
+	const match = /<script>location\.replace\(("(?:[^"\\]|\\.)*")\);<\/script>/.exec(html);
+	if (match === null) throw new Error("The sign-in page does not leave with location.replace.");
+	if (/http-equiv/.test(html.replace(/<noscript>.*?<\/noscript>/gs, ""))) {
+		throw new Error("The sign-in page adds a history entry with a bare meta refresh.");
+	}
+	return JSON.parse(match[1]);
 };

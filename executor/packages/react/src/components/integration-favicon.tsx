@@ -23,6 +23,29 @@ export function integrationFaviconUrl(url: string | undefined, size: number): st
   return `https://integrations.sh/logo/${domain}?sz=${size * 2}`;
 }
 
+/** Logo hosts the local server proxies at `/api/logo` (see apps/local serve-shared). */
+const LOGO_PROXY_HOSTS = new Set(["integrations.sh", "svgl.app"]);
+
+/**
+ * The URL to put in an `<img src>` for a logo. The web UI's CSP allows images
+ * only from its own origin (plus `data:`/`blob:`), so remote logos load
+ * through the server's same-origin `/api/logo` proxy. Logos on any other
+ * host return `null`, and the favicon cascade falls through to the
+ * domain-derived integrations.sh logo.
+ */
+export function proxiedLogoSrc(src: string | null | undefined): string | null {
+  if (!src) return null;
+  if (src.startsWith("data:") || src.startsWith("blob:")) return src;
+  // A same-origin path only: `//host` and `/\\host` resolve to another origin.
+  if (src.startsWith("/") && !src.startsWith("//") && !src.includes("\\")) return src;
+  if (src.startsWith("/") || !URL.canParse(src)) return null;
+  const url = new URL(src);
+  if (url.protocol !== "https:" || url.port !== "" || !LOGO_PROXY_HOSTS.has(url.hostname)) {
+    return null;
+  }
+  return `/api/logo?url=${encodeURIComponent(url.href)}`;
+}
+
 export function integrationLocalIconUrl(integrationId: string | undefined): string | null {
   if (integrationId !== "executor") return null;
   return "/favicon-32.png";
@@ -141,9 +164,9 @@ export function integrationFaviconSrc(args: {
   const failedSrcs = args.failedSrcs ?? [];
   return (
     [
-      args.icon ?? null,
+      proxiedLogoSrc(args.icon),
       integrationLocalIconUrl(args.integrationId),
-      integrationFaviconUrl(args.url, args.size),
+      proxiedLogoSrc(integrationFaviconUrl(args.url, args.size)),
     ].find((candidate) => candidate !== null && !failedSrcs.includes(candidate)) ?? null
   );
 }

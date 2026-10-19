@@ -4,6 +4,7 @@ import "./native-bindings";
 
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 // Make sibling binaries and standard GUI-missing CLI install locations
@@ -91,6 +92,7 @@ import {
   type ExecutorServerConnectionInput,
 } from "@executor-js/sdk/shared";
 import {
+  browserOpenCommand,
   decodeAccessTokenClaims,
   discoverCliLogin,
   launchOpenCommand,
@@ -105,11 +107,24 @@ import {
   localAuthTokenPath,
   secureLocalStateDir,
   findDataDirOwnershipHeld,
+  localServerAddress,
+  localServerOrigin,
   type ServerInstance,
   type StartServerOptions,
 } from "@executor-js/local";
 import { fetchIntegrations } from "./integrations";
-import { isLoopbackHttpOrigin, signInPageOpenCommand, writeSignInPage } from "./sign-in-page";
+import { resolveVerifiedLocalOrigin } from "./local-identity";
+import { rotateTokenReport } from "./rotate-token-report";
+import { backOffOnSupervisedStateRefusal } from "./state-refusal";
+import {
+  chooseSignInDelivery,
+  isLoopbackHttpOrigin,
+  loopbackSignInUrl,
+  macDefaultBrowserBundleId,
+  readLaunchServicesJson,
+  signInPageOpenCommand,
+  writeSignInPage,
+} from "./sign-in-page";
 import {
   buildDaemonSpawnSpec,
   chooseDaemonPort,
@@ -140,6 +155,7 @@ import {
 import {
   canAutoStartCliServerConnection,
   chooseCliServerConnectionWithActiveLocal,
+  sameLocalServerOrigin,
   describeUnauthorizedCliServer,
   parseCliExecutorServerConnection,
   profileNameFromConnectionKey,
@@ -198,7 +214,9 @@ const { version: CLI_VERSION } = await import("../package.json");
 const DEFAULT_PORT = 4788;
 /** Canonical public docs (Mintlify), matching the web shell's DEFAULT_DOCS_URL. */
 const DOCS_URL = "https://executor.sh/docs";
-const DEFAULT_BASE_URL = `http://localhost:${DEFAULT_PORT}`;
+// The literal loopback address, not `localhost`: the name can resolve to
+// `::1` first, where another local user may hold the same port.
+const DEFAULT_BASE_URL = `http://127.0.0.1:${DEFAULT_PORT}`;
 const DESKTOP_SIDECAR_READY_SENTINEL = "EXECUTOR_READY";
 const DESKTOP_SIDECAR_ATTACHED_SENTINEL = "EXECUTOR_ATTACHED";
 const DAEMON_BOOT_TIMEOUT_MS = 15_000;
@@ -240,7 +258,30 @@ const readReachableLocalServerHint = (): Effect.Effect<
     if (!manifest) return null;
 
     if (yield* isServerReachable(manifest.connection.origin)) {
-      return manifest;
+      const auth = manifest.connection.auth;
+      if (auth?.kind !== "bearer") return manifest;
+      // Never hand the bearer to whatever now listens on a stale manifest's
+      // port: the server must first prove it holds the same token, for the
+      // literal address the bearer will go to. A `localhost` manifest is
+      // re-resolved to that literal, because the name can reach a squatter
+      // on the other IP family first.
+      const verifiedOrigin = yield* Effect.promise(() =>
+        resolveVerifiedLocalOrigin({ origin: manifest.connection.origin, token: auth.token }),
+      );
+      if (verifiedOrigin !== null) {
+        if (verifiedOrigin === manifest.connection.origin) return manifest;
+        return {
+          ...manifest,
+          connection: normalizeExecutorServerConnection({
+            kind: manifest.connection.kind,
+            origin: verifiedOrigin,
+            displayName: manifest.connection.displayName,
+            auth: manifest.connection.auth,
+          }),
+        };
+      }
+      warnUnverifiedLocalServer(manifest.connection.origin);
+      return null;
     }
 
     if (!isPidAlive(manifest.pid)) {
@@ -252,6 +293,18 @@ const readReachableLocalServerHint = (): Effect.Effect<
   });
 
 const readActiveLocalServerManifest = readReachableLocalServerHint;
+
+let warnedUnverifiedOrigin: string | null = null;
+const warnUnverifiedLocalServer = (origin: string): void => {
+  if (warnedUnverifiedOrigin === origin) return;
+  warnedUnverifiedOrigin = origin;
+  console.error(
+    [
+      `The server at ${origin} did not prove it is the Executor for this data directory, so it was not sent the token.`,
+      "If it is an Executor from before this check, restart it (executor daemon stop, then start it again); otherwise another program now uses that port.",
+    ].join("\n"),
+  );
+};
 
 const normalizeDaemonScopeDir = (dir: string): string => {
   const resolved = resolve(dir);
@@ -339,8 +392,31 @@ const parseExecutorServerConnection = (baseUrl: string) =>
       cause instanceof Error ? cause : new Error(`Invalid server URL: ${String(cause)}`),
   });
 
-const daemonBaseUrl = (hostname: string, port: number): string =>
-  `http://${canonicalDaemonHost(hostname)}:${port}`;
+/**
+ * The URL the CLI reaches a daemon on `hostname` at. A local daemon host is
+ * the literal loopback address (`127.0.0.1`, or `[::1]` for an IPv6 bind),
+ * never the name `localhost`: the name can resolve to `::1` first, where
+ * another local user may hold the same port. `canonicalDaemonHost` stays the
+ * key for daemon record and pointer files only.
+ */
+const daemonBaseUrl = (hostname: string, port: number): string => {
+  const host = canonicalDaemonHost(hostname);
+  return host === "localhost"
+    ? localServerOrigin(daemonBindAddress(hostname), port)
+    : `http://${host}:${port}`;
+};
+
+/** The URL of the daemon a pointer names: its recorded literal address when present. */
+const pointerBaseUrl = (pointer: { hostname: string; port: number; address?: string }): string =>
+  pointer.address !== undefined
+    ? localServerOrigin(pointer.address, pointer.port)
+    : daemonBaseUrl(pointer.hostname, pointer.port);
+
+/** The address a daemon spawned for `hostname` binds: `localhost` binds 127.0.0.1. */
+const daemonBindAddress = (hostname: string): string => {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "localhost" ? "127.0.0.1" : localServerAddress(normalized);
+};
 
 const makeLocalServerManifest = (input: {
   readonly kind: ExecutorLocalServerKind;
@@ -462,7 +538,7 @@ const resolveDaemonTarget = (baseUrl: string) =>
     const pointer = yield* readDaemonPointer({ hostname: host, scopeId });
 
     if (pointer) {
-      const pointerUrl = daemonBaseUrl(pointer.hostname, pointer.port);
+      const pointerUrl = pointerBaseUrl(pointer);
       if (isPidAlive(pointer.pid) && (yield* isServerReachable(pointerUrl))) {
         return {
           baseUrl: pointerUrl,
@@ -538,14 +614,17 @@ const isStartLockContention = (error: Error): boolean =>
 
 const spawnDaemonAsLockHolder = (input: {
   host: string;
+  /** The literal address to bind; defaults to {@link daemonBindAddress} of `host`. */
+  bindAddress?: string;
   scopeId: string;
   preferredPort: number;
   allowedHosts: ReadonlyArray<string>;
 }): Effect.Effect<string, Error, FileSystem.FileSystem | PlatformPath.Path> =>
   Effect.gen(function* () {
+    const bindAddress = input.bindAddress ?? daemonBindAddress(input.host);
     const existing = yield* readDaemonPointer({ hostname: input.host, scopeId: input.scopeId });
     if (existing && isPidAlive(existing.pid)) {
-      const existingUrl = daemonBaseUrl(existing.hostname, existing.port);
+      const existingUrl = pointerBaseUrl(existing);
       if (yield* isServerReachable(existingUrl)) {
         return existingUrl;
       }
@@ -553,7 +632,7 @@ const spawnDaemonAsLockHolder = (input: {
 
     const selectedPort = yield* chooseDaemonPort({
       preferredPort: input.preferredPort,
-      hostname: input.host,
+      hostname: bindAddress,
     });
 
     if (selectedPort !== input.preferredPort) {
@@ -566,7 +645,7 @@ const spawnDaemonAsLockHolder = (input: {
       try: () =>
         buildDaemonSpawnSpec({
           port: selectedPort,
-          hostname: input.host,
+          hostname: bindAddress,
           isDevMode,
           scriptPath: script,
           executablePath: process.execPath,
@@ -578,7 +657,7 @@ const spawnDaemonAsLockHolder = (input: {
           : new Error(`Failed to build daemon command: ${String(cause)}`),
     });
 
-    const startBaseUrl = daemonBaseUrl(input.host, selectedPort);
+    const startBaseUrl = localServerOrigin(bindAddress, selectedPort);
     console.error(`Starting daemon on ${input.host}:${selectedPort}...`);
     const child = yield* spawnDetached({
       command: spec.command,
@@ -605,12 +684,16 @@ const spawnDaemonAsLockHolder = (input: {
 
 const spawnAndWaitForDaemon = (input: {
   host: string;
+  bindAddress?: string;
   scopeId: string;
   preferredPort: number;
   allowedHosts: ReadonlyArray<string>;
 }): Effect.Effect<string, Error, FileSystem.FileSystem | PlatformPath.Path> =>
   Effect.gen(function* () {
-    const requestedBaseUrl = daemonBaseUrl(input.host, input.preferredPort);
+    const requestedBaseUrl = localServerOrigin(
+      input.bindAddress ?? daemonBindAddress(input.host),
+      input.preferredPort,
+    );
 
     for (let attempt = 1; attempt <= MAX_DAEMON_ELECTION_ATTEMPTS; attempt++) {
       const acquired = yield* acquireDaemonStartLock({
@@ -664,17 +747,13 @@ const ensureDaemon = (
     }
 
     const active = yield* readActiveLocalServerManifest();
-    const activeOrigin = active
-      ? normalizeExecutorServerConnection({ origin: active.connection.origin }).origin
-      : null;
-    const targetOrigin = normalizeExecutorServerConnection({
-      origin: resolvedTarget.baseUrl,
-    }).origin;
-    if (activeOrigin === targetOrigin) {
-      return resolvedTarget.baseUrl;
+    // The verified manifest names the literal address; a target spelled
+    // `localhost`, `127.0.0.1` or `[::1]` on the same port means that server.
+    if (active && sameLocalServerOrigin(active.connection.origin, resolvedTarget.baseUrl)) {
+      return active.connection.origin;
     }
 
-    if (active && activeOrigin !== targetOrigin) {
+    if (active) {
       return yield* Effect.fail(
         new Error(
           [
@@ -854,11 +933,7 @@ const resolveExecutorServerConnection = (
     // (minted into auth.json). Prefer that authed connection — otherwise the
     // next API call hits the now-gated server with no credential and 401s.
     const started = yield* readActiveLocalServerManifest().pipe(Effect.orElseSucceed(() => null));
-    const daemonOrigin = normalizeExecutorServerConnection({ origin: daemonUrl }).origin;
-    const startedOrigin = started
-      ? normalizeExecutorServerConnection({ origin: started.connection.origin }).origin
-      : null;
-    if (started && startedOrigin === daemonOrigin) {
+    if (started && sameLocalServerOrigin(started.connection.origin, daemonUrl)) {
       return started.connection;
     }
     return normalizeExecutorServerConnection({
@@ -1120,7 +1195,9 @@ const runForegroundSession = (input: {
         return;
       }
       const server = startResult.server;
-      const baseUrl = `http://${displayHost}:${server.port}`;
+      // The literal address the server listens on (a wildcard bind maps to
+      // loopback), never `localhost`, which can reach the other IP family.
+      const baseUrl = server.origin;
       yield* publishLocalServerManifest({
         kind: "foreground",
         connection: normalizeExecutorServerConnection({
@@ -1143,7 +1220,7 @@ const runForegroundSession = (input: {
             `\n⚠  Listening on ${input.hostname}. Executor runs arbitrary commands — only expose on trusted networks.`,
           );
           if (input.allowedHosts.length > 0) {
-            console.log(`   Extra CORS origins: ${input.allowedHosts.join(", ")}`);
+            console.log(`   Extra CORS origins and Host names: ${input.allowedHosts.join(", ")}`);
           }
         }
 
@@ -1177,8 +1254,11 @@ const runDaemonSession = (input: {
 }) =>
   Effect.gen(function* () {
     const daemonHost = canonicalDaemonHost(input.hostname);
+    // The OAuth redirect base keeps its existing `localhost` form so redirect
+    // URIs registered with providers keep matching. It carries no bearer; the
+    // manifest and opener URLs below use the literal bind address.
     const restoreWebBaseUrl = installDefaultExecutorWebBaseUrl(
-      daemonBaseUrl(daemonHost, input.port),
+      `http://${daemonHost}:${input.port}`,
     );
     const scopeId = currentDaemonScopeId();
 
@@ -1205,7 +1285,7 @@ const runDaemonSession = (input: {
       const existing = yield* readDaemonPointer({ hostname: daemonHost, scopeId });
 
       if (existing) {
-        const existingUrl = daemonBaseUrl(existing.hostname, existing.port);
+        const existingUrl = pointerBaseUrl(existing);
         if (isPidAlive(existing.pid) && (yield* isServerReachable(existingUrl))) {
           if (process.env.EXECUTOR_SUPERVISED) {
             yield* terminatePid(existing.pid).pipe(Effect.ignore);
@@ -1245,7 +1325,15 @@ const runDaemonSession = (input: {
         allowedHosts: input.allowedHosts,
         authToken: input.authToken,
         embeddedWebUI,
-      });
+      }).pipe(
+        // Unsafe local state does not fix itself: under a supervisor, back off
+        // and exit with EX_CONFIG instead of crash-looping.
+        Effect.tapError((cause) =>
+          Effect.promise(() =>
+            backOffOnSupervisedStateRefusal(cause, Boolean(process.env.EXECUTOR_SUPERVISED)),
+          ),
+        ),
+      );
       if (startResult.kind === "attached") {
         if (shouldEmitDesktopSidecarSentinels()) {
           console.log(DESKTOP_SIDECAR_ATTACHED_SENTINEL);
@@ -1256,7 +1344,7 @@ const runDaemonSession = (input: {
       const server = startResult.server;
       const daemonPort = server.port;
       const token = randomUUID();
-      const daemonUrl = daemonBaseUrl(daemonHost, daemonPort);
+      const daemonUrl = server.origin;
       yield* publishLocalServerManifest({
         kind: "cli-daemon",
         connection: normalizeExecutorServerConnection({
@@ -1281,12 +1369,13 @@ const runDaemonSession = (input: {
           scopeId,
           scopeDir: process.env.EXECUTOR_SCOPE_DIR ?? null,
           token,
+          address: server.address,
         });
 
         if (shouldEmitDesktopSidecarSentinels()) {
           console.log(`${DESKTOP_SIDECAR_READY_SENTINEL}:${daemonPort}`);
         }
-        console.log(`Daemon ready on http://${daemonHost}:${daemonPort}`);
+        console.log(`Daemon ready on ${daemonUrl}`);
 
         yield* waitForShutdownSignal();
       } finally {
@@ -1331,6 +1420,7 @@ const runBackgroundDaemonStart = (input: {
 
     const startBaseUrl = yield* spawnAndWaitForDaemon({
       host,
+      bindAddress: daemonBindAddress(input.hostname),
       scopeId: target.scopeId,
       preferredPort: input.port,
       allowedHosts: input.allowedHosts,
@@ -2278,19 +2368,18 @@ const serverRemoveCommand = Command.make(
 
 const serverRotateTokenCommand = Command.make("rotate-token", {}, () =>
   Effect.gen(function* () {
-    const token = rotateLocalAuthToken();
-    console.log("Rotated the local server bearer token.");
-    console.log(`Stored in ${localAuthTokenPath()}`);
-
+    rotateLocalAuthToken();
     const manifest = yield* readLocalServerManifest();
-    if (manifest && isPidAlive(manifest.pid)) {
-      console.log(
-        `\n⚠  A local server is running at ${manifest.connection.origin} (pid ${manifest.pid}).`,
-      );
-      console.log("   Restart it to apply the new token.");
+    for (const line of rotateTokenReport({
+      tokenPath: localAuthTokenPath(),
+      runningServer:
+        manifest && isPidAlive(manifest.pid)
+          ? { origin: manifest.connection.origin, pid: manifest.pid }
+          : null,
+      cliPrefix,
+    })) {
+      console.log(line);
     }
-    console.log(`\nNew token: ${token}`);
-    console.log("Re-run your MCP client connect command with the new token.");
   }),
 ).pipe(Command.withDescription("Rotate the local server's bearer token (auth.json)"));
 
@@ -2593,14 +2682,14 @@ const webCommand = Command.make(
       .pipe(Options.withDefault("127.0.0.1"))
       .pipe(
         Options.withDescription(
-          "Bind address for the temporary --foreground server. Use 0.0.0.0 to listen on all interfaces.",
+          "Bind address for the temporary --foreground server: an IP address or localhost (DNS names are refused; use --allowed-host). Use 0.0.0.0 to listen on all interfaces.",
         ),
       ),
     allowedHost: Options.string("allowed-host")
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
-          "For --foreground, grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there. Not needed to reach the server from another host (the bearer token is the gate). The server's own localhost origins are always allowed.",
+          "For --foreground, grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there, and lets the server answer requests whose Host is that name: a DNS name other than localhost or the bind name is refused (DNS-rebinding defense), so reaching the server under a tailnet or LAN name needs it; IP addresses need nothing. The server's own localhost origins are always allowed.",
         ),
       ),
     authToken: Options.string("auth-token")
@@ -2647,12 +2736,16 @@ const daemonRunCommand = Command.make(
     port: Options.integer("port").pipe(Options.withDefault(DEFAULT_PORT)),
     hostname: Options.string("hostname")
       .pipe(Options.withDefault("127.0.0.1"))
-      .pipe(Options.withDescription("Bind address. Keep this local unless you trust the network.")),
+      .pipe(
+        Options.withDescription(
+          "Bind address: an IP address or localhost (DNS names are refused; use --allowed-host). Keep this local unless you trust the network.",
+        ),
+      ),
     allowedHost: Options.string("allowed-host")
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
-          "Grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there. Not needed to reach the server from another host (the bearer token is the gate). The server's own localhost origins are always allowed.",
+          "Grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there, and lets the server answer requests whose Host is that name: a DNS name other than localhost or the bind name is refused (DNS-rebinding defense), so reaching the server under a tailnet or LAN name needs it; IP addresses need nothing. The server's own localhost origins are always allowed.",
         ),
       ),
     authToken: Options.string("auth-token")
@@ -3186,6 +3279,19 @@ const openRunningLocalWebApp = (): Effect.Effect<
       token && isLoopbackHttpOrigin(origin) ? yield* mintLocalLoginCode(origin, token) : null;
     console.log(`Opening ${origin}/`);
     if (code !== null) {
+      const delivery = chooseSignInDelivery({ platform: process.platform, env: process.env });
+      const url = delivery === "loopback-url" ? loopbackSignInUrl(origin, code) : undefined;
+      const urlCommand = url === undefined ? undefined : browserOpenCommand(url);
+      if (urlCommand) {
+        // The browser cannot open a file page (snap/flatpak). The opener gets
+        // a loopback URL to the daemon's exchange page; the single-use code is
+        // only in the fragment, is not printed, and expires in 60 seconds.
+        yield* Effect.sync(() => launchOpenCommand(urlCommand));
+        console.log(
+          `If no browser opened, run \`${cliPrefix} open\` again; the sign-in link is single-use and is not printed.`,
+        );
+        return;
+      }
       // The single-use code is not printed and not passed to the opener: it goes
       // into an owner-only redirect page in server-control/, and the opener only
       // sees that page's path.
@@ -3201,13 +3307,23 @@ const openRunningLocalWebApp = (): Effect.Effect<
         },
         catch: (cause) => cause,
       }).pipe(Effect.orElseSucceed(() => undefined));
-      const openCommand = page === undefined ? undefined : signInPageOpenCommand(page);
+      const browserBundleId =
+        process.platform === "darwin"
+          ? macDefaultBrowserBundleId(readLaunchServicesJson(process.env.HOME || homedir()))
+          : undefined;
+      const openCommand =
+        page === undefined
+          ? undefined
+          : signInPageOpenCommand(page, process.platform, browserBundleId);
       if (page !== undefined && openCommand) {
         yield* Effect.sync(() => launchOpenCommand(openCommand));
         // The opener fails silently on headless hosts. The page path is no
         // secret (an owner-only file in server-control/), so offer it by hand.
         console.log(
           `If no browser opened, open ${pathToFileURL(page).href} within 60 seconds, or run \`${cliPrefix} open\` again.`,
+        );
+        console.log(
+          `If your browser cannot open that file (a snap or flatpak browser), run \`EXECUTOR_SIGN_IN=url ${cliPrefix} open\`.`,
         );
         return;
       }
