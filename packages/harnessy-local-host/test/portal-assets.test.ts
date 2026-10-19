@@ -229,8 +229,9 @@ describe("app bundle loader", () => {
 				/<script type="module" crossorigin src="\/assets\/index-[A-Za-z0-9_-]{8,}\.js"><\/script>/u,
 			);
 			// The page declares its icon from the manifest, so no browser asks for an unlisted /favicon.ico.
-			const icon =
-				/<link rel="icon" type="image\/svg\+xml" href="(\/assets\/favicon-[A-Za-z0-9_-]{8,}\.svg)">/u.exec(index);
+			const icon = index.match(
+				/<link rel="icon" type="image\/svg\+xml" href="(\/assets\/favicon-[A-Za-z0-9_-]{8,}\.svg)">/u,
+			);
 			expect(icon, "index.html must declare a manifest-pinned favicon").not.toBeNull();
 			expect(assets.get(icon![1]!)?.contentType).toBe("image/svg+xml");
 			expect(assets.get(icon![1]!)?.body.toString("utf8")).toMatch(

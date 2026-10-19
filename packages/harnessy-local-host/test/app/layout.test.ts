@@ -12,9 +12,8 @@ const app = readFileSync(new URL("../../src/portal/app/styles/app.css", import.m
 
 /** The declarations of the first top-level rule whose selector is exactly `selector`. */
 const rule = (selector: string): Readonly<Record<string, string>> => {
-	const match = new RegExp(`(?:^|\\n)${selector.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")} \\{([^}]*)\\}`, "u").exec(
-		app,
-	);
+	const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+	const match = app.match(new RegExp(`(?:^|\\n)${escaped} \\{([^}]*)\\}`, "u"));
 	expect(match, `no rule for ${selector}`).not.toBeNull();
 	return Object.fromEntries(
 		[...match![1]!.matchAll(/([a-z-]+):\s*([^;]+);/gu)].map((declaration) => [

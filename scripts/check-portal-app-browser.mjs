@@ -105,9 +105,13 @@ try {
 			"",
 		].join("\n"),
 	);
-	// One Fathom account that has never polled: the poll checkpoint and Connections both report it.
+	// One Fathom account that has never polled: the poll checkpoint and Connections both report it. The
+	// checkpoint file exists without an entry for the account; without the file Fathom reads as not set up.
 	await mkdir(join(home, ".jarvis"), { recursive: true });
 	await writeFile(join(home, ".jarvis", "config.yaml"), "fathom:\n  default_account: aa\n  accounts:\n    aa: {}\n");
+	const fathomState = join(home, ".harnessy", "jarvis", "state", "fathom");
+	await mkdir(fathomState, { recursive: true, mode: 0o700 });
+	await writeFile(join(fathomState, "poll-state-v2.json"), '{"version":1,"accounts":{}}\n', { mode: 0o600 });
 
 	const server = spawn(process.execPath, [portalCli, "serve", "--port", "0", "--state-dir", stateDir, "--home-root", home], {
 		env: childEnv,
