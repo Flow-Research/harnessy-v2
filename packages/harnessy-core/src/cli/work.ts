@@ -1,0 +1,91 @@
+import { Console, Effect, Option } from "effect";
+import { Command, Flag } from "effect/unstable/cli";
+import { causeMessage, HarnessError } from "../errors.ts";
+import { splitCli } from "../work/logic.ts";
+import { liveWorkDeps, runWork, type WorkDeps } from "../work/run.ts";
+
+const positive = (name: string, value: number): number => {
+	if (!Number.isFinite(value) || value <= 0) throw new Error(`--${name} must be a positive number`);
+	return value;
+};
+
+/** Build `harnessy work` around injected dependencies; tests pass a fake runner. */
+export const makeWorkCommand = (deps: () => WorkDeps) =>
+	Command.make(
+		"work",
+		{
+			task: Flag.string("task").pipe(Flag.withDescription("WorkStream task UUID.")),
+			repo: Flag.string("repo").pipe(Flag.withDefault("."), Flag.withDescription("Target repository checkout.")),
+			base: Flag.string("base").pipe(
+				Flag.withDefault("dev"),
+				Flag.withDescription("Base branch for the work branch and PR."),
+			),
+			budgetUsd: Flag.float("budget-usd").pipe(
+				Flag.withDefault(5),
+				Flag.withDescription("Agent spend limit in USD."),
+			),
+			maxMinutes: Flag.integer("max-minutes").pipe(
+				Flag.withDefault(45),
+				Flag.withDescription("Wall-clock limit for the agent run, in minutes."),
+			),
+			mergeWaitHours: Flag.float("merge-wait-hours").pipe(
+				Flag.withDefault(24),
+				Flag.withDescription("How long to wait for the PR to be merged, in hours."),
+			),
+			workstreamCli: Flag.string("workstream-cli").pipe(
+				Flag.withDefault("workstream"),
+				Flag.withDescription(
+					"WorkStream CLI argv prefix, split on whitespace (e.g. 'workstream-local --as agent').",
+				),
+			),
+			taskUrl: Flag.string("task-url").pipe(
+				Flag.optional,
+				Flag.withDescription("WorkStream task link for the PR body."),
+			),
+			agentAllow: Flag.string("agent-allow").pipe(
+				Flag.optional,
+				Flag.withDescription(
+					"Extra Claude Code tool rules for tests, e.g. 'Bash(npm test *),Bash(npm run check *)'.",
+				),
+			),
+			approvePush: Flag.boolean("approve-push").pipe(
+				Flag.withDescription(
+					"Push the locally reviewed commit and open a draft PR. Without it the run stops for review.",
+				),
+			),
+			dryRun: Flag.boolean("dry-run").pipe(
+				Flag.withDescription("Run preflight and print the plan without side effects."),
+			),
+			json: Flag.boolean("json").pipe(Flag.withDescription("Print the final report as one JSON line.")),
+		},
+		(flags) =>
+			Effect.gen(function* () {
+				const outcome = yield* Effect.tryPromise({
+					try: () =>
+						runWork(
+							{
+								task: flags.task,
+								repo: flags.repo,
+								base: flags.base,
+								budgetUsd: positive("budget-usd", flags.budgetUsd),
+								maxMinutes: positive("max-minutes", flags.maxMinutes),
+								mergeWaitHours: positive("merge-wait-hours", flags.mergeWaitHours),
+								workstreamCli: splitCli(flags.workstreamCli),
+								...(Option.isSome(flags.taskUrl) ? { taskUrl: flags.taskUrl.value } : {}),
+								...(Option.isSome(flags.agentAllow) ? { agentAllow: flags.agentAllow.value } : {}),
+								approvePush: flags.approvePush,
+								dryRun: flags.dryRun,
+							},
+							deps(),
+						),
+					catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+				});
+				yield* Console.log(flags.json ? JSON.stringify(outcome.report) : JSON.stringify(outcome.report, null, 2));
+				if (outcome.exitCode !== 0)
+					yield* Effect.sync(() => {
+						process.exitCode = outcome.exitCode;
+					});
+			}),
+	).pipe(Command.withDescription("Run one WorkStream task through an agent, a reviewed PR and a proof submission"));
+
+export const workCommand = makeWorkCommand(liveWorkDeps);
