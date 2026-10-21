@@ -266,6 +266,10 @@ export const gitArgv = {
 		"diff",
 		"--no-ext-diff",
 		"--no-textconv",
+		// NUL-separated, unquoted paths; renames listed as delete plus add, so a
+		// workflow moved out of `.github/` still shows its `.github/` source.
+		"--no-renames",
+		"-z",
 		"--name-only",
 		`origin/${base}...${sha}`,
 	],
@@ -782,6 +786,26 @@ export const evaluateStopRule = (evidence: AgentEvidence): StopDecision => {
 		return { kind: "handoff", reason: "no_changes", detail: "agent made no changes", costUsd };
 	return { kind: "continue", costUsd, reason: result.reason };
 };
+
+/** Paths from `git diff -z --name-only`: NUL-terminated, never quoted, never trimmed. */
+export const parseChangedPaths = (stdout: string): ReadonlyArray<string> =>
+	stdout.split("\0").filter((path) => path !== "");
+
+/**
+ * Claude Code managed (administrator) settings. They apply even with
+ * `--setting-sources ""`, so preflight refuses to run when one exists: the
+ * agent's permission policy would no longer be only Harnessy's settings file.
+ * MDM-delivered macOS profiles are not visible here and remain host-controlled.
+ */
+export const managedClaudeSettingsPaths = (platform: string): ReadonlyArray<string> =>
+	platform === "darwin"
+		? [
+				"/Library/Application Support/ClaudeCode/managed-settings.json",
+				"/Library/Application Support/ClaudeCode/managed-mcp.json",
+			]
+		: platform === "win32"
+			? ["C:\\Program Files\\ClaudeCode\\managed-settings.json", "C:\\Program Files\\ClaudeCode\\managed-mcp.json"]
+			: ["/etc/claude-code/managed-settings.json", "/etc/claude-code/managed-mcp.json"];
 
 /** Paths whose change would let a same-repo PR run new CI code with the workflow's secrets. */
 export const ciConfigPaths = (paths: ReadonlyArray<string>): ReadonlyArray<string> =>

@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
@@ -8,11 +11,16 @@ import type { WorkDeps } from "../src/work/run.ts";
 
 const TASK = "11111111-2222-4333-8444-555555555555";
 
-const fakeDeps = (herdrVersion = "herdr 0.9.2", claudeHelp = REQUIRED_CLAUDE_FLAGS.join("\n")) => {
+const fakeDeps = (
+	herdrVersion = "herdr 0.9.2",
+	claudeHelp = REQUIRED_CLAUDE_FLAGS.join("\n"),
+	managedSettingsPaths: ReadonlyArray<string> = [],
+) => {
 	const calls: string[][] = [];
 	const deps: WorkDeps = {
 		platform: "linux",
 		stateRoot: "/state",
+		managedSettingsPaths,
 		now: () => 0,
 		sleep: async () => {},
 		uuid: () => "00000000-0000-4000-8000-000000000000",
@@ -111,6 +119,24 @@ describe("harnessy work CLI", () => {
 		expect(claude.problem).toContain("--setting-sources");
 		expect(claude.problem).not.toContain("--settings,");
 		expect(process.exitCode).toBe(1);
+	});
+
+	it("refuses to run when managed Claude Code settings apply", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "managed-settings-"));
+		try {
+			const managed = join(dir, "managed-settings.json");
+			writeFileSync(managed, "{}");
+			const fake = fakeDeps("herdr 0.9.5", REQUIRED_CLAUDE_FLAGS.join("\n"), [join(dir, "absent.json"), managed]);
+			const log = vi.spyOn(console, "log").mockImplementation(() => {});
+			await runCli(fake.deps, ["--task", TASK, "--dry-run", "--json"]);
+			const claude = printed(log).tools.find((tool: { name: string }) => tool.name === "claude");
+			expect(claude).toMatchObject({ ok: false });
+			expect(claude.problem).toContain(managed);
+			expect(claude.problem).not.toContain("absent.json");
+			expect(process.exitCode).toBe(1);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("requires --task and rejects invalid values", async () => {

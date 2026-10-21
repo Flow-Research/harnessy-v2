@@ -66,6 +66,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 	const deps: WorkDeps = {
 		platform: "darwin",
 		stateRoot,
+		managedSettingsPaths: [],
 		now: () => clock,
 		sleep: async (ms) => {
 			clock += ms;
@@ -109,7 +110,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				if (args.includes("status")) return ok(scenario.dirty ?? " M src/a.ts\n");
 				if (args.includes("rev-list")) return ok(`${scenario.ahead ?? "0"}\n`);
 				if (args.includes("rev-parse")) return ok(`${HEAD}\n`);
-				if (args.includes("--name-only")) return ok(scenario.changedPaths ?? "src/a.ts\n");
+				if (args.includes("--name-only")) return ok(scenario.changedPaths ?? "src/a.ts\0");
 				return ok();
 			}
 			if (exe === "herdr") {
@@ -317,7 +318,7 @@ describe("runWork", () => {
 	});
 
 	it("refuses to push changes to CI configuration", async () => {
-		const fake = fakeTools(root, { changedPaths: "src/a.ts\n.github/workflows/ci.yml\n" });
+		const fake = fakeTools(root, { changedPaths: "src/a.ts\0.github/workflows/ci.yml\0" });
 		const outcome = await runWork(options, fake.deps);
 		expect(outcome.report).toMatchObject({
 			status: "handoff",
@@ -325,6 +326,18 @@ describe("runWork", () => {
 			paths: [".github/workflows/ci.yml"],
 		});
 		expect(has(fake.calls, "push")).toBe(false);
+	});
+
+	it("catches CI paths git would quote, including unicode and newlines", async () => {
+		const fake = fakeTools(root, { changedPaths: "src/a.ts\0.github/workflows/\u00e9.yml\0.github/x\ny.yml\0" });
+		const outcome = await runWork(options, fake.deps);
+		expect(outcome.report).toMatchObject({
+			reason: "ci_config_changed",
+			paths: [".github/workflows/\u00e9.yml", ".github/x\ny.yml"],
+		});
+		expect(fake.calls.find((argv) => argv.includes("--name-only"))).toEqual(
+			expect.arrayContaining(["--no-renames", "-z", "--name-only"]),
+		);
 	});
 
 	it("ignores fork PRs on the same branch name and creates its own", async () => {

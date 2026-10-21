@@ -69,8 +69,14 @@
     `claude --help` lacks any isolation flag. `--bare` is not used because it
     disables OAuth. Live probes on Claude Code 2.1.304 confirmed the
     behaviour: no hooks ran, only built-in plugins loaded, and OAuth worked.
+    Managed (administrator) Claude Code settings still apply under
+    `--setting-sources ""`, so preflight also fails closed when a
+    `managed-settings.json` or `managed-mcp.json` exists at the platform's
+    managed location. MDM-delivered macOS profiles are not visible to that
+    check and remain host-controlled.
   - Harnessy commits after the stop rule with repository hooks disabled,
-    refuses changes under `.github/`, detects a rewritten worktree `.git`
+    refuses changes under `.github/` (read with `git diff -z --no-renames`,
+    so quoted and renamed paths cannot hide), detects a rewritten worktree `.git`
     file, and pushes only the exact commit, and only on a re-run with
     `--approve-push` after local review.
   - PRs open as drafts. An existing PR is adopted only when it is in the same

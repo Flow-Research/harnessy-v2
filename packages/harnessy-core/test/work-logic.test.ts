@@ -17,11 +17,13 @@ import {
 	gitArgv,
 	herdrArgv,
 	installHint,
+	managedClaudeSettingsPaths,
 	missingClaudeFlags,
 	packetSummary,
 	parseActor,
 	parseAgentResult,
 	parseAssignment,
+	parseChangedPaths,
 	parseExitMarker,
 	parseHerdrError,
 	parseJson,
@@ -343,6 +345,24 @@ describe("stop rule", () => {
 		expect(evaluateStopRule({ ...base, timedOut: true, exitCode: 1, changes: 0 })).toMatchObject({
 			reason: "timeout",
 		});
+	});
+
+	it("reads NUL-separated changed paths without trimming or unquoting", () => {
+		expect(parseChangedPaths("a.ts\0 spaced .ts\0.github/\u00e9.yml\0line\nbreak\0")).toEqual([
+			"a.ts",
+			" spaced .ts",
+			".github/\u00e9.yml",
+			"line\nbreak",
+		]);
+		expect(parseChangedPaths("")).toEqual([]);
+	});
+
+	it("lists managed Claude Code settings locations per platform", () => {
+		expect(managedClaudeSettingsPaths("darwin")).toContain(
+			"/Library/Application Support/ClaudeCode/managed-settings.json",
+		);
+		expect(managedClaudeSettingsPaths("linux")).toContain("/etc/claude-code/managed-settings.json");
+		expect(managedClaudeSettingsPaths("linux")).toContain("/etc/claude-code/managed-mcp.json");
 	});
 
 	it("flags CI configuration paths", () => {

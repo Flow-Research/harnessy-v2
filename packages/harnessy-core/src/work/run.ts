@@ -19,10 +19,12 @@ import {
 	type HandoffReason,
 	herdrArgv,
 	isTaskId,
+	managedClaudeSettingsPaths,
 	missingClaudeFlags,
 	packetSummary,
 	parseActor,
 	parseAssignment,
+	parseChangedPaths,
 	parseExitMarker,
 	parseHerdrError,
 	parseJson,
@@ -74,6 +76,8 @@ export interface WorkDeps {
 	readonly log: (line: string) => void;
 	/** Parent of the per-task private state directories, outside any agent worktree. */
 	readonly stateRoot: string;
+	/** Claude Code managed settings files; any that exists fails preflight closed. */
+	readonly managedSettingsPaths: ReadonlyArray<string>;
 }
 
 export interface WorkOptions {
@@ -150,6 +154,7 @@ export const liveWorkDeps = (): WorkDeps => ({
 	uuid: randomUUID,
 	log: (line) => process.stderr.write(`${line}\n`),
 	stateRoot: defaultStateRoot(),
+	managedSettingsPaths: managedClaudeSettingsPaths(process.platform),
 });
 
 /** Worktree path for a task: a sibling `.harnessy-work/<task>` of the target checkout. */
@@ -181,6 +186,14 @@ export const preflight = async (deps: WorkDeps, workstreamCli: ReadonlyArray<str
 const claudeIsolationCheck = async (deps: WorkDeps, check: ToolCheck): Promise<ToolCheck> => {
 	const help = await deps.run(["claude", "--help"], { timeoutMs: PROBE_TIMEOUT_MS });
 	const missing = help.exitCode === 0 ? missingClaudeFlags(`${help.stdout}\n${help.stderr}`) : REQUIRED_CLAUDE_FLAGS;
+	const managed = deps.managedSettingsPaths.filter((path) => existsSync(path));
+	if (managed.length > 0)
+		return {
+			...check,
+			ok: false,
+			problem: `cannot isolate the agent: managed Claude Code settings apply (${managed.join(", ")})`,
+			hint: "Review the managed policy; harnessy work runs only when the agent's permissions come from its own settings file",
+		};
 	if (missing.length === 0) return check;
 	return {
 		...check,
@@ -432,10 +445,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 
 	if (state.pr === undefined) {
 		if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
-		const changed = (await must(gitArgv.changedPaths(worktree, options.base, headSha), "git diff"))
-			.split("\n")
-			.map((line) => line.trim())
-			.filter((line) => line !== "");
+		const changed = parseChangedPaths(await must(gitArgv.changedPaths(worktree, options.base, headSha), "git diff"));
 		const ci = ciConfigPaths(changed);
 		if (ci.length > 0)
 			return handoff("ci_config_changed", "the change edits CI configuration, which a same-repo PR would run", {
