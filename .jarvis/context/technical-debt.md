@@ -294,15 +294,23 @@
   (GHSA-22jm-h49p-29qw, GHSA-46jr-4wx8-v453, GHSA-6prh-2h8m-c8cw,
   GHSA-rvq5-wwqv-78pq; fixed in 1.32.0), `hono@4.13.7` (GHSA-5r4p-p66f-jhc7;
   fixed in 4.13.11) and `vite@8.0.16` (GHSA-587h-7wmj-h5pm and four lower
-  advisories; fixed in 8.1.6). The scoped override
-  `agents > @modelcontextprotocol/sdk@1.32.1` now produces a valid tree: the
-  earlier `npm sbom` rejection came from a stale nested lock entry, which was
-  removed. `hono` and `vite` move to exact overrides `4.13.13` and `8.1.6`, and
-  `@harnessy/local-host` pins `vite@8.1.6`. Release installs apply the same
-  SDK pin through `scripts/release-install-overrides.mjs`, because npm and Bun
-  ignore overrides declared by dependencies and `@harnessy/engine` keeps
-  `agents` for its declaration types. The reviewed MCP SDK exception
-  (GHSA-6qxp-vccf-f47h, expiring 2026-11-07) is resolved and removed. The
+  advisories; fixed in 8.1.6). A flat root override
+  `@modelcontextprotocol/sdk@1.32.1` moves the nested copy to the fixed release.
+  npm 11.6.0 (the CI version) does not propagate root overrides through
+  workspace links in the actual tree, so `npm sbom` reported the
+  `agents -> @modelcontextprotocol/sdk` edge as invalid. An exact root
+  `devDependencies.agents@0.17.3` gives the override a root edge and makes the
+  tree valid; it must stay equal to `@harnessy/engine`'s `agents` pin (asserted
+  in `scripts/harnessy-release-contract.test.mjs`). `hono` and `vite` move to
+  exact overrides `4.13.13` and `8.1.6`, `@harnessy/local-host` pins
+  `vite@8.1.6`, and the root optional `@rolldown/binding-*` pins move from
+  1.0.3 to 1.1.5 to match the `rolldown` that `vite@8.1.6` selects. Release
+  installs apply the same SDK pin through `scripts/release-install-overrides.mjs`,
+  because npm and Bun ignore overrides declared by dependencies and
+  `@harnessy/engine` keeps `agents` for its declaration types. The reviewed MCP
+  SDK exception (GHSA-6qxp-vccf-f47h, expiring 2026-11-07) is resolved and
+  removed. With npm 11.6.0, `npm ls --all` and
+  `npm sbom --omit=dev --sbom-format=cyclonedx` both pass. The
   after audit reports zero advisories at every severity, with no exception.
 - **Links:** `.github/workflows/qa-security-sweep.yml`,
   `qa/security/findings/2026-09-02-v2-canonical-cutover.md`

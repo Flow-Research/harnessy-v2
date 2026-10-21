@@ -203,10 +203,12 @@ test("publication uses only artifacts whose packed integrity matches the strict 
 	assert.throws(() => assertPublicationMatchesEvidence([state], []), /omitted publication artifact/u);
 });
 
-test("isolated release installs pin the MCP SDK the root workspace pins under agents", () => {
+test("isolated release installs pin the MCP SDK the root workspace pins", () => {
 	const root = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 	const engine = JSON.parse(readFileSync(new URL("../packages/harnessy-engine/package.json", import.meta.url), "utf8"));
-	const pinned = root.overrides.agents["@modelcontextprotocol/sdk"];
+	const pinned = root.overrides["@modelcontextprotocol/sdk"];
+	// npm 11 applies root overrides to agents only through a root edge; see V2D-009.
+	assert.equal(root.devDependencies.agents, engine.dependencies.agents);
 	assert.equal(releaseInstallOverrides["@modelcontextprotocol/sdk"], pinned);
 	assert.equal(engine.dependencies["@modelcontextprotocol/sdk"], pinned);
 	const dependencies = { "@harnessy/core": "file:/tmp/core.tgz" };
