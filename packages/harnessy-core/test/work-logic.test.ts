@@ -20,6 +20,8 @@ import {
 	parseAgentResult,
 	parseAssignment,
 	parseExitMarker,
+	parseHerdrError,
+	parseJson,
 	parsePreparation,
 	parsePrList,
 	parsePrUrl,
@@ -28,6 +30,7 @@ import {
 	parseState,
 	parseVersion,
 	prMismatch,
+	reviewEvidenceProblem,
 	splitCli,
 	validateAgentAllow,
 	WORK_TOOLS,
@@ -157,6 +160,11 @@ describe("agent permissions", () => {
 		expect(validateAgentAllow("Bash(npx-free test -- --run --reporter=dot)")).toEqual([
 			"Bash(npx-free test -- --run --reporter=dot)",
 		]);
+		expect(validateAgentAllow("Bash(npm test *) , Bash(./node_modules/.bin/vitest --run)")).toEqual([
+			"Bash(npm test *)",
+			"Bash(./node_modules/.bin/vitest --run)",
+		]);
+		expect(() => validateAgentAllow("x".repeat(5000))).toThrow("4096");
 		expect(validateAgentAllow(undefined)).toEqual([]);
 		expect(validateAgentAllow("  ")).toEqual([]);
 	});
@@ -184,6 +192,26 @@ describe("agent permissions", () => {
 		"Bash('npm' test)",
 		"Bash(/bin/sh -c x)",
 		"Bash(npm test {a,b})",
+		"Bash(npm test:*)",
+		"Bash(npm:*)",
+		"Bash(npm\ttest)",
+		"Bash(npm\u00a0test)",
+		"Bash(npm test)\n",
+		"Bash(npm test) extra",
+		"Bash(npm test )",
+		"Bash( npm test)",
+		"bash(npm test)",
+		"BASH(npm test)",
+		"B\u0430sh(npm test)",
+		"Bash\uff08npm test\uff09",
+		"Bash(npm test \\(x\\))",
+		"Bash(Git status)",
+		"Bash(/usr/bin/GIT status)",
+		"Bash(npm run PUSH)",
+		"Bash(-x test)",
+		"Bash(FOO=1)",
+		"Bash(npm test%20x)",
+		"Bash(npm test,x)",
 	])("rejects %s", (rule) => {
 		expect(() => validateAgentAllow(rule)).toThrow("--agent-allow");
 	});
@@ -313,6 +341,19 @@ describe("preflight", () => {
 		});
 	});
 
+	it("tells a missing executable apart from one that cannot start or hangs", () => {
+		const gh = tool("gh");
+		expect(
+			checkTool(gh, { exitCode: undefined, stdout: "", stderr: "", errorCode: "ENOENT" }, "darwin").problem,
+		).toBe("not found on PATH");
+		expect(
+			checkTool(gh, { exitCode: undefined, stdout: "", stderr: "", errorCode: "EACCES" }, "darwin").problem,
+		).toBe("could not start (EACCES)");
+		expect(checkTool(gh, { exitCode: undefined, stdout: "", stderr: "", timedOut: true }, "darwin").problem).toBe(
+			"probe timed out",
+		);
+	});
+
 	it("reports missing tools with platform hints", () => {
 		expect(checkTool(tool("gh"), { exitCode: undefined, stdout: "", stderr: "" }, "darwin")).toMatchObject({
 			ok: false,
@@ -382,6 +423,49 @@ describe("WorkStream and GitHub parsing", () => {
 			number: 42,
 		});
 		expect(() => parsePrUrl("nothing")).toThrow();
+	});
+
+	it("requires human review evidence on a merge", () => {
+		const merged = parsePrView(
+			JSON.stringify({ ...pr, state: "MERGED", mergedBy: { login: "julian", is_bot: false }, reviewDecision: "" }),
+		);
+		expect(merged.mergedBy).toEqual({ login: "julian", isBot: false });
+		expect(reviewEvidenceProblem(merged)).toBeUndefined();
+		expect(reviewEvidenceProblem({ ...merged, mergedBy: { login: "x", isBot: true } })).toContain("bot");
+		expect(
+			reviewEvidenceProblem({ ...merged, mergedBy: { login: "x", isBot: true }, reviewDecision: "APPROVED" }),
+		).toBeUndefined();
+		expect(reviewEvidenceProblem({ ...merged, reviewDecision: "CHANGES_REQUESTED" })).toContain("changes requested");
+		const { mergedBy: _ignored, ...withoutMerger } = merged;
+		expect(reviewEvidenceProblem(withoutMerger)).toContain("without a recorded merger");
+		expect(
+			parsePrView(JSON.stringify({ ...pr, mergedBy: { login: "renovate[bot]", is_bot: false } })).mergedBy?.isBot,
+		).toBe(true);
+	});
+
+	it("reads herdr error codes", () => {
+		expect(parseHerdrError('{"id":"cli:pane:wait-output","error":{"code":"timeout","message":"m"}}\n')).toBe(
+			"timeout",
+		);
+		expect(parseHerdrError("not json")).toBeUndefined();
+	});
+
+	it("rejects JSON with duplicate keys, including escaped duplicates, or trailing data", () => {
+		expect(parseJson('{"a":1,"b":{"a":2},"c":[{"a":3},{"a":4}]}')).toEqual({
+			a: 1,
+			b: { a: 2 },
+			c: [{ a: 3 }, { a: 4 }],
+		});
+		expect(parseJson('{"a":1,"a":2}')).toBeUndefined();
+		expect(parseJson('{"a":1,"\\u0061":2}')).toBeUndefined();
+		expect(parseJson('{"x":{"k":"v\\"","k":1}}')).toBeUndefined();
+		expect(parseJson('{"a":"b"} trailing')).toBeUndefined();
+		expect(parseJson('{"a":"{\\"a\\":1}","b":"a"}')).toEqual({ a: '{"a":1}', b: "a" });
+		expect(
+			parseAgentResult(
+				'{"total_cost_usd":1,"structured_output":{"outcome":"blocked","reason":"x"},"structured_output":{"outcome":"done","reason":"y"}}',
+			),
+		).toMatchObject({ ok: false, problem: "malformed" });
 	});
 
 	it("accepts CI only for the requested head commit", () => {

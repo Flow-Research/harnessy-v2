@@ -99,7 +99,13 @@ export const installHint = (tool: WorkTool, platform: string): string =>
 /** Judge one probe. `exitCode` is undefined when the executable could not be spawned. */
 export const checkTool = (
 	tool: WorkTool,
-	probe: { readonly exitCode: number | undefined; readonly stdout: string; readonly stderr: string },
+	probe: {
+		readonly exitCode: number | undefined;
+		readonly stdout: string;
+		readonly stderr: string;
+		readonly timedOut?: boolean;
+		readonly errorCode?: string;
+	},
 	platform: string,
 ): ToolCheck => {
 	const failed = (problem: string, version?: string): ToolCheck => ({
@@ -109,7 +115,11 @@ export const checkTool = (
 		hint: installHint(tool, platform),
 		...(version === undefined ? {} : { version }),
 	});
-	if (probe.exitCode === undefined) return failed("not found on PATH");
+	if (probe.exitCode === undefined) {
+		if (probe.timedOut === true) return failed("probe timed out");
+		if (probe.errorCode === undefined || probe.errorCode === "ENOENT") return failed("not found on PATH");
+		return failed(`could not start (${probe.errorCode})`);
+	}
 	if (probe.exitCode !== 0) return failed(`probe exited ${probe.exitCode}`);
 	const version = parseVersion(`${probe.stdout}\n${probe.stderr}`);
 	if (tool.minVersion !== undefined) {
@@ -271,7 +281,8 @@ export const gitArgv = {
 	],
 };
 
-const PR_FIELDS = "number,url,state,headRefName,baseRefName,headRefOid,isCrossRepository,mergeCommit";
+const PR_FIELDS =
+	"number,url,state,headRefName,baseRefName,headRefOid,isCrossRepository,mergeCommit,reviewDecision,mergedBy";
 
 /** gh argv builders. Callers run them with the worktree as cwd. */
 export const ghArgv = {
@@ -427,39 +438,43 @@ const DENIED_PROGRAMS: ReadonlySet<string> = new Set([
 	"tee",
 ]);
 
-const RULE = /^Bash\(([^()]*)\)$/;
-const PROGRAM = /^[A-Za-z0-9_./][A-Za-z0-9_./@+-]*$/;
-const ARGUMENT = /^[A-Za-z0-9_./:@%+,=-]+$/;
+/** One token: printable ASCII from a fixed set, so no lookalikes, quotes, escapes or separators. */
+const TOKEN = "[A-Za-z0-9._/@=+-]+";
+/** The exact accepted shape: `Bash(<tokens>)` or `Bash(<tokens> *)`, single ASCII spaces only. */
+const RULE = new RegExp(`^Bash\\((${TOKEN}(?: ${TOKEN})*)( \\*)?\\)$`);
+const MAX_ALLOW_LENGTH = 4096;
 
 /**
- * Validate `--agent-allow`: comma-separated `Bash(program args...)` rules made
- * of plain words, optionally ending in a single ` *` prefix wildcard. Shell
- * metacharacters, quotes, `=` assignments, mid-rule wildcards, bare `Bash` and
- * programs that run arbitrary code or reach credentials are rejected.
+ * Validate `--agent-allow`: comma-separated rules of the exact form
+ * `Bash(<tokens>)` or `Bash(<tokens> *)`. Tokens use only `[A-Za-z0-9._/@=+-]`
+ * and are separated by single ASCII spaces, so Claude Code's permission parser
+ * cannot read a rule differently from this check: there are no colons,
+ * escapes, quotes, other whitespace, Unicode lookalikes, case variants of
+ * `Bash` or trailing content. The program token must not start with `-` or
+ * contain `=`; programs that run arbitrary code or reach credentials are
+ * rejected case-insensitively, by basename; `push` is never allowed.
  *
  * Residual risk: an allowed test runner (for example `npm test`) executes
  * repository code the agent can edit, so it grants code execution as the
  * current user. Allow only what the task needs; review is the backstop.
  */
 export const validateAgentAllow = (value: string | undefined): ReadonlyArray<string> => {
-	if (value === undefined || value.trim() === "") return [];
+	if (value === undefined || value === "") return [];
+	if (value.length > MAX_ALLOW_LENGTH || !/^[\x20-\x7e]*$/.test(value))
+		throw new Error("--agent-allow must be printable ASCII and at most 4096 characters");
+	if (/^ *$/.test(value)) return [];
 	return value.split(",").map((raw) => {
-		const rule = raw.trim();
-		const inner = RULE.exec(rule)?.[1];
+		const rule = raw.replace(/^ +| +$/g, "");
 		const fail = (why: string) => new Error(`--agent-allow rule ${JSON.stringify(rule)} rejected: ${why}`);
-		if (inner === undefined) throw fail("use Bash(program args...)");
-		const words = inner.split(" ");
-		const wildcard = words.at(-1) === "*";
-		const fixed = wildcard ? words.slice(0, -1) : words;
-		if (fixed.length === 0) throw fail("a rule must name a program");
-		const [program = "", ...args] = fixed;
-		if (!PROGRAM.test(program)) throw fail(`program ${JSON.stringify(program)} is not a plain executable name`);
-		for (const word of args)
-			if (!ARGUMENT.test(word))
-				throw fail(`word ${JSON.stringify(word)} contains a shell metacharacter or wildcard`);
-		const name = program.split("/").at(-1) ?? program;
-		if (DENIED_PROGRAMS.has(name)) throw fail(`${name} can run arbitrary commands or reach credentials`);
-		if (fixed.includes("push")) throw fail("push is never allowed");
+		const match = RULE.exec(rule);
+		if (match?.[1] === undefined) throw fail("use exactly Bash(program args) or Bash(program args *)");
+		const [program = "", ...args] = match[1].split(" ");
+		if (program.startsWith("-") || program.includes("="))
+			throw fail(`program ${JSON.stringify(program)} is not a plain executable name`);
+		const name = (program.split("/").at(-1) ?? program).toLowerCase();
+		if (name === "" || DENIED_PROGRAMS.has(name))
+			throw fail(`${name} can run arbitrary commands or reach credentials`);
+		if ([program, ...args].some((token) => token.toLowerCase() === "push")) throw fail("push is never allowed");
 		return rule;
 	});
 };
@@ -521,6 +536,12 @@ export const agentRunLine = (
 		JSON.stringify(AGENT_RESULT_SCHEMA),
 	];
 	return `${argv.map(shellWord).join(" ")} < ${shellWord(paths.prompt)} > ${shellWord(paths.result)}; echo ${EXIT_MARKER}$?`;
+};
+
+/** Error code from herdr's JSON error on stderr (`{"error":{"code":"timeout"}}`). */
+export const parseHerdrError = (stderr: string): string | undefined => {
+	const code = field(field(parseJson(stderr.trim()), "error"), "code");
+	return typeof code === "string" ? code : undefined;
 };
 
 /** Exit code from the matched `HSY_WORK_EXIT=<n>` line in herdr's wait-output JSON. */
@@ -647,6 +668,8 @@ export type HandoffReason =
 	| "worktree_tampered"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
+	| "agent_wait_failed"
+	| "unreviewed_merge"
 	| "head_mismatch"
 	| "pr_conflict"
 	| "pr_mismatch"
@@ -807,6 +830,8 @@ export interface PrInfo {
 	readonly headSha: string;
 	readonly isCrossRepository: boolean;
 	readonly mergeCommitSha?: string;
+	readonly reviewDecision?: string;
+	readonly mergedBy?: { readonly login: string; readonly isBot: boolean };
 }
 
 const toPrInfo = (value: unknown): PrInfo | undefined => {
@@ -828,6 +853,9 @@ const toPrInfo = (value: unknown): PrInfo | undefined => {
 	)
 		return undefined;
 	const merge = field(field(value, "mergeCommit"), "oid");
+	const decision = field(value, "reviewDecision");
+	const merger = field(value, "mergedBy");
+	const login = field(merger, "login");
 	return {
 		number,
 		url,
@@ -837,7 +865,26 @@ const toPrInfo = (value: unknown): PrInfo | undefined => {
 		headSha: sha,
 		isCrossRepository: cross,
 		...(typeof merge === "string" ? { mergeCommitSha: merge } : {}),
+		...(typeof decision === "string" && decision !== "" ? { reviewDecision: decision } : {}),
+		...(typeof login === "string"
+			? { mergedBy: { login, isBot: field(merger, "is_bot") === true || login.endsWith("[bot]") } }
+			: {}),
 	};
+};
+
+/**
+ * Why a merged PR lacks human review evidence, or undefined when it has it.
+ * GitHub records no self-approval, so a PR opened under the operator's own
+ * account counts as reviewed when it carries an APPROVED review decision or
+ * was merged by a human account (never a bot or an app). The local
+ * `--approve-push` gate is the other human checkpoint.
+ */
+export const reviewEvidenceProblem = (pr: PrInfo): string | undefined => {
+	if (pr.reviewDecision === "APPROVED") return undefined;
+	if (pr.reviewDecision === "CHANGES_REQUESTED") return "merged with changes requested";
+	if (pr.mergedBy === undefined) return "merged without a recorded merger or approval";
+	if (pr.mergedBy.isBot) return `merged by bot ${pr.mergedBy.login} without an approving review`;
+	return undefined;
 };
 
 /** `gh pr view --json <PR_FIELDS>`. */
@@ -934,6 +981,8 @@ export interface WorkState {
 	readonly assignmentId?: string;
 	readonly started?: boolean;
 	readonly pane?: string;
+	/** Epoch milliseconds when the agent's wall-clock limit ends; survives re-attachment. */
+	readonly agentDeadline?: number;
 	readonly agent?: { readonly costUsd: number; readonly reason: string };
 	/** Commit Harnessy created and later pushed; the only SHA proof and CI checks accept. */
 	readonly headSha?: string;
@@ -983,7 +1032,39 @@ export const isTaskId = (value: string): boolean => UUID.test(value);
 /** JSON.parse that returns undefined instead of throwing. */
 export const parseJson = (text: string): unknown => {
 	const parsed = Result.try((): unknown => JSON.parse(text));
-	return Result.isSuccess(parsed) ? parsed.success : undefined;
+	return Result.isSuccess(parsed) && !hasDuplicateKeys(text) ? parsed.success : undefined;
+};
+
+/**
+ * True when any JSON object in already-valid `text` repeats a key, after
+ * escape decoding (`"a"` and `"\u0061"` are the same key). `JSON.parse` keeps
+ * the last duplicate where other parsers may keep the first, so such input is
+ * rejected instead of guessed. Trailing data is already rejected by `JSON.parse`.
+ */
+const hasDuplicateKeys = (text: string): boolean => {
+	const frames: Array<{ readonly keys: Set<string> | undefined; expectKey: boolean }> = [];
+	for (let index = 0; index < text.length; index++) {
+		const char = text[index];
+		if (char === "{") frames.push({ keys: new Set(), expectKey: true });
+		else if (char === "[") frames.push({ keys: undefined, expectKey: false });
+		else if (char === "}" || char === "]") frames.pop();
+		else if (char === ",") {
+			const top = frames.at(-1);
+			if (top?.keys !== undefined) top.expectKey = true;
+		} else if (char === '"') {
+			let end = index + 1;
+			while (text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+			const top = frames.at(-1);
+			if (top?.keys !== undefined && top.expectKey) {
+				const key = String(JSON.parse(text.slice(index, end + 1)));
+				if (top.keys.has(key)) return true;
+				top.keys.add(key);
+				top.expectKey = false;
+			}
+			index = end;
+		}
+	}
+	return false;
 };
 
 /** Read one property of an unknown JSON object. */

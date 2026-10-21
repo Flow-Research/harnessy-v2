@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -22,6 +22,7 @@ import {
 	parseActor,
 	parseAssignment,
 	parseExitMarker,
+	parseHerdrError,
 	parseJson,
 	parsePreparation,
 	parsePrList,
@@ -33,6 +34,7 @@ import {
 	parseTask,
 	prBody,
 	prMismatch,
+	reviewEvidenceProblem,
 	TERMINAL_PREPARATION_STATUSES,
 	type ToolCheck,
 	validateAgentAllow,
@@ -49,6 +51,8 @@ export interface RunResult {
 	readonly stdout: string;
 	readonly stderr: string;
 	readonly timedOut?: boolean;
+	/** Node spawn error code such as `ENOENT` or `EACCES`, when the process could not start. */
+	readonly errorCode?: string;
 }
 
 /** The only process seam: an argv array, never a shell string. */
@@ -96,6 +100,7 @@ const PREPARE_POLL_MS = 10 * 1000;
 const PREPARE_ATTEMPTS = 60;
 const CI_ATTEMPTS = 30;
 const PROBE_TIMEOUT_MS = 30 * 1000;
+const MIN_WAIT_MS = 1000;
 
 /** Live process runner: argv only, `shell: false`, bounded buffers. */
 export const execRun: Run = (argv, options) =>
@@ -122,6 +127,7 @@ export const execRun: Run = (argv, options) =>
 					exitCode: typeof code === "number" ? code : undefined,
 					stdout,
 					stderr,
+					...(typeof code === "string" ? { errorCode: code } : {}),
 					...(error !== null && error.killed === true ? { timedOut: true } : {}),
 				});
 			},
@@ -172,9 +178,12 @@ const privateDir = (path: string) => {
 	chmodSync(path, 0o700);
 };
 
+/** Write via a temporary file and rename, so a crash never leaves a truncated file behind. */
 const writePrivate = (path: string, data: string | Buffer) => {
-	writeFileSync(path, data, { mode: 0o600 });
-	chmodSync(path, 0o600);
+	const temporary = `${path}.tmp`;
+	writeFileSync(temporary, data, { mode: 0o600 });
+	chmodSync(temporary, 0o600);
+	renameSync(temporary, path);
 };
 
 /** Raw `.git` file content of a linked worktree, or undefined when it is missing or not a regular file. */
@@ -352,15 +361,22 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			const rootPane = field(field(field(created, "result"), "root_pane"), "pane_id");
 			if (typeof rootPane !== "string") throw new Error("herdr workspace create returned no root pane id");
 			pane = rootPane;
-			// Recorded before the run starts: a re-run re-attaches instead of starting a second agent.
-			save({ pane });
+			// Recorded before the run starts: a re-run re-attaches instead of starting a second agent,
+			// and keeps the original wall-clock deadline.
+			save({ pane, agentDeadline: deps.now() + options.maxMinutes * 60_000 });
 			deps.log(`Running agent in herdr pane ${pane}`);
 			await must(herdrArgv.paneRun(pane, agentRunLine(options.budgetUsd, paths, agentAllow)), "herdr pane run");
 		} else deps.log(`Re-attaching to agent in herdr pane ${pane}`);
-		const waited = await deps.run(herdrArgv.waitOutput(pane, options.maxMinutes * 60_000));
-		const timedOut = waited.exitCode !== 0;
+		const deadline = state.agentDeadline ?? deps.now() + options.maxMinutes * 60_000;
+		// herdr checks existing output first, so even an expired deadline still sees a finished run.
+		const waited = await deps.run(herdrArgv.waitOutput(pane, Math.max(deadline - deps.now(), MIN_WAIT_MS)));
+		const waitError = waited.exitCode === 0 ? undefined : (parseHerdrError(waited.stderr) ?? "unknown");
+		const timedOut = waitError === "timeout" || (waitError !== undefined && deps.now() >= deadline);
+		if (waitError !== undefined && !timedOut)
+			// Keep the pane: the agent may still be running. A re-run re-attaches until the deadline.
+			return handoff("agent_wait_failed", `herdr wait-output failed with ${waitError}`, { pane });
 		if (timedOut) await deps.run(herdrArgv.interrupt(pane));
-		save({ pane: undefined });
+		save({ pane: undefined, agentDeadline: undefined });
 		if (!worktreeIntact())
 			return handoff("worktree_tampered", "the worktree's .git file changed during the agent run");
 
@@ -471,6 +487,8 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 						return handoff("head_mismatch", `PR #${pr.number} merged ${pull.headSha}, not the pushed ${headSha}`);
 					if (pull.mergeCommitSha === undefined)
 						throw new Error(`PR #${pr.number} is merged but has no merge commit`);
+					const unreviewed = reviewEvidenceProblem(pull);
+					if (unreviewed !== undefined) return handoff("unreviewed_merge", `PR #${pr.number}: ${unreviewed}`);
 					save({ mergeCommitSha: pull.mergeCommitSha });
 					break;
 				}

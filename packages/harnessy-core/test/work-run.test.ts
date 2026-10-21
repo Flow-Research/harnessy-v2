@@ -18,6 +18,8 @@ interface PrRecord {
 	headRefOid: string;
 	isCrossRepository: boolean;
 	mergeCommit: { oid: string } | null;
+	reviewDecision: string;
+	mergedBy: { login: string; is_bot: boolean } | null;
 }
 
 const ourPr = (state: string, overrides: Partial<PrRecord> = {}): PrRecord => ({
@@ -29,11 +31,12 @@ const ourPr = (state: string, overrides: Partial<PrRecord> = {}): PrRecord => ({
 	headRefOid: HEAD,
 	isCrossRepository: false,
 	mergeCommit: state === "MERGED" ? { oid: "m".repeat(40) } : null,
+	reviewDecision: "",
+	mergedBy: state === "MERGED" ? { login: "julian", is_bot: false } : null,
 	...overrides,
 });
 
 interface Scenario {
-	waitExit?: number;
 	agentResult?: string;
 	dirty?: string;
 	ahead?: string;
@@ -44,6 +47,8 @@ interface Scenario {
 	ciSha?: string;
 	actors?: string[];
 	tamperGitFile?: boolean;
+	waitErrorCode?: string;
+	clockStart?: number;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -54,7 +59,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 	const prepareStatuses = [...(scenario.prepareStatuses ?? ["prepared", "ready"])];
 	const actors = [...(scenario.actors ?? [])];
 	let uuid = 0;
-	let clock = 1_000_000;
+	let clock = scenario.clockStart ?? 1_000_000;
 	const worktree = worktreePath(join(root, "repo"), TASK);
 	const stateRoot = join(root, "state");
 	const deps: WorkDeps = {
@@ -122,7 +127,12 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					return ok();
 				}
 				if (joined.startsWith("pane wait-output")) {
-					if ((scenario.waitExit ?? 0) !== 0) return { exitCode: 1, stdout: "", stderr: '{"error":"timeout"}' };
+					if (scenario.waitErrorCode !== undefined)
+						return {
+							exitCode: 1,
+							stdout: "",
+							stderr: JSON.stringify({ id: "cli:pane:wait-output", error: { code: scenario.waitErrorCode } }),
+						};
 					return ok(JSON.stringify({ result: { pane_id: "w1:p1", matched_line: "HSY_WORK_EXIT=0" } }));
 				}
 				return ok();
@@ -366,8 +376,68 @@ describe("runWork", () => {
 		expect(again.calls).toContainEqual(expect.arrayContaining(["wait-output", "w1:p1"]));
 	});
 
+	it("keeps the original agent deadline when re-attaching", async () => {
+		const first = fakeTools(root);
+		const crashing: WorkDeps = {
+			...first.deps,
+			run: async (argv, opts) => {
+				if (argv[1] === "pane" && argv[2] === "wait-output") throw new Error("killed");
+				return first.deps.run(argv, opts);
+			},
+		};
+		await expect(runWork(options, crashing)).rejects.toThrow("killed");
+		expect(JSON.parse(readFileSync(join(first.stateDir, "state.json"), "utf8")).agentDeadline).toBe(
+			1_000_000 + 45 * 60_000,
+		);
+		const late = fakeTools(root, { clockStart: 1_000_000 + 50 * 60_000 });
+		await runWork(options, late.deps);
+		expect(late.calls).toContainEqual([
+			"herdr",
+			"pane",
+			"wait-output",
+			"w1:p1",
+			"--regex",
+			"HSY_WORK_EXIT=[0-9]+",
+			"--timeout",
+			"1000",
+		]);
+	});
+
+	it("keeps the pane and hands off when herdr fails for a reason other than timeout", async () => {
+		const fake = fakeTools(root, { waitErrorCode: "server_not_running" });
+		const outcome = await runWork(options, fake.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "agent_wait_failed", pane: "w1:p1" });
+		expect(has(fake.calls, "send-keys")).toBe(false);
+		expect(JSON.parse(readFileSync(join(fake.stateDir, "state.json"), "utf8")).pane).toBe("w1:p1");
+	});
+
+	it("requires human review evidence for the merge", async () => {
+		const botMerge = ourPr("MERGED", { mergedBy: { login: "automerge-app[bot]", is_bot: false } });
+		const fake = fakeTools(root, { prStates: [ourPr("OPEN"), botMerge] });
+		expect((await runWork(options, fake.deps)).report).toMatchObject({
+			status: "handoff",
+			reason: "unreviewed_merge",
+		});
+		expect(has(fake.calls, "prepare")).toBe(false);
+	});
+
+	it("accepts a bot merge that carries an approving review", async () => {
+		rmSync(join(root, "state"), { recursive: true, force: true });
+		const approved = ourPr("MERGED", { reviewDecision: "APPROVED", mergedBy: { login: "merge-bot", is_bot: true } });
+		const fake = fakeTools(root, { prStates: [ourPr("OPEN"), approved] });
+		expect((await runWork(options, fake.deps)).report).toMatchObject({ status: "submitted" });
+	});
+
+	it("refuses to resume from a truncated state file and leaves no temporary files", async () => {
+		const fake = fakeTools(root);
+		await runWork({ ...options, approvePush: false }, fake.deps);
+		expect(existsSync(join(fake.stateDir, "state.json.tmp"))).toBe(false);
+		writeFileSync(join(fake.stateDir, "state.json"), '{"schema":"harnessy.work.st');
+		await expect(runWork(options, fakeTools(root).deps)).rejects.toThrow("not a valid state file");
+	});
+
 	it("hands off on timeout, interrupts the pane and never commits or pushes", async () => {
-		const fake = fakeTools(root, { waitExit: 1 });
+		const fake = fakeTools(root, { waitErrorCode: "timeout" });
 		const outcome = await runWork(options, fake.deps);
 		expect(outcome.exitCode).toBe(2);
 		expect(outcome.report).toMatchObject({ status: "handoff", reason: "timeout", task_id: TASK });
