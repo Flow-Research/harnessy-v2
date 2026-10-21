@@ -38,6 +38,18 @@
 - **QA ownership:** `.jarvis/context/profiles/qa.json` is canonical. The
   repo-owned wrapper verifies the preserved generic runtime digest, and
   `npm run qa:catalog` alone owns generated catalog output.
+- **WorkStream build loop (2026-10-21):** `harnessy work --task <id>` is a
+  minimal sequential loop: plain async steps behind one injected argv-only
+  `run` function, with a thin Effect CLI wrapper. A merged, human-reviewed PR
+  is the only path to a WorkStream submission; every other stop (wall clock,
+  non-zero exit, missing or malformed `result.json`, cost over budget,
+  `blocked` outcome, no new commits, closed or unmerged PR, no completed CI run
+  for the merged head) is a hand-off with
+  exit 2 and a desktop notification, and nothing is pushed before the stop rule
+  passes. The required tools (herdr 0.9.0 or newer, `claude`, `gh`, `git`, the
+  WorkStream CLI) are one exported constant, `WORK_TOOLS`, so the list can move
+  into a capability manifest that `harnessy deps check` reads. Resume state and
+  idempotency keys live in the task worktree, not in Harnessy's runtime store.
 
 ## Open decisions
 

@@ -10,6 +10,7 @@ import { openCommand, portalCommand } from "./cli/portal.ts";
 import { skillCommand } from "./cli/skill.ts";
 import { doctorCommand, verifyCommand } from "./cli/verify.ts";
 import { webCommand } from "./cli/web.ts";
+import { workCommand } from "./cli/work.ts";
 import { workspaceCommand } from "./cli/workspace.ts";
 
 export const rootCommand = Command.make("harnessy").pipe(
@@ -30,6 +31,7 @@ export const rootCommand = Command.make("harnessy").pipe(
 		depsCommand,
 		aiCommand,
 		workspaceCommand,
+		workCommand,
 	] as const),
 	Command.withDescription("Harnessy capability harness CLI"),
 );
