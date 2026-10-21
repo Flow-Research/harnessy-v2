@@ -4,6 +4,8 @@ import {
 	AGENT_RESULT_SCHEMA,
 	agentPrompt,
 	agentRunLine,
+	agentSettings,
+	agentTools,
 	bindingMismatch,
 	buildProof,
 	checkTool,
@@ -15,6 +17,7 @@ import {
 	gitArgv,
 	herdrArgv,
 	installHint,
+	missingClaudeFlags,
 	packetSummary,
 	parseActor,
 	parseAgentResult,
@@ -30,6 +33,7 @@ import {
 	parseState,
 	parseVersion,
 	prMismatch,
+	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
 	splitCli,
 	validateAgentAllow,
@@ -47,7 +51,12 @@ const tool = (name: string) => {
 };
 const result = (body: Record<string, unknown>) => JSON.stringify({ type: "result", total_cost_usd: 1.25, ...body });
 const done = result({ is_error: false, structured_output: { outcome: "done", reason: "changed and tested" } });
-const paths = { prompt: "/state dir/prompt.md", result: "/state dir/result.json", ghConfigDir: "/state dir/agent-gh" };
+const paths = {
+	prompt: "/state dir/prompt.md",
+	result: "/state dir/result.json",
+	ghConfigDir: "/state dir/agent-gh",
+	settings: "/state dir/agent-settings.json",
+};
 
 describe("argv builders", () => {
 	const ws = splitCli("workstream-local  --as agent-claude");
@@ -139,11 +148,44 @@ describe("argv builders", () => {
 describe("agent permissions", () => {
 	const line = agentRunLine(5, paths);
 
-	it("allow only exact read-only git rules and deny commit and push", () => {
-		expect(line).toContain("--allowedTools 'Bash(git status),Bash(git diff)'");
-		expect(line).toContain("--disallowedTools 'Bash(git push),Bash(git push *),Bash(git commit),Bash(git commit *)'");
-		expect(line).toContain("--permission-mode acceptEdits --permission-prompts none");
+	it("load no user, project or local settings, hooks, plugins or MCP servers", () => {
+		expect(line).toContain(
+			"claude -p --restricted --setting-sources '' --strict-mcp-config --disable-slash-commands --settings '/state dir/agent-settings.json' --tools Read,Edit,Write,Glob,Grep --permission-prompts none --max-budget-usd 5 --output-format json",
+		);
 		expect(line).toContain(`--json-schema '${JSON.stringify(AGENT_RESULT_SCHEMA)}'`);
+		// Permissions come only from the settings file; these flags merge with loaded sources.
+		for (const flag of ["--allowedTools", "--disallowedTools", "--permission-mode", "--bare", "Bash"])
+			expect(line).not.toContain(flag);
+	});
+
+	it("write the complete permission policy to the settings file", () => {
+		expect(agentSettings([])).toEqual({
+			permissions: {
+				allow: [],
+				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
+				defaultMode: "acceptEdits",
+			},
+		});
+		expect(agentSettings(["Bash(npm test)"])).toEqual({
+			permissions: {
+				allow: ["Bash(git status)", "Bash(git diff)", "Bash(npm test)"],
+				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
+				defaultMode: "acceptEdits",
+			},
+		});
+		expect(agentTools([])).toEqual(["Read", "Edit", "Write", "Glob", "Grep"]);
+		expect(agentTools(["Bash(npm test)"])).toEqual(["Read", "Edit", "Write", "Glob", "Grep", "Bash"]);
+	});
+
+	it("fail closed when claude lacks an isolation flag", () => {
+		const help = REQUIRED_CLAUDE_FLAGS.map((flag) => `  ${flag} <value>  description`).join("\n");
+		expect(missingClaudeFlags(help)).toEqual([]);
+		expect(missingClaudeFlags(help.replace("--restricted", "--unrelated"))).toEqual(["--restricted"]);
+		// Substrings of other flags do not count.
+		expect(missingClaudeFlags("  --allowedTools, --allowed-tools <tools...>\n  --settings-file x")).toContain(
+			"--tools",
+		);
+		expect(missingClaudeFlags("  --settings-file x")).toContain("--settings");
 	});
 
 	it("strip credentials from the agent environment and use private absolute paths", () => {
@@ -153,9 +195,9 @@ describe("agent permissions", () => {
 		expect(line.endsWith("< '/state dir/prompt.md' > '/state dir/result.json'; echo HSY_WORK_EXIT=$?")).toBe(true);
 	});
 
-	it("append validated extra rules", () => {
+	it("add Bash to the tools only for validated extra rules", () => {
 		expect(agentRunLine(5, paths, validateAgentAllow("Bash(npm test *), Bash(npm run check)"))).toContain(
-			"--allowedTools 'Bash(git status),Bash(git diff),Bash(npm test *),Bash(npm run check)'",
+			"--tools Read,Edit,Write,Glob,Grep,Bash --permission-prompts none",
 		);
 		expect(validateAgentAllow("Bash(npx-free test -- --run --reporter=dot)")).toEqual([
 			"Bash(npx-free test -- --run --reporter=dot)",

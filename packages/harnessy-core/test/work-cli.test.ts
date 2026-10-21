@@ -3,11 +3,12 @@ import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeWorkCommand } from "../src/cli/work.ts";
+import { REQUIRED_CLAUDE_FLAGS } from "../src/work/logic.ts";
 import type { WorkDeps } from "../src/work/run.ts";
 
 const TASK = "11111111-2222-4333-8444-555555555555";
 
-const fakeDeps = (herdrVersion = "herdr 0.9.2") => {
+const fakeDeps = (herdrVersion = "herdr 0.9.2", claudeHelp = REQUIRED_CLAUDE_FLAGS.join("\n")) => {
 	const calls: string[][] = [];
 	const deps: WorkDeps = {
 		platform: "linux",
@@ -20,7 +21,8 @@ const fakeDeps = (herdrVersion = "herdr 0.9.2") => {
 			calls.push([...argv]);
 			if (argv.includes("--version"))
 				return { exitCode: 0, stdout: argv[0] === "herdr" ? herdrVersion : "1.0.0", stderr: "" };
-			if (argv.includes("--help")) return { exitCode: 0, stdout: "usage", stderr: "" };
+			if (argv.includes("--help"))
+				return { exitCode: 0, stdout: argv[0] === "claude" ? claudeHelp : "usage", stderr: "" };
 			throw new Error(`dry run must not run ${argv.join(" ")}`);
 		},
 	};
@@ -94,6 +96,20 @@ describe("harnessy work CLI", () => {
 			ok: false,
 			hint: "curl -fsSL https://herdr.dev/install.sh | sh",
 		});
+		expect(process.exitCode).toBe(1);
+	});
+
+	it("refuses to run when claude cannot isolate the agent", async () => {
+		const fake = fakeDeps("herdr 0.9.5", "  --print\n  --settings <file>\n");
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
+		await runCli(fake.deps, ["--task", TASK, "--dry-run", "--json"]);
+		const report = printed(log);
+		expect(report.status).toBe("preflight_failed");
+		const claude = report.tools.find((tool: { name: string }) => tool.name === "claude");
+		expect(claude.ok).toBe(false);
+		expect(claude.problem).toContain("--restricted");
+		expect(claude.problem).toContain("--setting-sources");
+		expect(claude.problem).not.toContain("--settings,");
 		expect(process.exitCode).toBe(1);
 	});
 

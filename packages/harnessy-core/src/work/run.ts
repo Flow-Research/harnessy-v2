@@ -7,6 +7,7 @@ import {
 	ATTESTATION,
 	agentPrompt,
 	agentRunLine,
+	agentSettings,
 	bindingMismatch,
 	buildProof,
 	checkTool,
@@ -18,6 +19,7 @@ import {
 	type HandoffReason,
 	herdrArgv,
 	isTaskId,
+	missingClaudeFlags,
 	packetSummary,
 	parseActor,
 	parseAssignment,
@@ -34,6 +36,7 @@ import {
 	parseTask,
 	prBody,
 	prMismatch,
+	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
 	TERMINAL_PREPARATION_STATUSES,
 	type ToolCheck,
@@ -168,9 +171,23 @@ export const preflight = async (deps: WorkDeps, workstreamCli: ReadonlyArray<str
 		const argv =
 			tool.name === "workstream" ? [...workstreamCli, ...tool.probeArgs] : [tool.executable, ...tool.probeArgs];
 		const probe = await deps.run(argv, { timeoutMs: PROBE_TIMEOUT_MS });
-		checks.push(checkTool(tool, probe, deps.platform));
+		const check = checkTool(tool, probe, deps.platform);
+		checks.push(tool.name === "claude" && check.ok ? await claudeIsolationCheck(deps, check) : check);
 	}
 	return checks;
+};
+
+/** Fail closed unless this Claude Code supports every flag the agent isolation relies on. */
+const claudeIsolationCheck = async (deps: WorkDeps, check: ToolCheck): Promise<ToolCheck> => {
+	const help = await deps.run(["claude", "--help"], { timeoutMs: PROBE_TIMEOUT_MS });
+	const missing = help.exitCode === 0 ? missingClaudeFlags(`${help.stdout}\n${help.stderr}`) : REQUIRED_CLAUDE_FLAGS;
+	if (missing.length === 0) return check;
+	return {
+		...check,
+		ok: false,
+		problem: `cannot isolate the agent: claude --help lacks ${missing.join(", ")}`,
+		hint: "Upgrade Claude Code: npm i -g @anthropic-ai/claude-code",
+	};
 };
 
 const privateDir = (path: string) => {
@@ -209,6 +226,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		prompt: join(stateDir, "prompt.md"),
 		result: join(stateDir, "result.json"),
 		ghConfigDir: join(stateDir, "agent-gh"),
+		settings: join(stateDir, "agent-settings.json"),
 	};
 	const ws = options.workstreamCli;
 
@@ -353,6 +371,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	if (state.headSha === undefined) {
 		if (state.pane === undefined) rmSync(paths.result, { force: true });
 		writePrivate(paths.prompt, agentPrompt(task));
+		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow), null, 2)}\n`);
 		let pane = state.pane;
 		if (pane === undefined) {
 			const created = parseJson(

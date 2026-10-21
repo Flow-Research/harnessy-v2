@@ -372,8 +372,16 @@ export const AGENT_RESULT_SCHEMA = {
 } as const;
 
 /**
- * Exact read-only rules. The agent never commits or pushes: Harnessy commits
- * after the stop rule, with hooks disabled, and pushes only an approved SHA.
+ * Built-in tools the agent gets. `--restricted` removes every code-running
+ * tool not named here, so by default the agent can read and edit files but
+ * has no shell. Bash is added only when `--agent-allow` names commands.
+ */
+export const AGENT_BASE_TOOLS: ReadonlyArray<string> = ["Read", "Edit", "Write", "Glob", "Grep"];
+
+/**
+ * Exact read-only git rules granted alongside any `--agent-allow` rules. The
+ * agent never commits or pushes: Harnessy commits after the stop rule, with
+ * hooks disabled, and pushes only an approved SHA.
  */
 export const AGENT_ALLOWED_TOOLS: ReadonlyArray<string> = ["Bash(git status)", "Bash(git diff)"];
 export const AGENT_DISALLOWED_TOOLS: ReadonlyArray<string> = [
@@ -485,10 +493,55 @@ const SHELL_SAFE = /^[A-Za-z0-9_./:@%+=,-]+$/;
 export const shellWord = (word: string): string =>
 	word !== "" && SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 
+/**
+ * Claude Code settings for the agent: the complete permission policy. The run
+ * line loads no user, project or local settings (`--restricted` and
+ * `--setting-sources ""`), so nothing else can widen it. Julian's user
+ * settings allow plain `Bash`, and `--allowedTools` only adds to the loaded
+ * sources, which is how the first live run reached `npm test`.
+ */
+export const agentSettings = (extraAllowed: ReadonlyArray<string>) => ({
+	permissions: {
+		allow: extraAllowed.length === 0 ? [] : [...AGENT_ALLOWED_TOOLS, ...extraAllowed],
+		deny: [...AGENT_DISALLOWED_TOOLS],
+		defaultMode: "acceptEdits",
+	},
+});
+
+/** Tools for `--tools`: the base set, plus Bash only when rules allow commands. */
+export const agentTools = (extraAllowed: ReadonlyArray<string>): ReadonlyArray<string> =>
+	extraAllowed.length === 0 ? AGENT_BASE_TOOLS : [...AGENT_BASE_TOOLS, "Bash"];
+
+/**
+ * `claude` flags the isolation depends on. Preflight refuses to run when
+ * `claude --help` does not list every one, so an older Claude Code can never
+ * fall back to loading user settings, plugins, hooks or MCP servers.
+ */
+export const REQUIRED_CLAUDE_FLAGS: ReadonlyArray<string> = [
+	"--restricted",
+	"--setting-sources",
+	"--settings",
+	"--tools",
+	"--strict-mcp-config",
+	"--disable-slash-commands",
+	"--permission-prompts",
+	"--json-schema",
+	"--max-budget-usd",
+	"--output-format",
+];
+
+/** Required isolation flags missing from `claude --help` output. */
+export const missingClaudeFlags = (help: string): ReadonlyArray<string> =>
+	REQUIRED_CLAUDE_FLAGS.filter(
+		(flag) => !new RegExp(`(^|[\\s,])${flag.replaceAll("-", "\\-")}(?=[\\s,=<]|$)`, "m").test(help),
+	);
+
 /** Files the pane line reads and writes. All live in Harnessy's private state directory. */
 export interface AgentPaths {
 	readonly prompt: string;
 	readonly result: string;
+	/** The `agentSettings` JSON, written 0600 before the run. */
+	readonly settings: string;
 	/** Empty directory that makes `gh` unauthenticated inside the agent. */
 	readonly ghConfigDir: string;
 }
@@ -520,18 +573,24 @@ export const agentRunLine = (
 		`GH_CONFIG_DIR=${paths.ghConfigDir}`,
 		"claude",
 		"-p",
+		// No user, project or local settings: no inherited allow rules, hooks,
+		// plugins or worktree-editable project policy. OAuth comes from the
+		// keychain, so auth still works; `--bare` would disable OAuth.
+		"--restricted",
+		"--setting-sources",
+		"",
+		"--strict-mcp-config",
+		"--disable-slash-commands",
+		"--settings",
+		paths.settings,
+		"--tools",
+		agentTools(extraAllowed).join(","),
+		"--permission-prompts",
+		"none",
 		"--max-budget-usd",
 		String(budgetUsd),
 		"--output-format",
 		"json",
-		"--permission-mode",
-		"acceptEdits",
-		"--permission-prompts",
-		"none",
-		"--allowedTools",
-		[...AGENT_ALLOWED_TOOLS, ...extraAllowed].join(","),
-		"--disallowedTools",
-		AGENT_DISALLOWED_TOOLS.join(","),
 		"--json-schema",
 		JSON.stringify(AGENT_RESULT_SCHEMA),
 	];

@@ -53,12 +53,26 @@
     worktree, branch, base, WorkStream CLI argv and WorkStream actor; a resume
     with any difference is refused, and the actor is re-checked before claim,
     prepare and submit.
-  - The agent may only edit files and run exact `git status`/`git diff`, plus
-    validated `--agent-allow` rules (plain words, optional trailing `*`, no
-    interpreters, shells, git, gh or network tools). Harnessy commits after the
-    stop rule with repository hooks disabled, refuses changes under `.github/`,
-    detects a rewritten worktree `.git` file, and pushes only the exact
-    commit, and only on a re-run with `--approve-push` after local review.
+  - The agent runs `claude -p --restricted --setting-sources ""
+    --strict-mcp-config --disable-slash-commands --settings <state>/agent-settings.json
+    --tools Read,Edit,Write,Glob,Grep`. No user, project or local settings
+    load, so no inherited allow rules, hooks, third-party plugins, MCP servers,
+    skills or worktree-editable project policy apply. The 0600 settings file
+    is the complete permission policy (`allow`, `deny`, `defaultMode`).
+    `--allowedTools` is not used, because it only adds to the loaded sources:
+    the first live run (2026-10-21) inherited Julian's user rule
+    `permissions.allow: ["Bash"]` and ran `npm test` and `npm run check`
+    although only `git status` and `git diff` were allowed. Bash is available
+    only when validated `--agent-allow` rules (plain words, optional trailing
+    `*`, no interpreters, shells, git, gh or network tools) are given, together
+    with exact `git status`/`git diff`. Preflight refuses to run when
+    `claude --help` lacks any isolation flag. `--bare` is not used because it
+    disables OAuth. Live probes on Claude Code 2.1.304 confirmed the
+    behaviour: no hooks ran, only built-in plugins loaded, and OAuth worked.
+  - Harnessy commits after the stop rule with repository hooks disabled,
+    refuses changes under `.github/`, detects a rewritten worktree `.git`
+    file, and pushes only the exact commit, and only on a re-run with
+    `--approve-push` after local review.
   - PRs open as drafts. An existing PR is adopted only when it is in the same
     repository (not a fork) with the same head branch, base and pushed SHA.
     The merged head must equal the pushed SHA, and CI evidence must be a
