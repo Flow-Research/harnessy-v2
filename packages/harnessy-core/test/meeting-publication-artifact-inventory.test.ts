@@ -143,25 +143,41 @@ describe("meeting runtime artifact inventory", () => {
 		expect(instrumentation.reads).toBe(reads * 2);
 	});
 
-	it("rejects an earlier hashed file changed during an async yield", async () => {
-		const value = fixture(1000);
-		let mutation: Promise<void> | undefined;
-		let changed = false;
-		instrumentation.onRead = () => {
-			if (mutation !== undefined) return;
-			mutation = eventLoopTurn().then(() => {
-				const first = value.paths[0] as string;
-				const bytes = readFileSync(first);
-				bytes[0] = bytes[0] === 120 ? 121 : 120;
-				writeFileSync(first, bytes);
-				changed = true;
-			});
-		};
-		await expect(value.checkAsync()).rejects.toThrow(MeetingPublicationSmokeRuntimeError);
-		await mutation;
-		expect(changed).toBe(true);
-		expect(instrumentation.reads).toBe(value.paths.length * 2);
-	});
+	// The cooperative runner yields when its wall-clock slice expires, so a slow
+	// runner could yield while file 0 was still open and fail it there instead
+	// (#146). The slice clock is frozen and expires on the first read of file
+	// `yieldAt`, so the only yield after start lands after file 0 was hashed and
+	// closed. Each run moves that yield point to prove the outcome is not timing.
+	it.for(Array.from({ length: 20 }, (_, run) => 1 + run * 50))(
+		"rejects an earlier hashed file changed during an async yield at file %i",
+		async (yieldAt) => {
+			const value = fixture(1000);
+			let clock = 0;
+			const now = vi.spyOn(performance, "now").mockImplementation(() => clock);
+			let mutation: Promise<void> | undefined;
+			let readsAtMutation = 0;
+			// Each small file takes one data read and one end-of-file read.
+			instrumentation.onRead = () => {
+				if (mutation !== undefined || instrumentation.reads !== yieldAt * 2 + 1) return;
+				clock += 1000;
+				mutation = eventLoopTurn().then(() => {
+					const first = value.paths[0] as string;
+					const bytes = readFileSync(first);
+					bytes[0] = bytes[0] === 120 ? 121 : 120;
+					writeFileSync(first, bytes);
+					readsAtMutation = instrumentation.reads;
+				});
+			};
+			try {
+				await expect(value.checkAsync()).rejects.toThrow(MeetingPublicationSmokeRuntimeError);
+			} finally {
+				now.mockRestore();
+			}
+			await mutation;
+			expect(readsAtMutation).toBe(yieldAt * 2 + 1);
+			expect(instrumentation.reads).toBe(value.paths.length * 2);
+		},
+	);
 
 	it("stops async filesystem work on cancellation without a background reader", async () => {
 		const value = fixture(1000);
