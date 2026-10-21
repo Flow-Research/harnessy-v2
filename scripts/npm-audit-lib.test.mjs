@@ -51,6 +51,7 @@ test("root npm audit ignores transitive-only entries and rejects malformed evide
 });
 
 test("checked-in root audit exceptions are well formed", () => {
-	assert.ok(npmAuditExceptions.length > 0);
+	// An empty list is valid: every root advisory currently has a fix.
+	assert.ok(Array.isArray(npmAuditExceptions));
 	for (const exception of npmAuditExceptions) assert.match(exception.url, /^https:\/\/github\.com\/advisories\/GHSA-/);
 });

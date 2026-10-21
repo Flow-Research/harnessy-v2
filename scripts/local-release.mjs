@@ -11,6 +11,7 @@ import { stageV1Compatibility } from "./v1-compatibility-lib.mjs";
 import { installLocalJarvisRuntime } from "./install-local-jarvis-runtime.mjs";
 import { stageLocalServiceRuntime } from "./stage-local-service-runtime.mjs";
 import { prepareReleaseInstaller } from "./prepare-release-installer.mjs";
+import { releaseInstallManifest } from "./release-install-overrides.mjs";
 
 const packages = localReleasePackages([currentExecutorPlatformTag()]).map((pkg) => ({
 	...pkg,
@@ -247,7 +248,7 @@ if (!options.skipInstall) {
 	const dependencies = Object.fromEntries(
 		packages.map((pkg) => [pkg.installName ?? pkg.name, fileSpecifier(nodeInstallDirectory, tarballs.get(pkg.key ?? pkg.name))]),
 	);
-	const installPackageJson = `${JSON.stringify({ private: true, dependencies, overrides: dependencies }, undefined, "\t")}\n`;
+	const installPackageJson = `${JSON.stringify(releaseInstallManifest(dependencies), undefined, "\t")}\n`;
 	writeFileSync(join(nodeInstallDirectory, "package.json"), installPackageJson);
 
 	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: nodeInstallDirectory });
@@ -273,7 +274,7 @@ if (!options.skipInstall) {
 		const bunDependencies = Object.fromEntries(
 			packages.map((pkg) => [pkg.installName ?? pkg.name, fileSpecifier(bunInstallDirectory, tarballs.get(pkg.key ?? pkg.name))]),
 		);
-		writeFileSync(join(bunInstallDirectory, "package.json"), `${JSON.stringify({ private: true, dependencies: bunDependencies, overrides: bunDependencies }, undefined, "\t")}\n`);
+		writeFileSync(join(bunInstallDirectory, "package.json"), `${JSON.stringify(releaseInstallManifest(bunDependencies), undefined, "\t")}\n`);
 		run("bun", ["install", "--production", "--ignore-scripts"], { cwd: bunInstallDirectory });
 		createPiShim(bunInstallDirectory);
 	}

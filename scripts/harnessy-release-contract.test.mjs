@@ -15,6 +15,7 @@ import {
 	packedReleasePackages,
 	validateReleaseManifest,
 } from "./harnessy-release-contract.mjs";
+import { releaseInstallManifest, releaseInstallOverrides } from "./release-install-overrides.mjs";
 
 test("canonical packed release includes Harnessy packages and a platform runtime", () => {
 	const packages = packedReleasePackages(["linux-x64"]);
@@ -200,4 +201,24 @@ test("publication uses only artifacts whose packed integrity matches the strict 
 		/differs from the strictly verified/u,
 	);
 	assert.throws(() => assertPublicationMatchesEvidence([state], []), /omitted publication artifact/u);
+});
+
+test("isolated release installs pin the MCP SDK the root workspace pins", () => {
+	const root = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+	const engine = JSON.parse(readFileSync(new URL("../packages/harnessy-engine/package.json", import.meta.url), "utf8"));
+	const pinned = root.overrides["@modelcontextprotocol/sdk"];
+	// npm 11 applies root overrides to agents only through a root edge; see V2D-009.
+	assert.equal(root.devDependencies.agents, engine.dependencies.agents);
+	assert.equal(releaseInstallOverrides["@modelcontextprotocol/sdk"], pinned);
+	assert.equal(engine.dependencies["@modelcontextprotocol/sdk"], pinned);
+	const fixture = JSON.parse(
+		readFileSync(new URL("../packages/harnessy-engine/test/fixtures/cloudflare-worker/package.json", import.meta.url), "utf8"),
+	);
+	assert.equal(fixture.overrides["@modelcontextprotocol/sdk"], pinned);
+	const dependencies = { "@harnessy/core": "file:/tmp/core.tgz" };
+	assert.deepEqual(releaseInstallManifest(dependencies), {
+		private: true,
+		dependencies,
+		overrides: { "@modelcontextprotocol/sdk": pinned, "@harnessy/core": "file:/tmp/core.tgz" },
+	});
 });

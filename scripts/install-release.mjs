@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { satisfies } from "semver";
 import { formatNpmAuditReport, runNpmAudit } from "./npm-audit-lib.mjs";
+import { releaseInstallManifest } from "./release-install-overrides.mjs";
 import { stageV1Compatibility } from "./v1-compatibility-lib.mjs";
 import { installLocalJarvisRuntime } from "./install-local-jarvis-runtime.mjs";
 import { stageLocalServiceRuntime } from "./stage-local-service-runtime.mjs";
@@ -153,7 +154,7 @@ async function stageRelease(inspected, destination) {
 	const target = join(realpathSync(dirname(destination)), basename(destination));
 	// Never adopt, delete or overwrite an existing directory, even on failure.
 	mkdirSync(target, { mode: 0o700 });
-	writeFileSync(join(target, "package.json"), JSON.stringify({ private: true, dependencies, overrides: dependencies }, null, 2));
+	writeFileSync(join(target, "package.json"), JSON.stringify(releaseInstallManifest(dependencies), null, 2));
 	const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 	const installed = spawnSync(npm, ["install", "--omit=dev", "--ignore-scripts"], { cwd: target, stdio: "inherit", shell: process.platform === "win32" });
 	if (installed.error || installed.status !== 0) throw new Error("Release installation failed; incomplete directory preserved for inspection");
