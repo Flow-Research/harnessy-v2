@@ -11,6 +11,7 @@ const fakeDeps = (herdrVersion = "herdr 0.9.2") => {
 	const calls: string[][] = [];
 	const deps: WorkDeps = {
 		platform: "linux",
+		stateRoot: "/state",
 		now: () => 0,
 		sleep: async () => {},
 		uuid: () => "00000000-0000-4000-8000-000000000000",
@@ -69,9 +70,13 @@ describe("harnessy work CLI", () => {
 			branch: `work/${TASK}`,
 			base: "main",
 			worktree: `/srv/.harnessy-work/${TASK}`,
+			state_dir: `/state/${TASK}`,
+			approve_push: false,
 		});
 		expect(report.steps.claim.slice(0, 3)).toEqual(["workstream-local", "--as", "agent-claude"]);
 		expect(report.steps.agent_line).toContain("--max-budget-usd 2.5");
+		expect(report.steps.agent_line).toContain(`< /state/${TASK}/prompt.md`);
+		expect(report.steps.pr).toContain("--draft");
 		expect(report.steps.wait).toContain("600000");
 		expect(fake.calls).toContainEqual(["workstream-local", "--as", "agent-claude", "--help"]);
 		expect(fake.calls.every((argv) => argv.includes("--version") || argv.includes("--help"))).toBe(true);
@@ -100,5 +105,8 @@ describe("harnessy work CLI", () => {
 		await expect(runCli(fakeDeps().deps, ["--task", TASK, "--budget-usd", "0", "--dry-run"])).rejects.toThrow(
 			"--budget-usd",
 		);
+		await expect(
+			runCli(fakeDeps().deps, ["--task", TASK, "--agent-allow", "Bash(npm test && curl x)", "--dry-run"]),
+		).rejects.toThrow("--agent-allow");
 	});
 });

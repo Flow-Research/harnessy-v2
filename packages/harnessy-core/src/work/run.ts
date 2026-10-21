@@ -1,13 +1,16 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import {
 	ATTESTATION,
 	agentPrompt,
 	agentRunLine,
+	bindingMismatch,
 	buildProof,
 	checkTool,
+	ciConfigPaths,
 	evaluateStopRule,
 	field,
 	ghArgv,
@@ -16,6 +19,7 @@ import {
 	herdrArgv,
 	isTaskId,
 	packetSummary,
+	parseActor,
 	parseAssignment,
 	parseExitMarker,
 	parseJson,
@@ -28,9 +32,12 @@ import {
 	parseState,
 	parseTask,
 	prBody,
+	prMismatch,
 	TERMINAL_PREPARATION_STATUSES,
 	type ToolCheck,
+	validateAgentAllow,
 	WORK_TOOLS,
+	type WorkBinding,
 	type WorkState,
 	wsArgv,
 } from "./logic.ts";
@@ -50,7 +57,7 @@ export type Run = (
 	options?: { readonly cwd?: string; readonly timeoutMs?: number },
 ) => Promise<RunResult>;
 
-/** Everything `runWork` touches besides the filesystem under the worktree. */
+/** Everything `runWork` touches besides the worktree and the private state directory. */
 export interface WorkDeps {
 	readonly run: Run;
 	readonly platform: string;
@@ -58,6 +65,8 @@ export interface WorkDeps {
 	readonly sleep: (ms: number) => Promise<void>;
 	readonly uuid: () => string;
 	readonly log: (line: string) => void;
+	/** Parent of the per-task private state directories, outside any agent worktree. */
+	readonly stateRoot: string;
 }
 
 export interface WorkOptions {
@@ -69,8 +78,10 @@ export interface WorkOptions {
 	readonly mergeWaitHours: number;
 	readonly workstreamCli: ReadonlyArray<string>;
 	readonly taskUrl?: string;
-	/** Extra Claude Code tool rules, e.g. `Bash(npm test *)`, so the agent can run tests. */
+	/** Extra validated Claude Code rules, e.g. `Bash(npm test *)`, so the agent can run tests. */
 	readonly agentAllow?: string;
+	/** Push the reviewed local commit. Without it the run stops after the commit for review. */
+	readonly approvePush: boolean;
 	readonly dryRun: boolean;
 }
 
@@ -117,6 +128,10 @@ export const execRun: Run = (argv, options) =>
 		);
 	});
 
+/** `$XDG_STATE_HOME/harnessy/work`, defaulting to `~/.local/state/harnessy/work`. */
+export const defaultStateRoot = (): string =>
+	join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "harnessy", "work");
+
 /** Live dependencies for the CLI. */
 export const liveWorkDeps = (): WorkDeps => ({
 	run: execRun,
@@ -125,12 +140,13 @@ export const liveWorkDeps = (): WorkDeps => ({
 	sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
 	uuid: randomUUID,
 	log: (line) => process.stderr.write(`${line}\n`),
+	stateRoot: defaultStateRoot(),
 });
 
 /** Worktree path for a task: a sibling `.harnessy-work/<task>` of the target checkout. */
 export const worktreePath = (repo: string, task: string): string => resolve(repo, "..", ".harnessy-work", task);
 
-/** Desktop notification. Only fixed text, task ids and PR numbers enter the message. */
+/** Desktop notification. Only fixed text, task ids, PR numbers and SHAs enter the message. */
 export const notify = async (deps: WorkDeps, message: string): Promise<void> => {
 	if (deps.platform !== "darwin") return;
 	const safe = message.replace(/[\\"]/g, "");
@@ -151,22 +167,44 @@ export const preflight = async (deps: WorkDeps, workstreamCli: ReadonlyArray<str
 	return checks;
 };
 
+const privateDir = (path: string) => {
+	mkdirSync(path, { recursive: true, mode: 0o700 });
+	chmodSync(path, 0o700);
+};
+
+const writePrivate = (path: string, data: string | Buffer) => {
+	writeFileSync(path, data, { mode: 0o600 });
+	chmodSync(path, 0o600);
+};
+
+/** Raw `.git` file content of a linked worktree, or undefined when it is missing or not a regular file. */
+const readGitFile = (worktree: string): string | undefined => {
+	const path = join(worktree, ".git");
+	return existsSync(path) && lstatSync(path).isFile() ? readFileSync(path, "utf8") : undefined;
+};
+
 /**
- * Run one WorkStream task through claim, agent, pull request, merge and
- * submission. Every step records its result in `state.json` first, so a
- * re-run resumes and replays the same idempotency keys.
+ * Run one WorkStream task through claim, agent, local review, draft pull
+ * request, merge and submission. State lives in a private directory outside
+ * the agent's worktree, is bound to its inputs, and every step records its
+ * result before the next, so a re-run resumes with the same idempotency keys.
  */
 export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> => {
 	if (!isTaskId(options.task)) throw new Error("--task must be a WorkStream task UUID");
+	const agentAllow = validateAgentAllow(options.agentAllow);
 	const repo = resolve(options.repo);
 	const worktree = worktreePath(repo, options.task);
 	const branch = `work/${options.task}`;
-	const stateDir = join(worktree, ".harnessy-work");
+	const stateDir = join(deps.stateRoot, options.task);
+	const paths = {
+		prompt: join(stateDir, "prompt.md"),
+		result: join(stateDir, "result.json"),
+		ghConfigDir: join(stateDir, "agent-gh"),
+	};
 	const ws = options.workstreamCli;
 
 	const tools = await preflight(deps, ws);
-	const missing = tools.filter((tool) => !tool.ok);
-	if (missing.length > 0) return { exitCode: 1, report: { status: "preflight_failed", tools } };
+	if (tools.some((tool) => !tool.ok)) return { exitCode: 1, report: { status: "preflight_failed", tools } };
 
 	if (options.dryRun)
 		return {
@@ -178,17 +216,21 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 				worktree,
 				branch,
 				base: options.base,
+				state_dir: stateDir,
+				approve_push: options.approvePush,
 				tools,
 				steps: {
+					whoami: wsArgv.whoami(ws),
 					show: wsArgv.show(ws, options.task),
 					claim: wsArgv.claim(ws, options.task, "<claim-key>"),
 					start: wsArgv.start(ws, options.task, "<start-key>"),
 					fetch: gitArgv.fetch(repo),
 					worktree: gitArgv.worktreeAdd(repo, worktree, branch, options.base),
 					herdr: herdrArgv.workspaceCreate(worktree, options.task),
-					agent_line: agentRunLine(options.budgetUsd, options.agentAllow),
+					agent_line: agentRunLine(options.budgetUsd, paths, agentAllow),
 					wait: herdrArgv.waitOutput("<pane>", options.maxMinutes * 60_000),
-					push: gitArgv.push(worktree, branch),
+					commit: gitArgv.commit(worktree, options.task),
+					push: gitArgv.push(worktree, branch, "<reviewed-sha>"),
 					pr: ghArgv.prCreate(options.base, branch, "<task title>", join(stateDir, "pr-body.md")),
 				},
 			},
@@ -202,37 +244,63 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			);
 		return result.stdout;
 	};
+	const whoami = async () => parseActor(await must(wsArgv.whoami(ws), "WorkStream whoami"));
+
+	privateDir(stateDir);
+	privateDir(paths.ghConfigDir);
+	const binding: WorkBinding = {
+		repo,
+		worktree,
+		branch,
+		base: options.base,
+		workstreamCli: [...ws],
+		actor: await whoami(),
+	};
+
+	const statePath = join(stateDir, "state.json");
+	const saved = existsSync(statePath) ? parseState(readFileSync(statePath, "utf8"), options.task) : undefined;
+	if (existsSync(statePath) && saved === undefined)
+		throw new Error(`Refusing to resume: ${statePath} is not a valid state file for task ${options.task}`);
+	if (saved !== undefined) {
+		const mismatch = bindingMismatch(saved.binding, binding);
+		if (mismatch !== undefined)
+			throw new Error(`Refusing to resume task ${options.task}: saved state has a different ${mismatch}`);
+	}
 
 	deps.log(`Reading WorkStream task ${options.task}`);
 	const task = parseTask(await must(wsArgv.show(ws, options.task), "WorkStream task show"), options.task);
 
+	if (saved === undefined && existsSync(worktree))
+		throw new Error(`Refusing to adopt ${worktree}: it exists but no Harnessy state records it`);
 	if (!existsSync(worktree)) {
 		deps.log(`Creating worktree ${worktree}`);
 		await must(gitArgv.fetch(repo), "git fetch");
 		await must(gitArgv.worktreeAdd(repo, worktree, branch, options.base), "git worktree add");
 	}
-	mkdirSync(stateDir, { recursive: true });
-	// The directory ignores itself, so neither the agent nor a later `git add -A` commits it.
-	writeFileSync(join(stateDir, ".gitignore"), "*\n");
+	const gitFile = saved?.gitFile ?? readGitFile(worktree);
+	if (gitFile === undefined) throw new Error(`${worktree} is not a linked git worktree`);
 
-	const statePath = join(stateDir, "state.json");
-	let state: WorkState = (existsSync(statePath)
-		? parseState(readFileSync(statePath, "utf8"), options.task)
-		: undefined) ?? {
-		schema: "harnessy.work.state.v1",
+	let state: WorkState = saved ?? {
+		schema: "harnessy.work.state.v2",
 		taskId: options.task,
 		startedAt: deps.now(),
+		binding,
+		gitFile,
 		keys: { claim: deps.uuid(), start: deps.uuid(), prepare: deps.uuid() },
 		summary: packetSummary(task.title, options.task),
 	};
 	const save = (next: Partial<WorkState>) => {
 		state = { ...state, ...next };
-		writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+		writePrivate(statePath, `${JSON.stringify(state, null, 2)}\n`);
 	};
 	save({});
 
-	const handoff = async (reason: HandoffReason, detail: string, costUsd?: number): Promise<WorkOutcome> => {
-		await notify(deps, `Task needs attention: ${reason.replaceAll("_", " ")}.`);
+	const handoff = async (
+		reason: HandoffReason,
+		detail: string,
+		extra: Readonly<Record<string, unknown>> = {},
+	): Promise<WorkOutcome> => {
+		await notify(deps, `Task ${options.task.slice(0, 8)} needs attention: ${reason.replaceAll("_", " ")}.`);
 		return {
 			exitCode: 2,
 			report: {
@@ -241,13 +309,24 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 				detail,
 				task_id: options.task,
 				worktree,
-				...(costUsd === undefined ? {} : { cost_usd: costUsd }),
 				...(state.pr === undefined ? {} : { pr_url: state.pr.url }),
+				...extra,
 			},
 		};
 	};
+	/** The agent can edit the worktree's `.git` file to point git at a hostile config. */
+	const worktreeIntact = () => readGitFile(worktree) === state.gitFile;
+	/** The same WorkStream actor must run every mutation, including after long waits. */
+	const assertActor = async () => {
+		const actor = await whoami();
+		if (actor !== state.binding.actor)
+			throw new Error(
+				`WorkStream identity changed mid-run (${state.binding.actor} -> ${actor}); refusing to continue`,
+			);
+	};
 
 	if (state.assignmentId === undefined) {
+		await assertActor();
 		deps.log("Claiming task");
 		save({
 			assignmentId: parseAssignment(
@@ -262,10 +341,9 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		save({ started: true });
 	}
 
-	if (state.agent === undefined) {
-		const resultPath = join(stateDir, "result.json");
-		writeFileSync(join(stateDir, "prompt.md"), agentPrompt(task));
-		if (state.pane === undefined) rmSync(resultPath, { force: true });
+	if (state.headSha === undefined) {
+		if (state.pane === undefined) rmSync(paths.result, { force: true });
+		writePrivate(paths.prompt, agentPrompt(task));
 		let pane = state.pane;
 		if (pane === undefined) {
 			const created = parseJson(
@@ -277,102 +355,168 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			// Recorded before the run starts: a re-run re-attaches instead of starting a second agent.
 			save({ pane });
 			deps.log(`Running agent in herdr pane ${pane}`);
-			await must(herdrArgv.paneRun(pane, agentRunLine(options.budgetUsd, options.agentAllow)), "herdr pane run");
+			await must(herdrArgv.paneRun(pane, agentRunLine(options.budgetUsd, paths, agentAllow)), "herdr pane run");
 		} else deps.log(`Re-attaching to agent in herdr pane ${pane}`);
 		const waited = await deps.run(herdrArgv.waitOutput(pane, options.maxMinutes * 60_000));
 		const timedOut = waited.exitCode !== 0;
 		if (timedOut) await deps.run(herdrArgv.interrupt(pane));
-		const count = await deps.run(gitArgv.newCommitCount(worktree, options.base));
+		save({ pane: undefined });
+		if (!worktreeIntact())
+			return handoff("worktree_tampered", "the worktree's .git file changed during the agent run");
+
+		const status = await must(gitArgv.status(worktree), "git status");
+		const dirty = status.split("\n").filter((line) => line.trim() !== "").length;
+		const ahead = Number.parseInt(
+			(await must(gitArgv.newCommitCount(worktree, options.base), "git rev-list")).trim(),
+			10,
+		);
 		const decision = evaluateStopRule({
 			timedOut,
 			...(timedOut ? {} : { exitCode: parseExitMarker(waited.stdout) }),
-			...(existsSync(resultPath) ? { resultText: readFileSync(resultPath, "utf8") } : {}),
+			...(existsSync(paths.result) ? { resultText: readFileSync(paths.result, "utf8") } : {}),
 			budgetUsd: options.budgetUsd,
-			newCommits: count.exitCode === 0 ? Number.parseInt(count.stdout.trim(), 10) || 0 : 0,
+			changes: dirty + (Number.isFinite(ahead) ? ahead : 0),
 		});
-		// A finished or interrupted run releases its pane; the next run starts a fresh agent.
-		save({ pane: undefined });
-		if (decision.kind === "handoff") return handoff(decision.reason, decision.detail, decision.costUsd);
-		save({ agent: { costUsd: decision.costUsd, reason: decision.reason } });
+		if (decision.kind === "handoff")
+			return handoff(
+				decision.reason,
+				decision.detail,
+				decision.costUsd === undefined ? {} : { cost_usd: decision.costUsd },
+			);
+		if (dirty > 0) {
+			await must(gitArgv.addAll(worktree), "git add");
+			await must(gitArgv.commit(worktree, options.task), "git commit");
+		}
+		save({
+			agent: { costUsd: decision.costUsd, reason: decision.reason },
+			headSha: (await must(gitArgv.head(worktree), "git rev-parse")).trim(),
+		});
 	}
+	const headSha = state.headSha ?? "";
 	const agent = state.agent ?? { costUsd: 0, reason: "" };
 
 	if (state.pr === undefined) {
-		deps.log(`Pushing ${branch}`);
-		await must(gitArgv.push(worktree, branch), "git push");
-		save({ repo: parseRepoName(await must(ghArgv.repo(), "gh repo view", worktree)) });
-		// Adopt a PR opened by an earlier run that stopped before recording it.
-		const existing = parsePrList(await must(ghArgv.prList(branch), "gh pr list", worktree));
-		if (existing !== undefined) save({ pr: existing });
-		else {
-			const bodyFile = join(stateDir, "pr-body.md");
-			writeFileSync(bodyFile, prBody(task, options.taskUrl, agent.costUsd, agent.reason));
-			save({
-				pr: parsePrUrl(
-					await must(ghArgv.prCreate(options.base, branch, state.summary, bodyFile), "gh pr create", worktree),
-				),
+		if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
+		const changed = (await must(gitArgv.changedPaths(worktree, options.base, headSha), "git diff"))
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line !== "");
+		const ci = ciConfigPaths(changed);
+		if (ci.length > 0)
+			return handoff("ci_config_changed", "the change edits CI configuration, which a same-repo PR would run", {
+				paths: ci,
 			});
+		if (!options.approvePush) {
+			await notify(
+				deps,
+				`Review commit ${headSha.slice(0, 12)} for task ${options.task.slice(0, 8)}, then re-run with --approve-push.`,
+			);
+			return handoff("awaiting_push_approval", "review the local commit, then re-run with --approve-push", {
+				head_sha: headSha,
+				review: ["git", "-C", worktree, "diff", `origin/${options.base}...${headSha}`],
+			});
+		}
+		deps.log(`Pushing ${headSha} to ${branch}`);
+		await must(gitArgv.push(worktree, branch, headSha), "git push");
+		const repoName = parseRepoName(await must(ghArgv.repo(), "gh repo view", worktree));
+		save({ repoName });
+		const expected = { repo: repoName, branch, base: options.base, headSha };
+		// Adopt only our own PR from an earlier interrupted run: same repo, branch, base and pushed SHA.
+		const sameRepo = parsePrList(await must(ghArgv.prList(branch), "gh pr list", worktree)).filter(
+			(pr) => !pr.isCrossRepository && pr.headRefName === branch,
+		);
+		const ours = sameRepo.find((pr) => prMismatch(pr, expected) === undefined);
+		if (ours !== undefined) save({ pr: { url: ours.url, number: ours.number } });
+		else {
+			const other = sameRepo.find((pr) => pr.state === "OPEN");
+			if (other !== undefined)
+				return handoff("pr_conflict", `PR #${other.number} already uses ${branch} with a different base or head`);
+			const bodyFile = join(stateDir, "pr-body.md");
+			writePrivate(bodyFile, prBody(task, options.taskUrl, agent.costUsd, agent.reason));
+			const created = parsePrUrl(
+				await must(ghArgv.prCreate(options.base, branch, state.summary, bodyFile), "gh pr create", worktree),
+			);
+			const check = prMismatch(parsePrView(await must(ghArgv.prView(created.number), "gh pr view", worktree)), {
+				...expected,
+				number: created.number,
+			});
+			if (check !== undefined) return handoff("pr_mismatch", check);
+			save({ pr: created });
 		}
 	}
 	const pr = state.pr ?? { url: "", number: 0 };
+	const expectedPr = { repo: state.repoName ?? "", branch, base: options.base, number: pr.number };
 
 	if (state.reviewRequested !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
 		const checks = await deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
 		const verdict = checks.exitCode === 0 ? "checks passed" : "checks need attention";
-		await notify(deps, `PR #${pr.number} is ready to review and merge (${verdict}).`);
+		await notify(
+			deps,
+			`Draft PR #${pr.number} is ready to review (${verdict}). Mark it ready and merge when satisfied.`,
+		);
 		save({ reviewRequested: true });
 	}
 
-	if (state.merge === undefined) {
+	if (state.mergeCommitSha === undefined) {
 		const deadline = deps.now() + options.mergeWaitHours * 3_600_000;
 		for (;;) {
 			const view = await deps.run(ghArgv.prView(pr.number), { cwd: worktree });
-			const pull = view.exitCode === 0 ? parsePrView(view.stdout) : undefined;
-			if (pull?.state === "MERGED") {
-				save({ merge: { headSha: pull.headSha ?? "", mergeCommitSha: pull.mergeCommitSha ?? "" } });
-				break;
+			if (view.exitCode === 0) {
+				const pull = parsePrView(view.stdout);
+				const mismatch = prMismatch(pull, expectedPr);
+				if (mismatch !== undefined) return handoff("pr_mismatch", mismatch);
+				if (pull.state === "MERGED") {
+					if (pull.headSha !== headSha)
+						return handoff("head_mismatch", `PR #${pr.number} merged ${pull.headSha}, not the pushed ${headSha}`);
+					if (pull.mergeCommitSha === undefined)
+						throw new Error(`PR #${pr.number} is merged but has no merge commit`);
+					save({ mergeCommitSha: pull.mergeCommitSha });
+					break;
+				}
+				if (pull.state === "CLOSED") return handoff("pr_closed", `PR #${pr.number} was closed without merging`);
 			}
-			if (pull?.state === "CLOSED") return handoff("pr_closed", `PR #${pr.number} was closed without merging`);
 			if (deps.now() >= deadline)
 				return handoff("merge_timeout", `PR #${pr.number} was not merged within ${options.mergeWaitHours} hours`);
 			await deps.sleep(MERGE_POLL_MS);
 		}
 	}
-	const merge = state.merge ?? { headSha: "", mergeCommitSha: "" };
 
-	// CI evidence comes from the completed run for the merged head commit, not whichever run is newest.
-	if (state.ci === undefined) {
-		for (let attempt = 1; ; attempt++) {
-			const runs = await deps.run(ghArgv.runList(merge.headSha), { cwd: worktree });
-			const ci = runs.exitCode === 0 ? parseRunList(runs.stdout, merge.headSha) : undefined;
-			if (ci !== undefined && ci.conclusion !== "") {
-				save({ ci });
-				break;
-			}
-			if (attempt >= CI_ATTEMPTS)
-				return handoff("ci_unresolved", `no completed CI run found for ${merge.headSha.slice(0, 12)}`);
-			await deps.sleep(MERGE_POLL_MS);
-		}
-	}
-
-	// Written once: a replayed preparation must upload the same ZIP bytes.
+	// Every proof field comes from git or GitHub at proof time; written once so replays upload the same bytes.
 	const proofZip = join(stateDir, "proof.zip");
 	if (!existsSync(proofZip)) {
+		const repoName = parseRepoName(await must(ghArgv.repo(), "gh repo view", worktree));
+		if (repoName !== state.repoName)
+			return handoff("pr_mismatch", `repository is now ${repoName}, not ${state.repoName}`);
+		const merged = parsePrView(await must(ghArgv.prView(pr.number), "gh pr view", worktree));
+		const mismatch = prMismatch(merged, { ...expectedPr, headSha });
+		if (mismatch !== undefined) return handoff("pr_mismatch", mismatch);
+		if (merged.state !== "MERGED" || merged.mergeCommitSha === undefined)
+			return handoff("pr_mismatch", `PR #${pr.number} is ${merged.state}, not merged`);
+		let ci: { readonly url: string; readonly conclusion: string } | undefined;
+		for (let attempt = 1; ci === undefined; attempt++) {
+			const runs = await deps.run(ghArgv.runList(headSha), { cwd: worktree });
+			const found = runs.exitCode === 0 ? parseRunList(runs.stdout, headSha) : undefined;
+			if (found !== undefined && found.conclusion !== "") ci = found;
+			else if (attempt >= CI_ATTEMPTS)
+				return handoff("ci_unresolved", `no completed CI run found for ${headSha.slice(0, 12)}`);
+			else await deps.sleep(MERGE_POLL_MS);
+		}
 		const proof = buildProof({
 			task_id: options.task,
-			repo: state.repo ?? "",
-			commit_sha: merge.headSha,
-			merge_commit_sha: merge.mergeCommitSha,
-			pr_url: pr.url,
-			ci_run_url: state.ci?.url ?? "",
-			ci_conclusion: state.ci?.conclusion ?? "unknown",
+			repo: repoName,
+			commit_sha: merged.headSha,
+			merge_commit_sha: merged.mergeCommitSha,
+			pr_url: merged.url,
+			ci_run_url: ci.url,
+			ci_conclusion: ci.conclusion,
+			// Reported by the Claude Code process itself; the only cost source there is.
 			cost_usd: agent.costUsd,
 			duration_seconds: Math.round((deps.now() - state.startedAt) / 1000),
 		});
 		const json = Buffer.from(`${JSON.stringify(proof, null, 2)}\n`);
-		writeFileSync(join(stateDir, "proof.json"), json);
-		writeFileSync(proofZip, zipSingleFile("proof.json", json));
+		writePrivate(join(stateDir, "proof.json"), json);
+		writePrivate(proofZip, zipSingleFile("proof.json", json));
 	}
 
 	if (state.admissionId === undefined) {
@@ -385,6 +529,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			key: state.keys.prepare,
 		});
 		for (let attempt = 1; state.admissionId === undefined; attempt++) {
+			await assertActor();
 			deps.log(`Preparing submission (attempt ${attempt})`);
 			const preparation = parsePreparation(await must(argv, "WorkStream task prepare"));
 			if (preparation.status === "ready" && preparation.admissionId !== undefined) {
@@ -400,6 +545,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	}
 
 	if (state.submission === undefined) {
+		await assertActor();
 		deps.log("Submitting");
 		const receipt = await must(
 			wsArgv.submit(ws, {
@@ -414,14 +560,15 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		save({ submission: parseJson(receipt) ?? receipt.trim() });
 	}
 
-	await notify(deps, `Task submitted to WorkStream after PR #${pr.number} merged.`);
+	await notify(deps, `Task ${options.task.slice(0, 8)} submitted to WorkStream after PR #${pr.number} merged.`);
 	return {
 		exitCode: 0,
 		report: {
 			status: "submitted",
 			task_id: options.task,
 			pr_url: pr.url,
-			merge_commit_sha: merge.mergeCommitSha,
+			head_sha: headSha,
+			merge_commit_sha: state.mergeCommitSha,
 			admission_id: state.admissionId,
 			submission: state.submission,
 			proof: proofZip,

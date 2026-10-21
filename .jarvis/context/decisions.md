@@ -40,16 +40,43 @@
   `npm run qa:catalog` alone owns generated catalog output.
 - **WorkStream build loop (2026-10-21):** `harnessy work --task <id>` is a
   minimal sequential loop: plain async steps behind one injected argv-only
-  `run` function, with a thin Effect CLI wrapper. A merged, human-reviewed PR
-  is the only path to a WorkStream submission; every other stop (wall clock,
-  non-zero exit, missing or malformed `result.json`, cost over budget,
-  `blocked` outcome, no new commits, closed or unmerged PR, no completed CI run
-  for the merged head) is a hand-off with
-  exit 2 and a desktop notification, and nothing is pushed before the stop rule
-  passes. The required tools (herdr 0.9.0 or newer, `claude`, `gh`, `git`, the
-  WorkStream CLI) are one exported constant, `WORK_TOOLS`, so the list can move
-  into a capability manifest that `harnessy deps check` reads. Resume state and
-  idempotency keys live in the task worktree, not in Harnessy's runtime store.
+  `run` function, with a thin Effect CLI wrapper. The required tools (herdr
+  0.9.0 or newer, `claude`, `gh`, `git`, the WorkStream CLI) are one exported
+  constant, `WORK_TOOLS`, so the list can move into a capability manifest that
+  `harnessy deps check` reads. Trust model:
+  - WorkStream task text and everything the agent writes are untrusted. Task
+    text is fenced as data after the rules; neither it nor agent output can
+    choose the repository, branch, PR, permission rules or proof fields.
+  - Resume state, prompt, agent result, PR body and proof live in
+    `$XDG_STATE_HOME/harnessy/work/<task>/` (default `~/.local/state`), mode
+    0700/0600, outside the agent's worktree. State is bound to the task, repo,
+    worktree, branch, base, WorkStream CLI argv and WorkStream actor; a resume
+    with any difference is refused, and the actor is re-checked before claim,
+    prepare and submit.
+  - The agent may only edit files and run exact `git status`/`git diff`, plus
+    validated `--agent-allow` rules (plain words, optional trailing `*`, no
+    interpreters, shells, git, gh or network tools). Harnessy commits after the
+    stop rule with repository hooks disabled, refuses changes under `.github/`,
+    detects a rewritten worktree `.git` file, and pushes only the exact
+    commit, and only on a re-run with `--approve-push` after local review.
+  - PRs open as drafts. An existing PR is adopted only when it is in the same
+    repository (not a fork) with the same head branch, base and pushed SHA.
+    The merged head must equal the pushed SHA, and CI evidence must be a
+    completed run for that SHA. Proof fields are read from `gh` and `git` at
+    proof time; only `cost_usd` comes from the Claude Code result.
+  - Residual risks: an allowed test command runs repository code the agent
+    can edit, so it is code execution as the current user. The `env` prefix
+    that strips git and GitHub credentials is defense in depth, not a sandbox.
+    CI for a same-repository `pull_request` runs the pushed code with that
+    workflow's token permissions and any secrets it references. Today the
+    harnessy-v2 PR workflows (`ci.yml`, `pr-checks.yml`,
+    `qa-security-sweep.yml`) use `contents: read` and reference no secrets,
+    and `pr-gate.yml` (`pull_request_target`) does not check out PR code. Keep
+    it that way, and rely on branch protection with required review; local
+    approval before push and the `.github/` refusal cover the gap before review.
+  - Every stop other than a merged PR is a hand-off: exit 2, a desktop
+    notification and a JSON report. Nothing reaches GitHub before the stop rule
+    passes and the push is approved.
 
 ## Open decisions
 

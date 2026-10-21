@@ -48,6 +48,11 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 					"Extra Claude Code tool rules for tests, e.g. 'Bash(npm test *),Bash(npm run check *)'.",
 				),
 			),
+			approvePush: Flag.boolean("approve-push").pipe(
+				Flag.withDescription(
+					"Push the locally reviewed commit and open a draft PR. Without it the run stops for review.",
+				),
+			),
 			dryRun: Flag.boolean("dry-run").pipe(
 				Flag.withDescription("Run preflight and print the plan without side effects."),
 			),
@@ -68,6 +73,7 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 								workstreamCli: splitCli(flags.workstreamCli),
 								...(Option.isSome(flags.taskUrl) ? { taskUrl: flags.taskUrl.value } : {}),
 								...(Option.isSome(flags.agentAllow) ? { agentAllow: flags.agentAllow.value } : {}),
+								approvePush: flags.approvePush,
 								dryRun: flags.dryRun,
 							},
 							deps(),
