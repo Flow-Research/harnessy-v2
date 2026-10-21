@@ -211,6 +211,10 @@ test("isolated release installs pin the MCP SDK the root workspace pins", () => 
 	assert.equal(root.devDependencies.agents, engine.dependencies.agents);
 	assert.equal(releaseInstallOverrides["@modelcontextprotocol/sdk"], pinned);
 	assert.equal(engine.dependencies["@modelcontextprotocol/sdk"], pinned);
+	const fixture = JSON.parse(
+		readFileSync(new URL("../packages/harnessy-engine/test/fixtures/cloudflare-worker/package.json", import.meta.url), "utf8"),
+	);
+	assert.equal(fixture.overrides["@modelcontextprotocol/sdk"], pinned);
 	const dependencies = { "@harnessy/core": "file:/tmp/core.tgz" };
 	assert.deepEqual(releaseInstallManifest(dependencies), {
 		private: true,
