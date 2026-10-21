@@ -261,6 +261,16 @@
   added. The full Executor, workerd, package, and release integration surface
   passed. The after audit is 0 critical, 0 high, 4 moderate, and 2 low, with
   zero blocking records and no waiver.
+- **2026-10-21 revalidation:** New advisories made the Bun audit block on
+  `follow-redirects@1.16.0` (GHSA-q3jh-wrc6-jgq8, GHSA-8r9p-f939-6h3c; fixed in
+  1.16.1, reached through `axios`) and `vite@8.2.2` (GHSA-587h-7wmj-h5pm; fixed
+  in 8.2.4). Exact overrides `follow-redirects@1.16.1` and `vite@8.2.4` clear
+  them; the Bun 1.4.0 lock diff is limited to those two packages. The after
+  audit is 0 at or above high with 3 records under reviewed exception. The
+  reviewed exceptions remain necessary and keep their 2026-11-07 expiry:
+  `braces` has no release after 3.0.3, and the newest
+  `@cloudflare/vitest-pool-workers@0.23.0` still selects
+  `miniflare@5.20260815.0-alpha` with `undici@7.29.0`, below 7.29.1.
 - **Links:** `scripts/audit-executor.mjs`,
   `qa/security/findings/2026-09-02-v2-canonical-cutover.md`
 
@@ -279,6 +289,21 @@
   Effect beta.85 cohort. Coding-agent shrinkwrap/install-lock artifacts were
   regenerated. The after audit reports zero advisories at every severity and
   no waiver was added.
+- **2026-10-21 revalidation:** New advisories made the root audit block on
+  `@modelcontextprotocol/sdk@1.29.0` nested under `agents@0.17.3`
+  (GHSA-22jm-h49p-29qw, GHSA-46jr-4wx8-v453, GHSA-6prh-2h8m-c8cw,
+  GHSA-rvq5-wwqv-78pq; fixed in 1.32.0), `hono@4.13.7` (GHSA-5r4p-p66f-jhc7;
+  fixed in 4.13.11) and `vite@8.0.16` (GHSA-587h-7wmj-h5pm and four lower
+  advisories; fixed in 8.1.6). The scoped override
+  `agents > @modelcontextprotocol/sdk@1.32.1` now produces a valid tree: the
+  earlier `npm sbom` rejection came from a stale nested lock entry, which was
+  removed. `hono` and `vite` move to exact overrides `4.13.13` and `8.1.6`, and
+  `@harnessy/local-host` pins `vite@8.1.6`. Release installs apply the same
+  SDK pin through `scripts/release-install-overrides.mjs`, because npm and Bun
+  ignore overrides declared by dependencies and `@harnessy/engine` keeps
+  `agents` for its declaration types. The reviewed MCP SDK exception
+  (GHSA-6qxp-vccf-f47h, expiring 2026-11-07) is resolved and removed. The
+  after audit reports zero advisories at every severity, with no exception.
 - **Links:** `.github/workflows/qa-security-sweep.yml`,
   `qa/security/findings/2026-09-02-v2-canonical-cutover.md`
 
@@ -304,4 +329,8 @@
   Primary evidence: [Miniflare releases](https://registry.npmjs.org/miniflare),
   [Wrangler 4.129.0](https://registry.npmjs.org/wrangler/4.129.0), and
   [Workers Vitest pool 0.22.0](https://registry.npmjs.org/%40cloudflare%2Fvitest-pool-workers/0.22.0).
+- **2026-10-21 revalidation:** Latest Workers Vitest pool `0.23.0` selects
+  `miniflare@5.20260815.0-alpha` with `undici@7.29.0`; `undici@7.29.1` still
+  ships only in a newer Miniflare prerelease that no pool release selects. The
+  two Executor `undici` exceptions stay until a coherent owner set exists.
 - **Links:** `scripts/security-invariants-lib.mjs`, `executor/bun.lock`
