@@ -99,7 +99,7 @@
 		"@types/node": "22.19.19",
 		"@types/semver": "7.7.1",
 		"@typescript/native-preview": "7.0.0-dev.20260120.1",
-		"@vitest/coverage-v8": "4.1.11",
+		"@vitest/coverage-v8": "4.1.12",
 		"agents": "0.17.3",
 		"esbuild": "0.28.1",
 		"husky": "9.1.7",

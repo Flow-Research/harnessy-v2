@@ -312,6 +312,9 @@
   removed. With npm 11.6.0, `npm ls --all` and
   `npm sbom --omit=dev --sbom-format=cyclonedx` both pass. The
   after audit reports zero advisories at every severity, with no exception.
+  Later the same day `@vitest/mocker@4.1.11` (GHSA-qxg6-89mg-rqv8,
+  GHSA-xp26-3454-mjgp; fixed in 4.1.12) began blocking; every workspace
+  `vitest` and `@vitest/coverage-v8` pin moved from 4.1.11 to 4.1.12.
 - **Links:** `.github/workflows/qa-security-sweep.yml`,
   `qa/security/findings/2026-09-02-v2-canonical-cutover.md`
 
