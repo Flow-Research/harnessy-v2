@@ -905,7 +905,8 @@ const MAX_LISTED_PATHS = 50;
 
 /** Markdown heading text, lower-cased, or undefined for a non-heading line. */
 const headingName = (line: string): string | undefined => {
-	const match = /^\s*#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
+	// CommonMark ATX heading: at most three spaces of indentation.
+	const match = /^ {0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line);
 	return match?.[1]?.toLowerCase();
 };
 
@@ -977,11 +978,12 @@ export const prBody = (
 	let fence: string | undefined;
 	let inComment = false;
 	for (const line of template.replace(/\r\n/g, "\n").split("\n")) {
-		const fenceMark = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+		// CommonMark fences: at most three spaces before; a closer has only whitespace after it.
+		const fenceMark = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+		const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1];
 		const literal = fence !== undefined || inComment;
 		if (fence !== undefined) {
-			if (fenceMark !== undefined && fenceMark[0] === fence[0] && fenceMark.length >= fence.length)
-				fence = undefined;
+			if (closer !== undefined && closer[0] === fence[0] && closer.length >= fence.length) fence = undefined;
 		} else if (inComment) {
 			if (line.includes("-->")) inComment = false;
 		} else if (fenceMark !== undefined) fence = fenceMark;
