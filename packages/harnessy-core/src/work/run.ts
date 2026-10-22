@@ -573,6 +573,8 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 				return handoff("pr_conflict", `PR #${other.number} already uses ${branch} with a different base or head`);
 			const bodyFile = join(stateDir, "pr-body.md");
 			let template: string | undefined;
+			// The base may have moved during local review; read the current template.
+			await must(gitArgv.fetch(repo), "git fetch");
 			for (const dir of PR_TEMPLATE_DIRS) {
 				const listed = await deps.run(gitArgv.baseList(worktree, options.base, dir), { cwd: worktree });
 				const path = listed.exitCode === 0 ? findPrTemplate(dir, listed.stdout) : undefined;

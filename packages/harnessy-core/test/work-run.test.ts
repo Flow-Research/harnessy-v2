@@ -496,6 +496,12 @@ describe("runWork", () => {
 			"show",
 			"origin/dev:docs/Pull_Request_Template.TXT",
 		]);
+		// Fetched again right before the template is read, after local review.
+		const lastFetch = fake.calls.map((argv) => argv.includes("fetch")).lastIndexOf(true);
+		const templateRead = fake.calls.findIndex((argv) => argv.includes("ls-tree"));
+		expect(lastFetch).toBeGreaterThan(0);
+		expect(lastFetch).toBeLessThan(templateRead);
+		expect(fake.calls.filter((argv) => argv.includes("fetch")).length).toBe(2);
 		const body = readFileSync(join(fake.stateDir, "pr-body.md"), "utf8");
 		expect(body).toContain(`WorkStream task \`${TASK}\``);
 		expect(body).toContain("- In scope: 1 changed file:\n\n```text\nsrc/a.ts\n```");
