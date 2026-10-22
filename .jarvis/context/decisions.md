@@ -87,6 +87,15 @@
     Summary, Scope, Design, duplicate/idempotency and privacy/security from
     facts it controls and leaves the other sections for the reviewer. The body
     is never proof.
+  - Until the PR is merged, the reviewer can send the latest commit back with
+    `--revise "<notes>"`. An open PR returns to draft first, so the old head
+    cannot be merged. The notes are fenced in the prompt under the same rules;
+    the revised commit stops for local review again (`--revise` with
+    `--approve-push` is refused), and earlier spend reduces the remaining
+    budget. `--approve-push` then pushes the revision to the same branch and
+    comments on the PR with the commit and cost only (notes and revision
+    reports stay local, since the agent saw the private notes); checks, the head check and readiness run again for the
+    new head.
   - An existing PR is adopted only when it is in the same
     repository (not a fork) with the same head branch, base and pushed SHA.
     The merged head must equal the pushed SHA, and CI evidence must be a

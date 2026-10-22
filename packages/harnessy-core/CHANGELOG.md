@@ -4,6 +4,14 @@
 
 ### Changed
 
+- `harnessy work --revise "<notes>"` sends the latest commit back to the agent
+  with the reviewer's notes, before or after the push, until the PR is merged.
+  An open PR returns to draft first. The agent revises in the same worktree,
+  Harnessy commits again and the run stops for review again; `--approve-push`
+  then pushes the revision to the same PR with a comment naming the new
+  commit; reviewer notes and revision reports stay local.
+  Every run's spend counts against `--budget-usd`, and the proof reports the
+  total. `--revise` cannot be combined with `--approve-push`.
 - `harnessy work` marks its draft pull request ready for review once the
   pushed commit's checks pass, and leaves it a draft when they fail. Merging
   still needs a person.

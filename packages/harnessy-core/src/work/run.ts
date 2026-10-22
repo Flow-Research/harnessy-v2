@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import * as Result from "effect/Result";
 import {
 	ATTESTATION,
 	agentPrompt,
@@ -12,6 +13,7 @@ import {
 	buildProof,
 	checkTool,
 	ciConfigPaths,
+	combinedReports,
 	evaluateStopRule,
 	field,
 	findPrTemplate,
@@ -42,6 +44,7 @@ import {
 	prMismatch,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
+	revisionComment,
 	TERMINAL_PREPARATION_STATUSES,
 	type ToolCheck,
 	validateAgentAllow,
@@ -93,6 +96,8 @@ export interface WorkOptions {
 	readonly taskUrl?: string;
 	/** Extra validated Claude Code rules, e.g. `Bash(npm test *)`, so the agent can run tests. */
 	readonly agentAllow?: string;
+	/** Send the unpushed commit back to the agent with these reviewer notes. */
+	readonly revise?: string;
 	/** Push the reviewed local commit. Without it the run stops after the commit for review. */
 	readonly approvePush: boolean;
 	readonly dryRun: boolean;
@@ -234,7 +239,56 @@ const readGitFile = (worktree: string): string | undefined => {
  * the agent's worktree, is bound to its inputs, and every step records its
  * result before the next, so a re-run resumes with the same idempotency keys.
  */
+const errnoCode = (error: unknown): string | undefined =>
+	typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined;
+
+/** Pid of a live process holding the task lock, or undefined after taking it. */
+const takeTaskLock = (lock: string): number | undefined => {
+	const created = Result.try(() => writeFileSync(lock, `${process.pid}\n`, { flag: "wx", mode: 0o600 }));
+	if (Result.isSuccess(created)) return undefined;
+	if (errnoCode(created.failure) !== "EEXIST") throw created.failure;
+	const holder = Number.parseInt(readFileSync(lock, "utf8"), 10);
+	if (Number.isInteger(holder) && holder > 0 && holder !== process.pid) {
+		const probe = Result.try(() => process.kill(holder, 0));
+		// EPERM means the process exists but belongs to someone else.
+		if (Result.isSuccess(probe) || errnoCode(probe.failure) === "EPERM") return holder;
+	}
+	// A stale lock from a run that died.
+	writeFileSync(lock, `${process.pid}\n`, { mode: 0o600 });
+	return undefined;
+};
+
+/**
+ * One run per task at a time: a second invocation (for example `--revise`
+ * while an earlier run waits on checks) would act on stale state.
+ */
 export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> => {
+	if (options.dryRun || !isTaskId(options.task)) return runWorkUnlocked(options, deps);
+	const stateDir = join(deps.stateRoot, options.task);
+	privateDir(stateDir);
+	const lock = join(stateDir, "run.lock");
+	const holder = takeTaskLock(lock);
+	if (holder !== undefined)
+		return {
+			exitCode: 2,
+			report: {
+				status: "handoff",
+				reason: "already_running",
+				detail: `another harnessy work run (pid ${holder}) is working on this task; wait for it or stop it first`,
+				task_id: options.task,
+			},
+		};
+	try {
+		return await runWorkUnlocked(options, deps);
+	} finally {
+		rmSync(lock, { force: true });
+	}
+};
+
+const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> => {
+	// A revised commit is new code: it must stop for review again, never push in the same run.
+	if (options.revise !== undefined && options.approvePush)
+		throw new Error("--revise and --approve-push cannot be used together; review the revised commit first");
 	if (!isTaskId(options.task)) throw new Error("--task must be a WorkStream task UUID");
 	const agentAllow = validateAgentAllow(options.agentAllow);
 	const repo = resolve(options.repo);
@@ -371,6 +425,53 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			);
 	};
 
+	// The same notes again after an interruption resume the revision already under way.
+	const resumingRevision =
+		state.headSha === undefined && state.revisedFrom !== undefined && state.reviewNotes === options.revise;
+	if (options.revise !== undefined && !resumingRevision) {
+		if (state.mergeCommitSha !== undefined)
+			return handoff("revise_after_merge", "the pull request is merged; create a new task for further changes");
+		if (state.headSha === undefined)
+			return handoff("revise_without_commit", "there is no local commit to revise; run without --revise");
+		const spent = (state.spentUsd ?? 0) + (state.agent?.costUsd ?? 0);
+		// Check before discarding the reviewed commit, so it can still be pushed as it is.
+		if (spent >= options.budgetUsd)
+			return handoff("over_budget", `earlier runs spent ${spent} USD of the ${options.budgetUsd} USD budget`);
+		// The revision must start from exactly the reviewed commit, with nothing else in the worktree.
+		if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
+		const current = (await must(gitArgv.head(worktree), "git rev-parse")).trim();
+		const stray = (await must(gitArgv.status(worktree), "git status")).trim();
+		if (current !== state.headSha || stray !== "")
+			return handoff(
+				"worktree_tampered",
+				`the worktree is not the reviewed commit ${state.headSha.slice(0, 12)} with a clean tree`,
+			);
+		deps.log(`Sending commit ${state.headSha.slice(0, 12)} back to the agent with the reviewer's notes`);
+		// Back to draft first: until the revision is reviewed and pushed, the old head must not be merged.
+		if (state.pr !== undefined) {
+			// Only our PR, still on the commit we pushed, may be returned to draft.
+			const live = parsePrView(await must(ghArgv.prView(state.pr.number), "gh pr view", worktree));
+			const onBranch = state.pushedSha ?? state.headSha;
+			const diverged =
+				prMismatch(live, { repo: state.repoName ?? "", branch, base: options.base, number: state.pr.number }) ??
+				(live.headSha === onBranch ? undefined : `PR #${state.pr.number} head is ${live.headSha}, not ${onBranch}`);
+			if (diverged !== undefined) return handoff("pr_mismatch", diverged);
+			if (live.state !== "OPEN") return handoff("pr_closed", `PR #${state.pr.number} is ${live.state}`);
+			await must(ghArgv.prDraft(state.pr.number), "gh pr ready --undo", worktree);
+		}
+		save({
+			// Older state recorded only the PR; its head was the pushed commit.
+			pushedSha: state.pushedSha ?? (state.pr === undefined ? undefined : state.headSha),
+			readyMarked: undefined,
+			revisedFrom: state.headSha,
+			headSha: undefined,
+			agent: undefined,
+			spentUsd: spent,
+			earlierReports: [...(state.earlierReports ?? []), state.agent?.reason ?? ""],
+			reviewNotes: options.revise,
+			revisions: (state.revisions ?? 0) + 1,
+		});
+	}
 	if (state.assignmentId === undefined) {
 		await assertActor();
 		deps.log("Claiming task");
@@ -387,9 +488,16 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		save({ started: true });
 	}
 
+	// Earlier runs on this task spend the same budget.
+	const budgetLeft = options.budgetUsd - (state.spentUsd ?? 0);
 	if (state.headSha === undefined) {
+		if (budgetLeft <= 0)
+			return handoff(
+				"over_budget",
+				`earlier runs spent ${state.spentUsd} USD of the ${options.budgetUsd} USD budget`,
+			);
 		if (state.pane === undefined) rmSync(paths.result, { force: true });
-		writePrivate(paths.prompt, agentPrompt(task));
+		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes));
 		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow), null, 2)}\n`);
 		let pane = state.pane;
 		if (pane === undefined) {
@@ -403,7 +511,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			// and keeps the original wall-clock deadline.
 			save({ pane, agentDeadline: deps.now() + options.maxMinutes * 60_000 });
 			deps.log(`Running agent in herdr pane ${pane}`);
-			await must(herdrArgv.paneRun(pane, agentRunLine(options.budgetUsd, paths, agentAllow)), "herdr pane run");
+			await must(herdrArgv.paneRun(pane, agentRunLine(budgetLeft, paths, agentAllow)), "herdr pane run");
 		} else deps.log(`Re-attaching to agent in herdr pane ${pane}`);
 		const deadline = state.agentDeadline ?? deps.now() + options.maxMinutes * 60_000;
 		// herdr checks existing output first, so even an expired deadline still sees a finished run.
@@ -424,19 +532,41 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			(await must(gitArgv.newCommitCount(worktree, options.base), "git rev-list")).trim(),
 			10,
 		);
+		// A revision counts only what changed since the commit under review.
+		const revisedFrom = state.revisedFrom;
+		const revisionChanged =
+			revisedFrom === undefined
+				? undefined
+				: (await must(gitArgv.head(worktree), "git rev-parse")).trim() !== revisedFrom;
 		const decision = evaluateStopRule({
 			timedOut,
 			...(timedOut ? {} : { exitCode: parseExitMarker(waited.stdout) }),
 			...(existsSync(paths.result) ? { resultText: readFileSync(paths.result, "utf8") } : {}),
-			budgetUsd: options.budgetUsd,
-			changes: dirty + (Number.isFinite(ahead) ? ahead : 0),
+			budgetUsd: budgetLeft,
+			changes:
+				dirty + (revisionChanged === undefined ? (Number.isFinite(ahead) ? ahead : 0) : revisionChanged ? 1 : 0),
 		});
-		if (decision.kind === "handoff")
+		if (decision.kind === "handoff") {
+			// A priced run that stops still spent budget; a later run gets only what is left.
+			if (decision.costUsd !== undefined) save({ spentUsd: (state.spentUsd ?? 0) + decision.costUsd });
+			// A revision that left the reviewed commit untouched restores it, so it can still be pushed or revised.
+			if (revisedFrom !== undefined && revisionChanged === false && dirty === 0) {
+				const earlier = state.earlierReports ?? [];
+				save({
+					headSha: revisedFrom,
+					agent: { costUsd: 0, reason: earlier.at(-1) ?? "" },
+					earlierReports: earlier.slice(0, -1),
+					revisions: Math.max(0, (state.revisions ?? 1) - 1) || undefined,
+					revisedFrom: undefined,
+					reviewNotes: undefined,
+				});
+			}
 			return handoff(
 				decision.reason,
 				decision.detail,
 				decision.costUsd === undefined ? {} : { cost_usd: decision.costUsd },
 			);
+		}
 		if (dirty > 0) {
 			await must(gitArgv.addAll(worktree), "git add");
 			await must(gitArgv.commit(worktree, options.task), "git commit");
@@ -444,12 +574,15 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		save({
 			agent: { costUsd: decision.costUsd, reason: decision.reason },
 			headSha: (await must(gitArgv.head(worktree), "git rev-parse")).trim(),
+			revisedFrom: undefined,
 		});
 	}
 	const headSha = state.headSha ?? "";
 	const agent = state.agent ?? { costUsd: 0, reason: "" };
+	const totalCostUsd = (state.spentUsd ?? 0) + agent.costUsd;
 
-	if (state.pr === undefined) {
+	const pushedSha = state.pushedSha ?? (state.pr === undefined ? undefined : headSha);
+	if (pushedSha !== headSha) {
 		if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
 		const changed = parseChangedPaths(await must(gitArgv.changedPaths(worktree, options.base, headSha), "git diff"));
 		const ci = ciConfigPaths(changed);
@@ -462,13 +595,28 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 				deps,
 				`Review commit ${headSha.slice(0, 12)} for task ${options.task.slice(0, 8)}, then re-run with --approve-push.`,
 			);
-			return handoff("awaiting_push_approval", "review the local commit, then re-run with --approve-push", {
-				head_sha: headSha,
-				review: ["git", "-C", worktree, "diff", `origin/${options.base}...${headSha}`],
-			});
+			return handoff(
+				"awaiting_push_approval",
+				"review the local commit, then re-run with --approve-push, or with --revise <notes> to send it back",
+				{
+					head_sha: headSha,
+					review: ["git", "-C", worktree, "diff", `origin/${options.base}...${headSha}`],
+				},
+			);
 		}
 		deps.log(`Pushing ${headSha} to ${branch}`);
 		await must(gitArgv.push(worktree, branch, headSha), "git push");
+		save({ pushedSha: headSha, readyMarked: undefined });
+	}
+	// A revision pushed to an open PR gets one comment saying what changed; retried until posted.
+	if (state.pr !== undefined && state.revisions !== undefined && state.commentedSha !== headSha) {
+		const commentFile = join(stateDir, "pr-revision.md");
+		writePrivate(commentFile, revisionComment(state.revisions, headSha, totalCostUsd));
+		await must(ghArgv.prComment(state.pr.number, commentFile), "gh pr comment", worktree);
+		save({ commentedSha: headSha });
+	}
+	if (state.pr === undefined) {
+		const changed = parseChangedPaths(await must(gitArgv.changedPaths(worktree, options.base, headSha), "git diff"));
 		const repoName = parseRepoName(await must(ghArgv.repo(), "gh repo view", worktree));
 		save({ repoName });
 		const expected = { repo: repoName, branch, base: options.base, headSha };
@@ -496,7 +644,17 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 					break;
 				}
 			}
-			writePrivate(bodyFile, prBody(task, options.taskUrl, agent.costUsd, agent.reason, changed, template));
+			writePrivate(
+				bodyFile,
+				prBody(
+					task,
+					options.taskUrl,
+					totalCostUsd,
+					combinedReports(state.earlierReports ?? [], agent.reason),
+					changed,
+					template,
+				),
+			);
 			const created = parsePrUrl(
 				await must(ghArgv.prCreate(options.base, branch, state.summary, bodyFile), "gh pr create", worktree),
 			);
@@ -505,7 +663,8 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 				number: created.number,
 			});
 			if (check !== undefined) return handoff("pr_mismatch", check);
-			save({ pr: created });
+			// The new PR's body already carries every report, so no revision comment is needed.
+			save({ pr: created, commentedSha: headSha });
 		}
 	}
 	const pr = state.pr ?? { url: "", number: 0 };
@@ -603,7 +762,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			ci_run_url: ci.url,
 			ci_conclusion: ci.conclusion,
 			// Reported by the Claude Code process itself; the only cost source there is.
-			cost_usd: agent.costUsd,
+			cost_usd: totalCostUsd,
 			duration_seconds: Math.round((deps.now() - state.startedAt) / 1000),
 		});
 		const json = Buffer.from(`${JSON.stringify(proof, null, 2)}\n`);
@@ -664,7 +823,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			admission_id: state.admissionId,
 			submission: state.submission,
 			proof: proofZip,
-			cost_usd: agent.costUsd,
+			cost_usd: totalCostUsd,
 		},
 	};
 };

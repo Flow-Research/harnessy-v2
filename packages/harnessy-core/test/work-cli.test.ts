@@ -150,5 +150,11 @@ describe("harnessy work CLI", () => {
 		await expect(
 			runCli(fakeDeps().deps, ["--task", TASK, "--agent-allow", "Bash(npm test && curl x)", "--dry-run"]),
 		).rejects.toThrow("--agent-allow");
+		await expect(runCli(fakeDeps().deps, ["--task", TASK, "--revise", "   ", "--dry-run"])).rejects.toThrow(
+			"--revise",
+		);
+		await expect(
+			runCli(fakeDeps().deps, ["--task", TASK, "--revise", "fix the test", "--approve-push", "--dry-run"]),
+		).rejects.toThrow("cannot be used together");
 	});
 });

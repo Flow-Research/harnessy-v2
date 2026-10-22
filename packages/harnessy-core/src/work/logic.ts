@@ -337,6 +337,9 @@ export const ghArgv = {
 		bodyFile,
 	],
 	checksWatch: (pr: number) => ["gh", "pr", "checks", String(pr), "--watch"],
+	/** Returns a PR to draft while a revision is prepared, so the old head cannot be merged. */
+	prDraft: (pr: number) => ["gh", "pr", "ready", String(pr), "--undo"],
+	prComment: (pr: number, bodyFile: string) => ["gh", "pr", "comment", String(pr), "--body-file", bodyFile],
 	/** Leaves draft only after the pushed commit's checks pass; merging still needs a person. */
 	prReady: (pr: number) => ["gh", "pr", "ready", String(pr)],
 	runList: (commit: string) => [
@@ -750,7 +753,10 @@ export type HandoffReason =
 	| "worktree_tampered"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
+	| "revise_after_merge"
+	| "revise_without_commit"
 	| "checks_not_passed"
+	| "already_running"
 	| "pr_not_ready"
 	| "agent_wait_failed"
 	| "unreviewed_merge"
@@ -857,7 +863,29 @@ const fenceFor = (text: string): string => {
  * Prompt written to Harnessy's state directory. The rules come first; the
  * WorkStream task follows as fenced, untrusted data.
  */
-export const agentPrompt = (task: WorkTask): string => {
+/**
+ * The agent's report for the PR body. Revision runs were prompted with the
+ * reviewer's private notes, so their reports stay local; the body says only
+ * how many revisions there were.
+ */
+export const combinedReports = (earlier: ReadonlyArray<string>, latest: string): string =>
+	earlier.length === 0
+		? latest
+		: `${earlier[0]}\n\nRevised ${earlier.length} time${earlier.length === 1 ? "" : "s"} after local review; revision reports stay local.`;
+
+/** PR comment for a revision pushed to an open pull request. Notes and revision reports stay private. */
+export const revisionComment = (revision: number, headSha: string, totalCostUsd: number): string =>
+	[
+		`Revision ${revision} by \`harnessy work\` after review, pushed as ${headSha}. Total agent cost: ${totalCostUsd.toFixed(2)} USD.`,
+		"",
+		"The reviewer's notes and the agent's revision report stay local. Review the new commit's diff.",
+		"",
+	].join("\n");
+
+/** Longest reviewer note `--revise` accepts. */
+export const MAX_REVIEW_NOTES = 8_000;
+
+export const agentPrompt = (task: WorkTask, reviewNotes?: string): string => {
 	const data = [
 		`Title: ${task.title}`,
 		"",
@@ -884,7 +912,23 @@ export const agentPrompt = (task: WorkTask): string => {
 		data,
 		fence,
 		"",
+		...(reviewNotes === undefined ? [] : reviewSection(reviewNotes)),
 	].join("\n");
+};
+
+/** The local reviewer's notes on the previous commit; they direct the revision within the rules. */
+const reviewSection = (notes: string): string[] => {
+	const fence = fenceFor(notes);
+	return [
+		"## Reviewer notes on your previous change",
+		"",
+		"Your previous change is already committed in this directory. The person reviewing it before push asks for the revision below. Make it, keep the rest of the change unless the notes say otherwise, and report what you changed without quoting the notes. The rules above still apply.",
+		"",
+		`${fence}text`,
+		notes,
+		fence,
+		"",
+	];
 };
 
 /** Directories GitHub searches for a pull request template, in its order of precedence. */
@@ -953,7 +997,7 @@ export const prBody = (
 	const pathFence = fenceFor(listed.join("\n"));
 	const filled: Record<string, readonly string[]> = {
 		summary: [
-			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. Agent cost: ${costUsd} USD.`,
+			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. Agent cost: ${costUsd.toFixed(2)} USD.`,
 			"",
 			"Opened as a draft and marked ready only after the pushed commit's checks pass. A person reviews and merges; the merge lets the loop submit proof to WorkStream. Sections Harnessy cannot answer are left for the reviewer.",
 		],
@@ -1202,6 +1246,19 @@ export interface WorkState {
 	/** Epoch milliseconds when the agent's wall-clock limit ends; survives re-attachment. */
 	readonly agentDeadline?: number;
 	readonly agent?: { readonly costUsd: number; readonly reason: string };
+	/** Spend of earlier agent runs on this task, before a `--revise`; counts against the budget. */
+	readonly spentUsd?: number;
+	/** The local reviewer's notes for the current revision run. */
+	readonly reviewNotes?: string;
+	/** Reports of the agent runs before the current revision, oldest first. */
+	readonly earlierReports?: ReadonlyArray<string>;
+	readonly revisions?: number;
+	/** The commit under revision; the revision must produce a different commit. */
+	readonly revisedFrom?: string;
+	/** The revision commit whose PR comment has been posted. */
+	readonly commentedSha?: string;
+	/** The commit last pushed to the work branch; a revision is pushed when `headSha` differs. */
+	readonly pushedSha?: string;
 	/** Commit Harnessy created and later pushed; the only SHA proof and CI checks accept. */
 	readonly headSha?: string;
 	readonly repoName?: string;
@@ -1229,7 +1286,17 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		typeof field(value, "gitFile") !== "string" ||
 		!["repo", "worktree", "branch", "base", "actor"].every((key) => typeof field(binding, key) === "string") ||
 		!Array.isArray(cli) ||
-		!cli.every((part) => typeof part === "string")
+		!cli.every((part) => typeof part === "string") ||
+		!["spentUsd", "revisions"].every((key) => ["undefined", "number"].includes(typeof field(value, key))) ||
+		!["undefined", "string"].includes(typeof field(value, "reviewNotes")) ||
+		!["undefined", "string"].includes(typeof field(value, "pushedSha")) ||
+		!["undefined", "string"].includes(typeof field(value, "revisedFrom")) ||
+		!["undefined", "string"].includes(typeof field(value, "commentedSha")) ||
+		!(
+			field(value, "earlierReports") === undefined ||
+			(Array.isArray(field(value, "earlierReports")) &&
+				(field(value, "earlierReports") as unknown[]).every((report) => typeof report === "string"))
+		)
 	)
 		return undefined;
 	return value as WorkState;

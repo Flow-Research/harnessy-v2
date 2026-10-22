@@ -52,8 +52,15 @@ interface Scenario {
 	clockStart?: number;
 	template?: string;
 	checksExit?: number;
+	prCreateFails?: boolean;
+	head?: string;
 	checksMissingFirst?: number;
+	commentFails?: boolean;
 	readyFails?: boolean;
+	/** `git status` before the agent runs in this invocation; the worktree is clean by default. */
+	preRunStatus?: string;
+	/** HEAD before the agent runs in this invocation; the reviewed commit by default. */
+	preRunHead?: string;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -66,6 +73,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 	let uuid = 0;
 	let clock = scenario.clockStart ?? 1_000_000;
 	const worktree = worktreePath(join(root, "repo"), TASK);
+	const agentRan = () => calls.some((argv) => argv[0] === "herdr" && argv[1] === "pane" && argv[2] === "wait-output");
 	const stateRoot = join(root, "state");
 	const deps: WorkDeps = {
 		platform: "darwin",
@@ -111,9 +119,12 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					mkdirSync(worktree, { recursive: true });
 					writeFileSync(join(worktree, ".git"), "gitdir: /repo/.git/worktrees/x\n");
 				}
-				if (args.includes("status")) return ok(scenario.dirty ?? " M src/a.ts\n");
+				if (args.includes("status"))
+					return ok(agentRan() ? (scenario.dirty ?? " M src/a.ts\n") : (scenario.preRunStatus ?? ""));
 				if (args.includes("rev-list")) return ok(`${scenario.ahead ?? "0"}\n`);
-				if (args.includes("rev-parse")) return ok(`${HEAD}\n`);
+				// The agent's work shows up only after it ran in this invocation.
+				if (args.includes("rev-parse"))
+					return ok(`${agentRan() ? (scenario.head ?? HEAD) : (scenario.preRunHead ?? HEAD)}\n`);
 				if (args.includes("ls-tree"))
 					return args.at(-1) === "origin/dev:docs" && scenario.template !== undefined
 						? ok("guide.md\nPull_Request_Template.TXT\n")
@@ -154,7 +165,12 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			if (exe === "gh") {
 				if (joined.startsWith("repo view")) return ok(JSON.stringify({ nameWithOwner: "flow/app" }));
 				if (joined.startsWith("pr list")) return ok(JSON.stringify(scenario.prList ?? []));
-				if (joined.startsWith("pr create")) return ok("https://github.com/flow/app/pull/7\n");
+				if (joined.startsWith("pr create"))
+					return scenario.prCreateFails === true
+						? { exitCode: 1, stdout: "", stderr: "network down" }
+						: ok("https://github.com/flow/app/pull/7\n");
+				if (joined.startsWith("pr comment") && scenario.commentFails === true)
+					return { exitCode: 1, stdout: "", stderr: "secondary rate limit" };
 				if (joined === "pr ready 7" && scenario.readyFails === true)
 					return { exitCode: 1, stdout: "", stderr: "HTTP 502" };
 				if (joined.startsWith("pr checks") && (scenario.checksMissingFirst ?? 0) > 0) {
@@ -246,6 +262,189 @@ describe("runWork", () => {
 			"origin",
 			`${HEAD}:refs/heads/${BRANCH}`,
 		]);
+	});
+
+	it("sends an unpushed commit back to the agent with review notes, then stops for review again", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		const revised = fakeTools(root);
+		const outcome = await runWork(
+			{ ...options, approvePush: false, revise: "The no-date test passes undefined to a defaulted parameter." },
+			revised.deps,
+		);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "awaiting_push_approval" });
+		expect(has(revised.calls, "pane", "run")).toBe(true);
+		expect(has(revised.calls, "push")).toBe(false);
+		const prompt = readFileSync(join(revised.stateDir, "prompt.md"), "utf8");
+		expect(prompt).toContain("## Reviewer notes on your previous change");
+		expect(prompt).toContain("passes undefined to a defaulted parameter");
+		// The second run gets only what is left of the budget, and the proof reports both runs.
+		expect(revised.calls.some((argv) => argv.join(" ").includes("--max-budget-usd 4.5"))).toBe(true);
+		await runWork(options, fakeTools(root).deps);
+		expect(JSON.parse(readFileSync(join(revised.stateDir, "proof.json"), "utf8")).cost_usd).toBe(1);
+		const body = readFileSync(join(revised.stateDir, "pr-body.md"), "utf8");
+		expect(body).toContain("Agent cost: 1.00 USD.");
+		expect(body).toContain("ok\n\nRevised 1 time after local review; revision reports stay local.");
+	});
+
+	it("refuses to revise and push in one run, and to revise after the push", async () => {
+		await expect(runWork({ ...options, revise: "notes" }, fakeTools(root).deps)).rejects.toThrow(
+			"cannot be used together",
+		);
+		const pushed = fakeTools(root);
+		await runWork(options, pushed.deps);
+		const late = await runWork({ ...options, approvePush: false, revise: "notes" }, fakeTools(root).deps);
+		expect(late.report).toMatchObject({ status: "handoff", reason: "revise_after_merge" });
+	});
+
+	it("refuses --revise without a local commit, before claiming", async () => {
+		const fresh = fakeTools(root);
+		const outcome = await runWork({ ...options, approvePush: false, revise: "notes" }, fresh.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "revise_without_commit" });
+		expect(has(fresh.calls, "claim")).toBe(false);
+	});
+
+	it("revises an open PR: back to draft, review again, then push the revision to the same PR", async () => {
+		const red = await runWork(options, fakeTools(root, { checksExit: 1 }).deps);
+		expect(red.report).toMatchObject({ status: "handoff", reason: "checks_not_passed" });
+		const NEXT = "b".repeat(40);
+		const revising = fakeTools(root, { head: NEXT });
+		const held = await runWork({ ...options, approvePush: false, revise: "Format the test file." }, revising.deps);
+		expect(held.report).toMatchObject({ status: "handoff", reason: "awaiting_push_approval", head_sha: NEXT });
+		expect(revising.calls).toContainEqual(["gh", "pr", "ready", "7", "--undo"]);
+		expect(has(revising.calls, "push")).toBe(false);
+		const next = (state: string) => ourPr(state, { headRefOid: NEXT });
+		const approved = fakeTools(root, {
+			head: NEXT,
+			ciSha: NEXT,
+			prStates: [next("OPEN"), next("OPEN"), next("MERGED")],
+		});
+		const done = await runWork(options, approved.deps);
+		expect(done.report).toMatchObject({ status: "submitted" });
+		expect(JSON.parse(readFileSync(join(approved.stateDir, "proof.json"), "utf8")).commit_sha).toBe(NEXT);
+		expect(has(approved.calls, "pr", "create")).toBe(false);
+		expect(approved.calls).toContainEqual([
+			"git",
+			"-C",
+			approved.worktree,
+			"-c",
+			"core.hooksPath=/dev/null",
+			"push",
+			"origin",
+			`${NEXT}:refs/heads/${BRANCH}`,
+		]);
+		expect(has(approved.calls, "pr", "comment")).toBe(true);
+		const comment = readFileSync(join(approved.stateDir, "pr-revision.md"), "utf8");
+		expect(comment).toContain(`Revision 1 by \`harnessy work\` after review, pushed as ${NEXT}`);
+		expect(comment).not.toContain("Agent report");
+		expect(comment).not.toContain("Format the test file.");
+		expect(approved.calls).toContainEqual(["gh", "pr", "ready", "7"]);
+	});
+
+	it("does not return a diverged PR to draft", async () => {
+		await runWork(options, fakeTools(root, { checksExit: 1 }).deps);
+		const moved = fakeTools(root, { prStates: [ourPr("OPEN", { headRefOid: "c".repeat(40) })] });
+		const outcome = await runWork({ ...options, approvePush: false, revise: "notes" }, moved.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "pr_mismatch" });
+		expect(has(moved.calls, "--undo")).toBe(false);
+		expect(has(moved.calls, "pane", "run")).toBe(false);
+	});
+
+	it("retries the revision comment until it is posted", async () => {
+		await runWork(options, fakeTools(root, { checksExit: 1 }).deps);
+		const NEXT = "b".repeat(40);
+		await runWork({ ...options, approvePush: false, revise: "notes" }, fakeTools(root, { head: NEXT }).deps);
+		await expect(runWork(options, fakeTools(root, { head: NEXT, commentFails: true }).deps)).rejects.toThrow(
+			"gh pr comment",
+		);
+		const next = (state: string) => ourPr(state, { headRefOid: NEXT });
+		const retried = fakeTools(root, {
+			head: NEXT,
+			ciSha: NEXT,
+			prStates: [next("OPEN"), next("OPEN"), next("MERGED")],
+		});
+		expect((await runWork(options, retried.deps)).report).toMatchObject({ status: "submitted" });
+		expect(has(retried.calls, "push")).toBe(false);
+		expect(has(retried.calls, "pr", "comment")).toBe(true);
+	});
+
+	it("refuses to revise from a worktree that moved off the reviewed commit", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		const moved = fakeTools(root, { preRunHead: "d".repeat(40) });
+		const outcome = await runWork({ ...options, approvePush: false, revise: "notes" }, moved.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "worktree_tampered" });
+		expect(has(moved.calls, "pane", "run")).toBe(false);
+		const dirty = fakeTools(root, { preRunStatus: " M stray.ts\n" });
+		expect((await runWork({ ...options, approvePush: false, revise: "notes" }, dirty.deps)).report).toMatchObject({
+			reason: "worktree_tampered",
+		});
+	});
+
+	it("refuses a second run on the same task while one is live, and clears a stale lock", async () => {
+		const lock = join(root, "state", TASK, "run.lock");
+		mkdirSync(join(root, "state", TASK), { recursive: true });
+		writeFileSync(lock, `${process.ppid}\n`);
+		const blocked = fakeTools(root);
+		const outcome = await runWork({ ...options, approvePush: false }, blocked.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "already_running" });
+		expect(blocked.calls).toEqual([]);
+		writeFileSync(lock, "2147483646\n");
+		const stale = await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		expect(stale.report).toMatchObject({ reason: "awaiting_push_approval" });
+		expect(existsSync(lock)).toBe(false);
+	});
+
+	it("hands off a revision that changes nothing", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		const idle = await runWork(
+			{ ...options, approvePush: false, revise: "Fix the test." },
+			// The reviewed commit is still ahead of the base, but nothing changed since it.
+			fakeTools(root, { dirty: "", ahead: "1" }).deps,
+		);
+		expect(idle.report).toMatchObject({ status: "handoff", reason: "no_changes" });
+		// The reviewed commit is current again: it can be pushed without another agent run.
+		const push = fakeTools(root);
+		expect((await runWork(options, push.deps)).report).toMatchObject({ status: "submitted" });
+		expect(has(push.calls, "pane", "run")).toBe(false);
+		expect(has(push.calls, "push")).toBe(true);
+	});
+
+	it("resumes an interrupted revision when the same notes are given again", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		const notes = { ...options, approvePush: false, revise: "Fix the test." };
+		const cut = await runWork(notes, fakeTools(root, { waitErrorCode: "server_unavailable" }).deps);
+		expect(cut.report).toMatchObject({ status: "handoff", reason: "agent_wait_failed" });
+		const NEXT = "b".repeat(40);
+		const resumed = fakeTools(root, { head: NEXT });
+		const outcome = await runWork(notes, resumed.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "awaiting_push_approval", head_sha: NEXT });
+		expect(has(resumed.calls, "pane", "run")).toBe(false);
+		expect(has(resumed.calls, "pane", "wait-output")).toBe(true);
+	});
+
+	it("keeps the reviewed commit when no budget is left to revise it", async () => {
+		await runWork({ ...options, approvePush: false, budgetUsd: 0.5 }, fakeTools(root).deps);
+		const refused = await runWork(
+			{ ...options, approvePush: false, budgetUsd: 0.5, revise: "notes" },
+			fakeTools(root).deps,
+		);
+		expect(refused.report).toMatchObject({ status: "handoff", reason: "over_budget" });
+		const pushed = fakeTools(root);
+		expect((await runWork({ ...options, budgetUsd: 0.5 }, pushed.deps)).report).toMatchObject({
+			status: "submitted",
+		});
+		expect(has(pushed.calls, "pane", "run")).toBe(false);
+	});
+
+	it("counts the spend of a priced run that stops", async () => {
+		const blocked = JSON.stringify({
+			total_cost_usd: 0.5,
+			is_error: false,
+			structured_output: { outcome: "blocked", reason: "cannot" },
+		});
+		await runWork({ ...options, approvePush: false }, fakeTools(root, { agentResult: blocked }).deps);
+		const again = fakeTools(root);
+		await runWork({ ...options, approvePush: false }, again.deps);
+		expect(again.calls.some((argv) => argv.join(" ").includes("--max-budget-usd 4.5"))).toBe(true);
 	});
 
 	it("marks the PR ready after its checks pass", async () => {
