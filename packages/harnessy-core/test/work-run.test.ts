@@ -318,7 +318,7 @@ describe("runWork", () => {
 			"origin/dev:docs/Pull_Request_Template.TXT",
 		]);
 		// Fetched again right before the template is read, after local review.
-		const lastFetch = fake.calls.findLastIndex((argv) => argv.includes("fetch"));
+		const lastFetch = fake.calls.map((argv) => argv.includes("fetch")).lastIndexOf(true);
 		const templateRead = fake.calls.findIndex((argv) => argv.includes("ls-tree"));
 		expect(lastFetch).toBeGreaterThan(0);
 		expect(lastFetch).toBeLessThan(templateRead);
