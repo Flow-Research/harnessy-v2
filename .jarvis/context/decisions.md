@@ -117,13 +117,23 @@
     for it. Before copying, a source must exist that way
     (`agent_deps_source_unsafe`) and a destination must not exist in any form
     (`agent_deps_destination_unsafe`). Missing parents are created one
-    non-recursive `mkdir` at a time. The copy reads the realpath'd source
-    with `cp -c -R -P` (APFS clone) on macOS, `cp --reflink=auto -R -P`
-    elsewhere, or a plain `cp -R -P` only when the clone fails; `-P` never
-    follows a link. `cp` writes only into a private directory created fresh
-    (`mkdtemp`, 0700) beside the destination, and the finished copy is
-    renamed into place; `rename` never follows the final component and fails
-    if the destination appeared meanwhile. After copying, the
+    non-recursive `mkdir` at a time. Before anything is written, state
+    records a pending copy (destinations and staging directory). `cp -c -R
+    -P` (APFS clone) on macOS, `cp --reflink=auto -R -P` elsewhere, or a plain
+    `cp -R -P` only when the clone fails, copies each realpath'd source into
+    a private staging directory created fresh (`mkdtemp`, 0700) beside the
+    worktree, outside it; `-P` never follows a link. Files that may hold
+    secrets are deleted from the staged copy before it can enter the worktree
+    (`.env*`, `.npmrc`, `.yarnrc*`, `*.pem`, `*.key` at any depth, and every
+    `node_modules/.cache`), and the count is logged: they are never needed to
+    run tests or formatters, while refusing would stop ordinary trees whose
+    packages ship test keys. Only when every copy is staged are they renamed
+    into place; `rename` never follows the final component and fails if the
+    destination appeared meanwhile. Every failure removes what the copy
+    created (giving read-only directories owner write first) and clears the
+    pending record; while a pending record remains, because a run crashed or
+    a removal failed, every later agent start first retries the removal and
+    otherwise hands off with `agent_deps_cleanup_failed`, flag or no flag. After copying, the
     sources are checked again, and the copies get the same check that runs
     before every later agent start and after every agent run: each copy is
     still a plain directory (`agent_deps_moved`); a walk with no-follow
@@ -131,9 +141,12 @@
     link leads inside the worktree once every link on the way is followed,
     dangling ones included (`agent_deps_unsafe_entry`; npm and pnpm workspace
     links such as `../packages/x` are normal and kept, links into the source
-    checkout are not); HEAD's tree holds no file under it
-    in any letter case (`git diff --name-only <empty tree> HEAD --
-    ':(literal,icase)<path>'`, `agent_deps_committed`); and `git status
+    checkout are not, and a `..` after a missing component counts as
+    outside); neither HEAD's tree nor any commit since the base touches a
+    file under it in any letter case (`git diff --name-only <empty tree>
+    HEAD` and `git log --name-only --diff-merges=separate
+    origin/<base>..HEAD`, both with `':(literal,icase)<path>'`;
+    `agent_deps_committed`), since a push sends every commit; and `git status
     --porcelain=v1 -z --untracked-files=all -- ':(literal,icase)<path>'` is
     empty (`agent_deps_not_ignored`), which is git's own answer for nested
     `.gitignore` negations and nested repositories. Harnessy never parses
@@ -143,7 +156,10 @@
     the copies, so a resume never copies again. The default allowlist
     is unchanged: the operator names exact test and format commands, and `npx`
     stays denied because it can fetch and run any package, so rules name the
-    installed binary (`Bash(node_modules/.bin/vitest run *)`).
+    installed binary (`Bash(node_modules/.bin/vitest run *)`). The
+    `--agent-allow` deny list is best effort: general runners such as `npm *`
+    or `make *` and arguments matched by a trailing `*` still reach a shell,
+    so operators should allow exact test and format commands only.
   - Residual risks: an allowed test command runs repository code the agent
     can edit, so it is code execution as the current user. With `--agent-deps
     clone` that code also runs the copied packages, which the agent can change

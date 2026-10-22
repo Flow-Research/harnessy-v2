@@ -5,6 +5,7 @@ import {
 	existsSync,
 	lstatSync,
 	mkdirSync,
+	mkdtempSync,
 	readFileSync,
 	realpathSync,
 	renameSync,
@@ -12,7 +13,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import * as Result from "effect/Result";
 import {
 	checkComponents,
@@ -21,8 +22,10 @@ import {
 	destinationProblem,
 	makeParents,
 	removeInside,
+	removeTree,
 	sourceProblem,
 	stageable,
+	stripSensitive,
 	unsafeEntries,
 } from "./deps.ts";
 import {
@@ -487,7 +490,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 					"these entries in the copied dependency directories are special files, or links leading outside the worktree that a write could pass through",
 				paths: linked,
 			};
-		const inHead = await committed(deps.run, worktree, copies);
+		const inHead = await committed(deps.run, worktree, options.base, copies);
 		if (inHead.length > 0)
 			return {
 				reason: "agent_deps_committed",
@@ -504,6 +507,16 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		return undefined;
 	};
 	const recordedCopies = () => (state.agentDeps?.copied ?? []).map(({ path }) => path);
+	/** Remove what a dependency copy may have created; returns what could not be removed. */
+	const removePending = (pending: { readonly paths: ReadonlyArray<string>; readonly staging: string }) => {
+		const realWorktree = realpathSync(worktree);
+		const left = [
+			...pending.paths.filter((path) => !removeInside(realWorktree, path)),
+			...(removeTree(pending.staging) ? [] : [pending.staging]),
+		];
+		if (left.length === 0) save({ agentDeps: undefined });
+		return left;
+	};
 	/**
 	 * Give the worktree its own copy of the source checkout's installed build
 	 * inputs. Sources and destinations are checked in the exact form that is
@@ -525,35 +538,56 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		const badDestinations = sources.flatMap((path) => destinationProblem(realWorktree, path) ?? []);
 		if (badDestinations.length > 0)
 			return handoff("agent_deps_destination_unsafe", `${badDestinations.join("; ")}; nothing was copied`);
-		const copied: Array<{ readonly path: string; readonly method: DepCopyMethod }> = [];
-		const removeCopies = () => {
-			for (const { path } of copied)
-				if (!removeInside(realWorktree, path))
-					deps.log(`Left ${path} in place: a parent is no longer a plain directory`);
+		// Copies are made in a private staging directory beside the worktree, outside it, and
+		// renamed into place only once all are made. The pending record names everything this
+		// may create, so a crash or failed cleanup blocks every later agent run until removed.
+		const staging = mkdtempSync(join(dirname(realWorktree), `.${basename(realWorktree)}-deps-`));
+		save({ agentDeps: { copied: [], pending: { paths: sources, staging } } });
+		const undo = () => removePending({ paths: sources, staging });
+		const abort = (error: string): never => {
+			const left = undo();
+			throw new Error(left.length === 0 ? error : `${error}; could not remove ${left.join(", ")}`);
 		};
-		for (const path of sources) {
-			const parentProblem = makeParents(realWorktree, path);
-			const result =
-				parentProblem === undefined
-					? await copyTree(deps.run, deps.platform, deps.log, join(realRepo, path), join(realWorktree, path))
-					: { error: parentProblem };
-			// All or nothing: a partial copy is removed, so a re-run starts clean.
-			if ("error" in result) {
-				removeCopies();
-				throw new Error(result.error);
-			}
-			deps.log(`Copied ${path} into the worktree (${result.method})`);
+		const copied: Array<{ readonly path: string; readonly method: DepCopyMethod }> = [];
+		for (const [index, path] of sources.entries()) {
+			const staged = join(staging, String(index));
+			const result = await copyTree(deps.run, deps.platform, deps.log, join(realRepo, path), staged);
+			if ("error" in result) return abort(result.error);
+			// Never walk through a link: the staged copy must be the directory cp made.
+			if (lstatSync(staged, { throwIfNoEntry: false })?.isDirectory() !== true)
+				return abort(`the copy of ${path} is not a plain directory`);
+			const withheld = stripSensitive(staged, basename(path) === "node_modules");
+			if (withheld.length > 0)
+				deps.log(
+					`Left ${withheld.length} possibly secret files out of the copy of ${path}: ${withheld.slice(0, 5).join(", ")}`,
+				);
 			copied.push({ path, method: result.method });
 		}
+		for (const [index, { path, method }] of copied.entries()) {
+			const problem =
+				makeParents(realWorktree, path) ??
+				(Result.isSuccess(Result.try(() => renameSync(join(staging, String(index)), join(realWorktree, path))))
+					? undefined
+					: `moving the copy of ${path} into place failed`);
+			if (problem !== undefined) return abort(problem);
+			deps.log(`Copied ${path} into the worktree (${method})`);
+		}
+		removeTree(staging);
 		// Check again after copying: a source that changed form during the copy is not trusted.
 		const changed = sources.flatMap((path) => sourceProblem(realRepo, path) ?? []);
 		const problem =
 			changed.length > 0
 				? { reason: "agent_deps_source_unsafe" as const, detail: changed.join("; "), paths: sources }
-				: await copiesProblem(copied.map(({ path }) => path));
+				: await copiesProblem(sources);
 		if (problem !== undefined) {
-			removeCopies();
-			return handoff(problem.reason, `${problem.detail}; the copies were removed`, { paths: problem.paths });
+			const left = undo();
+			return left.length === 0
+				? handoff(problem.reason, `${problem.detail}; the copies were removed`, { paths: problem.paths })
+				: handoff(
+						"agent_deps_cleanup_failed",
+						`${problem.detail}; these could not be removed and block every agent run until they are`,
+						{ paths: left },
+					);
 		}
 		save({ agentDeps: { copied } });
 		return undefined;
@@ -633,6 +667,17 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		if (state.pane === undefined) rmSync(paths.result, { force: true });
 		// Before the pane exists: a re-attached agent is already running with what it has.
 		if (state.pane === undefined) {
+			const pending = state.agentDeps?.pending;
+			if (pending !== undefined) {
+				const left = removePending(pending);
+				if (left.length > 0)
+					return handoff(
+						"agent_deps_cleanup_failed",
+						"an interrupted dependency copy left these behind and they could not be removed; remove them, then run again",
+						{ paths: left },
+					);
+				deps.log("Removed what an interrupted dependency copy left behind");
+			}
 			if (options.agentDeps === "clone" && state.agentDeps === undefined) {
 				const stopped = await copyAgentDeps();
 				if (stopped !== undefined) return stopped;

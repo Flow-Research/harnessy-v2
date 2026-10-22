@@ -343,6 +343,24 @@ export const gitArgv = {
 		"--",
 		literalIcase(path),
 	],
+	/**
+	 * Files under one path that any commit since the base touched, merges
+	 * compared with each parent, in any letter case.
+	 */
+	touchedSince: (worktree: string, base: string, path: string) => [
+		"git",
+		"-C",
+		worktree,
+		"log",
+		"--format=",
+		"--name-only",
+		"-z",
+		"--no-renames",
+		"--diff-merges=separate",
+		`origin/${base}..HEAD`,
+		"--",
+		literalIcase(path),
+	],
 	/** Pushes the exact reviewed commit, not whatever HEAD is at push time. */
 	push: (worktree: string, branch: string, sha: string) => [
 		"git",
@@ -538,8 +556,12 @@ const MAX_ALLOW_LENGTH = 4096;
  * cannot read a rule differently from this check: there are no colons,
  * escapes, quotes, other whitespace, Unicode lookalikes, case variants of
  * `Bash` or trailing content. The program token must not start with `-` or
- * contain `=`; programs that run arbitrary code or reach credentials are
- * rejected case-insensitively, by basename; `push` is never allowed.
+ * contain `=`; a list of well-known shells, interpreters, git, gh and
+ * network tools is rejected case-insensitively, by basename; `push` is never
+ * a word of a rule. The deny list is best effort, not a sandbox: a trailing
+ * `*` or a general runner (`npm *`, `make *`, `pnpm *`) still reaches a shell,
+ * and arguments matched by `*` are not checked, so allow exact test and
+ * format commands only.
  *
  * Residual risk: an allowed test runner (for example `npm test`) executes
  * repository code the agent can edit, so it grants code execution as the
@@ -853,6 +875,7 @@ export type HandoffReason =
 	| "agent_deps_unsafe_entry"
 	| "agent_deps_committed"
 	| "agent_deps_moved"
+	| "agent_deps_cleanup_failed"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
 	| "revise_after_merge"
@@ -1349,7 +1372,14 @@ export interface WorkState {
 	 * Dependency directories copied into the worktree by `--agent-deps clone`;
 	 * an empty list means the source had none. Set once, so a resume never copies again.
 	 */
-	readonly agentDeps?: { readonly copied: ReadonlyArray<{ readonly path: string; readonly method: DepCopyMethod }> };
+	readonly agentDeps?: {
+		readonly copied: ReadonlyArray<{ readonly path: string; readonly method: DepCopyMethod }>;
+		/**
+		 * Set before anything is written and cleared once the copy is recorded or
+		 * removed: what a crashed or failed copy may have left behind.
+		 */
+		readonly pending?: { readonly paths: ReadonlyArray<string>; readonly staging: string };
+	};
 	/** Epoch milliseconds when the agent's wall-clock limit ends; survives re-attachment. */
 	readonly agentDeadline?: number;
 	readonly agent?: { readonly costUsd: number; readonly reason: string };
@@ -1382,7 +1412,13 @@ const DEP_COPY_METHODS: ReadonlySet<unknown> = new Set(["clone", "reflink", "cop
 const validAgentDeps = (value: unknown): boolean => {
 	if (value === undefined) return true;
 	const copied = field(value, "copied");
+	const pending = field(value, "pending");
+	const pendingPaths = field(pending, "paths");
 	return (
+		(pending === undefined ||
+			(typeof field(pending, "staging") === "string" &&
+				Array.isArray(pendingPaths) &&
+				pendingPaths.every((path: unknown) => typeof path === "string"))) &&
 		Array.isArray(copied) &&
 		copied.every(
 			(entry: unknown) => typeof field(entry, "path") === "string" && DEP_COPY_METHODS.has(field(entry, "method")),

@@ -39,10 +39,16 @@
   Off by default. Each source and destination is checked one component at a
   time under its real root, so a symbolic link, a path outside the checkout
   or worktree, an existing destination or a case or Unicode variant stops the
-  run before anything is copied; `cp -P` never follows links. After copying,
+  run before anything is copied; `cp -P` never follows links. Copies are made
+  in a private staging directory outside the worktree, files that may hold
+  secrets (`.env*`, `.npmrc`, `.yarnrc*`, `*.pem`, `*.key`,
+  `node_modules/.cache`) are left out, and only complete copies are renamed
+  into place. Every failure removes what was created; anything a crash or
+  failed removal leaves behind blocks later agent runs until it is removed.
+  After copying,
   before every agent start and after every agent run, each copy must still be
   a plain directory, every link inside it must lead inside the worktree, and
-  git must show no file under it in HEAD or to stage, so a copy never reaches
-  a commit. The copies are recorded so a resume does not copy again. The
+  git must show no file under it in HEAD, in any commit since the base or to
+  stage, so a copy never reaches a commit. The copies are recorded so a resume does not copy again. The
   agent prompt now asks it to run the allowed formatter and linter too and
   report the results.

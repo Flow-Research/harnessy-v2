@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, renameSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import * as Result from "effect/Result";
 import { cloneArgv, type DepCopyMethod, gitArgv, plainCopyArgv } from "./logic.ts";
@@ -81,18 +81,62 @@ export const makeParents = (realWorktree: string, rel: string): string | undefin
 };
 
 /**
+ * Remove the tree at `path` without following any link, first giving its
+ * directories owner write and search permission so read-only package
+ * directories cannot block the removal. Returns whether nothing is left.
+ */
+export const removeTree = (path: string): boolean =>
+	Result.isSuccess(
+		Result.try(() => {
+			const pending = lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === true ? [path] : [];
+			for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
+				chmodSync(current, 0o700);
+				for (const entry of readdirSync(current, { withFileTypes: true }))
+					if (entry.isDirectory()) pending.push(join(current, entry.name));
+			}
+			rmSync(path, { recursive: true, force: true });
+		}),
+	);
+
+/**
  * Remove `rel` under `base` only when every parent is a plain directory, so
- * the removal cannot pass through a link. `rmSync` never follows the last
- * component if it is a link. Returns whether it removed (or found nothing).
+ * the removal cannot pass through a link. Returns whether nothing is left.
  */
 export const removeInside = (base: string, rel: string): boolean => {
 	const parent = rel.split("/").slice(0, -1).join("/");
 	if (parent !== "") {
 		const check = checkComponents(base, parent);
-		if ("problem" in check || check.existing !== parent.split("/").length) return false;
+		if ("problem" in check) return false;
+		// A missing parent means nothing was created there.
+		if (check.existing !== parent.split("/").length) return true;
 	}
-	rmSync(join(base, rel), { recursive: true, force: true });
-	return true;
+	return removeTree(join(base, rel));
+};
+
+/** File names that may hold credentials or keys, and are never needed to run tests or formatters. */
+const SENSITIVE_FILE = /^(\.env(\..*)?|\.npmrc|\.yarnrc(\..*)?|.*\.pem|.*\.key)$/i;
+
+/**
+ * Delete files that may hold secrets from a staged copy before it enters the
+ * worktree: `.env*`, `.npmrc`, `.yarnrc*`, `*.pem`, `*.key` at any depth, and
+ * every `node_modules/.cache` directory. Returns their paths relative to `dir`.
+ */
+export const stripSensitive = (dir: string, isNodeModules: boolean): ReadonlyArray<string> => {
+	const removed: string[] = [];
+	const pending: Array<[string, boolean]> = [[dir, isNodeModules]];
+	for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+		const [current, inNodeModules] = next;
+		for (const entry of readdirSync(current, { withFileTypes: true })) {
+			const path = join(current, entry.name);
+			if (entry.isDirectory() && !(inNodeModules && entry.name === ".cache"))
+				pending.push([path, entry.name === "node_modules"]);
+			else if (entry.isDirectory() || SENSITIVE_FILE.test(entry.name)) {
+				rmSync(path, { recursive: true, force: true });
+				removed.push(relative(dir, path));
+			}
+		}
+	}
+	return removed.sort();
 };
 
 const MAX_LINK_HOPS = 40;
@@ -101,7 +145,7 @@ const MAX_LINK_HOPS = 40;
  * Where an absolute `path` really leads: every symbolic link along it is
  * followed, dangling ones included, so a write through it lands at the
  * result. After the first missing component the rest is appended as is.
- * Undefined for a link loop.
+ * Undefined for a link loop, or a `..` after a missing component.
  */
 export const leadsTo = (path: string, hops = 0): string | undefined => {
 	if (hops > MAX_LINK_HOPS) return undefined;
@@ -115,7 +159,9 @@ export const leadsTo = (path: string, hops = 0): string | undefined => {
 		}
 		const next = join(current, part);
 		const stat = lstatSync(next, { throwIfNoEntry: false });
-		if (stat === undefined) return join(next, ...parts.slice(index + 1));
+		// Past a missing component nothing can be followed; a `..` there could climb back through a link.
+		if (stat === undefined)
+			return parts.slice(index + 1).includes("..") ? undefined : join(next, ...parts.slice(index + 1));
 		if (stat.isSymbolicLink()) {
 			const target = readlinkSync(next);
 			const rest = parts.slice(index + 1).join("/");
@@ -157,39 +203,25 @@ export const failure = (result: RunResult): string =>
 const COPY_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * Copy `source` to the new path `target` (both real), as a copy-on-write clone
- * where the platform and filesystem allow it, otherwise as a plain copy. Both
- * use `cp -R -P`, so no link inside the tree is followed. `cp` writes only into
- * a private directory created fresh beside `target` (`mkdtemp`, mode 0700),
- * and the finished copy is renamed into place: `rename` never follows the
- * final component and fails if `target` appeared meanwhile as anything but an
- * empty directory.
+ * Copy `source` to the new path `staged`, which lies in Harnessy's private
+ * staging directory outside the worktree: a copy-on-write clone where the
+ * platform and filesystem allow it, otherwise a plain copy. Both use
+ * `cp -R -P`, so no link inside the tree is followed.
  */
 export const copyTree = async (
 	run: Run,
 	platform: string,
 	log: (line: string) => void,
 	source: string,
-	target: string,
+	staged: string,
 ): Promise<{ readonly method: DepCopyMethod } | { readonly error: string }> => {
-	const stagingDir = mkdtempSync(join(dirname(target), ".harnessy-copy-"));
-	const staged = join(stagingDir, "copy");
 	const clone = cloneArgv(platform, source, staged);
 	const cloned = await run(clone.argv, { timeoutMs: COPY_TIMEOUT_MS });
-	let method: DepCopyMethod = clone.method;
-	if (cloned.exitCode !== 0) {
-		rmSync(staged, { recursive: true, force: true });
-		log(`Cloning ${source} is not supported here (${failure(cloned)}); making a plain copy`);
-		const copied = await run(plainCopyArgv(source, staged), { timeoutMs: COPY_TIMEOUT_MS });
-		method = "copy";
-		if (copied.exitCode !== 0) {
-			rmSync(stagingDir, { recursive: true, force: true });
-			return { error: `copying ${source} failed: ${failure(copied)}` };
-		}
-	}
-	const moved = Result.try(() => renameSync(staged, target));
-	rmSync(stagingDir, { recursive: true, force: true });
-	return Result.isSuccess(moved) ? { method } : { error: `moving the copy of ${source} into place failed` };
+	if (cloned.exitCode === 0) return { method: clone.method };
+	if (!removeTree(staged)) return { error: `removing a failed clone of ${source} failed` };
+	log(`Cloning ${source} is not supported here (${failure(cloned)}); making a plain copy`);
+	const copied = await run(plainCopyArgv(source, staged), { timeoutMs: COPY_TIMEOUT_MS });
+	return copied.exitCode === 0 ? { method: "copy" } : { error: `copying ${source} failed: ${failure(copied)}` };
 };
 
 /**
@@ -211,7 +243,8 @@ export const stageable = async (
 };
 
 /**
- * Copied paths with any file in HEAD's tree, in any letter case. The
+ * Copied paths with any file in HEAD's tree or in any commit since the base,
+ * in any letter case. The
  * destination did not exist on the base branch, so any file there was added
  * during the run, for example by an allowed command that force-added and
  * committed a copy.
@@ -219,6 +252,7 @@ export const stageable = async (
 export const committed = async (
 	run: Run,
 	worktree: string,
+	base: string,
 	paths: ReadonlyArray<string>,
 ): Promise<ReadonlyArray<string>> => {
 	if (paths.length === 0) return [];
@@ -226,9 +260,14 @@ export const committed = async (
 	const emptyTree = empty.stdout.trim();
 	const found: string[] = [];
 	for (const path of paths) {
-		const listed =
+		const inTree =
 			empty.exitCode === 0 ? await run(gitArgv.inHead(worktree, emptyTree, path), { cwd: worktree }) : empty;
-		if (listed.exitCode !== 0 || listed.stdout !== "") found.push(path);
+		// A push sends every commit, so a copy added and removed again before HEAD counts too.
+		const inHistory =
+			inTree.exitCode === 0 && inTree.stdout === ""
+				? await run(gitArgv.touchedSince(worktree, base, path), { cwd: worktree })
+				: inTree;
+		if (inHistory.exitCode !== 0 || inHistory.stdout !== "") found.push(path);
 	}
 	return found;
 };

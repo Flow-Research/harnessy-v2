@@ -8,6 +8,7 @@ import {
 	leadsTo,
 	makeParents,
 	removeInside,
+	removeTree,
 	sourceProblem,
 	unsafeEntries,
 	within,
@@ -89,7 +90,17 @@ describe("dependency copy path checks", () => {
 		expect(checkComponents(outside, "dist")).toEqual({ existing: 1 });
 		symlinkSync(outside, join(root, "wt", "linked"));
 		expect(removeInside(join(root, "wt"), "linked/dist")).toBe(false);
-		expect(removeInside(join(root, "wt"), "missing/dist")).toBe(false);
+		// Nothing was created under a missing parent, so there is nothing to remove.
+		expect(removeInside(join(root, "wt"), "missing/dist")).toBe(true);
+		// Read-only directories inside the tree do not block removal; a read-only parent does.
+		mkdirSync(join(root, "wt", "ro", "pkg", "sub"), { recursive: true });
+		writeFileSync(join(root, "wt", "ro", "pkg", "sub", "f"), "");
+		chmodSync(join(root, "wt", "ro", "pkg", "sub"), 0o555);
+		expect(removeTree(join(root, "wt", "ro", "pkg"))).toBe(true);
+		mkdirSync(join(root, "wt", "ro", "pkg"));
+		chmodSync(join(root, "wt", "ro"), 0o555);
+		expect(removeTree(join(root, "wt", "ro", "pkg"))).toBe(false);
+		chmodSync(join(root, "wt", "ro"), 0o755);
 		expect(checkComponents(outside, "dist")).toEqual({ existing: 1 });
 	});
 
@@ -106,6 +117,9 @@ describe("dependency copy path checks", () => {
 		symlinkSync(join(outside, "sub"), join(wt, "deep"));
 		expect(leadsTo(`${wt}/deep/../z`)).toBe(join(outside, "z"));
 		expect(leadsTo(join(wt, ".", "node_modules"))).toBe(join(wt, "node_modules"));
+		// After a missing component nothing can be followed, so a `..` there is refused.
+		expect(leadsTo(`${wt}/missing/../evil/x`)).toBeUndefined();
+		expect(leadsTo(`${wt}/missing/./x`)).toBe(join(wt, "missing", "x"));
 		symlinkSync(join(wt, "loop-b"), join(wt, "loop-a"));
 		symlinkSync(join(wt, "loop-a"), join(wt, "loop-b"));
 		expect(leadsTo(join(wt, "loop-a"))).toBeUndefined();
