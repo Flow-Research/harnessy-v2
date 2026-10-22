@@ -741,6 +741,7 @@ export type HandoffReason =
 	| "worktree_tampered"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
+	| "checks_not_passed"
 	| "agent_wait_failed"
 	| "unreviewed_merge"
 	| "head_mismatch"
@@ -908,8 +909,10 @@ export const prBody = (
 ): string => {
 	const taskRef = taskUrl === undefined ? `\`${task.id}\`` : `[${task.id}](${taskUrl})`;
 	const reasonFence = fenceFor(agentReason);
-	const listed = changedPaths.slice(0, MAX_LISTED_PATHS).map((path) => `  - \`${path}\``);
+	// Paths come from the agent's worktree: a fenced block keeps backticks and newlines inert.
+	const listed = changedPaths.slice(0, MAX_LISTED_PATHS);
 	const more = changedPaths.length - listed.length;
+	const pathFence = fenceFor(listed.join("\n"));
 	const filled: Record<string, readonly string[]> = {
 		summary: [
 			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. Agent cost: ${costUsd} USD.`,
@@ -918,8 +921,8 @@ export const prBody = (
 		],
 		scope: [
 			`- In scope: ${changedPaths.length} changed file${changedPaths.length === 1 ? "" : "s"}${listed.length > 0 ? ":" : "."}`,
-			...listed,
-			...(more > 0 ? [`  - and ${more} more`] : []),
+			...(listed.length > 0 ? ["", `${pathFence}text`, ...listed, pathFence, ""] : []),
+			...(more > 0 ? [`  and ${more} more.`] : []),
 			"- Out of scope: everything else. Harnessy refuses changes to CI configuration.",
 		],
 		design: ["Agent report (written by the agent; untrusted):", "", `${reasonFence}text`, agentReason, reasonFence],

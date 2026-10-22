@@ -504,18 +504,29 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	if (state.reviewRequested !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
 		const checks = await deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
+		// Failed, pending or timed-out checks are not a verdict yet: stop, and let a re-run check again.
 		if (checks.exitCode !== 0)
+			return handoff(
+				"checks_not_passed",
+				`checks on PR #${pr.number} have not passed (gh exit ${checks.exitCode}); it stays a draft. Re-run once they pass, or close the PR.`,
+			);
+		// Mark ready only the reviewed commit: the branch could have moved while checks ran.
+		const current = parsePrView(await must(ghArgv.prView(pr.number), "gh pr view", worktree));
+		const moved =
+			prMismatch(current, expectedPr) ??
+			(current.headSha === headSha
+				? undefined
+				: `PR #${pr.number} head is ${current.headSha}, not the pushed ${headSha}`);
+		if (moved !== undefined) return handoff("pr_mismatch", moved);
+		if (current.state === "OPEN") {
+			const ready = await deps.run(ghArgv.prReady(pr.number), { cwd: worktree });
 			await notify(
 				deps,
-				`Draft PR #${pr.number}: checks need attention. It stays a draft; fix or close it, or mark it ready yourself.`,
+				ready.exitCode === 0
+					? `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`
+					: `PR #${pr.number} passed its checks but could not be marked ready. Mark it ready and merge when satisfied.`,
 			);
-		else if ((await deps.run(ghArgv.prReady(pr.number), { cwd: worktree })).exitCode === 0)
-			await notify(deps, `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`);
-		else
-			await notify(
-				deps,
-				`PR #${pr.number} passed its checks but could not be marked ready. Mark it ready and merge when satisfied.`,
-			);
+		}
 		save({ reviewRequested: true });
 	}
 
