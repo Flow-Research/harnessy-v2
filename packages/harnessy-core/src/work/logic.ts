@@ -1003,7 +1003,13 @@ export const prBody = (
 			"- Reviewer: check the diff for secrets, private data and permission changes.",
 		],
 	};
-	if (template === undefined || template.trim() === "") {
+	// A template with no section Harnessy recognises (for example Setext headings) gets the built-in body.
+	const recognised =
+		template?.split("\n").some((line) => {
+			const name = headingName(line);
+			return name !== undefined && filled[name] !== undefined;
+		}) === true;
+	if (template === undefined || template.trim() === "" || !recognised) {
 		const sections = [
 			"Summary",
 			"Scope",
