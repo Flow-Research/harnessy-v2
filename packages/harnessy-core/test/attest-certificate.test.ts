@@ -184,6 +184,8 @@ describe("certificates", () => {
 	});
 });
 
+const SIGNATURE_SHAPE = "signature must be exactly v, r and s, with r and s as lowercase 32-byte hex";
+
 describe("verification", () => {
 	const valid = certificateText(claimOf({ awards: [points("10")] }), SECRET, SIGNER);
 	type Mutable = Record<string, any>;
@@ -441,6 +443,34 @@ describe("verification", () => {
 					file.eas.sig.signature = null;
 				}),
 			),
+		).toBe(SIGNATURE_SHAPE);
+		expect(
+			reason(
+				edit((file) => {
+					file.eas.sig.signature.note = "Flow production attestation";
+				}),
+			),
+		).toBe(SIGNATURE_SHAPE);
+		expect(
+			reason(
+				edit((file) => {
+					file.eas.sig.signature.r = file.eas.sig.signature.r.toUpperCase().replace("0X", "0x");
+				}),
+			),
+		).toBe(SIGNATURE_SHAPE);
+		expect(
+			reason(
+				edit((file) => {
+					file.eas.sig.signature.s = "0x00";
+				}),
+			),
+		).toBe(SIGNATURE_SHAPE);
+		expect(
+			reason(
+				edit((file) => {
+					file.eas.sig.signature.v = 29;
+				}),
+			),
 		).toBe("signature must have v 27 or 28 and 32-byte r and s");
 		expect(
 			reason(
@@ -449,6 +479,24 @@ describe("verification", () => {
 				}),
 			),
 		).toBe("signature does not recover to a valid signer");
+	});
+
+	it("requires the stated signer to be the exact checksummed signer string", () => {
+		const message = `signature was made by ${SIGNER}, not the stated signer`;
+		expect(
+			reason(
+				edit((file) => {
+					file.eas.signer = SIGNER.toLowerCase();
+				}),
+			),
+		).toBe(message);
+		expect(
+			reason(
+				edit((file) => {
+					file.eas.signer = [SIGNER];
+				}),
+			),
+		).toBe(message);
 	});
 
 	it("rejects a certificate signed by another key", () => {

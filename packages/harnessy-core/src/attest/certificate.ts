@@ -287,6 +287,7 @@ const WRAPPER_KEYS = ["contribution", "eas", "format", "notice", "schema", "test
 const EAS_KEYS = ["sig", "signer"];
 const SIG_KEYS = ["domain", "message", "primaryType", "signature", "types", "uid"];
 const DECIMAL = /^(?:0|[1-9][0-9]*)$/;
+const LOWER_WORD = /^0x[0-9a-f]{64}$/;
 const FIXED_MESSAGE = {
 	version: OFFCHAIN_VERSION,
 	schema: SCHEMA_UID,
@@ -356,14 +357,21 @@ export const verifyCertificate = (text: string, attester: string): Verdict => {
 	};
 	const uid = toHex(offchainUid(SCHEMA_UID, attestation));
 	if (field(sig, "uid") !== uid) return invalid("attestation UID does not match its content");
+	// One text form per signature: exactly v, r and s, with lowercase hex as the issuer writes it.
+	const signature = field(sig, "signature");
+	if (
+		!same(keysOf(signature), ["r", "s", "v"]) ||
+		!LOWER_WORD.test(String(field(signature, "r"))) ||
+		!LOWER_WORD.test(String(field(signature, "s")))
+	)
+		return invalid("signature must be exactly v, r and s, with r and s as lowercase 32-byte hex");
 	const recovered = recoverAddress(
 		attestDigest(TEST_DOMAIN, EAS_ADDRESS_BYTES, attestation),
-		(field(sig, "signature") ?? {}) as EthSignature,
+		signature as EthSignature,
 	);
 	if (Result.isFailure(recovered)) return invalid(recovered.failure);
 	const signer = recovered.success;
-	if (String(field(eas, "signer")).toLowerCase() !== signer.toLowerCase())
-		return invalid(`signature was made by ${signer}, not the stated signer`);
+	if (field(eas, "signer") !== signer) return invalid(`signature was made by ${signer}, not the stated signer`);
 	if (signer.toLowerCase() !== attester.toLowerCase())
 		return invalid(`signed by ${signer}, not the expected attester ${attester}`);
 	return { valid: true, signer, uid, contribution: signed };
