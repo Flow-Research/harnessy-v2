@@ -110,6 +110,11 @@ describe("contribution records", () => {
 		expect(failure({ accepted_at: null })).toContain("has no valid acceptance time");
 	});
 
+	it("accepts real calendar edges and offsets", () => {
+		expect(claimOf({ accepted_at: "2028-02-29T23:59:59.999-05:30" }).acceptedAt).toBe(1835501399n);
+		expect(claimOf({ accepted_at: "2026-12-31T00:00:00Z" }).acceptedAt).toBe(1798675200n);
+	});
+
 	it("lower-cases IDs and the project comparison", () => {
 		expect(claimFromRecord(record({ project_id: PROJECT.toUpperCase() }), PROJECT.toUpperCase())).toEqual(
 			Result.succeed(claimOf()),
@@ -127,6 +132,16 @@ describe("contribution records", () => {
 		[{ artifact_hash: "sha1:abc" }, "artifact_hash is not sha256"],
 		[{ accepted_at: "yesterday" }, "has no valid acceptance time"],
 		[{ accepted_at: "2026-13-45T99:99:99Z" }, "has no valid acceptance time"],
+		[{ accepted_at: "2026-02-30T00:00:00Z" }, "has no valid acceptance time"],
+		[{ accepted_at: "0050-01-01T00:00:00Z" }, "has no valid acceptance time"],
+		[{ accepted_at: "2026-04-31T10:00:00+01:00" }, "has no valid acceptance time"],
+		[{ accepted_at: "2026-00-10T10:00:00Z" }, "has no valid acceptance time"],
+		[{ accepted_at: "2026-01-01T24:00:00Z" }, "has no valid acceptance time"],
+		[{ accepted_at: "2026-01-01T10:60:00Z" }, "has no valid acceptance time"],
+		[{ accepted_at: "2026-01-01T10:00:60Z" }, "has no valid acceptance time"],
+		[{ accepted_at: "2026-01-01T10:00:00+24:00" }, "has no valid acceptance time"],
+		[{ accepted_at: "2026-01-01T10:00:00-05:60" }, "has no valid acceptance time"],
+		[{ accepted_at: 1792614309 }, "has no valid acceptance time"],
 		[{ accepted_at: "1969-12-31T23:59:59Z" }, "has no valid acceptance time"],
 		[{ awards: null }, "awards is not a list"],
 		[{ awards: [points("1.5")] }, "not a whole number"],

@@ -82,16 +82,37 @@ export interface ContributionClaim {
 	readonly awardQuantity: bigint;
 }
 
-const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 const ARTIFACT_HASH = /^sha256:([0-9a-f]{64})$/;
 const QUANTITY = /^([0-9]+)(?:\.([0-9]+))?$/;
 const POINTS_INSTRUMENT = "project_points";
 const UINT256_MAX = 2n ** 256n - 1n;
 
+/**
+ * Unix seconds of an RFC 3339 timestamp. `Date.parse` silently rolls impossible
+ * values forward (Feb 30 becomes Mar 2, hour 24 the next day), so each calendar
+ * and clock component is checked first. Leap seconds are not accepted.
+ */
 const seconds = (value: unknown): bigint | undefined => {
-	if (typeof value !== "string" || !RFC3339.test(value)) return undefined;
-	const ms = Date.parse(value);
-	return Number.isNaN(ms) || ms < 0 ? undefined : BigInt(Math.floor(ms / 1000));
+	const match = typeof value === "string" ? RFC3339.exec(value) : null;
+	if (match === null) return undefined;
+	const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = match
+		.slice(1)
+		.map((part) => Number(part ?? 0)) as number[];
+	const date = new Date(Date.UTC(year as number, (month as number) - 1, day));
+	if (
+		date.getUTCFullYear() !== year ||
+		date.getUTCMonth() !== (month as number) - 1 ||
+		date.getUTCDate() !== day ||
+		(hour as number) > 23 ||
+		(minute as number) > 59 ||
+		(second as number) > 59 ||
+		(offsetHour as number) > 23 ||
+		(offsetMinute as number) > 59
+	)
+		return undefined;
+	const ms = Date.parse(value as string);
+	return ms < 0 ? undefined : BigInt(Math.floor(ms / 1000));
 };
 
 const uuidField = (record: unknown, key: string): string | undefined => {
