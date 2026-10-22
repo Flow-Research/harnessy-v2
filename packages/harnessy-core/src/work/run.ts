@@ -390,6 +390,15 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		// Check before discarding the reviewed commit, so it can still be pushed as it is.
 		if (spent >= options.budgetUsd)
 			return handoff("over_budget", `earlier runs spent ${spent} USD of the ${options.budgetUsd} USD budget`);
+		// The revision must start from exactly the reviewed commit, with nothing else in the worktree.
+		if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
+		const current = (await must(gitArgv.head(worktree), "git rev-parse")).trim();
+		const stray = (await must(gitArgv.status(worktree), "git status")).trim();
+		if (current !== state.headSha || stray !== "")
+			return handoff(
+				"worktree_tampered",
+				`the worktree is not the reviewed commit ${state.headSha.slice(0, 12)} with a clean tree`,
+			);
 		deps.log(`Sending commit ${state.headSha.slice(0, 12)} back to the agent with the reviewer's notes`);
 		// Back to draft first: until the revision is reviewed and pushed, the old head must not be merged.
 		if (state.pr !== undefined) {
@@ -629,12 +638,10 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		if (moved !== undefined) return handoff("pr_mismatch", moved);
 		if (current.state === "OPEN") {
 			const ready = await deps.run(ghArgv.prReady(pr.number), { cwd: worktree });
-			await notify(
-				deps,
-				ready.exitCode === 0
-					? `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`
-					: `PR #${pr.number} passed its checks but could not be marked ready. Mark it ready and merge when satisfied.`,
-			);
+			// Not recorded as requested, so a re-run tries again.
+			if (ready.exitCode !== 0)
+				return handoff("pr_not_ready", `PR #${pr.number} passed its checks but could not be marked ready`);
+			await notify(deps, `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`);
 		}
 		save({ reviewRequested: true });
 	}

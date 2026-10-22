@@ -56,6 +56,11 @@ interface Scenario {
 	head?: string;
 	checksMissingFirst?: number;
 	commentFails?: boolean;
+	readyFails?: boolean;
+	/** `git status` before the agent runs in this invocation; the worktree is clean by default. */
+	preRunStatus?: string;
+	/** HEAD before the agent runs in this invocation; the reviewed commit by default. */
+	preRunHead?: string;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -68,6 +73,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 	let uuid = 0;
 	let clock = scenario.clockStart ?? 1_000_000;
 	const worktree = worktreePath(join(root, "repo"), TASK);
+	const agentRan = () => calls.some((argv) => argv[0] === "herdr" && argv[1] === "pane" && argv[2] === "wait-output");
 	const stateRoot = join(root, "state");
 	const deps: WorkDeps = {
 		platform: "darwin",
@@ -113,9 +119,12 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					mkdirSync(worktree, { recursive: true });
 					writeFileSync(join(worktree, ".git"), "gitdir: /repo/.git/worktrees/x\n");
 				}
-				if (args.includes("status")) return ok(scenario.dirty ?? " M src/a.ts\n");
+				if (args.includes("status"))
+					return ok(agentRan() ? (scenario.dirty ?? " M src/a.ts\n") : (scenario.preRunStatus ?? ""));
 				if (args.includes("rev-list")) return ok(`${scenario.ahead ?? "0"}\n`);
-				if (args.includes("rev-parse")) return ok(`${scenario.head ?? HEAD}\n`);
+				// The agent's work shows up only after it ran in this invocation.
+				if (args.includes("rev-parse"))
+					return ok(`${agentRan() ? (scenario.head ?? HEAD) : (scenario.preRunHead ?? HEAD)}\n`);
 				if (args.includes("ls-tree"))
 					return args.at(-1) === "origin/dev:docs" && scenario.template !== undefined
 						? ok("guide.md\nPull_Request_Template.TXT\n")
@@ -162,6 +171,8 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 						: ok("https://github.com/flow/app/pull/7\n");
 				if (joined.startsWith("pr comment") && scenario.commentFails === true)
 					return { exitCode: 1, stdout: "", stderr: "secondary rate limit" };
+				if (joined === "pr ready 7" && scenario.readyFails === true)
+					return { exitCode: 1, stdout: "", stderr: "HTTP 502" };
 				if (joined.startsWith("pr checks") && (scenario.checksMissingFirst ?? 0) > 0) {
 					scenario.checksMissingFirst = (scenario.checksMissingFirst ?? 0) - 1;
 					return { exitCode: 1, stdout: "", stderr: "no checks reported on the 'work/x' branch" };
@@ -355,6 +366,18 @@ describe("runWork", () => {
 		expect(has(retried.calls, "pr", "comment")).toBe(true);
 	});
 
+	it("refuses to revise from a worktree that moved off the reviewed commit", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		const moved = fakeTools(root, { preRunHead: "d".repeat(40) });
+		const outcome = await runWork({ ...options, approvePush: false, revise: "notes" }, moved.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "worktree_tampered" });
+		expect(has(moved.calls, "pane", "run")).toBe(false);
+		const dirty = fakeTools(root, { preRunStatus: " M stray.ts\n" });
+		expect((await runWork({ ...options, approvePush: false, revise: "notes" }, dirty.deps)).report).toMatchObject({
+			reason: "worktree_tampered",
+		});
+	});
+
 	it("hands off a revision that changes nothing", async () => {
 		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
 		const idle = await runWork(
@@ -425,6 +448,14 @@ describe("runWork", () => {
 		expect((await runWork(options, fake.deps)).report).toMatchObject({ status: "submitted" });
 		expect(fake.calls.filter((argv) => argv.join(" ").startsWith("gh pr checks")).length).toBe(3);
 		expect(fake.calls).toContainEqual(["gh", "pr", "ready", "7"]);
+	});
+
+	it("retries marking the PR ready when gh pr ready fails", async () => {
+		const failed = await runWork(options, fakeTools(root, { readyFails: true }).deps);
+		expect(failed.report).toMatchObject({ status: "handoff", reason: "pr_not_ready" });
+		const retried = fakeTools(root);
+		expect((await runWork(options, retried.deps)).report).toMatchObject({ status: "submitted" });
+		expect(retried.calls).toContainEqual(["gh", "pr", "ready", "7"]);
 	});
 
 	it("does not mark ready a PR whose head moved while checks ran", async () => {
