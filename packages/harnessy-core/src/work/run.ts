@@ -509,7 +509,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	const pr = state.pr ?? { url: "", number: 0 };
 	const expectedPr = { repo: state.repoName ?? "", branch, base: options.base, number: pr.number };
 
-	if (state.reviewRequested !== true) {
+	if (state.readyMarked !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
 		const watch = () => deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
 		let checks = await watch();
@@ -543,7 +543,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 				return handoff("pr_not_ready", `PR #${pr.number} passed its checks but could not be marked ready`);
 			await notify(deps, `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`);
 		}
-		save({ reviewRequested: true });
+		save({ readyMarked: true });
 	}
 
 	if (state.mergeCommitSha === undefined) {
