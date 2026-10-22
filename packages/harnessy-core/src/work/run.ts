@@ -1,8 +1,20 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	readlinkSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import * as Result from "effect/Result";
 import {
 	ATTESTATION,
@@ -13,7 +25,9 @@ import {
 	buildProof,
 	checkTool,
 	ciConfigPaths,
+	cloneArgv,
 	combinedReports,
+	type DepCopyMethod,
 	evaluateStopRule,
 	field,
 	findPrTemplate,
@@ -29,6 +43,7 @@ import {
 	parseActor,
 	parseAssignment,
 	parseChangedPaths,
+	parseDepDirs,
 	parseExitMarker,
 	parseHerdrError,
 	parseJson,
@@ -40,6 +55,7 @@ import {
 	parseRunList,
 	parseState,
 	parseTask,
+	plainCopyArgv,
 	prBody,
 	prMismatch,
 	REQUIRED_CLAUDE_FLAGS,
@@ -96,6 +112,12 @@ export interface WorkOptions {
 	readonly taskUrl?: string;
 	/** Extra validated Claude Code rules, e.g. `Bash(npm test *)`, so the agent can run tests. */
 	readonly agentAllow?: string;
+	/**
+	 * `clone` gives the worktree its own copy-on-write copy of the source
+	 * checkout's ignored `node_modules` and `dist` directories before the agent
+	 * runs, so allowed test and format commands work there.
+	 */
+	readonly agentDeps?: "clone";
 	/** Send the unpushed commit back to the agent with these reviewer notes. */
 	readonly revise?: string;
 	/** Push the reviewed local commit. Without it the run stops after the commit for review. */
@@ -119,6 +141,7 @@ const PREPARE_ATTEMPTS = 60;
 const CI_ATTEMPTS = 30;
 const PROBE_TIMEOUT_MS = 30 * 1000;
 const MIN_WAIT_MS = 1000;
+const COPY_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** Live process runner: argv only, `shell: false`, bounded buffers. */
 export const execRun: Run = (argv, options) =>
@@ -233,6 +256,41 @@ const readGitFile = (worktree: string): string | undefined => {
 	return existsSync(path) && lstatSync(path).isFile() ? readFileSync(path, "utf8") : undefined;
 };
 
+/** Why a command failed, for a log line or an error. */
+const failure = (result: RunResult): string =>
+	result.stderr.trim().slice(0, 500) ||
+	(result.exitCode === undefined ? "it did not start" : `exit ${result.exitCode}`);
+
+/**
+ * Copy `source` to the new path `target`, as a copy-on-write clone where the
+ * platform and filesystem allow it, otherwise as a plain copy.
+ */
+const copyTree = async (
+	deps: WorkDeps,
+	source: string,
+	target: string,
+): Promise<{ readonly method: DepCopyMethod } | { readonly error: string }> => {
+	const clone = cloneArgv(deps.platform, source, target);
+	const cloned = await deps.run(clone.argv, { timeoutMs: COPY_TIMEOUT_MS });
+	if (cloned.exitCode === 0) return { method: clone.method };
+	rmSync(target, { recursive: true, force: true });
+	deps.log(`Cloning ${source} is not supported here (${failure(cloned)}); making a plain copy`);
+	const copied = await deps.run(plainCopyArgv(source, target), { timeoutMs: COPY_TIMEOUT_MS });
+	if (copied.exitCode === 0) return { method: "copy" };
+	rmSync(target, { recursive: true, force: true });
+	return { error: `copying ${source} failed: ${failure(copied)}` };
+};
+
+/** Symbolic links under `dir` whose target lies inside the checkout `root`. */
+const linksInto = (dir: string, root: string): ReadonlyArray<string> => {
+	const roots = [root, realpathSync(root)];
+	const inside = (path: string) => roots.some((base) => path === base || path.startsWith(`${base}${sep}`));
+	return readdirSync(dir, { recursive: true, withFileTypes: true })
+		.filter((entry) => entry.isSymbolicLink())
+		.map((entry) => join(entry.parentPath, entry.name))
+		.filter((link) => inside(resolve(dirname(link), readlinkSync(link))));
+};
+
 /**
  * Run one WorkStream task through claim, agent, local review, draft pull
  * request, merge and submission. State lives in a private directory outside
@@ -318,6 +376,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				base: options.base,
 				state_dir: stateDir,
 				approve_push: options.approvePush,
+				agent_deps: options.agentDeps ?? "off",
 				tools,
 				steps: {
 					whoami: wsArgv.whoami(ws),
@@ -425,6 +484,75 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			);
 	};
 
+	/** Copied paths that git in the worktree does not ignore, so `git add --all` would stage them. */
+	const unignored = async (paths: ReadonlyArray<string>): Promise<ReadonlyArray<string>> => {
+		const exposed: string[] = [];
+		for (const path of paths)
+			if ((await deps.run(gitArgv.checkIgnore(worktree, path), { cwd: worktree })).exitCode !== 0)
+				exposed.push(path);
+		return exposed;
+	};
+	/**
+	 * Give the worktree its own copy of the source checkout's installed build
+	 * inputs. Copies, never links: the agent may change them, and must not reach
+	 * the source checkout through them.
+	 */
+	const copyAgentDeps = async (): Promise<WorkOutcome | undefined> => {
+		const sources = parseDepDirs(await must(gitArgv.ignoredDirs(repo), "git ls-files")).filter((path) => {
+			// A symbolic link would be copied as a link into the source checkout.
+			const plain = lstatSync(join(repo, path), { throwIfNoEntry: false })?.isDirectory() === true;
+			if (!plain) deps.log(`Not copying ${path}: it is not a plain directory in ${repo}`);
+			return plain;
+		});
+		if (sources.length === 0) {
+			deps.log(`No ignored node_modules or dist directories in ${repo}; the agent gets no dependency copy`);
+			save({ agentDeps: { copied: [] } });
+			return undefined;
+		}
+		const present = sources.filter(
+			(path) => lstatSync(join(worktree, path), { throwIfNoEntry: false }) !== undefined,
+		);
+		if (present.length > 0)
+			return handoff(
+				"agent_deps_unsafe",
+				"these paths already exist in the worktree, so copying would overwrite tracked or leftover files; nothing was copied",
+				{ paths: present },
+			);
+		const copied: Array<{ readonly path: string; readonly method: DepCopyMethod }> = [];
+		const removeCopies = () => {
+			for (const { path } of copied) rmSync(join(worktree, path), { recursive: true, force: true });
+		};
+		for (const path of sources) {
+			mkdirSync(dirname(join(worktree, path)), { recursive: true });
+			const result = await copyTree(deps, join(repo, path), join(worktree, path));
+			// All or nothing: a partial copy is removed, so a re-run starts clean.
+			if ("error" in result) {
+				removeCopies();
+				throw new Error(result.error);
+			}
+			deps.log(`Copied ${path} into the worktree (${result.method})`);
+			copied.push({ path, method: result.method });
+		}
+		const exposed = await unignored(copied.map(({ path }) => path));
+		const linked = copied.flatMap(({ path }) => linksInto(join(worktree, path), repo));
+		if (exposed.length > 0 || linked.length > 0) {
+			removeCopies();
+			return exposed.length > 0
+				? handoff(
+						"agent_deps_unsafe",
+						"git does not ignore these copied paths in the worktree, so Harnessy's commit would include them; the copies were removed",
+						{ paths: exposed },
+					)
+				: handoff(
+						"agent_deps_unsafe",
+						"these copied links point into the source checkout, so the agent could change it; the copies were removed",
+						{ paths: linked },
+					);
+		}
+		save({ agentDeps: { copied } });
+		return undefined;
+	};
+
 	// The same notes again after an interruption resume the revision already under way.
 	const resumingRevision =
 		state.headSha === undefined && state.revisedFrom !== undefined && state.reviewNotes === options.revise;
@@ -497,6 +625,11 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				`earlier runs spent ${state.spentUsd} USD of the ${options.budgetUsd} USD budget`,
 			);
 		if (state.pane === undefined) rmSync(paths.result, { force: true });
+		// Before the pane exists: a re-attached agent is already running with what it has.
+		if (options.agentDeps === "clone" && state.agentDeps === undefined && state.pane === undefined) {
+			const stopped = await copyAgentDeps();
+			if (stopped !== undefined) return stopped;
+		}
 		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes));
 		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow), null, 2)}\n`);
 		let pane = state.pane;
@@ -568,6 +701,16 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			);
 		}
 		if (dirty > 0) {
+			// The agent can edit .gitignore; copied dependencies must never reach the commit.
+			const exposed = await unignored((state.agentDeps?.copied ?? []).map(({ path }) => path));
+			if (exposed.length > 0) {
+				save({ spentUsd: (state.spentUsd ?? 0) + decision.costUsd });
+				return handoff(
+					"agent_deps_unsafe",
+					"after the agent's change git no longer ignores these copied dependency directories; nothing was committed",
+					{ paths: exposed, cost_usd: decision.costUsd },
+				);
+			}
 			await must(gitArgv.addAll(worktree), "git add");
 			await must(gitArgv.commit(worktree, options.task), "git commit");
 		}

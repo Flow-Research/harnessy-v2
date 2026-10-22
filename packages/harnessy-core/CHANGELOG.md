@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+
+- `harnessy work --agent-deps clone` gives the agent's worktree its own
+  copy-on-write copy of the source checkout's ignored `node_modules` and
+  `dist` directories before the agent runs (`cp -c` on macOS,
+  `cp --reflink=auto` elsewhere, a plain copy only when cloning fails), so the
+  agent can run the tests and formatter that `--agent-allow` permits, for
+  example `--agent-allow 'Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)'`.
+  Off by default. The copies are never links into the source checkout, are
+  recorded so a resume does not copy again, and must stay git-ignored: when a
+  copied path is not ignored in the worktree, before the agent runs or after
+  its change, the run hands off and commits nothing. The agent prompt now asks
+  it to run the allowed formatter and linter too and report the results.
+
 ### Changed
 
 - `harnessy work --revise "<notes>"` sends the latest commit back to the agent

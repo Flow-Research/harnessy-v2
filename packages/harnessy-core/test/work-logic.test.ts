@@ -11,6 +11,7 @@ import {
 	buildProof,
 	checkTool,
 	ciConfigPaths,
+	cloneArgv,
 	compareVersions,
 	EXIT_MARKER_REGEX,
 	evaluateStopRule,
@@ -26,6 +27,7 @@ import {
 	parseAgentResult,
 	parseAssignment,
 	parseChangedPaths,
+	parseDepDirs,
 	parseExitMarker,
 	parseHerdrError,
 	parseJson,
@@ -36,6 +38,7 @@ import {
 	parseRunList,
 	parseState,
 	parseVersion,
+	plainCopyArgv,
 	prBody,
 	prMismatch,
 	REQUIRED_CLAUDE_FLAGS,
@@ -214,6 +217,11 @@ describe("agent permissions", () => {
 			"Bash(npm test *)",
 			"Bash(./node_modules/.bin/vitest --run)",
 		]);
+		// The documented test and format example passes; npx stays denied.
+		const documented =
+			"Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)";
+		expect(validateAgentAllow(documented)).toEqual(documented.split(","));
+		expect(() => validateAgentAllow("Bash(npx vitest run *)")).toThrow("npx can run arbitrary commands");
 		expect(() => validateAgentAllow("x".repeat(5000))).toThrow("4096");
 		expect(validateAgentAllow(undefined)).toEqual([]);
 		expect(validateAgentAllow("  ")).toEqual([]);
@@ -288,6 +296,40 @@ describe("prompt", () => {
 		expect(prompt).toContain("`````text\nTitle: T");
 		expect(prompt.trimEnd().endsWith("`````")).toBe(true);
 		expect(prompt).toContain("Do not commit, push");
+		expect(prompt).toContain(
+			"- Run the tests relevant to the change, and the formatter and linter, if your permissions allow it.",
+		);
+		expect(prompt).toContain("give the commands you ran and their results in the reason");
+	});
+
+	it("selects only plain node_modules and dist directories to copy", () => {
+		expect(
+			parseDepDirs(
+				"node_modules/\0packages/a/dist/\0packages/a/src/\0.env\0dist\0/abs/node_modules/\0../node_modules/\0a/./dist/\0a//dist/\0a/node_modules.bak/\0",
+			),
+		).toEqual(["node_modules", "packages/a/dist", "dist"]);
+		expect(parseDepDirs("")).toEqual([]);
+	});
+
+	it("builds copy-on-write copy commands per platform", () => {
+		expect(cloneArgv("darwin", "/r/node_modules", "/w/node_modules")).toEqual({
+			method: "clone",
+			argv: ["cp", "-c", "-R", "/r/node_modules", "/w/node_modules"],
+		});
+		expect(cloneArgv("linux", "/r/dist", "/w/dist")).toEqual({
+			method: "reflink",
+			argv: ["cp", "--reflink=auto", "-R", "/r/dist", "/w/dist"],
+		});
+		expect(plainCopyArgv("/r/dist", "/w/dist")).toEqual(["cp", "-R", "/r/dist", "/w/dist"]);
+		expect(gitArgv.checkIgnore("/w", "node_modules")).toEqual([
+			"git",
+			"-C",
+			"/w",
+			"check-ignore",
+			"-q",
+			"--",
+			"node_modules",
+		]);
 	});
 });
 
@@ -577,6 +619,11 @@ describe("WorkStream and GitHub parsing", () => {
 		expect(parseState(JSON.stringify({ ...state, schema: "harnessy.work.state.v1" }), TASK)).toBeUndefined();
 		expect(parseState(JSON.stringify({ ...state, binding: { ...binding, actor: 1 } }), TASK)).toBeUndefined();
 		expect(parseState("{", TASK)).toBeUndefined();
+		const agentDeps = { copied: [{ path: "node_modules", method: "clone" }] };
+		expect(parseState(JSON.stringify({ ...state, agentDeps }), TASK)).toEqual({ ...state, agentDeps });
+		expect(parseState(JSON.stringify({ ...state, agentDeps: { copied: [] } }), TASK)).toBeDefined();
+		for (const bad of [{}, { copied: [{ path: "x", method: "symlink" }] }, { copied: [{ method: "copy" }] }])
+			expect(parseState(JSON.stringify({ ...state, agentDeps: bad }), TASK)).toBeUndefined();
 		expect(bindingMismatch(binding, binding)).toBeUndefined();
 		expect(bindingMismatch(binding, { ...binding, repo: "/other" })).toBe("repo");
 		expect(bindingMismatch(binding, { ...binding, workstreamCli: ["workstream", "--as", "x"] })).toBe(

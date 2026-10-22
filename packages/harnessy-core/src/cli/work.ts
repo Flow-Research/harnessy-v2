@@ -52,7 +52,13 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 			agentAllow: Flag.string("agent-allow").pipe(
 				Flag.optional,
 				Flag.withDescription(
-					"Extra Claude Code tool rules for tests, e.g. 'Bash(npm test *),Bash(npm run check *)'.",
+					"Extra Claude Code tool rules for tests and formatting, e.g. 'Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)'. npx is not allowed; name the installed binary.",
+				),
+			),
+			agentDeps: Flag.choice("agent-deps", ["clone"]).pipe(
+				Flag.optional,
+				Flag.withDescription(
+					"'clone' gives the agent's worktree a private copy-on-write copy of --repo's ignored node_modules and dist directories, so --agent-allow test and format commands can run. Off by default.",
 				),
 			),
 			revise: Flag.string("revise").pipe(
@@ -86,6 +92,7 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 								workstreamCli: splitCli(flags.workstreamCli),
 								...(Option.isSome(flags.taskUrl) ? { taskUrl: flags.taskUrl.value } : {}),
 								...(Option.isSome(flags.agentAllow) ? { agentAllow: flags.agentAllow.value } : {}),
+								...(Option.isSome(flags.agentDeps) ? { agentDeps: flags.agentDeps.value } : {}),
 								...(Option.isSome(flags.revise) ? { revise: reviewNotes(flags.revise.value) } : {}),
 								approvePush: flags.approvePush,
 								dryRun: flags.dryRun,

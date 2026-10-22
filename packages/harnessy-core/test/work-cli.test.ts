@@ -70,10 +70,13 @@ describe("harnessy work CLI", () => {
 			"10",
 			"--workstream-cli",
 			"workstream-local --as agent-claude",
+			"--agent-deps",
+			"clone",
 			"--dry-run",
 			"--json",
 		]);
 		const report = printed(log);
+		expect(report.agent_deps).toBe("clone");
 		expect(report).toMatchObject({
 			status: "dry_run",
 			task_id: TASK,
@@ -150,6 +153,7 @@ describe("harnessy work CLI", () => {
 		await expect(
 			runCli(fakeDeps().deps, ["--task", TASK, "--agent-allow", "Bash(npm test && curl x)", "--dry-run"]),
 		).rejects.toThrow("--agent-allow");
+		await expect(runCli(fakeDeps().deps, ["--task", TASK, "--agent-deps", "symlink", "--dry-run"])).rejects.toThrow();
 		await expect(runCli(fakeDeps().deps, ["--task", TASK, "--revise", "   ", "--dry-run"])).rejects.toThrow(
 			"--revise",
 		);

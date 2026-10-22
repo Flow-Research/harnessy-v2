@@ -101,8 +101,30 @@
     The merged head must equal the pushed SHA, and CI evidence must be a
     completed run for that SHA. Proof fields are read from `gh` and `git` at
     proof time; only `cost_usd` comes from the Claude Code result.
+  - `--agent-deps clone` (approved 2026-10-22, off by default) gives the
+    worktree its own copy of the source checkout's installed build inputs, so
+    test and format commands allowed through `--agent-allow` can run there.
+    Harnessy lists the source's ignored, untracked directories with `git
+    ls-files --others --ignored --exclude-standard --directory`, keeps those
+    named `node_modules` or `dist` that are plain directories, and copies them
+    before the herdr pane starts: `cp -c -R` (APFS clone) on macOS, `cp
+    --reflink=auto -R` elsewhere, and a plain `cp -R` only when the clone
+    command fails. It never links into the source checkout, and hands off
+    with the copies removed when a copied path already exists in the
+    worktree, `git check-ignore` does not ignore it there, or a copied
+    symbolic link points into the source checkout. Before Harnessy's `git add
+    --all` it checks again that git ignores every copied path, since the agent
+    can edit `.gitignore`; otherwise it hands off and commits nothing. State
+    records the copies, so a resume never copies again. The default allowlist
+    is unchanged: the operator names exact test and format commands, and `npx`
+    stays denied because it can fetch and run any package, so rules name the
+    installed binary (`Bash(node_modules/.bin/vitest run *)`).
   - Residual risks: an allowed test command runs repository code the agent
-    can edit, so it is code execution as the current user. The `env` prefix
+    can edit, so it is code execution as the current user. With `--agent-deps
+    clone` that code also runs the copied packages, which the agent can change
+    in its worktree; the copies cannot reach the source checkout's own
+    `node_modules`, but code running as the user can still reach any file the
+    user can. The `env` prefix
     that strips git and GitHub credentials is defense in depth, not a sandbox.
     CI for a same-repository `pull_request` runs the pushed code with that
     workflow's token permissions and any secrets it references. Today the

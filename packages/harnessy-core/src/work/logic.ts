@@ -290,6 +290,23 @@ export const gitArgv = {
 		"show",
 		`origin/${base}:${path}`,
 	],
+	/**
+	 * Ignored, untracked paths of the source checkout, NUL-separated. With
+	 * `--directory` a wholly ignored directory is one entry ending in `/`.
+	 */
+	ignoredDirs: (repo: string) => [
+		"git",
+		"-C",
+		repo,
+		"ls-files",
+		"-z",
+		"--others",
+		"--ignored",
+		"--exclude-standard",
+		"--directory",
+	],
+	/** Exits 0 only when git ignores the path; tracked paths are never ignored. */
+	checkIgnore: (worktree: string, path: string) => ["git", "-C", worktree, "check-ignore", "-q", "--", path],
 	/** Pushes the exact reviewed commit, not whatever HEAD is at push time. */
 	push: (worktree: string, branch: string, sha: string) => [
 		"git",
@@ -490,7 +507,11 @@ const MAX_ALLOW_LENGTH = 4096;
  *
  * Residual risk: an allowed test runner (for example `npm test`) executes
  * repository code the agent can edit, so it grants code execution as the
- * current user. Allow only what the task needs; review is the backstop.
+ * current user. With `--agent-deps clone` that code also has the worktree's
+ * private copy of installed packages, which it can change but which never
+ * links back to the source checkout. Allow only what the task needs; review
+ * is the backstop. `npx` stays denied because it can fetch and run any
+ * package; name the installed binary instead, e.g. `Bash(node_modules/.bin/vitest run *)`.
  */
 export const validateAgentAllow = (value: string | undefined): ReadonlyArray<string> => {
 	if (value === undefined || value === "") return [];
@@ -740,6 +761,45 @@ export const parseAgentResult = (text: string | undefined): AgentResult => {
 	return { ok: true, costUsd: cost, outcome, reason: clean, isError: field(value, "is_error") === true };
 };
 
+/** Last path segments of the installed build inputs `--agent-deps clone` copies. */
+export const AGENT_DEP_DIRS: ReadonlySet<string> = new Set(["node_modules", "dist"]);
+
+/**
+ * Directories to copy from `git ls-files -z --others --ignored --directory`
+ * output: entries whose last segment is `node_modules` or `dist`, as plain
+ * relative paths without the trailing `/`. Anything absolute or with `.` or
+ * `..` segments is dropped.
+ */
+export const parseDepDirs = (stdout: string): ReadonlyArray<string> =>
+	stdout
+		.split("\0")
+		.map((entry) => entry.replace(/\/+$/, ""))
+		.filter((path) => {
+			const segments = path.split("/");
+			return (
+				path !== "" &&
+				!path.startsWith("/") &&
+				segments.every((segment) => segment !== "" && segment !== "." && segment !== "..") &&
+				AGENT_DEP_DIRS.has(path.slice(path.lastIndexOf("/") + 1))
+			);
+		});
+
+/** How one dependency directory reached the worktree. */
+export type DepCopyMethod = "clone" | "reflink" | "copy";
+
+/**
+ * `cp` argv for a copy-on-write copy: APFS `clonefile` on macOS
+ * (`cp -c`), `--reflink=auto` elsewhere (GNU cp clones where the filesystem
+ * supports it). `-R` copies symbolic links as links, never their targets.
+ */
+export const cloneArgv = (platform: string, source: string, target: string) =>
+	platform === "darwin"
+		? { method: "clone" as const, argv: ["cp", "-c", "-R", source, target] }
+		: { method: "reflink" as const, argv: ["cp", "--reflink=auto", "-R", source, target] };
+
+/** Plain recursive copy, used only when the clone command fails. */
+export const plainCopyArgv = (source: string, target: string) => ["cp", "-R", source, target];
+
 /** Why a run stops. Only `continue` from the stop rule plus an approved push reach GitHub. */
 export type HandoffReason =
 	| "timeout"
@@ -751,6 +811,7 @@ export type HandoffReason =
 	| "blocked"
 	| "no_changes"
 	| "worktree_tampered"
+	| "agent_deps_unsafe"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
 	| "revise_after_merge"
@@ -900,7 +961,7 @@ export const agentPrompt = (task: WorkTask, reviewNotes?: string): string => {
 		"## Rules",
 		"",
 		"- Make the change the task below describes, in the current directory only.",
-		"- Run the tests relevant to the change if your permissions allow it; otherwise say so in the reason. CI runs the full suite.",
+		"- Run the tests relevant to the change, and the formatter and linter, if your permissions allow it. Fix what they report, and give the commands you ran and their results in the reason; if you could not run them, say so there. CI runs the full suite.",
 		"- Do not commit, push, open pull requests or change git configuration. Harnessy commits and a human reviews before anything is pushed.",
 		"- Do not change files under `.github/`.",
 		'- Finish with outcome "done" when the change is complete, or "blocked" with a short reason when you cannot complete it safely.',
@@ -1243,6 +1304,11 @@ export interface WorkState {
 	readonly assignmentId?: string;
 	readonly started?: boolean;
 	readonly pane?: string;
+	/**
+	 * Dependency directories copied into the worktree by `--agent-deps clone`;
+	 * an empty list means the source had none. Set once, so a resume never copies again.
+	 */
+	readonly agentDeps?: { readonly copied: ReadonlyArray<{ readonly path: string; readonly method: DepCopyMethod }> };
 	/** Epoch milliseconds when the agent's wall-clock limit ends; survives re-attachment. */
 	readonly agentDeadline?: number;
 	readonly agent?: { readonly costUsd: number; readonly reason: string };
@@ -1270,6 +1336,19 @@ export interface WorkState {
 	readonly submission?: unknown;
 }
 
+const DEP_COPY_METHODS: ReadonlySet<unknown> = new Set(["clone", "reflink", "copy"]);
+
+const validAgentDeps = (value: unknown): boolean => {
+	if (value === undefined) return true;
+	const copied = field(value, "copied");
+	return (
+		Array.isArray(copied) &&
+		copied.every(
+			(entry: unknown) => typeof field(entry, "path") === "string" && DEP_COPY_METHODS.has(field(entry, "method")),
+		)
+	);
+};
+
 export const parseState = (text: string, task: string): WorkState | undefined => {
 	const value = parseJson(text);
 	const keys = field(value, "keys");
@@ -1292,6 +1371,7 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!["undefined", "string"].includes(typeof field(value, "pushedSha")) ||
 		!["undefined", "string"].includes(typeof field(value, "revisedFrom")) ||
 		!["undefined", "string"].includes(typeof field(value, "commentedSha")) ||
+		!validAgentDeps(field(value, "agentDeps")) ||
 		!(
 			field(value, "earlierReports") === undefined ||
 			(Array.isArray(field(value, "earlierReports")) &&
