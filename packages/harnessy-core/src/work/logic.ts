@@ -955,6 +955,28 @@ const headingName = (line: string): string | undefined => {
 };
 
 /**
+ * The section heading name of each line, or undefined. Headings inside a code
+ * fence or an HTML comment are examples, not sections (CommonMark: fences have
+ * at most three spaces before them, and a closer has only whitespace after it).
+ */
+const sectionHeadings = (lines: ReadonlyArray<string>): Array<string | undefined> => {
+	let fence: string | undefined;
+	let inComment = false;
+	return lines.map((line) => {
+		const fenceMark = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+		const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1];
+		const literal = fence !== undefined || inComment;
+		if (fence !== undefined) {
+			if (closer !== undefined && closer[0] === fence[0] && closer.length >= fence.length) fence = undefined;
+		} else if (inComment) {
+			if (line.includes("-->")) inComment = false;
+		} else if (fenceMark !== undefined) fence = fenceMark;
+		else if (line.includes("<!--") && !line.slice(line.indexOf("<!--")).includes("-->")) inComment = true;
+		return literal || fence !== undefined || inComment ? undefined : headingName(line);
+	});
+};
+
+/**
  * Pull request body. With the base branch's template, Harnessy fills the
  * sections it can answer from facts it controls and keeps every other section
  * verbatim for the reviewer. Task text and the agent's reason are content only.
@@ -998,10 +1020,10 @@ export const prBody = (
 	};
 	// A template with no section Harnessy recognises (for example Setext headings) gets the built-in body.
 	const recognised =
-		template?.split("\n").some((line) => {
-			const name = headingName(line);
-			return name !== undefined && filled[name] !== undefined;
-		}) === true;
+		template !== undefined &&
+		sectionHeadings(template.replace(/\r\n/g, "\n").split("\n")).some(
+			(name) => name !== undefined && filled[name] !== undefined,
+		);
 	if (template === undefined || template.trim() === "" || !recognised) {
 		const sections = [
 			"Summary",
@@ -1022,32 +1044,21 @@ export const prBody = (
 			"",
 		].join("\n");
 	}
+	const lines = template.replace(/\r\n/g, "\n").split("\n");
+	const headings = sectionHeadings(lines);
 	const out: string[] = [];
 	let skipping = false;
-	// Headings inside a code fence or an HTML comment are examples, not sections.
-	let fence: string | undefined;
-	let inComment = false;
-	for (const line of template.replace(/\r\n/g, "\n").split("\n")) {
-		// CommonMark fences: at most three spaces before; a closer has only whitespace after it.
-		const fenceMark = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-		const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1];
-		const literal = fence !== undefined || inComment;
-		if (fence !== undefined) {
-			if (closer !== undefined && closer[0] === fence[0] && closer.length >= fence.length) fence = undefined;
-		} else if (inComment) {
-			if (line.includes("-->")) inComment = false;
-		} else if (fenceMark !== undefined) fence = fenceMark;
-		else if (line.includes("<!--") && !line.slice(line.indexOf("<!--")).includes("-->")) inComment = true;
-		const name = literal || fence !== undefined || inComment ? undefined : headingName(line);
+	lines.forEach((line, index) => {
+		const name = headings[index];
 		if (name !== undefined) {
 			const content = filled[name];
 			out.push(line);
 			skipping = content !== undefined;
 			if (content !== undefined) out.push("", ...content, "");
-			continue;
+			return;
 		}
 		if (!skipping) out.push(line);
-	}
+	});
 	return `${out.join("\n").trimEnd()}\n`;
 };
 
