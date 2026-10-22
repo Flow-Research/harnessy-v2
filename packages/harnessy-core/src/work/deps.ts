@@ -1,4 +1,4 @@
-import { lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, renameSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import * as Result from "effect/Result";
 import { cloneArgv, type DepCopyMethod, gitArgv, plainCopyArgv } from "./logic.ts";
@@ -127,24 +127,26 @@ export const leadsTo = (path: string, hops = 0): string | undefined => {
 };
 
 /**
- * Symbolic links under the real directory `dir` that lead outside
- * `realWorktree`. Links are copied as links, because npm and pnpm workspace
- * links (`../packages/x`) are normal; each must lead inside the worktree.
+ * Entries under the real directory `dir` that are unsafe to keep, found with a
+ * walk that uses no-follow `lstat` types and descends only into real
+ * directories: anything but a regular file, directory or symbolic link, and
+ * any link that leads outside `realWorktree`. Links are copied as links,
+ * because npm and pnpm workspace links (`../packages/x`) are normal; each must
+ * lead inside the worktree once every link on the way is followed.
  */
-export const linksOutside = (dir: string, realWorktree: string): ReadonlyArray<string> => {
-	const outside: string[] = [];
+export const unsafeEntries = (dir: string, realWorktree: string): ReadonlyArray<string> => {
+	const unsafe: string[] = [];
 	const pending = [dir];
-	// A hand-rolled walk: it descends only into real directories, never through a link.
 	for (let current = pending.pop(); current !== undefined; current = pending.pop())
 		for (const entry of readdirSync(current, { withFileTypes: true })) {
 			const path = join(current, entry.name);
 			if (entry.isDirectory()) pending.push(path);
 			else if (entry.isSymbolicLink()) {
 				const target = leadsTo(path);
-				if (target === undefined || !within(realWorktree, target)) outside.push(path);
-			}
+				if (target === undefined || !within(realWorktree, target)) unsafe.push(path);
+			} else if (!entry.isFile()) unsafe.push(path);
 		}
-	return outside.sort();
+	return unsafe.sort();
 };
 
 /** Why a command failed, for a log line or an error. */
@@ -157,8 +159,11 @@ const COPY_TIMEOUT_MS = 30 * 60 * 1000;
 /**
  * Copy `source` to the new path `target` (both real), as a copy-on-write clone
  * where the platform and filesystem allow it, otherwise as a plain copy. Both
- * use `cp -R -P`, so no link inside the tree is followed. A failed attempt is
- * removed with `remove` before the next.
+ * use `cp -R -P`, so no link inside the tree is followed. `cp` writes only into
+ * a private directory created fresh beside `target` (`mkdtemp`, mode 0700),
+ * and the finished copy is renamed into place: `rename` never follows the
+ * final component and fails if `target` appeared meanwhile as anything but an
+ * empty directory.
  */
 export const copyTree = async (
 	run: Run,
@@ -166,17 +171,25 @@ export const copyTree = async (
 	log: (line: string) => void,
 	source: string,
 	target: string,
-	remove: () => void,
 ): Promise<{ readonly method: DepCopyMethod } | { readonly error: string }> => {
-	const clone = cloneArgv(platform, source, target);
+	const stagingDir = mkdtempSync(join(dirname(target), ".harnessy-copy-"));
+	const staged = join(stagingDir, "copy");
+	const clone = cloneArgv(platform, source, staged);
 	const cloned = await run(clone.argv, { timeoutMs: COPY_TIMEOUT_MS });
-	if (cloned.exitCode === 0) return { method: clone.method };
-	remove();
-	log(`Cloning ${source} is not supported here (${failure(cloned)}); making a plain copy`);
-	const copied = await run(plainCopyArgv(source, target), { timeoutMs: COPY_TIMEOUT_MS });
-	if (copied.exitCode === 0) return { method: "copy" };
-	remove();
-	return { error: `copying ${source} failed: ${failure(copied)}` };
+	let method: DepCopyMethod = clone.method;
+	if (cloned.exitCode !== 0) {
+		rmSync(staged, { recursive: true, force: true });
+		log(`Cloning ${source} is not supported here (${failure(cloned)}); making a plain copy`);
+		const copied = await run(plainCopyArgv(source, staged), { timeoutMs: COPY_TIMEOUT_MS });
+		method = "copy";
+		if (copied.exitCode !== 0) {
+			rmSync(stagingDir, { recursive: true, force: true });
+			return { error: `copying ${source} failed: ${failure(copied)}` };
+		}
+	}
+	const moved = Result.try(() => renameSync(staged, target));
+	rmSync(stagingDir, { recursive: true, force: true });
+	return Result.isSuccess(moved) ? { method } : { error: `moving the copy of ${source} into place failed` };
 };
 
 /**

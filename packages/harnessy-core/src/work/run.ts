@@ -19,11 +19,11 @@ import {
 	committed,
 	copyTree,
 	destinationProblem,
-	linksOutside,
 	makeParents,
 	removeInside,
 	sourceProblem,
 	stageable,
+	unsafeEntries,
 } from "./deps.ts";
 import {
 	ATTESTATION,
@@ -479,12 +479,12 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				detail: "these copied dependency directories are no longer plain directories in the worktree",
 				paths: moved,
 			};
-		const linked = copies.flatMap((path) => linksOutside(join(realWorktree, path), realWorktree));
+		const linked = copies.flatMap((path) => unsafeEntries(join(realWorktree, path), realWorktree));
 		if (linked.length > 0)
 			return {
-				reason: "agent_deps_link_outside",
+				reason: "agent_deps_unsafe_entry",
 				detail:
-					"these links inside the copied dependency directories lead outside the worktree, so a write could pass through them",
+					"these entries in the copied dependency directories are special files, or links leading outside the worktree that a write could pass through",
 				paths: linked,
 			};
 		const inHead = await committed(deps.run, worktree, copies);
@@ -535,9 +535,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			const parentProblem = makeParents(realWorktree, path);
 			const result =
 				parentProblem === undefined
-					? await copyTree(deps.run, deps.platform, deps.log, join(realRepo, path), join(realWorktree, path), () =>
-							removeInside(realWorktree, path),
-						)
+					? await copyTree(deps.run, deps.platform, deps.log, join(realRepo, path), join(realWorktree, path))
 					: { error: parentProblem };
 			// All or nothing: a partial copy is removed, so a re-run starts clean.
 			if ("error" in result) {

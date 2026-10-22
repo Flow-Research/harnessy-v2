@@ -850,7 +850,7 @@ export type HandoffReason =
 	| "agent_deps_source_unsafe"
 	| "agent_deps_destination_unsafe"
 	| "agent_deps_not_ignored"
-	| "agent_deps_link_outside"
+	| "agent_deps_unsafe_entry"
 	| "agent_deps_committed"
 	| "agent_deps_moved"
 	| "ci_config_changed"

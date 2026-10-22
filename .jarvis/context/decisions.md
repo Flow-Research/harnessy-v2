@@ -117,17 +117,21 @@
     for it. Before copying, a source must exist that way
     (`agent_deps_source_unsafe`) and a destination must not exist in any form
     (`agent_deps_destination_unsafe`). Missing parents are created one
-    non-recursive `mkdir` at a time. The copy reads the realpath'd source and
-    writes the realpath'd destination with `cp -c -R -P` (APFS clone) on
-    macOS, `cp --reflink=auto -R -P` elsewhere, or a plain `cp -R -P` only
-    when the clone fails; `-P` never follows a link. After copying, the
+    non-recursive `mkdir` at a time. The copy reads the realpath'd source
+    with `cp -c -R -P` (APFS clone) on macOS, `cp --reflink=auto -R -P`
+    elsewhere, or a plain `cp -R -P` only when the clone fails; `-P` never
+    follows a link. `cp` writes only into a private directory created fresh
+    (`mkdtemp`, 0700) beside the destination, and the finished copy is
+    renamed into place; `rename` never follows the final component and fails
+    if the destination appeared meanwhile. After copying, the
     sources are checked again, and the copies get the same check that runs
     before every later agent start and after every agent run: each copy is
-    still a plain directory (`agent_deps_moved`); every link inside it, found
-    by a walk that never descends through a link, leads inside the worktree
-    once every link on the way is followed, dangling ones included
-    (`agent_deps_link_outside`; npm and pnpm workspace links such as
-    `../packages/x` are normal and kept); HEAD's tree holds no file under it
+    still a plain directory (`agent_deps_moved`); a walk with no-follow
+    `lstat` types finds only regular files, directories and links, and every
+    link leads inside the worktree once every link on the way is followed,
+    dangling ones included (`agent_deps_unsafe_entry`; npm and pnpm workspace
+    links such as `../packages/x` are normal and kept, links into the source
+    checkout are not); HEAD's tree holds no file under it
     in any letter case (`git diff --name-only <empty tree> HEAD --
     ':(literal,icase)<path>'`, `agent_deps_committed`); and `git status
     --porcelain=v1 -z --untracked-files=all -- ':(literal,icase)<path>'` is
@@ -145,9 +149,14 @@
     clone` that code also runs the copied packages, which the agent can change
     in its worktree; the copies cannot reach the source checkout's own
     `node_modules`, but code running as the user can still reach any file the
-    user can. The checks are not atomic (Node has no `openat`); they rely on
-    nothing else writing to the worktree or the source's ignored directories
-    while Harnessy copies, which holds because the agent has not started. The `env` prefix
+    user can. The copy checks defend against hostile
+    repository content (the task branch and the source's ignored files), not
+    against a concurrent local attacker: Node has no `openat`, so a
+    same-user process that writes to the worktree or the source checkout
+    while Harnessy copies can always race a path check. Staging plus `rename`
+    and the checks repeated after the copy, before every agent start and
+    after every agent run narrow that window and catch what it leaves behind;
+    they cannot close it, and no such process runs before the agent starts. The `env` prefix
     that strips git and GitHub credentials is defense in depth, not a sandbox.
     CI for a same-repository `pull_request` runs the pushed code with that
     workflow's token permissions and any secrets it references. Today the

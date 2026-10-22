@@ -6,10 +6,10 @@ import {
 	checkComponents,
 	destinationProblem,
 	leadsTo,
-	linksOutside,
 	makeParents,
 	removeInside,
 	sourceProblem,
+	unsafeEntries,
 	within,
 } from "../src/work/deps.ts";
 
@@ -119,7 +119,7 @@ describe("dependency copy path checks", () => {
 		symlinkSync("./not-built", join(wt, "node_modules", "pending"));
 		symlinkSync(join(root, "repo-evil"), join(wt, "node_modules", "prefix"));
 		symlinkSync(join(wt, "node_modules", "loop"), join(wt, "node_modules", "loop"));
-		expect(linksOutside(join(wt, "node_modules"), wt)).toEqual([
+		expect(unsafeEntries(join(wt, "node_modules"), wt)).toEqual([
 			join(wt, "node_modules", "loop"),
 			join(wt, "node_modules", "prefix"),
 		]);
