@@ -415,7 +415,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		save({
 			// Older state recorded only the PR; its head was the pushed commit.
 			pushedSha: state.pushedSha ?? (state.pr === undefined ? undefined : state.headSha),
-			reviewRequested: undefined,
+			readyMarked: undefined,
 			revisedFrom: state.headSha,
 			headSha: undefined,
 			agent: undefined,
@@ -547,7 +547,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		}
 		deps.log(`Pushing ${headSha} to ${branch}`);
 		await must(gitArgv.push(worktree, branch, headSha), "git push");
-		save({ pushedSha: headSha, reviewRequested: undefined });
+		save({ pushedSha: headSha, readyMarked: undefined });
 	}
 	// A revision pushed to an open PR gets one comment saying what changed; retried until posted.
 	if (state.pr !== undefined && state.revisions !== undefined && state.commentedSha !== headSha) {
