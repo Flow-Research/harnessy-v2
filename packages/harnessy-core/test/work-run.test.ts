@@ -53,6 +53,7 @@ interface Scenario {
 	template?: string;
 	checksExit?: number;
 	checksMissingFirst?: number;
+	readyFails?: boolean;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -154,6 +155,8 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				if (joined.startsWith("repo view")) return ok(JSON.stringify({ nameWithOwner: "flow/app" }));
 				if (joined.startsWith("pr list")) return ok(JSON.stringify(scenario.prList ?? []));
 				if (joined.startsWith("pr create")) return ok("https://github.com/flow/app/pull/7\n");
+				if (joined === "pr ready 7" && scenario.readyFails === true)
+					return { exitCode: 1, stdout: "", stderr: "HTTP 502" };
 				if (joined.startsWith("pr checks") && (scenario.checksMissingFirst ?? 0) > 0) {
 					scenario.checksMissingFirst = (scenario.checksMissingFirst ?? 0) - 1;
 					return { exitCode: 1, stdout: "", stderr: "no checks reported on the 'work/x' branch" };
@@ -266,6 +269,14 @@ describe("runWork", () => {
 		expect((await runWork(options, fake.deps)).report).toMatchObject({ status: "submitted" });
 		expect(fake.calls.filter((argv) => argv.join(" ").startsWith("gh pr checks")).length).toBe(3);
 		expect(fake.calls).toContainEqual(["gh", "pr", "ready", "7"]);
+	});
+
+	it("retries marking the PR ready when gh pr ready fails", async () => {
+		const failed = await runWork(options, fakeTools(root, { readyFails: true }).deps);
+		expect(failed.report).toMatchObject({ status: "handoff", reason: "pr_not_ready" });
+		const retried = fakeTools(root);
+		expect((await runWork(options, retried.deps)).report).toMatchObject({ status: "submitted" });
+		expect(retried.calls).toContainEqual(["gh", "pr", "ready", "7"]);
 	});
 
 	it("does not mark ready a PR whose head moved while checks ran", async () => {

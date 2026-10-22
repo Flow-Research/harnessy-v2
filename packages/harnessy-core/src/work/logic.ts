@@ -751,6 +751,7 @@ export type HandoffReason =
 	| "ci_config_changed"
 	| "awaiting_push_approval"
 	| "checks_not_passed"
+	| "pr_not_ready"
 	| "agent_wait_failed"
 	| "unreviewed_merge"
 	| "head_mismatch"

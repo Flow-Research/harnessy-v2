@@ -538,12 +538,10 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		if (moved !== undefined) return handoff("pr_mismatch", moved);
 		if (current.state === "OPEN") {
 			const ready = await deps.run(ghArgv.prReady(pr.number), { cwd: worktree });
-			await notify(
-				deps,
-				ready.exitCode === 0
-					? `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`
-					: `PR #${pr.number} passed its checks but could not be marked ready. Mark it ready and merge when satisfied.`,
-			);
+			// Not recorded as requested, so a re-run tries again.
+			if (ready.exitCode !== 0)
+				return handoff("pr_not_ready", `PR #${pr.number} passed its checks but could not be marked ready`);
+			await notify(deps, `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`);
 		}
 		save({ reviewRequested: true });
 	}
