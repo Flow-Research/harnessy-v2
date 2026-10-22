@@ -335,8 +335,10 @@
   through a root edge, as with `agents`: an exact root
   `devDependencies.effect@4.0.0-beta.85` keeps the tree valid and must stay
   equal to `@harnessy/core`'s pin. `scripts/release-install-overrides.mjs` adds
-  the same flat `toml` pin for `install.mjs` and the local release installs;
-  both pins are asserted in `scripts/harnessy-release-contract.test.mjs`. The
+  the same flat `toml` pin for `install.mjs` and the local release installs,
+  and the packed-engine Cloudflare fixture gets it too because its install is
+  audited; all three pins are asserted in
+  `scripts/harnessy-release-contract.test.mjs`. The
   coding-agent shrinkwrap and install-lock change only for `ip-address`. The
   after audits report zero advisories at every severity, with no exception.
 - **Links:** `.github/workflows/qa-security-sweep.yml`,
