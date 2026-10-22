@@ -54,8 +54,9 @@ const tile = (state: string, data?: unknown, reason?: string) => ({
 	...(reason === undefined ? {} : { reason }),
 });
 
-const envelope = (tiles: Record<string, unknown>, generatedAt: string | undefined = "2026-10-17T05:00:00Z") => ({
-	...(generatedAt === undefined ? {} : { generatedAt }),
+// Pass { omitGeneratedAt: true } to leave generatedAt out of the envelope entirely.
+const envelope = (tiles: Record<string, unknown>, options: { omitGeneratedAt?: boolean } = {}) => ({
+	...(options.omitGeneratedAt ? {} : { generatedAt: "2026-10-17T05:00:00Z" }),
 	tiles,
 });
 
@@ -208,7 +209,7 @@ describe("the Today screen", () => {
 						}),
 						dates: tile("ok", { dates: [{ date: "2026-10-16" }, { date: "2026-10-17" }] }),
 					},
-					undefined,
+					{ omitGeneratedAt: true },
 				),
 			),
 			"/v1/today": ok(
