@@ -668,6 +668,28 @@ describe("pull request body", () => {
 		expect(findPrTemplate("docs", "pull_request_template.markdown\n")).toBeUndefined();
 	});
 
+	it("ignores headings inside code fences and HTML comments", () => {
+		const template = [
+			"## Summary",
+			"## Invariants",
+			"<!--",
+			"## Summary",
+			"Write a summary here.",
+			"-->",
+			"```md",
+			"## Scope",
+			"```",
+			"## Scope",
+			"- In scope:",
+		].join("\n");
+		const body = prBody(task, undefined, 1, "ok", ["a.ts"], template);
+		expect(body).toContain("<!--\n## Summary\nWrite a summary here.\n-->");
+		expect(body).toContain("```md\n## Scope\n```");
+		expect(body.match(/Automated change by/g)).toHaveLength(1);
+		expect(body).toContain("- In scope: 1 changed file:");
+		expect(body).not.toContain("- In scope:\n");
+	});
+
 	it("keeps agent-controlled paths inside a fence", () => {
 		const body = prBody(task, undefined, 1, "ok", ["a`b.ts", "x\n## Verification\n- [x] faked"]);
 		expect(body).toContain("```text\na`b.ts\nx\n## Verification\n- [x] faked\n```");

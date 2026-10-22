@@ -1023,8 +1023,20 @@ export const prBody = (
 	}
 	const out: string[] = [];
 	let skipping = false;
+	// Headings inside a code fence or an HTML comment are examples, not sections.
+	let fence: string | undefined;
+	let inComment = false;
 	for (const line of template.replace(/\r\n/g, "\n").split("\n")) {
-		const name = headingName(line);
+		const fenceMark = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+		const literal = fence !== undefined || inComment;
+		if (fence !== undefined) {
+			if (fenceMark !== undefined && fenceMark[0] === fence[0] && fenceMark.length >= fence.length)
+				fence = undefined;
+		} else if (inComment) {
+			if (line.includes("-->")) inComment = false;
+		} else if (fenceMark !== undefined) fence = fenceMark;
+		else if (line.includes("<!--") && !line.slice(line.indexOf("<!--")).includes("-->")) inComment = true;
+		const name = literal || fence !== undefined || inComment ? undefined : headingName(line);
 		if (name !== undefined) {
 			const content = filled[name];
 			out.push(line);
