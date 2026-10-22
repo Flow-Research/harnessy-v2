@@ -549,6 +549,18 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		if (decision.kind === "handoff") {
 			// A priced run that stops still spent budget; a later run gets only what is left.
 			if (decision.costUsd !== undefined) save({ spentUsd: (state.spentUsd ?? 0) + decision.costUsd });
+			// A revision that left the reviewed commit untouched restores it, so it can still be pushed or revised.
+			if (revisedFrom !== undefined && revisionChanged === false && dirty === 0) {
+				const earlier = state.earlierReports ?? [];
+				save({
+					headSha: revisedFrom,
+					agent: { costUsd: 0, reason: earlier.at(-1) ?? "" },
+					earlierReports: earlier.slice(0, -1),
+					revisions: Math.max(0, (state.revisions ?? 1) - 1) || undefined,
+					revisedFrom: undefined,
+					reviewNotes: undefined,
+				});
+			}
 			return handoff(
 				decision.reason,
 				decision.detail,

@@ -401,6 +401,11 @@ describe("runWork", () => {
 			fakeTools(root, { dirty: "", ahead: "1" }).deps,
 		);
 		expect(idle.report).toMatchObject({ status: "handoff", reason: "no_changes" });
+		// The reviewed commit is current again: it can be pushed without another agent run.
+		const push = fakeTools(root);
+		expect((await runWork(options, push.deps)).report).toMatchObject({ status: "submitted" });
+		expect(has(push.calls, "pane", "run")).toBe(false);
+		expect(has(push.calls, "push")).toBe(true);
 	});
 
 	it("resumes an interrupted revision when the same notes are given again", async () => {
