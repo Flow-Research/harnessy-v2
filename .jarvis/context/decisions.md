@@ -93,7 +93,8 @@
     the revised commit stops for local review again (`--revise` with
     `--approve-push` is refused), and earlier spend reduces the remaining
     budget. `--approve-push` then pushes the revision to the same branch and
-    comments on the PR; checks, the head check and readiness run again for the
+    comments on the PR with the commit and cost only (notes and revision
+    reports stay local, since the agent saw the private notes); checks, the head check and readiness run again for the
     new head.
   - An existing PR is adopted only when it is in the same
     repository (not a fork) with the same head branch, base and pushed SHA.

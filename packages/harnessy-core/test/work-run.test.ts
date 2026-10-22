@@ -283,7 +283,7 @@ describe("runWork", () => {
 		expect(JSON.parse(readFileSync(join(revised.stateDir, "proof.json"), "utf8")).cost_usd).toBe(1);
 		const body = readFileSync(join(revised.stateDir, "pr-body.md"), "utf8");
 		expect(body).toContain("Agent cost: 1.00 USD.");
-		expect(body).toContain("ok\n\nRevision 1 after review:\nok");
+		expect(body).toContain("ok\n\nRevised 1 time after local review; revision reports stay local.");
 	});
 
 	it("refuses to revise and push in one run, and to revise after the push", async () => {
@@ -334,7 +334,8 @@ describe("runWork", () => {
 		]);
 		expect(has(approved.calls, "pr", "comment")).toBe(true);
 		const comment = readFileSync(join(approved.stateDir, "pr-revision.md"), "utf8");
-		expect(comment).toContain(`Revision 1 by \`harnessy work\` after local review, pushed as ${NEXT}`);
+		expect(comment).toContain(`Revision 1 by \`harnessy work\` after review, pushed as ${NEXT}`);
+		expect(comment).not.toContain("Agent report");
 		expect(comment).not.toContain("Format the test file.");
 		expect(approved.calls).toContainEqual(["gh", "pr", "ready", "7"]);
 	});

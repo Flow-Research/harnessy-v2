@@ -599,7 +599,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	// A revision pushed to an open PR gets one comment saying what changed; retried until posted.
 	if (state.pr !== undefined && state.revisions !== undefined && state.commentedSha !== headSha) {
 		const commentFile = join(stateDir, "pr-revision.md");
-		writePrivate(commentFile, revisionComment(state.revisions, headSha, totalCostUsd, agent.reason));
+		writePrivate(commentFile, revisionComment(state.revisions, headSha, totalCostUsd));
 		await must(ghArgv.prComment(state.pr.number, commentFile), "gh pr comment", worktree);
 		save({ commentedSha: headSha });
 	}

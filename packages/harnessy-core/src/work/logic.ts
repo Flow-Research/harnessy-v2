@@ -863,31 +863,24 @@ const fenceFor = (text: string): string => {
  * Prompt written to Harnessy's state directory. The rules come first; the
  * WorkStream task follows as fenced, untrusted data.
  */
-/** Every agent report on the task, each revision labelled, for the PR body. */
+/**
+ * The agent's report for the PR body. Revision runs were prompted with the
+ * reviewer's private notes, so their reports stay local; the body says only
+ * how many revisions there were.
+ */
 export const combinedReports = (earlier: ReadonlyArray<string>, latest: string): string =>
-	[...earlier, latest]
-		.map((report, index) => (index === 0 ? report : `Revision ${index} after review:\n${report}`))
-		.join("\n\n");
+	earlier.length === 0
+		? latest
+		: `${earlier[0]}\n\nRevised ${earlier.length} time${earlier.length === 1 ? "" : "s"} after local review; revision reports stay local.`;
 
-/** PR comment for a revision pushed to an open pull request. Reviewer notes stay private. */
-export const revisionComment = (
-	revision: number,
-	headSha: string,
-	totalCostUsd: number,
-	agentReport: string,
-): string => {
-	const reportFence = fenceFor(agentReport);
-	return [
-		`Revision ${revision} by \`harnessy work\` after local review, pushed as ${headSha}. Total agent cost: ${totalCostUsd.toFixed(2)} USD.`,
+/** PR comment for a revision pushed to an open pull request. Notes and revision reports stay private. */
+export const revisionComment = (revision: number, headSha: string, totalCostUsd: number): string =>
+	[
+		`Revision ${revision} by \`harnessy work\` after review, pushed as ${headSha}. Total agent cost: ${totalCostUsd.toFixed(2)} USD.`,
 		"",
-		"Agent report (written by the agent; untrusted):",
-		"",
-		`${reportFence}text`,
-		agentReport,
-		reportFence,
+		"The reviewer's notes and the agent's revision report stay local. Review the new commit's diff.",
 		"",
 	].join("\n");
-};
 
 /** Longest reviewer note `--revise` accepts. */
 export const MAX_REVIEW_NOTES = 8_000;
@@ -929,7 +922,7 @@ const reviewSection = (notes: string): string[] => {
 	return [
 		"## Reviewer notes on your previous change",
 		"",
-		"Your previous change is already committed in this directory. The person reviewing it before push asks for the revision below. Make it, keep the rest of the change unless the notes say otherwise, and report what you changed. The rules above still apply.",
+		"Your previous change is already committed in this directory. The person reviewing it before push asks for the revision below. Make it, keep the rest of the change unless the notes say otherwise, and report what you changed without quoting the notes. The rules above still apply.",
 		"",
 		`${fence}text`,
 		notes,
