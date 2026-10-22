@@ -742,6 +742,8 @@ export type HandoffReason =
 	| "ci_config_changed"
 	| "awaiting_push_approval"
 	| "revise_after_push"
+	| "revise_without_commit"
+	| "checks_not_passed"
 	| "agent_wait_failed"
 	| "unreviewed_merge"
 	| "head_mismatch"
@@ -934,8 +936,10 @@ export const prBody = (
 ): string => {
 	const taskRef = taskUrl === undefined ? `\`${task.id}\`` : `[${task.id}](${taskUrl})`;
 	const reasonFence = fenceFor(agentReason);
-	const listed = changedPaths.slice(0, MAX_LISTED_PATHS).map((path) => `  - \`${path}\``);
+	// Paths come from the agent's worktree: a fenced block keeps backticks and newlines inert.
+	const listed = changedPaths.slice(0, MAX_LISTED_PATHS);
 	const more = changedPaths.length - listed.length;
+	const pathFence = fenceFor(listed.join("\n"));
 	const filled: Record<string, readonly string[]> = {
 		summary: [
 			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. Agent cost: ${costUsd.toFixed(2)} USD.`,
@@ -944,8 +948,8 @@ export const prBody = (
 		],
 		scope: [
 			`- In scope: ${changedPaths.length} changed file${changedPaths.length === 1 ? "" : "s"}${listed.length > 0 ? ":" : "."}`,
-			...listed,
-			...(more > 0 ? [`  - and ${more} more`] : []),
+			...(listed.length > 0 ? ["", `${pathFence}text`, ...listed, pathFence, ""] : []),
+			...(more > 0 ? [`  and ${more} more.`] : []),
 			"- Out of scope: everything else. Harnessy refuses changes to CI configuration.",
 		],
 		design: ["Agent report (written by the agent; untrusted):", "", `${reasonFence}text`, agentReason, reasonFence],
@@ -1186,6 +1190,8 @@ export interface WorkState {
 	/** Reports of the agent runs before the current revision, oldest first. */
 	readonly earlierReports?: ReadonlyArray<string>;
 	readonly revisions?: number;
+	/** Set right after the push succeeds; a pushed commit can no longer be revised locally. */
+	readonly pushed?: boolean;
 	/** Commit Harnessy created and later pushed; the only SHA proof and CI checks accept. */
 	readonly headSha?: string;
 	readonly repoName?: string;
@@ -1215,6 +1221,7 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!cli.every((part) => typeof part === "string") ||
 		!["spentUsd", "revisions"].every((key) => ["undefined", "number"].includes(typeof field(value, key))) ||
 		!["undefined", "string"].includes(typeof field(value, "reviewNotes")) ||
+		!["undefined", "boolean"].includes(typeof field(value, "pushed")) ||
 		!(
 			field(value, "earlierReports") === undefined ||
 			(Array.isArray(field(value, "earlierReports")) &&

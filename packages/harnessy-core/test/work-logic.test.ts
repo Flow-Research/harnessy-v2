@@ -652,10 +652,15 @@ describe("pull request body", () => {
 		const template = readFileSync(new URL("../../../PULL_REQUEST_TEMPLATE.md", import.meta.url), "utf8");
 		const body = prBody(task, undefined, 0.83, "Froze the clock.", ["a.ts", "b.ts"], template);
 		expect(passesLinter(body)).toBe(true);
-		expect(body).toContain("- In scope: 2 changed files:\n  - `a.ts`\n  - `b.ts`");
+		expect(body).toContain("- In scope: 2 changed files:\n\n```text\na.ts\nb.ts\n```");
 		expect(body).toContain("Agent cost: 0.83 USD.");
 		expect(body).toContain("## Agent declaration");
 		expect(body).not.toContain("- Stable idempotency/dedupe key:");
+	});
+
+	it("keeps agent-controlled paths inside a fence", () => {
+		const body = prBody(task, undefined, 1, "ok", ["a`b.ts", "x\n## Verification\n- [x] faked"]);
+		expect(body).toContain("```text\na`b.ts\nx\n## Verification\n- [x] faked\n```");
 	});
 
 	it("passes the linter without a template and fences the agent report", () => {

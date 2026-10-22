@@ -372,6 +372,25 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			);
 	};
 
+	if (options.revise !== undefined) {
+		if (state.pushed === true || state.pr !== undefined)
+			return handoff("revise_after_push", "the commit is already pushed; request changes on the pull request");
+		if (state.headSha === undefined)
+			return handoff("revise_without_commit", "there is no local commit to revise; run without --revise");
+		const spent = (state.spentUsd ?? 0) + (state.agent?.costUsd ?? 0);
+		// Check before discarding the reviewed commit, so it can still be pushed as it is.
+		if (spent >= options.budgetUsd)
+			return handoff("over_budget", `earlier runs spent ${spent} USD of the ${options.budgetUsd} USD budget`);
+		deps.log(`Sending commit ${state.headSha.slice(0, 12)} back to the agent with the reviewer's notes`);
+		save({
+			headSha: undefined,
+			agent: undefined,
+			spentUsd: spent,
+			earlierReports: [...(state.earlierReports ?? []), state.agent?.reason ?? ""],
+			reviewNotes: options.revise,
+			revisions: (state.revisions ?? 0) + 1,
+		});
+	}
 	if (state.assignmentId === undefined) {
 		await assertActor();
 		deps.log("Claiming task");
@@ -388,19 +407,6 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		save({ started: true });
 	}
 
-	if (options.revise !== undefined && state.headSha !== undefined) {
-		if (state.pr !== undefined)
-			return handoff("revise_after_push", "the commit is already pushed; request changes on the pull request");
-		deps.log(`Sending commit ${state.headSha.slice(0, 12)} back to the agent with the reviewer's notes`);
-		save({
-			headSha: undefined,
-			agent: undefined,
-			spentUsd: (state.spentUsd ?? 0) + (state.agent?.costUsd ?? 0),
-			earlierReports: [...(state.earlierReports ?? []), state.agent?.reason ?? ""],
-			reviewNotes: options.revise,
-			revisions: (state.revisions ?? 0) + 1,
-		});
-	}
 	// Earlier runs on this task spend the same budget.
 	const budgetLeft = options.budgetUsd - (state.spentUsd ?? 0);
 	if (state.headSha === undefined) {
@@ -452,12 +458,15 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			budgetUsd: budgetLeft,
 			changes: dirty + (Number.isFinite(ahead) ? ahead : 0),
 		});
-		if (decision.kind === "handoff")
+		if (decision.kind === "handoff") {
+			// A priced run that stops still spent budget; a later run gets only what is left.
+			if (decision.costUsd !== undefined) save({ spentUsd: (state.spentUsd ?? 0) + decision.costUsd });
 			return handoff(
 				decision.reason,
 				decision.detail,
 				decision.costUsd === undefined ? {} : { cost_usd: decision.costUsd },
 			);
+		}
 		if (dirty > 0) {
 			await must(gitArgv.addAll(worktree), "git add");
 			await must(gitArgv.commit(worktree, options.task), "git commit");
@@ -495,6 +504,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		}
 		deps.log(`Pushing ${headSha} to ${branch}`);
 		await must(gitArgv.push(worktree, branch, headSha), "git push");
+		save({ pushed: true });
 		const repoName = parseRepoName(await must(ghArgv.repo(), "gh repo view", worktree));
 		save({ repoName });
 		const expected = { repo: repoName, branch, base: options.base, headSha };
@@ -545,18 +555,29 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	if (state.reviewRequested !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
 		const checks = await deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
+		// Failed, pending or timed-out checks are not a verdict yet: stop, and let a re-run check again.
 		if (checks.exitCode !== 0)
+			return handoff(
+				"checks_not_passed",
+				`checks on PR #${pr.number} have not passed (gh exit ${checks.exitCode}); it stays a draft. Re-run once they pass, or close the PR.`,
+			);
+		// Mark ready only the reviewed commit: the branch could have moved while checks ran.
+		const current = parsePrView(await must(ghArgv.prView(pr.number), "gh pr view", worktree));
+		const moved =
+			prMismatch(current, expectedPr) ??
+			(current.headSha === headSha
+				? undefined
+				: `PR #${pr.number} head is ${current.headSha}, not the pushed ${headSha}`);
+		if (moved !== undefined) return handoff("pr_mismatch", moved);
+		if (current.state === "OPEN") {
+			const ready = await deps.run(ghArgv.prReady(pr.number), { cwd: worktree });
 			await notify(
 				deps,
-				`Draft PR #${pr.number}: checks need attention. It stays a draft; fix or close it, or mark it ready yourself.`,
+				ready.exitCode === 0
+					? `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`
+					: `PR #${pr.number} passed its checks but could not be marked ready. Mark it ready and merge when satisfied.`,
 			);
-		else if ((await deps.run(ghArgv.prReady(pr.number), { cwd: worktree })).exitCode === 0)
-			await notify(deps, `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`);
-		else
-			await notify(
-				deps,
-				`PR #${pr.number} passed its checks but could not be marked ready. Mark it ready and merge when satisfied.`,
-			);
+		}
 		save({ reviewRequested: true });
 	}
 

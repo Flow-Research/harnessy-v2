@@ -52,13 +52,14 @@ interface Scenario {
 	clockStart?: number;
 	template?: string;
 	checksExit?: number;
+	prCreateFails?: boolean;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
 const fakeTools = (root: string, scenario: Scenario = {}) => {
 	const calls: string[][] = [];
-	// Default: PR-create verification, one OPEN merge poll, then MERGED.
-	const prStates = [...(scenario.prStates ?? [ourPr("OPEN"), ourPr("OPEN"), ourPr("MERGED")])];
+	// Default: PR-create verification, the pre-ready head check, one OPEN merge poll, then MERGED.
+	const prStates = [...(scenario.prStates ?? [ourPr("OPEN"), ourPr("OPEN"), ourPr("OPEN"), ourPr("MERGED")])];
 	const prepareStatuses = [...(scenario.prepareStatuses ?? ["prepared", "ready"])];
 	const actors = [...(scenario.actors ?? [])];
 	let uuid = 0;
@@ -148,7 +149,10 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			if (exe === "gh") {
 				if (joined.startsWith("repo view")) return ok(JSON.stringify({ nameWithOwner: "flow/app" }));
 				if (joined.startsWith("pr list")) return ok(JSON.stringify(scenario.prList ?? []));
-				if (joined.startsWith("pr create")) return ok("https://github.com/flow/app/pull/7\n");
+				if (joined.startsWith("pr create"))
+					return scenario.prCreateFails === true
+						? { exitCode: 1, stdout: "", stderr: "network down" }
+						: ok("https://github.com/flow/app/pull/7\n");
 				if (joined.startsWith("pr checks")) return { exitCode: scenario.checksExit ?? 0, stdout: "", stderr: "" };
 				if (joined.startsWith("run list"))
 					return ok(
@@ -268,13 +272,44 @@ describe("runWork", () => {
 		expect(late.report).toMatchObject({ status: "handoff", reason: "revise_after_push" });
 	});
 
-	it("stops when earlier runs used the whole budget", async () => {
+	it("refuses --revise without a local commit, before claiming", async () => {
+		const fresh = fakeTools(root);
+		const outcome = await runWork({ ...options, approvePush: false, revise: "notes" }, fresh.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "revise_without_commit" });
+		expect(has(fresh.calls, "claim")).toBe(false);
+	});
+
+	it("refuses --revise once the commit is pushed, even before the PR exists", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		await expect(runWork(options, fakeTools(root, { prCreateFails: true }).deps)).rejects.toThrow();
+		const late = await runWork({ ...options, approvePush: false, revise: "notes" }, fakeTools(root).deps);
+		expect(late.report).toMatchObject({ status: "handoff", reason: "revise_after_push" });
+	});
+
+	it("keeps the reviewed commit when no budget is left to revise it", async () => {
 		await runWork({ ...options, approvePush: false, budgetUsd: 0.5 }, fakeTools(root).deps);
-		const outcome = await runWork(
+		const refused = await runWork(
 			{ ...options, approvePush: false, budgetUsd: 0.5, revise: "notes" },
 			fakeTools(root).deps,
 		);
-		expect(outcome.report).toMatchObject({ status: "handoff", reason: "over_budget" });
+		expect(refused.report).toMatchObject({ status: "handoff", reason: "over_budget" });
+		const pushed = fakeTools(root);
+		expect((await runWork({ ...options, budgetUsd: 0.5 }, pushed.deps)).report).toMatchObject({
+			status: "submitted",
+		});
+		expect(has(pushed.calls, "pane", "run")).toBe(false);
+	});
+
+	it("counts the spend of a priced run that stops", async () => {
+		const blocked = JSON.stringify({
+			total_cost_usd: 0.5,
+			is_error: false,
+			structured_output: { outcome: "blocked", reason: "cannot" },
+		});
+		await runWork({ ...options, approvePush: false }, fakeTools(root, { agentResult: blocked }).deps);
+		const again = fakeTools(root);
+		await runWork({ ...options, approvePush: false }, again.deps);
+		expect(again.calls.some((argv) => argv.join(" ").includes("--max-budget-usd 4.5"))).toBe(true);
 	});
 
 	it("marks the PR ready after its checks pass", async () => {
@@ -283,10 +318,21 @@ describe("runWork", () => {
 		expect(green.calls).toContainEqual(["gh", "pr", "ready", "7"]);
 	});
 
-	it("keeps the PR a draft when its checks fail", async () => {
-		const red = fakeTools(root, { checksExit: 1 });
-		await runWork(options, red.deps);
+	it("keeps the PR a draft and stops when its checks have not passed, then retries", async () => {
+		const red = fakeTools(root, { checksExit: 8 });
+		const outcome = await runWork(options, red.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "checks_not_passed" });
 		expect(has(red.calls, "ready")).toBe(false);
+		const green = fakeTools(root);
+		expect((await runWork(options, green.deps)).report).toMatchObject({ status: "submitted" });
+		expect(green.calls).toContainEqual(["gh", "pr", "ready", "7"]);
+	});
+
+	it("does not mark ready a PR whose head moved while checks ran", async () => {
+		const moved = fakeTools(root, { prStates: [ourPr("OPEN"), ourPr("OPEN", { headRefOid: "b".repeat(40) })] });
+		const outcome = await runWork(options, moved.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "pr_mismatch" });
+		expect(has(moved.calls, "ready")).toBe(false);
 	});
 
 	it("builds the PR body from the base branch template", async () => {
@@ -305,7 +351,7 @@ describe("runWork", () => {
 		expect(fake.calls).toContainEqual(["git", "-C", fake.worktree, "show", "origin/dev:PULL_REQUEST_TEMPLATE.md"]);
 		const body = readFileSync(join(fake.stateDir, "pr-body.md"), "utf8");
 		expect(body).toContain(`WorkStream task \`${TASK}\``);
-		expect(body).toContain("- In scope: 1 changed file:\n  - `src/a.ts`");
+		expect(body).toContain("- In scope: 1 changed file:\n\n```text\nsrc/a.ts\n```");
 		expect(body).not.toContain("Describe it.");
 		expect(body).toContain("## Invariants\n- [ ] Keep it.");
 		expect(body).toContain("## Verification\n- [ ] Unit tests");
@@ -445,7 +491,9 @@ describe("runWork", () => {
 	});
 
 	it("hands off when the merged head is not the pushed commit", async () => {
-		const fake = fakeTools(root, { prStates: [ourPr("OPEN"), ourPr("MERGED", { headRefOid: "c".repeat(40) })] });
+		const fake = fakeTools(root, {
+			prStates: [ourPr("OPEN"), ourPr("OPEN"), ourPr("MERGED", { headRefOid: "c".repeat(40) })],
+		});
 		const outcome = await runWork(options, fake.deps);
 		expect(outcome.report).toMatchObject({ status: "handoff", reason: "head_mismatch" });
 		expect(has(fake.calls, "prepare")).toBe(false);
