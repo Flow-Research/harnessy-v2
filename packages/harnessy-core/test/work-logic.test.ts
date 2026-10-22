@@ -711,6 +711,13 @@ describe("pull request body", () => {
 		expect(body).toContain("- In scope: 1 changed file:");
 	});
 
+	it("falls back to the built-in body when no template section is recognised", () => {
+		const body = prBody(task, undefined, 1, "ok", ["a.ts"], "Summary\n=======\n\nScope\n-----\n");
+		expect(passesLinter(body)).toBe(true);
+		expect(body).toContain("## Summary");
+		expect(body).not.toContain("=======");
+	});
+
 	it("keeps agent-controlled paths inside a fence", () => {
 		const body = prBody(task, undefined, 1, "ok", ["a`b.ts", "x\n## Verification\n- [x] faked"]);
 		expect(body).toContain("```text\na`b.ts\nx\n## Verification\n- [x] faked\n```");
