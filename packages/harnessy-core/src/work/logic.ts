@@ -305,8 +305,39 @@ export const gitArgv = {
 		"--exclude-standard",
 		"--directory",
 	],
-	/** Exits 0 only when git ignores the path; tracked paths are never ignored. */
-	checkIgnore: (worktree: string, path: string) => ["git", "-C", worktree, "check-ignore", "-q", "--", path],
+	/**
+	 * What `git add --all` would stage under one path, as git itself decides
+	 * (nested `.gitignore` files and `!` negations included). Literal pathspec,
+	 * NUL-separated output: empty means nothing there can reach a commit.
+	 */
+	stageableUnder: (worktree: string, path: string) => [
+		"git",
+		"--literal-pathspecs",
+		"-C",
+		worktree,
+		"status",
+		"--porcelain=v1",
+		"-z",
+		"--untracked-files=all",
+		"--",
+		path,
+	],
+	/** Files under one path that commits since the base changed; literal pathspec, NUL-separated. */
+	committedUnder: (worktree: string, base: string, path: string) => [
+		"git",
+		"--literal-pathspecs",
+		"-C",
+		worktree,
+		"diff",
+		"--no-ext-diff",
+		"--no-textconv",
+		"--no-renames",
+		"-z",
+		"--name-only",
+		`origin/${base}...HEAD`,
+		"--",
+		path,
+	],
 	/** Pushes the exact reviewed commit, not whatever HEAD is at push time. */
 	push: (worktree: string, branch: string, sha: string) => [
 		"git",
@@ -790,15 +821,15 @@ export type DepCopyMethod = "clone" | "reflink" | "copy";
 /**
  * `cp` argv for a copy-on-write copy: APFS `clonefile` on macOS
  * (`cp -c`), `--reflink=auto` elsewhere (GNU cp clones where the filesystem
- * supports it). `-R` copies symbolic links as links, never their targets.
+ * supports it). `-R -P` copies symbolic links as links and never follows one.
  */
 export const cloneArgv = (platform: string, source: string, target: string) =>
 	platform === "darwin"
-		? { method: "clone" as const, argv: ["cp", "-c", "-R", source, target] }
-		: { method: "reflink" as const, argv: ["cp", "--reflink=auto", "-R", source, target] };
+		? { method: "clone" as const, argv: ["cp", "-c", "-R", "-P", source, target] }
+		: { method: "reflink" as const, argv: ["cp", "--reflink=auto", "-R", "-P", source, target] };
 
 /** Plain recursive copy, used only when the clone command fails. */
-export const plainCopyArgv = (source: string, target: string) => ["cp", "-R", source, target];
+export const plainCopyArgv = (source: string, target: string) => ["cp", "-R", "-P", source, target];
 
 /** Why a run stops. Only `continue` from the stop rule plus an approved push reach GitHub. */
 export type HandoffReason =
@@ -811,7 +842,11 @@ export type HandoffReason =
 	| "blocked"
 	| "no_changes"
 	| "worktree_tampered"
-	| "agent_deps_unsafe"
+	| "agent_deps_source_unsafe"
+	| "agent_deps_destination_unsafe"
+	| "agent_deps_not_ignored"
+	| "agent_deps_link_outside"
+	| "agent_deps_committed"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
 	| "revise_after_merge"

@@ -9,10 +9,18 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { REQUIRED_CLAUDE_FLAGS } from "../src/work/logic.ts";
-import { type RunResult, runWork, type WorkDeps, type WorkOptions, worktreePath } from "../src/work/run.ts";
+import {
+	execRun,
+	type RunResult,
+	runWork,
+	stageable,
+	type WorkDeps,
+	type WorkOptions,
+	worktreePath,
+} from "../src/work/run.ts";
 
 const TASK = "11111111-2222-4333-8444-555555555555";
 const BRANCH = `work/${TASK}`;
@@ -73,7 +81,7 @@ interface Scenario {
 	platform?: string;
 	/** `git ls-files -z --others --ignored --directory` output for the source checkout. */
 	ignoredDirs?: string;
-	/** Paths `git check-ignore` reports as not ignored, before and after the agent runs. */
+	/** Copied paths under which git status lists stageable files, before and after the agent runs. */
 	notIgnored?: string[];
 	notIgnoredAfterAgent?: string[];
 	/** `cp` fails for sources containing this text: the clone, or the clone and the plain copy. */
@@ -81,10 +89,14 @@ interface Scenario {
 	copyFailsFor?: string;
 	/** Failed `cp` runs print nothing; the plain copy does not even start. */
 	cpQuiet?: boolean;
-	/** Every copy gets a symbolic link back to its source. */
-	linkToSource?: boolean;
-	/** A path that already exists in the new worktree. */
+	/** Copied paths with files in commits the agent made itself. */
+	committedCopies?: string[];
+	/** Symbolic links (name to target) placed in every copy; `{source}` is the copy's source directory. */
+	links?: Record<string, string>;
+	/** A directory that already exists in the new worktree. */
 	inWorktree?: string;
+	/** A symbolic link (path to target) that already exists in the new worktree. */
+	worktreeLink?: [string, string];
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -140,15 +152,25 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			}
 			if (exe === "git") {
 				if (args.includes("ls-files")) return ok(scenario.ignoredDirs ?? "");
-				if (args.includes("check-ignore")) {
+				if (args.includes("--literal-pathspecs") && args.includes("diff")) {
+					const path = argv.at(-1) ?? "";
+					return ok(scenario.committedCopies?.includes(path) === true ? `${path}/installed.js\0` : "");
+				}
+				if (args.includes("--untracked-files=all")) {
+					const path = argv.at(-1) ?? "";
 					const exposed = agentRan() ? scenario.notIgnoredAfterAgent : scenario.notIgnored;
-					return { exitCode: exposed?.includes(argv.at(-1) ?? "") === true ? 1 : 0, stdout: "", stderr: "" };
+					return ok(exposed?.includes(path) === true ? `?? ${path}/installed.js\0` : "");
 				}
 				if (args.includes("worktree")) {
 					mkdirSync(worktree, { recursive: true });
 					writeFileSync(join(worktree, ".git"), "gitdir: /repo/.git/worktrees/x\n");
 					if (scenario.inWorktree !== undefined)
 						mkdirSync(join(worktree, scenario.inWorktree), { recursive: true });
+					if (scenario.worktreeLink !== undefined) {
+						const [path, target] = scenario.worktreeLink;
+						mkdirSync(dirname(join(worktree, path)), { recursive: true });
+						symlinkSync(target, join(worktree, path));
+					}
 				}
 				if (args.includes("status"))
 					return ok(agentRan() ? (scenario.dirty ?? " M src/a.ts\n") : (scenario.preRunStatus ?? ""));
@@ -227,6 +249,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			}
 			if (exe === "cp") {
 				const [source = "", target = ""] = args.slice(-2);
+				expect(args).toContain("-P");
 				const plain = args[0] === "-R";
 				const fails = plain ? scenario.copyFailsFor : scenario.cloneFailsFor;
 				mkdirSync(target, { recursive: true });
@@ -236,7 +259,8 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					return { exitCode: plain ? undefined : 1, stdout: "", stderr: "" };
 				}
 				writeFileSync(join(target, "installed.js"), "");
-				if (scenario.linkToSource === true) symlinkSync(join(source, "installed.js"), join(target, "back"));
+				for (const [name, link] of Object.entries(scenario.links ?? {}))
+					symlinkSync(link.replace("{source}", source), join(target, name));
 				return ok();
 			}
 			if (exe === "/usr/bin/osascript") return ok();
@@ -859,13 +883,15 @@ describe("runWork", () => {
 	});
 
 	describe("--agent-deps clone", () => {
-		const IGNORED = "node_modules/\0packages/a/dist/\0packages/a/src/\0packages/b/dist/\0.env\0";
+		const IGNORED = "node_modules/\0packages/a/dist/\0packages/a/src/\0.env\0../escape/node_modules/\0/abs/dist/\0";
 		const prepareSource = () => {
 			mkdirSync(join(root, "repo", "node_modules"), { recursive: true });
 			mkdirSync(join(root, "repo", "packages", "a", "dist"), { recursive: true });
-			// A symlinked dist would be copied as a link into the source checkout.
-			mkdirSync(join(root, "repo", "packages", "b"), { recursive: true });
-			symlinkSync(join(root, "repo", "node_modules"), join(root, "repo", "packages", "b", "dist"));
+		};
+		const outside = () => {
+			const dir = join(root, "elsewhere");
+			mkdirSync(join(dir, "dist"), { recursive: true });
+			return dir;
 		};
 		const savedState = (fake: { stateDir: string }) =>
 			JSON.parse(readFileSync(join(fake.stateDir, "state.json"), "utf8"));
@@ -875,16 +901,23 @@ describe("runWork", () => {
 			const index = calls.findIndex((call) => call.join("\0") === argv.join("\0"));
 			return index >= 0 && index < pane;
 		};
+		const clone = (opts: WorkOptions) => ({ ...opts, approvePush: false, agentDeps: "clone" as const });
+		const refusedBeforeCopy = (fake: ReturnType<typeof fakeTools>) => {
+			expect(copies(fake.calls)).toEqual([]);
+			expect(has(fake.calls, "pane", "run")).toBe(false);
+			expect(savedState(fake).agentDeps).toBeUndefined();
+		};
 
 		it("clones node_modules and dist with clonefile on macOS before the agent runs", async () => {
 			prepareSource();
 			const fake = fakeTools(root, { ignoredDirs: IGNORED });
-			const outcome = await runWork({ ...options, approvePush: false, agentDeps: "clone" }, fake.deps);
+			const outcome = await runWork(clone(options), fake.deps);
 			expect(outcome.report).toMatchObject({ status: "handoff", reason: "awaiting_push_approval" });
 			const repo = join(root, "repo");
+			// Absolute and `..` entries from git never become copy sources.
 			expect(copies(fake.calls)).toEqual([
-				["cp", "-c", "-R", join(repo, "node_modules"), join(fake.worktree, "node_modules")],
-				["cp", "-c", "-R", join(repo, "packages/a/dist"), join(fake.worktree, "packages/a/dist")],
+				["cp", "-c", "-R", "-P", join(repo, "node_modules"), join(fake.worktree, "node_modules")],
+				["cp", "-c", "-R", "-P", join(repo, "packages/a/dist"), join(fake.worktree, "packages/a/dist")],
 			]);
 			expect(beforeAgent(fake.calls, copies(fake.calls)[1] ?? [])).toBe(true);
 			expect(fake.calls).toContainEqual([
@@ -898,9 +931,19 @@ describe("runWork", () => {
 				"--exclude-standard",
 				"--directory",
 			]);
-			expect(fake.calls).toContainEqual(["git", "-C", fake.worktree, "check-ignore", "-q", "--", "packages/a/dist"]);
+			expect(fake.calls).toContainEqual([
+				"git",
+				"--literal-pathspecs",
+				"-C",
+				fake.worktree,
+				"status",
+				"--porcelain=v1",
+				"-z",
+				"--untracked-files=all",
+				"--",
+				"packages/a/dist",
+			]);
 			expect(existsSync(join(fake.worktree, "packages/a/dist/installed.js"))).toBe(true);
-			expect(existsSync(join(fake.worktree, "packages/b/dist"))).toBe(false);
 			expect(savedState(fake).agentDeps).toEqual({
 				copied: [
 					{ path: "node_modules", method: "clone" },
@@ -910,12 +953,32 @@ describe("runWork", () => {
 			expect(readFileSync(join(fake.stateDir, "prompt.md"), "utf8")).toContain("and the formatter and linter");
 		});
 
+		it("copies paths with spaces and newlines exactly as git listed them", async () => {
+			const odd = ["pkg one/node_modules", "we\nird/dist"];
+			for (const path of odd) mkdirSync(join(root, "repo", path), { recursive: true });
+			const fake = fakeTools(root, { ignoredDirs: odd.map((path) => `${path}/\0`).join("") });
+			await runWork(clone(options), fake.deps);
+			expect(copies(fake.calls).map((argv) => argv.at(-1))).toEqual(odd.map((path) => join(fake.worktree, path)));
+			// Checked once after copying and once after the agent, each with the exact path.
+			expect(fake.calls.filter((argv) => argv.includes("--untracked-files=all")).map((argv) => argv.at(-1))).toEqual(
+				[...odd, ...odd],
+			);
+			expect(savedState(fake).agentDeps.copied.map((copy: { path: string }) => copy.path)).toEqual(odd);
+		});
+
 		it("uses cp --reflink=auto on Linux", async () => {
 			prepareSource();
 			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0", platform: "linux" });
-			await runWork({ ...options, approvePush: false, agentDeps: "clone" }, fake.deps);
+			await runWork(clone(options), fake.deps);
 			expect(copies(fake.calls)).toEqual([
-				["cp", "--reflink=auto", "-R", join(root, "repo", "node_modules"), join(fake.worktree, "node_modules")],
+				[
+					"cp",
+					"--reflink=auto",
+					"-R",
+					"-P",
+					join(root, "repo", "node_modules"),
+					join(fake.worktree, "node_modules"),
+				],
 			]);
 			expect(savedState(fake).agentDeps).toEqual({ copied: [{ path: "node_modules", method: "reflink" }] });
 		});
@@ -924,13 +987,10 @@ describe("runWork", () => {
 			prepareSource();
 			const lines: string[] = [];
 			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0", cloneFailsFor: "node_modules" });
-			await runWork(
-				{ ...options, approvePush: false, agentDeps: "clone" },
-				{ ...fake.deps, log: (line) => lines.push(line) },
-			);
-			expect(copies(fake.calls).map((argv) => argv.slice(0, 3))).toEqual([
-				["cp", "-c", "-R"],
-				["cp", "-R", join(root, "repo", "node_modules")],
+			await runWork(clone(options), { ...fake.deps, log: (line) => lines.push(line) });
+			expect(copies(fake.calls).map((argv) => argv.slice(0, 4))).toEqual([
+				["cp", "-c", "-R", "-P"],
+				["cp", "-R", "-P", join(root, "repo", "node_modules")],
 			]);
 			expect(savedState(fake).agentDeps).toEqual({ copied: [{ path: "node_modules", method: "copy" }] });
 			expect(
@@ -948,12 +1008,9 @@ describe("runWork", () => {
 				copyFailsFor: "dist",
 				cpQuiet: true,
 			});
-			await expect(
-				runWork(
-					{ ...options, approvePush: false, agentDeps: "clone" },
-					{ ...fake.deps, log: (line) => lines.push(line) },
-				),
-			).rejects.toThrow(`copying ${join(root, "repo", "packages/a/dist")} failed: it did not start`);
+			await expect(runWork(clone(options), { ...fake.deps, log: (line) => lines.push(line) })).rejects.toThrow(
+				`copying ${join(root, "repo", "packages/a/dist")} failed: it did not start`,
+			);
 			expect(lines.some((line) => line.includes("(exit 1); making a plain copy"))).toBe(true);
 			expect(existsSync(join(fake.worktree, "node_modules"))).toBe(false);
 			expect(existsSync(join(fake.worktree, "packages/a/dist"))).toBe(false);
@@ -965,10 +1022,7 @@ describe("runWork", () => {
 		it("records and logs a skip when the source has no node_modules or dist", async () => {
 			const lines: string[] = [];
 			const fake = fakeTools(root, { ignoredDirs: "packages/a/src/\0" });
-			const outcome = await runWork(
-				{ ...options, approvePush: false, agentDeps: "clone" },
-				{ ...fake.deps, log: (line) => lines.push(line) },
-			);
+			const outcome = await runWork(clone(options), { ...fake.deps, log: (line) => lines.push(line) });
 			expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
 			expect(copies(fake.calls)).toEqual([]);
 			expect(savedState(fake).agentDeps).toEqual({ copied: [] });
@@ -983,23 +1037,104 @@ describe("runWork", () => {
 				structured_output: { outcome: "blocked", reason: "cannot" },
 			});
 			const first = fakeTools(root, { ignoredDirs: IGNORED, agentResult: blocked });
-			await runWork({ ...options, approvePush: false, agentDeps: "clone" }, first.deps);
+			await runWork(clone(options), first.deps);
 			expect(copies(first.calls)).toHaveLength(2);
 			const again = fakeTools(root, { ignoredDirs: IGNORED });
-			const outcome = await runWork({ ...options, approvePush: false, agentDeps: "clone" }, again.deps);
+			const outcome = await runWork(clone(options), again.deps);
 			expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
 			expect(has(again.calls, "pane", "run")).toBe(true);
 			expect(has(again.calls, "ls-files")).toBe(false);
 			expect(copies(again.calls)).toEqual([]);
 		});
 
-		it("hands off and removes the copies when the target repository does not ignore them", async () => {
+		it("refuses a source that is a symbolic link", async () => {
+			prepareSource();
+			mkdirSync(join(root, "repo", "packages", "b"), { recursive: true });
+			symlinkSync(join(root, "repo", "node_modules"), join(root, "repo", "packages", "b", "dist"));
+			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0packages/b/dist/\0" });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({ status: "handoff", reason: "agent_deps_source_unsafe" });
+			expect(String(outcome.report.detail)).toContain("packages/b/dist is not a plain directory");
+			refusedBeforeCopy(fake);
+		});
+
+		it("refuses a source reached through a symbolic link that leaves the checkout", async () => {
+			prepareSource();
+			mkdirSync(join(root, "repo", "packages"), { recursive: true });
+			symlinkSync(outside(), join(root, "repo", "packages", "c"));
+			const fake = fakeTools(root, { ignoredDirs: "packages/c/dist/\0" });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "agent_deps_source_unsafe" });
+			expect(String(outcome.report.detail)).toContain("through a symbolic link or outside the source checkout");
+			refusedBeforeCopy(fake);
+		});
+
+		it("refuses a destination that already exists in the worktree", async () => {
+			prepareSource();
+			const fake = fakeTools(root, { ignoredDirs: IGNORED, inWorktree: "packages/a/dist" });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "agent_deps_destination_unsafe" });
+			expect(String(outcome.report.detail)).toContain("packages/a/dist already exists in the worktree");
+			refusedBeforeCopy(fake);
+		});
+
+		it("refuses a destination that is a symbolic link, even a dangling one", async () => {
+			prepareSource();
+			const target = join(root, "repo", "node_modules-real");
+			const fake = fakeTools(root, { ignoredDirs: IGNORED, worktreeLink: ["node_modules", target] });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "agent_deps_destination_unsafe" });
+			expect(String(outcome.report.detail)).toContain("node_modules already exists in the worktree");
+			expect(existsSync(target)).toBe(false);
+			refusedBeforeCopy(fake);
+		});
+
+		it("refuses a destination whose parent is a symbolic link out of the worktree", async () => {
+			prepareSource();
+			const elsewhere = outside();
+			rmSync(join(elsewhere, "dist"), { recursive: true });
+			const fake = fakeTools(root, { ignoredDirs: IGNORED, worktreeLink: ["packages/a", elsewhere] });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "agent_deps_destination_unsafe" });
+			expect(String(outcome.report.detail)).toContain("packages/a resolves to");
+			expect(existsSync(join(elsewhere, "dist"))).toBe(false);
+			refusedBeforeCopy(fake);
+		});
+
+		it("keeps copied links that stay inside the worktree, such as workspace links", async () => {
+			prepareSource();
+			const fake = fakeTools(root, {
+				ignoredDirs: IGNORED,
+				links: { workspace: "../packages/a", pending: "./not-built-yet" },
+			});
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
+			expect(savedState(fake).agentDeps.copied).toHaveLength(2);
+		});
+
+		it.each([
+			["into the source checkout", "{source}/installed.js"],
+			["to a missing path outside the worktree", "/nonexistent/harnessy-escape"],
+		])("removes the copies when a copied link leads %s", async (_, target) => {
+			prepareSource();
+			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0", links: { back: target } });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({
+				reason: "agent_deps_link_outside",
+				paths: [join(fake.worktree, "node_modules", "back")],
+			});
+			expect(existsSync(join(fake.worktree, "node_modules"))).toBe(false);
+			expect(has(fake.calls, "pane", "run")).toBe(false);
+			expect(savedState(fake).agentDeps).toBeUndefined();
+		});
+
+		it("hands off and removes the copies when git would stage them", async () => {
 			prepareSource();
 			const fake = fakeTools(root, { ignoredDirs: IGNORED, notIgnored: ["packages/a/dist"] });
-			const outcome = await runWork({ ...options, approvePush: false, agentDeps: "clone" }, fake.deps);
+			const outcome = await runWork(clone(options), fake.deps);
 			expect(outcome).toMatchObject({
 				exitCode: 2,
-				report: { status: "handoff", reason: "agent_deps_unsafe", paths: ["packages/a/dist"] },
+				report: { status: "handoff", reason: "agent_deps_not_ignored", paths: ["packages/a/dist"] },
 			});
 			expect(existsSync(join(fake.worktree, "node_modules"))).toBe(false);
 			expect(existsSync(join(fake.worktree, "packages/a/dist"))).toBe(false);
@@ -1008,13 +1143,13 @@ describe("runWork", () => {
 			expect(savedState(fake).agentDeps).toBeUndefined();
 		});
 
-		it("commits nothing when the agent's change stops git ignoring a copy", async () => {
+		it("commits nothing when the agent's change makes git stage a copy", async () => {
 			prepareSource();
 			const fake = fakeTools(root, { ignoredDirs: IGNORED, notIgnoredAfterAgent: ["node_modules"] });
-			const outcome = await runWork({ ...options, approvePush: false, agentDeps: "clone" }, fake.deps);
+			const outcome = await runWork(clone(options), fake.deps);
 			expect(outcome.report).toMatchObject({
 				status: "handoff",
-				reason: "agent_deps_unsafe",
+				reason: "agent_deps_not_ignored",
 				paths: ["node_modules"],
 				cost_usd: 0.5,
 			});
@@ -1024,25 +1159,38 @@ describe("runWork", () => {
 			expect(savedState(fake).headSha).toBeUndefined();
 		});
 
-		it("hands off without copying over a path the worktree already has", async () => {
+		it("refuses a HEAD the agent committed copied files into, even with a clean tree", async () => {
 			prepareSource();
-			const fake = fakeTools(root, { ignoredDirs: IGNORED, inWorktree: "packages/a/dist" });
-			const outcome = await runWork({ ...options, approvePush: false, agentDeps: "clone" }, fake.deps);
-			expect(outcome.report).toMatchObject({ reason: "agent_deps_unsafe", paths: ["packages/a/dist"] });
-			expect(copies(fake.calls)).toEqual([]);
-			expect(has(fake.calls, "pane", "run")).toBe(false);
-		});
-
-		it("hands off and removes the copies when a copied link points into the source checkout", async () => {
-			prepareSource();
-			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0", linkToSource: true });
-			const outcome = await runWork({ ...options, approvePush: false, agentDeps: "clone" }, fake.deps);
-			expect(outcome.report).toMatchObject({
-				reason: "agent_deps_unsafe",
-				paths: [join(fake.worktree, "node_modules", "back")],
+			const fake = fakeTools(root, {
+				ignoredDirs: IGNORED,
+				dirty: "",
+				ahead: "1",
+				committedCopies: ["packages/a/dist"],
 			});
-			expect(existsSync(join(fake.worktree, "node_modules"))).toBe(false);
-			expect(has(fake.calls, "pane", "run")).toBe(false);
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({
+				reason: "agent_deps_committed",
+				paths: ["packages/a/dist"],
+				cost_usd: 0.5,
+			});
+			expect(fake.calls).toContainEqual([
+				"git",
+				"--literal-pathspecs",
+				"-C",
+				fake.worktree,
+				"diff",
+				"--no-ext-diff",
+				"--no-textconv",
+				"--no-renames",
+				"-z",
+				"--name-only",
+				"origin/dev...HEAD",
+				"--",
+				"packages/a/dist",
+			]);
+			expect(has(fake.calls, "commit")).toBe(false);
+			expect(savedState(fake).headSha).toBeUndefined();
+			expect(savedState(fake)).toMatchObject({ spentUsd: 0.5 });
 		});
 
 		it("copies nothing without the flag", async () => {
@@ -1050,11 +1198,39 @@ describe("runWork", () => {
 			const fake = fakeTools(root, { ignoredDirs: IGNORED });
 			await runWork({ ...options, approvePush: false }, fake.deps);
 			expect(has(fake.calls, "ls-files")).toBe(false);
-			expect(has(fake.calls, "check-ignore")).toBe(false);
+			expect(has(fake.calls, "--untracked-files=all")).toBe(false);
 			expect(copies(fake.calls)).toEqual([]);
 			expect(savedState(fake).agentDeps).toBeUndefined();
 			const plan = await runWork({ ...options, dryRun: true }, fakeTools(root).deps);
 			expect(plan.report).toMatchObject({ status: "dry_run", agent_deps: "off" });
+		});
+
+		it("asks real git what it would stage, including nested negations and odd names", async () => {
+			const repo = join(root, "real");
+			const git = (...args: string[]) => execRun(["git", "-C", repo, ...args]);
+			mkdirSync(repo);
+			await git("init", "-q");
+			writeFileSync(join(repo, ".gitignore"), "node_modules/\n*.js\nwe*/\n");
+			// A nested .gitignore re-includes one file inside a copied directory.
+			mkdirSync(join(repo, "lib", "dist"), { recursive: true });
+			writeFileSync(join(repo, "lib", ".gitignore"), "!keep.js\n");
+			writeFileSync(join(repo, "lib", "dist", "a.js"), "");
+			writeFileSync(join(repo, "lib", "dist", "keep.js"), "");
+			for (const path of ["node_modules", "pkg one/node_modules", "we\nird/dist", "plain*/dist", "plain [x]/dist"]) {
+				mkdirSync(join(repo, path), { recursive: true });
+				writeFileSync(join(repo, path, "index.json"), "{}");
+			}
+			// Literal pathspecs: `plain*` must not match `plain [x]`, which git does not ignore.
+			expect(
+				await stageable(execRun, repo, [
+					"node_modules",
+					"pkg one/node_modules",
+					"we\nird/dist",
+					"lib/dist",
+					"plain*/dist",
+				]),
+			).toEqual(["lib/dist", "plain*/dist"]);
+			expect(await stageable(execRun, join(root, "missing"), ["node_modules"])).toEqual(["node_modules"]);
 		});
 	});
 

@@ -10,10 +10,13 @@
   `cp --reflink=auto` elsewhere, a plain copy only when cloning fails), so the
   agent can run the tests and formatter that `--agent-allow` permits, for
   example `--agent-allow 'Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)'`.
-  Off by default. The copies are never links into the source checkout, are
-  recorded so a resume does not copy again, and must stay git-ignored: when a
-  copied path is not ignored in the worktree, before the agent runs or after
-  its change, the run hands off and commits nothing. The agent prompt now asks
+  Off by default. Sources and destinations are checked by real path first: a
+  source reached through a symbolic link or outside the checkout, or a
+  destination that already exists or sits under a link, stops the run before
+  anything is copied. `cp -P` never follows links, links inside the copies
+  must resolve inside the worktree, and git status and diff must show nothing
+  under a copy before the agent runs and after it, so a copy never reaches a
+  commit. The copies are recorded so a resume does not copy again. The agent prompt now asks
   it to run the allowed formatter and linter too and report the results.
 
 ### Changed

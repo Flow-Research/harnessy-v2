@@ -268,6 +268,12 @@ describe("agent permissions", () => {
 		"Bash(npm run PUSH)",
 		"Bash(-x test)",
 		"Bash(FOO=1)",
+		"Bash(node_modules/.bin/vitest run\nid)",
+		"Bash(node_modules/.bin/vitest run *; id)",
+		"Bash(node_modules/.bin/vitest run $(id) *)",
+		"Bash(node_modules/.bin/../../../bin/sh -c x)",
+		"Bash(node_modules/.bin/npx vitest)",
+		"Bash(node_modules/.bin/biome format --write * && id)",
 		"Bash(npm test%20x)",
 		"Bash(npm test,x)",
 	])("rejects %s", (rule) => {
@@ -308,27 +314,36 @@ describe("prompt", () => {
 				"node_modules/\0packages/a/dist/\0packages/a/src/\0.env\0dist\0/abs/node_modules/\0../node_modules/\0a/./dist/\0a//dist/\0a/node_modules.bak/\0",
 			),
 		).toEqual(["node_modules", "packages/a/dist", "dist"]);
+		// NUL-separated: spaces, quotes and newlines stay part of the path.
+		expect(parseDepDirs('a b/node_modules/\0we\nird/dist/\0q"uote/dist/\0')).toEqual([
+			"a b/node_modules",
+			"we\nird/dist",
+			'q"uote/dist',
+		]);
 		expect(parseDepDirs("")).toEqual([]);
 	});
 
 	it("builds copy-on-write copy commands per platform", () => {
 		expect(cloneArgv("darwin", "/r/node_modules", "/w/node_modules")).toEqual({
 			method: "clone",
-			argv: ["cp", "-c", "-R", "/r/node_modules", "/w/node_modules"],
+			argv: ["cp", "-c", "-R", "-P", "/r/node_modules", "/w/node_modules"],
 		});
 		expect(cloneArgv("linux", "/r/dist", "/w/dist")).toEqual({
 			method: "reflink",
-			argv: ["cp", "--reflink=auto", "-R", "/r/dist", "/w/dist"],
+			argv: ["cp", "--reflink=auto", "-R", "-P", "/r/dist", "/w/dist"],
 		});
-		expect(plainCopyArgv("/r/dist", "/w/dist")).toEqual(["cp", "-R", "/r/dist", "/w/dist"]);
-		expect(gitArgv.checkIgnore("/w", "node_modules")).toEqual([
+		expect(plainCopyArgv("/r/dist", "/w/dist")).toEqual(["cp", "-R", "-P", "/r/dist", "/w/dist"]);
+		expect(gitArgv.stageableUnder("/w", "a b\n/dist")).toEqual([
 			"git",
+			"--literal-pathspecs",
 			"-C",
 			"/w",
-			"check-ignore",
-			"-q",
+			"status",
+			"--porcelain=v1",
+			"-z",
+			"--untracked-files=all",
 			"--",
-			"node_modules",
+			"a b\n/dist",
 		]);
 	});
 });

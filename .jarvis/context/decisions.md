@@ -105,17 +105,28 @@
     worktree its own copy of the source checkout's installed build inputs, so
     test and format commands allowed through `--agent-allow` can run there.
     Harnessy lists the source's ignored, untracked directories with `git
-    ls-files --others --ignored --exclude-standard --directory`, keeps those
-    named `node_modules` or `dist` that are plain directories, and copies them
-    before the herdr pane starts: `cp -c -R` (APFS clone) on macOS, `cp
-    --reflink=auto -R` elsewhere, and a plain `cp -R` only when the clone
-    command fails. It never links into the source checkout, and hands off
-    with the copies removed when a copied path already exists in the
-    worktree, `git check-ignore` does not ignore it there, or a copied
-    symbolic link points into the source checkout. Before Harnessy's `git add
-    --all` it checks again that git ignores every copied path, since the agent
-    can edit `.gitignore`; otherwise it hands off and commits nothing. State
-    records the copies, so a resume never copies again. The default allowlist
+    ls-files -z --others --ignored --exclude-standard --directory` (NUL-separated,
+    so names with spaces, quotes or newlines stay exact; absolute and `..`
+    entries are dropped) and keeps those named `node_modules` or `dist`.
+    Before copying anything it hands off when a source is not a plain
+    directory whose real path is exactly `<real repo>/<path>` (no symbolic
+    link in it or its parents, nothing outside the checkout), or when a
+    destination already exists in the worktree (even as a dangling link) or
+    its nearest existing parent does not have the real path
+    `<real worktree>/<parent>`. It then copies before the herdr pane starts:
+    `cp -c -R -P` (APFS clone) on macOS, `cp --reflink=auto -R -P` elsewhere,
+    and a plain `cp -R -P` only when the clone command fails; `-P` never
+    follows a link. Links inside the copies are kept as links, because npm
+    and pnpm workspace links (`../packages/x`) are normal, but every link must
+    resolve inside the task worktree (by real path, or lexically when it
+    dangles); otherwise the copies are removed and the run hands off. Whether
+    a copy could reach a commit is git's answer, never a parse of
+    `.gitignore`: `git --literal-pathspecs status --porcelain=v1 -z
+    --untracked-files=all -- <path>` must be empty right after copying and
+    again after the agent, and `git diff --name-only origin/<base>...HEAD --
+    <path>` must be empty after the agent, since an allowed command could
+    edit `.gitignore` or force-add and commit a copy itself. State records
+    the copies, so a resume never copies again. The default allowlist
     is unchanged: the operator names exact test and format commands, and `npx`
     stays denied because it can fetch and run any package, so rules name the
     installed binary (`Bash(node_modules/.bin/vitest run *)`).
