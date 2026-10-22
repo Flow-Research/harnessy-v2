@@ -690,6 +690,27 @@ describe("pull request body", () => {
 		expect(body).not.toContain("- In scope:\n");
 	});
 
+	it("follows CommonMark for indented headings and fence closers", () => {
+		const template = [
+			"## Summary",
+			"## Invariants",
+			"    ## Summary",
+			"```js",
+			"## Scope",
+			"```js",
+			"## Design",
+			"```",
+			"\t```",
+			"## Scope",
+			"- In scope:",
+		].join("\n");
+		const body = prBody(task, undefined, 1, "ok", ["a.ts"], template);
+		expect(body).toContain("## Invariants\n    ## Summary");
+		expect(body).toContain("```js\n## Scope\n```js\n## Design\n```");
+		expect(body.match(/Automated change by/g)).toHaveLength(1);
+		expect(body).toContain("- In scope: 1 changed file:");
+	});
+
 	it("keeps agent-controlled paths inside a fence", () => {
 		const body = prBody(task, undefined, 1, "ok", ["a`b.ts", "x\n## Verification\n- [x] faked"]);
 		expect(body).toContain("```text\na`b.ts\nx\n## Verification\n- [x] faked\n```");
