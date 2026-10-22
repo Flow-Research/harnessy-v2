@@ -108,6 +108,10 @@ export interface WorkOutcome {
 
 const CHECKS_TIMEOUT_MS = 60 * 60 * 1000;
 const MERGE_POLL_MS = 60 * 1000;
+/** Right after a push GitHub may not list the new commit's checks yet. */
+const CHECKS_APPEAR_MS = 10 * 60 * 1000;
+const CHECKS_APPEAR_POLL_MS = 20 * 1000;
+const NO_CHECKS_YET = /no checks reported/i;
 const PREPARE_POLL_MS = 10 * 1000;
 const PREPARE_ATTEMPTS = 60;
 const CI_ATTEMPTS = 30;
@@ -573,7 +577,17 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 
 	if (state.reviewRequested !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
-		const checks = await deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
+		const watch = () => deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
+		let checks = await watch();
+		const appearBy = deps.now() + CHECKS_APPEAR_MS;
+		while (
+			checks.exitCode !== 0 &&
+			NO_CHECKS_YET.test(`${checks.stdout}\n${checks.stderr}`) &&
+			deps.now() < appearBy
+		) {
+			await deps.sleep(CHECKS_APPEAR_POLL_MS);
+			checks = await watch();
+		}
 		// Failed, pending or timed-out checks are not a verdict yet: stop, and let a re-run check again.
 		if (checks.exitCode !== 0)
 			return handoff(

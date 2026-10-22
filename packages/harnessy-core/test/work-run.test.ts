@@ -54,6 +54,7 @@ interface Scenario {
 	checksExit?: number;
 	prCreateFails?: boolean;
 	head?: string;
+	checksMissingFirst?: number;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -154,6 +155,10 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					return scenario.prCreateFails === true
 						? { exitCode: 1, stdout: "", stderr: "network down" }
 						: ok("https://github.com/flow/app/pull/7\n");
+				if (joined.startsWith("pr checks") && (scenario.checksMissingFirst ?? 0) > 0) {
+					scenario.checksMissingFirst = (scenario.checksMissingFirst ?? 0) - 1;
+					return { exitCode: 1, stdout: "", stderr: "no checks reported on the 'work/x' branch" };
+				}
 				if (joined.startsWith("pr checks")) return { exitCode: scenario.checksExit ?? 0, stdout: "", stderr: "" };
 				if (joined.startsWith("run list"))
 					return ok(
@@ -353,6 +358,13 @@ describe("runWork", () => {
 		const green = fakeTools(root);
 		expect((await runWork(options, green.deps)).report).toMatchObject({ status: "submitted" });
 		expect(green.calls).toContainEqual(["gh", "pr", "ready", "7"]);
+	});
+
+	it("waits for a new commit's checks to appear before judging them", async () => {
+		const fake = fakeTools(root, { checksMissingFirst: 2 });
+		expect((await runWork(options, fake.deps)).report).toMatchObject({ status: "submitted" });
+		expect(fake.calls.filter((argv) => argv.join(" ").startsWith("gh pr checks")).length).toBe(3);
+		expect(fake.calls).toContainEqual(["gh", "pr", "ready", "7"]);
 	});
 
 	it("does not mark ready a PR whose head moved while checks ran", async () => {
