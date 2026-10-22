@@ -30,3 +30,15 @@
   WorkStream preparation and submission. Resume state lives in a private
   directory outside the agent's worktree and is bound to the task, repository,
   branch, base, WorkStream CLI and actor.
+
+### Fixed
+
+- Release installs and the workspace now resolve `toml@5.0.1`, the first
+  release that fixes three quadratic or unbounded parsing denial-of-service
+  advisories (GHSA-4qx8-w7c3-pj3p, GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p).
+  `effect@4.0.0-beta.85` still declares `toml@^4.1.1`, so `install.mjs` and the
+  local release installs pin it through their overrides. TOML integers beyond
+  `Number.MAX_SAFE_INTEGER` now fail to parse instead of losing precision. The
+  workspace also moves `ip-address` to 10.7.4 (GHSA-rxp7-6hxx-x8q5), and the
+  Executor moves `dompurify` to 3.4.17 (GHSA-cg2g-xh64-v4q7,
+  GHSA-mrv2-3pqr-j5jr, GHSA-c6gr-qvv4-5v3f).

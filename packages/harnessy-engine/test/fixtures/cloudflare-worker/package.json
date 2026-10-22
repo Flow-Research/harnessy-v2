@@ -16,6 +16,7 @@
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.1",
     "miniflare": "5.20261006.0-alpha",
-    "sharp": "0.35.5"
+    "sharp": "0.35.5",
+    "toml": "5.0.1"
   }
 }

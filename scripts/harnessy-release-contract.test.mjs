@@ -203,7 +203,7 @@ test("publication uses only artifacts whose packed integrity matches the strict 
 	assert.throws(() => assertPublicationMatchesEvidence([state], []), /omitted publication artifact/u);
 });
 
-test("isolated release installs pin the MCP SDK the root workspace pins", () => {
+test("isolated release installs and the engine fixture pin the MCP SDK and toml the root workspace pins", () => {
 	const root = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 	const engine = JSON.parse(readFileSync(new URL("../packages/harnessy-engine/package.json", import.meta.url), "utf8"));
 	const pinned = root.overrides["@modelcontextprotocol/sdk"];
@@ -215,10 +215,15 @@ test("isolated release installs pin the MCP SDK the root workspace pins", () => 
 		readFileSync(new URL("../packages/harnessy-engine/test/fixtures/cloudflare-worker/package.json", import.meta.url), "utf8"),
 	);
 	assert.equal(fixture.overrides["@modelcontextprotocol/sdk"], pinned);
+	// npm 11 applies the root toml override to effect only through a root edge; see V2D-009.
+	const core = JSON.parse(readFileSync(new URL("../packages/harnessy-core/package.json", import.meta.url), "utf8"));
+	assert.equal(root.devDependencies.effect, core.dependencies.effect);
+	assert.equal(releaseInstallOverrides.toml, root.overrides.toml);
+	assert.equal(fixture.overrides.toml, root.overrides.toml);
 	const dependencies = { "@harnessy/core": "file:/tmp/core.tgz" };
 	assert.deepEqual(releaseInstallManifest(dependencies), {
 		private: true,
 		dependencies,
-		overrides: { "@modelcontextprotocol/sdk": pinned, "@harnessy/core": "file:/tmp/core.tgz" },
+		overrides: { "@modelcontextprotocol/sdk": pinned, toml: root.overrides.toml, "@harnessy/core": "file:/tmp/core.tgz" },
 	});
 });
