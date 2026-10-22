@@ -711,6 +711,12 @@ describe("pull request body", () => {
 		expect(body).toContain("- In scope: 1 changed file:");
 	});
 
+	it("falls back when the only matching headings are examples", () => {
+		const body = prBody(task, undefined, 1, "ok", ["a.ts"], "<!--\n## Summary\n-->\n```\n## Scope\n```\n");
+		expect(passesLinter(body)).toBe(true);
+		expect(body).toContain("Automated change by");
+	});
+
 	it("falls back to the built-in body when no template section is recognised", () => {
 		const body = prBody(task, undefined, 1, "ok", ["a.ts"], "Summary\n=======\n\nScope\n-----\n");
 		expect(passesLinter(body)).toBe(true);
