@@ -741,6 +741,7 @@ export type HandoffReason =
 	| "worktree_tampered"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
+	| "revise_after_push"
 	| "agent_wait_failed"
 	| "unreviewed_merge"
 	| "head_mismatch"
@@ -846,7 +847,10 @@ const fenceFor = (text: string): string => {
  * Prompt written to Harnessy's state directory. The rules come first; the
  * WorkStream task follows as fenced, untrusted data.
  */
-export const agentPrompt = (task: WorkTask): string => {
+/** Longest reviewer note `--revise` accepts. */
+export const MAX_REVIEW_NOTES = 8_000;
+
+export const agentPrompt = (task: WorkTask, reviewNotes?: string): string => {
 	const data = [
 		`Title: ${task.title}`,
 		"",
@@ -873,7 +877,23 @@ export const agentPrompt = (task: WorkTask): string => {
 		data,
 		fence,
 		"",
+		...(reviewNotes === undefined ? [] : reviewSection(reviewNotes)),
 	].join("\n");
+};
+
+/** The local reviewer's notes on the previous commit; they direct the revision within the rules. */
+const reviewSection = (notes: string): string[] => {
+	const fence = fenceFor(notes);
+	return [
+		"## Reviewer notes on your previous change",
+		"",
+		"Your previous change is already committed in this directory. The person reviewing it before push asks for the revision below. Make it, keep the rest of the change unless the notes say otherwise, and report what you changed. The rules above still apply.",
+		"",
+		`${fence}text`,
+		notes,
+		fence,
+		"",
+	];
 };
 
 /** Pull request template locations GitHub recognises, checked in order on the base branch. */
@@ -1153,6 +1173,11 @@ export interface WorkState {
 	/** Epoch milliseconds when the agent's wall-clock limit ends; survives re-attachment. */
 	readonly agentDeadline?: number;
 	readonly agent?: { readonly costUsd: number; readonly reason: string };
+	/** Spend of earlier agent runs on this task, before a `--revise`; counts against the budget. */
+	readonly spentUsd?: number;
+	/** The local reviewer's notes for the current revision run. */
+	readonly reviewNotes?: string;
+	readonly revisions?: number;
 	/** Commit Harnessy created and later pushed; the only SHA proof and CI checks accept. */
 	readonly headSha?: string;
 	readonly repoName?: string;
@@ -1179,7 +1204,9 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		typeof field(value, "gitFile") !== "string" ||
 		!["repo", "worktree", "branch", "base", "actor"].every((key) => typeof field(binding, key) === "string") ||
 		!Array.isArray(cli) ||
-		!cli.every((part) => typeof part === "string")
+		!cli.every((part) => typeof part === "string") ||
+		!["spentUsd", "revisions"].every((key) => ["undefined", "number"].includes(typeof field(value, key))) ||
+		!["undefined", "string"].includes(typeof field(value, "reviewNotes"))
 	)
 		return undefined;
 	return value as WorkState;

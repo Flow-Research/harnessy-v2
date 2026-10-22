@@ -92,6 +92,8 @@ export interface WorkOptions {
 	readonly taskUrl?: string;
 	/** Extra validated Claude Code rules, e.g. `Bash(npm test *)`, so the agent can run tests. */
 	readonly agentAllow?: string;
+	/** Send the unpushed commit back to the agent with these reviewer notes. */
+	readonly revise?: string;
 	/** Push the reviewed local commit. Without it the run stops after the commit for review. */
 	readonly approvePush: boolean;
 	readonly dryRun: boolean;
@@ -230,6 +232,9 @@ const readGitFile = (worktree: string): string | undefined => {
  * result before the next, so a re-run resumes with the same idempotency keys.
  */
 export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> => {
+	// A revised commit is new code: it must stop for review again, never push in the same run.
+	if (options.revise !== undefined && options.approvePush)
+		throw new Error("--revise and --approve-push cannot be used together; review the revised commit first");
 	if (!isTaskId(options.task)) throw new Error("--task must be a WorkStream task UUID");
 	const agentAllow = validateAgentAllow(options.agentAllow);
 	const repo = resolve(options.repo);
@@ -382,9 +387,28 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		save({ started: true });
 	}
 
+	if (options.revise !== undefined && state.headSha !== undefined) {
+		if (state.pr !== undefined)
+			return handoff("revise_after_push", "the commit is already pushed; request changes on the pull request");
+		deps.log(`Sending commit ${state.headSha.slice(0, 12)} back to the agent with the reviewer's notes`);
+		save({
+			headSha: undefined,
+			agent: undefined,
+			spentUsd: (state.spentUsd ?? 0) + (state.agent?.costUsd ?? 0),
+			reviewNotes: options.revise,
+			revisions: (state.revisions ?? 0) + 1,
+		});
+	}
+	// Earlier runs on this task spend the same budget.
+	const budgetLeft = options.budgetUsd - (state.spentUsd ?? 0);
 	if (state.headSha === undefined) {
+		if (budgetLeft <= 0)
+			return handoff(
+				"over_budget",
+				`earlier runs spent ${state.spentUsd} USD of the ${options.budgetUsd} USD budget`,
+			);
 		if (state.pane === undefined) rmSync(paths.result, { force: true });
-		writePrivate(paths.prompt, agentPrompt(task));
+		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes));
 		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow), null, 2)}\n`);
 		let pane = state.pane;
 		if (pane === undefined) {
@@ -398,7 +422,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			// and keeps the original wall-clock deadline.
 			save({ pane, agentDeadline: deps.now() + options.maxMinutes * 60_000 });
 			deps.log(`Running agent in herdr pane ${pane}`);
-			await must(herdrArgv.paneRun(pane, agentRunLine(options.budgetUsd, paths, agentAllow)), "herdr pane run");
+			await must(herdrArgv.paneRun(pane, agentRunLine(budgetLeft, paths, agentAllow)), "herdr pane run");
 		} else deps.log(`Re-attaching to agent in herdr pane ${pane}`);
 		const deadline = state.agentDeadline ?? deps.now() + options.maxMinutes * 60_000;
 		// herdr checks existing output first, so even an expired deadline still sees a finished run.
@@ -423,7 +447,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			timedOut,
 			...(timedOut ? {} : { exitCode: parseExitMarker(waited.stdout) }),
 			...(existsSync(paths.result) ? { resultText: readFileSync(paths.result, "utf8") } : {}),
-			budgetUsd: options.budgetUsd,
+			budgetUsd: budgetLeft,
 			changes: dirty + (Number.isFinite(ahead) ? ahead : 0),
 		});
 		if (decision.kind === "handoff")
@@ -443,6 +467,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	}
 	const headSha = state.headSha ?? "";
 	const agent = state.agent ?? { costUsd: 0, reason: "" };
+	const totalCostUsd = (state.spentUsd ?? 0) + agent.costUsd;
 
 	if (state.pr === undefined) {
 		if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
@@ -457,10 +482,14 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 				deps,
 				`Review commit ${headSha.slice(0, 12)} for task ${options.task.slice(0, 8)}, then re-run with --approve-push.`,
 			);
-			return handoff("awaiting_push_approval", "review the local commit, then re-run with --approve-push", {
-				head_sha: headSha,
-				review: ["git", "-C", worktree, "diff", `origin/${options.base}...${headSha}`],
-			});
+			return handoff(
+				"awaiting_push_approval",
+				"review the local commit, then re-run with --approve-push, or with --revise <notes> to send it back",
+				{
+					head_sha: headSha,
+					review: ["git", "-C", worktree, "diff", `origin/${options.base}...${headSha}`],
+				},
+			);
 		}
 		deps.log(`Pushing ${headSha} to ${branch}`);
 		await must(gitArgv.push(worktree, branch, headSha), "git push");
@@ -486,7 +515,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 					break;
 				}
 			}
-			writePrivate(bodyFile, prBody(task, options.taskUrl, agent.costUsd, agent.reason, changed, template));
+			writePrivate(bodyFile, prBody(task, options.taskUrl, totalCostUsd, agent.reason, changed, template));
 			const created = parsePrUrl(
 				await must(ghArgv.prCreate(options.base, branch, state.summary, bodyFile), "gh pr create", worktree),
 			);
@@ -574,7 +603,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			ci_run_url: ci.url,
 			ci_conclusion: ci.conclusion,
 			// Reported by the Claude Code process itself; the only cost source there is.
-			cost_usd: agent.costUsd,
+			cost_usd: totalCostUsd,
 			duration_seconds: Math.round((deps.now() - state.startedAt) / 1000),
 		});
 		const json = Buffer.from(`${JSON.stringify(proof, null, 2)}\n`);
@@ -635,7 +664,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			admission_id: state.admissionId,
 			submission: state.submission,
 			proof: proofZip,
-			cost_usd: agent.costUsd,
+			cost_usd: totalCostUsd,
 		},
 	};
 };

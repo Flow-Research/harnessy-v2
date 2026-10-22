@@ -236,6 +236,44 @@ describe("runWork", () => {
 		]);
 	});
 
+	it("sends an unpushed commit back to the agent with review notes, then stops for review again", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		const revised = fakeTools(root);
+		const outcome = await runWork(
+			{ ...options, approvePush: false, revise: "The no-date test passes undefined to a defaulted parameter." },
+			revised.deps,
+		);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "awaiting_push_approval" });
+		expect(has(revised.calls, "pane", "run")).toBe(true);
+		expect(has(revised.calls, "push")).toBe(false);
+		const prompt = readFileSync(join(revised.stateDir, "prompt.md"), "utf8");
+		expect(prompt).toContain("## Reviewer notes on your previous change");
+		expect(prompt).toContain("passes undefined to a defaulted parameter");
+		// The second run gets only what is left of the budget, and the proof reports both runs.
+		expect(revised.calls.some((argv) => argv.join(" ").includes("--max-budget-usd 4.5"))).toBe(true);
+		await runWork(options, fakeTools(root).deps);
+		expect(JSON.parse(readFileSync(join(revised.stateDir, "proof.json"), "utf8")).cost_usd).toBe(1);
+	});
+
+	it("refuses to revise and push in one run, and to revise after the push", async () => {
+		await expect(runWork({ ...options, revise: "notes" }, fakeTools(root).deps)).rejects.toThrow(
+			"cannot be used together",
+		);
+		const pushed = fakeTools(root);
+		await runWork(options, pushed.deps);
+		const late = await runWork({ ...options, approvePush: false, revise: "notes" }, fakeTools(root).deps);
+		expect(late.report).toMatchObject({ status: "handoff", reason: "revise_after_push" });
+	});
+
+	it("stops when earlier runs used the whole budget", async () => {
+		await runWork({ ...options, approvePush: false, budgetUsd: 0.5 }, fakeTools(root).deps);
+		const outcome = await runWork(
+			{ ...options, approvePush: false, budgetUsd: 0.5, revise: "notes" },
+			fakeTools(root).deps,
+		);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "over_budget" });
+	});
+
 	it("marks the PR ready after its checks pass", async () => {
 		const green = fakeTools(root);
 		await runWork(options, green.deps);

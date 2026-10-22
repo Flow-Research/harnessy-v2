@@ -87,6 +87,11 @@
     Summary, Scope, Design, duplicate/idempotency and privacy/security from
     facts it controls and leaves the other sections for the reviewer. The body
     is never proof.
+  - Before the push, the reviewer can send the commit back with
+    `--revise "<notes>"`. The notes are fenced in the prompt under the same
+    rules; the revised commit stops for review again (`--revise` with
+    `--approve-push` is refused), and earlier spend reduces the remaining
+    budget. After the push, changes are requested on the PR instead.
   - An existing PR is adopted only when it is in the same
     repository (not a fork) with the same head branch, base and pushed SHA.
     The merged head must equal the pushed SHA, and CI evidence must be a

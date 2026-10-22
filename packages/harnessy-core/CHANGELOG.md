@@ -4,6 +4,11 @@
 
 ### Changed
 
+- `harnessy work --revise "<notes>"` sends the unpushed local commit back to
+  the agent with the reviewer's notes. The agent revises in the same worktree,
+  Harnessy commits again and the run stops for review again. Every run's spend
+  counts against `--budget-usd`, and the proof reports the total.
+  `--revise` cannot be combined with `--approve-push` or used after the push.
 - `harnessy work` marks its draft pull request ready for review once the
   pushed commit's checks pass, and leaves it a draft when they fail. Merging
   still needs a person.

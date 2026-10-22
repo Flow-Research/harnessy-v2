@@ -1,12 +1,19 @@
 import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { causeMessage, HarnessError } from "../errors.ts";
-import { splitCli } from "../work/logic.ts";
+import { MAX_REVIEW_NOTES, splitCli } from "../work/logic.ts";
 import { liveWorkDeps, runWork, type WorkDeps } from "../work/run.ts";
 
 const positive = (name: string, value: number): number => {
 	if (!Number.isFinite(value) || value <= 0) throw new Error(`--${name} must be a positive number`);
 	return value;
+};
+
+const reviewNotes = (value: string): string => {
+	const notes = value.trim();
+	if (notes === "" || notes.length > MAX_REVIEW_NOTES)
+		throw new Error(`--revise needs review notes of 1 to ${MAX_REVIEW_NOTES} characters`);
+	return notes;
 };
 
 /** Build `harnessy work` around injected dependencies; tests pass a fake runner. */
@@ -48,6 +55,12 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 					"Extra Claude Code tool rules for tests, e.g. 'Bash(npm test *),Bash(npm run check *)'.",
 				),
 			),
+			revise: Flag.string("revise").pipe(
+				Flag.optional,
+				Flag.withDescription(
+					"Send the unpushed commit back to the agent with these review notes. Spend counts against --budget-usd.",
+				),
+			),
 			approvePush: Flag.boolean("approve-push").pipe(
 				Flag.withDescription(
 					"Push the locally reviewed commit and open a draft PR. Without it the run stops for review.",
@@ -73,6 +86,7 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 								workstreamCli: splitCli(flags.workstreamCli),
 								...(Option.isSome(flags.taskUrl) ? { taskUrl: flags.taskUrl.value } : {}),
 								...(Option.isSome(flags.agentAllow) ? { agentAllow: flags.agentAllow.value } : {}),
+								...(Option.isSome(flags.revise) ? { revise: reviewNotes(flags.revise.value) } : {}),
 								approvePush: flags.approvePush,
 								dryRun: flags.dryRun,
 							},
