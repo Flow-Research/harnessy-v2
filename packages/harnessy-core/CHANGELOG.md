@@ -30,3 +30,14 @@
   WorkStream preparation and submission. Resume state lives in a private
   directory outside the agent's worktree and is bound to the task, repository,
   branch, base, WorkStream CLI and actor.
+- Added `harnessy attest`, which signs a TEST certificate ("Flow verified this
+  work") for each accepted WorkStream contribution, in the Ethereum
+  Attestation Service off-chain format (version 2) under the
+  `workstream.contribution.v1` schema. `attest key init` creates a private
+  TEST signing key and prints only its address; `attest run` reads
+  `workstream contributions` and writes one deterministic certificate per new
+  contribution, never replacing a different one; `attest verify` checks a
+  certificate's signature, signer and schema. Certificates name Base Sepolia
+  (chain 84532) and carry `"test": true`. Adds the pinned dependencies
+  `@noble/curves` 2.2.0 and `@noble/hashes` 2.2.0. See
+  `docs/attest-test-certificates.md`.
