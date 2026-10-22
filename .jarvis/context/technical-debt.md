@@ -271,6 +271,16 @@
   `braces` has no release after 3.0.3, and the newest
   `@cloudflare/vitest-pool-workers@0.23.0` still selects
   `miniflare@5.20260815.0-alpha` with `undici@7.29.0`, below 7.29.1.
+- **2026-10-22 revalidation:** New advisories made the Bun audit block on
+  `dompurify@3.4.14` (GHSA-cg2g-xh64-v4q7 critical, GHSA-mrv2-3pqr-j5jr high;
+  fixed in 3.4.17, reached through `streamdown -> mermaid`) and `toml@4.2.0`
+  (GHSA-4qx8-w7c3-pj3p, GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p, all high;
+  every 4.x release is affected and 5.0.1 is the first fix). The exact
+  overrides move to `dompurify@3.4.17` and `toml@5.0.1`, crossing the
+  `toml@^4.1.1` range that `effect@4.0.0-beta.59` declares; the parser API that
+  Effect calls (`parse`) is unchanged. `ip-address` moves to 10.7.4 with the
+  root. The Bun 1.4.0 lock diff is limited to those three packages. The after
+  audit is 0 at or above high with the same 3 records under reviewed exception.
 - **Links:** `scripts/audit-executor.mjs`,
   `qa/security/findings/2026-09-02-v2-canonical-cutover.md`
 
@@ -315,6 +325,20 @@
   Later the same day `@vitest/mocker@4.1.11` (GHSA-qxg6-89mg-rqv8,
   GHSA-xp26-3454-mjgp; fixed in 4.1.12) began blocking; every workspace
   `vitest` and `@vitest/coverage-v8` pin moved from 4.1.11 to 4.1.12.
+- **2026-10-22 revalidation:** New advisories made the root audit and the
+  isolated release-install audit block on `toml@4.3.0` (GHSA-4qx8-w7c3-pj3p,
+  GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p, all high; fixed only in 5.0.1) and
+  the root audit on `ip-address@10.7.3` (GHSA-rxp7-6hxx-x8q5, moderate; fixed in
+  10.7.4). The exact overrides move to `toml@5.0.1` and `ip-address@10.7.4`.
+  Because 5.0.1 is outside the `toml@^4.1.1` range that
+  `effect@4.0.0-beta.85` declares, npm 11.6.0 applies the root override only
+  through a root edge, as with `agents`: an exact root
+  `devDependencies.effect@4.0.0-beta.85` keeps the tree valid and must stay
+  equal to `@harnessy/core`'s pin. `scripts/release-install-overrides.mjs` adds
+  the same flat `toml` pin for `install.mjs` and the local release installs;
+  both pins are asserted in `scripts/harnessy-release-contract.test.mjs`. The
+  coding-agent shrinkwrap and install-lock change only for `ip-address`. The
+  after audits report zero advisories at every severity, with no exception.
 - **Links:** `.github/workflows/qa-security-sweep.yml`,
   `qa/security/findings/2026-09-02-v2-canonical-cutover.md`
 
