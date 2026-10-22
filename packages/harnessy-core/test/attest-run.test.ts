@@ -10,7 +10,7 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import * as Result from "effect/Result";
@@ -355,6 +355,10 @@ describe("file writes and verification", () => {
 		const previous = process.env.XDG_STATE_HOME;
 		process.env.XDG_STATE_HOME = "/xdg";
 		expect(defaultAttestRoot()).toBe("/xdg/harnessy/attest");
+		for (const ignored of ["", "relative/state"]) {
+			process.env.XDG_STATE_HOME = ignored;
+			expect(defaultAttestRoot()).toBe(join(homedir(), ".local", "state", "harnessy", "attest"));
+		}
 		delete process.env.XDG_STATE_HOME;
 		expect(defaultAttestRoot()).toMatch(/\.local\/state\/harnessy\/attest$/);
 		if (previous !== undefined) process.env.XDG_STATE_HOME = previous;

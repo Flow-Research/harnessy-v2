@@ -95,6 +95,11 @@ describe("contribution records", () => {
 		expect([claim.awardUnit, claim.awardQuantity]).toEqual(["FLOW", 15n]);
 	});
 
+	it("accepts the largest uint256 points total", () => {
+		const max = (2n ** 256n - 1n).toString();
+		expect(claimOf({ awards: [points(max)] }).awardQuantity).toBe(2n ** 256n - 1n);
+	});
+
 	it("uses the record time for a completed review without its own acceptance", () => {
 		const claim = claimOf({
 			contribution_type: "completed_review",
@@ -129,6 +134,8 @@ describe("contribution records", () => {
 		[{ awards: [points("1", "")] }, "no unit"],
 		[{ awards: [{ instrument: "project_points", quantity: "1" }] }, "no unit"],
 		[{ awards: [points("1"), points("1", "XP")] }, "more than one unit"],
+		[{ awards: [points((2n ** 256n).toString())] }, "points total does not fit in uint256"],
+		[{ awards: [points((2n ** 255n).toString()), points((2n ** 255n).toString())] }, "does not fit in uint256"],
 	])("rejects %o", (overrides, message) => {
 		expect(failure(overrides)).toContain(message);
 	});

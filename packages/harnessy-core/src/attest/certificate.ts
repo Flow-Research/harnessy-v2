@@ -86,6 +86,7 @@ const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d
 const ARTIFACT_HASH = /^sha256:([0-9a-f]{64})$/;
 const QUANTITY = /^([0-9]+)(?:\.([0-9]+))?$/;
 const POINTS_INSTRUMENT = "project_points";
+const UINT256_MAX = 2n ** 256n - 1n;
 
 const seconds = (value: unknown): bigint | undefined => {
 	if (typeof value !== "string" || !RFC3339.test(value)) return undefined;
@@ -117,6 +118,7 @@ const pointsAward = (awards: unknown): Result.Result<{ unit: string; quantity: b
 		quantity += BigInt(match[1] as string);
 	}
 	if (units.size > 1) return Result.fail("points awards use more than one unit");
+	if (quantity > UINT256_MAX) return Result.fail("points total does not fit in uint256");
 	return Result.succeed({ unit: [...units][0] ?? "", quantity });
 };
 

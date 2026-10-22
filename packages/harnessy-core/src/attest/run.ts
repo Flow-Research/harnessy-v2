@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, linkSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import * as Result from "effect/Result";
 import { field, isTaskId, parseJson } from "../work/logic.ts";
@@ -32,9 +32,15 @@ export const KEY_LABEL =
 	"TEST signing key for Harnessy test certificates only. Not a Flow production key. Never share this file.";
 const WORKSTREAM_TIMEOUT_MS = 2 * 60 * 1000;
 
-/** `$XDG_STATE_HOME/harnessy/attest`, defaulting to `~/.local/state/harnessy/attest`. */
-export const defaultAttestRoot = (): string =>
-	join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "harnessy", "attest");
+/**
+ * `$XDG_STATE_HOME/harnessy/attest`, defaulting to `~/.local/state/harnessy/attest`.
+ * An empty or relative `XDG_STATE_HOME` is ignored, as the XDG spec requires, so
+ * the key never lands under the current directory.
+ */
+export const defaultAttestRoot = (): string => {
+	const xdg = process.env.XDG_STATE_HOME;
+	return join(xdg !== undefined && isAbsolute(xdg) ? xdg : join(homedir(), ".local", "state"), "harnessy", "attest");
+};
 
 export const liveAttestDeps = (run: Run): AttestDeps => ({
 	run,
