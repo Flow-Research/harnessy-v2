@@ -53,6 +53,7 @@ interface Scenario {
 	template?: string;
 	checksExit?: number;
 	prCreateFails?: boolean;
+	head?: string;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -112,7 +113,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				}
 				if (args.includes("status")) return ok(scenario.dirty ?? " M src/a.ts\n");
 				if (args.includes("rev-list")) return ok(`${scenario.ahead ?? "0"}\n`);
-				if (args.includes("rev-parse")) return ok(`${HEAD}\n`);
+				if (args.includes("rev-parse")) return ok(`${scenario.head ?? HEAD}\n`);
 				if (args.includes("--name-only")) return ok(scenario.changedPaths ?? "src/a.ts\0");
 				if (args.includes("show"))
 					return args.at(-1) === "origin/dev:PULL_REQUEST_TEMPLATE.md" && scenario.template !== undefined
@@ -269,7 +270,7 @@ describe("runWork", () => {
 		const pushed = fakeTools(root);
 		await runWork(options, pushed.deps);
 		const late = await runWork({ ...options, approvePush: false, revise: "notes" }, fakeTools(root).deps);
-		expect(late.report).toMatchObject({ status: "handoff", reason: "revise_after_push" });
+		expect(late.report).toMatchObject({ status: "handoff", reason: "revise_after_merge" });
 	});
 
 	it("refuses --revise without a local commit, before claiming", async () => {
@@ -279,11 +280,37 @@ describe("runWork", () => {
 		expect(has(fresh.calls, "claim")).toBe(false);
 	});
 
-	it("refuses --revise once the commit is pushed, even before the PR exists", async () => {
-		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
-		await expect(runWork(options, fakeTools(root, { prCreateFails: true }).deps)).rejects.toThrow();
-		const late = await runWork({ ...options, approvePush: false, revise: "notes" }, fakeTools(root).deps);
-		expect(late.report).toMatchObject({ status: "handoff", reason: "revise_after_push" });
+	it("revises an open PR: back to draft, review again, then push the revision to the same PR", async () => {
+		const red = await runWork(options, fakeTools(root, { checksExit: 1 }).deps);
+		expect(red.report).toMatchObject({ status: "handoff", reason: "checks_not_passed" });
+		const NEXT = "b".repeat(40);
+		const revising = fakeTools(root, { head: NEXT });
+		const held = await runWork({ ...options, approvePush: false, revise: "Format the test file." }, revising.deps);
+		expect(held.report).toMatchObject({ status: "handoff", reason: "awaiting_push_approval", head_sha: NEXT });
+		expect(revising.calls).toContainEqual(["gh", "pr", "ready", "7", "--undo"]);
+		expect(has(revising.calls, "push")).toBe(false);
+		const next = (state: string) => ourPr(state, { headRefOid: NEXT });
+		const approved = fakeTools(root, {
+			head: NEXT,
+			ciSha: NEXT,
+			prStates: [next("OPEN"), next("OPEN"), next("MERGED")],
+		});
+		const done = await runWork(options, approved.deps);
+		expect(done.report).toMatchObject({ status: "submitted" });
+		expect(JSON.parse(readFileSync(join(approved.stateDir, "proof.json"), "utf8")).commit_sha).toBe(NEXT);
+		expect(has(approved.calls, "pr", "create")).toBe(false);
+		expect(approved.calls).toContainEqual([
+			"git",
+			"-C",
+			approved.worktree,
+			"-c",
+			"core.hooksPath=/dev/null",
+			"push",
+			"origin",
+			`${NEXT}:refs/heads/${BRANCH}`,
+		]);
+		expect(has(approved.calls, "pr", "comment")).toBe(true);
+		expect(approved.calls).toContainEqual(["gh", "pr", "ready", "7"]);
 	});
 
 	it("keeps the reviewed commit when no budget is left to revise it", async () => {

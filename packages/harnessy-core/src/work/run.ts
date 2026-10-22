@@ -42,6 +42,7 @@ import {
 	prMismatch,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
+	revisionComment,
 	TERMINAL_PREPARATION_STATUSES,
 	type ToolCheck,
 	validateAgentAllow,
@@ -373,8 +374,8 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	};
 
 	if (options.revise !== undefined) {
-		if (state.pushed === true || state.pr !== undefined)
-			return handoff("revise_after_push", "the commit is already pushed; request changes on the pull request");
+		if (state.mergeCommitSha !== undefined)
+			return handoff("revise_after_merge", "the pull request is merged; create a new task for further changes");
 		if (state.headSha === undefined)
 			return handoff("revise_without_commit", "there is no local commit to revise; run without --revise");
 		const spent = (state.spentUsd ?? 0) + (state.agent?.costUsd ?? 0);
@@ -382,7 +383,12 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		if (spent >= options.budgetUsd)
 			return handoff("over_budget", `earlier runs spent ${spent} USD of the ${options.budgetUsd} USD budget`);
 		deps.log(`Sending commit ${state.headSha.slice(0, 12)} back to the agent with the reviewer's notes`);
+		// Back to draft first: until the revision is reviewed and pushed, the old head must not be merged.
+		if (state.pr !== undefined) await must(ghArgv.prDraft(state.pr.number), "gh pr ready --undo", worktree);
 		save({
+			// Older state recorded only the PR; its head was the pushed commit.
+			pushedSha: state.pushedSha ?? (state.pr === undefined ? undefined : state.headSha),
+			reviewRequested: undefined,
 			headSha: undefined,
 			agent: undefined,
 			spentUsd: spent,
@@ -480,7 +486,8 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	const agent = state.agent ?? { costUsd: 0, reason: "" };
 	const totalCostUsd = (state.spentUsd ?? 0) + agent.costUsd;
 
-	if (state.pr === undefined) {
+	const pushedSha = state.pushedSha ?? (state.pr === undefined ? undefined : headSha);
+	if (pushedSha !== headSha) {
 		if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
 		const changed = parseChangedPaths(await must(gitArgv.changedPaths(worktree, options.base, headSha), "git diff"));
 		const ci = ciConfigPaths(changed);
@@ -504,7 +511,19 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		}
 		deps.log(`Pushing ${headSha} to ${branch}`);
 		await must(gitArgv.push(worktree, branch, headSha), "git push");
-		save({ pushed: true });
+		save({ pushedSha: headSha, reviewRequested: undefined });
+		if (state.pr !== undefined) {
+			// A revision of an open PR: tell the reviewer what changed.
+			const commentFile = join(stateDir, "pr-revision.md");
+			writePrivate(
+				commentFile,
+				revisionComment(state.revisions ?? 1, headSha, totalCostUsd, agent.reason, state.reviewNotes),
+			);
+			await must(ghArgv.prComment(state.pr.number, commentFile), "gh pr comment", worktree);
+		}
+	}
+	if (state.pr === undefined) {
+		const changed = parseChangedPaths(await must(gitArgv.changedPaths(worktree, options.base, headSha), "git diff"));
 		const repoName = parseRepoName(await must(ghArgv.repo(), "gh repo view", worktree));
 		save({ repoName });
 		const expected = { repo: repoName, branch, base: options.base, headSha };

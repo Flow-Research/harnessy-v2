@@ -328,6 +328,9 @@ export const ghArgv = {
 		bodyFile,
 	],
 	checksWatch: (pr: number) => ["gh", "pr", "checks", String(pr), "--watch"],
+	/** Returns a PR to draft while a revision is prepared, so the old head cannot be merged. */
+	prDraft: (pr: number) => ["gh", "pr", "ready", String(pr), "--undo"],
+	prComment: (pr: number, bodyFile: string) => ["gh", "pr", "comment", String(pr), "--body-file", bodyFile],
 	/** Leaves draft only after the pushed commit's checks pass; merging still needs a person. */
 	prReady: (pr: number) => ["gh", "pr", "ready", String(pr)],
 	runList: (commit: string) => [
@@ -741,7 +744,7 @@ export type HandoffReason =
 	| "worktree_tampered"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
-	| "revise_after_push"
+	| "revise_after_merge"
 	| "revise_without_commit"
 	| "checks_not_passed"
 	| "agent_wait_failed"
@@ -854,6 +857,34 @@ export const combinedReports = (earlier: ReadonlyArray<string>, latest: string):
 	[...earlier, latest]
 		.map((report, index) => (index === 0 ? report : `Revision ${index} after review:\n${report}`))
 		.join("\n\n");
+
+/** PR comment for a revision pushed to an open pull request. */
+export const revisionComment = (
+	revision: number,
+	headSha: string,
+	totalCostUsd: number,
+	agentReport: string,
+	reviewNotes: string | undefined,
+): string => {
+	const notesFence = fenceFor(reviewNotes ?? "");
+	const reportFence = fenceFor(agentReport);
+	return [
+		`Revision ${revision} by \`harnessy work\`, pushed as ${headSha}. Total agent cost: ${totalCostUsd.toFixed(2)} USD.`,
+		"",
+		"Reviewer notes:",
+		"",
+		`${notesFence}text`,
+		reviewNotes ?? "",
+		notesFence,
+		"",
+		"Agent report (written by the agent; untrusted):",
+		"",
+		`${reportFence}text`,
+		agentReport,
+		reportFence,
+		"",
+	].join("\n");
+};
 
 /** Longest reviewer note `--revise` accepts. */
 export const MAX_REVIEW_NOTES = 8_000;
@@ -1190,8 +1221,8 @@ export interface WorkState {
 	/** Reports of the agent runs before the current revision, oldest first. */
 	readonly earlierReports?: ReadonlyArray<string>;
 	readonly revisions?: number;
-	/** Set right after the push succeeds; a pushed commit can no longer be revised locally. */
-	readonly pushed?: boolean;
+	/** The commit last pushed to the work branch; a revision is pushed when `headSha` differs. */
+	readonly pushedSha?: string;
 	/** Commit Harnessy created and later pushed; the only SHA proof and CI checks accept. */
 	readonly headSha?: string;
 	readonly repoName?: string;
@@ -1221,7 +1252,7 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!cli.every((part) => typeof part === "string") ||
 		!["spentUsd", "revisions"].every((key) => ["undefined", "number"].includes(typeof field(value, key))) ||
 		!["undefined", "string"].includes(typeof field(value, "reviewNotes")) ||
-		!["undefined", "boolean"].includes(typeof field(value, "pushed")) ||
+		!["undefined", "string"].includes(typeof field(value, "pushedSha")) ||
 		!(
 			field(value, "earlierReports") === undefined ||
 			(Array.isArray(field(value, "earlierReports")) &&
