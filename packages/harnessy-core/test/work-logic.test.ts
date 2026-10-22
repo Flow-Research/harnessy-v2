@@ -335,7 +335,6 @@ describe("prompt", () => {
 		expect(plainCopyArgv("/r/dist", "/w/dist")).toEqual(["cp", "-R", "-P", "/r/dist", "/w/dist"]);
 		expect(gitArgv.stageableUnder("/w", "a b\n/dist")).toEqual([
 			"git",
-			"--literal-pathspecs",
 			"-C",
 			"/w",
 			"status",
@@ -343,7 +342,23 @@ describe("prompt", () => {
 			"-z",
 			"--untracked-files=all",
 			"--",
-			"a b\n/dist",
+			":(literal,icase)a b\n/dist",
+		]);
+		expect(gitArgv.emptyTree("/w")).toEqual(["git", "-C", "/w", "hash-object", "-t", "tree", "/dev/null"]);
+		expect(gitArgv.inHead("/w", "e", "dist")).toEqual([
+			"git",
+			"-C",
+			"/w",
+			"diff",
+			"--no-ext-diff",
+			"--no-textconv",
+			"--no-renames",
+			"-z",
+			"--name-only",
+			"e",
+			"HEAD",
+			"--",
+			":(literal,icase)dist",
 		]);
 	});
 });

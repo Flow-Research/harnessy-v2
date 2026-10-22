@@ -5,17 +5,26 @@ import {
 	existsSync,
 	lstatSync,
 	mkdirSync,
-	readdirSync,
 	readFileSync,
-	readlinkSync,
 	realpathSync,
 	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import * as Result from "effect/Result";
+import {
+	checkComponents,
+	committed,
+	copyTree,
+	destinationProblem,
+	linksOutside,
+	makeParents,
+	removeInside,
+	sourceProblem,
+	stageable,
+} from "./deps.ts";
 import {
 	ATTESTATION,
 	agentPrompt,
@@ -25,7 +34,6 @@ import {
 	buildProof,
 	checkTool,
 	ciConfigPaths,
-	cloneArgv,
 	combinedReports,
 	type DepCopyMethod,
 	evaluateStopRule,
@@ -55,7 +63,6 @@ import {
 	parseRunList,
 	parseState,
 	parseTask,
-	plainCopyArgv,
 	prBody,
 	prMismatch,
 	REQUIRED_CLAUDE_FLAGS,
@@ -141,7 +148,6 @@ const PREPARE_ATTEMPTS = 60;
 const CI_ATTEMPTS = 30;
 const PROBE_TIMEOUT_MS = 30 * 1000;
 const MIN_WAIT_MS = 1000;
-const COPY_TIMEOUT_MS = 30 * 60 * 1000;
 
 /** Live process runner: argv only, `shell: false`, bounded buffers. */
 export const execRun: Run = (argv, options) =>
@@ -254,98 +260,6 @@ const writePrivate = (path: string, data: string | Buffer) => {
 const readGitFile = (worktree: string): string | undefined => {
 	const path = join(worktree, ".git");
 	return existsSync(path) && lstatSync(path).isFile() ? readFileSync(path, "utf8") : undefined;
-};
-
-/** Why a command failed, for a log line or an error. */
-const failure = (result: RunResult): string =>
-	result.stderr.trim().slice(0, 500) ||
-	(result.exitCode === undefined ? "it did not start" : `exit ${result.exitCode}`);
-
-/**
- * Copy `source` to the new path `target`, as a copy-on-write clone where the
- * platform and filesystem allow it, otherwise as a plain copy.
- */
-const copyTree = async (
-	deps: WorkDeps,
-	source: string,
-	target: string,
-): Promise<{ readonly method: DepCopyMethod } | { readonly error: string }> => {
-	const clone = cloneArgv(deps.platform, source, target);
-	const cloned = await deps.run(clone.argv, { timeoutMs: COPY_TIMEOUT_MS });
-	if (cloned.exitCode === 0) return { method: clone.method };
-	rmSync(target, { recursive: true, force: true });
-	deps.log(`Cloning ${source} is not supported here (${failure(cloned)}); making a plain copy`);
-	const copied = await deps.run(plainCopyArgv(source, target), { timeoutMs: COPY_TIMEOUT_MS });
-	if (copied.exitCode === 0) return { method: "copy" };
-	rmSync(target, { recursive: true, force: true });
-	return { error: `copying ${source} failed: ${failure(copied)}` };
-};
-
-const insideDir = (base: string, path: string) => path === base || path.startsWith(`${base}${sep}`);
-
-/**
- * Why `path` cannot be copied from the source checkout: it must be a plain
- * directory whose real path is exactly `<real repo>/<path>`, so neither it nor
- * any parent is a symbolic link and it cannot lie outside the checkout.
- */
-const sourceProblem = (repo: string, realRepo: string, path: string): string | undefined => {
-	const absolute = join(repo, path);
-	if (lstatSync(absolute, { throwIfNoEntry: false })?.isDirectory() !== true)
-		return `${path} is not a plain directory in the source checkout`;
-	const real = realpathSync(absolute);
-	return real === join(realRepo, path)
-		? undefined
-		: `${path} resolves to ${real}, through a symbolic link or outside the source checkout`;
-};
-
-/**
- * Why `path` cannot be created in the worktree: it must not exist yet, not even
- * as a symbolic link, and its nearest existing parent must have the real path
- * `<real worktree>/<parent>`, so no write can pass through a link.
- */
-const destinationProblem = (worktree: string, realWorktree: string, path: string): string | undefined => {
-	const target = join(worktree, path);
-	if (lstatSync(target, { throwIfNoEntry: false }) !== undefined) return `${path} already exists in the worktree`;
-	let parent = dirname(target);
-	while (lstatSync(parent, { throwIfNoEntry: false }) === undefined) parent = dirname(parent);
-	const real = realpathSync(parent);
-	const relativeParent = relative(worktree, parent);
-	return real === join(realWorktree, relativeParent)
-		? undefined
-		: `${relativeParent} resolves to ${real}, through a symbolic link or outside the worktree`;
-};
-
-/**
- * Symbolic links under `dir` that lead outside the worktree. Links are copied
- * as links (workspace packages are relative links such as
- * `../packages/x`); each must resolve inside the worktree, judged by its real
- * path when the target exists and lexically when it dangles.
- */
-const linksOutside = (dir: string, worktree: string, realWorktree: string): ReadonlyArray<string> =>
-	readdirSync(dir, { recursive: true, withFileTypes: true })
-		.filter((entry) => entry.isSymbolicLink())
-		.map((entry) => join(entry.parentPath, entry.name))
-		.filter((link) =>
-			existsSync(link)
-				? !insideDir(realWorktree, realpathSync(link))
-				: !insideDir(worktree, resolve(dirname(link), readlinkSync(link))),
-		);
-
-/**
- * Copied paths under which `git add --all` would stage anything, as git's own
- * status reports it; Harnessy never reads `.gitignore` itself.
- */
-export const stageable = async (
-	run: Run,
-	worktree: string,
-	paths: ReadonlyArray<string>,
-): Promise<ReadonlyArray<string>> => {
-	const exposed: string[] = [];
-	for (const path of paths) {
-		const status = await run(gitArgv.stageableUnder(worktree, path), { cwd: worktree });
-		if (status.exitCode !== 0 || status.stdout !== "") exposed.push(path);
-	}
-	return exposed;
 };
 
 /**
@@ -542,9 +456,58 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	};
 
 	/**
+	 * Why the recorded dependency copies are no longer safe to keep: each must
+	 * still be a plain directory in the worktree, every link inside must lead
+	 * inside the worktree, HEAD must hold nothing under it, and git must have
+	 * nothing to stage there. Run after copying, before every agent start and
+	 * after every agent run, because allowed commands run arbitrary code.
+	 */
+	const copiesProblem = async (
+		copies: ReadonlyArray<string>,
+	): Promise<
+		{ readonly reason: HandoffReason; readonly detail: string; readonly paths: ReadonlyArray<string> } | undefined
+	> => {
+		if (copies.length === 0) return undefined;
+		const realWorktree = realpathSync(worktree);
+		const moved = copies.filter((path) => {
+			const check = checkComponents(realWorktree, path);
+			return "problem" in check || check.existing !== path.split("/").length;
+		});
+		if (moved.length > 0)
+			return {
+				reason: "agent_deps_moved",
+				detail: "these copied dependency directories are no longer plain directories in the worktree",
+				paths: moved,
+			};
+		const linked = copies.flatMap((path) => linksOutside(join(realWorktree, path), realWorktree));
+		if (linked.length > 0)
+			return {
+				reason: "agent_deps_link_outside",
+				detail:
+					"these links inside the copied dependency directories lead outside the worktree, so a write could pass through them",
+				paths: linked,
+			};
+		const inHead = await committed(deps.run, worktree, copies);
+		if (inHead.length > 0)
+			return {
+				reason: "agent_deps_committed",
+				detail: "HEAD has files under these copied dependency directories; Harnessy will not use that HEAD",
+				paths: inHead,
+			};
+		const exposed = await stageable(deps.run, worktree, copies);
+		if (exposed.length > 0)
+			return {
+				reason: "agent_deps_not_ignored",
+				detail: "git would stage files under these copied dependency directories, so a commit would include them",
+				paths: exposed,
+			};
+		return undefined;
+	};
+	const recordedCopies = () => (state.agentDeps?.copied ?? []).map(({ path }) => path);
+	/**
 	 * Give the worktree its own copy of the source checkout's installed build
-	 * inputs. Copies, never links into the source: the agent may change them,
-	 * and must not reach the source checkout or anything else through them.
+	 * inputs. Sources and destinations are checked in the exact form that is
+	 * used: a relative path of plain components under a real root.
 	 */
 	const copyAgentDeps = async (): Promise<WorkOutcome | undefined> => {
 		const sources = parseDepDirs(await must(gitArgv.ignoredDirs(repo), "git ls-files"));
@@ -555,20 +518,27 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		}
 		// Every source and destination is checked before anything is copied.
 		const realRepo = realpathSync(repo);
-		const badSources = sources.flatMap((path) => sourceProblem(repo, realRepo, path) ?? []);
+		const badSources = sources.flatMap((path) => sourceProblem(realRepo, path) ?? []);
 		if (badSources.length > 0)
 			return handoff("agent_deps_source_unsafe", `${badSources.join("; ")}; nothing was copied`);
 		const realWorktree = realpathSync(worktree);
-		const badDestinations = sources.flatMap((path) => destinationProblem(worktree, realWorktree, path) ?? []);
+		const badDestinations = sources.flatMap((path) => destinationProblem(realWorktree, path) ?? []);
 		if (badDestinations.length > 0)
 			return handoff("agent_deps_destination_unsafe", `${badDestinations.join("; ")}; nothing was copied`);
 		const copied: Array<{ readonly path: string; readonly method: DepCopyMethod }> = [];
 		const removeCopies = () => {
-			for (const { path } of copied) rmSync(join(worktree, path), { recursive: true, force: true });
+			for (const { path } of copied)
+				if (!removeInside(realWorktree, path))
+					deps.log(`Left ${path} in place: a parent is no longer a plain directory`);
 		};
 		for (const path of sources) {
-			mkdirSync(dirname(join(worktree, path)), { recursive: true });
-			const result = await copyTree(deps, join(repo, path), join(worktree, path));
+			const parentProblem = makeParents(realWorktree, path);
+			const result =
+				parentProblem === undefined
+					? await copyTree(deps.run, deps.platform, deps.log, join(realRepo, path), join(realWorktree, path), () =>
+							removeInside(realWorktree, path),
+						)
+					: { error: parentProblem };
 			// All or nothing: a partial copy is removed, so a re-run starts clean.
 			if ("error" in result) {
 				removeCopies();
@@ -577,25 +547,15 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			deps.log(`Copied ${path} into the worktree (${result.method})`);
 			copied.push({ path, method: result.method });
 		}
-		const exposed = await stageable(
-			deps.run,
-			worktree,
-			copied.map(({ path }) => path),
-		);
-		const linked = copied.flatMap(({ path }) => linksOutside(join(worktree, path), worktree, realWorktree));
-		if (exposed.length > 0 || linked.length > 0) {
+		// Check again after copying: a source that changed form during the copy is not trusted.
+		const changed = sources.flatMap((path) => sourceProblem(realRepo, path) ?? []);
+		const problem =
+			changed.length > 0
+				? { reason: "agent_deps_source_unsafe" as const, detail: changed.join("; "), paths: sources }
+				: await copiesProblem(copied.map(({ path }) => path));
+		if (problem !== undefined) {
 			removeCopies();
-			return exposed.length > 0
-				? handoff(
-						"agent_deps_not_ignored",
-						"git would stage files under these copied paths in the worktree, so Harnessy's commit would include them; the copies were removed",
-						{ paths: exposed },
-					)
-				: handoff(
-						"agent_deps_link_outside",
-						"these copied links lead outside the worktree, so the agent could write through them; the copies were removed",
-						{ paths: linked },
-					);
+			return handoff(problem.reason, `${problem.detail}; the copies were removed`, { paths: problem.paths });
 		}
 		save({ agentDeps: { copied } });
 		return undefined;
@@ -674,9 +634,15 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			);
 		if (state.pane === undefined) rmSync(paths.result, { force: true });
 		// Before the pane exists: a re-attached agent is already running with what it has.
-		if (options.agentDeps === "clone" && state.agentDeps === undefined && state.pane === undefined) {
-			const stopped = await copyAgentDeps();
-			if (stopped !== undefined) return stopped;
+		if (state.pane === undefined) {
+			if (options.agentDeps === "clone" && state.agentDeps === undefined) {
+				const stopped = await copyAgentDeps();
+				if (stopped !== undefined) return stopped;
+			} else {
+				// Copies from an earlier run (with or without the flag now) are checked again before any new agent.
+				const problem = await copiesProblem(recordedCopies());
+				if (problem !== undefined) return handoff(problem.reason, problem.detail, { paths: problem.paths });
+			}
 		}
 		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes));
 		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow), null, 2)}\n`);
@@ -748,28 +714,16 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				decision.costUsd === undefined ? {} : { cost_usd: decision.costUsd },
 			);
 		}
-		// Copied dependencies must never reach the commit. An allowed command runs
-		// arbitrary code: it can edit .gitignore, or force-add and commit a copy itself.
-		const copiedPaths = (state.agentDeps?.copied ?? []).map(({ path }) => path);
-		const committed: string[] = [];
-		for (const path of copiedPaths) {
-			const diff = await deps.run(gitArgv.committedUnder(worktree, options.base, path), { cwd: worktree });
-			if (diff.exitCode !== 0 || diff.stdout !== "") committed.push(path);
-		}
-		const exposedCopies = await stageable(deps.run, worktree, copiedPaths);
-		if (committed.length > 0 || exposedCopies.length > 0) {
+		// Copied dependencies must never reach the commit or lead out of the worktree. An
+		// allowed command runs arbitrary code: it can edit .gitignore, swap or link a copy,
+		// or force-add and commit one itself, even leaving a clean tree.
+		const problem = await copiesProblem(recordedCopies());
+		if (problem !== undefined) {
 			save({ spentUsd: (state.spentUsd ?? 0) + decision.costUsd });
-			return committed.length > 0
-				? handoff(
-						"agent_deps_committed",
-						"commits made during the agent run contain files under these copied dependency directories; Harnessy will not use that HEAD",
-						{ paths: committed, cost_usd: decision.costUsd },
-					)
-				: handoff(
-						"agent_deps_not_ignored",
-						"after the agent's change git would stage files under these copied dependency directories; nothing was committed",
-						{ paths: exposedCopies, cost_usd: decision.costUsd },
-					);
+			return handoff(problem.reason, `${problem.detail}; nothing was committed`, {
+				paths: problem.paths,
+				cost_usd: decision.costUsd,
+			});
 		}
 		if (dirty > 0) {
 			await must(gitArgv.addAll(worktree), "git add");

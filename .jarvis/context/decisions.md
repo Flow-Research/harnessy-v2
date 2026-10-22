@@ -106,26 +106,36 @@
     test and format commands allowed through `--agent-allow` can run there.
     Harnessy lists the source's ignored, untracked directories with `git
     ls-files -z --others --ignored --exclude-standard --directory` (NUL-separated,
-    so names with spaces, quotes or newlines stay exact; absolute and `..`
-    entries are dropped) and keeps those named `node_modules` or `dist`.
-    Before copying anything it hands off when a source is not a plain
-    directory whose real path is exactly `<real repo>/<path>` (no symbolic
-    link in it or its parents, nothing outside the checkout), or when a
-    destination already exists in the worktree (even as a dangling link) or
-    its nearest existing parent does not have the real path
-    `<real worktree>/<parent>`. It then copies before the herdr pane starts:
-    `cp -c -R -P` (APFS clone) on macOS, `cp --reflink=auto -R -P` elsewhere,
-    and a plain `cp -R -P` only when the clone command fails; `-P` never
-    follows a link. Links inside the copies are kept as links, because npm
-    and pnpm workspace links (`../packages/x`) are normal, but every link must
-    resolve inside the task worktree (by real path, or lexically when it
-    dangles); otherwise the copies are removed and the run hands off. Whether
-    a copy could reach a commit is git's answer, never a parse of
-    `.gitignore`: `git --literal-pathspecs status --porcelain=v1 -z
-    --untracked-files=all -- <path>` must be empty right after copying and
-    again after the agent, and `git diff --name-only origin/<base>...HEAD --
-    <path>` must be empty after the agent, since an allowed command could
-    edit `.gitignore` or force-add and commit a copy itself. State records
+    so names with spaces, quotes or newlines stay exact; absolute, `.` and `..`
+    entries are dropped) and keeps those named `node_modules` or `dist`. The
+    checks live in `src/work/deps.ts` and assume the task branch and the
+    source's ignored files are hostile. Every path is checked in the one form
+    then used: a relative path of plain components joined onto a realpath'd
+    root. Walking one component at a time, each existing component must be a
+    directory, not a symbolic link, listed by its parent under exactly that
+    name, so a case or Unicode-normalisation variant on APFS cannot stand in
+    for it. Before copying, a source must exist that way
+    (`agent_deps_source_unsafe`) and a destination must not exist in any form
+    (`agent_deps_destination_unsafe`). Missing parents are created one
+    non-recursive `mkdir` at a time. The copy reads the realpath'd source and
+    writes the realpath'd destination with `cp -c -R -P` (APFS clone) on
+    macOS, `cp --reflink=auto -R -P` elsewhere, or a plain `cp -R -P` only
+    when the clone fails; `-P` never follows a link. After copying, the
+    sources are checked again, and the copies get the same check that runs
+    before every later agent start and after every agent run: each copy is
+    still a plain directory (`agent_deps_moved`); every link inside it, found
+    by a walk that never descends through a link, leads inside the worktree
+    once every link on the way is followed, dangling ones included
+    (`agent_deps_link_outside`; npm and pnpm workspace links such as
+    `../packages/x` are normal and kept); HEAD's tree holds no file under it
+    in any letter case (`git diff --name-only <empty tree> HEAD --
+    ':(literal,icase)<path>'`, `agent_deps_committed`); and `git status
+    --porcelain=v1 -z --untracked-files=all -- ':(literal,icase)<path>'` is
+    empty (`agent_deps_not_ignored`), which is git's own answer for nested
+    `.gitignore` negations and nested repositories. Harnessy never parses
+    `.gitignore` or splits git output on newlines. Copies are removed only
+    when every parent is a plain directory, and `rm` never follows the final
+    link. Containment uses `path.relative`, never a string prefix. State records
     the copies, so a resume never copies again. The default allowlist
     is unchanged: the operator names exact test and format commands, and `npx`
     stays denied because it can fetch and run any package, so rules name the
@@ -135,7 +145,9 @@
     clone` that code also runs the copied packages, which the agent can change
     in its worktree; the copies cannot reach the source checkout's own
     `node_modules`, but code running as the user can still reach any file the
-    user can. The `env` prefix
+    user can. The checks are not atomic (Node has no `openat`); they rely on
+    nothing else writing to the worktree or the source's ignored directories
+    while Harnessy copies, which holds because the agent has not started. The `env` prefix
     that strips git and GitHub credentials is defense in depth, not a sandbox.
     CI for a same-repository `pull_request` runs the pushed code with that
     workflow's token permissions and any secrets it references. Today the

@@ -225,6 +225,9 @@ export const wsArgv = {
  */
 const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"] as const;
 
+/** A pathspec git matches literally (no globs) and in any letter case. */
+const literalIcase = (path: string) => `:(literal,icase)${path}`;
+
 /** git argv builders. */
 export const gitArgv = {
 	fetch: (repo: string) => ["git", "-C", repo, "fetch", "origin"],
@@ -307,12 +310,12 @@ export const gitArgv = {
 	],
 	/**
 	 * What `git add --all` would stage under one path, as git itself decides
-	 * (nested `.gitignore` files and `!` negations included). Literal pathspec,
-	 * NUL-separated output: empty means nothing there can reach a commit.
+	 * (nested `.gitignore` files, `!` negations and nested repositories
+	 * included). Literal, case-insensitive pathspec; NUL-separated output that
+	 * is only checked for being empty.
 	 */
 	stageableUnder: (worktree: string, path: string) => [
 		"git",
-		"--literal-pathspecs",
 		"-C",
 		worktree,
 		"status",
@@ -320,12 +323,13 @@ export const gitArgv = {
 		"-z",
 		"--untracked-files=all",
 		"--",
-		path,
+		literalIcase(path),
 	],
-	/** Files under one path that commits since the base changed; literal pathspec, NUL-separated. */
-	committedUnder: (worktree: string, base: string, path: string) => [
+	/** The empty tree's id in this repository's hash algorithm. */
+	emptyTree: (worktree: string) => ["git", "-C", worktree, "hash-object", "-t", "tree", "/dev/null"],
+	/** Every file HEAD's tree has under one path, in any letter case. */
+	inHead: (worktree: string, emptyTree: string, path: string) => [
 		"git",
-		"--literal-pathspecs",
 		"-C",
 		worktree,
 		"diff",
@@ -334,9 +338,10 @@ export const gitArgv = {
 		"--no-renames",
 		"-z",
 		"--name-only",
-		`origin/${base}...HEAD`,
+		emptyTree,
+		"HEAD",
 		"--",
-		path,
+		literalIcase(path),
 	],
 	/** Pushes the exact reviewed commit, not whatever HEAD is at push time. */
 	push: (worktree: string, branch: string, sha: string) => [
@@ -847,6 +852,7 @@ export type HandoffReason =
 	| "agent_deps_not_ignored"
 	| "agent_deps_link_outside"
 	| "agent_deps_committed"
+	| "agent_deps_moved"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
 	| "revise_after_merge"
