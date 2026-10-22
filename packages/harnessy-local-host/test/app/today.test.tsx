@@ -329,7 +329,9 @@ describe("the weekly draft reader", () => {
 	it("shows a truncated draft with its notice, and an untruncated one without", async () => {
 		const path = `/v1/life/weekly/${DRAFT_HASH}/draft`;
 		await renderToday(["draft", DRAFT_HASH], {
-			[path]: ok(envelope({ draft: tile("ok", { periodId: "2026-W42", truncated: true, text: "## Plan\n\nRest." }) })),
+			[path]: ok(
+				envelope({ draft: tile("ok", { periodId: "2026-W42", truncated: true, text: "## Plan\n\nRest." }) }),
+			),
 		});
 		await waitFor(() => expect(text()).toContain("Weekly plan draft · 2026-W42"));
 		expect(text()).toContain("Only the first 64 KiB are shown.");
