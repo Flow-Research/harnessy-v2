@@ -867,24 +867,16 @@ export const combinedReports = (earlier: ReadonlyArray<string>, latest: string):
 		.map((report, index) => (index === 0 ? report : `Revision ${index} after review:\n${report}`))
 		.join("\n\n");
 
-/** PR comment for a revision pushed to an open pull request. */
+/** PR comment for a revision pushed to an open pull request. Reviewer notes stay private. */
 export const revisionComment = (
 	revision: number,
 	headSha: string,
 	totalCostUsd: number,
 	agentReport: string,
-	reviewNotes: string | undefined,
 ): string => {
-	const notesFence = fenceFor(reviewNotes ?? "");
 	const reportFence = fenceFor(agentReport);
 	return [
-		`Revision ${revision} by \`harnessy work\`, pushed as ${headSha}. Total agent cost: ${totalCostUsd.toFixed(2)} USD.`,
-		"",
-		"Reviewer notes:",
-		"",
-		`${notesFence}text`,
-		reviewNotes ?? "",
-		notesFence,
+		`Revision ${revision} by \`harnessy work\` after local review, pushed as ${headSha}. Total agent cost: ${totalCostUsd.toFixed(2)} USD.`,
 		"",
 		"Agent report (written by the agent; untrusted):",
 		"",
@@ -1237,6 +1229,8 @@ export interface WorkState {
 	readonly revisions?: number;
 	/** The commit under revision; the revision must produce a different commit. */
 	readonly revisedFrom?: string;
+	/** The revision commit whose PR comment has been posted. */
+	readonly commentedSha?: string;
 	/** The commit last pushed to the work branch; a revision is pushed when `headSha` differs. */
 	readonly pushedSha?: string;
 	/** Commit Harnessy created and later pushed; the only SHA proof and CI checks accept. */
@@ -1270,6 +1264,7 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!["undefined", "string"].includes(typeof field(value, "reviewNotes")) ||
 		!["undefined", "string"].includes(typeof field(value, "pushedSha")) ||
 		!["undefined", "string"].includes(typeof field(value, "revisedFrom")) ||
+		!["undefined", "string"].includes(typeof field(value, "commentedSha")) ||
 		!(
 			field(value, "earlierReports") === undefined ||
 			(Array.isArray(field(value, "earlierReports")) &&

@@ -55,6 +55,7 @@ interface Scenario {
 	prCreateFails?: boolean;
 	head?: string;
 	checksMissingFirst?: number;
+	commentFails?: boolean;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -159,6 +160,8 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					return scenario.prCreateFails === true
 						? { exitCode: 1, stdout: "", stderr: "network down" }
 						: ok("https://github.com/flow/app/pull/7\n");
+				if (joined.startsWith("pr comment") && scenario.commentFails === true)
+					return { exitCode: 1, stdout: "", stderr: "secondary rate limit" };
 				if (joined.startsWith("pr checks") && (scenario.checksMissingFirst ?? 0) > 0) {
 					scenario.checksMissingFirst = (scenario.checksMissingFirst ?? 0) - 1;
 					return { exitCode: 1, stdout: "", stderr: "no checks reported on the 'work/x' branch" };
@@ -319,7 +322,37 @@ describe("runWork", () => {
 			`${NEXT}:refs/heads/${BRANCH}`,
 		]);
 		expect(has(approved.calls, "pr", "comment")).toBe(true);
+		const comment = readFileSync(join(approved.stateDir, "pr-revision.md"), "utf8");
+		expect(comment).toContain(`Revision 1 by \`harnessy work\` after local review, pushed as ${NEXT}`);
+		expect(comment).not.toContain("Format the test file.");
 		expect(approved.calls).toContainEqual(["gh", "pr", "ready", "7"]);
+	});
+
+	it("does not return a diverged PR to draft", async () => {
+		await runWork(options, fakeTools(root, { checksExit: 1 }).deps);
+		const moved = fakeTools(root, { prStates: [ourPr("OPEN", { headRefOid: "c".repeat(40) })] });
+		const outcome = await runWork({ ...options, approvePush: false, revise: "notes" }, moved.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "pr_mismatch" });
+		expect(has(moved.calls, "--undo")).toBe(false);
+		expect(has(moved.calls, "pane", "run")).toBe(false);
+	});
+
+	it("retries the revision comment until it is posted", async () => {
+		await runWork(options, fakeTools(root, { checksExit: 1 }).deps);
+		const NEXT = "b".repeat(40);
+		await runWork({ ...options, approvePush: false, revise: "notes" }, fakeTools(root, { head: NEXT }).deps);
+		await expect(runWork(options, fakeTools(root, { head: NEXT, commentFails: true }).deps)).rejects.toThrow(
+			"gh pr comment",
+		);
+		const next = (state: string) => ourPr(state, { headRefOid: NEXT });
+		const retried = fakeTools(root, {
+			head: NEXT,
+			ciSha: NEXT,
+			prStates: [next("OPEN"), next("OPEN"), next("MERGED")],
+		});
+		expect((await runWork(options, retried.deps)).report).toMatchObject({ status: "submitted" });
+		expect(has(retried.calls, "push")).toBe(false);
+		expect(has(retried.calls, "pr", "comment")).toBe(true);
 	});
 
 	it("hands off a revision that changes nothing", async () => {

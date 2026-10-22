@@ -392,7 +392,17 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			return handoff("over_budget", `earlier runs spent ${spent} USD of the ${options.budgetUsd} USD budget`);
 		deps.log(`Sending commit ${state.headSha.slice(0, 12)} back to the agent with the reviewer's notes`);
 		// Back to draft first: until the revision is reviewed and pushed, the old head must not be merged.
-		if (state.pr !== undefined) await must(ghArgv.prDraft(state.pr.number), "gh pr ready --undo", worktree);
+		if (state.pr !== undefined) {
+			// Only our PR, still on the commit we pushed, may be returned to draft.
+			const live = parsePrView(await must(ghArgv.prView(state.pr.number), "gh pr view", worktree));
+			const onBranch = state.pushedSha ?? state.headSha;
+			const diverged =
+				prMismatch(live, { repo: state.repoName ?? "", branch, base: options.base, number: state.pr.number }) ??
+				(live.headSha === onBranch ? undefined : `PR #${state.pr.number} head is ${live.headSha}, not ${onBranch}`);
+			if (diverged !== undefined) return handoff("pr_mismatch", diverged);
+			if (live.state !== "OPEN") return handoff("pr_closed", `PR #${state.pr.number} is ${live.state}`);
+			await must(ghArgv.prDraft(state.pr.number), "gh pr ready --undo", worktree);
+		}
 		save({
 			// Older state recorded only the PR; its head was the pushed commit.
 			pushedSha: state.pushedSha ?? (state.pr === undefined ? undefined : state.headSha),
@@ -529,15 +539,13 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		deps.log(`Pushing ${headSha} to ${branch}`);
 		await must(gitArgv.push(worktree, branch, headSha), "git push");
 		save({ pushedSha: headSha, reviewRequested: undefined });
-		if (state.pr !== undefined) {
-			// A revision of an open PR: tell the reviewer what changed.
-			const commentFile = join(stateDir, "pr-revision.md");
-			writePrivate(
-				commentFile,
-				revisionComment(state.revisions ?? 1, headSha, totalCostUsd, agent.reason, state.reviewNotes),
-			);
-			await must(ghArgv.prComment(state.pr.number, commentFile), "gh pr comment", worktree);
-		}
+	}
+	// A revision pushed to an open PR gets one comment saying what changed; retried until posted.
+	if (state.pr !== undefined && state.revisions !== undefined && state.commentedSha !== headSha) {
+		const commentFile = join(stateDir, "pr-revision.md");
+		writePrivate(commentFile, revisionComment(state.revisions, headSha, totalCostUsd, agent.reason));
+		await must(ghArgv.prComment(state.pr.number, commentFile), "gh pr comment", worktree);
+		save({ commentedSha: headSha });
 	}
 	if (state.pr === undefined) {
 		const changed = parseChangedPaths(await must(gitArgv.changedPaths(worktree, options.base, headSha), "git diff"));
@@ -585,7 +593,8 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 				number: created.number,
 			});
 			if (check !== undefined) return handoff("pr_mismatch", check);
-			save({ pr: created });
+			// The new PR's body already carries every report, so no revision comment is needed.
+			save({ pr: created, commentedSha: headSha });
 		}
 	}
 	const pr = state.pr ?? { url: "", number: 0 };
