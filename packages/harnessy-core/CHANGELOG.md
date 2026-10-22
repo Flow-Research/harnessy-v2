@@ -33,8 +33,8 @@
 - `harnessy work --agent-allow` now runs the agent's Bash commands in Claude
   Code's OS sandbox (Claude Code 2.1.304 or newer; macOS, or Linux with
   bubblewrap and socat). Writes are limited to the worktree and Claude Code's
-  per-user temp directory. Inside them, the worktree's `.git` file, its
-  `.claude/` directory and its git directory under the source checkout are
+  per-user temp directory. The worktree's `.git` file, its `.claude/`
+  directory, the whole source checkout and its shared git directory are
   denied. There is no network, and common credential stores cannot be read.
   `failIfUnavailable` and `allowUnsandboxedCommands: false` mean a command
   never runs unsandboxed. Preflight refuses `--agent-allow` where the sandbox

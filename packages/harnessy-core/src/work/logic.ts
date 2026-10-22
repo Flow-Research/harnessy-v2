@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import * as Result from "effect/Result";
 
 /**
@@ -634,17 +635,25 @@ export const agentSandbox = () => ({
 /**
  * Paths the agent may never write, as `Edit` deny rules: they bind the Edit
  * and Write tools and, merged by Claude Code, sandboxed commands. They are the
- * worktree's `.git` file and `.claude/`, and the worktree's own git directory
- * (`<repo>/.git/worktrees/<name>`), which Claude Code's sandbox otherwise
- * lets commands write so git works: its `commondir` or `HEAD` could redirect
- * Harnessy's later git commands. `//` marks an absolute path in a rule.
+ * worktree's `.git` file and `.claude/`, the whole source checkout, and the
+ * shared git directory (`<common>`, which holds `worktrees/<name>`). Claude
+ * Code's sandbox otherwise lets commands write a linked worktree's git
+ * directories so git works: refs, objects, `info/`, `HEAD` and `commondir`,
+ * which could move branches in the real checkout or redirect Harnessy's later
+ * git commands. `//` marks an absolute path in a rule.
  */
-export const protectedWorktreeRules = (realWorktree: string, realGitDir: string): ReadonlyArray<string> => [
+export const protectedWorktreeRules = (
+	realWorktree: string,
+	realRepo: string,
+	realCommonDir: string,
+): ReadonlyArray<string> => [
 	`Edit(/${realWorktree}/.git)`,
 	`Edit(/${realWorktree}/.claude/**)`,
-	`Edit(/${realGitDir})`,
-	`Edit(/${realGitDir}/**)`,
+	...[...new Set([realRepo, realCommonDir])].flatMap((path) => [`Edit(/${path})`, `Edit(/${path}/**)`]),
 ];
+
+/** The shared git directory of a linked worktree whose git directory is `<common>/worktrees/<name>`. */
+export const commonDirOf = (gitDir: string): string => dirname(dirname(gitDir));
 
 /** The git directory a linked worktree's `.git` file names, or undefined. */
 export const gitDirOf = (gitFile: string): string | undefined => /^gitdir: (.+)$/m.exec(gitFile)?.[1];
@@ -658,10 +667,10 @@ export const gitDirOf = (gitFile: string): string | undefined => /^gitdir: (.+)$
  * to the loaded sources, which is how the first live run reached `npm test`.
  * Whenever commands are allowed, the sandbox block comes with them.
  */
-export const agentSettings = (extraAllowed: ReadonlyArray<string>, realWorktree: string, realGitDir: string) => ({
+export const agentSettings = (extraAllowed: ReadonlyArray<string>, protectedRules: ReadonlyArray<string>) => ({
 	permissions: {
 		allow: extraAllowed.length === 0 ? [] : [...AGENT_ALLOWED_TOOLS, ...extraAllowed],
-		deny: [...AGENT_DISALLOWED_TOOLS, ...protectedWorktreeRules(realWorktree, realGitDir)],
+		deny: [...AGENT_DISALLOWED_TOOLS, ...protectedRules],
 		defaultMode: "acceptEdits",
 	},
 	...(extraAllowed.length === 0 ? {} : { sandbox: agentSandbox() }),

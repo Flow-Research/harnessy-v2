@@ -36,6 +36,7 @@ import {
 	checkTool,
 	ciConfigPaths,
 	combinedReports,
+	commonDirOf,
 	type DepCopyMethod,
 	evaluateStopRule,
 	field,
@@ -67,6 +68,7 @@ import {
 	parseTask,
 	prBody,
 	prMismatch,
+	protectedWorktreeRules,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
 	revisionComment,
@@ -669,10 +671,12 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes));
 		const gitDir = gitDirOf(state.gitFile);
 		if (gitDir === undefined) return handoff("worktree_tampered", "the worktree's .git file names no git directory");
-		writePrivate(
-			paths.settings,
-			`${JSON.stringify(agentSettings(agentAllow, realPath(worktree), realPath(resolve(worktree, gitDir))), null, 2)}\n`,
+		const protectedRules = protectedWorktreeRules(
+			realPath(worktree),
+			realPath(repo),
+			realPath(commonDirOf(resolve(worktree, gitDir))),
 		);
+		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow, protectedRules), null, 2)}\n`);
 		let pane = state.pane;
 		if (pane === undefined) {
 			const created = parseJson(

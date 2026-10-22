@@ -13,6 +13,7 @@ import {
 	checkTool,
 	ciConfigPaths,
 	cloneArgv,
+	commonDirOf,
 	compareVersions,
 	EXIT_MARKER_REGEX,
 	evaluateStopRule,
@@ -43,6 +44,7 @@ import {
 	plainCopyArgv,
 	prBody,
 	prMismatch,
+	protectedWorktreeRules,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
 	SANDBOX_DENY_READ,
@@ -175,20 +177,23 @@ describe("agent permissions", () => {
 	});
 
 	it("write the complete permission policy to the settings file", () => {
-		const deny = [
-			"Bash(git push)",
-			"Bash(git push *)",
-			"Bash(git commit)",
-			"Bash(git commit *)",
+		const rules = protectedWorktreeRules("/w", "/r", "/r/.git");
+		expect(rules).toEqual([
 			"Edit(//w/.git)",
 			"Edit(//w/.claude/**)",
-			"Edit(//r/.git/worktrees/w)",
-			"Edit(//r/.git/worktrees/w/**)",
-		];
-		expect(agentSettings([], "/w", "/r/.git/worktrees/w")).toEqual({
-			permissions: { allow: [], deny, defaultMode: "acceptEdits" },
-		});
-		expect(agentSettings(["Bash(npm test)"], "/w", "/r/.git/worktrees/w")).toEqual({
+			"Edit(//r)",
+			"Edit(//r/**)",
+			"Edit(//r/.git)",
+			"Edit(//r/.git/**)",
+		]);
+		// A common directory that is the checkout itself is listed once.
+		expect(protectedWorktreeRules("/w", "/r", "/r")).toHaveLength(4);
+		expect(commonDirOf("/r/.git/worktrees/w")).toBe("/r/.git");
+		expect(gitDirOf("gitdir: /r/.git/worktrees/w\n")).toBe("/r/.git/worktrees/w");
+		expect(gitDirOf("garbage")).toBeUndefined();
+		const deny = ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)", ...rules];
+		expect(agentSettings([], rules)).toEqual({ permissions: { allow: [], deny, defaultMode: "acceptEdits" } });
+		expect(agentSettings(["Bash(npm test)"], rules)).toEqual({
 			permissions: {
 				allow: ["Bash(git status)", "Bash(git diff)", "Bash(npm test)"],
 				deny,
@@ -196,8 +201,12 @@ describe("agent permissions", () => {
 			},
 			sandbox: agentSandbox(),
 		});
-		expect(gitDirOf("gitdir: /r/.git/worktrees/w\n")).toBe("/r/.git/worktrees/w");
-		expect(gitDirOf("garbage")).toBeUndefined();
+	});
+
+	it("pins the sandbox's writable set: nothing added to Claude Code's allow-list, nothing wider", () => {
+		// Writable = the working directory (the worktree) plus Claude Code's forced per-user temp
+		// directory. Any allowWrite entry, an Edit allow rule, a network domain or an escape hatch
+		// would widen it; this test fails if one appears.
 		expect(agentSandbox()).toEqual({
 			enabled: true,
 			failIfUnavailable: true,
@@ -207,6 +216,12 @@ describe("agent permissions", () => {
 			network: { allowedDomains: [], strictAllowlist: true, allowLocalBinding: false, allowAllUnixSockets: false },
 			filesystem: { denyRead: [...SANDBOX_DENY_READ] },
 		});
+		const settings = agentSettings(
+			["Bash(node_modules/.bin/vitest run *)"],
+			protectedWorktreeRules("/w", "/r", "/r/.git"),
+		);
+		expect(settings.permissions.allow.some((rule) => !rule.startsWith("Bash("))).toBe(false);
+		expect(Object.keys(settings)).toEqual(["permissions", "sandbox"]);
 	});
 
 	it("refuses --agent-allow where Claude Code cannot sandbox commands", () => {

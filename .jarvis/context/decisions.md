@@ -121,16 +121,27 @@
 
     Writes follow Claude Code's allow-list, and Harnessy adds nothing to it.
     The list is the working directory (the worktree) and Claude Code's
-    per-user temp directory `/tmp/claude-<uid>`; 2.1.304 always grants that
-    directory and sets it as `TMPDIR`, and settings cannot narrow it. Within
-    that list, `Edit` deny rules, which Claude Code merges into the sandbox
-    and applies to the Edit and Write tools, protect three things:
+    per-user temp directory `/tmp/claude-<uid>`. For a linked worktree,
+    Claude Code also opens the git directories so git works. `Edit` deny
+    rules, which Claude Code merges into the sandbox and applies to the Edit
+    and Write tools, remove what the agent must not write:
     - the worktree's `.git` file;
     - the worktree's `.claude/` directory;
-    - the worktree's own git directory (`<repo>/.git/worktrees/<name>`).
-      The sandbox otherwise lets commands write it so that git works, and
-      its `commondir` or `HEAD` could redirect Harnessy's later git
-      commands.
+    - the whole source checkout;
+    - the shared git directory (`<repo>/.git`, including
+      `worktrees/<name>`). Without this rule, probes showed sandboxed code
+      could write refs, objects, `info/` and `commondir`.
+
+    A probe confirmed the agent's own `git status` and `git diff` still
+    work. A test pins this writable set, so any widening fails.
+
+    `/tmp/claude-<uid>` cannot be narrowed with 2.1.304's settings. Three
+    attempts failed:
+    - `CLAUDE_CODE_TMPDIR` and `TMPDIR`, set as environment variables or in
+      the settings `env`, do not move the sandbox's `TMPDIR`.
+    - Denying `/tmp/claude-<uid>` makes every sandboxed command exit 1,
+      because Claude Code's shell writes its working-directory file there.
+    - A private per-task temp directory is therefore not possible.
 
     The source checkout's `.git` (hooks, config, objects),
     `~/.claude`, the settings file and the rest of Harnessy's state lie
