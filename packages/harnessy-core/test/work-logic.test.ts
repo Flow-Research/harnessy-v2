@@ -5,6 +5,7 @@ import {
 	AGENT_RESULT_SCHEMA,
 	agentPrompt,
 	agentRunLine,
+	agentSandbox,
 	agentSettings,
 	agentTools,
 	bindingMismatch,
@@ -43,6 +44,8 @@ import {
 	prMismatch,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
+	SANDBOX_MIN_CLAUDE,
+	sandboxProblem,
 	splitCli,
 	validateAgentAllow,
 	WORK_TOOLS,
@@ -170,20 +173,46 @@ describe("agent permissions", () => {
 	});
 
 	it("write the complete permission policy to the settings file", () => {
-		expect(agentSettings([])).toEqual({
+		expect(agentSettings([], ["/repo"])).toEqual({
 			permissions: {
 				allow: [],
 				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
 				defaultMode: "acceptEdits",
 			},
 		});
-		expect(agentSettings(["Bash(npm test)"])).toEqual({
+		expect(agentSettings(["Bash(npm test)"], ["/repo", "/state"])).toEqual({
 			permissions: {
 				allow: ["Bash(git status)", "Bash(git diff)", "Bash(npm test)"],
 				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
 				defaultMode: "acceptEdits",
 			},
+			sandbox: agentSandbox(["/repo", "/state"]),
 		});
+		expect(agentSandbox(["/repo"]).filesystem.denyWrite).toEqual(["/repo"]);
+		expect(agentSandbox([])).toMatchObject({
+			enabled: true,
+			failIfUnavailable: true,
+			autoAllowBashIfSandboxed: false,
+			allowUnsandboxedCommands: false,
+			excludedCommands: [],
+			network: { allowedDomains: [], strictAllowlist: true },
+		});
+	});
+
+	it("refuses --agent-allow where Claude Code cannot sandbox commands", () => {
+		const both = { bwrap: true, socat: true };
+		expect(sandboxProblem("darwin", SANDBOX_MIN_CLAUDE, { bwrap: false, socat: false })).toBeUndefined();
+		expect(sandboxProblem("linux", "2.2.0", both)).toBeUndefined();
+		expect(sandboxProblem("win32", SANDBOX_MIN_CLAUDE, both)).toBe(
+			"Claude Code cannot sandbox commands on win32, so --agent-allow is refused",
+		);
+		expect(sandboxProblem("darwin", "2.1.303", both)).toBe(
+			`--agent-allow needs Claude Code ${SANDBOX_MIN_CLAUDE} or newer for its sandbox settings (found 2.1.303)`,
+		);
+		expect(sandboxProblem("darwin", undefined, both)).toContain("(found unknown)");
+		expect(sandboxProblem("linux", SANDBOX_MIN_CLAUDE, { bwrap: true, socat: false })).toBe(
+			"Claude Code's sandbox needs socat on Linux, so --agent-allow is refused",
+		);
 		expect(agentTools([])).toEqual(["Read", "Edit", "Write", "Glob", "Grep"]);
 		expect(agentTools(["Bash(npm test)"])).toEqual(["Read", "Edit", "Write", "Glob", "Grep", "Bash"]);
 	});
@@ -337,28 +366,21 @@ describe("prompt", () => {
 			"git",
 			"-C",
 			"/w",
+			"-c",
+			"core.hooksPath=/dev/null",
+			"-c",
+			"core.fsmonitor=false",
+			"-c",
+			"submodule.recurse=false",
+			"-c",
+			"diff.ignoreSubmodules=all",
 			"status",
 			"--porcelain=v1",
 			"-z",
 			"--untracked-files=all",
+			"--ignore-submodules=all",
 			"--",
 			":(literal,icase)a b\n/dist",
-		]);
-		expect(gitArgv.emptyTree("/w")).toEqual(["git", "-C", "/w", "hash-object", "-t", "tree", "/dev/null"]);
-		expect(gitArgv.inHead("/w", "e", "dist")).toEqual([
-			"git",
-			"-C",
-			"/w",
-			"diff",
-			"--no-ext-diff",
-			"--no-textconv",
-			"--no-renames",
-			"-z",
-			"--name-only",
-			"e",
-			"HEAD",
-			"--",
-			":(literal,icase)dist",
 		]);
 	});
 });

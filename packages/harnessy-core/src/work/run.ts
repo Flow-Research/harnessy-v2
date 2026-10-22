@@ -16,17 +16,15 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import * as Result from "effect/Result";
 import {
-	checkComponents,
-	committed,
+	auditCopy,
 	copyTree,
 	destinationProblem,
 	makeParents,
-	removeInside,
+	removeCopy,
 	removeTree,
 	sourceProblem,
 	stageable,
 	stripSensitive,
-	unsafeEntries,
 } from "./deps.ts";
 import {
 	ATTESTATION,
@@ -71,6 +69,7 @@ import {
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
 	revisionComment,
+	sandboxProblem,
 	TERMINAL_PREPARATION_STATUSES,
 	type ToolCheck,
 	validateAgentAllow,
@@ -212,8 +211,12 @@ export const notify = async (deps: WorkDeps, message: string): Promise<void> => 
 	});
 };
 
-/** Check every required tool. */
-export const preflight = async (deps: WorkDeps, workstreamCli: ReadonlyArray<string>): Promise<ToolCheck[]> => {
+/** Check every required tool, and the sandbox when the agent may run commands. */
+export const preflight = async (
+	deps: WorkDeps,
+	workstreamCli: ReadonlyArray<string>,
+	needsSandbox = false,
+): Promise<ToolCheck[]> => {
 	const checks: ToolCheck[] = [];
 	for (const tool of WORK_TOOLS) {
 		const argv =
@@ -222,7 +225,26 @@ export const preflight = async (deps: WorkDeps, workstreamCli: ReadonlyArray<str
 		const check = checkTool(tool, probe, deps.platform);
 		checks.push(tool.name === "claude" && check.ok ? await claudeIsolationCheck(deps, check) : check);
 	}
+	if (needsSandbox) checks.push(await sandboxCheck(deps, checks.find((check) => check.name === "claude")?.version));
 	return checks;
+};
+
+/** Never run allowed commands unsandboxed: refuse before anything when the sandbox cannot work here. */
+const sandboxCheck = async (deps: WorkDeps, claudeVersion: string | undefined): Promise<ToolCheck> => {
+	const present = async (argv: ReadonlyArray<string>) =>
+		deps.platform === "linux" && (await deps.run(argv, { timeoutMs: PROBE_TIMEOUT_MS })).exitCode === 0;
+	const problem = sandboxProblem(deps.platform, claudeVersion, {
+		bwrap: await present(["bwrap", "--version"]),
+		socat: await present(["socat", "-V"]),
+	});
+	return problem === undefined
+		? { name: "sandbox", ok: true }
+		: {
+				name: "sandbox",
+				ok: false,
+				problem,
+				hint: "Run without --agent-allow, or on macOS, or on Linux with bubblewrap and socat installed",
+			};
 };
 
 /** Fail closed unless this Claude Code supports every flag the agent isolation relies on. */
@@ -335,7 +357,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	};
 	const ws = options.workstreamCli;
 
-	const tools = await preflight(deps, ws);
+	const tools = await preflight(deps, ws, agentAllow.length > 0);
 	if (tools.some((tool) => !tool.ok)) return { exitCode: 1, report: { status: "preflight_failed", tools } };
 
 	if (options.dryRun)
@@ -458,69 +480,17 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			);
 	};
 
-	/**
-	 * Why the recorded dependency copies are no longer safe to keep: each must
-	 * still be a plain directory in the worktree, every link inside must lead
-	 * inside the worktree, HEAD must hold nothing under it, and git must have
-	 * nothing to stage there. Run after copying, before every agent start and
-	 * after every agent run, because allowed commands run arbitrary code.
-	 */
-	const copiesProblem = async (
-		copies: ReadonlyArray<string>,
-	): Promise<
-		{ readonly reason: HandoffReason; readonly detail: string; readonly paths: ReadonlyArray<string> } | undefined
-	> => {
-		if (copies.length === 0) return undefined;
+	/** Remove dependency copies from the worktree; returns whether all are gone, clearing the record then. */
+	const removeCopies = (copies: ReadonlyArray<string>): boolean => {
 		const realWorktree = realpathSync(worktree);
-		const moved = copies.filter((path) => {
-			const check = checkComponents(realWorktree, path);
-			return "problem" in check || check.existing !== path.split("/").length;
-		});
-		if (moved.length > 0)
-			return {
-				reason: "agent_deps_moved",
-				detail: "these copied dependency directories are no longer plain directories in the worktree",
-				paths: moved,
-			};
-		const linked = copies.flatMap((path) => unsafeEntries(join(realWorktree, path), realWorktree));
-		if (linked.length > 0)
-			return {
-				reason: "agent_deps_unsafe_entry",
-				detail:
-					"these entries in the copied dependency directories are special files, or links leading outside the worktree that a write could pass through",
-				paths: linked,
-			};
-		const inHead = await committed(deps.run, worktree, options.base, copies);
-		if (inHead.length > 0)
-			return {
-				reason: "agent_deps_committed",
-				detail: "HEAD has files under these copied dependency directories; Harnessy will not use that HEAD",
-				paths: inHead,
-			};
-		const exposed = await stageable(deps.run, worktree, copies);
-		if (exposed.length > 0)
-			return {
-				reason: "agent_deps_not_ignored",
-				detail: "git would stage files under these copied dependency directories, so a commit would include them",
-				paths: exposed,
-			};
-		return undefined;
-	};
-	const recordedCopies = () => (state.agentDeps?.copied ?? []).map(({ path }) => path);
-	/** Remove what a dependency copy may have created; returns what could not be removed. */
-	const removePending = (pending: { readonly paths: ReadonlyArray<string>; readonly staging: string }) => {
-		const realWorktree = realpathSync(worktree);
-		const left = [
-			...pending.paths.filter((path) => !removeInside(realWorktree, path)),
-			...(removeTree(pending.staging) ? [] : [pending.staging]),
-		];
-		if (left.length === 0) save({ agentDeps: undefined });
-		return left;
+		const gone = copies.filter((path) => !removeCopy(realWorktree, path)).length === 0;
+		if (gone) save({ agentDeps: undefined });
+		return gone;
 	};
 	/**
-	 * Give the worktree its own copy of the source checkout's installed build
-	 * inputs. Sources and destinations are checked in the exact form that is
-	 * used: a relative path of plain components under a real root.
+	 * Give the worktree its own copy of the source checkout's ignored
+	 * `node_modules` and `dist` directories: staged outside the worktree,
+	 * secrets withheld, renamed into place, then audited once.
 	 */
 	const copyAgentDeps = async (): Promise<WorkOutcome | undefined> => {
 		const sources = parseDepDirs(await must(gitArgv.ignoredDirs(repo), "git ls-files"));
@@ -529,7 +499,6 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			save({ agentDeps: { copied: [] } });
 			return undefined;
 		}
-		// Every source and destination is checked before anything is copied.
 		const realRepo = realpathSync(repo);
 		const badSources = sources.flatMap((path) => sourceProblem(realRepo, path) ?? []);
 		if (badSources.length > 0)
@@ -538,24 +507,20 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		const badDestinations = sources.flatMap((path) => destinationProblem(realWorktree, path) ?? []);
 		if (badDestinations.length > 0)
 			return handoff("agent_deps_destination_unsafe", `${badDestinations.join("; ")}; nothing was copied`);
-		// Copies are made in a private staging directory beside the worktree, outside it, and
-		// renamed into place only once all are made. The pending record names everything this
-		// may create, so a crash or failed cleanup blocks every later agent run until removed.
 		const staging = mkdtempSync(join(dirname(realWorktree), `.${basename(realWorktree)}-deps-`));
-		save({ agentDeps: { copied: [], pending: { paths: sources, staging } } });
-		const undo = () => removePending({ paths: sources, staging });
-		const abort = (error: string): never => {
-			const left = undo();
-			throw new Error(left.length === 0 ? error : `${error}; could not remove ${left.join(", ")}`);
-		};
 		const copied: Array<{ readonly path: string; readonly method: DepCopyMethod }> = [];
 		for (const [index, path] of sources.entries()) {
 			const staged = join(staging, String(index));
 			const result = await copyTree(deps.run, deps.platform, deps.log, join(realRepo, path), staged);
-			if ("error" in result) return abort(result.error);
-			// Never walk through a link: the staged copy must be the directory cp made.
-			if (lstatSync(staged, { throwIfNoEntry: false })?.isDirectory() !== true)
-				return abort(`the copy of ${path} is not a plain directory`);
+			if ("error" in result) {
+				removeTree(staging);
+				throw new Error(result.error);
+			}
+			// Harnessy's own walk runs unsandboxed: never through a link, so the staged copy must be what cp made.
+			if (lstatSync(staged, { throwIfNoEntry: false })?.isDirectory() !== true) {
+				removeTree(staging);
+				throw new Error(`the copy of ${path} is not a plain directory`);
+			}
 			const withheld = stripSensitive(staged, basename(path) === "node_modules");
 			if (withheld.length > 0)
 				deps.log(
@@ -563,30 +528,35 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				);
 			copied.push({ path, method: result.method });
 		}
+		// From here the worktree changes; a crash leaves a record the next run cleans up.
+		save({ agentDeps: { copied: [], pending: sources } });
 		for (const [index, { path, method }] of copied.entries()) {
 			const problem =
 				makeParents(realWorktree, path) ??
 				(Result.isSuccess(Result.try(() => renameSync(join(staging, String(index)), join(realWorktree, path))))
 					? undefined
 					: `moving the copy of ${path} into place failed`);
-			if (problem !== undefined) return abort(problem);
+			if (problem !== undefined) {
+				removeTree(staging);
+				throw new Error(removeCopies(sources) ? problem : `${problem}; the copies could not all be removed`);
+			}
 			deps.log(`Copied ${path} into the worktree (${method})`);
 		}
 		removeTree(staging);
-		// Check again after copying: a source that changed form during the copy is not trusted.
-		const changed = sources.flatMap((path) => sourceProblem(realRepo, path) ?? []);
-		const problem =
-			changed.length > 0
-				? { reason: "agent_deps_source_unsafe" as const, detail: changed.join("; "), paths: sources }
-				: await copiesProblem(sources);
-		if (problem !== undefined) {
-			const left = undo();
-			return left.length === 0
-				? handoff(problem.reason, `${problem.detail}; the copies were removed`, { paths: problem.paths })
+		const unsafe = sources.flatMap((path) => auditCopy(join(realWorktree, path), realWorktree, realRepo));
+		const exposed = unsafe.length > 0 ? [] : await stageable(deps.run, worktree, sources);
+		if (unsafe.length > 0 || exposed.length > 0) {
+			const removed = removeCopies(sources) ? "the copies were removed" : "the copies could not all be removed";
+			return unsafe.length > 0
+				? handoff(
+						"agent_deps_unsafe_entry",
+						`these copied entries are special files or links leading outside the worktree and the source checkout; ${removed}`,
+						{ paths: unsafe },
+					)
 				: handoff(
-						"agent_deps_cleanup_failed",
-						`${problem.detail}; these could not be removed and block every agent run until they are`,
-						{ paths: left },
+						"agent_deps_not_ignored",
+						`git would stage files under these copied paths, so Harnessy's commit would include them; ${removed}`,
+						{ paths: exposed },
 					);
 		}
 		save({ agentDeps: { copied } });
@@ -667,28 +637,27 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		if (state.pane === undefined) rmSync(paths.result, { force: true });
 		// Before the pane exists: a re-attached agent is already running with what it has.
 		if (state.pane === undefined) {
+			// No git command may run in a worktree whose .git file an earlier agent rewrote.
+			if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
 			const pending = state.agentDeps?.pending;
 			if (pending !== undefined) {
-				const left = removePending(pending);
-				if (left.length > 0)
+				if (!removeCopies(pending))
 					return handoff(
 						"agent_deps_cleanup_failed",
 						"an interrupted dependency copy left these behind and they could not be removed; remove them, then run again",
-						{ paths: left },
+						{ paths: pending },
 					);
 				deps.log("Removed what an interrupted dependency copy left behind");
 			}
 			if (options.agentDeps === "clone" && state.agentDeps === undefined) {
 				const stopped = await copyAgentDeps();
 				if (stopped !== undefined) return stopped;
-			} else {
-				// Copies from an earlier run (with or without the flag now) are checked again before any new agent.
-				const problem = await copiesProblem(recordedCopies());
-				if (problem !== undefined) return handoff(problem.reason, problem.detail, { paths: problem.paths });
 			}
 		}
 		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes));
-		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow), null, 2)}\n`);
+		// The sandbox may not write to the source checkout (the worktree's git directory lives
+		// there) or to Harnessy's state, even where they fall under a writable temp directory.
+		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow, [repo, stateDir]), null, 2)}\n`);
 		let pane = state.pane;
 		if (pane === undefined) {
 			const created = parseJson(
@@ -757,16 +726,19 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				decision.costUsd === undefined ? {} : { cost_usd: decision.costUsd },
 			);
 		}
-		// Copied dependencies must never reach the commit or lead out of the worktree. An
-		// allowed command runs arbitrary code: it can edit .gitignore, swap or link a copy,
-		// or force-add and commit one itself, even leaving a clean tree.
-		const problem = await copiesProblem(recordedCopies());
-		if (problem !== undefined) {
+		// Copied dependencies must never reach Harnessy's commit: the agent can edit .gitignore.
+		const exposedCopies = await stageable(
+			deps.run,
+			worktree,
+			(state.agentDeps?.copied ?? []).map(({ path }) => path),
+		);
+		if (exposedCopies.length > 0) {
 			save({ spentUsd: (state.spentUsd ?? 0) + decision.costUsd });
-			return handoff(problem.reason, `${problem.detail}; nothing was committed`, {
-				paths: problem.paths,
-				cost_usd: decision.costUsd,
-			});
+			return handoff(
+				"agent_deps_not_ignored",
+				"after the agent's change git would stage files under these copied dependency directories; nothing was committed",
+				{ paths: exposedCopies, cost_usd: decision.costUsd },
+			);
 		}
 		if (dirty > 0) {
 			await must(gitArgv.addAll(worktree), "git add");

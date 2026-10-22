@@ -1,20 +1,29 @@
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-	checkComponents,
+	auditCopy,
 	destinationProblem,
-	leadsTo,
 	makeParents,
-	removeInside,
+	removeCopy,
 	removeTree,
 	sourceProblem,
-	unsafeEntries,
+	stripSensitive,
 	within,
 } from "../src/work/deps.ts";
 
-describe("dependency copy path checks", () => {
+describe("dependency copy checks", () => {
 	let root = "";
 	beforeEach(() => {
 		root = realpathSync(mkdtempSync(join(tmpdir(), "harnessy-deps-")));
@@ -30,35 +39,38 @@ describe("dependency copy path checks", () => {
 		expect(within("/repo", "/")).toBe(false);
 	});
 
-	it("rejects paths that are not plain relative components", () => {
-		for (const rel of ["", "a//b", "./a", "a/../b", "a/."])
-			expect(checkComponents(root, rel)).toEqual({ problem: `${rel} is not a plain relative path` });
-	});
-
-	it("rejects a file where a directory is expected, and reports a missing source", () => {
+	it("accepts only a plain source directory reached through no link", () => {
+		expect(sourceProblem(root, "a//b")).toBe("source a//b is not a plain relative path");
+		expect(sourceProblem(root, "../x")).toBe("source ../x is not a plain relative path");
+		expect(sourceProblem(root, "node_modules")).toBe("source node_modules does not exist");
 		writeFileSync(join(root, "dist"), "");
 		expect(sourceProblem(root, "dist")).toBe("source dist is a symbolic link or not a directory");
-		expect(sourceProblem(root, "node_modules")).toBe("source node_modules does not exist");
 		mkdirSync(join(root, "node_modules"));
 		expect(sourceProblem(root, "node_modules")).toBeUndefined();
+		symlinkSync(join(root, "node_modules"), join(root, "pkg"));
+		expect(sourceProblem(root, "pkg/dist")).toBe("source pkg is a symbolic link or not a directory");
 	});
 
-	// macOS APFS is case- and normalisation-insensitive by default; on such a file
-	// system lstat finds a variant name, and only the exact directory listing tells them apart.
-	const probe = () => {
+	it("accepts only a destination that does not exist in any form", () => {
+		expect(destinationProblem(root, "packages/a/dist")).toBeUndefined();
+		symlinkSync(join(root, "missing-target"), join(root, "node_modules"));
+		expect(destinationProblem(root, "node_modules")).toBe(
+			"destination node_modules is a symbolic link or not a directory",
+		);
+		mkdirSync(join(root, "dist"));
+		expect(destinationProblem(root, "dist")).toBe("destination dist already exists in the worktree");
+	});
+
+	// macOS APFS is case- and normalisation-insensitive by default; lstat finds a
+	// variant name there, and only the exact directory listing tells them apart.
+	const insensitive = (() => {
 		const dir = mkdtempSync(join(tmpdir(), "harnessy-case-"));
 		writeFileSync(join(dir, "a"), "");
-		const insensitive = (() => {
-			try {
-				return realpathSync(join(dir, "A")) !== "";
-			} catch {
-				return false;
-			}
-		})();
+		const found = existsSync(join(dir, "A"));
 		rmSync(dir, { recursive: true, force: true });
-		return insensitive;
-	};
-	it.runIf(probe())("refuses a case or Unicode variant of a destination on an insensitive file system", () => {
+		return found;
+	})();
+	it.runIf(insensitive)("refuses a case or Unicode variant of a destination", () => {
 		mkdirSync(join(root, "Node_Modules"));
 		expect(destinationProblem(root, "node_modules")).toBe(
 			"destination node_modules exists only under a different case or Unicode form",
@@ -70,9 +82,9 @@ describe("dependency copy path checks", () => {
 	});
 
 	it("creates missing parents one at a time, and reports one it cannot create", () => {
+		mkdirSync(join(root, "packages"));
 		expect(makeParents(root, "packages/a/dist")).toBeUndefined();
-		expect(checkComponents(root, "packages/a")).toEqual({ existing: 2 });
-		expect(makeParents(root, "packages/a/dist")).toBeUndefined();
+		expect(existsSync(join(root, "packages/a"))).toBe(true);
 		mkdirSync(join(root, "packages/a/dist"));
 		expect(makeParents(root, "packages/a/dist")).toBe("destination packages/a/dist already exists in the worktree");
 		mkdirSync(join(root, "locked"));
@@ -81,61 +93,81 @@ describe("dependency copy path checks", () => {
 		chmodSync(join(root, "locked"), 0o755);
 	});
 
-	it("removes only below plain parents and never follows a final link", () => {
+	it("removes read-only trees, never through a link, and reports what it cannot remove", () => {
 		const outside = join(root, "outside");
 		mkdirSync(join(outside, "dist"), { recursive: true });
-		mkdirSync(join(root, "wt", "pkg"), { recursive: true });
-		symlinkSync(join(outside, "dist"), join(root, "wt", "pkg", "dist"));
-		expect(removeInside(join(root, "wt"), "pkg/dist")).toBe(true);
-		expect(checkComponents(outside, "dist")).toEqual({ existing: 1 });
+		mkdirSync(join(root, "wt", "pkg", "sub"), { recursive: true });
+		writeFileSync(join(root, "wt", "pkg", "sub", "f"), "");
+		chmodSync(join(root, "wt", "pkg", "sub"), 0o555);
+		expect(removeTree(join(root, "wt", "pkg"))).toBe(true);
 		symlinkSync(outside, join(root, "wt", "linked"));
-		expect(removeInside(join(root, "wt"), "linked/dist")).toBe(false);
-		// Nothing was created under a missing parent, so there is nothing to remove.
-		expect(removeInside(join(root, "wt"), "missing/dist")).toBe(true);
-		// Read-only directories inside the tree do not block removal; a read-only parent does.
-		mkdirSync(join(root, "wt", "ro", "pkg", "sub"), { recursive: true });
-		writeFileSync(join(root, "wt", "ro", "pkg", "sub", "f"), "");
-		chmodSync(join(root, "wt", "ro", "pkg", "sub"), 0o555);
-		expect(removeTree(join(root, "wt", "ro", "pkg"))).toBe(true);
-		mkdirSync(join(root, "wt", "ro", "pkg"));
-		chmodSync(join(root, "wt", "ro"), 0o555);
-		expect(removeTree(join(root, "wt", "ro", "pkg"))).toBe(false);
-		chmodSync(join(root, "wt", "ro"), 0o755);
-		expect(checkComponents(outside, "dist")).toEqual({ existing: 1 });
+		expect(removeCopy(join(root, "wt"), "linked/dist")).toBe(false);
+		expect(existsSync(join(outside, "dist"))).toBe(true);
+		// A final link is removed itself; its target stays.
+		mkdirSync(join(root, "wt", "pkg"));
+		symlinkSync(join(outside, "dist"), join(root, "wt", "pkg", "dist"));
+		expect(removeCopy(join(root, "wt"), "pkg/dist")).toBe(true);
+		expect(existsSync(join(outside, "dist"))).toBe(true);
+		expect(removeCopy(join(root, "wt"), "missing/dist")).toBe(true);
+		mkdirSync(join(root, "wt", "node_modules"));
+		expect(removeCopy(join(root, "wt"), "node_modules")).toBe(true);
+		mkdirSync(join(root, "ro", "pkg"), { recursive: true });
+		chmodSync(join(root, "ro"), 0o555);
+		expect(removeTree(join(root, "ro", "pkg"))).toBe(false);
+		chmodSync(join(root, "ro"), 0o755);
 	});
 
-	it("follows every link, dangling ones and `..` after a link included, to where a write would land", () => {
-		const outside = join(root, "outside");
-		const wt = join(root, "wt");
-		mkdirSync(join(outside, "sub"), { recursive: true });
-		mkdirSync(join(wt, "node_modules"), { recursive: true });
-		// A tracked link in the task branch whose target does not exist yet.
-		symlinkSync(join(outside, "new"), join(wt, "evil"));
-		symlinkSync("../evil", join(wt, "node_modules", "x"));
-		expect(leadsTo(join(wt, "node_modules", "x", "file"))).toBe(join(outside, "new", "file"));
-		// POSIX resolves the link before `..`.
-		symlinkSync(join(outside, "sub"), join(wt, "deep"));
-		expect(leadsTo(`${wt}/deep/../z`)).toBe(join(outside, "z"));
-		expect(leadsTo(join(wt, ".", "node_modules"))).toBe(join(wt, "node_modules"));
-		// After a missing component nothing can be followed, so a `..` there is refused.
-		expect(leadsTo(`${wt}/missing/../evil/x`)).toBeUndefined();
-		expect(leadsTo(`${wt}/missing/./x`)).toBe(join(wt, "missing", "x"));
-		symlinkSync(join(wt, "loop-b"), join(wt, "loop-a"));
-		symlinkSync(join(wt, "loop-a"), join(wt, "loop-b"));
-		expect(leadsTo(join(wt, "loop-a"))).toBeUndefined();
+	it("withholds files that may hold secrets, and node_modules caches", () => {
+		const copy = join(root, "node_modules");
+		for (const file of [
+			".env",
+			".env.local",
+			".npmrc",
+			".yarnrc.yml",
+			"pkg/server.pem",
+			"pkg/id.KEY",
+			"pkg/index.js",
+		]) {
+			mkdirSync(join(copy, file, ".."), { recursive: true });
+			writeFileSync(join(copy, file), "");
+		}
+		mkdirSync(join(copy, ".cache", "babel"), { recursive: true });
+		mkdirSync(join(copy, "pkg", "node_modules", ".cache"), { recursive: true });
+		mkdirSync(join(copy, "pkg", ".cache"), { recursive: true });
+		expect(stripSensitive(copy, true)).toEqual([
+			".cache",
+			".env",
+			".env.local",
+			".npmrc",
+			".yarnrc.yml",
+			"pkg/id.KEY",
+			"pkg/node_modules/.cache",
+			"pkg/server.pem",
+		]);
+		// Only node_modules/.cache is a cache; a package's own .cache directory stays.
+		expect(existsSync(join(copy, "pkg", ".cache"))).toBe(true);
+		expect(existsSync(join(copy, "pkg", "index.js"))).toBe(true);
+		mkdirSync(join(root, "dist", ".cache"), { recursive: true });
+		expect(stripSensitive(join(root, "dist"), false)).toEqual([]);
 	});
 
-	it("lists copied links that lead outside the worktree, and keeps workspace links", () => {
+	it("audits a copy: files, directories and links inside the worktree or the source only", () => {
 		const wt = join(root, "wt");
+		const repo = join(root, "repo");
+		mkdirSync(join(repo, "node_modules"), { recursive: true });
 		mkdirSync(join(wt, "node_modules", "@s"), { recursive: true });
 		mkdirSync(join(wt, "packages", "a"), { recursive: true });
+		writeFileSync(join(wt, "node_modules", "index.js"), "");
 		symlinkSync("../../packages/a", join(wt, "node_modules", "@s", "a"));
 		symlinkSync("./not-built", join(wt, "node_modules", "pending"));
-		symlinkSync(join(root, "repo-evil"), join(wt, "node_modules", "prefix"));
-		symlinkSync(join(wt, "node_modules", "loop"), join(wt, "node_modules", "loop"));
-		expect(unsafeEntries(join(wt, "node_modules"), wt)).toEqual([
-			join(wt, "node_modules", "loop"),
+		symlinkSync(join(repo, "node_modules"), join(wt, "node_modules", "source"));
+		symlinkSync(join(root, "wt-evil"), join(wt, "node_modules", "prefix"));
+		symlinkSync("/", join(wt, "node_modules", "root"));
+		execFileSync("mkfifo", [join(wt, "node_modules", "pipe")]);
+		expect(auditCopy(join(wt, "node_modules"), wt, repo)).toEqual([
+			join(wt, "node_modules", "pipe"),
 			join(wt, "node_modules", "prefix"),
+			join(wt, "node_modules", "root"),
 		]);
 	});
 });

@@ -1,17 +1,19 @@
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import * as Result from "effect/Result";
 import { cloneArgv, type DepCopyMethod, gitArgv, plainCopyArgv } from "./logic.ts";
 import type { Run, RunResult } from "./run.ts";
 
 /**
- * Filesystem and git checks for `harnessy work --agent-deps clone`.
+ * The copy step of `harnessy work --agent-deps clone`.
  *
- * Threat model: the task branch (everything in the worktree) and the source
- * checkout's ignored files are attacker-controlled; the source checkout path,
- * the worktree path and Harnessy's private state are not. Every path is
- * checked in the one form that is then used: a relative path of plain
- * components joined onto a real (symlink-free) root.
+ * The boundary for the agent is Claude Code's OS sandbox (see
+ * `agentSandbox` in logic.ts): its commands cannot write outside the
+ * worktree. These checks cover only what the sandbox does not: Harnessy's
+ * own writes while it copies (they run outside the sandbox), secrets the
+ * agent could read inside the worktree, and copies reaching Harnessy's
+ * commit. The task branch and the source checkout's ignored files are
+ * treated as hostile.
  */
 
 /** True when `path` is `base` or below it: `path.relative`, never a string prefix. */
@@ -20,16 +22,16 @@ export const within = (base: string, path: string): boolean => {
 	return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 };
 
-export type ComponentCheck = { readonly problem: string } | { readonly existing: number };
+type ComponentCheck = { readonly problem: string } | { readonly existing: number };
 
 /**
- * Walk the relative path `rel` under the real directory `base`, one component
+ * Walk the relative path `rel` under the real directory `base` one component
  * at a time. Each component that exists must be listed by its parent under
- * exactly that name (so a case or Unicode-normalisation variant on APFS cannot
- * stand in for it) and must be a directory, not a symbolic link. `existing`
- * counts the leading components that exist.
+ * exactly that name (no case or Unicode variant on APFS) and must be a
+ * directory, not a symbolic link. `existing` counts the leading components
+ * that exist.
  */
-export const checkComponents = (base: string, rel: string): ComponentCheck => {
+const checkComponents = (base: string, rel: string): ComponentCheck => {
 	const parts = rel.split("/");
 	if (parts.some((part) => part === "" || part === "." || part === ".."))
 		return { problem: `${rel} is not a plain relative path` };
@@ -38,25 +40,32 @@ export const checkComponents = (base: string, rel: string): ComponentCheck => {
 		const next = join(current, part);
 		const stat = lstatSync(next, { throwIfNoEntry: false });
 		if (stat === undefined) return { existing: index };
+		const shown = parts.slice(0, index + 1).join("/");
 		if (!readdirSync(current).includes(part))
-			return {
-				problem: `${parts.slice(0, index + 1).join("/")} exists only under a different case or Unicode form`,
-			};
+			return { problem: `${shown} exists only under a different case or Unicode form` };
 		if (stat.isSymbolicLink() || !stat.isDirectory())
-			return { problem: `${parts.slice(0, index + 1).join("/")} is a symbolic link or not a directory` };
+			return { problem: `${shown} is a symbolic link or not a directory` };
 		current = next;
 	}
 	return { existing: parts.length };
 };
 
-/** Why `rel` cannot be a copy source under the real source checkout `realRepo`. */
+/**
+ * Why `rel` cannot be copied from the real source checkout `realRepo`: it
+ * must be a plain directory there, reached through no link, so the copy can
+ * never read from somewhere else (such as `~/.ssh`).
+ */
 export const sourceProblem = (realRepo: string, rel: string): string | undefined => {
 	const check = checkComponents(realRepo, rel);
 	if ("problem" in check) return `source ${check.problem}`;
 	return check.existing === rel.split("/").length ? undefined : `source ${rel} does not exist`;
 };
 
-/** Why `rel` cannot be created in the real worktree `realWorktree`: it must not exist in any form. */
+/**
+ * Why `rel` cannot be created in the real worktree `realWorktree`: it must not
+ * exist in any form, and its existing parents must be plain directories, so
+ * Harnessy's `mkdir` and `rename` cannot pass through a link.
+ */
 export const destinationProblem = (realWorktree: string, rel: string): string | undefined => {
 	const check = checkComponents(realWorktree, rel);
 	if ("problem" in check) return `destination ${check.problem}`;
@@ -64,26 +73,26 @@ export const destinationProblem = (realWorktree: string, rel: string): string | 
 };
 
 /**
- * Create the missing parents of `rel` one directory at a time, after checking
- * again. A non-recursive `mkdir` fails if anything appeared there since the
- * check, so nothing is created through a link. Returns the problem, if any.
+ * Check `rel` again, then create its missing parents one non-recursive
+ * `mkdir` at a time. Returns the problem, if any.
  */
 export const makeParents = (realWorktree: string, rel: string): string | undefined => {
 	const problem = destinationProblem(realWorktree, rel);
 	if (problem !== undefined) return problem;
-	const check = checkComponents(realWorktree, rel) as { readonly existing: number };
 	const parts = rel.split("/");
-	for (let index = check.existing; index < parts.length - 1; index++) {
-		const made = Result.try(() => mkdirSync(join(realWorktree, ...parts.slice(0, index + 1))));
-		if (Result.isFailure(made)) return `destination ${parts.slice(0, index + 1).join("/")} could not be created`;
+	for (let index = 0; index < parts.length - 1; index++) {
+		const path = join(realWorktree, ...parts.slice(0, index + 1));
+		if (lstatSync(path, { throwIfNoEntry: false }) !== undefined) continue;
+		if (Result.isFailure(Result.try(() => mkdirSync(path))))
+			return `destination ${parts.slice(0, index + 1).join("/")} could not be created`;
 	}
 	return undefined;
 };
 
 /**
  * Remove the tree at `path` without following any link, first giving its
- * directories owner write and search permission so read-only package
- * directories cannot block the removal. Returns whether nothing is left.
+ * directories owner permissions so read-only package directories cannot
+ * block it. Returns whether nothing is left.
  */
 export const removeTree = (path: string): boolean =>
 	Result.isSuccess(
@@ -99,27 +108,29 @@ export const removeTree = (path: string): boolean =>
 	);
 
 /**
- * Remove `rel` under `base` only when every parent is a plain directory, so
- * the removal cannot pass through a link. Returns whether nothing is left.
+ * Remove the copy at `rel` under the real worktree only when every parent is
+ * a plain directory, so Harnessy's own removal (outside the sandbox) cannot
+ * pass through a link. Returns whether nothing is left there.
  */
-export const removeInside = (base: string, rel: string): boolean => {
+export const removeCopy = (realWorktree: string, rel: string): boolean => {
 	const parent = rel.split("/").slice(0, -1).join("/");
 	if (parent !== "") {
-		const check = checkComponents(base, parent);
+		const check = checkComponents(realWorktree, parent);
 		if ("problem" in check) return false;
 		// A missing parent means nothing was created there.
 		if (check.existing !== parent.split("/").length) return true;
 	}
-	return removeTree(join(base, rel));
+	return removeTree(join(realWorktree, rel));
 };
 
-/** File names that may hold credentials or keys, and are never needed to run tests or formatters. */
+/** File names that may hold credentials or keys; tests and formatters never need them. */
 const SENSITIVE_FILE = /^(\.env(\..*)?|\.npmrc|\.yarnrc(\..*)?|.*\.pem|.*\.key)$/i;
 
 /**
- * Delete files that may hold secrets from a staged copy before it enters the
- * worktree: `.env*`, `.npmrc`, `.yarnrc*`, `*.pem`, `*.key` at any depth, and
- * every `node_modules/.cache` directory. Returns their paths relative to `dir`.
+ * Delete what may hold secrets from a staged copy before it enters the
+ * worktree, where the sandbox still lets the agent read: `.env*`, `.npmrc`,
+ * `.yarnrc*`, `*.pem` and `*.key` at any depth, and every `node_modules/.cache`.
+ * The walk uses no-follow entry types. Returns the removed paths, relative.
  */
 export const stripSensitive = (dir: string, isNodeModules: boolean): ReadonlyArray<string> => {
 	const removed: string[] = [];
@@ -139,60 +150,25 @@ export const stripSensitive = (dir: string, isNodeModules: boolean): ReadonlyArr
 	return removed.sort();
 };
 
-const MAX_LINK_HOPS = 40;
-
 /**
- * Where an absolute `path` really leads: every symbolic link along it is
- * followed, dangling ones included, so a write through it lands at the
- * result. After the first missing component the rest is appended as is.
- * Undefined for a link loop, or a `..` after a missing component.
+ * The one post-copy audit, with no-follow `lstat` entry types: everything in
+ * a copy must be a regular file, a directory, or a symbolic link that leads
+ * inside the worktree or the source checkout (npm and pnpm workspace links
+ * such as `../packages/x` are normal). Returns the offending paths.
  */
-export const leadsTo = (path: string, hops = 0): string | undefined => {
-	if (hops > MAX_LINK_HOPS) return undefined;
-	const parts = path.split("/");
-	let current = "/";
-	for (const [index, part] of parts.entries()) {
-		if (part === "" || part === ".") continue;
-		if (part === "..") {
-			current = dirname(current);
-			continue;
-		}
-		const next = join(current, part);
-		const stat = lstatSync(next, { throwIfNoEntry: false });
-		// Past a missing component nothing can be followed; a `..` there could climb back through a link.
-		if (stat === undefined)
-			return parts.slice(index + 1).includes("..") ? undefined : join(next, ...parts.slice(index + 1));
-		if (stat.isSymbolicLink()) {
-			const target = readlinkSync(next);
-			const rest = parts.slice(index + 1).join("/");
-			return leadsTo(`${target.startsWith("/") ? target : `${current}/${target}`}/${rest}`, hops + 1);
-		}
-		current = next;
-	}
-	return current;
-};
-
-/**
- * Entries under the real directory `dir` that are unsafe to keep, found with a
- * walk that uses no-follow `lstat` types and descends only into real
- * directories: anything but a regular file, directory or symbolic link, and
- * any link that leads outside `realWorktree`. Links are copied as links,
- * because npm and pnpm workspace links (`../packages/x`) are normal; each must
- * lead inside the worktree once every link on the way is followed.
- */
-export const unsafeEntries = (dir: string, realWorktree: string): ReadonlyArray<string> => {
-	const unsafe: string[] = [];
+export const auditCopy = (dir: string, realWorktree: string, realRepo: string): ReadonlyArray<string> => {
+	const bad: string[] = [];
 	const pending = [dir];
 	for (let current = pending.pop(); current !== undefined; current = pending.pop())
 		for (const entry of readdirSync(current, { withFileTypes: true })) {
 			const path = join(current, entry.name);
 			if (entry.isDirectory()) pending.push(path);
 			else if (entry.isSymbolicLink()) {
-				const target = leadsTo(path);
-				if (target === undefined || !within(realWorktree, target)) unsafe.push(path);
-			} else if (!entry.isFile()) unsafe.push(path);
+				const target = existsSync(path) ? realpathSync(path) : resolve(dirname(path), readlinkSync(path));
+				if (!within(realWorktree, target) && !within(realRepo, target)) bad.push(path);
+			} else if (!entry.isFile()) bad.push(path);
 		}
-	return unsafe.sort();
+	return bad.sort();
 };
 
 /** Why a command failed, for a log line or an error. */
@@ -203,10 +179,10 @@ export const failure = (result: RunResult): string =>
 const COPY_TIMEOUT_MS = 30 * 60 * 1000;
 
 /**
- * Copy `source` to the new path `staged`, which lies in Harnessy's private
- * staging directory outside the worktree: a copy-on-write clone where the
- * platform and filesystem allow it, otherwise a plain copy. Both use
- * `cp -R -P`, so no link inside the tree is followed.
+ * Copy `source` to the new path `staged` in Harnessy's private staging
+ * directory outside the worktree: a copy-on-write clone where the platform and
+ * filesystem allow it, otherwise a plain copy. Both use `cp -R -P`, so no link
+ * inside the tree is followed.
  */
 export const copyTree = async (
 	run: Run,
@@ -226,7 +202,7 @@ export const copyTree = async (
 
 /**
  * Copied paths under which `git add --all` would stage anything, as git's own
- * status reports it (case-insensitive literal pathspec, NUL-separated output,
+ * status reports it (case-insensitive literal pathspec, NUL-separated output
  * only checked for being empty). Harnessy never reads `.gitignore` itself.
  */
 export const stageable = async (
@@ -240,34 +216,4 @@ export const stageable = async (
 		if (status.exitCode !== 0 || status.stdout !== "") exposed.push(path);
 	}
 	return exposed;
-};
-
-/**
- * Copied paths with any file in HEAD's tree or in any commit since the base,
- * in any letter case. The
- * destination did not exist on the base branch, so any file there was added
- * during the run, for example by an allowed command that force-added and
- * committed a copy.
- */
-export const committed = async (
-	run: Run,
-	worktree: string,
-	base: string,
-	paths: ReadonlyArray<string>,
-): Promise<ReadonlyArray<string>> => {
-	if (paths.length === 0) return [];
-	const empty = await run(gitArgv.emptyTree(worktree), { cwd: worktree });
-	const emptyTree = empty.stdout.trim();
-	const found: string[] = [];
-	for (const path of paths) {
-		const inTree =
-			empty.exitCode === 0 ? await run(gitArgv.inHead(worktree, emptyTree, path), { cwd: worktree }) : empty;
-		// A push sends every commit, so a copy added and removed again before HEAD counts too.
-		const inHistory =
-			inTree.exitCode === 0 && inTree.stdout === ""
-				? await run(gitArgv.touchedSince(worktree, base, path), { cwd: worktree })
-				: inTree;
-		if (inHistory.exitCode !== 0 || inHistory.stdout !== "") found.push(path);
-	}
-	return found;
 };

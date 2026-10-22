@@ -220,10 +220,23 @@ export const wsArgv = {
 };
 
 /**
- * Repository hooks live in agent-writable files (for example `.husky/`), so
- * every git command Harnessy runs after the agent starts disables them.
+ * Repository hooks live in agent-writable files (for example `.husky/`), and
+ * a git directory the agent plants inside a submodule path carries its own
+ * config (such as `core.fsmonitor`, which git runs as a program). Every git
+ * command Harnessy runs in the worktree disables hooks and fsmonitor and
+ * never descends into submodules; `-c` settings also reach git's child
+ * processes.
  */
-const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"] as const;
+const NO_HOOKS = [
+	"-c",
+	"core.hooksPath=/dev/null",
+	"-c",
+	"core.fsmonitor=false",
+	"-c",
+	"submodule.recurse=false",
+	"-c",
+	"diff.ignoreSubmodules=all",
+] as const;
 
 /** A pathspec git matches literally (no globs) and in any letter case. */
 const literalIcase = (path: string) => `:(literal,icase)${path}`;
@@ -242,11 +255,20 @@ export const gitArgv = {
 		branch,
 		`origin/${base}`,
 	],
-	status: (worktree: string) => ["git", "-C", worktree, "status", "--porcelain"],
+	status: (worktree: string) => [
+		"git",
+		"-C",
+		worktree,
+		...NO_HOOKS,
+		"status",
+		"--porcelain",
+		"--ignore-submodules=all",
+	],
 	newCommitCount: (worktree: string, base: string) => [
 		"git",
 		"-C",
 		worktree,
+		...NO_HOOKS,
 		"rev-list",
 		"--count",
 		`origin/${base}..HEAD`,
@@ -261,11 +283,12 @@ export const gitArgv = {
 		"-m",
 		`work: WorkStream task ${task}`,
 	],
-	head: (worktree: string) => ["git", "-C", worktree, "rev-parse", "HEAD"],
+	head: (worktree: string) => ["git", "-C", worktree, ...NO_HOOKS, "rev-parse", "HEAD"],
 	changedPaths: (worktree: string, base: string, sha: string) => [
 		"git",
 		"-C",
 		worktree,
+		...NO_HOOKS,
 		"diff",
 		"--no-ext-diff",
 		"--no-textconv",
@@ -281,6 +304,7 @@ export const gitArgv = {
 		"git",
 		"-C",
 		worktree,
+		...NO_HOOKS,
 		"ls-tree",
 		"--name-only",
 		`origin/${base}:${dir}`,
@@ -290,6 +314,7 @@ export const gitArgv = {
 		"git",
 		"-C",
 		worktree,
+		...NO_HOOKS,
 		"show",
 		`origin/${base}:${path}`,
 	],
@@ -318,46 +343,12 @@ export const gitArgv = {
 		"git",
 		"-C",
 		worktree,
+		...NO_HOOKS,
 		"status",
 		"--porcelain=v1",
 		"-z",
 		"--untracked-files=all",
-		"--",
-		literalIcase(path),
-	],
-	/** The empty tree's id in this repository's hash algorithm. */
-	emptyTree: (worktree: string) => ["git", "-C", worktree, "hash-object", "-t", "tree", "/dev/null"],
-	/** Every file HEAD's tree has under one path, in any letter case. */
-	inHead: (worktree: string, emptyTree: string, path: string) => [
-		"git",
-		"-C",
-		worktree,
-		"diff",
-		"--no-ext-diff",
-		"--no-textconv",
-		"--no-renames",
-		"-z",
-		"--name-only",
-		emptyTree,
-		"HEAD",
-		"--",
-		literalIcase(path),
-	],
-	/**
-	 * Files under one path that any commit since the base touched, merges
-	 * compared with each parent, in any letter case.
-	 */
-	touchedSince: (worktree: string, base: string, path: string) => [
-		"git",
-		"-C",
-		worktree,
-		"log",
-		"--format=",
-		"--name-only",
-		"-z",
-		"--no-renames",
-		"--diff-merges=separate",
-		`origin/${base}..HEAD`,
+		"--ignore-submodules=all",
 		"--",
 		literalIcase(path),
 	],
@@ -599,19 +590,82 @@ export const shellWord = (word: string): string =>
 	word !== "" && SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 
 /**
+ * Credential stores that sandboxed commands may not read. The sandbox's default
+ * read policy is the whole machine; `~/` is the home directory.
+ */
+export const SANDBOX_DENY_READ: ReadonlyArray<string> = [
+	"~/.ssh",
+	"~/.aws",
+	"~/.gnupg",
+	"~/.netrc",
+	"~/.npmrc",
+	"~/.docker",
+	"~/.kube",
+	"~/.config/gh",
+	"~/.config/gcloud",
+	"~/.config/gws*",
+	"~/Library/Keychains",
+];
+
+/**
+ * Claude Code's OS sandbox for the agent's Bash commands: the boundary once
+ * `--agent-allow` lets a command run repository code. Writes are limited to
+ * the worktree (the sandbox default, with Claude Code's per-user temp
+ * directory) minus `denyWrite`; there is no network; credential stores are
+ * unreadable. `failIfUnavailable` makes Claude Code exit instead of running
+ * unsandboxed, `allowUnsandboxedCommands: false` removes the
+ * `dangerouslyDisableSandbox` escape hatch, no command is excluded, and
+ * `autoAllowBashIfSandboxed: false` keeps the allow rules in force.
+ */
+export const agentSandbox = (denyWrite: ReadonlyArray<string>) => ({
+	enabled: true,
+	failIfUnavailable: true,
+	autoAllowBashIfSandboxed: false,
+	allowUnsandboxedCommands: false,
+	excludedCommands: [],
+	network: { allowedDomains: [], strictAllowlist: true, allowLocalBinding: false, allowAllUnixSockets: false },
+	filesystem: { denyRead: [...SANDBOX_DENY_READ], denyWrite: [...denyWrite] },
+});
+
+/**
  * Claude Code settings for the agent: the complete permission policy. The run
  * line loads no user, project or local settings (`--restricted` and
  * `--setting-sources ""`), so nothing else can widen it. Julian's user
  * settings allow plain `Bash`, and `--allowedTools` only adds to the loaded
- * sources, which is how the first live run reached `npm test`.
+ * sources, which is how the first live run reached `npm test`. Whenever
+ * commands are allowed, the sandbox block comes with them.
  */
-export const agentSettings = (extraAllowed: ReadonlyArray<string>) => ({
+export const agentSettings = (extraAllowed: ReadonlyArray<string>, denyWrite: ReadonlyArray<string>) => ({
 	permissions: {
 		allow: extraAllowed.length === 0 ? [] : [...AGENT_ALLOWED_TOOLS, ...extraAllowed],
 		deny: [...AGENT_DISALLOWED_TOOLS],
 		defaultMode: "acceptEdits",
 	},
+	...(extraAllowed.length === 0 ? {} : { sandbox: agentSandbox(denyWrite) }),
 });
+
+/** The first Claude Code release whose sandbox settings Harnessy was verified against. */
+export const SANDBOX_MIN_CLAUDE = "2.1.304";
+
+/**
+ * Why the agent's commands cannot be sandboxed here, or undefined. macOS uses
+ * the built-in Seatbelt; Linux and WSL2 need `bwrap` and `socat`; Claude Code
+ * runs commands unsandboxed on native Windows, so it is refused.
+ */
+export const sandboxProblem = (
+	platform: string,
+	claudeVersion: string | undefined,
+	linuxTools: { readonly bwrap: boolean; readonly socat: boolean },
+): string | undefined => {
+	if (platform !== "darwin" && platform !== "linux")
+		return `Claude Code cannot sandbox commands on ${platform}, so --agent-allow is refused`;
+	if (claudeVersion === undefined || compareVersions(claudeVersion, SANDBOX_MIN_CLAUDE) < 0)
+		return `--agent-allow needs Claude Code ${SANDBOX_MIN_CLAUDE} or newer for its sandbox settings (found ${claudeVersion ?? "unknown"})`;
+	const missing = platform === "linux" ? (["bwrap", "socat"] as const).filter((tool) => !linuxTools[tool]) : [];
+	return missing.length === 0
+		? undefined
+		: `Claude Code's sandbox needs ${missing.join(" and ")} on Linux, so --agent-allow is refused`;
+};
 
 /** Tools for `--tools`: the base set, plus Bash only when rules allow commands. */
 export const agentTools = (extraAllowed: ReadonlyArray<string>): ReadonlyArray<string> =>
@@ -873,8 +927,6 @@ export type HandoffReason =
 	| "agent_deps_destination_unsafe"
 	| "agent_deps_not_ignored"
 	| "agent_deps_unsafe_entry"
-	| "agent_deps_committed"
-	| "agent_deps_moved"
 	| "agent_deps_cleanup_failed"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
@@ -1374,11 +1426,8 @@ export interface WorkState {
 	 */
 	readonly agentDeps?: {
 		readonly copied: ReadonlyArray<{ readonly path: string; readonly method: DepCopyMethod }>;
-		/**
-		 * Set before anything is written and cleared once the copy is recorded or
-		 * removed: what a crashed or failed copy may have left behind.
-		 */
-		readonly pending?: { readonly paths: ReadonlyArray<string>; readonly staging: string };
+		/** Copies moved into the worktree but not yet audited: what a crash may have left behind. */
+		readonly pending?: ReadonlyArray<string>;
 	};
 	/** Epoch milliseconds when the agent's wall-clock limit ends; survives re-attachment. */
 	readonly agentDeadline?: number;
@@ -1413,12 +1462,9 @@ const validAgentDeps = (value: unknown): boolean => {
 	if (value === undefined) return true;
 	const copied = field(value, "copied");
 	const pending = field(value, "pending");
-	const pendingPaths = field(pending, "paths");
 	return (
 		(pending === undefined ||
-			(typeof field(pending, "staging") === "string" &&
-				Array.isArray(pendingPaths) &&
-				pendingPaths.every((path: unknown) => typeof path === "string"))) &&
+			(Array.isArray(pending) && pending.every((path: unknown) => typeof path === "string"))) &&
 		Array.isArray(copied) &&
 		copied.every(
 			(entry: unknown) => typeof field(entry, "path") === "string" && DEP_COPY_METHODS.has(field(entry, "method")),

@@ -101,78 +101,68 @@
     The merged head must equal the pushed SHA, and CI evidence must be a
     completed run for that SHA. Proof fields are read from `gh` and `git` at
     proof time; only `cost_usd` comes from the Claude Code result.
+  - Agent sandbox (2026-10-22): whenever `--agent-allow` lets commands run,
+    the agent settings file carries Claude Code's OS sandbox for Bash
+    (Seatbelt on macOS; bubblewrap and socat on Linux and WSL2). It is the
+    boundary, because an allowed test or format command runs repository code
+    the agent can edit. The block, verified against Claude Code 2.1.304
+    (`SANDBOX_MIN_CLAUDE`) with probe runs, is `enabled: true`,
+    `failIfUnavailable: true` (exit rather than run unsandboxed),
+    `allowUnsandboxedCommands: false` (no `dangerouslyDisableSandbox`),
+    `excludedCommands: []`, `autoAllowBashIfSandboxed: false` (the allow
+    rules still decide which commands run), `network: { allowedDomains: [],
+    strictAllowlist: true, allowLocalBinding: false, allowAllUnixSockets:
+    false }`, and `filesystem: { denyRead: [credential stores], denyWrite:
+    [source checkout, Harnessy state directory] }`. Preflight refuses
+    `--agent-allow` before claiming anything on other platforms, on Linux
+    without `bwrap` and `socat`, and with an older Claude Code. Sandboxed
+    commands can write only the worktree and Claude Code's per-user temp
+    directory (`/tmp/claude-<uid>`), minus the denied paths. The source
+    checkout holds the worktree's git directory, so they cannot commit
+    either. They have no network, and cannot read `~/.ssh`, `~/.aws`,
+    `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube`,
+    `~/.config/gh`, `~/.config/gcloud`, `~/.config/gws*` or
+    `~/Library/Keychains`. They can read the rest of the machine, including
+    the source checkout. The file tools (Read, Edit, Write) run outside the
+    OS sandbox; their limit is the permission mode (edits only in the
+    working directory), as before. Every git command Harnessy runs in the
+    worktree disables hooks and fsmonitor and never descends into
+    submodules, and no git command runs before the worktree's `.git` file is
+    checked, so a planted git directory cannot run code through Harnessy.
   - `--agent-deps clone` (approved 2026-10-22, off by default) gives the
-    worktree its own copy of the source checkout's installed build inputs, so
-    test and format commands allowed through `--agent-allow` can run there.
-    Harnessy lists the source's ignored, untracked directories with `git
-    ls-files -z --others --ignored --exclude-standard --directory` (NUL-separated,
-    so names with spaces, quotes or newlines stay exact; absolute, `.` and `..`
-    entries are dropped) and keeps those named `node_modules` or `dist`. The
-    checks live in `src/work/deps.ts` and assume the task branch and the
-    source's ignored files are hostile. Every path is checked in the one form
-    then used: a relative path of plain components joined onto a realpath'd
-    root. Walking one component at a time, each existing component must be a
-    directory, not a symbolic link, listed by its parent under exactly that
-    name, so a case or Unicode-normalisation variant on APFS cannot stand in
-    for it. Before copying, a source must exist that way
-    (`agent_deps_source_unsafe`) and a destination must not exist in any form
-    (`agent_deps_destination_unsafe`). Missing parents are created one
-    non-recursive `mkdir` at a time. Before anything is written, state
-    records a pending copy (destinations and staging directory). `cp -c -R
-    -P` (APFS clone) on macOS, `cp --reflink=auto -R -P` elsewhere, or a plain
-    `cp -R -P` only when the clone fails, copies each realpath'd source into
-    a private staging directory created fresh (`mkdtemp`, 0700) beside the
-    worktree, outside it; `-P` never follows a link. Files that may hold
-    secrets are deleted from the staged copy before it can enter the worktree
-    (`.env*`, `.npmrc`, `.yarnrc*`, `*.pem`, `*.key` at any depth, and every
-    `node_modules/.cache`), and the count is logged: they are never needed to
-    run tests or formatters, while refusing would stop ordinary trees whose
-    packages ship test keys. Only when every copy is staged are they renamed
-    into place; `rename` never follows the final component and fails if the
-    destination appeared meanwhile. Every failure removes what the copy
-    created (giving read-only directories owner write first) and clears the
-    pending record; while a pending record remains, because a run crashed or
-    a removal failed, every later agent start first retries the removal and
-    otherwise hands off with `agent_deps_cleanup_failed`, flag or no flag. After copying, the
-    sources are checked again, and the copies get the same check that runs
-    before every later agent start and after every agent run: each copy is
-    still a plain directory (`agent_deps_moved`); a walk with no-follow
-    `lstat` types finds only regular files, directories and links, and every
-    link leads inside the worktree once every link on the way is followed,
-    dangling ones included (`agent_deps_unsafe_entry`; npm and pnpm workspace
-    links such as `../packages/x` are normal and kept, links into the source
-    checkout are not, and a `..` after a missing component counts as
-    outside); neither HEAD's tree nor any commit since the base touches a
-    file under it in any letter case (`git diff --name-only <empty tree>
-    HEAD` and `git log --name-only --diff-merges=separate
-    origin/<base>..HEAD`, both with `':(literal,icase)<path>'`;
-    `agent_deps_committed`), since a push sends every commit; and `git status
-    --porcelain=v1 -z --untracked-files=all -- ':(literal,icase)<path>'` is
-    empty (`agent_deps_not_ignored`), which is git's own answer for nested
-    `.gitignore` negations and nested repositories. Harnessy never parses
-    `.gitignore` or splits git output on newlines. Copies are removed only
-    when every parent is a plain directory, and `rm` never follows the final
-    link. Containment uses `path.relative`, never a string prefix. State records
-    the copies, so a resume never copies again. The default allowlist
-    is unchanged: the operator names exact test and format commands, and `npx`
-    stays denied because it can fetch and run any package, so rules name the
-    installed binary (`Bash(node_modules/.bin/vitest run *)`). The
-    `--agent-allow` deny list is best effort: general runners such as `npm *`
-    or `make *` and arguments matched by a trailing `*` still reach a shell,
-    so operators should allow exact test and format commands only.
-  - Residual risks: an allowed test command runs repository code the agent
-    can edit, so it is code execution as the current user. With `--agent-deps
-    clone` that code also runs the copied packages, which the agent can change
-    in its worktree; the copies cannot reach the source checkout's own
-    `node_modules`, but code running as the user can still reach any file the
-    user can. The copy checks defend against hostile
-    repository content (the task branch and the source's ignored files), not
-    against a concurrent local attacker: Node has no `openat`, so a
-    same-user process that writes to the worktree or the source checkout
-    while Harnessy copies can always race a path check. Staging plus `rename`
-    and the checks repeated after the copy, before every agent start and
-    after every agent run narrow that window and catch what it leaves behind;
-    they cannot close it, and no such process runs before the agent starts. The `env` prefix
+    worktree its own copy of the source checkout's ignored `node_modules` and
+    `dist` directories, so allowed test and format commands can run. Harnessy
+    lists them with `git ls-files -z --others --ignored --exclude-standard
+    --directory`. Each source must be a plain directory reached through no
+    link, and each destination must not exist in any form. Each is copied with
+    `cp -c -R -P` (macOS), `cp --reflink=auto -R -P` (elsewhere), or `cp -R -P`
+    only when the clone fails. The copy goes into a fresh `mkdtemp` staging
+    directory beside the worktree. Then `.env*`, `.npmrc`, `.yarnrc*`,
+    `*.pem`, `*.key` and `node_modules/.cache` are deleted from it, because the
+    sandbox still lets the agent read the worktree. Finally the copy is
+    renamed into place. One post-copy audit with no-follow `lstat` types
+    accepts only regular files, directories, and links that lead into the
+    worktree or the source checkout; workspace links are normal. Then
+    `git status --porcelain=v1 -z --untracked-files=all` must show nothing
+    under any copy. It runs again before Harnessy's `git add --all`, because
+    the agent can edit `.gitignore`. A failure removes the copies, never
+    through a link. A crash leaves a pending record that the next run cleans
+    before any agent starts. These checks cover only Harnessy's own
+    unsandboxed writes, secrets inside the worktree, and the commit. They are
+    not the agent's boundary; the sandbox is. The default allowlist is
+    unchanged, and `npx` stays denied. The `--agent-allow` deny list is best
+    effort: general runners such as `npm *` reach a shell, which the sandbox
+    then contains.
+  - Residual risks: allowed commands run repository code inside the
+    sandbox. That code can read every file the sandbox does not deny,
+    including the source checkout and other files in the user's home. It
+    can write the worktree and `/tmp/claude-<uid>`, which other Claude Code
+    sessions of the same user share. It can reach no network. The sandbox
+    depends on Claude Code honouring these settings; Harnessy checks the
+    version, and `failIfUnavailable` stops an unsandboxed start. The copy
+    checks defend against hostile repository content, not against a
+    concurrent same-user process, which can always race a path check
+    (Node has no `openat`). The `env` prefix
     that strips git and GitHub credentials is defense in depth, not a sandbox.
     CI for a same-repository `pull_request` runs the pushed code with that
     workflow's token permissions and any secrets it references. Today the

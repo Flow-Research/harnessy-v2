@@ -30,25 +30,24 @@
   WorkStream preparation and submission. Resume state lives in a private
   directory outside the agent's worktree and is bound to the task, repository,
   branch, base, WorkStream CLI and actor.
+- `harnessy work --agent-allow` now runs the agent's Bash commands in Claude
+  Code's OS sandbox (Claude Code 2.1.304 or newer; macOS, or Linux with
+  bubblewrap and socat). Writes are limited to the worktree and Claude Code's
+  temp directory, the source checkout and Harnessy's state cannot be written,
+  there is no network, and common credential stores cannot be read.
+  `failIfUnavailable` and `allowUnsandboxedCommands: false` mean a command
+  never runs unsandboxed. Preflight refuses `--agent-allow` where the sandbox
+  cannot run. Every git command Harnessy runs in the worktree now disables
+  hooks and fsmonitor and skips submodules.
 - `harnessy work --agent-deps clone` gives the agent's worktree its own
   copy-on-write copy of the source checkout's ignored `node_modules` and
-  `dist` directories before the agent runs (`cp -c` on macOS,
-  `cp --reflink=auto` elsewhere, a plain copy only when cloning fails), so the
-  agent can run the tests and formatter that `--agent-allow` permits, for
-  example `--agent-allow 'Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)'`.
-  Off by default. Each source and destination is checked one component at a
-  time under its real root, so a symbolic link, a path outside the checkout
-  or worktree, an existing destination or a case or Unicode variant stops the
-  run before anything is copied; `cp -P` never follows links. Copies are made
-  in a private staging directory outside the worktree, files that may hold
-  secrets (`.env*`, `.npmrc`, `.yarnrc*`, `*.pem`, `*.key`,
-  `node_modules/.cache`) are left out, and only complete copies are renamed
-  into place. Every failure removes what was created; anything a crash or
-  failed removal leaves behind blocks later agent runs until it is removed.
-  After copying,
-  before every agent start and after every agent run, each copy must still be
-  a plain directory, every link inside it must lead inside the worktree, and
-  git must show no file under it in HEAD, in any commit since the base or to
-  stage, so a copy never reaches a commit. The copies are recorded so a resume does not copy again. The
-  agent prompt now asks it to run the allowed formatter and linter too and
-  report the results.
+  `dist` directories before the agent runs, so the tests and formatter that
+  `--agent-allow` permits can run, for example `--agent-allow
+  'Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)'`.
+  Off by default. Each copy is staged outside the worktree with `cp -P`, has
+  files that may hold secrets (`.env*`, `.npmrc`, `.yarnrc*`, `*.pem`,
+  `*.key`, `node_modules/.cache`) removed, and is renamed into place. It is
+  then audited, and git must have nothing to stage under it, before the agent
+  runs and again before Harnessy commits. The copies are recorded, so a
+  resume does not copy again. The agent prompt now asks it to run the
+  allowed formatter and linter too and report the results.
