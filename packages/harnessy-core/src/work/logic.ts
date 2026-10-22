@@ -847,6 +847,12 @@ const fenceFor = (text: string): string => {
  * Prompt written to Harnessy's state directory. The rules come first; the
  * WorkStream task follows as fenced, untrusted data.
  */
+/** Every agent report on the task, each revision labelled, for the PR body. */
+export const combinedReports = (earlier: ReadonlyArray<string>, latest: string): string =>
+	[...earlier, latest]
+		.map((report, index) => (index === 0 ? report : `Revision ${index} after review:\n${report}`))
+		.join("\n\n");
+
 /** Longest reviewer note `--revise` accepts. */
 export const MAX_REVIEW_NOTES = 8_000;
 
@@ -932,7 +938,7 @@ export const prBody = (
 	const more = changedPaths.length - listed.length;
 	const filled: Record<string, readonly string[]> = {
 		summary: [
-			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. Agent cost: ${costUsd} USD.`,
+			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. Agent cost: ${costUsd.toFixed(2)} USD.`,
 			"",
 			"Opened as a draft and marked ready only after the pushed commit's checks pass. A person reviews and merges; the merge lets the loop submit proof to WorkStream. Sections Harnessy cannot answer are left for the reviewer.",
 		],
@@ -1177,6 +1183,8 @@ export interface WorkState {
 	readonly spentUsd?: number;
 	/** The local reviewer's notes for the current revision run. */
 	readonly reviewNotes?: string;
+	/** Reports of the agent runs before the current revision, oldest first. */
+	readonly earlierReports?: ReadonlyArray<string>;
 	readonly revisions?: number;
 	/** Commit Harnessy created and later pushed; the only SHA proof and CI checks accept. */
 	readonly headSha?: string;
@@ -1206,7 +1214,12 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!Array.isArray(cli) ||
 		!cli.every((part) => typeof part === "string") ||
 		!["spentUsd", "revisions"].every((key) => ["undefined", "number"].includes(typeof field(value, key))) ||
-		!["undefined", "string"].includes(typeof field(value, "reviewNotes"))
+		!["undefined", "string"].includes(typeof field(value, "reviewNotes")) ||
+		!(
+			field(value, "earlierReports") === undefined ||
+			(Array.isArray(field(value, "earlierReports")) &&
+				(field(value, "earlierReports") as unknown[]).every((report) => typeof report === "string"))
+		)
 	)
 		return undefined;
 	return value as WorkState;

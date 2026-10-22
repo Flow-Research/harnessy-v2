@@ -12,6 +12,7 @@ import {
 	buildProof,
 	checkTool,
 	ciConfigPaths,
+	combinedReports,
 	evaluateStopRule,
 	field,
 	ghArgv,
@@ -395,6 +396,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			headSha: undefined,
 			agent: undefined,
 			spentUsd: (state.spentUsd ?? 0) + (state.agent?.costUsd ?? 0),
+			earlierReports: [...(state.earlierReports ?? []), state.agent?.reason ?? ""],
 			reviewNotes: options.revise,
 			revisions: (state.revisions ?? 0) + 1,
 		});
@@ -515,7 +517,17 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 					break;
 				}
 			}
-			writePrivate(bodyFile, prBody(task, options.taskUrl, totalCostUsd, agent.reason, changed, template));
+			writePrivate(
+				bodyFile,
+				prBody(
+					task,
+					options.taskUrl,
+					totalCostUsd,
+					combinedReports(state.earlierReports ?? [], agent.reason),
+					changed,
+					template,
+				),
+			);
 			const created = parsePrUrl(
 				await must(ghArgv.prCreate(options.base, branch, state.summary, bodyFile), "gh pr create", worktree),
 			);

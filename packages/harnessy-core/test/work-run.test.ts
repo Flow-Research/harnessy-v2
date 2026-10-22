@@ -253,6 +253,9 @@ describe("runWork", () => {
 		expect(revised.calls.some((argv) => argv.join(" ").includes("--max-budget-usd 4.5"))).toBe(true);
 		await runWork(options, fakeTools(root).deps);
 		expect(JSON.parse(readFileSync(join(revised.stateDir, "proof.json"), "utf8")).cost_usd).toBe(1);
+		const body = readFileSync(join(revised.stateDir, "pr-body.md"), "utf8");
+		expect(body).toContain("Agent cost: 1.00 USD.");
+		expect(body).toContain("ok\n\nRevision 1 after review:\nok");
 	});
 
 	it("refuses to revise and push in one run, and to revise after the push", async () => {
