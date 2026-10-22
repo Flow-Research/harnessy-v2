@@ -238,7 +238,56 @@ const readGitFile = (worktree: string): string | undefined => {
  * the agent's worktree, is bound to its inputs, and every step records its
  * result before the next, so a re-run resumes with the same idempotency keys.
  */
+/** Pid of a live process holding the task lock, or undefined after taking it. */
+const takeTaskLock = (lock: string): number | undefined => {
+	try {
+		writeFileSync(lock, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+		return undefined;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+	}
+	const holder = Number.parseInt(readFileSync(lock, "utf8"), 10);
+	if (Number.isInteger(holder) && holder > 0 && holder !== process.pid) {
+		try {
+			process.kill(holder, 0);
+			return holder;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "EPERM") return holder;
+		}
+	}
+	// A stale lock from a run that died.
+	writeFileSync(lock, `${process.pid}\n`, { mode: 0o600 });
+	return undefined;
+};
+
+/**
+ * One run per task at a time: a second invocation (for example `--revise`
+ * while an earlier run waits on checks) would act on stale state.
+ */
 export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> => {
+	if (options.dryRun || !isTaskId(options.task)) return runWorkUnlocked(options, deps);
+	const stateDir = join(deps.stateRoot, options.task);
+	privateDir(stateDir);
+	const lock = join(stateDir, "run.lock");
+	const holder = takeTaskLock(lock);
+	if (holder !== undefined)
+		return {
+			exitCode: 2,
+			report: {
+				status: "handoff",
+				reason: "already_running",
+				detail: `another harnessy work run (pid ${holder}) is working on this task; wait for it or stop it first`,
+				task_id: options.task,
+			},
+		};
+	try {
+		return await runWorkUnlocked(options, deps);
+	} finally {
+		rmSync(lock, { force: true });
+	}
+};
+
+const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> => {
 	// A revised commit is new code: it must stop for review again, never push in the same run.
 	if (options.revise !== undefined && options.approvePush)
 		throw new Error("--revise and --approve-push cannot be used together; review the revised commit first");

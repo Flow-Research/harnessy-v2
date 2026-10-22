@@ -378,6 +378,20 @@ describe("runWork", () => {
 		});
 	});
 
+	it("refuses a second run on the same task while one is live, and clears a stale lock", async () => {
+		const lock = join(root, "state", TASK, "run.lock");
+		mkdirSync(join(root, "state", TASK), { recursive: true });
+		writeFileSync(lock, `${process.ppid}\n`);
+		const blocked = fakeTools(root);
+		const outcome = await runWork({ ...options, approvePush: false }, blocked.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "already_running" });
+		expect(blocked.calls).toEqual([]);
+		writeFileSync(lock, "2147483646\n");
+		const stale = await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		expect(stale.report).toMatchObject({ reason: "awaiting_push_approval" });
+		expect(existsSync(lock)).toBe(false);
+	});
+
 	it("hands off a revision that changes nothing", async () => {
 		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
 		const idle = await runWork(

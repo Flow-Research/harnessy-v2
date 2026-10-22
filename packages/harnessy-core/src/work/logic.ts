@@ -756,6 +756,7 @@ export type HandoffReason =
 	| "revise_after_merge"
 	| "revise_without_commit"
 	| "checks_not_passed"
+	| "already_running"
 	| "pr_not_ready"
 	| "agent_wait_failed"
 	| "unreviewed_merge"
