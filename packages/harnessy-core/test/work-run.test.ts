@@ -1085,17 +1085,20 @@ describe("runWork", () => {
 		});
 
 		it("refuses to start when what it protects lies under the sandbox's writable temp directory", async () => {
-			const fake = fakeTools(root);
-			const outcome = await runWork(
-				{ ...options, agentAllow: ALLOW },
-				{ ...fake.deps, stateRoot: "/private/tmp/claude-0/harnessy-state" },
-			);
-			expect(outcome.report).toMatchObject({ status: "preflight_failed" });
-			const sandbox = (outcome.report.tools as Array<{ name: string; problem?: string }>).find(
-				(tool) => tool.name === "sandbox",
-			);
-			expect(sandbox?.problem).toContain(`/private/tmp/claude-0/harnessy-state/${TASK} lies under`);
-			expect(has(fake.calls, "claim")).toBe(false);
+			// Created and removed here: a state root under the temp prefix the sandbox always grants.
+			const exposed = mkdtempSync("/tmp/claude-hsy-test-");
+			try {
+				const fake = fakeTools(root);
+				const outcome = await runWork({ ...options, agentAllow: ALLOW }, { ...fake.deps, stateRoot: exposed });
+				expect(outcome.report).toMatchObject({ status: "preflight_failed" });
+				const sandbox = (outcome.report.tools as Array<{ name: string; problem?: string }>).find(
+					(tool) => tool.name === "sandbox",
+				);
+				expect(sandbox?.problem).toContain(`${TASK} lies under Claude Code's sandbox temp directory`);
+				expect(has(fake.calls, "claim")).toBe(false);
+			} finally {
+				rmSync(exposed, { recursive: true, force: true });
+			}
 		});
 
 		it("runs on Linux when bubblewrap and socat are present", async () => {
