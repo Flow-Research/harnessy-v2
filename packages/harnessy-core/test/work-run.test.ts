@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stageable } from "../src/work/deps.ts";
-import { gitArgv, REQUIRED_CLAUDE_FLAGS } from "../src/work/logic.ts";
+import { filterOverrides, gitArgv, REQUIRED_CLAUDE_FLAGS } from "../src/work/logic.ts";
 import { execRun, type RunResult, runWork, type WorkDeps, type WorkOptions, worktreePath } from "../src/work/run.ts";
 
 const TASK = "11111111-2222-4333-8444-555555555555";
@@ -87,6 +87,8 @@ interface Scenario {
 	copyFailsFor?: string;
 	/** Failed `cp` runs print nothing; the plain copy does not even start. */
 	cpQuiet?: boolean;
+	/** NUL-separated filter driver config keys the user's git config defines. */
+	filterKeys?: string;
 	/** Content of the new worktree's `.git` file. */
 	gitFile?: string;
 	/** Whether `bwrap` and `socat` run, for the Linux sandbox; they do by default. */
@@ -163,6 +165,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			}
 			if (exe === "git") {
 				if (args.includes("ls-files")) return ok(scenario.ignoredDirs ?? "");
+				if (args.includes("config") && args.includes("--get-regexp")) return ok(scenario.filterKeys ?? "");
 				const pathspec = (argv.at(-1) ?? "").replace(":(literal,icase)", "");
 				if (args.includes("--untracked-files=all")) {
 					const path = pathspec;
@@ -764,6 +767,55 @@ describe("runWork", () => {
 		expect(has(fake.calls, "push")).toBe(false);
 	});
 
+	it("switches off the user's filter drivers on every git command it runs", async () => {
+		const fake = fakeTools(root, { filterKeys: "filter.lfs.clean\0filter.lfs.process\0filter.a.b.smudge\0" });
+		await runWork({ ...options, approvePush: false }, fake.deps);
+		const off = [
+			"-c",
+			"filter.lfs.clean=",
+			"-c",
+			"filter.lfs.smudge=",
+			"-c",
+			"filter.lfs.process=",
+			"-c",
+			"filter.lfs.required=false",
+			"-c",
+			"filter.a.b.clean=",
+			"-c",
+			"filter.a.b.smudge=",
+			"-c",
+			"filter.a.b.process=",
+			"-c",
+			"filter.a.b.required=false",
+		];
+		expect(fake.calls).toContainEqual([
+			"git",
+			"-C",
+			join(root, "repo"),
+			"-c",
+			"core.hooksPath=/dev/null",
+			"-c",
+			"core.fsmonitor=false",
+			"-c",
+			"submodule.recurse=false",
+			"-c",
+			"diff.ignoreSubmodules=all",
+			"config",
+			"--name-only",
+			"-z",
+			"--get-regexp",
+			"^filter\\.",
+		]);
+		// Everything after the read-only preflight probe and the filter lookup itself.
+		const gitCalls = fake.calls.filter(
+			(argv) => argv[0] === "git" && !argv.includes("--get-regexp") && !argv.includes("--version"),
+		);
+		expect(gitCalls.length).toBeGreaterThan(5);
+		for (const argv of gitCalls) expect(argv.slice(1, 1 + off.length)).toEqual(off);
+		expect(has(fake.calls, "worktree", "add")).toBe(true);
+		expect(has(fake.calls, "fetch")).toBe(true);
+	});
+
 	it("catches CI paths git would quote, including unicode and newlines", async () => {
 		const fake = fakeTools(root, { changedPaths: "src/a.ts\0.github/workflows/\u00e9.yml\0.github/x\ny.yml\0" });
 		const outcome = await runWork(options, fake.deps);
@@ -771,7 +823,7 @@ describe("runWork", () => {
 			reason: "ci_config_changed",
 			paths: [".github/workflows/\u00e9.yml", ".github/x\ny.yml"],
 		});
-		expect(fake.calls.find((argv) => argv.includes("--name-only"))).toEqual(
+		expect(fake.calls.find((argv) => argv.includes("diff") && argv.includes("--name-only"))).toEqual(
 			expect.arrayContaining(["--no-renames", "-z", "--name-only"]),
 		);
 	});
@@ -1108,6 +1160,14 @@ describe("runWork", () => {
 				"git",
 				"-C",
 				join(root, "repo"),
+				"-c",
+				"core.hooksPath=/dev/null",
+				"-c",
+				"core.fsmonitor=false",
+				"-c",
+				"submodule.recurse=false",
+				"-c",
+				"diff.ignoreSubmodules=all",
 				"ls-files",
 				"-z",
 				"--others",
@@ -1551,6 +1611,16 @@ describe("runWork", () => {
 				...gitArgv.commit(repo, TASK).slice(3),
 			]);
 			expect(existsSync(pwned)).toBe(false);
+			// A filter driver from the user's config, named by the branch's .gitattributes, stays off.
+			await git("config", "filter.evil.clean", `touch ${pwned}; cat`);
+			await git("config", "filter.evil.process", `sh -c 'touch ${pwned}'`);
+			writeFileSync(join(repo, ".gitattributes"), "* filter=evil\n");
+			writeFileSync(join(repo, "g.txt"), "y");
+			const off = filterOverrides((await execRun(gitArgv.filterNames(repo))).stdout);
+			await execRun(["git", ...off, ...gitArgv.addAll(repo).slice(1)]);
+			expect(existsSync(pwned)).toBe(false);
+			await git("config", "--unset", "filter.evil.process");
+			await git("config", "--unset", "filter.evil.clean");
 			// The same planted directory runs its program under a plain git status.
 			await execRun(["git", "-C", repo, "status", "--porcelain"]);
 			expect(existsSync(pwned)).toBe(true);

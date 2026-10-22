@@ -17,6 +17,7 @@ import {
 	compareVersions,
 	EXIT_MARKER_REGEX,
 	evaluateStopRule,
+	filterOverrides,
 	findPrTemplate,
 	ghArgv,
 	gitArgv,
@@ -201,6 +202,28 @@ describe("agent permissions", () => {
 			},
 			sandbox: agentSandbox(),
 		});
+	});
+
+	it("turns every configured filter driver off, once per name", () => {
+		expect(filterOverrides("")).toEqual([]);
+		expect(filterOverrides("filter.lfs.clean\0filter.lfs.smudge\0core.editor\0filter.odd.name.x.process\0")).toEqual([
+			"-c",
+			"filter.lfs.clean=",
+			"-c",
+			"filter.lfs.smudge=",
+			"-c",
+			"filter.lfs.process=",
+			"-c",
+			"filter.lfs.required=false",
+			"-c",
+			"filter.odd.name.x.clean=",
+			"-c",
+			"filter.odd.name.x.smudge=",
+			"-c",
+			"filter.odd.name.x.process=",
+			"-c",
+			"filter.odd.name.x.required=false",
+		]);
 	});
 
 	it("pins the sandbox's writable set: nothing added to Claude Code's allow-list, nothing wider", () => {

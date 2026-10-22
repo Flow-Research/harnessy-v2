@@ -142,6 +142,13 @@ describe("harnessy work CLI", () => {
 		}
 	});
 
+	it("warns in the --agent-allow help that untrusted repositories are out of scope", async () => {
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
+		await runCli(fakeDeps().deps, ["--help"]).catch(() => {});
+		const help = log.mock.calls.map((call) => String(call[0])).join("\n");
+		expect(help).toContain("do not use on repositories with untrusted contributors");
+	});
+
 	it("requires --task and rejects invalid values", async () => {
 		vi.spyOn(console, "log").mockImplementation(() => {});
 		vi.spyOn(console, "error").mockImplementation(() => {});

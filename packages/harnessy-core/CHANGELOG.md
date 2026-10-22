@@ -39,8 +39,15 @@
   `failIfUnavailable` and `allowUnsandboxedCommands: false` mean a command
   never runs unsandboxed. Preflight refuses `--agent-allow` where the sandbox
   cannot run, or when the source checkout, the worktrees or Harnessy's state
-  lie under Claude Code's always-writable `/tmp/claude` prefix. Every git command Harnessy runs in the worktree now disables
-  hooks and fsmonitor and skips submodules.
+  lie under Claude Code's always-writable `/tmp/claude` prefix. Every git
+  command Harnessy runs, in the worktree and in the source checkout, now
+  disables hooks and fsmonitor, skips submodules and switches off the filter
+  drivers defined in git config. Sandboxed commands can still write Claude
+  Code's shared per-user temp directory `/tmp/claude-<uid>`, which settings
+  cannot narrow. On 22 October Julian accepted this for Flow repositories he
+  controls while he is the only operator. Do not use `--agent-allow` on
+  repositories with untrusted contributors until Claude Code allows moving
+  that directory.
 - `harnessy work --agent-deps clone` gives the agent's worktree its own
   copy-on-write copy of the source checkout's ignored `node_modules` and
   `dist` directories before the agent runs, so the tests and formatter that

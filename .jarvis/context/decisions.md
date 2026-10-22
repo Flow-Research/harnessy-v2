@@ -155,8 +155,15 @@
     - when the source checkout, the worktrees' parent or Harnessy's state
       lies under the always-writable `/tmp/claude` prefix.
 
-    Every git command Harnessy runs in the worktree disables hooks and
-    fsmonitor and never descends into submodules. No git command runs before
+    Every git command Harnessy runs disables hooks and fsmonitor and never
+    descends into submodules. This covers the worktree and the source
+    checkout (`fetch`, `worktree add`, `ls-files`). After a read-only
+    `git config --name-only --get-regexp '^filter\.'`, every command also
+    switches off each filter driver that the user, system or repository
+    config defines (`-c filter.<name>.clean= ... required=false`), so a
+    `.gitattributes` in the task branch cannot run one. `GIT_CONFIG_GLOBAL`
+    stays as it is, because fetch and push need the user's credential
+    helper and commits need the user's identity. No git command runs before
     the worktree's `.git` file is checked.
   - `--agent-deps clone` (approved 2026-10-22, off by default) gives the
     worktree its own copy of the source checkout's ignored `node_modules` and
@@ -190,7 +197,12 @@
     grants that directory unconditionally, and `CLAUDE_CODE_TMPDIR` does not
     move the sandbox's `TMPDIR`, so settings cannot close this. Harnessy
     therefore refuses to run when anything it protects lies there. It can
-    reach no network. The sandbox
+    reach no network.
+    Decision (22 October 2026, Julian): this `/tmp/claude-<uid>` residual is
+    accepted for Flow repositories Julian controls while he is the only
+    operator. `--agent-allow` must not be used on repositories with
+    untrusted contributors until Claude Code allows moving the sandbox temp
+    directory; revisit then. The sandbox
     depends on Claude Code honouring these settings; Harnessy checks the
     version, and `failIfUnavailable` stops an unsandboxed start. The copy
     checks defend against hostile repository content, not against a

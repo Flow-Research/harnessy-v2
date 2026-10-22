@@ -40,6 +40,7 @@ import {
 	type DepCopyMethod,
 	evaluateStopRule,
 	field,
+	filterOverrides,
 	findPrTemplate,
 	ghArgv,
 	gitArgv,
@@ -405,8 +406,16 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			},
 		};
 
+	// Every git command from here on switches off the filter drivers that the user's and the
+	// system's git config define, so the task branch's .gitattributes cannot invoke one.
+	const filterOff = filterOverrides((await deps.run(gitArgv.filterNames(repo))).stdout);
+	const work: WorkDeps = {
+		...deps,
+		run: (argv, runOptions) =>
+			deps.run(argv[0] === "git" ? ["git", ...filterOff, ...argv.slice(1)] : argv, runOptions),
+	};
 	const must = async (argv: ReadonlyArray<string>, what: string, cwd?: string): Promise<string> => {
-		const result = await deps.run(argv, cwd === undefined ? {} : { cwd });
+		const result = await work.run(argv, cwd === undefined ? {} : { cwd });
 		if (result.exitCode !== 0)
 			throw new Error(
 				`${what} failed (exit ${result.exitCode ?? "none"}): ${result.stderr.trim().slice(0, 500) || "no output"}`,
@@ -525,7 +534,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		const copied: Array<{ readonly path: string; readonly method: DepCopyMethod }> = [];
 		for (const [index, path] of sources.entries()) {
 			const staged = join(staging, String(index));
-			const result = await copyTree(deps.run, deps.platform, deps.log, join(realRepo, path), staged);
+			const result = await copyTree(work.run, deps.platform, deps.log, join(realRepo, path), staged);
 			if ("error" in result) {
 				removeTree(staging);
 				throw new Error(result.error);
@@ -558,7 +567,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		}
 		removeTree(staging);
 		const unsafe = sources.flatMap((path) => auditCopy(join(realWorktree, path), realWorktree, realRepo));
-		const exposed = unsafe.length > 0 ? [] : await stageable(deps.run, worktree, sources);
+		const exposed = unsafe.length > 0 ? [] : await stageable(work.run, worktree, sources);
 		if (unsafe.length > 0 || exposed.length > 0) {
 			const removed = removeCopies(sources) ? "the copies were removed" : "the copies could not all be removed";
 			return unsafe.length > 0
@@ -693,13 +702,13 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		} else deps.log(`Re-attaching to agent in herdr pane ${pane}`);
 		const deadline = state.agentDeadline ?? deps.now() + options.maxMinutes * 60_000;
 		// herdr checks existing output first, so even an expired deadline still sees a finished run.
-		const waited = await deps.run(herdrArgv.waitOutput(pane, Math.max(deadline - deps.now(), MIN_WAIT_MS)));
+		const waited = await work.run(herdrArgv.waitOutput(pane, Math.max(deadline - deps.now(), MIN_WAIT_MS)));
 		const waitError = waited.exitCode === 0 ? undefined : (parseHerdrError(waited.stderr) ?? "unknown");
 		const timedOut = waitError === "timeout" || (waitError !== undefined && deps.now() >= deadline);
 		if (waitError !== undefined && !timedOut)
 			// Keep the pane: the agent may still be running. A re-run re-attaches until the deadline.
 			return handoff("agent_wait_failed", `herdr wait-output failed with ${waitError}`, { pane });
-		if (timedOut) await deps.run(herdrArgv.interrupt(pane));
+		if (timedOut) await work.run(herdrArgv.interrupt(pane));
 		save({ pane: undefined, agentDeadline: undefined });
 		if (!worktreeIntact())
 			return handoff("worktree_tampered", "the worktree's .git file changed during the agent run");
@@ -747,7 +756,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		}
 		// Copied dependencies must never reach Harnessy's commit: the agent can edit .gitignore.
 		const exposedCopies = await stageable(
-			deps.run,
+			work.run,
 			worktree,
 			(state.agentDeps?.copied ?? []).map(({ path }) => path),
 		);
@@ -827,10 +836,10 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			// The base may have moved during local review; read the current template.
 			await must(gitArgv.fetch(repo), "git fetch");
 			for (const dir of PR_TEMPLATE_DIRS) {
-				const listed = await deps.run(gitArgv.baseList(worktree, options.base, dir), { cwd: worktree });
+				const listed = await work.run(gitArgv.baseList(worktree, options.base, dir), { cwd: worktree });
 				const path = listed.exitCode === 0 ? findPrTemplate(dir, listed.stdout) : undefined;
 				if (path === undefined) continue;
-				const shown = await deps.run(gitArgv.baseFile(worktree, options.base, path), { cwd: worktree });
+				const shown = await work.run(gitArgv.baseFile(worktree, options.base, path), { cwd: worktree });
 				if (shown.exitCode === 0 && shown.stdout.trim() !== "") {
 					template = shown.stdout;
 					break;
@@ -864,7 +873,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 
 	if (state.readyMarked !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
-		const watch = () => deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
+		const watch = () => work.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
 		let checks = await watch();
 		const appearBy = deps.now() + CHECKS_APPEAR_MS;
 		while (
@@ -890,7 +899,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				: `PR #${pr.number} head is ${current.headSha}, not the pushed ${headSha}`);
 		if (moved !== undefined) return handoff("pr_mismatch", moved);
 		if (current.state === "OPEN") {
-			const ready = await deps.run(ghArgv.prReady(pr.number), { cwd: worktree });
+			const ready = await work.run(ghArgv.prReady(pr.number), { cwd: worktree });
 			// Not recorded as requested, so a re-run tries again.
 			if (ready.exitCode !== 0)
 				return handoff("pr_not_ready", `PR #${pr.number} passed its checks but could not be marked ready`);
@@ -902,7 +911,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	if (state.mergeCommitSha === undefined) {
 		const deadline = deps.now() + options.mergeWaitHours * 3_600_000;
 		for (;;) {
-			const view = await deps.run(ghArgv.prView(pr.number), { cwd: worktree });
+			const view = await work.run(ghArgv.prView(pr.number), { cwd: worktree });
 			if (view.exitCode === 0) {
 				const pull = parsePrView(view.stdout);
 				const mismatch = prMismatch(pull, expectedPr);
@@ -938,7 +947,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			return handoff("pr_mismatch", `PR #${pr.number} is ${merged.state}, not merged`);
 		let ci: { readonly url: string; readonly conclusion: string } | undefined;
 		for (let attempt = 1; ci === undefined; attempt++) {
-			const runs = await deps.run(ghArgv.runList(headSha), { cwd: worktree });
+			const runs = await work.run(ghArgv.runList(headSha), { cwd: worktree });
 			const found = runs.exitCode === 0 ? parseRunList(runs.stdout, headSha) : undefined;
 			if (found !== undefined && found.conclusion !== "") ci = found;
 			else if (attempt >= CI_ATTEMPTS)

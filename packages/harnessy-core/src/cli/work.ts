@@ -52,7 +52,7 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 			agentAllow: Flag.string("agent-allow").pipe(
 				Flag.optional,
 				Flag.withDescription(
-					"Extra Claude Code tool rules for tests and formatting, e.g. 'Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)'. npx is not allowed; name the installed binary. The commands run in Claude Code's OS sandbox (macOS, or Linux with bubblewrap and socat): writes only in the worktree, no network; elsewhere the run is refused.",
+					"Extra Claude Code tool rules for tests and formatting, e.g. 'Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)'. npx is not allowed; name the installed binary. The commands run in Claude Code's OS sandbox (macOS, or Linux with bubblewrap and socat): writes only in the worktree, no network; elsewhere the run is refused. Warning: sandboxed commands can still write Claude Code's shared /tmp/claude-<uid>; do not use on repositories with untrusted contributors.",
 				),
 			),
 			agentDeps: Flag.choice("agent-deps", ["clone"]).pipe(

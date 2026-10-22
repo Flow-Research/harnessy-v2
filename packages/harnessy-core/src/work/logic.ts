@@ -239,16 +239,54 @@ const NO_HOOKS = [
 	"diff.ignoreSubmodules=all",
 ] as const;
 
+/**
+ * `-c` overrides that switch off every named filter driver from the user's
+ * or system config, so a `.gitattributes` file in the task branch cannot make
+ * Harnessy's own git commands (checkout, add, status) run one. Read from
+ * `git config --name-only -z --get-regexp '^filter\.'`.
+ */
+export const filterOverrides = (configKeys: string): ReadonlyArray<string> =>
+	[
+		...new Set(
+			configKeys
+				.split("\0")
+				.map((key) => /^filter\.(.+)\.[^.]+$/s.exec(key)?.[1])
+				.filter((name): name is string => name !== undefined),
+		),
+	].flatMap((name) => [
+		"-c",
+		`filter.${name}.clean=`,
+		"-c",
+		`filter.${name}.smudge=`,
+		"-c",
+		`filter.${name}.process=`,
+		"-c",
+		`filter.${name}.required=false`,
+	]);
+
 /** A pathspec git matches literally (no globs) and in any letter case. */
 const literalIcase = (path: string) => `:(literal,icase)${path}`;
 
 /** git argv builders. */
 export const gitArgv = {
-	fetch: (repo: string) => ["git", "-C", repo, "fetch", "origin"],
+	fetch: (repo: string) => ["git", "-C", repo, ...NO_HOOKS, "fetch", "origin"],
+	/** Names of the filter drivers any config scope defines, NUL-separated keys. */
+	filterNames: (repo: string) => [
+		"git",
+		"-C",
+		repo,
+		...NO_HOOKS,
+		"config",
+		"--name-only",
+		"-z",
+		"--get-regexp",
+		"^filter\\.",
+	],
 	worktreeAdd: (repo: string, worktree: string, branch: string, base: string) => [
 		"git",
 		"-C",
 		repo,
+		...NO_HOOKS,
 		"worktree",
 		"add",
 		worktree,
@@ -327,6 +365,7 @@ export const gitArgv = {
 		"git",
 		"-C",
 		repo,
+		...NO_HOOKS,
 		"ls-files",
 		"-z",
 		"--others",
