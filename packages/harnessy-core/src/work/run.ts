@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import * as Result from "effect/Result";
 import {
 	ATTESTATION,
 	agentPrompt,
@@ -238,22 +239,19 @@ const readGitFile = (worktree: string): string | undefined => {
  * the agent's worktree, is bound to its inputs, and every step records its
  * result before the next, so a re-run resumes with the same idempotency keys.
  */
+const errnoCode = (error: unknown): string | undefined =>
+	typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined;
+
 /** Pid of a live process holding the task lock, or undefined after taking it. */
 const takeTaskLock = (lock: string): number | undefined => {
-	try {
-		writeFileSync(lock, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
-		return undefined;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-	}
+	const created = Result.try(() => writeFileSync(lock, `${process.pid}\n`, { flag: "wx", mode: 0o600 }));
+	if (Result.isSuccess(created)) return undefined;
+	if (errnoCode(created.failure) !== "EEXIST") throw created.failure;
 	const holder = Number.parseInt(readFileSync(lock, "utf8"), 10);
 	if (Number.isInteger(holder) && holder > 0 && holder !== process.pid) {
-		try {
-			process.kill(holder, 0);
-			return holder;
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "EPERM") return holder;
-		}
+		const probe = Result.try(() => process.kill(holder, 0));
+		// EPERM means the process exists but belongs to someone else.
+		if (Result.isSuccess(probe) || errnoCode(probe.failure) === "EPERM") return holder;
 	}
 	// A stale lock from a run that died.
 	writeFileSync(lock, `${process.pid}\n`, { mode: 0o600 });
