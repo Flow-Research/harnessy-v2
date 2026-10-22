@@ -378,7 +378,10 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			);
 	};
 
-	if (options.revise !== undefined) {
+	// The same notes again after an interruption resume the revision already under way.
+	const resumingRevision =
+		state.headSha === undefined && state.revisedFrom !== undefined && state.reviewNotes === options.revise;
+	if (options.revise !== undefined && !resumingRevision) {
 		if (state.mergeCommitSha !== undefined)
 			return handoff("revise_after_merge", "the pull request is merged; create a new task for further changes");
 		if (state.headSha === undefined)
@@ -394,6 +397,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			// Older state recorded only the PR; its head was the pushed commit.
 			pushedSha: state.pushedSha ?? (state.pr === undefined ? undefined : state.headSha),
 			reviewRequested: undefined,
+			revisedFrom: state.headSha,
 			headSha: undefined,
 			agent: undefined,
 			spentUsd: spent,
@@ -462,12 +466,19 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			(await must(gitArgv.newCommitCount(worktree, options.base), "git rev-list")).trim(),
 			10,
 		);
+		// A revision counts only what changed since the commit under review.
+		const revisedFrom = state.revisedFrom;
+		const revisionChanged =
+			revisedFrom === undefined
+				? undefined
+				: (await must(gitArgv.head(worktree), "git rev-parse")).trim() !== revisedFrom;
 		const decision = evaluateStopRule({
 			timedOut,
 			...(timedOut ? {} : { exitCode: parseExitMarker(waited.stdout) }),
 			...(existsSync(paths.result) ? { resultText: readFileSync(paths.result, "utf8") } : {}),
 			budgetUsd: budgetLeft,
-			changes: dirty + (Number.isFinite(ahead) ? ahead : 0),
+			changes:
+				dirty + (revisionChanged === undefined ? (Number.isFinite(ahead) ? ahead : 0) : revisionChanged ? 1 : 0),
 		});
 		if (decision.kind === "handoff") {
 			// A priced run that stops still spent budget; a later run gets only what is left.
@@ -485,6 +496,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		save({
 			agent: { costUsd: decision.costUsd, reason: decision.reason },
 			headSha: (await must(gitArgv.head(worktree), "git rev-parse")).trim(),
+			revisedFrom: undefined,
 		});
 	}
 	const headSha = state.headSha ?? "";

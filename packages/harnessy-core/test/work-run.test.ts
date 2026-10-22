@@ -322,6 +322,29 @@ describe("runWork", () => {
 		expect(approved.calls).toContainEqual(["gh", "pr", "ready", "7"]);
 	});
 
+	it("hands off a revision that changes nothing", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		const idle = await runWork(
+			{ ...options, approvePush: false, revise: "Fix the test." },
+			// The reviewed commit is still ahead of the base, but nothing changed since it.
+			fakeTools(root, { dirty: "", ahead: "1" }).deps,
+		);
+		expect(idle.report).toMatchObject({ status: "handoff", reason: "no_changes" });
+	});
+
+	it("resumes an interrupted revision when the same notes are given again", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		const notes = { ...options, approvePush: false, revise: "Fix the test." };
+		const cut = await runWork(notes, fakeTools(root, { waitErrorCode: "server_unavailable" }).deps);
+		expect(cut.report).toMatchObject({ status: "handoff", reason: "agent_wait_failed" });
+		const NEXT = "b".repeat(40);
+		const resumed = fakeTools(root, { head: NEXT });
+		const outcome = await runWork(notes, resumed.deps);
+		expect(outcome.report).toMatchObject({ status: "handoff", reason: "awaiting_push_approval", head_sha: NEXT });
+		expect(has(resumed.calls, "pane", "run")).toBe(false);
+		expect(has(resumed.calls, "pane", "wait-output")).toBe(true);
+	});
+
 	it("keeps the reviewed commit when no budget is left to revise it", async () => {
 		await runWork({ ...options, approvePush: false, budgetUsd: 0.5 }, fakeTools(root).deps);
 		const refused = await runWork(

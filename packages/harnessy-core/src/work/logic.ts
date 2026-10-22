@@ -1235,6 +1235,8 @@ export interface WorkState {
 	/** Reports of the agent runs before the current revision, oldest first. */
 	readonly earlierReports?: ReadonlyArray<string>;
 	readonly revisions?: number;
+	/** The commit under revision; the revision must produce a different commit. */
+	readonly revisedFrom?: string;
 	/** The commit last pushed to the work branch; a revision is pushed when `headSha` differs. */
 	readonly pushedSha?: string;
 	/** Commit Harnessy created and later pushed; the only SHA proof and CI checks accept. */
@@ -1267,6 +1269,7 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!["spentUsd", "revisions"].every((key) => ["undefined", "number"].includes(typeof field(value, key))) ||
 		!["undefined", "string"].includes(typeof field(value, "reviewNotes")) ||
 		!["undefined", "string"].includes(typeof field(value, "pushedSha")) ||
+		!["undefined", "string"].includes(typeof field(value, "revisedFrom")) ||
 		!(
 			field(value, "earlierReports") === undefined ||
 			(Array.isArray(field(value, "earlierReports")) &&
