@@ -7,7 +7,6 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
-	realpathSync,
 	renameSync,
 	rmSync,
 	writeFileSync,
@@ -20,6 +19,7 @@ import {
 	copyTree,
 	destinationProblem,
 	makeParents,
+	realPath,
 	removeCopy,
 	removeTree,
 	sourceProblem,
@@ -42,6 +42,7 @@ import {
 	findPrTemplate,
 	ghArgv,
 	gitArgv,
+	gitDirOf,
 	type HandoffReason,
 	herdrArgv,
 	isTaskId,
@@ -215,7 +216,8 @@ export const notify = async (deps: WorkDeps, message: string): Promise<void> => 
 export const preflight = async (
 	deps: WorkDeps,
 	workstreamCli: ReadonlyArray<string>,
-	needsSandbox = false,
+	/** Paths the sandbox must not be able to write, when the agent may run commands. */
+	needsSandbox: ReadonlyArray<string> | false = false,
 ): Promise<ToolCheck[]> => {
 	const checks: ToolCheck[] = [];
 	for (const tool of WORK_TOOLS) {
@@ -225,18 +227,28 @@ export const preflight = async (
 		const check = checkTool(tool, probe, deps.platform);
 		checks.push(tool.name === "claude" && check.ok ? await claudeIsolationCheck(deps, check) : check);
 	}
-	if (needsSandbox) checks.push(await sandboxCheck(deps, checks.find((check) => check.name === "claude")?.version));
+	if (needsSandbox !== false)
+		checks.push(await sandboxCheck(deps, checks.find((check) => check.name === "claude")?.version, needsSandbox));
 	return checks;
 };
 
 /** Never run allowed commands unsandboxed: refuse before anything when the sandbox cannot work here. */
-const sandboxCheck = async (deps: WorkDeps, claudeVersion: string | undefined): Promise<ToolCheck> => {
+const sandboxCheck = async (
+	deps: WorkDeps,
+	claudeVersion: string | undefined,
+	protectedPaths: ReadonlyArray<string>,
+): Promise<ToolCheck> => {
 	const present = async (argv: ReadonlyArray<string>) =>
 		deps.platform === "linux" && (await deps.run(argv, { timeoutMs: PROBE_TIMEOUT_MS })).exitCode === 0;
-	const problem = sandboxProblem(deps.platform, claudeVersion, {
-		bwrap: await present(["bwrap", "--version"]),
-		socat: await present(["socat", "-V"]),
-	});
+	const problem = sandboxProblem(
+		deps.platform,
+		claudeVersion,
+		{
+			bwrap: await present(["bwrap", "--version"]),
+			socat: await present(["socat", "-V"]),
+		},
+		protectedPaths.map((path) => (existsSync(path) ? realPath(path) : resolve(path))),
+	);
 	return problem === undefined
 		? { name: "sandbox", ok: true }
 		: {
@@ -357,7 +369,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	};
 	const ws = options.workstreamCli;
 
-	const tools = await preflight(deps, ws, agentAllow.length > 0);
+	const tools = await preflight(deps, ws, agentAllow.length > 0 && [repo, resolve(worktree, ".."), stateDir]);
 	if (tools.some((tool) => !tool.ok)) return { exitCode: 1, report: { status: "preflight_failed", tools } };
 
 	if (options.dryRun)
@@ -482,7 +494,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 
 	/** Remove dependency copies from the worktree; returns whether all are gone, clearing the record then. */
 	const removeCopies = (copies: ReadonlyArray<string>): boolean => {
-		const realWorktree = realpathSync(worktree);
+		const realWorktree = realPath(worktree);
 		const gone = copies.filter((path) => !removeCopy(realWorktree, path)).length === 0;
 		if (gone) save({ agentDeps: undefined });
 		return gone;
@@ -499,11 +511,11 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			save({ agentDeps: { copied: [] } });
 			return undefined;
 		}
-		const realRepo = realpathSync(repo);
+		const realRepo = realPath(repo);
 		const badSources = sources.flatMap((path) => sourceProblem(realRepo, path) ?? []);
 		if (badSources.length > 0)
 			return handoff("agent_deps_source_unsafe", `${badSources.join("; ")}; nothing was copied`);
-		const realWorktree = realpathSync(worktree);
+		const realWorktree = realPath(worktree);
 		const badDestinations = sources.flatMap((path) => destinationProblem(realWorktree, path) ?? []);
 		if (badDestinations.length > 0)
 			return handoff("agent_deps_destination_unsafe", `${badDestinations.join("; ")}; nothing was copied`);
@@ -655,9 +667,12 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			}
 		}
 		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes));
-		// The sandbox may not write to the source checkout (the worktree's git directory lives
-		// there) or to Harnessy's state, even where they fall under a writable temp directory.
-		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow, [repo, stateDir]), null, 2)}\n`);
+		const gitDir = gitDirOf(state.gitFile);
+		if (gitDir === undefined) return handoff("worktree_tampered", "the worktree's .git file names no git directory");
+		writePrivate(
+			paths.settings,
+			`${JSON.stringify(agentSettings(agentAllow, realPath(worktree), realPath(resolve(worktree, gitDir))), null, 2)}\n`,
+		);
 		let pane = state.pane;
 		if (pane === undefined) {
 			const created = parseJson(

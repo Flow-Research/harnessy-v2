@@ -22,54 +22,61 @@ export const within = (base: string, path: string): boolean => {
 	return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 };
 
-type ComponentCheck = { readonly problem: string } | { readonly existing: number };
+/** Native realpath: resolves every link and returns the on-disk letter case and Unicode form. */
+export const realPath = (path: string): string => realpathSync.native(path);
+
+/** `lstat` that reports nothing for a missing path, including one under a file (ENOTDIR). */
+const entryAt = (path: string) => {
+	const stat = Result.try(() => lstatSync(path, { throwIfNoEntry: false }));
+	return Result.isSuccess(stat) ? stat.success : undefined;
+};
+
+const plainRelative = (rel: string): boolean =>
+	rel.split("/").every((part) => part !== "" && part !== "." && part !== "..");
 
 /**
- * Walk the relative path `rel` under the real directory `base` one component
- * at a time. Each component that exists must be listed by its parent under
- * exactly that name (no case or Unicode variant on APFS) and must be a
- * directory, not a symbolic link. `existing` counts the leading components
- * that exist.
+ * Why the existing path `path` is not exactly itself on disk: its native
+ * realpath must equal its spelling, so no component is a link and none is a
+ * case or Unicode variant of what the file system holds.
  */
-const checkComponents = (base: string, rel: string): ComponentCheck => {
-	const parts = rel.split("/");
-	if (parts.some((part) => part === "" || part === "." || part === ".."))
-		return { problem: `${rel} is not a plain relative path` };
-	let current = base;
-	for (const [index, part] of parts.entries()) {
-		const next = join(current, part);
-		const stat = lstatSync(next, { throwIfNoEntry: false });
-		if (stat === undefined) return { existing: index };
-		const shown = parts.slice(0, index + 1).join("/");
-		if (!readdirSync(current).includes(part))
-			return { problem: `${shown} exists only under a different case or Unicode form` };
-		if (stat.isSymbolicLink() || !stat.isDirectory())
-			return { problem: `${shown} is a symbolic link or not a directory` };
-		current = next;
-	}
-	return { existing: parts.length };
+const notItself = (path: string, shown: string): string | undefined => {
+	const real = realPath(path);
+	return real === path
+		? undefined
+		: `${shown} resolves to ${real}: a link, a case or Unicode variant, or a path outside`;
 };
 
 /**
- * Why `rel` cannot be copied from the real source checkout `realRepo`: it
- * must be a plain directory there, reached through no link, so the copy can
- * never read from somewhere else (such as `~/.ssh`).
+ * Why `rel` cannot be copied from the source checkout `realRepo` (a native
+ * realpath): it must be a plain directory whose real path is exactly
+ * `realRepo/rel`, so the copy can never read from somewhere else.
  */
 export const sourceProblem = (realRepo: string, rel: string): string | undefined => {
-	const check = checkComponents(realRepo, rel);
-	if ("problem" in check) return `source ${check.problem}`;
-	return check.existing === rel.split("/").length ? undefined : `source ${rel} does not exist`;
+	if (!plainRelative(rel)) return `source ${rel} is not a plain relative path`;
+	const path = join(realRepo, rel);
+	const stat = entryAt(path);
+	if (stat === undefined) return `source ${rel} does not exist`;
+	if (!stat.isDirectory()) return `source ${rel} is a symbolic link or not a directory`;
+	const problem = notItself(path, rel);
+	return problem === undefined ? undefined : `source ${problem}`;
 };
 
 /**
- * Why `rel` cannot be created in the real worktree `realWorktree`: it must not
- * exist in any form, and its existing parents must be plain directories, so
- * Harnessy's `mkdir` and `rename` cannot pass through a link.
+ * Why `rel` cannot be created in the worktree `realWorktree` (a native
+ * realpath): nothing may exist there in any form, and its nearest existing
+ * parent must be a directory that is exactly itself on disk, so Harnessy's
+ * `mkdir` and `rename` cannot pass through a link.
  */
 export const destinationProblem = (realWorktree: string, rel: string): string | undefined => {
-	const check = checkComponents(realWorktree, rel);
-	if ("problem" in check) return `destination ${check.problem}`;
-	return check.existing === rel.split("/").length ? `destination ${rel} already exists in the worktree` : undefined;
+	if (!plainRelative(rel)) return `destination ${rel} is not a plain relative path`;
+	const path = join(realWorktree, rel);
+	if (entryAt(path) !== undefined) return `destination ${rel} already exists in the worktree`;
+	let parent = dirname(path);
+	while (entryAt(parent) === undefined) parent = dirname(parent);
+	const shown = relative(realWorktree, parent) || ".";
+	if (lstatSync(parent).isDirectory() !== true) return `destination ${shown} is a symbolic link or not a directory`;
+	const problem = notItself(parent, shown);
+	return problem === undefined ? undefined : `destination ${problem}`;
 };
 
 /**
@@ -82,7 +89,7 @@ export const makeParents = (realWorktree: string, rel: string): string | undefin
 	const parts = rel.split("/");
 	for (let index = 0; index < parts.length - 1; index++) {
 		const path = join(realWorktree, ...parts.slice(0, index + 1));
-		if (lstatSync(path, { throwIfNoEntry: false }) !== undefined) continue;
+		if (entryAt(path) !== undefined) continue;
 		if (Result.isFailure(Result.try(() => mkdirSync(path))))
 			return `destination ${parts.slice(0, index + 1).join("/")} could not be created`;
 	}
@@ -97,7 +104,7 @@ export const makeParents = (realWorktree: string, rel: string): string | undefin
 export const removeTree = (path: string): boolean =>
 	Result.isSuccess(
 		Result.try(() => {
-			const pending = lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === true ? [path] : [];
+			const pending = entryAt(path)?.isDirectory() === true ? [path] : [];
 			for (let current = pending.pop(); current !== undefined; current = pending.pop()) {
 				chmodSync(current, 0o700);
 				for (const entry of readdirSync(current, { withFileTypes: true }))
@@ -113,13 +120,11 @@ export const removeTree = (path: string): boolean =>
  * pass through a link. Returns whether nothing is left there.
  */
 export const removeCopy = (realWorktree: string, rel: string): boolean => {
-	const parent = rel.split("/").slice(0, -1).join("/");
-	if (parent !== "") {
-		const check = checkComponents(realWorktree, parent);
-		if ("problem" in check) return false;
-		// A missing parent means nothing was created there.
-		if (check.existing !== parent.split("/").length) return true;
-	}
+	const parent = dirname(join(realWorktree, rel));
+	const stat = entryAt(parent);
+	// A missing parent means nothing was created there.
+	if (stat === undefined) return true;
+	if (!stat.isDirectory() || notItself(parent, parent) !== undefined) return false;
 	return removeTree(join(realWorktree, rel));
 };
 
@@ -154,9 +159,11 @@ export const stripSensitive = (dir: string, isNodeModules: boolean): ReadonlyArr
  * The one post-copy audit, with no-follow `lstat` entry types: everything in
  * a copy must be a regular file, a directory, or a symbolic link that leads
  * inside the worktree or the source checkout (npm and pnpm workspace links
- * such as `../packages/x` are normal). Returns the offending paths.
+ * such as `../packages/x` are normal). The copy itself must still be a plain
+ * directory that is exactly itself on disk. Returns the offending paths.
  */
 export const auditCopy = (dir: string, realWorktree: string, realRepo: string): ReadonlyArray<string> => {
+	if (entryAt(dir)?.isDirectory() !== true || notItself(dir, dir) !== undefined) return [dir];
 	const bad: string[] = [];
 	const pending = [dir];
 	for (let current = pending.pop(); current !== undefined; current = pending.pop())
@@ -164,7 +171,7 @@ export const auditCopy = (dir: string, realWorktree: string, realRepo: string): 
 			const path = join(current, entry.name);
 			if (entry.isDirectory()) pending.push(path);
 			else if (entry.isSymbolicLink()) {
-				const target = existsSync(path) ? realpathSync(path) : resolve(dirname(path), readlinkSync(path));
+				const target = existsSync(path) ? realPath(path) : resolve(dirname(path), readlinkSync(path));
 				if (!within(realWorktree, target) && !within(realRepo, target)) bad.push(path);
 			} else if (!entry.isFile()) bad.push(path);
 		}

@@ -19,6 +19,7 @@ import {
 	findPrTemplate,
 	ghArgv,
 	gitArgv,
+	gitDirOf,
 	herdrArgv,
 	installHint,
 	managedClaudeSettingsPaths,
@@ -44,6 +45,7 @@ import {
 	prMismatch,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
+	SANDBOX_DENY_READ,
 	SANDBOX_MIN_CLAUDE,
 	sandboxProblem,
 	splitCli,
@@ -173,45 +175,60 @@ describe("agent permissions", () => {
 	});
 
 	it("write the complete permission policy to the settings file", () => {
-		expect(agentSettings([], ["/repo"])).toEqual({
-			permissions: {
-				allow: [],
-				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
-				defaultMode: "acceptEdits",
-			},
+		const deny = [
+			"Bash(git push)",
+			"Bash(git push *)",
+			"Bash(git commit)",
+			"Bash(git commit *)",
+			"Edit(//w/.git)",
+			"Edit(//w/.claude/**)",
+			"Edit(//r/.git/worktrees/w)",
+			"Edit(//r/.git/worktrees/w/**)",
+		];
+		expect(agentSettings([], "/w", "/r/.git/worktrees/w")).toEqual({
+			permissions: { allow: [], deny, defaultMode: "acceptEdits" },
 		});
-		expect(agentSettings(["Bash(npm test)"], ["/repo", "/state"])).toEqual({
+		expect(agentSettings(["Bash(npm test)"], "/w", "/r/.git/worktrees/w")).toEqual({
 			permissions: {
 				allow: ["Bash(git status)", "Bash(git diff)", "Bash(npm test)"],
-				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
+				deny,
 				defaultMode: "acceptEdits",
 			},
-			sandbox: agentSandbox(["/repo", "/state"]),
+			sandbox: agentSandbox(),
 		});
-		expect(agentSandbox(["/repo"]).filesystem.denyWrite).toEqual(["/repo"]);
-		expect(agentSandbox([])).toMatchObject({
+		expect(gitDirOf("gitdir: /r/.git/worktrees/w\n")).toBe("/r/.git/worktrees/w");
+		expect(gitDirOf("garbage")).toBeUndefined();
+		expect(agentSandbox()).toEqual({
 			enabled: true,
 			failIfUnavailable: true,
 			autoAllowBashIfSandboxed: false,
 			allowUnsandboxedCommands: false,
 			excludedCommands: [],
-			network: { allowedDomains: [], strictAllowlist: true },
+			network: { allowedDomains: [], strictAllowlist: true, allowLocalBinding: false, allowAllUnixSockets: false },
+			filesystem: { denyRead: [...SANDBOX_DENY_READ] },
 		});
 	});
 
 	it("refuses --agent-allow where Claude Code cannot sandbox commands", () => {
 		const both = { bwrap: true, socat: true };
-		expect(sandboxProblem("darwin", SANDBOX_MIN_CLAUDE, { bwrap: false, socat: false })).toBeUndefined();
-		expect(sandboxProblem("linux", "2.2.0", both)).toBeUndefined();
-		expect(sandboxProblem("win32", SANDBOX_MIN_CLAUDE, both)).toBe(
+		const safe = ["/Users/j/Code/repo", "/Users/j/Code/.harnessy-work", "/Users/j/.local/state/harnessy/work/t"];
+		expect(sandboxProblem("darwin", SANDBOX_MIN_CLAUDE, { bwrap: false, socat: false }, safe)).toBeUndefined();
+		expect(sandboxProblem("linux", "2.2.0", both, safe)).toBeUndefined();
+		expect(sandboxProblem("win32", SANDBOX_MIN_CLAUDE, both, safe)).toBe(
 			"Claude Code cannot sandbox commands on win32, so --agent-allow is refused",
 		);
-		expect(sandboxProblem("darwin", "2.1.303", both)).toBe(
+		expect(sandboxProblem("darwin", "2.1.303", both, safe)).toBe(
 			`--agent-allow needs Claude Code ${SANDBOX_MIN_CLAUDE} or newer for its sandbox settings (found 2.1.303)`,
 		);
-		expect(sandboxProblem("darwin", undefined, both)).toContain("(found unknown)");
-		expect(sandboxProblem("linux", SANDBOX_MIN_CLAUDE, { bwrap: true, socat: false })).toBe(
+		expect(sandboxProblem("darwin", undefined, both, safe)).toContain("(found unknown)");
+		expect(sandboxProblem("linux", SANDBOX_MIN_CLAUDE, { bwrap: true, socat: false }, safe)).toBe(
 			"Claude Code's sandbox needs socat on Linux, so --agent-allow is refused",
+		);
+		// The sandbox always lets commands write its temp directory; nothing Harnessy protects may live there.
+		expect(
+			sandboxProblem("darwin", SANDBOX_MIN_CLAUDE, both, ["/private/tmp/claude-501/s/repo", "/tmp/claudeX", "/x"]),
+		).toBe(
+			"/private/tmp/claude-501/s/repo, /tmp/claudeX lies under Claude Code's sandbox temp directory, which sandboxed commands can write; move it elsewhere to use --agent-allow",
 		);
 		expect(agentTools([])).toEqual(["Read", "Edit", "Write", "Glob", "Grep"]);
 		expect(agentTools(["Bash(npm test)"])).toEqual(["Read", "Edit", "Write", "Glob", "Grep", "Bash"]);

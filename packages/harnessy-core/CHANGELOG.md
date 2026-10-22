@@ -33,11 +33,13 @@
 - `harnessy work --agent-allow` now runs the agent's Bash commands in Claude
   Code's OS sandbox (Claude Code 2.1.304 or newer; macOS, or Linux with
   bubblewrap and socat). Writes are limited to the worktree and Claude Code's
-  temp directory, the source checkout and Harnessy's state cannot be written,
-  there is no network, and common credential stores cannot be read.
+  per-user temp directory. Inside them, the worktree's `.git` file, its
+  `.claude/` directory and its git directory under the source checkout are
+  denied. There is no network, and common credential stores cannot be read.
   `failIfUnavailable` and `allowUnsandboxedCommands: false` mean a command
   never runs unsandboxed. Preflight refuses `--agent-allow` where the sandbox
-  cannot run. Every git command Harnessy runs in the worktree now disables
+  cannot run, or when the source checkout, the worktrees or Harnessy's state
+  lie under Claude Code's always-writable `/tmp/claude` prefix. Every git command Harnessy runs in the worktree now disables
   hooks and fsmonitor and skips submodules.
 - `harnessy work --agent-deps clone` gives the agent's worktree its own
   copy-on-write copy of the source checkout's ignored `node_modules` and

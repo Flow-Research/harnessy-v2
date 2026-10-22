@@ -609,62 +609,98 @@ export const SANDBOX_DENY_READ: ReadonlyArray<string> = [
 
 /**
  * Claude Code's OS sandbox for the agent's Bash commands: the boundary once
- * `--agent-allow` lets a command run repository code. Writes are limited to
- * the worktree (the sandbox default, with Claude Code's per-user temp
- * directory) minus `denyWrite`; there is no network; credential stores are
- * unreadable. `failIfUnavailable` makes Claude Code exit instead of running
- * unsandboxed, `allowUnsandboxedCommands: false` removes the
- * `dangerouslyDisableSandbox` escape hatch, no command is excluded, and
- * `autoAllowBashIfSandboxed: false` keeps the allow rules in force.
+ * `--agent-allow` lets a command run repository code. Writes follow an
+ * allow-list and nothing is added to it: the working directory (the
+ * worktree) and Claude Code's per-user temp directory `/tmp/claude-<uid>`,
+ * which Claude Code 2.1.304 always grants and sets as `TMPDIR`. Inside the
+ * worktree the `.git` file and `.claude/` are denied through the `Edit` deny
+ * rules, which Claude Code merges into the sandbox. There is no network and
+ * credential stores are unreadable. `failIfUnavailable` makes Claude Code
+ * exit instead of running unsandboxed, `allowUnsandboxedCommands: false`
+ * removes the `dangerouslyDisableSandbox` escape hatch, no command is
+ * excluded, and `autoAllowBashIfSandboxed: false` keeps the allow rules in
+ * force.
  */
-export const agentSandbox = (denyWrite: ReadonlyArray<string>) => ({
+export const agentSandbox = () => ({
 	enabled: true,
 	failIfUnavailable: true,
 	autoAllowBashIfSandboxed: false,
 	allowUnsandboxedCommands: false,
 	excludedCommands: [],
 	network: { allowedDomains: [], strictAllowlist: true, allowLocalBinding: false, allowAllUnixSockets: false },
-	filesystem: { denyRead: [...SANDBOX_DENY_READ], denyWrite: [...denyWrite] },
+	filesystem: { denyRead: [...SANDBOX_DENY_READ] },
 });
+
+/**
+ * Paths the agent may never write, as `Edit` deny rules: they bind the Edit
+ * and Write tools and, merged by Claude Code, sandboxed commands. They are the
+ * worktree's `.git` file and `.claude/`, and the worktree's own git directory
+ * (`<repo>/.git/worktrees/<name>`), which Claude Code's sandbox otherwise
+ * lets commands write so git works: its `commondir` or `HEAD` could redirect
+ * Harnessy's later git commands. `//` marks an absolute path in a rule.
+ */
+export const protectedWorktreeRules = (realWorktree: string, realGitDir: string): ReadonlyArray<string> => [
+	`Edit(/${realWorktree}/.git)`,
+	`Edit(/${realWorktree}/.claude/**)`,
+	`Edit(/${realGitDir})`,
+	`Edit(/${realGitDir}/**)`,
+];
+
+/** The git directory a linked worktree's `.git` file names, or undefined. */
+export const gitDirOf = (gitFile: string): string | undefined => /^gitdir: (.+)$/m.exec(gitFile)?.[1];
 
 /**
  * Claude Code settings for the agent: the complete permission policy. The run
  * line loads no user, project or local settings (`--restricted` and
- * `--setting-sources ""`), so nothing else can widen it. Julian's user
- * settings allow plain `Bash`, and `--allowedTools` only adds to the loaded
- * sources, which is how the first live run reached `npm test`. Whenever
- * commands are allowed, the sandbox block comes with them.
+ * `--setting-sources ""`; a probe confirmed the worktree's own
+ * `.claude/settings*.json` are ignored), so nothing else can widen it.
+ * Julian's user settings allow plain `Bash`, and `--allowedTools` only adds
+ * to the loaded sources, which is how the first live run reached `npm test`.
+ * Whenever commands are allowed, the sandbox block comes with them.
  */
-export const agentSettings = (extraAllowed: ReadonlyArray<string>, denyWrite: ReadonlyArray<string>) => ({
+export const agentSettings = (extraAllowed: ReadonlyArray<string>, realWorktree: string, realGitDir: string) => ({
 	permissions: {
 		allow: extraAllowed.length === 0 ? [] : [...AGENT_ALLOWED_TOOLS, ...extraAllowed],
-		deny: [...AGENT_DISALLOWED_TOOLS],
+		deny: [...AGENT_DISALLOWED_TOOLS, ...protectedWorktreeRules(realWorktree, realGitDir)],
 		defaultMode: "acceptEdits",
 	},
-	...(extraAllowed.length === 0 ? {} : { sandbox: agentSandbox(denyWrite) }),
+	...(extraAllowed.length === 0 ? {} : { sandbox: agentSandbox() }),
 });
 
 /** The first Claude Code release whose sandbox settings Harnessy was verified against. */
 export const SANDBOX_MIN_CLAUDE = "2.1.304";
 
 /**
+ * Prefixes Claude Code's sandbox always lets commands write: its per-user
+ * temp directory and the runtime's own `/tmp/claude` grant, matched as
+ * prefixes. Nothing Harnessy protects may live there.
+ */
+export const SANDBOX_TEMP_PREFIXES: ReadonlyArray<string> = ["/tmp/claude", "/private/tmp/claude"];
+
+/**
  * Why the agent's commands cannot be sandboxed here, or undefined. macOS uses
  * the built-in Seatbelt; Linux and WSL2 need `bwrap` and `socat`; Claude Code
- * runs commands unsandboxed on native Windows, so it is refused.
+ * runs commands unsandboxed on native Windows, so it is refused. The source
+ * checkout (which holds the worktree's git directory), the worktree's parent
+ * and Harnessy's state must lie outside the always-writable temp prefixes.
  */
 export const sandboxProblem = (
 	platform: string,
 	claudeVersion: string | undefined,
 	linuxTools: { readonly bwrap: boolean; readonly socat: boolean },
+	protectedPaths: ReadonlyArray<string>,
 ): string | undefined => {
 	if (platform !== "darwin" && platform !== "linux")
 		return `Claude Code cannot sandbox commands on ${platform}, so --agent-allow is refused`;
 	if (claudeVersion === undefined || compareVersions(claudeVersion, SANDBOX_MIN_CLAUDE) < 0)
 		return `--agent-allow needs Claude Code ${SANDBOX_MIN_CLAUDE} or newer for its sandbox settings (found ${claudeVersion ?? "unknown"})`;
 	const missing = platform === "linux" ? (["bwrap", "socat"] as const).filter((tool) => !linuxTools[tool]) : [];
-	return missing.length === 0
+	if (missing.length > 0)
+		return `Claude Code's sandbox needs ${missing.join(" and ")} on Linux, so --agent-allow is refused`;
+	const exposed = protectedPaths.filter((path) => SANDBOX_TEMP_PREFIXES.some((prefix) => path.startsWith(prefix)));
+	return exposed.length === 0
 		? undefined
-		: `Claude Code's sandbox needs ${missing.join(" and ")} on Linux, so --agent-allow is refused`;
+		: `${exposed.join(", ")} lies under Claude Code's sandbox temp directory, which sandboxed commands can write; move it elsewhere to use --agent-allow`;
 };
 
 /** Tools for `--tools`: the base set, plus Bash only when rules allow commands. */

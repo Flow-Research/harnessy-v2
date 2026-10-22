@@ -105,30 +105,48 @@
     the agent settings file carries Claude Code's OS sandbox for Bash
     (Seatbelt on macOS; bubblewrap and socat on Linux and WSL2). It is the
     boundary, because an allowed test or format command runs repository code
-    the agent can edit. The block, verified against Claude Code 2.1.304
-    (`SANDBOX_MIN_CLAUDE`) with probe runs, is `enabled: true`,
-    `failIfUnavailable: true` (exit rather than run unsandboxed),
-    `allowUnsandboxedCommands: false` (no `dangerouslyDisableSandbox`),
-    `excludedCommands: []`, `autoAllowBashIfSandboxed: false` (the allow
-    rules still decide which commands run), `network: { allowedDomains: [],
-    strictAllowlist: true, allowLocalBinding: false, allowAllUnixSockets:
-    false }`, and `filesystem: { denyRead: [credential stores], denyWrite:
-    [source checkout, Harnessy state directory] }`. Preflight refuses
-    `--agent-allow` before claiming anything on other platforms, on Linux
-    without `bwrap` and `socat`, and with an older Claude Code. Sandboxed
-    commands can write only the worktree and Claude Code's per-user temp
-    directory (`/tmp/claude-<uid>`), minus the denied paths. The source
-    checkout holds the worktree's git directory, so they cannot commit
-    either. They have no network, and cannot read `~/.ssh`, `~/.aws`,
-    `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube`,
-    `~/.config/gh`, `~/.config/gcloud`, `~/.config/gws*` or
-    `~/Library/Keychains`. They can read the rest of the machine, including
-    the source checkout. The file tools (Read, Edit, Write) run outside the
-    OS sandbox; their limit is the permission mode (edits only in the
-    working directory), as before. Every git command Harnessy runs in the
-    worktree disables hooks and fsmonitor and never descends into
-    submodules, and no git command runs before the worktree's `.git` file is
-    checked, so a planted git directory cannot run code through Harnessy.
+    the agent can edit. The block, verified on Claude Code 2.1.304
+    (`SANDBOX_MIN_CLAUDE`) with probe runs against a real git worktree:
+    - `enabled: true`.
+    - `failIfUnavailable: true`: exit rather than run unsandboxed.
+    - `allowUnsandboxedCommands: false`: no `dangerouslyDisableSandbox`.
+    - `excludedCommands: []`.
+    - `autoAllowBashIfSandboxed: false`: the allow rules still decide which
+      commands run.
+    - `network`: `allowedDomains: []`, `strictAllowlist: true`, no local
+      binding, no Unix sockets.
+    - `filesystem.denyRead`: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`,
+      `~/.npmrc`, `~/.docker`, `~/.kube`, `~/.config/gh`, `~/.config/gcloud`,
+      `~/.config/gws*` and `~/Library/Keychains`.
+
+    Writes follow Claude Code's allow-list, and Harnessy adds nothing to it.
+    The list is the working directory (the worktree) and Claude Code's
+    per-user temp directory `/tmp/claude-<uid>`; 2.1.304 always grants that
+    directory and sets it as `TMPDIR`, and settings cannot narrow it. Within
+    that list, `Edit` deny rules, which Claude Code merges into the sandbox
+    and applies to the Edit and Write tools, protect three things:
+    - the worktree's `.git` file;
+    - the worktree's `.claude/` directory;
+    - the worktree's own git directory (`<repo>/.git/worktrees/<name>`).
+      The sandbox otherwise lets commands write it so that git works, and
+      its `commondir` or `HEAD` could redirect Harnessy's later git
+      commands.
+
+    The source checkout's `.git` (hooks, config, objects),
+    `~/.claude`, the settings file and the rest of Harnessy's state lie
+    outside the list; probes confirmed EPERM for each, and a sandboxed `git
+    commit` fails. Probes also confirmed that `--setting-sources ""` ignores
+    the worktree's `.claude/settings*.json`. Preflight refuses `--agent-allow`
+    before claiming anything in four cases:
+    - on platforms other than macOS and Linux;
+    - on Linux without `bwrap` and `socat`;
+    - with an older Claude Code;
+    - when the source checkout, the worktrees' parent or Harnessy's state
+      lies under the always-writable `/tmp/claude` prefix.
+
+    Every git command Harnessy runs in the worktree disables hooks and
+    fsmonitor and never descends into submodules. No git command runs before
+    the worktree's `.git` file is checked.
   - `--agent-deps clone` (approved 2026-10-22, off by default) gives the
     worktree its own copy of the source checkout's ignored `node_modules` and
     `dist` directories, so allowed test and format commands can run. Harnessy
@@ -156,8 +174,12 @@
   - Residual risks: allowed commands run repository code inside the
     sandbox. That code can read every file the sandbox does not deny,
     including the source checkout and other files in the user's home. It
-    can write the worktree and `/tmp/claude-<uid>`, which other Claude Code
-    sessions of the same user share. It can reach no network. The sandbox
+    can write the worktree and `/tmp/claude-<uid>`, which every Claude Code
+    session of the same user shares as scratch space. Claude Code 2.1.304
+    grants that directory unconditionally, and `CLAUDE_CODE_TMPDIR` does not
+    move the sandbox's `TMPDIR`, so settings cannot close this. Harnessy
+    therefore refuses to run when anything it protects lies there. It can
+    reach no network. The sandbox
     depends on Claude Code honouring these settings; Harnessy checks the
     version, and `failIfUnavailable` stops an unsandboxed start. The copy
     checks defend against hostile repository content, not against a

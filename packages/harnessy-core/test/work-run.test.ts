@@ -87,6 +87,8 @@ interface Scenario {
 	copyFailsFor?: string;
 	/** Failed `cp` runs print nothing; the plain copy does not even start. */
 	cpQuiet?: boolean;
+	/** Content of the new worktree's `.git` file. */
+	gitFile?: string;
 	/** Whether `bwrap` and `socat` run, for the Linux sandbox; they do by default. */
 	sandboxTools?: boolean;
 	/** A failed clone leaves its staging directory read-only, so the partial copy cannot be removed. */
@@ -169,7 +171,11 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				}
 				if (args.includes("worktree")) {
 					mkdirSync(worktree, { recursive: true });
-					writeFileSync(join(worktree, ".git"), "gitdir: /repo/.git/worktrees/x\n");
+					mkdirSync(join(root, "repo", ".git", "worktrees", "x"), { recursive: true });
+					writeFileSync(
+						join(worktree, ".git"),
+						scenario.gitFile ?? `gitdir: ${join(root, "repo", ".git", "worktrees", "x")}\n`,
+					);
 					if (scenario.inWorktree !== undefined)
 						mkdirSync(join(worktree, scenario.inWorktree), { recursive: true });
 					if (scenario.worktreeLink !== undefined) {
@@ -684,7 +690,16 @@ describe("runWork", () => {
 		expect(JSON.parse(readFileSync(join(fake.stateDir, "agent-settings.json"), "utf8"))).toEqual({
 			permissions: {
 				allow: [],
-				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
+				deny: [
+					"Bash(git push)",
+					"Bash(git push *)",
+					"Bash(git commit)",
+					"Bash(git commit *)",
+					`Edit(/${realpathSync.native(fake.worktree)}/.git)`,
+					`Edit(/${realpathSync.native(fake.worktree)}/.claude/**)`,
+					`Edit(/${realpathSync.native(join(root, "repo", ".git", "worktrees", "x"))})`,
+					`Edit(/${realpathSync.native(join(root, "repo", ".git", "worktrees", "x"))}/**)`,
+				],
 				defaultMode: "acceptEdits",
 			},
 		});
@@ -941,7 +956,16 @@ describe("runWork", () => {
 			expect(settings(fake.stateDir)).toEqual({
 				permissions: {
 					allow: ["Bash(git status)", "Bash(git diff)", ALLOW],
-					deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
+					deny: [
+						"Bash(git push)",
+						"Bash(git push *)",
+						"Bash(git commit)",
+						"Bash(git commit *)",
+						`Edit(/${realpathSync.native(fake.worktree)}/.git)`,
+						`Edit(/${realpathSync.native(fake.worktree)}/.claude/**)`,
+						`Edit(/${realpathSync.native(join(root, "repo", ".git", "worktrees", "x"))})`,
+						`Edit(/${realpathSync.native(join(root, "repo", ".git", "worktrees", "x"))}/**)`,
+					],
 					defaultMode: "acceptEdits",
 				},
 				sandbox: {
@@ -970,7 +994,6 @@ describe("runWork", () => {
 							"~/.config/gws*",
 							"~/Library/Keychains",
 						],
-						denyWrite: [join(root, "repo"), fake.stateDir],
 					},
 				},
 			});
@@ -996,6 +1019,27 @@ describe("runWork", () => {
 			expect(sandbox?.problem).toContain(problem);
 			expect(has(fake.calls, "claim")).toBe(false);
 			expect(has(fake.calls, "pane", "run")).toBe(false);
+		});
+
+		it("hands off when the worktree's .git file names no git directory", async () => {
+			const fake = fakeTools(root, { gitFile: "not a gitdir line\n" });
+			const outcome = await runWork({ ...options, approvePush: false, agentAllow: ALLOW }, fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "worktree_tampered" });
+			expect(has(fake.calls, "pane", "run")).toBe(false);
+		});
+
+		it("refuses to start when what it protects lies under the sandbox's writable temp directory", async () => {
+			const fake = fakeTools(root);
+			const outcome = await runWork(
+				{ ...options, agentAllow: ALLOW },
+				{ ...fake.deps, stateRoot: "/private/tmp/claude-0/harnessy-state" },
+			);
+			expect(outcome.report).toMatchObject({ status: "preflight_failed" });
+			const sandbox = (outcome.report.tools as Array<{ name: string; problem?: string }>).find(
+				(tool) => tool.name === "sandbox",
+			);
+			expect(sandbox?.problem).toContain(`/private/tmp/claude-0/harnessy-state/${TASK} lies under`);
+			expect(has(fake.calls, "claim")).toBe(false);
 		});
 
 		it("runs on Linux when bubblewrap and socat are present", async () => {
@@ -1251,8 +1295,12 @@ describe("runWork", () => {
 			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0packages/b/dist/\0packages/c/dist/\0" });
 			const outcome = await runWork(clone(options), fake.deps);
 			expect(outcome.report).toMatchObject({ status: "handoff", reason: "agent_deps_source_unsafe" });
-			expect(String(outcome.report.detail)).toBe(
-				"source packages/b/dist is a symbolic link or not a directory; source packages/c is a symbolic link or not a directory; nothing was copied",
+			expect(String(outcome.report.detail)).toContain(
+				"source packages/b/dist is a symbolic link or not a directory; ",
+			);
+			expect(String(outcome.report.detail)).toContain("source packages/c/dist resolves to ");
+			expect(String(outcome.report.detail)).toContain(
+				": a link, a case or Unicode variant, or a path outside; nothing was copied",
 			);
 			refusedBeforeCopy(fake);
 		});
@@ -1266,7 +1314,7 @@ describe("runWork", () => {
 			[
 				"is a dangling link",
 				{ worktreeLink: ["node_modules", "/nonexistent/harnessy"] as [string, string] },
-				"destination node_modules is a symbolic link or not a directory",
+				"destination node_modules already exists in the worktree",
 			],
 			[
 				"lies under a link out of the worktree",

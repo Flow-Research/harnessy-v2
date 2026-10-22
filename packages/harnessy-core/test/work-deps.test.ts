@@ -47,16 +47,20 @@ describe("dependency copy checks", () => {
 		expect(sourceProblem(root, "dist")).toBe("source dist is a symbolic link or not a directory");
 		mkdirSync(join(root, "node_modules"));
 		expect(sourceProblem(root, "node_modules")).toBeUndefined();
+		mkdirSync(join(root, "node_modules", "dist"));
 		symlinkSync(join(root, "node_modules"), join(root, "pkg"));
-		expect(sourceProblem(root, "pkg/dist")).toBe("source pkg is a symbolic link or not a directory");
+		expect(sourceProblem(root, "pkg/dist")).toBe(
+			`source pkg/dist resolves to ${join(root, "node_modules", "dist")}: a link, a case or Unicode variant, or a path outside`,
+		);
 	});
 
 	it("accepts only a destination that does not exist in any form", () => {
 		expect(destinationProblem(root, "packages/a/dist")).toBeUndefined();
+		expect(destinationProblem(root, "../dist")).toBe("destination ../dist is not a plain relative path");
 		symlinkSync(join(root, "missing-target"), join(root, "node_modules"));
-		expect(destinationProblem(root, "node_modules")).toBe(
-			"destination node_modules is a symbolic link or not a directory",
-		);
+		expect(destinationProblem(root, "node_modules")).toBe("destination node_modules already exists in the worktree");
+		writeFileSync(join(root, "file"), "");
+		expect(destinationProblem(root, "file/dist")).toBe("destination file is a symbolic link or not a directory");
 		mkdirSync(join(root, "dist"));
 		expect(destinationProblem(root, "dist")).toBe("destination dist already exists in the worktree");
 	});
@@ -72,13 +76,14 @@ describe("dependency copy checks", () => {
 	})();
 	it.runIf(insensitive)("refuses a case or Unicode variant of a destination", () => {
 		mkdirSync(join(root, "Node_Modules"));
-		expect(destinationProblem(root, "node_modules")).toBe(
-			"destination node_modules exists only under a different case or Unicode form",
+		expect(destinationProblem(root, "node_modules")).toBe("destination node_modules already exists in the worktree");
+		mkdirSync(join(root, "Packages"));
+		expect(destinationProblem(root, "packages/dist")).toBe(
+			`destination packages resolves to ${join(root, "Packages")}: a link, a case or Unicode variant, or a path outside`,
 		);
-		mkdirSync(join(root, "café"));
-		expect(destinationProblem(root, "café/dist")).toBe(
-			"destination café exists only under a different case or Unicode form",
-		);
+		expect(sourceProblem(root, "packages")).toContain("source packages resolves to ");
+		mkdirSync(join(root, "cafe\u0301"));
+		expect(destinationProblem(root, "caf\u00e9/dist")).toContain("resolves to ");
 	});
 
 	it("creates missing parents one at a time, and reports one it cannot create", () => {
@@ -164,6 +169,10 @@ describe("dependency copy checks", () => {
 		symlinkSync(join(root, "wt-evil"), join(wt, "node_modules", "prefix"));
 		symlinkSync("/", join(wt, "node_modules", "root"));
 		execFileSync("mkfifo", [join(wt, "node_modules", "pipe")]);
+		// The copy itself must still be a plain directory, exactly itself on disk.
+		expect(auditCopy(join(wt, "missing"), wt, repo)).toEqual([join(wt, "missing")]);
+		symlinkSync(join(wt, "node_modules"), join(wt, "linked"));
+		expect(auditCopy(join(wt, "linked"), wt, repo)).toEqual([join(wt, "linked")]);
 		expect(auditCopy(join(wt, "node_modules"), wt, repo)).toEqual([
 			join(wt, "node_modules", "pipe"),
 			join(wt, "node_modules", "prefix"),
