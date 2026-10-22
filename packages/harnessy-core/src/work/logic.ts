@@ -273,6 +273,14 @@ export const gitArgv = {
 		"--name-only",
 		`origin/${base}...${sha}`,
 	],
+	/** A file as committed on the base branch, so the agent's worktree cannot change it. */
+	baseFile: (worktree: string, base: string, path: string) => [
+		"git",
+		"-C",
+		worktree,
+		"show",
+		`origin/${base}:${path}`,
+	],
 	/** Pushes the exact reviewed commit, not whatever HEAD is at push time. */
 	push: (worktree: string, branch: string, sha: string) => [
 		"git",
@@ -320,6 +328,8 @@ export const ghArgv = {
 		bodyFile,
 	],
 	checksWatch: (pr: number) => ["gh", "pr", "checks", String(pr), "--watch"],
+	/** Leaves draft only after the pushed commit's checks pass; merging still needs a person. */
+	prReady: (pr: number) => ["gh", "pr", "ready", String(pr)],
 	runList: (commit: string) => [
 		"gh",
 		"run",
@@ -866,22 +876,98 @@ export const agentPrompt = (task: WorkTask): string => {
 	].join("\n");
 };
 
-/** Pull request body. Task text and the agent's reason are content only. */
-export const prBody = (task: WorkTask, taskUrl: string | undefined, costUsd: number, agentReason: string): string =>
-	[
-		"## Summary",
-		"",
-		`Automated change for WorkStream task ${taskUrl === undefined ? `\`${task.id}\`` : `[${task.id}](${taskUrl})`}.`,
-		"",
-		"## Agent report",
-		"",
-		agentReason,
-		"",
-		`Agent cost: ${costUsd} USD.`,
-		"",
-		"Opened as a draft by `harnessy work`. Review the diff, mark it ready and merge to let the loop submit proof to WorkStream.",
-		"",
-	].join("\n");
+/** Pull request template locations GitHub recognises, checked in order on the base branch. */
+export const PR_TEMPLATE_PATHS = [
+	"PULL_REQUEST_TEMPLATE.md",
+	".github/PULL_REQUEST_TEMPLATE.md",
+	".github/pull_request_template.md",
+	"docs/PULL_REQUEST_TEMPLATE.md",
+	"pull_request_template.md",
+] as const;
+
+const MAX_LISTED_PATHS = 50;
+
+/** Markdown heading text, lower-cased, or undefined for a non-heading line. */
+const headingName = (line: string): string | undefined => {
+	const match = /^\s*#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
+	return match?.[1]?.toLowerCase();
+};
+
+/**
+ * Pull request body. With the base branch's template, Harnessy fills the
+ * sections it can answer from facts it controls and keeps every other section
+ * verbatim for the reviewer. Task text and the agent's reason are content only.
+ */
+export const prBody = (
+	task: WorkTask,
+	taskUrl: string | undefined,
+	costUsd: number,
+	agentReason: string,
+	changedPaths: readonly string[] = [],
+	template?: string,
+): string => {
+	const taskRef = taskUrl === undefined ? `\`${task.id}\`` : `[${task.id}](${taskUrl})`;
+	const reasonFence = fenceFor(agentReason);
+	const listed = changedPaths.slice(0, MAX_LISTED_PATHS).map((path) => `  - \`${path}\``);
+	const more = changedPaths.length - listed.length;
+	const filled: Record<string, readonly string[]> = {
+		summary: [
+			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. Agent cost: ${costUsd} USD.`,
+			"",
+			"Opened as a draft and marked ready only after the pushed commit's checks pass. A person reviews and merges; the merge lets the loop submit proof to WorkStream. Sections Harnessy cannot answer are left for the reviewer.",
+		],
+		scope: [
+			`- In scope: ${changedPaths.length} changed file${changedPaths.length === 1 ? "" : "s"}${listed.length > 0 ? ":" : "."}`,
+			...listed,
+			...(more > 0 ? [`  - and ${more} more`] : []),
+			"- Out of scope: everything else. Harnessy refuses changes to CI configuration.",
+		],
+		design: ["Agent report (written by the agent; untrusted):", "", `${reasonFence}text`, agentReason, reasonFence],
+		"duplicate and idempotency review": [
+			"- `harnessy work` keeps idempotency keys and step results in a private state directory, so a re-run resumes without a second claim, push, pull request or submission.",
+			"- Reviewer: check the change itself for duplicate or non-idempotent effects.",
+		],
+		"privacy and security review": [
+			"- The agent ran in its own worktree with restricted Claude Code permissions and no repository credentials; the task text was given to it as untrusted data.",
+			"- The WorkStream proof is built only from git and GitHub, not from this description.",
+			"- Reviewer: check the diff for secrets, private data and permission changes.",
+		],
+	};
+	if (template === undefined || template.trim() === "") {
+		const sections = [
+			"Summary",
+			"Scope",
+			"Design",
+			"Duplicate and idempotency review",
+			"Privacy and security review",
+		];
+		return [
+			...sections.flatMap((name) => [`## ${name}`, "", ...(filled[name.toLowerCase()] ?? []), ""]),
+			"## Invariants",
+			"",
+			"- Reviewer: list the rules that must stay true.",
+			"",
+			"## Verification",
+			"",
+			"- CI on the pushed commit; the reviewer records anything else run.",
+			"",
+		].join("\n");
+	}
+	const out: string[] = [];
+	let skipping = false;
+	for (const line of template.replace(/\r\n/g, "\n").split("\n")) {
+		const name = headingName(line);
+		if (name !== undefined) {
+			const content = filled[name];
+			out.push(line);
+			skipping = content !== undefined;
+			if (content !== undefined) out.push("", ...content, "");
+			continue;
+		}
+		if (!skipping) out.push(line);
+	}
+	return `${out.join("\n").trimEnd()}\n`;
+};
 
 /** Pull request number from the URL `gh pr create` prints. */
 export const parsePrUrl = (stdout: string): { readonly url: string; readonly number: number } => {

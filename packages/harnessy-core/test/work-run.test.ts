@@ -50,6 +50,8 @@ interface Scenario {
 	tamperGitFile?: boolean;
 	waitErrorCode?: string;
 	clockStart?: number;
+	template?: string;
+	checksExit?: number;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -111,6 +113,10 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				if (args.includes("rev-list")) return ok(`${scenario.ahead ?? "0"}\n`);
 				if (args.includes("rev-parse")) return ok(`${HEAD}\n`);
 				if (args.includes("--name-only")) return ok(scenario.changedPaths ?? "src/a.ts\0");
+				if (args.includes("show"))
+					return args.at(-1) === "origin/dev:PULL_REQUEST_TEMPLATE.md" && scenario.template !== undefined
+						? ok(scenario.template)
+						: { exitCode: 128, stdout: "", stderr: "fatal: path does not exist" };
 				return ok();
 			}
 			if (exe === "herdr") {
@@ -143,6 +149,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				if (joined.startsWith("repo view")) return ok(JSON.stringify({ nameWithOwner: "flow/app" }));
 				if (joined.startsWith("pr list")) return ok(JSON.stringify(scenario.prList ?? []));
 				if (joined.startsWith("pr create")) return ok("https://github.com/flow/app/pull/7\n");
+				if (joined.startsWith("pr checks")) return { exitCode: scenario.checksExit ?? 0, stdout: "", stderr: "" };
 				if (joined.startsWith("run list"))
 					return ok(
 						JSON.stringify([
@@ -227,6 +234,40 @@ describe("runWork", () => {
 			"origin",
 			`${HEAD}:refs/heads/${BRANCH}`,
 		]);
+	});
+
+	it("marks the PR ready after its checks pass", async () => {
+		const green = fakeTools(root);
+		await runWork(options, green.deps);
+		expect(green.calls).toContainEqual(["gh", "pr", "ready", "7"]);
+	});
+
+	it("keeps the PR a draft when its checks fail", async () => {
+		const red = fakeTools(root, { checksExit: 1 });
+		await runWork(options, red.deps);
+		expect(has(red.calls, "ready")).toBe(false);
+	});
+
+	it("builds the PR body from the base branch template", async () => {
+		const template = [
+			"# Summary",
+			"Describe it.",
+			"## Scope",
+			"- In scope:",
+			"## Invariants",
+			"- [ ] Keep it.",
+			"## Verification",
+			"- [ ] Unit tests",
+		].join("\n");
+		const fake = fakeTools(root, { template });
+		await runWork(options, fake.deps);
+		expect(fake.calls).toContainEqual(["git", "-C", fake.worktree, "show", "origin/dev:PULL_REQUEST_TEMPLATE.md"]);
+		const body = readFileSync(join(fake.stateDir, "pr-body.md"), "utf8");
+		expect(body).toContain(`WorkStream task \`${TASK}\``);
+		expect(body).toContain("- In scope: 1 changed file:\n  - `src/a.ts`");
+		expect(body).not.toContain("Describe it.");
+		expect(body).toContain("## Invariants\n- [ ] Keep it.");
+		expect(body).toContain("## Verification\n- [ ] Unit tests");
 	});
 
 	it("keeps state and proof private and outside the worktree, built from GitHub facts", async () => {

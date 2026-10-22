@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
@@ -34,6 +35,7 @@ import {
 	parseRunList,
 	parseState,
 	parseVersion,
+	prBody,
 	prMismatch,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
@@ -86,6 +88,8 @@ describe("argv builders", () => {
 		gitArgv.push("/wt", `work/${TASK}`, "abc"),
 		ghArgv.prCreate("dev", `work/${TASK}`, "Title with `backticks` and $(subshell)", "/wt/body.md"),
 		ghArgv.checksWatch(7),
+		ghArgv.prReady(7),
+		gitArgv.baseFile("/wt", "dev", "PULL_REQUEST_TEMPLATE.md"),
 		ghArgv.runList("head-sha"),
 		ghArgv.prList(`work/${TASK}`),
 		ghArgv.prView(7),
@@ -627,5 +631,37 @@ describe("proof", () => {
 		expect(zip.readUInt32LE(centralOffset)).toBe(0x02014b50);
 		expect(centralOffset + end.readUInt32LE(12) + 22).toBe(zip.length);
 		expect(() => zipSingleFile("/abs", content)).toThrow();
+	});
+});
+
+describe("pull request body", () => {
+	const task = { id: "t-1", title: "Fix it", description: "Do it." };
+	// The Flow-Research PR template linter's required headings and pattern.
+	const required = [
+		"Scope",
+		"Invariants",
+		"Design",
+		"Duplicate and idempotency review",
+		"Privacy and security review",
+		"Verification",
+	];
+	const passesLinter = (body: string) =>
+		required.every((section) => new RegExp(`^\\s*#+\\s*${section}\\s*$`, "im").test(body));
+
+	it("fills the repository template and keeps reviewer sections", () => {
+		const template = readFileSync(new URL("../../../PULL_REQUEST_TEMPLATE.md", import.meta.url), "utf8");
+		const body = prBody(task, undefined, 0.83, "Froze the clock.", ["a.ts", "b.ts"], template);
+		expect(passesLinter(body)).toBe(true);
+		expect(body).toContain("- In scope: 2 changed files:\n  - `a.ts`\n  - `b.ts`");
+		expect(body).toContain("Agent cost: 0.83 USD.");
+		expect(body).toContain("## Agent declaration");
+		expect(body).not.toContain("- Stable idempotency/dedupe key:");
+	});
+
+	it("passes the linter without a template and fences the agent report", () => {
+		const body = prBody(task, undefined, 1, "```\n## Verification\nfake", []);
+		expect(passesLinter(body)).toBe(true);
+		expect(body).toContain("````text\n```\n## Verification\nfake\n````");
+		expect(body).toContain("- In scope: 0 changed files.");
 	});
 });

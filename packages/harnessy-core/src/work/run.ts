@@ -21,6 +21,7 @@ import {
 	isTaskId,
 	managedClaudeSettingsPaths,
 	missingClaudeFlags,
+	PR_TEMPLATE_PATHS,
 	packetSummary,
 	parseActor,
 	parseAssignment,
@@ -477,7 +478,15 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			if (other !== undefined)
 				return handoff("pr_conflict", `PR #${other.number} already uses ${branch} with a different base or head`);
 			const bodyFile = join(stateDir, "pr-body.md");
-			writePrivate(bodyFile, prBody(task, options.taskUrl, agent.costUsd, agent.reason));
+			let template: string | undefined;
+			for (const path of PR_TEMPLATE_PATHS) {
+				const shown = await deps.run(gitArgv.baseFile(worktree, options.base, path), { cwd: worktree });
+				if (shown.exitCode === 0 && shown.stdout.trim() !== "") {
+					template = shown.stdout;
+					break;
+				}
+			}
+			writePrivate(bodyFile, prBody(task, options.taskUrl, agent.costUsd, agent.reason, changed, template));
 			const created = parsePrUrl(
 				await must(ghArgv.prCreate(options.base, branch, state.summary, bodyFile), "gh pr create", worktree),
 			);
@@ -495,11 +504,18 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	if (state.reviewRequested !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
 		const checks = await deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
-		const verdict = checks.exitCode === 0 ? "checks passed" : "checks need attention";
-		await notify(
-			deps,
-			`Draft PR #${pr.number} is ready to review (${verdict}). Mark it ready and merge when satisfied.`,
-		);
+		if (checks.exitCode !== 0)
+			await notify(
+				deps,
+				`Draft PR #${pr.number}: checks need attention. It stays a draft; fix or close it, or mark it ready yourself.`,
+			);
+		else if ((await deps.run(ghArgv.prReady(pr.number), { cwd: worktree })).exitCode === 0)
+			await notify(deps, `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`);
+		else
+			await notify(
+				deps,
+				`PR #${pr.number} passed its checks but could not be marked ready. Mark it ready and merge when satisfied.`,
+			);
 		save({ reviewRequested: true });
 	}
 

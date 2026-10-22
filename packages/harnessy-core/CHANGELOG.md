@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `harnessy work` marks its draft pull request ready for review once the
+  pushed commit's checks pass, and leaves it a draft when they fail. Merging
+  still needs a person.
+- `harnessy work` builds the pull request body from the base branch's
+  `PULL_REQUEST_TEMPLATE.md`, filling the sections it can answer and keeping
+  the rest for the reviewer, so the PR template check passes (#154).
+
 ### Added
 
 - Added `harnessy work`, which runs one WorkStream task end to end: tool
