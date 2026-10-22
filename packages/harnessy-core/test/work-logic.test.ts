@@ -14,6 +14,7 @@ import {
 	compareVersions,
 	EXIT_MARKER_REGEX,
 	evaluateStopRule,
+	findPrTemplate,
 	ghArgv,
 	gitArgv,
 	herdrArgv,
@@ -90,6 +91,7 @@ describe("argv builders", () => {
 		ghArgv.checksWatch(7),
 		ghArgv.prReady(7),
 		gitArgv.baseFile("/wt", "dev", "PULL_REQUEST_TEMPLATE.md"),
+		gitArgv.baseList("/wt", "dev", ".github"),
 		ghArgv.runList("head-sha"),
 		ghArgv.prList(`work/${TASK}`),
 		ghArgv.prView(7),
@@ -656,6 +658,14 @@ describe("pull request body", () => {
 		expect(body).toContain("Agent cost: 0.83 USD.");
 		expect(body).toContain("## Agent declaration");
 		expect(body).not.toContain("- Stable idempotency/dedupe key:");
+	});
+
+	it("finds a template case-insensitively as .md or .txt", () => {
+		expect(findPrTemplate(".github", "ISSUE_TEMPLATE\npull_request_template.md\n")).toBe(
+			".github/pull_request_template.md",
+		);
+		expect(findPrTemplate("", "README.md\nPULL_REQUEST_TEMPLATE.txt\n")).toBe("PULL_REQUEST_TEMPLATE.txt");
+		expect(findPrTemplate("docs", "pull_request_template.markdown\n")).toBeUndefined();
 	});
 
 	it("keeps agent-controlled paths inside a fence", () => {
