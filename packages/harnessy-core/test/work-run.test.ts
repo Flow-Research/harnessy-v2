@@ -115,9 +115,13 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				if (args.includes("status")) return ok(scenario.dirty ?? " M src/a.ts\n");
 				if (args.includes("rev-list")) return ok(`${scenario.ahead ?? "0"}\n`);
 				if (args.includes("rev-parse")) return ok(`${scenario.head ?? HEAD}\n`);
+				if (args.includes("ls-tree"))
+					return args.at(-1) === "origin/dev:docs" && scenario.template !== undefined
+						? ok("guide.md\nPull_Request_Template.TXT\n")
+						: ok("README.md\n");
 				if (args.includes("--name-only")) return ok(scenario.changedPaths ?? "src/a.ts\0");
 				if (args.includes("show"))
-					return args.at(-1) === "origin/dev:PULL_REQUEST_TEMPLATE.md" && scenario.template !== undefined
+					return args.at(-1) === "origin/dev:docs/Pull_Request_Template.TXT" && scenario.template !== undefined
 						? ok(scenario.template)
 						: { exitCode: 128, stdout: "", stderr: "fatal: path does not exist" };
 				return ok();
@@ -387,7 +391,13 @@ describe("runWork", () => {
 		].join("\n");
 		const fake = fakeTools(root, { template });
 		await runWork(options, fake.deps);
-		expect(fake.calls).toContainEqual(["git", "-C", fake.worktree, "show", "origin/dev:PULL_REQUEST_TEMPLATE.md"]);
+		expect(fake.calls).toContainEqual([
+			"git",
+			"-C",
+			fake.worktree,
+			"show",
+			"origin/dev:docs/Pull_Request_Template.TXT",
+		]);
 		const body = readFileSync(join(fake.stateDir, "pr-body.md"), "utf8");
 		expect(body).toContain(`WorkStream task \`${TASK}\``);
 		expect(body).toContain("- In scope: 1 changed file:\n\n```text\nsrc/a.ts\n```");

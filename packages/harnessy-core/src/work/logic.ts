@@ -273,6 +273,15 @@ export const gitArgv = {
 		"--name-only",
 		`origin/${base}...${sha}`,
 	],
+	/** Entries of one directory on the base branch. */
+	baseList: (worktree: string, base: string, dir: string) => [
+		"git",
+		"-C",
+		worktree,
+		"ls-tree",
+		"--name-only",
+		`origin/${base}:${dir}`,
+	],
 	/** A file as committed on the base branch, so the agent's worktree cannot change it. */
 	baseFile: (worktree: string, base: string, path: string) => [
 		"git",
@@ -935,14 +944,19 @@ const reviewSection = (notes: string): string[] => {
 	];
 };
 
-/** Pull request template locations GitHub recognises, checked in order on the base branch. */
-export const PR_TEMPLATE_PATHS = [
-	"PULL_REQUEST_TEMPLATE.md",
-	".github/PULL_REQUEST_TEMPLATE.md",
-	".github/pull_request_template.md",
-	"docs/PULL_REQUEST_TEMPLATE.md",
-	"pull_request_template.md",
-] as const;
+/** Directories GitHub searches for a pull request template, in its order of precedence. */
+export const PR_TEMPLATE_DIRS = [".github", "", "docs"] as const;
+
+const PR_TEMPLATE_NAME = /^pull_request_template\.(md|txt)$/i;
+
+/** The template file in one directory listing (`git ls-tree --name-only`), matched case-insensitively. */
+export const findPrTemplate = (dir: string, listing: string): string | undefined => {
+	const name = listing
+		.split("\n")
+		.map((line) => line.trim())
+		.find((line) => PR_TEMPLATE_NAME.test(line));
+	return name === undefined ? undefined : dir === "" ? name : `${dir}/${name}`;
+};
 
 const MAX_LISTED_PATHS = 50;
 

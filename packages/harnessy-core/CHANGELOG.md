@@ -16,7 +16,8 @@
   still needs a person.
 - `harnessy work` builds the pull request body from the base branch's
   `PULL_REQUEST_TEMPLATE.md`, filling the sections it can answer and keeping
-  the rest for the reviewer, so the PR template check passes (#154).
+  the rest for the reviewer, so the PR template check passes
+  ([#154](https://github.com/Flow-Research/harnessy-v2/issues/154)).
 
 ### Added
 

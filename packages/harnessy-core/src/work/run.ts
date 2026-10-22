@@ -15,6 +15,7 @@ import {
 	combinedReports,
 	evaluateStopRule,
 	field,
+	findPrTemplate,
 	ghArgv,
 	gitArgv,
 	type HandoffReason,
@@ -22,7 +23,7 @@ import {
 	isTaskId,
 	managedClaudeSettingsPaths,
 	missingClaudeFlags,
-	PR_TEMPLATE_PATHS,
+	PR_TEMPLATE_DIRS,
 	packetSummary,
 	parseActor,
 	parseAssignment,
@@ -543,7 +544,10 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 				return handoff("pr_conflict", `PR #${other.number} already uses ${branch} with a different base or head`);
 			const bodyFile = join(stateDir, "pr-body.md");
 			let template: string | undefined;
-			for (const path of PR_TEMPLATE_PATHS) {
+			for (const dir of PR_TEMPLATE_DIRS) {
+				const listed = await deps.run(gitArgv.baseList(worktree, options.base, dir), { cwd: worktree });
+				const path = listed.exitCode === 0 ? findPrTemplate(dir, listed.stdout) : undefined;
+				if (path === undefined) continue;
 				const shown = await deps.run(gitArgv.baseFile(worktree, options.base, path), { cwd: worktree });
 				if (shown.exitCode === 0 && shown.stdout.trim() !== "") {
 					template = shown.stdout;
