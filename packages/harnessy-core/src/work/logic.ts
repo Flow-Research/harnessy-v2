@@ -1252,7 +1252,8 @@ export interface WorkState {
 	readonly headSha?: string;
 	readonly repoName?: string;
 	readonly pr?: { readonly url: string; readonly number: number };
-	readonly reviewRequested?: boolean;
+	/** Checks passed and the PR was marked ready. Older state's `reviewRequested` did not mean this. */
+	readonly readyMarked?: boolean;
 	readonly mergeCommitSha?: string;
 	readonly admissionId?: string;
 	readonly submission?: unknown;

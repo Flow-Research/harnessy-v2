@@ -458,6 +458,17 @@ describe("runWork", () => {
 		expect(retried.calls).toContainEqual(["gh", "pr", "ready", "7"]);
 	});
 
+	it("marks ready a PR left as a draft by older state", async () => {
+		await runWork({ ...options, approvePush: false }, fakeTools(root).deps);
+		const statePath = join(root, "state", TASK, "state.json");
+		await runWork(options, fakeTools(root, { checksExit: 1 }).deps);
+		const legacy = JSON.parse(readFileSync(statePath, "utf8"));
+		writeFileSync(statePath, JSON.stringify({ ...legacy, reviewRequested: true }));
+		const resumed = fakeTools(root);
+		expect((await runWork(options, resumed.deps)).report).toMatchObject({ status: "submitted" });
+		expect(resumed.calls).toContainEqual(["gh", "pr", "ready", "7"]);
+	});
+
 	it("does not mark ready a PR whose head moved while checks ran", async () => {
 		const moved = fakeTools(root, { prStates: [ourPr("OPEN"), ourPr("OPEN", { headRefOid: "b".repeat(40) })] });
 		const outcome = await runWork(options, moved.deps);
