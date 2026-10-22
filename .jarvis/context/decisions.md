@@ -79,7 +79,15 @@
     so quoted and renamed paths cannot hide), detects a rewritten worktree `.git`
     file, and pushes only the exact commit, and only on a re-run with
     `--approve-push` after local review.
-  - PRs open as drafts. An existing PR is adopted only when it is in the same
+  - PRs open as drafts and are marked ready only after `gh pr checks --watch`
+    passes for the pushed commit; a failed check leaves the draft. Merging
+    still needs a person, and the merge must carry human review evidence. The
+    PR body follows the base branch's PR template (read with `git show
+    origin/<base>:<path>`, so the agent cannot edit it): Harnessy fills
+    Summary, Scope, Design, duplicate/idempotency and privacy/security from
+    facts it controls and leaves the other sections for the reviewer. The body
+    is never proof.
+  - An existing PR is adopted only when it is in the same
     repository (not a fork) with the same head branch, base and pushed SHA.
     The merged head must equal the pushed SHA, and CI evidence must be a
     completed run for that SHA. Proof fields are read from `gh` and `git` at

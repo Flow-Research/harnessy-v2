@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { crc32 } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,6 +14,7 @@ import {
 	compareVersions,
 	EXIT_MARKER_REGEX,
 	evaluateStopRule,
+	findPrTemplate,
 	ghArgv,
 	gitArgv,
 	herdrArgv,
@@ -34,6 +36,7 @@ import {
 	parseRunList,
 	parseState,
 	parseVersion,
+	prBody,
 	prMismatch,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
@@ -86,6 +89,9 @@ describe("argv builders", () => {
 		gitArgv.push("/wt", `work/${TASK}`, "abc"),
 		ghArgv.prCreate("dev", `work/${TASK}`, "Title with `backticks` and $(subshell)", "/wt/body.md"),
 		ghArgv.checksWatch(7),
+		ghArgv.prReady(7),
+		gitArgv.baseFile("/wt", "dev", "PULL_REQUEST_TEMPLATE.md"),
+		gitArgv.baseList("/wt", "dev", ".github"),
 		ghArgv.runList("head-sha"),
 		ghArgv.prList(`work/${TASK}`),
 		ghArgv.prView(7),
@@ -627,5 +633,106 @@ describe("proof", () => {
 		expect(zip.readUInt32LE(centralOffset)).toBe(0x02014b50);
 		expect(centralOffset + end.readUInt32LE(12) + 22).toBe(zip.length);
 		expect(() => zipSingleFile("/abs", content)).toThrow();
+	});
+});
+
+describe("pull request body", () => {
+	const task = { id: "t-1", title: "Fix it", description: "Do it." };
+	// The Flow-Research PR template linter's required headings and pattern.
+	const required = [
+		"Scope",
+		"Invariants",
+		"Design",
+		"Duplicate and idempotency review",
+		"Privacy and security review",
+		"Verification",
+	];
+	const passesLinter = (body: string) =>
+		required.every((section) => new RegExp(`^\\s*#+\\s*${section}\\s*$`, "im").test(body));
+
+	it("fills the repository template and keeps reviewer sections", () => {
+		const template = readFileSync(new URL("../../../PULL_REQUEST_TEMPLATE.md", import.meta.url), "utf8");
+		const body = prBody(task, undefined, 0.83, "Froze the clock.", ["a.ts", "b.ts"], template);
+		expect(passesLinter(body)).toBe(true);
+		expect(body).toContain("- In scope: 2 changed files:\n\n```text\na.ts\nb.ts\n```");
+		expect(body).toContain("Agent cost: 0.83 USD.");
+		expect(body).toContain("## Agent declaration");
+		expect(body).not.toContain("- Stable idempotency/dedupe key:");
+	});
+
+	it("finds a template case-insensitively as .md or .txt", () => {
+		expect(findPrTemplate(".github", "ISSUE_TEMPLATE\npull_request_template.md\n")).toBe(
+			".github/pull_request_template.md",
+		);
+		expect(findPrTemplate("", "README.md\nPULL_REQUEST_TEMPLATE.txt\n")).toBe("PULL_REQUEST_TEMPLATE.txt");
+		expect(findPrTemplate("docs", "pull_request_template.markdown\n")).toBeUndefined();
+	});
+
+	it("ignores headings inside code fences and HTML comments", () => {
+		const template = [
+			"## Summary",
+			"## Invariants",
+			"<!--",
+			"## Summary",
+			"Write a summary here.",
+			"-->",
+			"```md",
+			"## Scope",
+			"```",
+			"## Scope",
+			"- In scope:",
+		].join("\n");
+		const body = prBody(task, undefined, 1, "ok", ["a.ts"], template);
+		expect(body).toContain("<!--\n## Summary\nWrite a summary here.\n-->");
+		expect(body).toContain("```md\n## Scope\n```");
+		expect(body.match(/Automated change by/g)).toHaveLength(1);
+		expect(body).toContain("- In scope: 1 changed file:");
+		expect(body).not.toContain("- In scope:\n");
+	});
+
+	it("follows CommonMark for indented headings and fence closers", () => {
+		const template = [
+			"## Summary",
+			"## Invariants",
+			"    ## Summary",
+			"```js",
+			"## Scope",
+			"```js",
+			"## Design",
+			"```",
+			"\t```",
+			"## Scope",
+			"- In scope:",
+		].join("\n");
+		const body = prBody(task, undefined, 1, "ok", ["a.ts"], template);
+		expect(body).toContain("## Invariants\n    ## Summary");
+		expect(body).toContain("```js\n## Scope\n```js\n## Design\n```");
+		expect(body.match(/Automated change by/g)).toHaveLength(1);
+		expect(body).toContain("- In scope: 1 changed file:");
+	});
+
+	it("falls back when the only matching headings are examples", () => {
+		const body = prBody(task, undefined, 1, "ok", ["a.ts"], "<!--\n## Summary\n-->\n```\n## Scope\n```\n");
+		expect(passesLinter(body)).toBe(true);
+		expect(body).toContain("Automated change by");
+	});
+
+	it("falls back to the built-in body when no template section is recognised", () => {
+		const body = prBody(task, undefined, 1, "ok", ["a.ts"], "Summary\n=======\n\nScope\n-----\n");
+		expect(passesLinter(body)).toBe(true);
+		expect(body).toContain("## Summary");
+		expect(body).not.toContain("=======");
+	});
+
+	it("keeps agent-controlled paths inside a fence", () => {
+		const body = prBody(task, undefined, 1, "ok", ["a`b.ts", "x\n## Verification\n- [x] faked"]);
+		expect(body).toContain("```text\na`b.ts\nx\n## Verification\n- [x] faked\n```");
+	});
+
+	it("passes the linter without a template and fences the agent report", () => {
+		const body = prBody(task, undefined, 1, "```\n## Verification\nfake", []);
+		expect(passesLinter(body)).toBe(true);
+		expect(body).toContain("````text\n```\n## Verification\nfake\n````");
+		expect(body).toContain("- In scope: 0 changed files.");
 	});
 });

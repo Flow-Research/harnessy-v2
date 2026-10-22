@@ -273,6 +273,23 @@ export const gitArgv = {
 		"--name-only",
 		`origin/${base}...${sha}`,
 	],
+	/** Entries of one directory on the base branch. */
+	baseList: (worktree: string, base: string, dir: string) => [
+		"git",
+		"-C",
+		worktree,
+		"ls-tree",
+		"--name-only",
+		`origin/${base}:${dir}`,
+	],
+	/** A file as committed on the base branch, so the agent's worktree cannot change it. */
+	baseFile: (worktree: string, base: string, path: string) => [
+		"git",
+		"-C",
+		worktree,
+		"show",
+		`origin/${base}:${path}`,
+	],
 	/** Pushes the exact reviewed commit, not whatever HEAD is at push time. */
 	push: (worktree: string, branch: string, sha: string) => [
 		"git",
@@ -320,6 +337,8 @@ export const ghArgv = {
 		bodyFile,
 	],
 	checksWatch: (pr: number) => ["gh", "pr", "checks", String(pr), "--watch"],
+	/** Leaves draft only after the pushed commit's checks pass; merging still needs a person. */
+	prReady: (pr: number) => ["gh", "pr", "ready", String(pr)],
 	runList: (commit: string) => [
 		"gh",
 		"run",
@@ -731,6 +750,8 @@ export type HandoffReason =
 	| "worktree_tampered"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
+	| "checks_not_passed"
+	| "pr_not_ready"
 	| "agent_wait_failed"
 	| "unreviewed_merge"
 	| "head_mismatch"
@@ -866,22 +887,136 @@ export const agentPrompt = (task: WorkTask): string => {
 	].join("\n");
 };
 
-/** Pull request body. Task text and the agent's reason are content only. */
-export const prBody = (task: WorkTask, taskUrl: string | undefined, costUsd: number, agentReason: string): string =>
-	[
-		"## Summary",
-		"",
-		`Automated change for WorkStream task ${taskUrl === undefined ? `\`${task.id}\`` : `[${task.id}](${taskUrl})`}.`,
-		"",
-		"## Agent report",
-		"",
-		agentReason,
-		"",
-		`Agent cost: ${costUsd} USD.`,
-		"",
-		"Opened as a draft by `harnessy work`. Review the diff, mark it ready and merge to let the loop submit proof to WorkStream.",
-		"",
-	].join("\n");
+/** Directories GitHub searches for a pull request template, in its order of precedence. */
+export const PR_TEMPLATE_DIRS = [".github", "", "docs"] as const;
+
+const PR_TEMPLATE_NAME = /^pull_request_template\.(md|txt)$/i;
+
+/** The template file in one directory listing (`git ls-tree --name-only`), matched case-insensitively. */
+export const findPrTemplate = (dir: string, listing: string): string | undefined => {
+	const name = listing
+		.split("\n")
+		.map((line) => line.trim())
+		.find((line) => PR_TEMPLATE_NAME.test(line));
+	return name === undefined ? undefined : dir === "" ? name : `${dir}/${name}`;
+};
+
+const MAX_LISTED_PATHS = 50;
+
+/** Markdown heading text, lower-cased, or undefined for a non-heading line. */
+const headingName = (line: string): string | undefined => {
+	// CommonMark ATX heading: at most three spaces of indentation.
+	const match = /^ {0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/.exec(line);
+	return match?.[1]?.toLowerCase();
+};
+
+/**
+ * The section heading name of each line, or undefined. Headings inside a code
+ * fence or an HTML comment are examples, not sections (CommonMark: fences have
+ * at most three spaces before them, and a closer has only whitespace after it).
+ */
+const sectionHeadings = (lines: ReadonlyArray<string>): Array<string | undefined> => {
+	let fence: string | undefined;
+	let inComment = false;
+	return lines.map((line) => {
+		const fenceMark = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+		const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1];
+		const literal = fence !== undefined || inComment;
+		if (fence !== undefined) {
+			if (closer !== undefined && closer[0] === fence[0] && closer.length >= fence.length) fence = undefined;
+		} else if (inComment) {
+			if (line.includes("-->")) inComment = false;
+		} else if (fenceMark !== undefined) fence = fenceMark;
+		else if (line.includes("<!--") && !line.slice(line.indexOf("<!--")).includes("-->")) inComment = true;
+		return literal || fence !== undefined || inComment ? undefined : headingName(line);
+	});
+};
+
+/**
+ * Pull request body. With the base branch's template, Harnessy fills the
+ * sections it can answer from facts it controls and keeps every other section
+ * verbatim for the reviewer. Task text and the agent's reason are content only.
+ */
+export const prBody = (
+	task: WorkTask,
+	taskUrl: string | undefined,
+	costUsd: number,
+	agentReason: string,
+	changedPaths: readonly string[] = [],
+	template?: string,
+): string => {
+	const taskRef = taskUrl === undefined ? `\`${task.id}\`` : `[${task.id}](${taskUrl})`;
+	const reasonFence = fenceFor(agentReason);
+	// Paths come from the agent's worktree: a fenced block keeps backticks and newlines inert.
+	const listed = changedPaths.slice(0, MAX_LISTED_PATHS);
+	const more = changedPaths.length - listed.length;
+	const pathFence = fenceFor(listed.join("\n"));
+	const filled: Record<string, readonly string[]> = {
+		summary: [
+			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. Agent cost: ${costUsd} USD.`,
+			"",
+			"Opened as a draft and marked ready only after the pushed commit's checks pass. A person reviews and merges; the merge lets the loop submit proof to WorkStream. Sections Harnessy cannot answer are left for the reviewer.",
+		],
+		scope: [
+			`- In scope: ${changedPaths.length} changed file${changedPaths.length === 1 ? "" : "s"}${listed.length > 0 ? ":" : "."}`,
+			...(listed.length > 0 ? ["", `${pathFence}text`, ...listed, pathFence, ""] : []),
+			...(more > 0 ? [`  and ${more} more.`] : []),
+			"- Out of scope: everything else. Harnessy refuses changes to CI configuration.",
+		],
+		design: ["Agent report (written by the agent; untrusted):", "", `${reasonFence}text`, agentReason, reasonFence],
+		"duplicate and idempotency review": [
+			"- `harnessy work` keeps idempotency keys and step results in a private state directory, so a re-run resumes without a second claim, push, pull request or submission.",
+			"- Reviewer: check the change itself for duplicate or non-idempotent effects.",
+		],
+		"privacy and security review": [
+			"- The agent ran in its own worktree with restricted Claude Code permissions and no repository credentials; the task text was given to it as untrusted data.",
+			"- The WorkStream proof is built only from git and GitHub, not from this description.",
+			"- Reviewer: check the diff for secrets, private data and permission changes.",
+		],
+	};
+	// A template with no section Harnessy recognises (for example Setext headings) gets the built-in body.
+	const recognised =
+		template !== undefined &&
+		sectionHeadings(template.replace(/\r\n/g, "\n").split("\n")).some(
+			(name) => name !== undefined && filled[name] !== undefined,
+		);
+	if (template === undefined || template.trim() === "" || !recognised) {
+		const sections = [
+			"Summary",
+			"Scope",
+			"Design",
+			"Duplicate and idempotency review",
+			"Privacy and security review",
+		];
+		return [
+			...sections.flatMap((name) => [`## ${name}`, "", ...(filled[name.toLowerCase()] ?? []), ""]),
+			"## Invariants",
+			"",
+			"- Reviewer: list the rules that must stay true.",
+			"",
+			"## Verification",
+			"",
+			"- CI on the pushed commit; the reviewer records anything else run.",
+			"",
+		].join("\n");
+	}
+	const lines = template.replace(/\r\n/g, "\n").split("\n");
+	const headings = sectionHeadings(lines);
+	const out: string[] = [];
+	let skipping = false;
+	lines.forEach((line, index) => {
+		const name = headings[index];
+		if (name !== undefined) {
+			const content = filled[name];
+			out.push(line);
+			skipping = content !== undefined;
+			if (content !== undefined) out.push("", ...content, "");
+			return;
+		}
+		if (!skipping) out.push(line);
+	});
+	return `${out.join("\n").trimEnd()}\n`;
+};
 
 /** Pull request number from the URL `gh pr create` prints. */
 export const parsePrUrl = (stdout: string): { readonly url: string; readonly number: number } => {
@@ -1071,7 +1206,8 @@ export interface WorkState {
 	readonly headSha?: string;
 	readonly repoName?: string;
 	readonly pr?: { readonly url: string; readonly number: number };
-	readonly reviewRequested?: boolean;
+	/** Checks passed and the PR was marked ready. Older state's `reviewRequested` did not mean this. */
+	readonly readyMarked?: boolean;
 	readonly mergeCommitSha?: string;
 	readonly admissionId?: string;
 	readonly submission?: unknown;

@@ -14,6 +14,7 @@ import {
 	ciConfigPaths,
 	evaluateStopRule,
 	field,
+	findPrTemplate,
 	ghArgv,
 	gitArgv,
 	type HandoffReason,
@@ -21,6 +22,7 @@ import {
 	isTaskId,
 	managedClaudeSettingsPaths,
 	missingClaudeFlags,
+	PR_TEMPLATE_DIRS,
 	packetSummary,
 	parseActor,
 	parseAssignment,
@@ -103,6 +105,10 @@ export interface WorkOutcome {
 
 const CHECKS_TIMEOUT_MS = 60 * 60 * 1000;
 const MERGE_POLL_MS = 60 * 1000;
+/** Right after a push GitHub may not list the new commit's checks yet. */
+const CHECKS_APPEAR_MS = 10 * 60 * 1000;
+const CHECKS_APPEAR_POLL_MS = 20 * 1000;
+const NO_CHECKS_YET = /no checks reported/i;
 const PREPARE_POLL_MS = 10 * 1000;
 const PREPARE_ATTEMPTS = 60;
 const CI_ATTEMPTS = 30;
@@ -477,7 +483,20 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			if (other !== undefined)
 				return handoff("pr_conflict", `PR #${other.number} already uses ${branch} with a different base or head`);
 			const bodyFile = join(stateDir, "pr-body.md");
-			writePrivate(bodyFile, prBody(task, options.taskUrl, agent.costUsd, agent.reason));
+			let template: string | undefined;
+			// The base may have moved during local review; read the current template.
+			await must(gitArgv.fetch(repo), "git fetch");
+			for (const dir of PR_TEMPLATE_DIRS) {
+				const listed = await deps.run(gitArgv.baseList(worktree, options.base, dir), { cwd: worktree });
+				const path = listed.exitCode === 0 ? findPrTemplate(dir, listed.stdout) : undefined;
+				if (path === undefined) continue;
+				const shown = await deps.run(gitArgv.baseFile(worktree, options.base, path), { cwd: worktree });
+				if (shown.exitCode === 0 && shown.stdout.trim() !== "") {
+					template = shown.stdout;
+					break;
+				}
+			}
+			writePrivate(bodyFile, prBody(task, options.taskUrl, agent.costUsd, agent.reason, changed, template));
 			const created = parsePrUrl(
 				await must(ghArgv.prCreate(options.base, branch, state.summary, bodyFile), "gh pr create", worktree),
 			);
@@ -492,15 +511,41 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 	const pr = state.pr ?? { url: "", number: 0 };
 	const expectedPr = { repo: state.repoName ?? "", branch, base: options.base, number: pr.number };
 
-	if (state.reviewRequested !== true) {
+	if (state.readyMarked !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
-		const checks = await deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
-		const verdict = checks.exitCode === 0 ? "checks passed" : "checks need attention";
-		await notify(
-			deps,
-			`Draft PR #${pr.number} is ready to review (${verdict}). Mark it ready and merge when satisfied.`,
-		);
-		save({ reviewRequested: true });
+		const watch = () => deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
+		let checks = await watch();
+		const appearBy = deps.now() + CHECKS_APPEAR_MS;
+		while (
+			checks.exitCode !== 0 &&
+			NO_CHECKS_YET.test(`${checks.stdout}\n${checks.stderr}`) &&
+			deps.now() < appearBy
+		) {
+			await deps.sleep(CHECKS_APPEAR_POLL_MS);
+			checks = await watch();
+		}
+		// Failed, pending or timed-out checks are not a verdict yet: stop, and let a re-run check again.
+		if (checks.exitCode !== 0)
+			return handoff(
+				"checks_not_passed",
+				`checks on PR #${pr.number} have not passed (gh exit ${checks.exitCode}); it stays a draft. Re-run once they pass, or close the PR.`,
+			);
+		// Mark ready only the reviewed commit: the branch could have moved while checks ran.
+		const current = parsePrView(await must(ghArgv.prView(pr.number), "gh pr view", worktree));
+		const moved =
+			prMismatch(current, expectedPr) ??
+			(current.headSha === headSha
+				? undefined
+				: `PR #${pr.number} head is ${current.headSha}, not the pushed ${headSha}`);
+		if (moved !== undefined) return handoff("pr_mismatch", moved);
+		if (current.state === "OPEN") {
+			const ready = await deps.run(ghArgv.prReady(pr.number), { cwd: worktree });
+			// Not recorded as requested, so a re-run tries again.
+			if (ready.exitCode !== 0)
+				return handoff("pr_not_ready", `PR #${pr.number} passed its checks but could not be marked ready`);
+			await notify(deps, `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`);
+		}
+		save({ readyMarked: true });
 	}
 
 	if (state.mergeCommitSha === undefined) {
