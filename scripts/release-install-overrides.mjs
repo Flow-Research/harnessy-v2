@@ -9,10 +9,14 @@
  * GHSA-rvq5-wwqv-78pq. The engine bundles its runtime code at build time, so
  * the installed copy supplies types only. The flat form works for npm and for Bun,
  * which supports only top-level overrides; every other consumer already
- * resolves the same version. The root workspace applies the same flat pin
- * (asserted in harnessy-release-contract.test.mjs).
+ * resolves the same version. `effect@4.0.0-beta.85`, a runtime dependency of
+ * the core, local-host, SDK and engine packages, declares `toml@^4.1.1`; every
+ * 4.x release is affected by GHSA-4qx8-w7c3-pj3p, GHSA-9j65-hcg3-gc64 and
+ * GHSA-9qmh-m7c6-f92p, fixed only in 5.0.1, so the toml pin crosses that range.
+ * The root workspace applies the same flat pins (asserted in
+ * harnessy-release-contract.test.mjs).
  */
-export const releaseInstallOverrides = Object.freeze({ "@modelcontextprotocol/sdk": "1.32.1" });
+export const releaseInstallOverrides = Object.freeze({ "@modelcontextprotocol/sdk": "1.32.1", toml: "5.0.1" });
 
 /** `package.json` for an isolated install of the given release tarballs. */
 export const releaseInstallManifest = (dependencies) => ({
