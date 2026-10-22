@@ -101,6 +101,7 @@
 		"@typescript/native-preview": "7.0.0-dev.20260120.1",
 		"@vitest/coverage-v8": "4.1.12",
 		"agents": "0.17.3",
+		"effect": "4.0.0-beta.85",
 		"esbuild": "0.28.1",
 		"husky": "9.1.7",
 		"jiti": "2.7.0",
@@ -132,7 +133,7 @@
 		"browserslist": "4.28.8",
 		"fast-uri": "3.1.8",
 		"hono": "4.13.13",
-		"ip-address": "10.7.3",
+		"ip-address": "10.7.4",
 		"postcss": {
 			".": "8.5.26",
 			"nanoid": "3.3.18"
@@ -141,7 +142,7 @@
 		"qs": "6.16.0",
 		"rimraf": "6.1.2",
 		"sharp": "0.35.5",
-		"toml": "4.3.0",
+		"toml": "5.0.1",
 		"gaxios": {
 			"rimraf": "6.1.2"
 		},
