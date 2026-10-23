@@ -74,6 +74,15 @@
 
 ### Fixed
 
+- `harnessy work` no longer commits raw bytes for paths that a configured git
+  filter driver (for example `filter=lfs`) should clean. Harnessy keeps filter
+  drivers off on its own git commands, so before `git add --all` it asks
+  `git check-attr -z filter` about every path the commit would include, both
+  the paths it would stage and the ones already staged. When a path
+  names a driver defined in git config, the run hands off with
+  `filter_driver_paths` and commits nothing. The handoff tells the reviewer to
+  restage those paths with the filter enabled (`git add --renormalize`) and
+  check the staged content before committing.
 - `harnessy work` now tells the agent exactly which commands it can run. With
   `--agent-allow`, the prompt lists the allowed command patterns (for example
   `node_modules/.bin/vitest run <args>`). It says that other runners such as

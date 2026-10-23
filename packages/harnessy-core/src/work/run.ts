@@ -40,6 +40,7 @@ import {
 	type DepCopyMethod,
 	evaluateStopRule,
 	field,
+	filterDriverNames,
 	filterOverrides,
 	findPrTemplate,
 	ghArgv,
@@ -67,6 +68,7 @@ import {
 	parseRunList,
 	parseState,
 	parseTask,
+	pathsWithDriver,
 	prBody,
 	prMismatch,
 	protectedWorktreeRules,
@@ -154,6 +156,7 @@ const PREPARE_ATTEMPTS = 60;
 const CI_ATTEMPTS = 30;
 const PROBE_TIMEOUT_MS = 30 * 1000;
 const MIN_WAIT_MS = 1000;
+const ATTR_BATCH = 200;
 
 /** Live process runner: argv only, `shell: false`, bounded buffers. */
 export const execRun: Run = (argv, options) =>
@@ -408,7 +411,8 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 
 	// Every git command from here on switches off the filter drivers that the user's and the
 	// system's git config define, so the task branch's .gitattributes cannot invoke one.
-	const filterOff = filterOverrides((await deps.run(gitArgv.filterNames(repo))).stdout);
+	const filterDrivers = filterDriverNames((await deps.run(gitArgv.filterNames(repo))).stdout);
+	const filterOff = filterOverrides(filterDrivers);
 	const work: WorkDeps = {
 		...deps,
 		run: (argv, runOptions) =>
@@ -515,6 +519,27 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	 * `node_modules` and `dist` directories: staged outside the worktree,
 	 * secrets withheld, renamed into place, then audited once.
 	 */
+	/** Paths the commit would include whose `filter` attribute names a configured driver. */
+	const pathsUsingDrivers = async (): Promise<ReadonlyArray<string>> => {
+		if (filterDrivers.length === 0) return [];
+		// What git add --all would stage, plus what an earlier run or a person already staged.
+		const listed = `${await must(gitArgv.changedForAdd(worktree), "git ls-files", worktree)}\0${await must(gitArgv.stagedPaths(worktree), "git diff --cached", worktree)}`;
+		const changed = [...new Set(listed.split("\0").filter((path) => path !== ""))];
+		const driven: string[] = [];
+		// Bounded argv: check-attr reads the paths from the command line.
+		for (let start = 0; start < changed.length; start += ATTR_BATCH)
+			driven.push(
+				...pathsWithDriver(
+					await must(
+						gitArgv.filterAttribute(worktree, changed.slice(start, start + ATTR_BATCH)),
+						"git check-attr",
+						worktree,
+					),
+					filterDrivers,
+				),
+			);
+		return [...new Set(driven)];
+	};
 	const copyAgentDeps = async (): Promise<WorkOutcome | undefined> => {
 		const sources = parseDepDirs(await must(gitArgv.ignoredDirs(repo), "git ls-files"));
 		if (sources.length === 0) {
@@ -769,6 +794,17 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			);
 		}
 		if (dirty > 0) {
+			// Harnessy keeps filter drivers off, so it would commit raw bytes where a driver
+			// (such as git-lfs) should have cleaned them; such changes go to a person instead.
+			const driven = await pathsUsingDrivers();
+			if (driven.length > 0) {
+				save({ spentUsd: (state.spentUsd ?? 0) + decision.costUsd });
+				return handoff(
+					"filter_driver_paths",
+					`these changed paths use the git filter driver ${filterDrivers.join(", ")}, which Harnessy keeps off; nothing was committed. Review the change, then restage these paths with the filter enabled (for example \`git add --renormalize -- <paths>\` for tracked paths, or \`git add -- <paths>\` for new files; a path staged while the filter was off keeps its raw blob until restaged), check the staged content with \`git diff --cached\`, and commit`,
+					{ paths: driven, cost_usd: decision.costUsd },
+				);
+			}
 			await must(gitArgv.addAll(worktree), "git add");
 			await must(gitArgv.commit(worktree, options.task), "git commit");
 		}
