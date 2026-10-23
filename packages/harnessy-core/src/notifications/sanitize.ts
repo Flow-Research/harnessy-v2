@@ -47,6 +47,27 @@ const homeSpellings = (home: string): ReadonlyArray<string> => {
  */
 export const MIN_SECRET_LENGTH = 8;
 
+/** Secrets learnt while running, such as a GitHub App installation token. */
+const registered = new Set<string>();
+
+/**
+ * Add a value that `redact` and `redactSecrets` remove from now on, in this
+ * process. Values shorter than `MIN_SECRET_LENGTH` are ignored.
+ */
+export const registerSecret = (secret: string): void => {
+	if (secret.length >= MIN_SECRET_LENGTH) registered.add(secret);
+};
+
+const withoutSecrets = (text: string, secrets: Iterable<string>): string => {
+	let out = text;
+	for (const secret of secrets)
+		if (secret.length >= MIN_SECRET_LENGTH) out = out.replace(new RegExp(escapeRegExp(secret), "gu"), "<redacted>");
+	return out;
+};
+
+/** Replace only the registered secrets, keeping paths: for log lines and reports. */
+export const redactSecrets = (text: string): string => withoutSecrets(text, registered);
+
 export interface SanitizeOptions {
 	/** The user's home directory; paths under it become `~`. */
 	readonly home?: string;
@@ -56,16 +77,16 @@ export interface SanitizeOptions {
 
 /**
  * Replace secrets and private paths in `text`:
- * configured secret values, URL credentials, `key=value` secrets, known token
+ * configured and registered secret values, URL credentials, `key=value` secrets, known token
  * formats and long opaque strings become `<redacted>`; the home directory
  * becomes `~`; any other absolute path becomes `<path>`. Control and
  * direction-changing characters are removed.
  */
 export const redact = (text: string, options: SanitizeOptions = {}): string => {
-	let out = text.replace(INVISIBLE, "").replace(CONTROL, " ");
-	for (const secret of options.secrets ?? [])
-		if (secret.length >= MIN_SECRET_LENGTH) out = out.replace(new RegExp(escapeRegExp(secret), "gu"), "<redacted>");
-	out = out
+	let out = withoutSecrets(text.replace(INVISIBLE, "").replace(CONTROL, " "), [
+		...(options.secrets ?? []),
+		...registered,
+	])
 		.replace(URL_USERINFO, "$1")
 		.replace(SECRET_ASSIGNMENT, "$1$2$3$4<redacted>")
 		.replace(KNOWN_TOKEN, "<redacted>")

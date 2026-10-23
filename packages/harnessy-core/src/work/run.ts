@@ -14,8 +14,9 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import * as Result from "effect/Result";
-import type { NotifyMode } from "../notifications/config.ts";
+import { type NotifyMode, settingsPath } from "../notifications/config.ts";
 import { liveNotifier, type Notification } from "../notifications/notifier.ts";
+import { redactSecrets } from "../notifications/sanitize.ts";
 import {
 	auditCopy,
 	copyTree,
@@ -28,6 +29,15 @@ import {
 	stageable,
 	stripSensitive,
 } from "./deps.ts";
+import {
+	GitHubAppAuthError,
+	type GitHubAppRun,
+	type GitHubFetch,
+	type GitHubSettingsRead,
+	readGitHubSettings,
+	resolveGitHubApp,
+	setUpGitHubApp,
+} from "./github-app.ts";
 import {
 	ATTESTATION,
 	agentPrompt,
@@ -109,7 +119,12 @@ export interface RunResult {
 /** The only process seam: an argv array, never a shell string. */
 export type Run = (
 	argv: ReadonlyArray<string>,
-	options?: { readonly cwd?: string; readonly timeoutMs?: number },
+	options?: {
+		readonly cwd?: string;
+		readonly timeoutMs?: number;
+		/** Added to this process's environment for this one child only. */
+		readonly env?: Readonly<Record<string, string>>;
+	},
 ) => Promise<RunResult>;
 
 /** Everything `runWork` touches besides the worktree and the private state directory. */
@@ -126,6 +141,17 @@ export interface WorkDeps {
 	readonly managedSettingsPaths: ReadonlyArray<string>;
 	/** Tell the person something needs them. A failure here never fails the run. */
 	readonly notify: (notification: Notification) => Promise<void>;
+	/** What `--github-app` needs; without it the flag is refused. */
+	readonly githubApp?: GitHubAppDeps;
+}
+
+/** Settings and seams for acting as a GitHub App. */
+export interface GitHubAppDeps {
+	readonly settings: GitHubSettingsRead;
+	/** `HSY_GITHUB_APP_KEY_FILE`: the app's PEM private key file. */
+	readonly keyFileEnv?: string;
+	readonly fetch: GitHubFetch;
+	readonly readFile: (path: string) => string;
 }
 
 export interface WorkOptions {
@@ -151,6 +177,8 @@ export interface WorkOptions {
 	readonly revise?: string;
 	/** Push the reviewed local commit. Without it the run stops after the commit for review. */
 	readonly approvePush: boolean;
+	/** Push and call `gh` as this GitHub App (its slug) instead of the operator's account. */
+	readonly githubApp?: string;
 	readonly dryRun: boolean;
 }
 
@@ -160,6 +188,8 @@ export interface WorkOutcome {
 }
 
 const CHECKS_TIMEOUT_MS = 60 * 60 * 1000;
+/** As the app, one `gh pr checks --watch` runs at most this long, so a fresh token outlives it. */
+const APP_CHECKS_SLICE_MS = 40 * 60 * 1000;
 const MERGE_POLL_MS = 60 * 1000;
 /** Right after a push GitHub may not list the new commit's checks yet. */
 const CHECKS_APPEAR_MS = 10 * 60 * 1000;
@@ -185,6 +215,7 @@ export const execRun: Run = (argv, options) =>
 			args,
 			{
 				cwd: options?.cwd,
+				...(options?.env === undefined ? {} : { env: { ...process.env, ...options.env } }),
 				timeout: options?.timeoutMs ?? 0,
 				shell: false,
 				windowsHide: true,
@@ -210,8 +241,9 @@ export const defaultStateRoot = (): string =>
 
 /** Live dependencies for the CLI; `notifyMode` is the `--notify` flag, when given. */
 export const liveWorkDeps = (notifyMode?: NotifyMode): WorkDeps => {
+	// A minted GitHub App token is registered as a secret before any line could carry it.
 	const log = (line: string) => {
-		process.stderr.write(`${line}\n`);
+		process.stderr.write(`${redactSecrets(line)}\n`);
 	};
 	return {
 		run: execRun,
@@ -223,6 +255,14 @@ export const liveWorkDeps = (notifyMode?: NotifyMode): WorkDeps => {
 		stateRoot: defaultStateRoot(),
 		managedSettingsPaths: managedClaudeSettingsPaths(process.platform),
 		notify: liveNotifier(notifyMode, log).notify,
+		githubApp: {
+			settings: readGitHubSettings(settingsPath(process.env, homedir())),
+			...(process.env.HSY_GITHUB_APP_KEY_FILE === undefined
+				? {}
+				: { keyFileEnv: process.env.HSY_GITHUB_APP_KEY_FILE }),
+			fetch: (url, init) => globalThis.fetch(url, init),
+			readFile: (path) => readFileSync(path, "utf8"),
+		},
 	};
 };
 
@@ -354,7 +394,24 @@ const takeTaskLock = (lock: string): number | undefined => {
  * One run per task at a time: a second invocation (for example `--revise`
  * while an earlier run waits on checks) would act on stale state.
  */
-export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> => {
+export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> =>
+	runWorkLocked(options, deps).catch(async (error: unknown) => {
+		if (!(error instanceof GitHubAppAuthError)) throw error;
+		// Never a silent fallback to the operator's account: the run stops before the GitHub step.
+		await tell(deps, handoffNotification(options.task, "github_app_auth_failed", undefined));
+		return {
+			exitCode: 2,
+			report: {
+				status: "handoff",
+				reason: "github_app_auth_failed",
+				detail: `${error.message}; the GitHub step that needed the app did not run`,
+				task_id: options.task,
+				worktree: worktreePath(resolve(options.repo), options.task),
+			},
+		};
+	});
+
+const runWorkLocked = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> => {
 	if (options.dryRun || !isTaskId(options.task)) return runWorkUnlocked(options, deps);
 	const stateDir = join(deps.stateRoot, options.task);
 	privateDir(stateDir);
@@ -394,6 +451,13 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		settings: join(stateDir, "agent-settings.json"),
 	};
 	const ws = options.workstreamCli;
+	if (options.githubApp !== undefined && deps.githubApp === undefined)
+		throw new Error("--github-app is not available in this environment");
+	const appDeps = deps.githubApp;
+	const appConfig =
+		appDeps === undefined
+			? undefined
+			: resolveGitHubApp(options.githubApp, appDeps.settings, appDeps.keyFileEnv, deps.platform);
 
 	const tools = await preflight(deps, ws, agentAllow.length > 0 && [repo, resolve(worktree, ".."), stateDir]);
 	if (tools.some((tool) => !tool.ok)) return { exitCode: 1, report: { status: "preflight_failed", tools } };
@@ -411,6 +475,15 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				state_dir: stateDir,
 				approve_push: options.approvePush,
 				agent_deps: options.agentDeps ?? "off",
+				...(appConfig === undefined
+					? {}
+					: {
+							github_app: {
+								slug: appConfig.slug,
+								app_id: appConfig.appId,
+								key_source: appConfig.keySource.kind,
+							},
+						}),
 				tools,
 				steps: {
 					whoami: wsArgv.whoami(ws),
@@ -433,13 +506,27 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	// system's git config define, so the task branch's .gitattributes cannot invoke one.
 	const filterDrivers = filterDriverNames((await deps.run(gitArgv.filterNames(repo))).stdout);
 	const filterOff = filterOverrides(filterDrivers);
+	/** Set once the app is ready: every `gh` call then runs with a token only in its own environment. */
+	let app: GitHubAppRun | undefined;
 	const work: WorkDeps = {
 		...deps,
-		run: (argv, runOptions) =>
-			deps.run(argv[0] === "git" ? ["git", ...filterOff, ...argv.slice(1)] : argv, runOptions),
+		run: async (argv, runOptions) => {
+			if (argv[0] === "git") return deps.run(["git", ...filterOff, ...argv.slice(1)], runOptions);
+			if (argv[0] !== "gh" || app === undefined) return deps.run(argv, runOptions);
+			const env = await app.auth.ghEnv(runOptions?.timeoutMs);
+			return deps.run(argv, { ...runOptions, env: { ...runOptions?.env, ...env } });
+		},
 	};
-	const must = async (argv: ReadonlyArray<string>, what: string, cwd?: string): Promise<string> => {
-		const result = await work.run(argv, cwd === undefined ? {} : { cwd });
+	const must = async (
+		argv: ReadonlyArray<string>,
+		what: string,
+		cwd?: string,
+		env?: Readonly<Record<string, string>>,
+	): Promise<string> => {
+		const result = await work.run(argv, {
+			...(cwd === undefined ? {} : { cwd }),
+			...(env === undefined ? {} : { env }),
+		});
 		if (result.exitCode !== 0)
 			throw new Error(
 				`${what} failed (exit ${result.exitCode ?? "none"}): ${result.stderr.trim().slice(0, 500) || "no output"}`,
@@ -516,6 +603,20 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			},
 		};
 	};
+	if (appConfig !== undefined && appDeps !== undefined) {
+		// Checked before anything is claimed, so a broken key or installation stops the run here.
+		deps.log(`Authenticating as GitHub App ${appConfig.slug}`);
+		app = await setUpGitHubApp({
+			config: appConfig,
+			repoPath: repo,
+			task: options.task,
+			run: work.run,
+			fetch: appDeps.fetch,
+			readFile: appDeps.readFile,
+			now: deps.now,
+			stateRoot: deps.stateRoot,
+		});
+	}
 	/** The agent can edit the worktree's `.git` file to point git at a hostile config. */
 	const worktreeIntact = () => readGitFile(worktree) === state.gitFile;
 	/** The same WorkStream actor must run every mutation, including after long waits. */
@@ -826,7 +927,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				);
 			}
 			await must(gitArgv.addAll(worktree), "git add");
-			await must(gitArgv.commit(worktree, options.task), "git commit");
+			await must(gitArgv.commit(worktree, options.task, app?.provenance), "git commit", undefined, app?.identity);
 		}
 		save({
 			agent: { costUsd: decision.costUsd, reason: decision.reason },
@@ -857,7 +958,13 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				},
 			);
 		deps.log(`Pushing ${headSha} to ${branch}`);
-		await must(gitArgv.push(worktree, branch, headSha), "git push");
+		// As the app: a fresh token in the push's own environment, minted before git starts.
+		await must(
+			gitArgv.push(worktree, branch, headSha, app?.auth.pushUrl),
+			"git push",
+			undefined,
+			await app?.auth.pushEnv(),
+		);
 		save({ pushedSha: headSha, readyMarked: undefined });
 	}
 	// A revision pushed to an open PR gets one comment saying what changed; retried until posted.
@@ -905,6 +1012,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 					combinedReports(state.earlierReports ?? [], agent.reason),
 					changed,
 					template,
+					app?.provenance,
 				),
 			);
 			const created = parsePrUrl(
@@ -924,7 +1032,15 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 
 	if (state.readyMarked !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
-		const watch = () => work.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
+		/** As the app, the watch runs in slices, each with a token that outlives it. */
+		const watch = async () => {
+			const until = deps.now() + CHECKS_TIMEOUT_MS;
+			for (;;) {
+				const timeoutMs = app === undefined ? CHECKS_TIMEOUT_MS : Math.min(APP_CHECKS_SLICE_MS, until - deps.now());
+				const result = await work.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs });
+				if (app === undefined || result.timedOut !== true || deps.now() >= until) return result;
+			}
+		};
 		let checks = await watch();
 		const appearBy = deps.now() + CHECKS_APPEAR_MS;
 		while (

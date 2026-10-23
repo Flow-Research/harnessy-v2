@@ -214,3 +214,103 @@ receives one JSON object:
   and the text reaches it only through environment variables.
 - Warnings name what failed (for example `ntfy push failed (HTTP 401)`), never
   a URL, a token or a response body.
+
+## Pushing as a GitHub App
+
+By default `harnessy work` pushes and opens its pull request with your own `gh`
+and git credentials, so the PR is yours and you cannot approve it. With a
+GitHub App, Harnessy's own steps act as the app instead: the push, the draft
+pull request and every later `gh` call. You can then review and approve the
+PR like anyone else's. Without app configuration nothing changes.
+
+### Setup
+
+1. Create a GitHub App (Settings, Developer settings, GitHub Apps) with no
+   webhook and these repository permissions:
+
+   | Permission | Access | Used for |
+   | --- | --- | --- |
+   | Contents | Read and write | `git push` of the reviewed commit |
+   | Pull requests | Read and write | Creating, commenting on, drafting and readying the PR |
+   | Checks | Read | `gh pr checks --watch` |
+   | Metadata | Read | Required by GitHub |
+
+   On a private repository the run evidence (`gh run list`) and commit
+   statuses may also need Actions: read and Commit statuses: read.
+2. Install the app on the repositories `harnessy work` should push to.
+3. Generate a private key and store it (see below). Never commit it.
+4. Add the app to `~/.hsy/agent/settings.json` (or
+   `$HSY_CODING_AGENT_DIR/settings.json`):
+
+   ```json
+   {
+     "operator": "Julian",
+     "github": { "app": { "slug": "flow-research-agents", "id": 5443042 } }
+   }
+   ```
+
+5. Run `harnessy work --github-app flow-research-agents ...`. A configured
+   `github.app.slug` turns the app on without the flag.
+
+| Setting | Meaning |
+| --- | --- |
+| `github.app.slug` | The app's slug. The `--github-app <slug>` flag overrides it and must match it when both are set. |
+| `github.app.id` | The numeric app id (required). |
+| `github.app.keySource` | `keychain` or `file`. Defaults to `file` when a key file is named, else `keychain` on macOS. |
+| `github.app.keyFile` | Path of the PEM private key. `HSY_GITHUB_APP_KEY_FILE` overrides it. |
+| `github.app.botUserId` | Optional. Otherwise Harnessy looks the bot user up once and caches it in `~/.local/state/harnessy/work/github-app/<slug>.json`. |
+| `operator` | The person who runs the agent. Defaults to `git config user.name` of `--repo`. |
+
+### Key storage
+
+On macOS, keep the key in the login keychain as the base64 of the PEM file,
+under service `harnessy.github-app.<slug>` and account `private-key-pem-base64`:
+
+```sh
+security add-generic-password -s harnessy.github-app.flow-research-agents \
+  -a private-key-pem-base64 -w "$(base64 < app.private-key.pem)"
+rm app.private-key.pem
+```
+
+On other systems and in CI, point `HSY_GITHUB_APP_KEY_FILE` (or
+`github.app.keyFile`) at a PEM file readable only by you (`chmod 600`).
+
+### What happens in a run
+
+- Before it claims the task, Harnessy finds the github.com repository behind
+  `--repo`'s `origin`, mints an installation token limited to that one
+  repository and looks up the bot user. If any of this fails, the run stops
+  with the handoff reason `github_app_auth_failed` and nothing is claimed.
+- Each token lasts an hour. Before every `git push` and `gh` call, Harnessy
+  mints a fresh one when less than ten minutes (or less than the call's time
+  limit plus ten minutes) remain. `gh pr checks --watch` runs in slices of at
+  most 40 minutes so a token always outlives it. If a later mint fails, the
+  run stops with `github_app_auth_failed` before that step: there is no
+  partial push and no fallback to your account.
+- The push goes to `https://github.com/<owner>/<repo>.git`. The token reaches
+  git only as an `http.extraheader` in that one child's environment
+  (`GIT_CONFIG_*`): never in the argument list, a URL or a git config file.
+  For the push, user and system git config are skipped, credential helpers
+  are cleared and only HTTPS is allowed, so a rejected token fails the push.
+  Proxy and CA settings from your global git config therefore do not apply
+  to it; use `HTTPS_PROXY` and `GIT_SSL_CAINFO` if you need them.
+- Each `gh` call gets `GH_TOKEN` and `GH_REPO` in its own environment only.
+- Harnessy's commit is authored and committed by
+  `Claude Code agent (operated by <operator>)` with the bot's noreply address
+  `<bot-user-id>+<slug>[bot]@users.noreply.github.com`, so GitHub shows the
+  app. The commit message and the PR summary carry `Agent: Claude Code`,
+  `Operator: <operator>` and `WorkStream-Task: <task id>`.
+
+### What the agent can and cannot see
+
+The agent cannot see the private key or any token. The key is read from the
+keychain or file only when a token is minted and stays in Harnessy's memory.
+Tokens exist only in that memory and in the environment of the one `git push`
+or `gh` child that uses them. The agent's herdr pane, its settings file and
+its prompt never contain them, and the agent already runs with `GH_TOKEN`,
+`GITHUB_TOKEN` and git credentials removed. The agent can see the commit
+identity and trailers, which are not secret.
+
+Harnessy registers the key, every JWT and every token with the notification
+sanitiser as secrets, and redacts them from its log lines, the printed report
+and error messages. None of them is written to the state directory.

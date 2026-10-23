@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -17,7 +18,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Notification } from "../src/notifications/notifier.ts";
+import { registerSecret } from "../src/notifications/sanitize.ts";
 import { stageable } from "../src/work/deps.ts";
+import { type GitHubFetch, gitPushEnv, parseGitHubSettings } from "../src/work/github-app.ts";
 import {
 	filterDriverNames,
 	filterOverrides,
@@ -29,6 +32,7 @@ import { handoffNotification } from "../src/work/notifications.ts";
 import {
 	execRun,
 	liveWorkDeps,
+	type Run,
 	type RunResult,
 	runWork,
 	type WorkDeps,
@@ -41,6 +45,10 @@ const BRANCH = `work/${TASK}`;
 const HEAD = "a".repeat(40);
 const SUBMISSION = "99999999-8888-4777-8666-555555555555";
 const ok = (stdout = ""): RunResult => ({ exitCode: 0, stdout, stderr: "" });
+const APP_KEY_PEM = generateKeyPairSync("rsa", { modulusLength: 2048 })
+	.privateKey.export({ type: "pkcs8", format: "pem" })
+	.toString();
+const APP_KEY_B64 = Buffer.from(APP_KEY_PEM).toString("base64");
 
 interface PrRecord {
 	number: number;
@@ -132,11 +140,19 @@ interface Scenario {
 	submissionId?: string;
 	/** The injected notifier throws instead of recording. */
 	notifyThrows?: boolean;
+	/** `git remote get-url origin` of the source checkout. */
+	originUrl?: string;
+	/** The first this many `gh pr checks --watch` runs hit their time limit, which the clock passes. */
+	checksTimeoutFirst?: number;
+	/** `git config user.name` of the source checkout; unset when undefined. */
+	gitUserName?: string;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
 const fakeTools = (root: string, scenario: Scenario = {}) => {
 	const calls: string[][] = [];
+	/** Every command with its options, for the environment each child got. */
+	const runs: Array<{ argv: string[]; options: Parameters<Run>[1] }> = [];
 	const notices: Notification[] = [];
 	const logs: string[] = [];
 	const submissionStatuses = [...(scenario.submissionStatuses ?? ["review_pending"])];
@@ -165,9 +181,11 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			if (scenario.notifyThrows === true) throw new Error("notifier exploded");
 			notices.push(notification);
 		},
-		run: async (argv) => {
+		run: async (argv, runOptions) => {
 			calls.push([...argv]);
+			runs.push({ argv: [...argv], options: runOptions });
 			const [exe, ...args] = argv;
+			if (exe === "/usr/bin/security") return ok(`${APP_KEY_B64}\n`);
 			const joined = args.join(" ");
 			if (exe === "bwrap" || exe === "socat")
 				return scenario.sandboxTools === false
@@ -219,6 +237,11 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				}
 				if (args.includes("ls-files")) return ok(scenario.ignoredDirs ?? "");
 				if (args.includes("config") && args.includes("--get-regexp")) return ok(scenario.filterKeys ?? "");
+				if (args.includes("get-url")) return ok(scenario.originUrl ?? "git@github.com:flow/app.git\n");
+				if (args.includes("user.name"))
+					return scenario.gitUserName === undefined
+						? { exitCode: 1, stdout: "", stderr: "" }
+						: ok(`${scenario.gitUserName}\n`);
 				const pathspec = (argv.at(-1) ?? "").replace(":(literal,icase)", "");
 				if (args.includes("--untracked-files=all")) {
 					const path = pathspec;
@@ -298,6 +321,11 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					scenario.checksMissingFirst = (scenario.checksMissingFirst ?? 0) - 1;
 					return { exitCode: 1, stdout: "", stderr: "no checks reported on the 'work/x' branch" };
 				}
+				if (joined.startsWith("pr checks") && (scenario.checksTimeoutFirst ?? 0) > 0) {
+					scenario.checksTimeoutFirst = (scenario.checksTimeoutFirst ?? 0) - 1;
+					clock += runOptions?.timeoutMs ?? 0;
+					return { exitCode: undefined, stdout: "", stderr: "", timedOut: true };
+				}
 				if (joined.startsWith("pr checks")) return { exitCode: scenario.checksExit ?? 0, stdout: "", stderr: "" };
 				if (joined.startsWith("run list"))
 					return ok(
@@ -337,7 +365,19 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			throw new Error(`unexpected command ${argv.join(" ")}`);
 		},
 	};
-	return { calls, deps, worktree, notices, logs, stateDir: join(stateRoot, TASK) };
+	return {
+		calls,
+		runs,
+		deps,
+		worktree,
+		notices,
+		logs,
+		stateDir: join(stateRoot, TASK),
+		tick: (ms: number) => {
+			clock += ms;
+		},
+		now: () => clock,
+	};
 };
 
 const has = (calls: string[][], ...words: string[]) => calls.some((argv) => words.every((word) => argv.includes(word)));
@@ -1965,6 +2005,282 @@ describe("runWork", () => {
 			expect(
 				fake.logs.filter((line) => line === "[harnessy] notification warning: notification failed"),
 			).toHaveLength(2);
+		});
+	});
+
+	describe("--github-app", () => {
+		const settings = (app: object = { slug: "flow-research-agents", id: 5443042 }) =>
+			parseGitHubSettings(JSON.stringify({ operator: "Julian", github: { app } }));
+		type Fake = ReturnType<typeof fakeTools>;
+		/** A scripted GitHub API whose tokens expire `lifetimeMs` after minting on the fake clock. */
+		const fakeApi = (fake: Fake, opts: { lifetimeMs?: number; mintLimit?: number; installStatus?: number } = {}) => {
+			const tokens: string[] = [];
+			const calls: string[] = [];
+			const fetch: GitHubFetch = async (url, init) => {
+				calls.push(`${init.method} ${url}`);
+				if (url.endsWith("/installation"))
+					return { status: opts.installStatus ?? 200, json: async () => ({ id: 42 }) };
+				if (url.endsWith("/access_tokens")) {
+					if (opts.mintLimit !== undefined && tokens.length >= opts.mintLimit)
+						return { status: 503, json: async () => ({}) };
+					const token = `ghs_${tokens.length}${"k".repeat(36)}`;
+					tokens.push(token);
+					return {
+						status: 201,
+						json: async () => ({
+							token,
+							expires_at: new Date(fake.now() + (opts.lifetimeMs ?? 3_600_000)).toISOString(),
+							repositories: [{ full_name: "flow/app" }],
+						}),
+					};
+				}
+				return { status: 200, json: async () => ({ id: 777 }) };
+			};
+			return { tokens, calls, fetch };
+		};
+		const withApp = (fake: Fake, api: ReturnType<typeof fakeApi>, read = settings()): WorkDeps => ({
+			...fake.deps,
+			githubApp: { settings: read, fetch: api.fetch, readFile: (path) => readFileSync(path, "utf8") },
+		});
+		const appOptions = (): WorkOptions => ({ ...options, githubApp: "flow-research-agents" });
+		const secretsOf = (api: ReturnType<typeof fakeApi>) => [
+			...api.tokens,
+			...api.tokens.map((token) => Buffer.from(`x-access-token:${token}`).toString("base64")),
+			APP_KEY_B64,
+			APP_KEY_PEM.split("\n")[1] ?? "",
+		];
+		/** Runs of one executable, without the read-only version probes of preflight. */
+		const runsOf = (fake: Fake, exe: string) =>
+			fake.runs.filter(({ argv }) => argv[0] === exe && !argv.includes("--version"));
+
+		it("changes nothing without app settings", async () => {
+			const plain = fakeTools(root);
+			const before = await runWork(options, plain.deps);
+			rmSync(root, { recursive: true, force: true });
+			mkdirSync(join(root, "repo"), { recursive: true });
+			const configured = fakeTools(root);
+			const after = await runWork(options, {
+				...configured.deps,
+				githubApp: {
+					settings: parseGitHubSettings(undefined),
+					fetch: () => Promise.reject(new Error("no API calls expected")),
+					readFile: () => "",
+				},
+			});
+			expect(after).toEqual(before);
+			expect(configured.calls).toEqual(plain.calls);
+			expect(configured.runs.every(({ options: runOptions }) => runOptions?.env === undefined)).toBe(true);
+			expect(has(configured.calls, "push", "origin")).toBe(true);
+		});
+
+		it("pushes and calls gh with a token limited to the repository, and never gives the agent one", async () => {
+			const fake = fakeTools(root, { submissionStatuses: ["accepted"] });
+			const api = fakeApi(fake);
+			const outcome = await runWork(appOptions(), withApp(fake, api));
+			expect(outcome).toMatchObject({ exitCode: 0, report: { status: "accepted" } });
+			expect(api.tokens).toHaveLength(1);
+			expect(api.calls).toEqual([
+				"GET https://api.github.com/repos/flow/app/installation",
+				"POST https://api.github.com/app/installations/42/access_tokens",
+				"GET https://api.github.com/users/flow-research-agents%5Bbot%5D",
+			]);
+			const token = api.tokens[0] ?? "";
+			// The push goes to the HTTPS URL with the token only in its own environment.
+			const pushes = fake.runs.filter(({ argv }) => argv.includes("push"));
+			expect(pushes).toHaveLength(1);
+			expect(pushes[0]?.argv.slice(-3)).toEqual([
+				"push",
+				"https://github.com/flow/app.git",
+				`${HEAD}:refs/heads/${BRANCH}`,
+			]);
+			expect(pushes[0]?.options?.env).toEqual(gitPushEnv(token));
+			// Every gh call, and only gh calls and the push, carry a token.
+			const gh = runsOf(fake, "gh");
+			expect(gh.length).toBeGreaterThan(5);
+			for (const { options: runOptions } of gh)
+				expect(runOptions?.env).toMatchObject({ GH_TOKEN: token, GH_REPO: "flow/app", GH_HOST: "github.com" });
+			const others = fake.runs.filter(({ argv }) => argv[0] !== "gh" && !argv.includes("push"));
+			for (const { options: runOptions } of others) expect(runOptions?.env?.GH_TOKEN).toBeUndefined();
+			// The agent pane: herdr gets no environment, and nothing it is given holds a secret.
+			for (const { options: runOptions } of runsOf(fake, "herdr")) expect(runOptions?.env).toBeUndefined();
+			const agentFacing = [
+				JSON.stringify(runsOf(fake, "herdr").map(({ argv }) => argv)),
+				readFileSync(join(fake.stateDir, "agent-settings.json"), "utf8"),
+				readFileSync(join(fake.stateDir, "prompt.md"), "utf8"),
+			].join("\n");
+			const visible = [
+				agentFacing,
+				JSON.stringify(fake.calls),
+				JSON.stringify(outcome.report),
+				fake.logs.join("\n"),
+				JSON.stringify(fake.notices),
+				readFileSync(join(fake.stateDir, "state.json"), "utf8"),
+			].join("\n");
+			for (const secret of secretsOf(api)) expect(visible).not.toContain(secret);
+			expect(visible).not.toContain("x-access-token");
+			expect(visible).not.toContain("PRIVATE KEY");
+			// The commit names the agent and the operator, as the app's bot.
+			const commit = fake.runs.find(({ argv }) => argv.includes("commit"));
+			expect(commit?.argv.slice(-4)).toEqual([
+				"-m",
+				`work: WorkStream task ${TASK}`,
+				"-m",
+				`Agent: Claude Code\nOperator: Julian\nWorkStream-Task: ${TASK}`,
+			]);
+			expect(commit?.options?.env).toEqual({
+				GIT_AUTHOR_NAME: "Claude Code agent (operated by Julian)",
+				GIT_AUTHOR_EMAIL: "777+flow-research-agents[bot]@users.noreply.github.com",
+				GIT_COMMITTER_NAME: "Claude Code agent (operated by Julian)",
+				GIT_COMMITTER_EMAIL: "777+flow-research-agents[bot]@users.noreply.github.com",
+			});
+			const body = readFileSync(join(fake.stateDir, "pr-body.md"), "utf8");
+			expect(body).toContain(`- Agent: Claude Code\n- Operator: Julian\n- WorkStream-Task: ${TASK}`);
+			expect(fake.logs).toContain("Authenticating as GitHub App flow-research-agents");
+			expect(
+				JSON.parse(readFileSync(join(root, "state", "github-app", "flow-research-agents.json"), "utf8")),
+			).toEqual({ botUserId: 777 });
+		});
+
+		it("is switched on by github.app.slug alone, with the operator from git", async () => {
+			const fake = fakeTools(root, { gitUserName: "Julian Git" });
+			const api = fakeApi(fake);
+			const read = parseGitHubSettings(JSON.stringify({ github: { app: { slug: "flow-research-agents", id: 1 } } }));
+			const outcome = await runWork({ ...options, approvePush: false }, withApp(fake, api, read));
+			expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
+			expect(fake.runs.find(({ argv }) => argv.includes("commit"))?.options?.env?.GIT_AUTHOR_NAME).toBe(
+				"Claude Code agent (operated by Julian Git)",
+			);
+			expect(has(fake.calls, "push")).toBe(false);
+		});
+
+		it("mints a fresh token when the current one has less than ten minutes left", async () => {
+			const open = Array.from({ length: 14 }, () => ourPr("OPEN"));
+			const fake = fakeTools(root, { prStates: [...open, ourPr("MERGED")] });
+			const api = fakeApi(fake, { lifetimeMs: 15 * 60 * 1000 });
+			const outcome = await runWork(appOptions(), withApp(fake, api));
+			expect(outcome.exitCode).toBe(0);
+			expect(api.tokens.length).toBeGreaterThan(1);
+			const used = runsOf(fake, "gh").map(({ options: runOptions }) => runOptions?.env?.GH_TOKEN);
+			expect(used[0]).toBe(api.tokens[0]);
+			expect(used.at(-1)).toBe(api.tokens.at(-1));
+		});
+
+		it("watches checks in slices that a fresh token outlives", async () => {
+			const fake = fakeTools(root, { checksTimeoutFirst: 1 });
+			const api = fakeApi(fake);
+			expect((await runWork(appOptions(), withApp(fake, api))).exitCode).toBe(0);
+			const watches = runsOf(fake, "gh").filter(({ argv }) => argv.includes("checks"));
+			expect(watches.map(({ options: runOptions }) => runOptions?.timeoutMs)).toEqual([40 * 60_000, 20 * 60_000]);
+			// 20 minutes were left of the first token: the second slice gets a fresh one.
+			expect(watches.map(({ options: runOptions }) => runOptions?.env?.GH_TOKEN)).toEqual(api.tokens.slice(0, 2));
+		});
+
+		it("stops watching checks after the hour, as without the app", async () => {
+			const fake = fakeTools(root, { checksTimeoutFirst: 2 });
+			const outcome = await runWork(appOptions(), withApp(fake, fakeApi(fake)));
+			expect(outcome.report).toMatchObject({ reason: "checks_not_passed" });
+			expect(runsOf(fake, "gh").filter(({ argv }) => argv.includes("checks"))).toHaveLength(2);
+		});
+
+		it("hands off before claiming anything when the app cannot authenticate", async () => {
+			const fake = fakeTools(root);
+			const outcome = await runWork(appOptions(), withApp(fake, fakeApi(fake, { installStatus: 404 })));
+			expect(outcome).toEqual({
+				exitCode: 2,
+				report: {
+					status: "handoff",
+					reason: "github_app_auth_failed",
+					detail:
+						"finding the app installation failed (HTTP 404): the app is not installed on flow/app; the GitHub step that needed the app did not run",
+					task_id: TASK,
+					worktree: fake.worktree,
+				},
+			});
+			expect(has(fake.calls, "task", "claim")).toBe(false);
+			expect(runsOf(fake, "gh")).toEqual([]);
+			expect(has(fake.calls, "push")).toBe(false);
+			expect(fake.notices.map(({ event }) => event)).toEqual(["handoff"]);
+		});
+
+		it("never pushes, or falls back to the operator's account, when a later mint fails", async () => {
+			const fake = fakeTools(root);
+			// Every use needs a fresh token, and only the first mint succeeds.
+			const api = fakeApi(fake, { lifetimeMs: 5 * 60 * 1000, mintLimit: 1 });
+			const outcome = await runWork(appOptions(), withApp(fake, api));
+			expect(outcome.report).toMatchObject({
+				reason: "github_app_auth_failed",
+				detail: "minting an installation token failed (HTTP 503); the GitHub step that needed the app did not run",
+			});
+			expect(has(fake.calls, "commit")).toBe(true);
+			expect(has(fake.calls, "push")).toBe(false);
+			expect(runsOf(fake, "gh")).toEqual([]);
+		});
+
+		it("rethrows other errors unchanged", async () => {
+			const fake = fakeTools(root, { prCreateFails: true });
+			await expect(runWork(appOptions(), withApp(fake, fakeApi(fake)))).rejects.toThrow("gh pr create failed");
+		});
+
+		it("shows the app in a dry run without minting", async () => {
+			const fake = fakeTools(root);
+			const api = fakeApi(fake);
+			const outcome = await runWork({ ...appOptions(), dryRun: true }, withApp(fake, api));
+			expect(outcome.report).toMatchObject({
+				status: "dry_run",
+				github_app: { slug: "flow-research-agents", app_id: 5443042, key_source: "keychain" },
+			});
+			expect(api.calls).toEqual([]);
+		});
+
+		it("refuses unusable app configuration before running anything", async () => {
+			const fake = fakeTools(root);
+			await expect(runWork(appOptions(), fake.deps)).rejects.toThrow("--github-app is not available");
+			await expect(
+				runWork(appOptions(), withApp(fake, fakeApi(fake), settings({ slug: "flow-research-agents" }))),
+			).rejects.toThrow("set github.app.id");
+			expect(fake.calls).toEqual([]);
+		});
+
+		it("passes an environment to a real child process, on top of this process's own", async () => {
+			const result = await execRun(
+				["node", "-e", "process.stdout.write(process.env.HSY_T + ':' + typeof process.env.PATH)"],
+				{
+					env: { HSY_T: "child-only" },
+				},
+			);
+			expect(result.stdout).toBe("child-only:string");
+			expect(process.env.HSY_T).toBeUndefined();
+		});
+
+		it("redacts registered secrets from the live log and reads the live settings", async () => {
+			const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+			try {
+				expect(liveWorkDeps("off").githubApp?.keyFileEnv).toBeUndefined();
+				vi.stubEnv("HSY_GITHUB_APP_KEY_FILE", "/keys/app.pem");
+				const fetch = vi.fn(async () => new Response("{}"));
+				vi.stubGlobal("fetch", fetch);
+				const deps = liveWorkDeps("off");
+				expect(deps.githubApp?.keyFileEnv).toBe("/keys/app.pem");
+				expect(deps.githubApp?.settings.problems).toBeDefined();
+				const keyFile = join(root, "key.pem");
+				writeFileSync(keyFile, "pem text");
+				expect(deps.githubApp?.readFile(keyFile)).toBe("pem text");
+				const init = {
+					method: "GET",
+					headers: {},
+					signal: AbortSignal.timeout(1000),
+					redirect: "error",
+				} as const;
+				expect((await deps.githubApp?.fetch("https://api.github.com/x", init))?.status).toBe(200);
+				expect(fetch).toHaveBeenCalledWith("https://api.github.com/x", init);
+				registerSecret("ghs_live_log_secret_value");
+				deps.log("token ghs_live_log_secret_value here");
+				expect(write).toHaveBeenCalledWith("token <redacted> here\n");
+			} finally {
+				write.mockRestore();
+				vi.unstubAllEnvs();
+				vi.unstubAllGlobals();
+			}
 		});
 	});
 });

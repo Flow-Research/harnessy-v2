@@ -2,6 +2,7 @@ import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { causeMessage, HarnessError } from "../errors.ts";
 import { NOTIFY_MODES, type NotifyMode } from "../notifications/config.ts";
+import { redactSecrets } from "../notifications/sanitize.ts";
 import { MAX_REVIEW_NOTES, splitCli } from "../work/logic.ts";
 import { liveWorkDeps, runWork, type WorkDeps } from "../work/run.ts";
 
@@ -90,6 +91,12 @@ export const makeWorkCommand = (deps: (notify: NotifyMode | undefined) => WorkDe
 					"Push the locally reviewed commit and open a draft PR. Without it the run stops for review.",
 				),
 			),
+			githubApp: Flag.string("github-app").pipe(
+				Flag.optional,
+				Flag.withDescription(
+					"Push and call gh as this GitHub App (its slug, e.g. flow-research-agents) instead of your own account. The app id comes from github.app.id in the Harnessy settings file; the key from the macOS keychain or HSY_GITHUB_APP_KEY_FILE. Overrides github.app.slug.",
+				),
+			),
 			dryRun: Flag.boolean("dry-run").pipe(
 				Flag.withDescription("Run preflight and print the plan without side effects."),
 			),
@@ -113,14 +120,18 @@ export const makeWorkCommand = (deps: (notify: NotifyMode | undefined) => WorkDe
 								...(Option.isSome(flags.agentAllow) ? { agentAllow: flags.agentAllow.value } : {}),
 								...(Option.isSome(flags.agentDeps) ? { agentDeps: flags.agentDeps.value } : {}),
 								...(Option.isSome(flags.revise) ? { revise: reviewNotes(flags.revise.value) } : {}),
+								...(Option.isSome(flags.githubApp) ? { githubApp: flags.githubApp.value } : {}),
 								approvePush: flags.approvePush,
 								dryRun: flags.dryRun,
 							},
 							deps(Option.getOrUndefined(flags.notify)),
 						),
-					catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+					// A GitHub App token or key never reaches the terminal, even inside an error.
+					catch: (cause) => new HarnessError({ message: redactSecrets(causeMessage(cause)), cause }),
 				});
-				yield* Console.log(flags.json ? JSON.stringify(outcome.report) : JSON.stringify(outcome.report, null, 2));
+				yield* Console.log(
+					redactSecrets(flags.json ? JSON.stringify(outcome.report) : JSON.stringify(outcome.report, null, 2)),
+				);
 				if (outcome.exitCode !== 0)
 					yield* Effect.sync(() => {
 						process.exitCode = outcome.exitCode;
