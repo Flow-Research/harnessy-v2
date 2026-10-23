@@ -58,6 +58,12 @@ export interface GitHubSettingsRead {
 	readonly operator?: string;
 	/** Fixed text without values. They matter only when the app is used. */
 	readonly problems: ReadonlyArray<string>;
+	/**
+	 * The file may configure an app: it has a `github.app` key, or it could
+	 * not be parsed although it mentions `github`. Problems then stop the run
+	 * instead of silently switching the app off.
+	 */
+	readonly mayConfigureApp?: boolean;
 }
 
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?$/u;
@@ -84,10 +90,17 @@ export const operatorName = (value: unknown): string | undefined => {
 export const parseGitHubSettings = (text: string | undefined): GitHubSettingsRead => {
 	if (text === undefined) return { app: {}, problems: [] };
 	const parsed = Result.try((): unknown => JSON.parse(text));
-	if (Result.isFailure(parsed)) return { app: {}, problems: ["the Harnessy settings file is not valid JSON"] };
+	if (Result.isFailure(parsed))
+		return {
+			app: {},
+			problems: ["the Harnessy settings file is not valid JSON"],
+			...(text.includes('"github"') ? { mayConfigureApp: true } : {}),
+		};
 	const root = record(parsed.success);
-	const app = record(record(root?.github)?.app) ?? {};
+	const rawApp = record(root?.github)?.app;
+	const app = record(rawApp) ?? {};
 	const problems: string[] = [];
+	if (rawApp !== undefined && record(rawApp) === undefined) problems.push("github.app must be an object");
 	const check = <T>(key: string, value: T | undefined, rule: string): T | undefined => {
 		if (app[key] !== undefined && value === undefined) problems.push(`github.app.${key} ${rule}`);
 		return value;
@@ -122,6 +135,7 @@ export const parseGitHubSettings = (text: string | undefined): GitHubSettingsRea
 		},
 		...(operator === undefined ? {} : { operator }),
 		problems,
+		...(rawApp === undefined ? {} : { mayConfigureApp: true }),
 	};
 };
 
@@ -167,6 +181,9 @@ export const resolveGitHubApp = (
 	platform: string,
 ): GitHubAppConfig | undefined => {
 	const slug = flagSlug ?? read.app.slug;
+	// A broken app entry must not quietly mean "push as the operator".
+	if (slug === undefined && read.mayConfigureApp === true && read.problems.length > 0)
+		throw new Error(`GitHub App settings: ${read.problems.join("; ")}`);
 	if (slug === undefined) return undefined;
 	const fail = (problem: string) => {
 		throw new Error(`GitHub App ${slug}: ${problem}`);
@@ -346,29 +363,44 @@ export const mintInstallationToken = async (
 export const basicAuthorization = (token: string): string =>
 	`basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
 
+/** Tracing that could echo request headers into stderr, which Harnessy quotes in errors: off. */
+const NO_TRACE = {
+	GIT_TRACE: "0",
+	GIT_TRACE_CURL: "0",
+	GIT_TRACE_PACKET: "0",
+	GIT_CURL_VERBOSE: "0",
+	GIT_TRACE_REDACT: "1",
+	GH_DEBUG: "",
+} as const;
+
 /**
- * Environment for one `git push` to `https://github.com/<repo>.git`. The
- * token travels as an `http.extraheader` set through `GIT_CONFIG_*`, so it
+ * Environment for one `git push` to `pushUrl`. The token travels as an
+ * `http.<pushUrl>.extraheader` set through `GIT_CONFIG_*`, so it
  * is neither in the argv, nor in a URL, nor written to any git config file.
  * User and system config are skipped (no `insteadOf` rewrite to SSH, no
  * extra headers), credential helpers are cleared and only HTTPS is allowed,
  * so a rejected token fails the push instead of falling back to the
  * operator's credentials.
  */
-export const gitPushEnv = (token: string): Readonly<Record<string, string>> => ({
+export const gitPushEnv = (token: string, pushUrl: string): Readonly<Record<string, string>> => ({
 	GIT_CONFIG_NOSYSTEM: "1",
 	GIT_CONFIG_GLOBAL: "/dev/null",
-	GIT_CONFIG_COUNT: "3",
-	// An empty value first clears any extra header the repository's own config sets.
-	GIT_CONFIG_KEY_0: "http.extraheader",
+	GIT_CONFIG_COUNT: "4",
+	// Keyed by the full push URL: git applies the most specific `http.<url>.*` match, so a
+	// host-wide header in the repository's config (as actions/checkout writes) cannot win.
+	// The empty value first clears any header an equally specific repository entry set.
+	GIT_CONFIG_KEY_0: `http.${pushUrl}.extraheader`,
 	GIT_CONFIG_VALUE_0: "",
-	GIT_CONFIG_KEY_1: "http.extraheader",
+	GIT_CONFIG_KEY_1: `http.${pushUrl}.extraheader`,
 	GIT_CONFIG_VALUE_1: `AUTHORIZATION: ${basicAuthorization(token)}`,
 	GIT_CONFIG_KEY_2: "credential.helper",
 	GIT_CONFIG_VALUE_2: "",
+	GIT_CONFIG_KEY_3: `credential.${pushUrl}.helper`,
+	GIT_CONFIG_VALUE_3: "",
 	GIT_ALLOW_PROTOCOL: "https",
 	GIT_TERMINAL_PROMPT: "0",
 	GIT_ASKPASS: "false",
+	...NO_TRACE,
 });
 
 /** Environment for one `gh` call: the token, pinned to the repository it is limited to. */
@@ -377,6 +409,7 @@ export const ghEnv = (token: string, repo: string): Readonly<Record<string, stri
 	GH_HOST: "github.com",
 	GH_REPO: repo,
 	GH_PROMPT_DISABLED: "1",
+	...NO_TRACE,
 });
 
 export interface GitHubAuth {
@@ -406,6 +439,7 @@ export const createGitHubAuth = (input: {
 	readonly now: () => number;
 }): GitHubAuth => {
 	let current: InstallationToken | undefined;
+	const pushUrl = `https://github.com/${input.repo}.git`;
 	const token = async (runsForMs = 0): Promise<string> => {
 		if (current === undefined || current.expiresAt - input.now() < runsForMs + TOKEN_REFRESH_MS) {
 			const key = await loadPrivateKey(input.config.keySource, input.run, input.readFile);
@@ -415,10 +449,10 @@ export const createGitHubAuth = (input: {
 	};
 	return {
 		repo: input.repo,
-		pushUrl: `https://github.com/${input.repo}.git`,
+		pushUrl,
 		token,
 		ghEnv: async (runsForMs) => ghEnv(await token(runsForMs), input.repo),
-		pushEnv: async () => gitPushEnv(await token()),
+		pushEnv: async () => gitPushEnv(await token(), pushUrl),
 	};
 };
 

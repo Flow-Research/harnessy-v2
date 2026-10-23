@@ -145,6 +145,9 @@ describe("sanitiser", () => {
 		expect(redactSecrets("token reg-secret-1 at /home/me/x, short")).toBe("token <redacted> at /home/me/x, short");
 		expect(redact("a reg-secret-1 b")).toBe("a <redacted> b");
 		expect(cleanText("reg-secret-1", 80)).toBe("<redacted>");
+		// A multi-line secret, such as a PEM key, is matched before line breaks become spaces.
+		registerSecret("-----BEGIN KEY-----\nline-one\nline-two\n-----END KEY-----");
+		expect(redact("key: -----BEGIN KEY-----\nline-one\nline-two\n-----END KEY----- end")).toBe("key: <redacted> end");
 	});
 
 	it("replaces the home directory with ~ and hides every other absolute path", () => {

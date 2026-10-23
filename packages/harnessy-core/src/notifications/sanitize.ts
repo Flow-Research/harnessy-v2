@@ -83,10 +83,10 @@ export interface SanitizeOptions {
  * direction-changing characters are removed.
  */
 export const redact = (text: string, options: SanitizeOptions = {}): string => {
-	let out = withoutSecrets(text.replace(INVISIBLE, "").replace(CONTROL, " "), [
-		...(options.secrets ?? []),
-		...registered,
-	])
+	// Secrets first, on the raw text, so a multi-line one such as a PEM key still matches.
+	let out = withoutSecrets(text, [...(options.secrets ?? []), ...registered])
+		.replace(INVISIBLE, "")
+		.replace(CONTROL, " ")
 		.replace(URL_USERINFO, "$1")
 		.replace(SECRET_ASSIGNMENT, "$1$2$3$4<redacted>")
 		.replace(KNOWN_TOKEN, "<redacted>")

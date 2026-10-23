@@ -404,7 +404,7 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 			report: {
 				status: "handoff",
 				reason: "github_app_auth_failed",
-				detail: `${error.message}; the GitHub step that needed the app did not run`,
+				detail: redactSecrets(`${error.message}; the GitHub step that needed the app did not run`),
 				task_id: options.task,
 				worktree: worktreePath(resolve(options.repo), options.task),
 			},
@@ -527,9 +527,10 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			...(cwd === undefined ? {} : { cwd }),
 			...(env === undefined ? {} : { env }),
 		});
+		// stderr of a git push or gh call could echo the app token; redact before quoting it.
 		if (result.exitCode !== 0)
 			throw new Error(
-				`${what} failed (exit ${result.exitCode ?? "none"}): ${result.stderr.trim().slice(0, 500) || "no output"}`,
+				`${what} failed (exit ${result.exitCode ?? "none"}): ${redactSecrets(result.stderr.trim()).slice(0, 500) || "no output"}`,
 			);
 		return result.stdout;
 	};
@@ -932,6 +933,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		save({
 			agent: { costUsd: decision.costUsd, reason: decision.reason },
 			headSha: (await must(gitArgv.head(worktree), "git rev-parse")).trim(),
+			commitApp: appConfig?.slug,
 			revisedFrom: undefined,
 		});
 	}
@@ -948,6 +950,12 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			return handoff("ci_config_changed", "the change edits CI configuration, which a same-repo PR would run", {
 				paths: ci,
 			});
+		// The commit's author and trailers must match the account that pushes it.
+		if (state.commitApp !== appConfig?.slug)
+			return handoff(
+				"github_app_mismatch",
+				`the commit was made ${state.commitApp === undefined ? "without a GitHub App" : `as GitHub App ${state.commitApp}`} but this run ${appConfig === undefined ? "has none" : `uses ${appConfig.slug}`}; re-run as the commit was made, or with --revise to commit again`,
+			);
 		if (!options.approvePush)
 			return handoff(
 				"awaiting_push_approval",

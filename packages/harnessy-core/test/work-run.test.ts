@@ -146,6 +146,10 @@ interface Scenario {
 	checksTimeoutFirst?: number;
 	/** `git config user.name` of the source checkout; unset when undefined. */
 	gitUserName?: string;
+	/** `git push` fails and echoes its whole environment on stderr, as a hostile or traced child could. */
+	pushEchoesEnv?: boolean;
+	/** `gh pr create` fails and echoes its whole environment on stderr. */
+	prCreateEchoesEnv?: boolean;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -237,6 +241,8 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				}
 				if (args.includes("ls-files")) return ok(scenario.ignoredDirs ?? "");
 				if (args.includes("config") && args.includes("--get-regexp")) return ok(scenario.filterKeys ?? "");
+				if (args.includes("push") && scenario.pushEchoesEnv === true)
+					return { exitCode: 128, stdout: "", stderr: JSON.stringify(runOptions?.env) };
 				if (args.includes("get-url")) return ok(scenario.originUrl ?? "git@github.com:flow/app.git\n");
 				if (args.includes("user.name"))
 					return scenario.gitUserName === undefined
@@ -309,6 +315,8 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			if (exe === "gh") {
 				if (joined.startsWith("repo view")) return ok(JSON.stringify({ nameWithOwner: "flow/app" }));
 				if (joined.startsWith("pr list")) return ok(JSON.stringify(scenario.prList ?? []));
+				if (joined.startsWith("pr create") && scenario.prCreateEchoesEnv === true)
+					return { exitCode: 1, stdout: "", stderr: `HTTP 401 ${JSON.stringify(runOptions?.env)}` };
 				if (joined.startsWith("pr create"))
 					return scenario.prCreateFails === true
 						? { exitCode: 1, stdout: "", stderr: "network down" }
@@ -2093,7 +2101,7 @@ describe("runWork", () => {
 				"https://github.com/flow/app.git",
 				`${HEAD}:refs/heads/${BRANCH}`,
 			]);
-			expect(pushes[0]?.options?.env).toEqual(gitPushEnv(token));
+			expect(pushes[0]?.options?.env).toEqual(gitPushEnv(token, "https://github.com/flow/app.git"));
 			// Every gh call, and only gh calls and the push, carry a token.
 			const gh = runsOf(fake, "gh");
 			expect(gh.length).toBeGreaterThan(5);
@@ -2214,6 +2222,44 @@ describe("runWork", () => {
 			expect(has(fake.calls, "commit")).toBe(true);
 			expect(has(fake.calls, "push")).toBe(false);
 			expect(runsOf(fake, "gh")).toEqual([]);
+		});
+
+		it("refuses to push a commit made under the other identity", async () => {
+			const first = fakeTools(root);
+			await runWork({ ...options, approvePush: false }, first.deps);
+			const asApp = fakeTools(root, { preRunHead: HEAD });
+			const outcome = await runWork(appOptions(), withApp(asApp, fakeApi(asApp)));
+			expect(outcome.report).toMatchObject({
+				reason: "github_app_mismatch",
+				detail:
+					"the commit was made without a GitHub App but this run uses flow-research-agents; re-run as the commit was made, or with --revise to commit again",
+			});
+			expect(has(asApp.calls, "push")).toBe(false);
+			// And the reverse: a commit made as the app is not pushed with the operator's account.
+			rmSync(root, { recursive: true, force: true });
+			mkdirSync(join(root, "repo"), { recursive: true });
+			const made = fakeTools(root);
+			await runWork({ ...appOptions(), approvePush: false }, withApp(made, fakeApi(made)));
+			const plain = fakeTools(root);
+			expect((await runWork(options, plain.deps)).report).toMatchObject({
+				reason: "github_app_mismatch",
+				detail: expect.stringContaining("as GitHub App flow-research-agents but this run has none"),
+			});
+			expect(has(plain.calls, "push")).toBe(false);
+		});
+
+		it("redacts the token from git and gh stderr quoted in errors", async () => {
+			for (const scenario of [{ pushEchoesEnv: true }, { prCreateEchoesEnv: true }]) {
+				rmSync(root, { recursive: true, force: true });
+				mkdirSync(join(root, "repo"), { recursive: true });
+				const fake = fakeTools(root, scenario);
+				const api = fakeApi(fake);
+				const error = await runWork(appOptions(), withApp(fake, api)).catch((caught: unknown) => caught);
+				const message = String((error as Error).message);
+				expect(message).toMatch(/^(git push|gh pr create) failed/u);
+				expect(message).toContain("<redacted>");
+				for (const secret of secretsOf(api)) expect(message).not.toContain(secret);
+			}
 		});
 
 		it("rethrows other errors unchanged", async () => {

@@ -1,8 +1,10 @@
 import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { redactSecrets } from "../src/notifications/sanitize.ts";
 import {
 	AGENT_NAME,
@@ -31,7 +33,7 @@ import {
 	setUpGitHubApp,
 	TOKEN_REFRESH_MS,
 } from "../src/work/github-app.ts";
-import type { Run, RunResult } from "../src/work/run.ts";
+import { execRun, type Run, type RunResult } from "../src/work/run.ts";
 
 const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const PEM = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
@@ -144,7 +146,24 @@ describe("GitHub App settings", () => {
 			},
 			operator: "Julian",
 			problems: [],
+			mayConfigureApp: true,
 		});
+	});
+
+	it("marks a file that may configure an app, so its problems are not ignored", () => {
+		expect(parseGitHubSettings('{"github":{"app":"flow"}}')).toEqual({
+			app: {},
+			problems: ["github.app must be an object"],
+			mayConfigureApp: true,
+		});
+		expect(parseGitHubSettings('{"github": {"app": {').mayConfigureApp).toBe(true);
+		expect(parseGitHubSettings("{").mayConfigureApp).toBeUndefined();
+		expect(() =>
+			resolveGitHubApp(undefined, parseGitHubSettings('{"github":{"app":{"slug":"Flow"}}}'), undefined, "darwin"),
+		).toThrow("GitHub App settings: github.app.slug must be an app slug");
+		expect(() => resolveGitHubApp(undefined, parseGitHubSettings('{"github": {'), undefined, "darwin")).toThrow(
+			"not valid JSON",
+		);
 	});
 
 	it("reports invalid values without repeating them", () => {
@@ -401,28 +420,89 @@ describe("githubRepoOf", () => {
 describe("child environments", () => {
 	it("gives git push the token only as an extra header, with no fallback credentials", () => {
 		const token = `ghs_${"p".repeat(36)}`;
-		const env = gitPushEnv(token);
+		const url = "https://github.com/flow/app.git";
+		const env = gitPushEnv(token, url);
 		expect(basicAuthorization(token)).toBe(`basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`);
 		expect(env).toEqual({
 			GIT_CONFIG_NOSYSTEM: "1",
 			GIT_CONFIG_GLOBAL: "/dev/null",
-			GIT_CONFIG_COUNT: "3",
-			GIT_CONFIG_KEY_0: "http.extraheader",
+			GIT_CONFIG_COUNT: "4",
+			GIT_CONFIG_KEY_0: `http.${url}.extraheader`,
 			GIT_CONFIG_VALUE_0: "",
-			GIT_CONFIG_KEY_1: "http.extraheader",
+			GIT_CONFIG_KEY_1: `http.${url}.extraheader`,
 			GIT_CONFIG_VALUE_1: `AUTHORIZATION: ${basicAuthorization(token)}`,
 			GIT_CONFIG_KEY_2: "credential.helper",
 			GIT_CONFIG_VALUE_2: "",
+			GIT_CONFIG_KEY_3: `credential.${url}.helper`,
+			GIT_CONFIG_VALUE_3: "",
 			GIT_ALLOW_PROTOCOL: "https",
 			GIT_TERMINAL_PROMPT: "0",
 			GIT_ASKPASS: "false",
+			GIT_TRACE: "0",
+			GIT_TRACE_CURL: "0",
+			GIT_TRACE_PACKET: "0",
+			GIT_CURL_VERBOSE: "0",
+			GIT_TRACE_REDACT: "1",
+			GH_DEBUG: "",
 		});
 		expect(ghEnv(token, REPO)).toEqual({
 			GH_TOKEN: token,
 			GH_HOST: "github.com",
 			GH_REPO: REPO,
 			GH_PROMPT_DISABLED: "1",
+			GIT_TRACE: "0",
+			GIT_TRACE_CURL: "0",
+			GIT_TRACE_PACKET: "0",
+			GIT_CURL_VERBOSE: "0",
+			GIT_TRACE_REDACT: "1",
+			GH_DEBUG: "",
 		});
+	});
+
+	it("makes real git send only the app token, over a repository's own header and credential helper", async () => {
+		const seen: Array<string | undefined> = [];
+		const server = createServer((request, response) => {
+			seen.push(request.headers.authorization);
+			response.writeHead(401, { "www-authenticate": 'Basic realm="test"' }).end();
+		});
+		await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+		const root = mkdtempSync(join(tmpdir(), "hsy-ghapp-git-"));
+		try {
+			const { port } = server.address() as AddressInfo;
+			const url = `http://127.0.0.1:${port}/flow/app.git`;
+			const git = (...args: string[]) => execRun(["git", "-C", root, ...args]);
+			await git("init", "-q");
+			// What actions/checkout writes, and a helper that would hand over the operator's password.
+			await git("config", `http.http://127.0.0.1:${port}/.extraheader`, "AUTHORIZATION: basic T0xEOm9sZA==");
+			await git("config", "http.extraheader", "AUTHORIZATION: basic R0VORVJJQzpvbGQ=");
+			await git(
+				"config",
+				`credential.http://127.0.0.1:${port}.helper`,
+				"!f() { echo username=op; echo password=leak; }; f",
+			);
+			await git("config", "credential.helper", "!f() { echo username=op; echo password=leak2; }; f");
+			const token = `ghs_${"g".repeat(36)}`;
+			// An operator who traces git with redaction off must still get no token in stderr.
+			vi.stubEnv("GIT_TRACE_CURL", "1");
+			vi.stubEnv("GIT_TRACE_REDACT", "0");
+			const result = await execRun(["git", "-C", root, "ls-remote", url], {
+				// Only so the test can use a local plain-HTTP server.
+				env: { ...gitPushEnv(token, url), GIT_ALLOW_PROTOCOL: "http" },
+			});
+			expect(result.exitCode).not.toBe(0);
+			expect(seen.length).toBeGreaterThan(0);
+			expect(new Set(seen)).toEqual(new Set([basicAuthorization(token)]));
+			const header = basicAuthorization(token).replace("basic ", "");
+			const config = readFileSync(join(root, ".git", "config"), "utf8");
+			for (const text of [result.stdout, result.stderr, config]) {
+				expect(text).not.toContain(token);
+				expect(text).not.toContain(header);
+			}
+		} finally {
+			vi.unstubAllEnvs();
+			server.close();
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 
 	it("names the agent and the operator on commits", () => {

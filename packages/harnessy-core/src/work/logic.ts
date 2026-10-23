@@ -1122,7 +1122,8 @@ export type HandoffReason =
 	| "ci_unresolved"
 	| "preparation_failed"
 	| "preparation_timeout"
-	| "github_app_auth_failed";
+	| "github_app_auth_failed"
+	| "github_app_mismatch";
 
 export type StopDecision =
 	| { readonly kind: "continue"; readonly costUsd: number; readonly reason: string }
@@ -1665,6 +1666,8 @@ export interface WorkState {
 	readonly pushedSha?: string;
 	/** Commit Harnessy created and later pushed; the only SHA proof and CI checks accept. */
 	readonly headSha?: string;
+	/** The GitHub App whose identity Harnessy's commit carries; absent for the operator's own. */
+	readonly commitApp?: string;
 	readonly repoName?: string;
 	readonly pr?: { readonly url: string; readonly number: number };
 	/** Checks passed and the PR was marked ready. Older state's `reviewRequested` did not mean this. */
@@ -1714,6 +1717,7 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!["undefined", "string"].includes(typeof field(value, "pushedSha")) ||
 		!["undefined", "string"].includes(typeof field(value, "revisedFrom")) ||
 		!["undefined", "string"].includes(typeof field(value, "commentedSha")) ||
+		!["undefined", "string"].includes(typeof field(value, "commitApp")) ||
 		!(
 			field(value, "outcome") === undefined ||
 			SUBMISSION_OUTCOMES.includes(field(value, "outcome") as SubmissionOutcome)

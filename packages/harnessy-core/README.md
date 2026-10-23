@@ -288,13 +288,22 @@ On other systems and in CI, point `HSY_GITHUB_APP_KEY_FILE` (or
   run stops with `github_app_auth_failed` before that step: there is no
   partial push and no fallback to your account.
 - The push goes to `https://github.com/<owner>/<repo>.git`. The token reaches
-  git only as an `http.extraheader` in that one child's environment
-  (`GIT_CONFIG_*`): never in the argument list, a URL or a git config file.
+  git only as an `http.<that URL>.extraheader` in that one child's
+  environment (`GIT_CONFIG_*`): never in the argument list, a URL or a git
+  config file. Keyed by the full URL, it overrides any extra header the
+  repository's own config sets (as `actions/checkout` does).
   For the push, user and system git config are skipped, credential helpers
   are cleared and only HTTPS is allowed, so a rejected token fails the push.
   Proxy and CA settings from your global git config therefore do not apply
   to it; use `HTTPS_PROXY` and `GIT_SSL_CAINFO` if you need them.
 - Each `gh` call gets `GH_TOKEN` and `GH_REPO` in its own environment only.
+- A commit made without the app is never pushed as the app, and a commit
+  made as the app is never pushed with your account: the run stops with
+  `github_app_mismatch`. Re-run in the mode the commit was made in, or use
+  `--revise` to commit again.
+- A settings file whose `github.app` entry is invalid, or which mentions
+  `github` but is not valid JSON, stops the run instead of quietly pushing
+  as you.
 - Harnessy's commit is authored and committed by
   `Claude Code agent (operated by <operator>)` with the bot's noreply address
   `<bot-user-id>+<slug>[bot]@users.noreply.github.com`, so GitHub shows the
