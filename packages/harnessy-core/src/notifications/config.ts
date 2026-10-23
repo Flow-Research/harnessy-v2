@@ -98,7 +98,7 @@ const envMode = (value: string | undefined): NotifyMode | "invalid" | undefined 
 
 /**
  * Resolve the configuration. The mode comes from the `--notify` flag, else
- * `NO_NOTIFY` (any value turns notifications off), else `HSY_NOTIFY`, else
+ * `NO_NOTIFY` (set at all, even empty, turns notifications off), else `HSY_NOTIFY`, else
  * the settings file, else `auto`; `auto` becomes `off` when `CI` is set.
  * Push URLs and the ntfy token come from `HSY_NOTIFY_NTFY_URL`,
  * `HSY_NOTIFY_NTFY_TOKEN` and `HSY_NOTIFY_WEBHOOK_URL`, else the settings
@@ -112,7 +112,7 @@ export const resolveNotifyConfig = (
 	ciSet: boolean,
 ): NotifyConfig => {
 	const warnings: string[] = [];
-	const fromEnv = env.NO_NOTIFY !== undefined && env.NO_NOTIFY !== "" ? "off" : envMode(env.HSY_NOTIFY);
+	const fromEnv = env.NO_NOTIFY !== undefined ? "off" : envMode(env.HSY_NOTIFY);
 	if (fromEnv === "invalid") warnings.push(`HSY_NOTIFY must be one of ${NOTIFY_MODES.join(", ")}`);
 	const chosen = flag ?? (fromEnv === "invalid" ? undefined : fromEnv) ?? settings.mode ?? "auto";
 	const mode = chosen === "auto" && ciSet ? "off" : chosen;

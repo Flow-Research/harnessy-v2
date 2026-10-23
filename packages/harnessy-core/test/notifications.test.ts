@@ -267,7 +267,9 @@ describe("configuration", () => {
 		) => resolveNotifyConfig(flag, env, settings, ci).mode;
 		expect(mode("desktop", { NO_NOTIFY: "1", HSY_NOTIFY: "off" }, { mode: "off" }, true)).toBe("desktop");
 		expect(mode(undefined, { NO_NOTIFY: "1", HSY_NOTIFY: "desktop" })).toBe("off");
-		expect(mode(undefined, { NO_NOTIFY: "", HSY_NOTIFY: "terminal" })).toBe("terminal");
+		// Present is enough: `NO_NOTIFY=` from a shell or an env file still turns notifications off.
+		expect(mode(undefined, { NO_NOTIFY: "", HSY_NOTIFY: "terminal" })).toBe("off");
+		expect(mode(undefined, { HSY_NOTIFY: "terminal" })).toBe("terminal");
 		for (const word of ["off", "0", "false", "NO"]) expect(mode(undefined, { HSY_NOTIFY: word })).toBe("off");
 		for (const word of ["1", "true", "yes", "on", " Auto "])
 			expect(mode(undefined, { HSY_NOTIFY: word })).toBe("auto");

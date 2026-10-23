@@ -147,7 +147,7 @@ command: it prints a `[harnessy] notification warning: ...` line and goes on.
 Harnessy takes the first of these that is set:
 
 1. `harnessy work --notify <auto|off|desktop|terminal>`.
-2. `NO_NOTIFY` with any value: `off`.
+2. `NO_NOTIFY` set to anything, even an empty value: `off`.
 3. `HSY_NOTIFY`: a mode, or `0`/`false`/`no` for `off` and `1`/`true`/`yes`/`on` for `auto`.
 4. `notifications.mode` in `~/.hsy/agent/settings.json` (or
    `$HSY_CODING_AGENT_DIR/settings.json`).
