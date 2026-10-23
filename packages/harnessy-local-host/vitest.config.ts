@@ -86,9 +86,8 @@ export default defineConfig({
 				"src/portal/app/lib/browser.ts": { statements: 85, branches: 80, functions: 100, lines: 90 },
 				"src/portal/app/lib/keys.tsx": { statements: 90, branches: 75, functions: 100, lines: 90 },
 				// Each screen and component has its own floor (test/coverage-floors.test.ts checks that every
-				// .tsx file has one), set just under what the app tests reach. Jobs sits at 65 branches: its
-				// uncovered branches are absent-field fallbacks in detail panes. test/app/today.test.tsx covers
-				// Today's absent-field fallbacks.
+				// .tsx file has one), set just under what the app tests reach. test/app/today.test.tsx and
+				// test/app/jobs.test.tsx cover Today's and Jobs' absent-field fallbacks.
 				"src/portal/app/App.tsx": { statements: 95, branches: 85, functions: 90, lines: 95 },
 				"src/portal/app/components/actions.tsx": { statements: 95, branches: 90, functions: 90, lines: 95 },
 				"src/portal/app/components/DetailPane.tsx": { statements: 95, branches: 75, functions: 100, lines: 95 },
@@ -99,7 +98,7 @@ export default defineConfig({
 				"src/portal/app/components/Shell.tsx": { statements: 95, branches: 90, functions: 100, lines: 95 },
 				"src/portal/app/screens/Connections.tsx": { statements: 95, branches: 70, functions: 100, lines: 95 },
 				"src/portal/app/screens/Inbox.tsx": { statements: 90, branches: 80, functions: 90, lines: 95 },
-				"src/portal/app/screens/Jobs.tsx": { statements: 95, branches: 65, functions: 90, lines: 95 },
+				"src/portal/app/screens/Jobs.tsx": { statements: 95, branches: 75, functions: 90, lines: 95 },
 				"src/portal/app/screens/Learning.tsx": { statements: 95, branches: 75, functions: 100, lines: 95 },
 				"src/portal/app/screens/Reviews.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
 				"src/portal/app/screens/Tasks.tsx": { statements: 95, branches: 90, functions: 95, lines: 95 },
