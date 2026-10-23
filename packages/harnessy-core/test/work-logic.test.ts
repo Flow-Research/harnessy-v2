@@ -18,6 +18,7 @@ import {
 	compareVersions,
 	EXIT_MARKER_REGEX,
 	evaluateStopRule,
+	filterDriverNames,
 	filterOverrides,
 	findPrTemplate,
 	ghArgv,
@@ -44,6 +45,7 @@ import {
 	parseState,
 	parseSubmissionOutcome,
 	parseVersion,
+	pathsWithDriver,
 	plainCopyArgv,
 	prBody,
 	prMismatch,
@@ -208,8 +210,10 @@ describe("agent permissions", () => {
 	});
 
 	it("turns every configured filter driver off, once per name", () => {
-		expect(filterOverrides("")).toEqual([]);
-		expect(filterOverrides("filter.lfs.clean\0filter.lfs.smudge\0core.editor\0filter.odd.name.x.process\0")).toEqual([
+		expect(filterOverrides(filterDriverNames(""))).toEqual([]);
+		const names = filterDriverNames("filter.lfs.clean\0filter.lfs.smudge\0core.editor\0filter.odd.name.x.process\0");
+		expect(names).toEqual(["lfs", "odd.name.x"]);
+		expect(filterOverrides(names)).toEqual([
 			"-c",
 			"filter.lfs.clean=",
 			"-c",
@@ -226,6 +230,52 @@ describe("agent permissions", () => {
 			"filter.odd.name.x.process=",
 			"-c",
 			"filter.odd.name.x.required=false",
+		]);
+	});
+
+	it("finds the paths whose filter attribute names a configured driver", () => {
+		const attrs = [
+			"big.bin",
+			"filter",
+			"lfs",
+			"src/a.ts",
+			"filter",
+			"unspecified",
+			"set.txt",
+			"filter",
+			"set",
+			"off.txt",
+			"filter",
+			"unset",
+			"we\nird.bin",
+			"filter",
+			"lfs",
+			"other.dat",
+			"filter",
+			"undefined-driver",
+			"",
+		].join("\0");
+		expect(pathsWithDriver(attrs, ["lfs"])).toEqual(["big.bin", "we\nird.bin"]);
+		expect(pathsWithDriver(attrs, [])).toEqual([]);
+		// A driver named after an attribute state is reserved: every path in that state counts.
+		expect(pathsWithDriver(attrs, ["set"])).toEqual(["set.txt"]);
+		expect(pathsWithDriver(attrs, ["unspecified"])).toEqual(["src/a.ts"]);
+		expect(pathsWithDriver("", ["lfs"])).toEqual([]);
+		expect(gitArgv.changedForAdd("/w").slice(-5)).toEqual([
+			"ls-files",
+			"-z",
+			"--modified",
+			"--others",
+			"--exclude-standard",
+		]);
+		// Paths follow `--`, so one starting with `-` is never read as an option.
+		expect(gitArgv.filterAttribute("/w", ["a", "-b"]).slice(-6)).toEqual([
+			"check-attr",
+			"-z",
+			"filter",
+			"--",
+			"a",
+			"-b",
 		]);
 	});
 
