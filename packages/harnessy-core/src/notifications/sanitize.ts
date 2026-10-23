@@ -40,6 +40,13 @@ const homeSpellings = (home: string): ReadonlyArray<string> => {
 	return [...new Set([trimmed, trimmed.replaceAll("\\", "/"), trimmed.replaceAll("/", "\\")])];
 };
 
+/**
+ * Shortest configured secret that is redacted. Shorter values would mangle
+ * ordinary words, so a configured token must be at least this long to be
+ * accepted at all (see `allowedToken`), and every accepted token is redacted.
+ */
+export const MIN_SECRET_LENGTH = 8;
+
 export interface SanitizeOptions {
 	/** The user's home directory; paths under it become `~`. */
 	readonly home?: string;
@@ -57,7 +64,7 @@ export interface SanitizeOptions {
 export const redact = (text: string, options: SanitizeOptions = {}): string => {
 	let out = text.replace(INVISIBLE, "").replace(CONTROL, " ");
 	for (const secret of options.secrets ?? [])
-		if (secret.length >= 4) out = out.replace(new RegExp(escapeRegExp(secret), "gu"), "<redacted>");
+		if (secret.length >= MIN_SECRET_LENGTH) out = out.replace(new RegExp(escapeRegExp(secret), "gu"), "<redacted>");
 	out = out
 		.replace(URL_USERINFO, "$1")
 		.replace(SECRET_ASSIGNMENT, "$1$2$3$4<redacted>")

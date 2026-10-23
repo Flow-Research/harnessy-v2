@@ -1,4 +1,4 @@
-import { headerText } from "./sanitize.ts";
+import { headerText, MIN_SECRET_LENGTH } from "./sanitize.ts";
 
 /** The subset of `fetch` the remote senders use; tests pass a fake. */
 export type Fetch = (
@@ -40,8 +40,12 @@ export const allowedPushUrl = (value: string): boolean => {
 	);
 };
 
-/** A token must be one visible ASCII word, so it cannot inject another header. */
-export const allowedToken = (value: string): boolean => /^[!-~]{1,512}$/u.test(value);
+/**
+ * A token must be one visible ASCII word, so it cannot inject another header,
+ * and long enough that the sanitiser redacts it wherever it appears.
+ */
+export const allowedToken = (value: string): boolean =>
+	/^[!-~]{1,512}$/u.test(value) && value.length >= MIN_SECRET_LENGTH;
 
 export interface SendResult {
 	readonly ok: boolean;

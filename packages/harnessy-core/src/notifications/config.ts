@@ -124,7 +124,7 @@ export const resolveNotifyConfig = (
 		warnings.push("the ntfy URL is ignored: use https, or http only to localhost, with no user name or password");
 	const tokenOk = ntfyToken !== undefined && allowedToken(ntfyToken);
 	if (ntfyToken !== undefined && !tokenOk)
-		warnings.push("the ntfy token is ignored: it must be one word of visible ASCII");
+		warnings.push("the ntfy token is ignored: it must be one word of 8 to 512 visible ASCII characters");
 	const webhookOk = webhookUrl !== undefined && allowedPushUrl(webhookUrl);
 	if (webhookUrl !== undefined && !webhookOk)
 		warnings.push("the webhook URL is ignored: use https, or http only to localhost, with no user name or password");

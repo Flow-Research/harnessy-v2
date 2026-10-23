@@ -176,6 +176,9 @@ describe("sanitiser", () => {
 			"11111111-2222-4333-8444-555555555555 abcdefghijklmnopqrstuvwxyzabcdefghij 12345678901234567890123456789012345";
 		expect(redact(kept)).toBe(kept);
 		expect(redact("value s3cr3t-value here", { secrets: ["s3cr3t-value", "ab"] })).toBe("value <redacted> here");
+		// The shortest token the configuration accepts is redacted too.
+		expect(redact("short abcd1234 key", { secrets: ["abcd1234", "abcd123"] })).toBe("short <redacted> key");
+		expect(redact("short abcd123 key", { secrets: ["abcd123"] })).toBe("short abcd123 key");
 	});
 
 	it("removes control, direction and broken characters, then trims, de-dashes and cuts to the limit", () => {
@@ -608,7 +611,9 @@ describe("remote push", () => {
 		])
 			expect(allowedPushUrl(url)).toBe(false);
 		expect(allowedToken(TOKEN)).toBe(true);
-		for (const token of ["", "a b", "a\r\nX-Evil: 1", "\u00e9", "x".repeat(513)])
+		expect(allowedToken("abcd1234")).toBe(true);
+		// Too short to redact safely, so never accepted: every accepted token is redacted everywhere.
+		for (const token of ["", "a", "abc", "abcd123", "a b", "a\r\nX-Evil: 1", "\u00e9", "x".repeat(513)])
 			expect(allowedToken(token)).toBe(false);
 	});
 
