@@ -489,7 +489,12 @@ describe("child environments", () => {
 			vi.stubEnv("GIT_TRACE_REDACT", "0");
 			const result = await execRun(["git", "-C", root, "ls-remote", url], {
 				// Only so the test can use a local plain-HTTP server.
-				env: { ...gitPushEnv(token, url), GIT_ALLOW_PROTOCOL: "http" },
+				env: {
+					...gitPushEnv(token, url),
+					GIT_ALLOW_PROTOCOL: "http",
+					PI_AUTH_ENCRYPTION: "off",
+					HSY_AUTH_ENCRYPTION: "off",
+				},
 			});
 			expect(result.exitCode).not.toBe(0);
 			expect(seen.length).toBeGreaterThan(0);
