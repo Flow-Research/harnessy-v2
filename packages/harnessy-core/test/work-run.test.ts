@@ -2291,7 +2291,7 @@ describe("runWork", () => {
 			const result = await execRun(
 				["node", "-e", "process.stdout.write(process.env.HSY_T + ':' + typeof process.env.PATH)"],
 				{
-					env: { HSY_T: "child-only" },
+					env: { HSY_T: "child-only", PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 				},
 			);
 			expect(result.stdout).toBe("child-only:string");
