@@ -80,8 +80,9 @@
   `git check-attr -z filter` about every path the commit would include, both
   the paths it would stage and the ones already staged. When a path
   names a driver defined in git config, the run hands off with
-  `filter_driver_paths` and commits nothing, and the reviewer commits those
-  paths with the filter enabled.
+  `filter_driver_paths` and commits nothing. The handoff tells the reviewer to
+  restage those paths with the filter enabled (`git add --renormalize`) and
+  check the staged content before committing.
 - Release installs and the workspace now resolve `toml@5.0.1`, the first
   release that fixes three quadratic or unbounded parsing denial-of-service
   advisories (GHSA-4qx8-w7c3-pj3p, GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p).

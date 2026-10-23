@@ -271,7 +271,11 @@ export const filterOverrides = (names: ReadonlyArray<string>): ReadonlyArray<str
 
 /**
  * Paths whose `filter` attribute names one of `drivers`, from `git check-attr
- * -z filter` output. `set`, `unset` and `unspecified` name no driver.
+ * -z filter` output. `set`, `unset` and `unspecified` are also git's words for
+ * attribute states, and check-attr prints them the same way, so a driver
+ * defined under one of those names is reserved: every path in that state
+ * counts as using it. That errs toward a handoff, never toward committing
+ * unfiltered bytes.
  */
 export const pathsWithDriver = (checkAttr: string, drivers: ReadonlyArray<string>): ReadonlyArray<string> => {
 	const fields = checkAttr.split("\0");

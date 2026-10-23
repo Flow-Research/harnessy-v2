@@ -254,6 +254,9 @@ describe("agent permissions", () => {
 		].join("\0");
 		expect(pathsWithDriver(attrs, ["lfs"])).toEqual(["big.bin", "we\nird.bin"]);
 		expect(pathsWithDriver(attrs, [])).toEqual([]);
+		// A driver named after an attribute state is reserved: every path in that state counts.
+		expect(pathsWithDriver(attrs, ["set"])).toEqual(["set.txt"]);
+		expect(pathsWithDriver(attrs, ["unspecified"])).toEqual(["src/a.ts"]);
 		expect(pathsWithDriver("", ["lfs"])).toEqual([]);
 		expect(gitArgv.changedForAdd("/w").slice(-5)).toEqual([
 			"ls-files",

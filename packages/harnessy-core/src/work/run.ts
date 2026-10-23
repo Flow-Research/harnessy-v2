@@ -801,7 +801,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				save({ spentUsd: (state.spentUsd ?? 0) + decision.costUsd });
 				return handoff(
 					"filter_driver_paths",
-					`these changed paths use the git filter driver ${filterDrivers.join(", ")}, which Harnessy keeps off; nothing was committed. Review the change and commit these paths yourself with the filter enabled`,
+					`these changed paths use the git filter driver ${filterDrivers.join(", ")}, which Harnessy keeps off; nothing was committed. Review the change, then restage these paths with the filter enabled (for example \`git add --renormalize -- <paths>\`; a path staged while the filter was off keeps its raw blob until restaged), check the staged content with \`git diff --cached\`, and commit`,
 					{ paths: driven, cost_usd: decision.costUsd },
 				);
 			}

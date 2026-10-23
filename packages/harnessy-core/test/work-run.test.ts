@@ -849,7 +849,10 @@ describe("runWork", () => {
 			report: { status: "handoff", reason: "filter_driver_paths", paths: ["assets/big.bin"], cost_usd: 0.5 },
 		});
 		expect(String(outcome.report.detail)).toContain("git filter driver lfs");
-		expect(String(outcome.report.detail)).toContain("commit these paths yourself with the filter enabled");
+		expect(String(outcome.report.detail)).toContain(
+			"restage these paths with the filter enabled (for example `git add --renormalize -- <paths>`",
+		);
+		expect(String(outcome.report.detail)).toContain("check the staged content with `git diff --cached`");
 		expect(has(fake.calls, "add", "--all")).toBe(false);
 		expect(has(fake.calls, "commit")).toBe(false);
 		const state = JSON.parse(readFileSync(join(fake.stateDir, "state.json"), "utf8"));
