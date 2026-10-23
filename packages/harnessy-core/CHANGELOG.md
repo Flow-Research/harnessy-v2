@@ -74,6 +74,13 @@
 
 ### Fixed
 
+- `harnessy work` no longer commits raw bytes for paths that a configured git
+  filter driver (for example `filter=lfs`) should clean. Harnessy keeps filter
+  drivers off on its own git commands, so before `git add --all` it asks
+  `git check-attr -z filter` about every path it would stage. When a path
+  names a driver defined in git config, the run hands off with
+  `filter_driver_paths` and commits nothing, and the reviewer commits those
+  paths with the filter enabled.
 - Release installs and the workspace now resolve `toml@5.0.1`, the first
   release that fixes three quadratic or unbounded parsing denial-of-service
   advisories (GHSA-4qx8-w7c3-pj3p, GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p).

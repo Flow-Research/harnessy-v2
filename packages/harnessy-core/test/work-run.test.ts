@@ -17,7 +17,13 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stageable } from "../src/work/deps.ts";
-import { filterOverrides, gitArgv, REQUIRED_CLAUDE_FLAGS } from "../src/work/logic.ts";
+import {
+	filterDriverNames,
+	filterOverrides,
+	gitArgv,
+	pathsWithDriver,
+	REQUIRED_CLAUDE_FLAGS,
+} from "../src/work/logic.ts";
 import { execRun, type RunResult, runWork, type WorkDeps, type WorkOptions, worktreePath } from "../src/work/run.ts";
 
 const TASK = "11111111-2222-4333-8444-555555555555";
@@ -89,6 +95,10 @@ interface Scenario {
 	cpQuiet?: boolean;
 	/** NUL-separated filter driver config keys the user's git config defines. */
 	filterKeys?: string;
+	/** `git ls-files -z --modified --others --exclude-standard` output after the agent. */
+	changedFiles?: string;
+	/** The `filter` attribute value per path; unspecified when absent. */
+	filterAttr?: Record<string, string>;
 	/** Content of the new worktree's `.git` file. */
 	gitFile?: string;
 	/** Whether `bwrap` and `socat` run, for the Linux sandbox; they do by default. */
@@ -164,6 +174,14 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					return ok(JSON.stringify({ submission_id: "sub-1", admission_id: "adm-1" }));
 			}
 			if (exe === "git") {
+				if (args.includes("ls-files") && args.includes("--modified"))
+					return ok(scenario.changedFiles ?? "src/a.ts\0");
+				if (args.includes("check-attr")) {
+					const paths = args.slice(args.indexOf("--") + 1);
+					return ok(
+						paths.map((path) => `${path}\0filter\0${scenario.filterAttr?.[path] ?? "unspecified"}\0`).join(""),
+					);
+				}
 				if (args.includes("ls-files")) return ok(scenario.ignoredDirs ?? "");
 				if (args.includes("config") && args.includes("--get-regexp")) return ok(scenario.filterKeys ?? "");
 				const pathspec = (argv.at(-1) ?? "").replace(":(literal,icase)", "");
@@ -814,6 +832,73 @@ describe("runWork", () => {
 		for (const argv of gitCalls) expect(argv.slice(1, 1 + off.length)).toEqual(off);
 		expect(has(fake.calls, "worktree", "add")).toBe(true);
 		expect(has(fake.calls, "fetch")).toBe(true);
+	});
+
+	it("hands off, committing nothing, when changed paths use a configured filter driver", async () => {
+		const fake = fakeTools(root, {
+			filterKeys: "filter.lfs.clean\0filter.lfs.process\0",
+			changedFiles: "assets/big.bin\0src/a.ts\0",
+			filterAttr: { "assets/big.bin": "lfs" },
+		});
+		const outcome = await runWork({ ...options, approvePush: false }, fake.deps);
+		expect(outcome).toMatchObject({
+			exitCode: 2,
+			report: { status: "handoff", reason: "filter_driver_paths", paths: ["assets/big.bin"], cost_usd: 0.5 },
+		});
+		expect(String(outcome.report.detail)).toContain("git filter driver lfs");
+		expect(String(outcome.report.detail)).toContain("commit these paths yourself with the filter enabled");
+		expect(has(fake.calls, "add", "--all")).toBe(false);
+		expect(has(fake.calls, "commit")).toBe(false);
+		const state = JSON.parse(readFileSync(join(fake.stateDir, "state.json"), "utf8"));
+		expect(state).toMatchObject({ spentUsd: 0.5 });
+		expect(state.headSha).toBeUndefined();
+	});
+
+	it("commits as before when no changed path uses a configured driver, checking paths in batches", async () => {
+		const many = Array.from({ length: 450 }, (_, index) => `src/f${index}.ts`);
+		const fake = fakeTools(root, {
+			filterKeys: "filter.lfs.clean\0",
+			changedFiles: `${many.join("\0")}\0`,
+			filterAttr: { "src/f3.ts": "set", "src/f4.ts": "other-unconfigured" },
+		});
+		const outcome = await runWork({ ...options, approvePush: false }, fake.deps);
+		expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
+		const batches = fake.calls.filter((argv) => argv.includes("check-attr"));
+		expect(batches.map((argv) => argv.length - argv.indexOf("--") - 1)).toEqual([200, 200, 50]);
+		expect(has(fake.calls, "add", "--all")).toBe(true);
+		// Without configured drivers there is nothing to look up.
+		const plain = fakeTools(join(root, "plain"));
+		mkdirSync(join(root, "plain", "repo"), { recursive: true });
+		await runWork(
+			{ ...options, repo: join(root, "plain", "repo"), approvePush: false },
+			{ ...plain.deps, stateRoot: join(root, "plain", "state") },
+		);
+		expect(has(plain.calls, "check-attr")).toBe(false);
+		expect(has(plain.calls, "--modified")).toBe(false);
+	});
+
+	it("asks real git which changed paths a configured filter driver would clean", async () => {
+		const repo = join(root, "lfs");
+		const git = (...args: string[]) =>
+			execRun(["git", "-C", repo, "-c", "user.email=a@b", "-c", "user.name=a", ...args]);
+		mkdirSync(repo);
+		await git("init", "-q");
+		await git("config", "filter.lfs.clean", "cat");
+		await git("config", "filter.lfs.smudge", "cat");
+		writeFileSync(join(repo, ".gitattributes"), "*.bin filter=lfs\n*.txt filter\n");
+		writeFileSync(join(repo, "keep.md"), "");
+		await git("add", ".gitattributes", "keep.md");
+		await git("commit", "-q", "-m", "base");
+		writeFileSync(join(repo, "big.bin"), "binary");
+		writeFileSync(join(repo, "notes.txt"), "set without a driver");
+		writeFileSync(join(repo, "keep.md"), "changed");
+		writeFileSync(join(repo, "-dash.bin"), "option-like name");
+		const drivers = filterDriverNames((await execRun(gitArgv.filterNames(repo))).stdout);
+		expect(drivers).toEqual(["lfs"]);
+		const changed = (await execRun(gitArgv.changedForAdd(repo))).stdout.split("\0").filter((path) => path !== "");
+		expect([...changed].sort()).toEqual(["-dash.bin", "big.bin", "keep.md", "notes.txt"]);
+		const attrs = (await execRun(gitArgv.filterAttribute(repo, changed))).stdout;
+		expect([...pathsWithDriver(attrs, drivers)].sort()).toEqual(["-dash.bin", "big.bin"]);
 	});
 
 	it("catches CI paths git would quote, including unicode and newlines", async () => {
@@ -1619,7 +1704,7 @@ describe("runWork", () => {
 			await git("config", "filter.evil.process", `sh -c 'touch ${pwned}'`);
 			writeFileSync(join(repo, ".gitattributes"), "* filter=evil\n");
 			writeFileSync(join(repo, "g.txt"), "y");
-			const off = filterOverrides((await execRun(gitArgv.filterNames(repo))).stdout);
+			const off = filterOverrides(filterDriverNames((await execRun(gitArgv.filterNames(repo))).stdout));
 			await execRun(["git", ...off, ...gitArgv.addAll(repo).slice(1)]);
 			expect(existsSync(pwned)).toBe(false);
 			await git("config", "--unset", "filter.evil.process");

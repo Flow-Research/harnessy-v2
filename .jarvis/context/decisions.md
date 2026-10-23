@@ -163,8 +163,12 @@
     config defines (`-c filter.<name>.clean= ... required=false`), so a
     `.gitattributes` in the task branch cannot run one. `GIT_CONFIG_GLOBAL`
     stays as it is, because fetch and push need the user's credential
-    helper and commits need the user's identity. No git command runs before
-    the worktree's `.git` file is checked.
+    helper and commits need the user's identity. With the drivers off,
+    Harnessy would commit raw bytes where a driver should clean them, so
+    before `git add --all` it asks `git check-attr -z filter` about every path
+    it would stage. Any path naming a configured driver hands off with
+    `filter_driver_paths` and nothing is committed. No git command runs
+    before the worktree's `.git` file is checked.
   - `--agent-deps clone` (approved 2026-10-22, off by default) gives the
     worktree its own copy of the source checkout's ignored `node_modules` and
     `dist` directories, so allowed test and format commands can run. Harnessy

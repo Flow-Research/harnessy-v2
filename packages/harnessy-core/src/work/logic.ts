@@ -240,20 +240,25 @@ const NO_HOOKS = [
 ] as const;
 
 /**
- * `-c` overrides that switch off every named filter driver from the user's
- * or system config, so a `.gitattributes` file in the task branch cannot make
- * Harnessy's own git commands (checkout, add, status) run one. Read from
+ * Names of the filter drivers git config defines, from
  * `git config --name-only -z --get-regexp '^filter\.'`.
  */
-export const filterOverrides = (configKeys: string): ReadonlyArray<string> =>
-	[
-		...new Set(
-			configKeys
-				.split("\0")
-				.map((key) => /^filter\.(.+)\.[^.]+$/s.exec(key)?.[1])
-				.filter((name): name is string => name !== undefined),
-		),
-	].flatMap((name) => [
+export const filterDriverNames = (configKeys: string): ReadonlyArray<string> => [
+	...new Set(
+		configKeys
+			.split("\0")
+			.map((key) => /^filter\.(.+)\.[^.]+$/s.exec(key)?.[1])
+			.filter((name): name is string => name !== undefined),
+	),
+];
+
+/**
+ * `-c` overrides that switch off every named filter driver, so a
+ * `.gitattributes` file in the task branch cannot make Harnessy's own git
+ * commands (checkout, add, status) run one.
+ */
+export const filterOverrides = (names: ReadonlyArray<string>): ReadonlyArray<string> =>
+	names.flatMap((name) => [
 		"-c",
 		`filter.${name}.clean=`,
 		"-c",
@@ -263,6 +268,18 @@ export const filterOverrides = (configKeys: string): ReadonlyArray<string> =>
 		"-c",
 		`filter.${name}.required=false`,
 	]);
+
+/**
+ * Paths whose `filter` attribute names one of `drivers`, from `git check-attr
+ * -z filter` output. `set`, `unset` and `unspecified` name no driver.
+ */
+export const pathsWithDriver = (checkAttr: string, drivers: ReadonlyArray<string>): ReadonlyArray<string> => {
+	const fields = checkAttr.split("\0");
+	// Every third field is a value; its path is two fields earlier.
+	return fields.flatMap((value, index) =>
+		index % 3 === 2 && drivers.includes(value) ? fields.slice(index - 2, index - 1) : [],
+	);
+};
 
 /** A pathspec git matches literally (no globs) and in any letter case. */
 const literalIcase = (path: string) => `:(literal,icase)${path}`;
@@ -391,6 +408,34 @@ export const gitArgv = {
 		"--ignore-submodules=all",
 		"--",
 		literalIcase(path),
+	],
+	/**
+	 * Paths `git add --all` would stage in the worktree: changed tracked files
+	 * and untracked files git does not ignore, NUL-separated. Deleted files
+	 * are listed too.
+	 */
+	changedForAdd: (worktree: string) => [
+		"git",
+		"-C",
+		worktree,
+		...NO_HOOKS,
+		"ls-files",
+		"-z",
+		"--modified",
+		"--others",
+		"--exclude-standard",
+	],
+	/** The `filter` attribute of each path, as NUL-separated `path, filter, value` triples. */
+	filterAttribute: (worktree: string, paths: ReadonlyArray<string>) => [
+		"git",
+		"-C",
+		worktree,
+		...NO_HOOKS,
+		"check-attr",
+		"-z",
+		"filter",
+		"--",
+		...paths,
 	],
 	/** Pushes the exact reviewed commit, not whatever HEAD is at push time. */
 	push: (worktree: string, branch: string, sha: string) => [
@@ -1012,6 +1057,7 @@ export type HandoffReason =
 	| "agent_deps_not_ignored"
 	| "agent_deps_unsafe_entry"
 	| "agent_deps_cleanup_failed"
+	| "filter_driver_paths"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
 	| "revise_after_merge"
