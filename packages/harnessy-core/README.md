@@ -165,7 +165,7 @@ not contain a user name or password. A failed push is retried once.
 | Setting | Environment variable | `settings.json` key |
 | --- | --- | --- |
 | ntfy topic URL | `HSY_NOTIFY_NTFY_URL` | `notifications.ntfy.url` |
-| ntfy access token (optional) | `HSY_NOTIFY_NTFY_TOKEN` | `notifications.ntfy.token` |
+| ntfy access token (optional, at least 8 characters) | `HSY_NOTIFY_NTFY_TOKEN` | `notifications.ntfy.token` |
 | Webhook URL | `HSY_NOTIFY_WEBHOOK_URL` | `notifications.webhook.url` |
 
 Environment variables override the settings file. For example:
