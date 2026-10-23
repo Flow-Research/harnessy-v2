@@ -340,17 +340,22 @@ describe("configuration", () => {
 
 describe("process starter", () => {
 	const node = process.execPath;
-	const run = (script: string, timeoutMs = 10_000, env: Record<string, string> = {}) =>
-		startProcess(node, ["-e", script], { env, timeoutMs });
+	/** Real test children never reach the OS keychain. */
+	const childEnv = { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" } as const;
+	const run = (script: string, timeoutMs = 10_000, extra: Record<string, string> = {}) =>
+		startProcess(node, ["-e", script], {
+			env: { ...extra, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
+			timeoutMs,
+		});
 
 	it("reports success, a failing exit code and a process that cannot start", async () => {
 		expect(await run("process.exit(0)")).toEqual({ ok: true, detail: "exit 0" });
 		expect(await run("process.exit(3)")).toEqual({ ok: false, detail: "exit 3" });
 		expect(
-			await startProcess(join(tmpdir(), "harnessy-no-such-notifier"), [], { env: {}, timeoutMs: 1_000 }),
+			await startProcess(join(tmpdir(), "harnessy-no-such-notifier"), [], { env: childEnv, timeoutMs: 1_000 }),
 		).toEqual({ ok: false, detail: "could not start" });
 		// Node refuses a NUL byte before any process exists.
-		expect(await startProcess(`${node}\u0000`, [], { env: {}, timeoutMs: 1_000 })).toEqual({
+		expect(await startProcess(`${node}\u0000`, [], { env: childEnv, timeoutMs: 1_000 })).toEqual({
 			ok: false,
 			detail: "could not start",
 		});
@@ -366,7 +371,7 @@ describe("process starter", () => {
 		).toEqual({ ok: true, detail: "exit 0" });
 		expect(
 			await startProcess(node, ["-e", "process.exit(process.argv[1] === '$(whoami)' ? 0 : 5)", "$(whoami)"], {
-				env: {},
+				env: childEnv,
 				timeoutMs: 10_000,
 			}),
 		).toEqual({
@@ -415,9 +420,10 @@ describe("executable lookup", () => {
 			expect(check(join(dir, "missing"))).toBe(false);
 			expect(isExecutableFile("linux")(plain)).toBe(process.platform === "win32");
 			expect(isExecutableFile("win32")(plain)).toBe(true);
-			expect(findExecutable("tool", { ...liveEnvironment(), env: { PATH: dir, Path: dir, PATHEXT: ".EXE" } })).toBe(
-				tool,
-			);
+			expect(
+				// harnessy-test-env: configuration, not a child process environment
+				findExecutable("tool", { ...liveEnvironment(), env: { PATH: dir, Path: dir, PATHEXT: ".EXE" } }),
+			).toBe(tool);
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
@@ -704,6 +710,7 @@ describe("notifier", () => {
 					"-e",
 					'display notification "PR #7 for task 11111111 passed its checks. Next: Review and merge PR #7." with title "Harnessy: Ready to merge"',
 				],
+				// harnessy-test-env: configuration, not a child process environment
 				env: { PATH: "/usr/bin:/bin" },
 				timeoutMs: 5_000,
 			},
@@ -891,6 +898,7 @@ describe("live notifier", () => {
 				(line) => logs.push(line),
 				() => ({
 					...machine("linux"),
+					// harnessy-test-env: configuration, not a child process environment
 					env: { HSY_CODING_AGENT_DIR: dir, CI: "true" },
 				}),
 			);
@@ -975,9 +983,18 @@ describe("this platform", () => {
 					"-NoProfile",
 					"-NonInteractive",
 					"-Command",
-					"$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($env:HARNESSY_SCRIPT, [ref]$null, [ref]$errors); if ($errors.Count -gt 0) { $errors | ForEach-Object { $_.Message }; exit 3 }",
+					"$errors = $null; [void][System.Management.Automation.Language.Parser]::ParseInput([Environment]::GetEnvironmentVariable('HARNESSY_SCRIPT'), [ref]$null, [ref]$errors); if ($errors.Count -gt 0) { $errors | ForEach-Object { $_.Message }; exit 3 }",
 				],
-				{ env: { ...process.env, HARNESSY_SCRIPT: WINDOWS_TOAST_SCRIPT }, encoding: "utf8", timeout: 60_000 },
+				{
+					env: {
+						...process.env,
+						PI_AUTH_ENCRYPTION: "off",
+						HSY_AUTH_ENCRYPTION: "off",
+						HARNESSY_SCRIPT: WINDOWS_TOAST_SCRIPT,
+					},
+					encoding: "utf8",
+					timeout: 60_000,
+				},
 			);
 			expect(parse.stdout).toBe("");
 			expect(parse.status).toBe(0);
