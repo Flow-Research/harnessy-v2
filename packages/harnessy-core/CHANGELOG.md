@@ -71,9 +71,28 @@
   (chain 84532) and carry `"test": true`. Adds the pinned dependencies
   `@noble/curves` 2.2.0 and `@noble/hashes` 2.2.0. See
   `docs/attest-test-certificates.md`.
+- Added built-in notifications (`@harnessy/core/notifications`) on macOS,
+  Linux and Windows: terminal-notifier or `osascript`, `notify-send` with a
+  display, or a Windows toast through PowerShell. Without a display (SSH,
+  containers) Harnessy prints one `[harnessy] ...` line on stderr instead, and
+  `CI` turns the default mode off. Optional ntfy and generic webhook pushes
+  are off until a URL is set. Text is sanitized (home paths become `~`, other
+  absolute paths and token-like strings are redacted), and a notifier failure
+  only logs a warning. `harnessy work` uses it for review before the push,
+  blocked, over budget and other handoffs, PR ready to merge, and the
+  WorkStream outcome; `--notify auto|off|desktop|terminal` overrides
+  `HSY_NOTIFY`, `NO_NOTIFY` and the `notifications` key in
+  `~/.hsy/agent/settings.json`. See "Notifications" in the README.
+- `harnessy work` now waits up to `--outcome-wait-hours` (default 1) after
+  submitting for WorkStream to accept, reject or return the submission. It
+  reports `accepted` (exit 0), or `rejected` or `needs_revision` (exit 2),
+  records the decision so a re-run neither asks again nor notifies again, and
+  reports `submitted` as before while the review is open.
 
 ### Fixed
 
+- `harnessy work` sent two notifications when it stopped for review before
+  the push; it now sends one.
 - `harnessy work` now tells the agent exactly which commands it can run. With
   `--agent-allow`, the prompt lists the allowed command patterns (for example
   `node_modules/.bin/vitest run <args>`). It says that other runners such as

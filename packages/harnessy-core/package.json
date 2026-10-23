@@ -41,6 +41,10 @@
 			"types": "./dist/meeting-publication-inspector.d.ts",
 			"import": "./dist/meeting-publication-inspector.js"
 		},
+		"./notifications": {
+			"types": "./dist/notifications.d.ts",
+			"import": "./dist/notifications.js"
+		},
 		"./life-orchestrator": {
 			"types": "./dist/life-orchestrator.d.ts",
 			"import": "./dist/life-orchestrator.js"

@@ -112,3 +112,105 @@ short busy timeout (250 ms by default) and holds one read transaction. It
 refuses to open a database while a `-journal` file exists, refuses WAL
 databases, and never creates a file or rolls back a journal.
 `PortalSchemas` holds the TypeBox (JSON Schema) shape of every result.
+
+## Notifications
+
+Harnessy tells you when it needs you. `harnessy work` sends a notification
+when it stops for your review before the push, when a run stops (blocked, over
+budget or another handoff), when a PR is ready to merge, and when WorkStream
+accepts, rejects or returns the submission. Each notification says what to do
+next. Other Harnessy commands can use the same module,
+`@harnessy/core/notifications`.
+
+### Where notifications appear
+
+| Machine | What Harnessy uses |
+| --- | --- |
+| macOS | `terminal-notifier` when it is on `PATH`, else `/usr/bin/osascript` |
+| Linux with `DISPLAY` or `WAYLAND_DISPLAY` | `notify-send` |
+| Windows | A toast through Windows PowerShell (`powershell.exe -NoProfile -NonInteractive`) |
+| No display (SSH, containers) | One line on stderr, such as `[harnessy] Review needed: ... Next: ...` |
+
+If the desktop notification fails, Harnessy prints the stderr line instead.
+Harnessy adds no dependency for this, and a notification problem never fails a
+command: it prints a `[harnessy] notification warning: ...` line and goes on.
+
+### Choosing the mode
+
+| Mode | Effect |
+| --- | --- |
+| `auto` (default) | A desktop notification where a display exists, else the stderr line |
+| `desktop` | Always try the desktop notification first, even over SSH |
+| `terminal` | Only the stderr line |
+| `off` | Nothing, including remote pushes |
+
+Harnessy takes the first of these that is set:
+
+1. `harnessy work --notify <auto|off|desktop|terminal>`.
+2. `NO_NOTIFY` with any value: `off`.
+3. `HSY_NOTIFY`: a mode, or `0`/`false`/`no` for `off` and `1`/`true`/`yes`/`on` for `auto`.
+4. `notifications.mode` in `~/.hsy/agent/settings.json` (or
+   `$HSY_CODING_AGENT_DIR/settings.json`).
+5. `auto`.
+
+When `CI` is set, `auto` means `off`. An explicit mode still applies.
+
+### Phone and remote notifications (off by default)
+
+Harnessy can also push each notification to [ntfy](https://ntfy.sh) and to a
+generic webhook. Nothing is sent until you set a URL. URLs must use `https`
+(plain `http` is allowed only to `localhost`, `127.0.0.1` or `[::1]`) and must
+not contain a user name or password. A failed push is retried once.
+
+| Setting | Environment variable | `settings.json` key |
+| --- | --- | --- |
+| ntfy topic URL | `HSY_NOTIFY_NTFY_URL` | `notifications.ntfy.url` |
+| ntfy access token (optional) | `HSY_NOTIFY_NTFY_TOKEN` | `notifications.ntfy.token` |
+| Webhook URL | `HSY_NOTIFY_WEBHOOK_URL` | `notifications.webhook.url` |
+
+Environment variables override the settings file. For example:
+
+```json
+{
+  "notifications": {
+    "mode": "auto",
+    "ntfy": { "url": "https://ntfy.sh/<your-private-topic>" },
+    "webhook": { "url": "https://hooks.example.com/harnessy" }
+  }
+}
+```
+
+To get notifications on your phone with ntfy:
+
+1. Install the ntfy app (Android or iOS).
+2. Choose a long, hard-to-guess topic name. On the public `ntfy.sh` server,
+   anyone who knows the topic name can read it.
+3. In the app, subscribe to that topic.
+4. Set `HSY_NOTIFY_NTFY_URL=https://ntfy.sh/<topic>`, or the settings key.
+5. For a self-hosted server or a reserved topic, also set
+   `HSY_NOTIFY_NTFY_TOKEN` to an access token. Harnessy sends it only in the
+   `Authorization` header and never logs it.
+
+The ntfy push carries the title, priority (`high` when you need to act) and
+tags in headers, and the message and next step in the body. The webhook
+receives one JSON object:
+
+```json
+{ "event": "pr_ready", "title": "Ready to merge", "message": "PR #7 for task 1a2b3c4d passed its checks.", "next_step": "Review and merge PR #7; harnessy work then submits the task.", "ts": "2026-10-23T12:00:00.000Z" }
+```
+
+### Privacy
+
+- `harnessy work` puts only fixed text, the first 8 characters of the task id,
+  PR numbers and 12-character commit SHAs in a notification. Task text, agent
+  output, file paths and URLs never enter one.
+- Every notification is sanitized before it is shown or sent: the home
+  directory becomes `~`, other absolute paths become `<path>`, and token-like
+  strings (known token formats, `token=...` style values, long opaque strings
+  and the configured ntfy token) become `<redacted>`. Control and
+  direction-changing characters are removed.
+- Desktop notifiers run without a shell, with a fixed argument list, a minimal
+  environment and a 5-second limit. On Windows the PowerShell script is fixed
+  and the text reaches it only through environment variables.
+- Warnings name what failed (for example `ntfy push failed (HTTP 401)`), never
+  a URL, a token or a response body.

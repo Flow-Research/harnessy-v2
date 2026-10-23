@@ -25,6 +25,7 @@ const fakeDeps = (
 		sleep: async () => {},
 		uuid: () => "00000000-0000-4000-8000-000000000000",
 		log: () => {},
+		notify: async () => {},
 		run: async (argv) => {
 			calls.push([...argv]);
 			if (argv.includes("--version"))
@@ -37,10 +38,13 @@ const fakeDeps = (
 	return { calls, deps };
 };
 
-const runCli = (deps: WorkDeps, args: ReadonlyArray<string>) =>
+const runCli = (deps: WorkDeps, args: ReadonlyArray<string>, modes: Array<string | undefined> = []) =>
 	Effect.runPromise(
 		Command.runWith(
-			makeWorkCommand(() => deps),
+			makeWorkCommand((mode) => {
+				modes.push(mode);
+				return deps;
+			}),
 			{ version: "test" },
 		)(args).pipe(Effect.provide(NodeServices.layer)),
 	);
@@ -167,5 +171,29 @@ describe("harnessy work CLI", () => {
 		await expect(
 			runCli(fakeDeps().deps, ["--task", TASK, "--revise", "fix the test", "--approve-push", "--dry-run"]),
 		).rejects.toThrow("cannot be used together");
+		await expect(runCli(fakeDeps().deps, ["--task", TASK, "--notify", "loud", "--dry-run"])).rejects.toThrow();
+		await expect(runCli(fakeDeps().deps, ["--task", TASK, "--outcome-wait-hours=-1", "--dry-run"])).rejects.toThrow(
+			"--outcome-wait-hours must be zero or a positive number",
+		);
+	});
+});
+
+describe("harnessy work --notify", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		process.exitCode = undefined;
+	});
+
+	it("passes the chosen mode to the notifier, and nothing when the flag is absent", async () => {
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		const modes: Array<string | undefined> = [];
+		for (const mode of ["auto", "off", "desktop", "terminal"])
+			await runCli(
+				fakeDeps().deps,
+				["--task", TASK, "--notify", mode, "--outcome-wait-hours", "0", "--dry-run"],
+				modes,
+			);
+		await runCli(fakeDeps().deps, ["--task", TASK, "--dry-run"], modes);
+		expect(modes).toEqual(["auto", "off", "desktop", "terminal", undefined]);
 	});
 });
