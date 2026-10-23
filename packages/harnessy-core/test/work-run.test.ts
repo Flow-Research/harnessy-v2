@@ -1007,6 +1007,9 @@ describe("runWork", () => {
 		it("writes the sandbox block whenever commands are allowed, and none without", async () => {
 			const fake = fakeTools(root);
 			await runWork({ ...options, approvePush: false, agentAllow: ALLOW }, fake.deps);
+			expect(readFileSync(join(fake.stateDir, "prompt.md"), "utf8")).toContain(
+				"git status\ngit diff\nnode_modules/.bin/vitest run <args>\n",
+			);
 			expect(settings(fake.stateDir)).toEqual({
 				permissions: {
 					allow: ["Bash(git status)", "Bash(git diff)", ALLOW],
