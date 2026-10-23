@@ -813,6 +813,10 @@ describe("WorkStream and GitHub parsing", () => {
 		expect(parseState(JSON.stringify({ ...state, schema: "harnessy.work.state.v1" }), TASK)).toBeUndefined();
 		expect(parseState(JSON.stringify({ ...state, binding: { ...binding, actor: 1 } }), TASK)).toBeUndefined();
 		expect(parseState("{", TASK)).toBeUndefined();
+		expect(parseState(JSON.stringify({ ...state, commitApp: "flow-research-agents" }), TASK)).toMatchObject({
+			commitApp: "flow-research-agents",
+		});
+		expect(parseState(JSON.stringify({ ...state, commitApp: 1 }), TASK)).toBeUndefined();
 		const agentDeps = { copied: [{ path: "node_modules", method: "clone" }] };
 		expect(parseState(JSON.stringify({ ...state, agentDeps }), TASK)).toEqual({ ...state, agentDeps });
 		expect(parseState(JSON.stringify({ ...state, agentDeps: { copied: [] } }), TASK)).toBeDefined();

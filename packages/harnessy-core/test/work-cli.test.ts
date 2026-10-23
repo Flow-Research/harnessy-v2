@@ -6,6 +6,8 @@ import { Effect } from "effect";
 import { Command } from "effect/unstable/cli";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeWorkCommand } from "../src/cli/work.ts";
+import { registerSecret } from "../src/notifications/sanitize.ts";
+import { parseGitHubSettings } from "../src/work/github-app.ts";
 import { REQUIRED_CLAUDE_FLAGS } from "../src/work/logic.ts";
 import type { WorkDeps } from "../src/work/run.ts";
 
@@ -195,5 +197,44 @@ describe("harnessy work --notify", () => {
 			);
 		await runCli(fakeDeps().deps, ["--task", TASK, "--dry-run"], modes);
 		expect(modes).toEqual(["auto", "off", "desktop", "terminal", undefined]);
+	});
+});
+
+describe("harnessy work --github-app", () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		process.exitCode = undefined;
+	});
+	const withApp = (app: object): WorkDeps => ({
+		...fakeDeps().deps,
+		githubApp: {
+			settings: parseGitHubSettings(JSON.stringify({ github: { app } })),
+			fetch: () => Promise.reject(new Error("a dry run calls no API")),
+			readFile: () => "",
+		},
+	});
+
+	it("passes the app to the run and shows it in the dry-run plan", async () => {
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
+		await runCli(withApp({ id: 5443042, keyFile: "/keys/app.pem" }), [
+			"--task",
+			TASK,
+			"--github-app",
+			"flow-research-agents",
+			"--dry-run",
+			"--json",
+		]);
+		expect(printed(log).github_app).toEqual({ slug: "flow-research-agents", app_id: 5443042, key_source: "file" });
+	});
+
+	it("redacts registered secrets from the printed report and from errors", async () => {
+		registerSecret("cli-secret-value-1");
+		const log = vi.spyOn(console, "log").mockImplementation(() => {});
+		await runCli(fakeDeps().deps, ["--task", TASK, "--repo", "/srv/cli-secret-value-1/app", "--dry-run", "--json"]);
+		expect(printed(log).repo).toBe("/srv/<redacted>/app");
+		registerSecret("cli-secret-slug");
+		await expect(
+			runCli(withApp({ slug: "other", id: 1 }), ["--task", TASK, "--github-app", "cli-secret-slug", "--dry-run"]),
+		).rejects.toThrow("GitHub App <redacted>: the settings file configures github.app for other, not this app");
 	});
 });

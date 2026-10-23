@@ -137,6 +137,8 @@ export default defineConfig({
 				"src/notifications/remote.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
 				"src/notifications/sanitize.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
 				"src/work/notifications.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				// `harnessy work --github-app`: settings, key loading, token minting and child environments.
+				"src/work/github-app.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
 			},
 		},
 	},

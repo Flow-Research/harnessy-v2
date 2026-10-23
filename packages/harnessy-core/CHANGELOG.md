@@ -22,6 +22,19 @@
 
 ### Added
 
+- `harnessy work --github-app <slug>` (or `github.app` in the settings file)
+  pushes and calls `gh` as a GitHub App installation instead of the
+  operator's account, so the operator can approve the PR. Each run mints an
+  installation token limited to the task's repository and mints a fresh one
+  before any GitHub step with less than ten minutes left. The token reaches
+  only the `git push` and `gh` children, through their environment; the agent
+  never sees it or the key, and it is redacted from logs, reports and errors.
+  Harnessy's commit is authored by `Claude Code agent (operated by
+  <operator>)` with the app bot's noreply address, and the commit and PR body
+  carry `Agent:`, `Operator:` and `WorkStream-Task:` lines. A token that
+  cannot be minted stops the run with `github_app_auth_failed` before the
+  step, never falling back to the operator's account. The key comes from the
+  macOS keychain or `HSY_GITHUB_APP_KEY_FILE`.
 - Added `harnessy work`, which runs one WorkStream task end to end: tool
   preflight, claim and start, an isolated git worktree, a budgeted Claude Code
   run in a herdr pane, a stop rule, a Harnessy-made commit held for local

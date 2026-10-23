@@ -43,7 +43,14 @@ import {
 	RETRY_DELAY_MS,
 	webhookRequest,
 } from "../src/notifications/remote.ts";
-import { cleanText, headerText, redact, TEXT_LIMITS } from "../src/notifications/sanitize.ts";
+import {
+	cleanText,
+	headerText,
+	redact,
+	redactSecrets,
+	registerSecret,
+	TEXT_LIMITS,
+} from "../src/notifications/sanitize.ts";
 
 const HOME = "/Users/someone";
 /** Joins a fake credential at runtime, so the repository's secret scanner never sees a token-shaped literal. */
@@ -131,6 +138,18 @@ const needsYou: Notification = {
 };
 
 describe("sanitiser", () => {
+	it("redacts secrets registered while running, everywhere, from then on", () => {
+		expect(redactSecrets("before reg-secret-1 is known")).toBe("before reg-secret-1 is known");
+		registerSecret("reg-secret-1");
+		registerSecret("short");
+		expect(redactSecrets("token reg-secret-1 at /home/me/x, short")).toBe("token <redacted> at /home/me/x, short");
+		expect(redact("a reg-secret-1 b")).toBe("a <redacted> b");
+		expect(cleanText("reg-secret-1", 80)).toBe("<redacted>");
+		// A multi-line secret, such as a PEM key, is matched before line breaks become spaces.
+		registerSecret("-----BEGIN KEY-----\nline-one\nline-two\n-----END KEY-----");
+		expect(redact("key: -----BEGIN KEY-----\nline-one\nline-two\n-----END KEY----- end")).toBe("key: <redacted> end");
+	});
+
 	it("replaces the home directory with ~ and hides every other absolute path", () => {
 		expect(redact(`log at ${HOME}/Code/app/run.log and /etc/passwd`, { home: HOME })).toBe(
 			"log at ~/Code/app/run.log and <path>",
