@@ -702,7 +702,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				if (stopped !== undefined) return stopped;
 			}
 		}
-		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes));
+		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes, agentAllow));
 		const gitDir = gitDirOf(state.gitFile);
 		if (gitDir === undefined) return handoff("worktree_tampered", "the worktree's .git file names no git directory");
 		const protectedRules = protectedWorktreeRules(

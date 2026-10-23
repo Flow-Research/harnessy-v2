@@ -83,6 +83,14 @@
   `filter_driver_paths` and commits nothing. The handoff tells the reviewer to
   restage those paths with the filter enabled (`git add --renormalize`) and
   check the staged content before committing.
+- `harnessy work` now tells the agent exactly which commands it can run. With
+  `--agent-allow`, the prompt lists the allowed command patterns (for example
+  `node_modules/.bin/vitest run <args>`). It says that other runners such as
+  `npx`, `pnpm`, `npm`, `yarn` and `bun` are blocked unless listed, and that
+  commands run from the worktree root, so a monorepo package needs
+  `--root <package dir>` or a test path. Without `--agent-allow`, the prompt
+  says there is no shell. Run 3's agent had tried `pnpm exec vitest` and
+  `npx vitest`, was denied, and never ran the allowed form.
 - Release installs and the workspace now resolve `toml@5.0.1`, the first
   release that fixes three quadratic or unbounded parsing denial-of-service
   advisories (GHSA-4qx8-w7c3-pj3p, GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p).
