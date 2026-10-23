@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import * as Result from "effect/Result";
 
 /**
@@ -220,18 +221,72 @@ export const wsArgv = {
 };
 
 /**
- * Repository hooks live in agent-writable files (for example `.husky/`), so
- * every git command Harnessy runs after the agent starts disables them.
+ * Repository hooks live in agent-writable files (for example `.husky/`), and
+ * a git directory the agent plants inside a submodule path carries its own
+ * config (such as `core.fsmonitor`, which git runs as a program). Every git
+ * command Harnessy runs in the worktree disables hooks and fsmonitor and
+ * never descends into submodules; `-c` settings also reach git's child
+ * processes.
  */
-const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"] as const;
+const NO_HOOKS = [
+	"-c",
+	"core.hooksPath=/dev/null",
+	"-c",
+	"core.fsmonitor=false",
+	"-c",
+	"submodule.recurse=false",
+	"-c",
+	"diff.ignoreSubmodules=all",
+] as const;
+
+/**
+ * `-c` overrides that switch off every named filter driver from the user's
+ * or system config, so a `.gitattributes` file in the task branch cannot make
+ * Harnessy's own git commands (checkout, add, status) run one. Read from
+ * `git config --name-only -z --get-regexp '^filter\.'`.
+ */
+export const filterOverrides = (configKeys: string): ReadonlyArray<string> =>
+	[
+		...new Set(
+			configKeys
+				.split("\0")
+				.map((key) => /^filter\.(.+)\.[^.]+$/s.exec(key)?.[1])
+				.filter((name): name is string => name !== undefined),
+		),
+	].flatMap((name) => [
+		"-c",
+		`filter.${name}.clean=`,
+		"-c",
+		`filter.${name}.smudge=`,
+		"-c",
+		`filter.${name}.process=`,
+		"-c",
+		`filter.${name}.required=false`,
+	]);
+
+/** A pathspec git matches literally (no globs) and in any letter case. */
+const literalIcase = (path: string) => `:(literal,icase)${path}`;
 
 /** git argv builders. */
 export const gitArgv = {
-	fetch: (repo: string) => ["git", "-C", repo, "fetch", "origin"],
+	fetch: (repo: string) => ["git", "-C", repo, ...NO_HOOKS, "fetch", "origin"],
+	/** Names of the filter drivers any config scope defines, NUL-separated keys. */
+	filterNames: (repo: string) => [
+		"git",
+		"-C",
+		repo,
+		...NO_HOOKS,
+		"config",
+		"--name-only",
+		"-z",
+		"--get-regexp",
+		"^filter\\.",
+	],
 	worktreeAdd: (repo: string, worktree: string, branch: string, base: string) => [
 		"git",
 		"-C",
 		repo,
+		...NO_HOOKS,
 		"worktree",
 		"add",
 		worktree,
@@ -239,11 +294,20 @@ export const gitArgv = {
 		branch,
 		`origin/${base}`,
 	],
-	status: (worktree: string) => ["git", "-C", worktree, "status", "--porcelain"],
+	status: (worktree: string) => [
+		"git",
+		"-C",
+		worktree,
+		...NO_HOOKS,
+		"status",
+		"--porcelain",
+		"--ignore-submodules=all",
+	],
 	newCommitCount: (worktree: string, base: string) => [
 		"git",
 		"-C",
 		worktree,
+		...NO_HOOKS,
 		"rev-list",
 		"--count",
 		`origin/${base}..HEAD`,
@@ -258,11 +322,12 @@ export const gitArgv = {
 		"-m",
 		`work: WorkStream task ${task}`,
 	],
-	head: (worktree: string) => ["git", "-C", worktree, "rev-parse", "HEAD"],
+	head: (worktree: string) => ["git", "-C", worktree, ...NO_HOOKS, "rev-parse", "HEAD"],
 	changedPaths: (worktree: string, base: string, sha: string) => [
 		"git",
 		"-C",
 		worktree,
+		...NO_HOOKS,
 		"diff",
 		"--no-ext-diff",
 		"--no-textconv",
@@ -278,6 +343,7 @@ export const gitArgv = {
 		"git",
 		"-C",
 		worktree,
+		...NO_HOOKS,
 		"ls-tree",
 		"--name-only",
 		`origin/${base}:${dir}`,
@@ -287,8 +353,44 @@ export const gitArgv = {
 		"git",
 		"-C",
 		worktree,
+		...NO_HOOKS,
 		"show",
 		`origin/${base}:${path}`,
+	],
+	/**
+	 * Ignored, untracked paths of the source checkout, NUL-separated. With
+	 * `--directory` a wholly ignored directory is one entry ending in `/`.
+	 */
+	ignoredDirs: (repo: string) => [
+		"git",
+		"-C",
+		repo,
+		...NO_HOOKS,
+		"ls-files",
+		"-z",
+		"--others",
+		"--ignored",
+		"--exclude-standard",
+		"--directory",
+	],
+	/**
+	 * What `git add --all` would stage under one path, as git itself decides
+	 * (nested `.gitignore` files, `!` negations and nested repositories
+	 * included). Literal, case-insensitive pathspec; NUL-separated output that
+	 * is only checked for being empty.
+	 */
+	stageableUnder: (worktree: string, path: string) => [
+		"git",
+		"-C",
+		worktree,
+		...NO_HOOKS,
+		"status",
+		"--porcelain=v1",
+		"-z",
+		"--untracked-files=all",
+		"--ignore-submodules=all",
+		"--",
+		literalIcase(path),
 	],
 	/** Pushes the exact reviewed commit, not whatever HEAD is at push time. */
 	push: (worktree: string, branch: string, sha: string) => [
@@ -485,12 +587,20 @@ const MAX_ALLOW_LENGTH = 4096;
  * cannot read a rule differently from this check: there are no colons,
  * escapes, quotes, other whitespace, Unicode lookalikes, case variants of
  * `Bash` or trailing content. The program token must not start with `-` or
- * contain `=`; programs that run arbitrary code or reach credentials are
- * rejected case-insensitively, by basename; `push` is never allowed.
+ * contain `=`; a list of well-known shells, interpreters, git, gh and
+ * network tools is rejected case-insensitively, by basename; `push` is never
+ * a word of a rule. The deny list is best effort, not a sandbox: a trailing
+ * `*` or a general runner (`npm *`, `make *`, `pnpm *`) still reaches a shell,
+ * and arguments matched by `*` are not checked, so allow exact test and
+ * format commands only.
  *
  * Residual risk: an allowed test runner (for example `npm test`) executes
  * repository code the agent can edit, so it grants code execution as the
- * current user. Allow only what the task needs; review is the backstop.
+ * current user. With `--agent-deps clone` that code also has the worktree's
+ * private copy of installed packages, which it can change but which never
+ * links back to the source checkout. Allow only what the task needs; review
+ * is the backstop. `npx` stays denied because it can fetch and run any
+ * package; name the installed binary instead, e.g. `Bash(node_modules/.bin/vitest run *)`.
  */
 export const validateAgentAllow = (value: string | undefined): ReadonlyArray<string> => {
 	if (value === undefined || value === "") return [];
@@ -520,19 +630,126 @@ export const shellWord = (word: string): string =>
 	word !== "" && SHELL_SAFE.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`;
 
 /**
+ * Credential stores that sandboxed commands may not read. The sandbox's default
+ * read policy is the whole machine; `~/` is the home directory.
+ */
+export const SANDBOX_DENY_READ: ReadonlyArray<string> = [
+	"~/.ssh",
+	"~/.aws",
+	"~/.gnupg",
+	"~/.netrc",
+	"~/.npmrc",
+	"~/.docker",
+	"~/.kube",
+	"~/.config/gh",
+	"~/.config/gcloud",
+	"~/.config/gws*",
+	"~/Library/Keychains",
+];
+
+/**
+ * Claude Code's OS sandbox for the agent's Bash commands: the boundary once
+ * `--agent-allow` lets a command run repository code. Writes follow an
+ * allow-list and nothing is added to it: the working directory (the
+ * worktree) and Claude Code's per-user temp directory `/tmp/claude-<uid>`,
+ * which Claude Code 2.1.304 always grants and sets as `TMPDIR`. Inside the
+ * worktree the `.git` file and `.claude/` are denied through the `Edit` deny
+ * rules, which Claude Code merges into the sandbox. There is no network and
+ * credential stores are unreadable. `failIfUnavailable` makes Claude Code
+ * exit instead of running unsandboxed, `allowUnsandboxedCommands: false`
+ * removes the `dangerouslyDisableSandbox` escape hatch, no command is
+ * excluded, and `autoAllowBashIfSandboxed: false` keeps the allow rules in
+ * force.
+ */
+export const agentSandbox = () => ({
+	enabled: true,
+	failIfUnavailable: true,
+	autoAllowBashIfSandboxed: false,
+	allowUnsandboxedCommands: false,
+	excludedCommands: [],
+	network: { allowedDomains: [], strictAllowlist: true, allowLocalBinding: false, allowAllUnixSockets: false },
+	filesystem: { denyRead: [...SANDBOX_DENY_READ] },
+});
+
+/**
+ * Paths the agent may never write, as `Edit` deny rules: they bind the Edit
+ * and Write tools and, merged by Claude Code, sandboxed commands. They are the
+ * worktree's `.git` file and `.claude/`, the whole source checkout, and the
+ * shared git directory (`<common>`, which holds `worktrees/<name>`). Claude
+ * Code's sandbox otherwise lets commands write a linked worktree's git
+ * directories so git works: refs, objects, `info/`, `HEAD` and `commondir`,
+ * which could move branches in the real checkout or redirect Harnessy's later
+ * git commands. `//` marks an absolute path in a rule.
+ */
+export const protectedWorktreeRules = (
+	realWorktree: string,
+	realRepo: string,
+	realCommonDir: string,
+): ReadonlyArray<string> => [
+	`Edit(/${realWorktree}/.git)`,
+	`Edit(/${realWorktree}/.claude/**)`,
+	...[...new Set([realRepo, realCommonDir])].flatMap((path) => [`Edit(/${path})`, `Edit(/${path}/**)`]),
+];
+
+/** The shared git directory of a linked worktree whose git directory is `<common>/worktrees/<name>`. */
+export const commonDirOf = (gitDir: string): string => dirname(dirname(gitDir));
+
+/** The git directory a linked worktree's `.git` file names, or undefined. */
+export const gitDirOf = (gitFile: string): string | undefined => /^gitdir: (.+)$/m.exec(gitFile)?.[1];
+
+/**
  * Claude Code settings for the agent: the complete permission policy. The run
  * line loads no user, project or local settings (`--restricted` and
- * `--setting-sources ""`), so nothing else can widen it. Julian's user
- * settings allow plain `Bash`, and `--allowedTools` only adds to the loaded
- * sources, which is how the first live run reached `npm test`.
+ * `--setting-sources ""`; a probe confirmed the worktree's own
+ * `.claude/settings*.json` are ignored), so nothing else can widen it.
+ * Julian's user settings allow plain `Bash`, and `--allowedTools` only adds
+ * to the loaded sources, which is how the first live run reached `npm test`.
+ * Whenever commands are allowed, the sandbox block comes with them.
  */
-export const agentSettings = (extraAllowed: ReadonlyArray<string>) => ({
+export const agentSettings = (extraAllowed: ReadonlyArray<string>, protectedRules: ReadonlyArray<string>) => ({
 	permissions: {
 		allow: extraAllowed.length === 0 ? [] : [...AGENT_ALLOWED_TOOLS, ...extraAllowed],
-		deny: [...AGENT_DISALLOWED_TOOLS],
+		deny: [...AGENT_DISALLOWED_TOOLS, ...protectedRules],
 		defaultMode: "acceptEdits",
 	},
+	...(extraAllowed.length === 0 ? {} : { sandbox: agentSandbox() }),
 });
+
+/** The first Claude Code release whose sandbox settings Harnessy was verified against. */
+export const SANDBOX_MIN_CLAUDE = "2.1.304";
+
+/**
+ * Prefixes Claude Code's sandbox always lets commands write: its per-user
+ * temp directory and the runtime's own `/tmp/claude` grant, matched as
+ * prefixes. Nothing Harnessy protects may live there.
+ */
+export const SANDBOX_TEMP_PREFIXES: ReadonlyArray<string> = ["/tmp/claude", "/private/tmp/claude"];
+
+/**
+ * Why the agent's commands cannot be sandboxed here, or undefined. macOS uses
+ * the built-in Seatbelt; Linux and WSL2 need `bwrap` and `socat`; Claude Code
+ * runs commands unsandboxed on native Windows, so it is refused. The source
+ * checkout (which holds the worktree's git directory), the worktree's parent
+ * and Harnessy's state must lie outside the always-writable temp prefixes.
+ */
+export const sandboxProblem = (
+	platform: string,
+	claudeVersion: string | undefined,
+	linuxTools: { readonly bwrap: boolean; readonly socat: boolean },
+	protectedPaths: ReadonlyArray<string>,
+): string | undefined => {
+	if (platform !== "darwin" && platform !== "linux")
+		return `Claude Code cannot sandbox commands on ${platform}, so --agent-allow is refused`;
+	if (claudeVersion === undefined || compareVersions(claudeVersion, SANDBOX_MIN_CLAUDE) < 0)
+		return `--agent-allow needs Claude Code ${SANDBOX_MIN_CLAUDE} or newer for its sandbox settings (found ${claudeVersion ?? "unknown"})`;
+	const missing = platform === "linux" ? (["bwrap", "socat"] as const).filter((tool) => !linuxTools[tool]) : [];
+	if (missing.length > 0)
+		return `Claude Code's sandbox needs ${missing.join(" and ")} on Linux, so --agent-allow is refused`;
+	const exposed = protectedPaths.filter((path) => SANDBOX_TEMP_PREFIXES.some((prefix) => path.startsWith(prefix)));
+	return exposed.length === 0
+		? undefined
+		: `${exposed.join(", ")} lies under Claude Code's sandbox temp directory, which sandboxed commands can write; move it elsewhere to use --agent-allow`;
+};
 
 /** Tools for `--tools`: the base set, plus Bash only when rules allow commands. */
 export const agentTools = (extraAllowed: ReadonlyArray<string>): ReadonlyArray<string> =>
@@ -740,6 +957,45 @@ export const parseAgentResult = (text: string | undefined): AgentResult => {
 	return { ok: true, costUsd: cost, outcome, reason: clean, isError: field(value, "is_error") === true };
 };
 
+/** Last path segments of the installed build inputs `--agent-deps clone` copies. */
+export const AGENT_DEP_DIRS: ReadonlySet<string> = new Set(["node_modules", "dist"]);
+
+/**
+ * Directories to copy from `git ls-files -z --others --ignored --directory`
+ * output: entries whose last segment is `node_modules` or `dist`, as plain
+ * relative paths without the trailing `/`. Anything absolute or with `.` or
+ * `..` segments is dropped.
+ */
+export const parseDepDirs = (stdout: string): ReadonlyArray<string> =>
+	stdout
+		.split("\0")
+		.map((entry) => entry.replace(/\/+$/, ""))
+		.filter((path) => {
+			const segments = path.split("/");
+			return (
+				path !== "" &&
+				!path.startsWith("/") &&
+				segments.every((segment) => segment !== "" && segment !== "." && segment !== "..") &&
+				AGENT_DEP_DIRS.has(path.slice(path.lastIndexOf("/") + 1))
+			);
+		});
+
+/** How one dependency directory reached the worktree. */
+export type DepCopyMethod = "clone" | "reflink" | "copy";
+
+/**
+ * `cp` argv for a copy-on-write copy: APFS `clonefile` on macOS
+ * (`cp -c`), `--reflink=auto` elsewhere (GNU cp clones where the filesystem
+ * supports it). `-R -P` copies symbolic links as links and never follows one.
+ */
+export const cloneArgv = (platform: string, source: string, target: string) =>
+	platform === "darwin"
+		? { method: "clone" as const, argv: ["cp", "-c", "-R", "-P", source, target] }
+		: { method: "reflink" as const, argv: ["cp", "--reflink=auto", "-R", "-P", source, target] };
+
+/** Plain recursive copy, used only when the clone command fails. */
+export const plainCopyArgv = (source: string, target: string) => ["cp", "-R", "-P", source, target];
+
 /** Why a run stops. Only `continue` from the stop rule plus an approved push reach GitHub. */
 export type HandoffReason =
 	| "timeout"
@@ -751,6 +1007,11 @@ export type HandoffReason =
 	| "blocked"
 	| "no_changes"
 	| "worktree_tampered"
+	| "agent_deps_source_unsafe"
+	| "agent_deps_destination_unsafe"
+	| "agent_deps_not_ignored"
+	| "agent_deps_unsafe_entry"
+	| "agent_deps_cleanup_failed"
 	| "ci_config_changed"
 	| "awaiting_push_approval"
 	| "revise_after_merge"
@@ -900,7 +1161,7 @@ export const agentPrompt = (task: WorkTask, reviewNotes?: string): string => {
 		"## Rules",
 		"",
 		"- Make the change the task below describes, in the current directory only.",
-		"- Run the tests relevant to the change if your permissions allow it; otherwise say so in the reason. CI runs the full suite.",
+		"- Run the tests relevant to the change, and the formatter and linter, if your permissions allow it. Fix what they report, and give the commands you ran and their results in the reason; if you could not run them, say so there. CI runs the full suite.",
 		"- Do not commit, push, open pull requests or change git configuration. Harnessy commits and a human reviews before anything is pushed.",
 		"- Do not change files under `.github/`.",
 		'- Finish with outcome "done" when the change is complete, or "blocked" with a short reason when you cannot complete it safely.',
@@ -1243,6 +1504,15 @@ export interface WorkState {
 	readonly assignmentId?: string;
 	readonly started?: boolean;
 	readonly pane?: string;
+	/**
+	 * Dependency directories copied into the worktree by `--agent-deps clone`;
+	 * an empty list means the source had none. Set once, so a resume never copies again.
+	 */
+	readonly agentDeps?: {
+		readonly copied: ReadonlyArray<{ readonly path: string; readonly method: DepCopyMethod }>;
+		/** Copies moved into the worktree but not yet audited: what a crash may have left behind. */
+		readonly pending?: ReadonlyArray<string>;
+	};
 	/** Epoch milliseconds when the agent's wall-clock limit ends; survives re-attachment. */
 	readonly agentDeadline?: number;
 	readonly agent?: { readonly costUsd: number; readonly reason: string };
@@ -1270,6 +1540,22 @@ export interface WorkState {
 	readonly submission?: unknown;
 }
 
+const DEP_COPY_METHODS: ReadonlySet<unknown> = new Set(["clone", "reflink", "copy"]);
+
+const validAgentDeps = (value: unknown): boolean => {
+	if (value === undefined) return true;
+	const copied = field(value, "copied");
+	const pending = field(value, "pending");
+	return (
+		(pending === undefined ||
+			(Array.isArray(pending) && pending.every((path: unknown) => typeof path === "string"))) &&
+		Array.isArray(copied) &&
+		copied.every(
+			(entry: unknown) => typeof field(entry, "path") === "string" && DEP_COPY_METHODS.has(field(entry, "method")),
+		)
+	);
+};
+
 export const parseState = (text: string, task: string): WorkState | undefined => {
 	const value = parseJson(text);
 	const keys = field(value, "keys");
@@ -1292,6 +1578,7 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!["undefined", "string"].includes(typeof field(value, "pushedSha")) ||
 		!["undefined", "string"].includes(typeof field(value, "revisedFrom")) ||
 		!["undefined", "string"].includes(typeof field(value, "commentedSha")) ||
+		!validAgentDeps(field(value, "agentDeps")) ||
 		!(
 			field(value, "earlierReports") === undefined ||
 			(Array.isArray(field(value, "earlierReports")) &&

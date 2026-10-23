@@ -101,8 +101,113 @@
     The merged head must equal the pushed SHA, and CI evidence must be a
     completed run for that SHA. Proof fields are read from `gh` and `git` at
     proof time; only `cost_usd` comes from the Claude Code result.
-  - Residual risks: an allowed test command runs repository code the agent
-    can edit, so it is code execution as the current user. The `env` prefix
+  - Agent sandbox (2026-10-22): whenever `--agent-allow` lets commands run,
+    the agent settings file carries Claude Code's OS sandbox for Bash
+    (Seatbelt on macOS; bubblewrap and socat on Linux and WSL2). It is the
+    boundary, because an allowed test or format command runs repository code
+    the agent can edit. The block, verified on Claude Code 2.1.304
+    (`SANDBOX_MIN_CLAUDE`) with probe runs against a real git worktree:
+    - `enabled: true`.
+    - `failIfUnavailable: true`: exit rather than run unsandboxed.
+    - `allowUnsandboxedCommands: false`: no `dangerouslyDisableSandbox`.
+    - `excludedCommands: []`.
+    - `autoAllowBashIfSandboxed: false`: the allow rules still decide which
+      commands run.
+    - `network`: `allowedDomains: []`, `strictAllowlist: true`, no local
+      binding, no Unix sockets.
+    - `filesystem.denyRead`: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`,
+      `~/.npmrc`, `~/.docker`, `~/.kube`, `~/.config/gh`, `~/.config/gcloud`,
+      `~/.config/gws*` and `~/Library/Keychains`.
+
+    Writes follow Claude Code's allow-list, and Harnessy adds nothing to it.
+    The list is the working directory (the worktree) and Claude Code's
+    per-user temp directory `/tmp/claude-<uid>`. For a linked worktree,
+    Claude Code also opens the git directories so git works. `Edit` deny
+    rules, which Claude Code merges into the sandbox and applies to the Edit
+    and Write tools, remove what the agent must not write:
+    - the worktree's `.git` file;
+    - the worktree's `.claude/` directory;
+    - the whole source checkout;
+    - the shared git directory (`<repo>/.git`, including
+      `worktrees/<name>`). Without this rule, probes showed sandboxed code
+      could write refs, objects, `info/` and `commondir`.
+
+    A probe confirmed the agent's own `git status` and `git diff` still
+    work. A test pins this writable set, so any widening fails.
+
+    `/tmp/claude-<uid>` cannot be narrowed with 2.1.304's settings. Three
+    attempts failed:
+    - `CLAUDE_CODE_TMPDIR` and `TMPDIR`, set as environment variables or in
+      the settings `env`, do not move the sandbox's `TMPDIR`.
+    - Denying `/tmp/claude-<uid>` makes every sandboxed command exit 1,
+      because Claude Code's shell writes its working-directory file there.
+    - A private per-task temp directory is therefore not possible.
+
+    The source checkout's `.git` (hooks, config, objects),
+    `~/.claude`, the settings file and the rest of Harnessy's state lie
+    outside the list; probes confirmed EPERM for each, and a sandboxed `git
+    commit` fails. Probes also confirmed that `--setting-sources ""` ignores
+    the worktree's `.claude/settings*.json`. Preflight refuses `--agent-allow`
+    before claiming anything in four cases:
+    - on platforms other than macOS and Linux;
+    - on Linux without `bwrap` and `socat`;
+    - with an older Claude Code;
+    - when the source checkout, the worktrees' parent or Harnessy's state
+      lies under the always-writable `/tmp/claude` prefix.
+
+    Every git command Harnessy runs disables hooks and fsmonitor and never
+    descends into submodules. This covers the worktree and the source
+    checkout (`fetch`, `worktree add`, `ls-files`). After a read-only
+    `git config --name-only --get-regexp '^filter\.'`, every command also
+    switches off each filter driver that the user, system or repository
+    config defines (`-c filter.<name>.clean= ... required=false`), so a
+    `.gitattributes` in the task branch cannot run one. `GIT_CONFIG_GLOBAL`
+    stays as it is, because fetch and push need the user's credential
+    helper and commits need the user's identity. No git command runs before
+    the worktree's `.git` file is checked.
+  - `--agent-deps clone` (approved 2026-10-22, off by default) gives the
+    worktree its own copy of the source checkout's ignored `node_modules` and
+    `dist` directories, so allowed test and format commands can run. Harnessy
+    lists them with `git ls-files -z --others --ignored --exclude-standard
+    --directory`. Each source must be a plain directory reached through no
+    link, and each destination must not exist in any form. Each is copied with
+    `cp -c -R -P` (macOS), `cp --reflink=auto -R -P` (elsewhere), or `cp -R -P`
+    only when the clone fails. The copy goes into a fresh `mkdtemp` staging
+    directory beside the worktree. Then `.env*`, `.npmrc`, `.yarnrc*`,
+    `*.pem`, `*.key` and `node_modules/.cache` are deleted from it, because the
+    sandbox still lets the agent read the worktree. Finally the copy is
+    renamed into place. One post-copy audit with no-follow `lstat` types
+    accepts only regular files, directories, and links that lead into the
+    worktree or the source checkout; workspace links are normal. Then
+    `git status --porcelain=v1 -z --untracked-files=all` must show nothing
+    under any copy. It runs again before Harnessy's `git add --all`, because
+    the agent can edit `.gitignore`. A failure removes the copies, never
+    through a link. A crash leaves a pending record that the next run cleans
+    before any agent starts. These checks cover only Harnessy's own
+    unsandboxed writes, secrets inside the worktree, and the commit. They are
+    not the agent's boundary; the sandbox is. The default allowlist is
+    unchanged, and `npx` stays denied. The `--agent-allow` deny list is best
+    effort: general runners such as `npm *` reach a shell, which the sandbox
+    then contains.
+  - Residual risks: allowed commands run repository code inside the
+    sandbox. That code can read every file the sandbox does not deny,
+    including the source checkout and other files in the user's home. It
+    can write the worktree and `/tmp/claude-<uid>`, which every Claude Code
+    session of the same user shares as scratch space. Claude Code 2.1.304
+    grants that directory unconditionally, and `CLAUDE_CODE_TMPDIR` does not
+    move the sandbox's `TMPDIR`, so settings cannot close this. Harnessy
+    therefore refuses to run when anything it protects lies there. It can
+    reach no network.
+    Decision (22 October 2026, Julian): this `/tmp/claude-<uid>` residual is
+    accepted for Flow repositories Julian controls while he is the only
+    operator. `--agent-allow` must not be used on repositories with
+    untrusted contributors until Claude Code allows moving the sandbox temp
+    directory; revisit then. The sandbox
+    depends on Claude Code honouring these settings; Harnessy checks the
+    version, and `failIfUnavailable` stops an unsandboxed start. The copy
+    checks defend against hostile repository content, not against a
+    concurrent same-user process, which can always race a path check
+    (Node has no `openat`). The `env` prefix
     that strips git and GitHub credentials is defense in depth, not a sandbox.
     CI for a same-repository `pull_request` runs the pushed code with that
     workflow's token permissions and any secrets it references. Today the

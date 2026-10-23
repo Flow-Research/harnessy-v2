@@ -1,9 +1,31 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import * as Result from "effect/Result";
+import {
+	auditCopy,
+	copyTree,
+	destinationProblem,
+	makeParents,
+	realPath,
+	removeCopy,
+	removeTree,
+	sourceProblem,
+	stageable,
+	stripSensitive,
+} from "./deps.ts";
 import {
 	ATTESTATION,
 	agentPrompt,
@@ -14,11 +36,15 @@ import {
 	checkTool,
 	ciConfigPaths,
 	combinedReports,
+	commonDirOf,
+	type DepCopyMethod,
 	evaluateStopRule,
 	field,
+	filterOverrides,
 	findPrTemplate,
 	ghArgv,
 	gitArgv,
+	gitDirOf,
 	type HandoffReason,
 	herdrArgv,
 	isTaskId,
@@ -29,6 +55,7 @@ import {
 	parseActor,
 	parseAssignment,
 	parseChangedPaths,
+	parseDepDirs,
 	parseExitMarker,
 	parseHerdrError,
 	parseJson,
@@ -42,9 +69,11 @@ import {
 	parseTask,
 	prBody,
 	prMismatch,
+	protectedWorktreeRules,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
 	revisionComment,
+	sandboxProblem,
 	TERMINAL_PREPARATION_STATUSES,
 	type ToolCheck,
 	validateAgentAllow,
@@ -96,6 +125,12 @@ export interface WorkOptions {
 	readonly taskUrl?: string;
 	/** Extra validated Claude Code rules, e.g. `Bash(npm test *)`, so the agent can run tests. */
 	readonly agentAllow?: string;
+	/**
+	 * `clone` gives the worktree its own copy-on-write copy of the source
+	 * checkout's ignored `node_modules` and `dist` directories before the agent
+	 * runs, so allowed test and format commands work there.
+	 */
+	readonly agentDeps?: "clone";
 	/** Send the unpushed commit back to the agent with these reviewer notes. */
 	readonly revise?: string;
 	/** Push the reviewed local commit. Without it the run stops after the commit for review. */
@@ -180,8 +215,13 @@ export const notify = async (deps: WorkDeps, message: string): Promise<void> => 
 	});
 };
 
-/** Check every required tool. */
-export const preflight = async (deps: WorkDeps, workstreamCli: ReadonlyArray<string>): Promise<ToolCheck[]> => {
+/** Check every required tool, and the sandbox when the agent may run commands. */
+export const preflight = async (
+	deps: WorkDeps,
+	workstreamCli: ReadonlyArray<string>,
+	/** Paths the sandbox must not be able to write, when the agent may run commands. */
+	needsSandbox: ReadonlyArray<string> | false = false,
+): Promise<ToolCheck[]> => {
 	const checks: ToolCheck[] = [];
 	for (const tool of WORK_TOOLS) {
 		const argv =
@@ -190,7 +230,36 @@ export const preflight = async (deps: WorkDeps, workstreamCli: ReadonlyArray<str
 		const check = checkTool(tool, probe, deps.platform);
 		checks.push(tool.name === "claude" && check.ok ? await claudeIsolationCheck(deps, check) : check);
 	}
+	if (needsSandbox !== false)
+		checks.push(await sandboxCheck(deps, checks.find((check) => check.name === "claude")?.version, needsSandbox));
 	return checks;
+};
+
+/** Never run allowed commands unsandboxed: refuse before anything when the sandbox cannot work here. */
+const sandboxCheck = async (
+	deps: WorkDeps,
+	claudeVersion: string | undefined,
+	protectedPaths: ReadonlyArray<string>,
+): Promise<ToolCheck> => {
+	const present = async (argv: ReadonlyArray<string>) =>
+		deps.platform === "linux" && (await deps.run(argv, { timeoutMs: PROBE_TIMEOUT_MS })).exitCode === 0;
+	const problem = sandboxProblem(
+		deps.platform,
+		claudeVersion,
+		{
+			bwrap: await present(["bwrap", "--version"]),
+			socat: await present(["socat", "-V"]),
+		},
+		protectedPaths.map((path) => (existsSync(path) ? realPath(path) : resolve(path))),
+	);
+	return problem === undefined
+		? { name: "sandbox", ok: true }
+		: {
+				name: "sandbox",
+				ok: false,
+				problem,
+				hint: "Run without --agent-allow, or on macOS, or on Linux with bubblewrap and socat installed",
+			};
 };
 
 /** Fail closed unless this Claude Code supports every flag the agent isolation relies on. */
@@ -303,7 +372,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	};
 	const ws = options.workstreamCli;
 
-	const tools = await preflight(deps, ws);
+	const tools = await preflight(deps, ws, agentAllow.length > 0 && [repo, resolve(worktree, ".."), stateDir]);
 	if (tools.some((tool) => !tool.ok)) return { exitCode: 1, report: { status: "preflight_failed", tools } };
 
 	if (options.dryRun)
@@ -318,6 +387,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				base: options.base,
 				state_dir: stateDir,
 				approve_push: options.approvePush,
+				agent_deps: options.agentDeps ?? "off",
 				tools,
 				steps: {
 					whoami: wsArgv.whoami(ws),
@@ -336,8 +406,16 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			},
 		};
 
+	// Every git command from here on switches off the filter drivers that the user's and the
+	// system's git config define, so the task branch's .gitattributes cannot invoke one.
+	const filterOff = filterOverrides((await deps.run(gitArgv.filterNames(repo))).stdout);
+	const work: WorkDeps = {
+		...deps,
+		run: (argv, runOptions) =>
+			deps.run(argv[0] === "git" ? ["git", ...filterOff, ...argv.slice(1)] : argv, runOptions),
+	};
 	const must = async (argv: ReadonlyArray<string>, what: string, cwd?: string): Promise<string> => {
-		const result = await deps.run(argv, cwd === undefined ? {} : { cwd });
+		const result = await work.run(argv, cwd === undefined ? {} : { cwd });
 		if (result.exitCode !== 0)
 			throw new Error(
 				`${what} failed (exit ${result.exitCode ?? "none"}): ${result.stderr.trim().slice(0, 500) || "no output"}`,
@@ -425,6 +503,89 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			);
 	};
 
+	/** Remove dependency copies from the worktree; returns whether all are gone, clearing the record then. */
+	const removeCopies = (copies: ReadonlyArray<string>): boolean => {
+		const realWorktree = realPath(worktree);
+		const gone = copies.filter((path) => !removeCopy(realWorktree, path)).length === 0;
+		if (gone) save({ agentDeps: undefined });
+		return gone;
+	};
+	/**
+	 * Give the worktree its own copy of the source checkout's ignored
+	 * `node_modules` and `dist` directories: staged outside the worktree,
+	 * secrets withheld, renamed into place, then audited once.
+	 */
+	const copyAgentDeps = async (): Promise<WorkOutcome | undefined> => {
+		const sources = parseDepDirs(await must(gitArgv.ignoredDirs(repo), "git ls-files"));
+		if (sources.length === 0) {
+			deps.log(`No ignored node_modules or dist directories in ${repo}; the agent gets no dependency copy`);
+			save({ agentDeps: { copied: [] } });
+			return undefined;
+		}
+		const realRepo = realPath(repo);
+		const badSources = sources.flatMap((path) => sourceProblem(realRepo, path) ?? []);
+		if (badSources.length > 0)
+			return handoff("agent_deps_source_unsafe", `${badSources.join("; ")}; nothing was copied`);
+		const realWorktree = realPath(worktree);
+		const badDestinations = sources.flatMap((path) => destinationProblem(realWorktree, path) ?? []);
+		if (badDestinations.length > 0)
+			return handoff("agent_deps_destination_unsafe", `${badDestinations.join("; ")}; nothing was copied`);
+		const staging = mkdtempSync(join(dirname(realWorktree), `.${basename(realWorktree)}-deps-`));
+		const copied: Array<{ readonly path: string; readonly method: DepCopyMethod }> = [];
+		for (const [index, path] of sources.entries()) {
+			const staged = join(staging, String(index));
+			const result = await copyTree(work.run, deps.platform, deps.log, join(realRepo, path), staged);
+			if ("error" in result) {
+				removeTree(staging);
+				throw new Error(result.error);
+			}
+			// Harnessy's own walk runs unsandboxed: never through a link, so the staged copy must be what cp made.
+			if (lstatSync(staged, { throwIfNoEntry: false })?.isDirectory() !== true) {
+				removeTree(staging);
+				throw new Error(`the copy of ${path} is not a plain directory`);
+			}
+			const withheld = stripSensitive(staged, basename(path) === "node_modules");
+			if (withheld.length > 0)
+				deps.log(
+					`Left ${withheld.length} possibly secret files out of the copy of ${path}: ${withheld.slice(0, 5).join(", ")}`,
+				);
+			copied.push({ path, method: result.method });
+		}
+		// From here the worktree changes; a crash leaves a record the next run cleans up.
+		save({ agentDeps: { copied: [], pending: sources } });
+		for (const [index, { path, method }] of copied.entries()) {
+			const problem =
+				makeParents(realWorktree, path) ??
+				(Result.isSuccess(Result.try(() => renameSync(join(staging, String(index)), join(realWorktree, path))))
+					? undefined
+					: `moving the copy of ${path} into place failed`);
+			if (problem !== undefined) {
+				removeTree(staging);
+				throw new Error(removeCopies(sources) ? problem : `${problem}; the copies could not all be removed`);
+			}
+			deps.log(`Copied ${path} into the worktree (${method})`);
+		}
+		removeTree(staging);
+		const unsafe = sources.flatMap((path) => auditCopy(join(realWorktree, path), realWorktree, realRepo));
+		const exposed = unsafe.length > 0 ? [] : await stageable(work.run, worktree, sources);
+		if (unsafe.length > 0 || exposed.length > 0) {
+			const removed = removeCopies(sources) ? "the copies were removed" : "the copies could not all be removed";
+			return unsafe.length > 0
+				? handoff(
+						"agent_deps_unsafe_entry",
+						`these copied entries are special files or links leading outside the worktree and the source checkout; ${removed}`,
+						{ paths: unsafe },
+					)
+				: handoff(
+						"agent_deps_not_ignored",
+						`git would stage files under these copied paths, so Harnessy's commit would include them; ${removed}`,
+						{ paths: exposed },
+					);
+		}
+		save({ agentDeps: { copied } });
+		return undefined;
+	};
+
 	// The same notes again after an interruption resume the revision already under way.
 	const resumingRevision =
 		state.headSha === undefined && state.revisedFrom !== undefined && state.reviewNotes === options.revise;
@@ -497,8 +658,34 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				`earlier runs spent ${state.spentUsd} USD of the ${options.budgetUsd} USD budget`,
 			);
 		if (state.pane === undefined) rmSync(paths.result, { force: true });
+		// Before the pane exists: a re-attached agent is already running with what it has.
+		if (state.pane === undefined) {
+			// No git command may run in a worktree whose .git file an earlier agent rewrote.
+			if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
+			const pending = state.agentDeps?.pending;
+			if (pending !== undefined) {
+				if (!removeCopies(pending))
+					return handoff(
+						"agent_deps_cleanup_failed",
+						"an interrupted dependency copy left these behind and they could not be removed; remove them, then run again",
+						{ paths: pending },
+					);
+				deps.log("Removed what an interrupted dependency copy left behind");
+			}
+			if (options.agentDeps === "clone" && state.agentDeps === undefined) {
+				const stopped = await copyAgentDeps();
+				if (stopped !== undefined) return stopped;
+			}
+		}
 		writePrivate(paths.prompt, agentPrompt(task, state.reviewNotes));
-		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow), null, 2)}\n`);
+		const gitDir = gitDirOf(state.gitFile);
+		if (gitDir === undefined) return handoff("worktree_tampered", "the worktree's .git file names no git directory");
+		const protectedRules = protectedWorktreeRules(
+			realPath(worktree),
+			realPath(repo),
+			realPath(commonDirOf(resolve(worktree, gitDir))),
+		);
+		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow, protectedRules), null, 2)}\n`);
 		let pane = state.pane;
 		if (pane === undefined) {
 			const created = parseJson(
@@ -515,13 +702,13 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		} else deps.log(`Re-attaching to agent in herdr pane ${pane}`);
 		const deadline = state.agentDeadline ?? deps.now() + options.maxMinutes * 60_000;
 		// herdr checks existing output first, so even an expired deadline still sees a finished run.
-		const waited = await deps.run(herdrArgv.waitOutput(pane, Math.max(deadline - deps.now(), MIN_WAIT_MS)));
+		const waited = await work.run(herdrArgv.waitOutput(pane, Math.max(deadline - deps.now(), MIN_WAIT_MS)));
 		const waitError = waited.exitCode === 0 ? undefined : (parseHerdrError(waited.stderr) ?? "unknown");
 		const timedOut = waitError === "timeout" || (waitError !== undefined && deps.now() >= deadline);
 		if (waitError !== undefined && !timedOut)
 			// Keep the pane: the agent may still be running. A re-run re-attaches until the deadline.
 			return handoff("agent_wait_failed", `herdr wait-output failed with ${waitError}`, { pane });
-		if (timedOut) await deps.run(herdrArgv.interrupt(pane));
+		if (timedOut) await work.run(herdrArgv.interrupt(pane));
 		save({ pane: undefined, agentDeadline: undefined });
 		if (!worktreeIntact())
 			return handoff("worktree_tampered", "the worktree's .git file changed during the agent run");
@@ -565,6 +752,20 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				decision.reason,
 				decision.detail,
 				decision.costUsd === undefined ? {} : { cost_usd: decision.costUsd },
+			);
+		}
+		// Copied dependencies must never reach Harnessy's commit: the agent can edit .gitignore.
+		const exposedCopies = await stageable(
+			work.run,
+			worktree,
+			(state.agentDeps?.copied ?? []).map(({ path }) => path),
+		);
+		if (exposedCopies.length > 0) {
+			save({ spentUsd: (state.spentUsd ?? 0) + decision.costUsd });
+			return handoff(
+				"agent_deps_not_ignored",
+				"after the agent's change git would stage files under these copied dependency directories; nothing was committed",
+				{ paths: exposedCopies, cost_usd: decision.costUsd },
 			);
 		}
 		if (dirty > 0) {
@@ -635,10 +836,10 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			// The base may have moved during local review; read the current template.
 			await must(gitArgv.fetch(repo), "git fetch");
 			for (const dir of PR_TEMPLATE_DIRS) {
-				const listed = await deps.run(gitArgv.baseList(worktree, options.base, dir), { cwd: worktree });
+				const listed = await work.run(gitArgv.baseList(worktree, options.base, dir), { cwd: worktree });
 				const path = listed.exitCode === 0 ? findPrTemplate(dir, listed.stdout) : undefined;
 				if (path === undefined) continue;
-				const shown = await deps.run(gitArgv.baseFile(worktree, options.base, path), { cwd: worktree });
+				const shown = await work.run(gitArgv.baseFile(worktree, options.base, path), { cwd: worktree });
 				if (shown.exitCode === 0 && shown.stdout.trim() !== "") {
 					template = shown.stdout;
 					break;
@@ -672,7 +873,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 
 	if (state.readyMarked !== true) {
 		deps.log(`Waiting for checks on PR #${pr.number}`);
-		const watch = () => deps.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
+		const watch = () => work.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs: CHECKS_TIMEOUT_MS });
 		let checks = await watch();
 		const appearBy = deps.now() + CHECKS_APPEAR_MS;
 		while (
@@ -698,7 +899,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				: `PR #${pr.number} head is ${current.headSha}, not the pushed ${headSha}`);
 		if (moved !== undefined) return handoff("pr_mismatch", moved);
 		if (current.state === "OPEN") {
-			const ready = await deps.run(ghArgv.prReady(pr.number), { cwd: worktree });
+			const ready = await work.run(ghArgv.prReady(pr.number), { cwd: worktree });
 			// Not recorded as requested, so a re-run tries again.
 			if (ready.exitCode !== 0)
 				return handoff("pr_not_ready", `PR #${pr.number} passed its checks but could not be marked ready`);
@@ -710,7 +911,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	if (state.mergeCommitSha === undefined) {
 		const deadline = deps.now() + options.mergeWaitHours * 3_600_000;
 		for (;;) {
-			const view = await deps.run(ghArgv.prView(pr.number), { cwd: worktree });
+			const view = await work.run(ghArgv.prView(pr.number), { cwd: worktree });
 			if (view.exitCode === 0) {
 				const pull = parsePrView(view.stdout);
 				const mismatch = prMismatch(pull, expectedPr);
@@ -746,7 +947,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			return handoff("pr_mismatch", `PR #${pr.number} is ${merged.state}, not merged`);
 		let ci: { readonly url: string; readonly conclusion: string } | undefined;
 		for (let attempt = 1; ci === undefined; attempt++) {
-			const runs = await deps.run(ghArgv.runList(headSha), { cwd: worktree });
+			const runs = await work.run(ghArgv.runList(headSha), { cwd: worktree });
 			const found = runs.exitCode === 0 ? parseRunList(runs.stdout, headSha) : undefined;
 			if (found !== undefined && found.conclusion !== "") ci = found;
 			else if (attempt >= CI_ATTEMPTS)

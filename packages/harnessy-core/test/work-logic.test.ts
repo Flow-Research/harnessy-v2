@@ -5,18 +5,23 @@ import {
 	AGENT_RESULT_SCHEMA,
 	agentPrompt,
 	agentRunLine,
+	agentSandbox,
 	agentSettings,
 	agentTools,
 	bindingMismatch,
 	buildProof,
 	checkTool,
 	ciConfigPaths,
+	cloneArgv,
+	commonDirOf,
 	compareVersions,
 	EXIT_MARKER_REGEX,
 	evaluateStopRule,
+	filterOverrides,
 	findPrTemplate,
 	ghArgv,
 	gitArgv,
+	gitDirOf,
 	herdrArgv,
 	installHint,
 	managedClaudeSettingsPaths,
@@ -26,6 +31,7 @@ import {
 	parseAgentResult,
 	parseAssignment,
 	parseChangedPaths,
+	parseDepDirs,
 	parseExitMarker,
 	parseHerdrError,
 	parseJson,
@@ -36,10 +42,15 @@ import {
 	parseRunList,
 	parseState,
 	parseVersion,
+	plainCopyArgv,
 	prBody,
 	prMismatch,
+	protectedWorktreeRules,
 	REQUIRED_CLAUDE_FLAGS,
 	reviewEvidenceProblem,
+	SANDBOX_DENY_READ,
+	SANDBOX_MIN_CLAUDE,
+	sandboxProblem,
 	splitCli,
 	validateAgentAllow,
 	WORK_TOOLS,
@@ -167,20 +178,96 @@ describe("agent permissions", () => {
 	});
 
 	it("write the complete permission policy to the settings file", () => {
-		expect(agentSettings([])).toEqual({
-			permissions: {
-				allow: [],
-				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
-				defaultMode: "acceptEdits",
-			},
-		});
-		expect(agentSettings(["Bash(npm test)"])).toEqual({
+		const rules = protectedWorktreeRules("/w", "/r", "/r/.git");
+		expect(rules).toEqual([
+			"Edit(//w/.git)",
+			"Edit(//w/.claude/**)",
+			"Edit(//r)",
+			"Edit(//r/**)",
+			"Edit(//r/.git)",
+			"Edit(//r/.git/**)",
+		]);
+		// A common directory that is the checkout itself is listed once.
+		expect(protectedWorktreeRules("/w", "/r", "/r")).toHaveLength(4);
+		expect(commonDirOf("/r/.git/worktrees/w")).toBe("/r/.git");
+		expect(gitDirOf("gitdir: /r/.git/worktrees/w\n")).toBe("/r/.git/worktrees/w");
+		expect(gitDirOf("garbage")).toBeUndefined();
+		const deny = ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)", ...rules];
+		expect(agentSettings([], rules)).toEqual({ permissions: { allow: [], deny, defaultMode: "acceptEdits" } });
+		expect(agentSettings(["Bash(npm test)"], rules)).toEqual({
 			permissions: {
 				allow: ["Bash(git status)", "Bash(git diff)", "Bash(npm test)"],
-				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
+				deny,
 				defaultMode: "acceptEdits",
 			},
+			sandbox: agentSandbox(),
 		});
+	});
+
+	it("turns every configured filter driver off, once per name", () => {
+		expect(filterOverrides("")).toEqual([]);
+		expect(filterOverrides("filter.lfs.clean\0filter.lfs.smudge\0core.editor\0filter.odd.name.x.process\0")).toEqual([
+			"-c",
+			"filter.lfs.clean=",
+			"-c",
+			"filter.lfs.smudge=",
+			"-c",
+			"filter.lfs.process=",
+			"-c",
+			"filter.lfs.required=false",
+			"-c",
+			"filter.odd.name.x.clean=",
+			"-c",
+			"filter.odd.name.x.smudge=",
+			"-c",
+			"filter.odd.name.x.process=",
+			"-c",
+			"filter.odd.name.x.required=false",
+		]);
+	});
+
+	it("pins the sandbox's writable set: nothing added to Claude Code's allow-list, nothing wider", () => {
+		// Writable = the working directory (the worktree) plus Claude Code's forced per-user temp
+		// directory. Any allowWrite entry, an Edit allow rule, a network domain or an escape hatch
+		// would widen it; this test fails if one appears.
+		expect(agentSandbox()).toEqual({
+			enabled: true,
+			failIfUnavailable: true,
+			autoAllowBashIfSandboxed: false,
+			allowUnsandboxedCommands: false,
+			excludedCommands: [],
+			network: { allowedDomains: [], strictAllowlist: true, allowLocalBinding: false, allowAllUnixSockets: false },
+			filesystem: { denyRead: [...SANDBOX_DENY_READ] },
+		});
+		const settings = agentSettings(
+			["Bash(node_modules/.bin/vitest run *)"],
+			protectedWorktreeRules("/w", "/r", "/r/.git"),
+		);
+		expect(settings.permissions.allow.some((rule) => !rule.startsWith("Bash("))).toBe(false);
+		expect(Object.keys(settings)).toEqual(["permissions", "sandbox"]);
+	});
+
+	it("refuses --agent-allow where Claude Code cannot sandbox commands", () => {
+		const both = { bwrap: true, socat: true };
+		const safe = ["/Users/j/Code/repo", "/Users/j/Code/.harnessy-work", "/Users/j/.local/state/harnessy/work/t"];
+		expect(sandboxProblem("darwin", SANDBOX_MIN_CLAUDE, { bwrap: false, socat: false }, safe)).toBeUndefined();
+		expect(sandboxProblem("linux", "2.2.0", both, safe)).toBeUndefined();
+		expect(sandboxProblem("win32", SANDBOX_MIN_CLAUDE, both, safe)).toBe(
+			"Claude Code cannot sandbox commands on win32, so --agent-allow is refused",
+		);
+		expect(sandboxProblem("darwin", "2.1.303", both, safe)).toBe(
+			`--agent-allow needs Claude Code ${SANDBOX_MIN_CLAUDE} or newer for its sandbox settings (found 2.1.303)`,
+		);
+		expect(sandboxProblem("darwin", undefined, both, safe)).toContain("(found unknown)");
+		expect(sandboxProblem("linux", SANDBOX_MIN_CLAUDE, { bwrap: true, socat: false }, safe)).toBe(
+			"Claude Code's sandbox needs socat on Linux, so --agent-allow is refused",
+		);
+		// The sandbox always lets commands write its temp directory; nothing Harnessy protects may live there.
+		expect(
+			sandboxProblem("darwin", SANDBOX_MIN_CLAUDE, both, ["/private/tmp/claude-501/s/repo", "/tmp/claudeX", "/x"]),
+		).toBe(
+			"/private/tmp/claude-501/s/repo, /tmp/claudeX lies under Claude Code's sandbox temp directory, which sandboxed commands can write; move it elsewhere to use --agent-allow",
+		);
 		expect(agentTools([])).toEqual(["Read", "Edit", "Write", "Glob", "Grep"]);
 		expect(agentTools(["Bash(npm test)"])).toEqual(["Read", "Edit", "Write", "Glob", "Grep", "Bash"]);
 	});
@@ -214,6 +301,11 @@ describe("agent permissions", () => {
 			"Bash(npm test *)",
 			"Bash(./node_modules/.bin/vitest --run)",
 		]);
+		// The documented test and format example passes; npx stays denied.
+		const documented =
+			"Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)";
+		expect(validateAgentAllow(documented)).toEqual(documented.split(","));
+		expect(() => validateAgentAllow("Bash(npx vitest run *)")).toThrow("npx can run arbitrary commands");
 		expect(() => validateAgentAllow("x".repeat(5000))).toThrow("4096");
 		expect(validateAgentAllow(undefined)).toEqual([]);
 		expect(validateAgentAllow("  ")).toEqual([]);
@@ -260,6 +352,12 @@ describe("agent permissions", () => {
 		"Bash(npm run PUSH)",
 		"Bash(-x test)",
 		"Bash(FOO=1)",
+		"Bash(node_modules/.bin/vitest run\nid)",
+		"Bash(node_modules/.bin/vitest run *; id)",
+		"Bash(node_modules/.bin/vitest run $(id) *)",
+		"Bash(node_modules/.bin/../../../bin/sh -c x)",
+		"Bash(node_modules/.bin/npx vitest)",
+		"Bash(node_modules/.bin/biome format --write * && id)",
 		"Bash(npm test%20x)",
 		"Bash(npm test,x)",
 	])("rejects %s", (rule) => {
@@ -288,6 +386,57 @@ describe("prompt", () => {
 		expect(prompt).toContain("`````text\nTitle: T");
 		expect(prompt.trimEnd().endsWith("`````")).toBe(true);
 		expect(prompt).toContain("Do not commit, push");
+		expect(prompt).toContain(
+			"- Run the tests relevant to the change, and the formatter and linter, if your permissions allow it.",
+		);
+		expect(prompt).toContain("give the commands you ran and their results in the reason");
+	});
+
+	it("selects only plain node_modules and dist directories to copy", () => {
+		expect(
+			parseDepDirs(
+				"node_modules/\0packages/a/dist/\0packages/a/src/\0.env\0dist\0/abs/node_modules/\0../node_modules/\0a/./dist/\0a//dist/\0a/node_modules.bak/\0",
+			),
+		).toEqual(["node_modules", "packages/a/dist", "dist"]);
+		// NUL-separated: spaces, quotes and newlines stay part of the path.
+		expect(parseDepDirs('a b/node_modules/\0we\nird/dist/\0q"uote/dist/\0')).toEqual([
+			"a b/node_modules",
+			"we\nird/dist",
+			'q"uote/dist',
+		]);
+		expect(parseDepDirs("")).toEqual([]);
+	});
+
+	it("builds copy-on-write copy commands per platform", () => {
+		expect(cloneArgv("darwin", "/r/node_modules", "/w/node_modules")).toEqual({
+			method: "clone",
+			argv: ["cp", "-c", "-R", "-P", "/r/node_modules", "/w/node_modules"],
+		});
+		expect(cloneArgv("linux", "/r/dist", "/w/dist")).toEqual({
+			method: "reflink",
+			argv: ["cp", "--reflink=auto", "-R", "-P", "/r/dist", "/w/dist"],
+		});
+		expect(plainCopyArgv("/r/dist", "/w/dist")).toEqual(["cp", "-R", "-P", "/r/dist", "/w/dist"]);
+		expect(gitArgv.stageableUnder("/w", "a b\n/dist")).toEqual([
+			"git",
+			"-C",
+			"/w",
+			"-c",
+			"core.hooksPath=/dev/null",
+			"-c",
+			"core.fsmonitor=false",
+			"-c",
+			"submodule.recurse=false",
+			"-c",
+			"diff.ignoreSubmodules=all",
+			"status",
+			"--porcelain=v1",
+			"-z",
+			"--untracked-files=all",
+			"--ignore-submodules=all",
+			"--",
+			":(literal,icase)a b\n/dist",
+		]);
 	});
 });
 
@@ -577,6 +726,11 @@ describe("WorkStream and GitHub parsing", () => {
 		expect(parseState(JSON.stringify({ ...state, schema: "harnessy.work.state.v1" }), TASK)).toBeUndefined();
 		expect(parseState(JSON.stringify({ ...state, binding: { ...binding, actor: 1 } }), TASK)).toBeUndefined();
 		expect(parseState("{", TASK)).toBeUndefined();
+		const agentDeps = { copied: [{ path: "node_modules", method: "clone" }] };
+		expect(parseState(JSON.stringify({ ...state, agentDeps }), TASK)).toEqual({ ...state, agentDeps });
+		expect(parseState(JSON.stringify({ ...state, agentDeps: { copied: [] } }), TASK)).toBeDefined();
+		for (const bad of [{}, { copied: [{ path: "x", method: "symlink" }] }, { copied: [{ method: "copy" }] }])
+			expect(parseState(JSON.stringify({ ...state, agentDeps: bad }), TASK)).toBeUndefined();
 		expect(bindingMismatch(binding, binding)).toBeUndefined();
 		expect(bindingMismatch(binding, { ...binding, repo: "/other" })).toBe("repo");
 		expect(bindingMismatch(binding, { ...binding, workstreamCli: ["workstream", "--as", "x"] })).toBe(

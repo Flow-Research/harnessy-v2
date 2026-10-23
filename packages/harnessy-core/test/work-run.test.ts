@@ -1,9 +1,24 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { REQUIRED_CLAUDE_FLAGS } from "../src/work/logic.ts";
-import { type RunResult, runWork, type WorkDeps, type WorkOptions, worktreePath } from "../src/work/run.ts";
+import { stageable } from "../src/work/deps.ts";
+import { filterOverrides, gitArgv, REQUIRED_CLAUDE_FLAGS } from "../src/work/logic.ts";
+import { execRun, type RunResult, runWork, type WorkDeps, type WorkOptions, worktreePath } from "../src/work/run.ts";
 
 const TASK = "11111111-2222-4333-8444-555555555555";
 const BRANCH = `work/${TASK}`;
@@ -61,6 +76,33 @@ interface Scenario {
 	preRunStatus?: string;
 	/** HEAD before the agent runs in this invocation; the reviewed commit by default. */
 	preRunHead?: string;
+	platform?: string;
+	/** `git ls-files -z --others --ignored --directory` output for the source checkout. */
+	ignoredDirs?: string;
+	/** Copied paths under which git status lists stageable files, before and after the agent runs. */
+	notIgnored?: string[];
+	notIgnoredAfterAgent?: string[];
+	/** `cp` fails for sources containing this text: the clone, or the clone and the plain copy. */
+	cloneFailsFor?: string;
+	copyFailsFor?: string;
+	/** Failed `cp` runs print nothing; the plain copy does not even start. */
+	cpQuiet?: boolean;
+	/** NUL-separated filter driver config keys the user's git config defines. */
+	filterKeys?: string;
+	/** Content of the new worktree's `.git` file. */
+	gitFile?: string;
+	/** Whether `bwrap` and `socat` run, for the Linux sandbox; they do by default. */
+	sandboxTools?: boolean;
+	/** A failed clone leaves its staging directory read-only, so the partial copy cannot be removed. */
+	cpLocksStaging?: boolean;
+	/** Symbolic links (name to target) placed in every copy; `{source}` is the copy's source directory. */
+	links?: Record<string, string>;
+	/** A directory that already exists in the new worktree. */
+	inWorktree?: string;
+	/** A symbolic link (path to target) that already exists in the new worktree. */
+	worktreeLink?: [string, string];
+	/** After `cp` copies a source containing the key, it runs the value: a race or a hostile tree. */
+	afterCopy?: Record<string, (source: string, target: string) => void>;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -76,7 +118,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 	const agentRan = () => calls.some((argv) => argv[0] === "herdr" && argv[1] === "pane" && argv[2] === "wait-output");
 	const stateRoot = join(root, "state");
 	const deps: WorkDeps = {
-		platform: "darwin",
+		platform: scenario.platform ?? "darwin",
 		stateRoot,
 		managedSettingsPaths: [],
 		now: () => clock,
@@ -89,7 +131,14 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			calls.push([...argv]);
 			const [exe, ...args] = argv;
 			const joined = args.join(" ");
-			if (args[0] === "--version") return ok(exe === "herdr" ? "herdr 0.9.5" : `${exe} version 2.1.0`);
+			if (exe === "bwrap" || exe === "socat")
+				return scenario.sandboxTools === false
+					? { exitCode: undefined, stdout: "", stderr: "", errorCode: "ENOENT" }
+					: ok("1.0");
+			if (args[0] === "--version")
+				return ok(
+					exe === "herdr" ? "herdr 0.9.5" : exe === "claude" ? "2.1.304 (Claude Code)" : `${exe} version 2.1.0`,
+				);
 			if (args.includes("--help")) return ok(exe === "claude" ? REQUIRED_CLAUDE_FLAGS.join("\n") : "usage");
 			if (exe === "workstream" || exe === "workstream-local") {
 				if (joined.endsWith("whoami"))
@@ -115,9 +164,28 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					return ok(JSON.stringify({ submission_id: "sub-1", admission_id: "adm-1" }));
 			}
 			if (exe === "git") {
+				if (args.includes("ls-files")) return ok(scenario.ignoredDirs ?? "");
+				if (args.includes("config") && args.includes("--get-regexp")) return ok(scenario.filterKeys ?? "");
+				const pathspec = (argv.at(-1) ?? "").replace(":(literal,icase)", "");
+				if (args.includes("--untracked-files=all")) {
+					const path = pathspec;
+					const exposed = agentRan() ? scenario.notIgnoredAfterAgent : scenario.notIgnored;
+					return ok(exposed?.includes(path) === true ? `?? ${path}/installed.js\0` : "");
+				}
 				if (args.includes("worktree")) {
 					mkdirSync(worktree, { recursive: true });
-					writeFileSync(join(worktree, ".git"), "gitdir: /repo/.git/worktrees/x\n");
+					mkdirSync(join(root, "repo", ".git", "worktrees", "x"), { recursive: true });
+					writeFileSync(
+						join(worktree, ".git"),
+						scenario.gitFile ?? `gitdir: ${join(root, "repo", ".git", "worktrees", "x")}\n`,
+					);
+					if (scenario.inWorktree !== undefined)
+						mkdirSync(join(worktree, scenario.inWorktree), { recursive: true });
+					if (scenario.worktreeLink !== undefined) {
+						const [path, target] = scenario.worktreeLink;
+						mkdirSync(dirname(join(worktree, path)), { recursive: true });
+						symlinkSync(target, join(worktree, path));
+					}
 				}
 				if (args.includes("status"))
 					return ok(agentRan() ? (scenario.dirty ?? " M src/a.ts\n") : (scenario.preRunStatus ?? ""));
@@ -194,6 +262,25 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				}
 				return ok();
 			}
+			if (exe === "cp") {
+				const [source = "", target = ""] = args.slice(-2);
+				expect(args).toContain("-P");
+				const plain = args[0] === "-R";
+				const fails = plain ? scenario.copyFailsFor : scenario.cloneFailsFor;
+				mkdirSync(target, { recursive: true });
+				if (fails !== undefined && source.includes(fails)) {
+					if (scenario.cpLocksStaging === true) chmodSync(dirname(target), 0o500);
+					if (scenario.cpQuiet !== true)
+						return { exitCode: 1, stdout: "", stderr: "cp: clonefile failed: Operation not supported" };
+					return { exitCode: plain ? undefined : 1, stdout: "", stderr: "" };
+				}
+				writeFileSync(join(target, "installed.js"), "");
+				for (const [name, link] of Object.entries(scenario.links ?? {}))
+					symlinkSync(link.replace("{source}", source), join(target, name));
+				for (const [key, action] of Object.entries(scenario.afterCopy ?? {}))
+					if (source.includes(key)) action(source, target);
+				return ok();
+			}
 			if (exe === "/usr/bin/osascript") return ok();
 			throw new Error(`unexpected command ${argv.join(" ")}`);
 		},
@@ -236,13 +323,33 @@ describe("runWork", () => {
 			},
 		});
 		expect(has(fake.calls, "push")).toBe(false);
-		expect(fake.calls).toContainEqual(["git", "-C", fake.worktree, "-c", "core.hooksPath=/dev/null", "add", "--all"]);
 		expect(fake.calls).toContainEqual([
 			"git",
 			"-C",
 			fake.worktree,
 			"-c",
 			"core.hooksPath=/dev/null",
+			"-c",
+			"core.fsmonitor=false",
+			"-c",
+			"submodule.recurse=false",
+			"-c",
+			"diff.ignoreSubmodules=all",
+			"add",
+			"--all",
+		]);
+		expect(fake.calls).toContainEqual([
+			"git",
+			"-C",
+			fake.worktree,
+			"-c",
+			"core.hooksPath=/dev/null",
+			"-c",
+			"core.fsmonitor=false",
+			"-c",
+			"submodule.recurse=false",
+			"-c",
+			"diff.ignoreSubmodules=all",
 			"commit",
 			"-m",
 			`work: WorkStream task ${TASK}`,
@@ -258,6 +365,12 @@ describe("runWork", () => {
 			approved.worktree,
 			"-c",
 			"core.hooksPath=/dev/null",
+			"-c",
+			"core.fsmonitor=false",
+			"-c",
+			"submodule.recurse=false",
+			"-c",
+			"diff.ignoreSubmodules=all",
 			"push",
 			"origin",
 			`${HEAD}:refs/heads/${BRANCH}`,
@@ -328,6 +441,12 @@ describe("runWork", () => {
 			approved.worktree,
 			"-c",
 			"core.hooksPath=/dev/null",
+			"-c",
+			"core.fsmonitor=false",
+			"-c",
+			"submodule.recurse=false",
+			"-c",
+			"diff.ignoreSubmodules=all",
 			"push",
 			"origin",
 			`${NEXT}:refs/heads/${BRANCH}`,
@@ -513,6 +632,14 @@ describe("runWork", () => {
 			"git",
 			"-C",
 			fake.worktree,
+			"-c",
+			"core.hooksPath=/dev/null",
+			"-c",
+			"core.fsmonitor=false",
+			"-c",
+			"submodule.recurse=false",
+			"-c",
+			"diff.ignoreSubmodules=all",
 			"show",
 			"origin/dev:docs/Pull_Request_Template.TXT",
 		]);
@@ -566,7 +693,18 @@ describe("runWork", () => {
 		expect(JSON.parse(readFileSync(join(fake.stateDir, "agent-settings.json"), "utf8"))).toEqual({
 			permissions: {
 				allow: [],
-				deny: ["Bash(git push)", "Bash(git push *)", "Bash(git commit)", "Bash(git commit *)"],
+				deny: [
+					"Bash(git push)",
+					"Bash(git push *)",
+					"Bash(git commit)",
+					"Bash(git commit *)",
+					`Edit(/${realpathSync.native(fake.worktree)}/.git)`,
+					`Edit(/${realpathSync.native(fake.worktree)}/.claude/**)`,
+					`Edit(/${realpathSync.native(join(root, "repo"))})`,
+					`Edit(/${realpathSync.native(join(root, "repo"))}/**)`,
+					`Edit(/${realpathSync.native(join(root, "repo", ".git"))})`,
+					`Edit(/${realpathSync.native(join(root, "repo", ".git"))}/**)`,
+				],
 				defaultMode: "acceptEdits",
 			},
 		});
@@ -629,6 +767,55 @@ describe("runWork", () => {
 		expect(has(fake.calls, "push")).toBe(false);
 	});
 
+	it("switches off the user's filter drivers on every git command it runs", async () => {
+		const fake = fakeTools(root, { filterKeys: "filter.lfs.clean\0filter.lfs.process\0filter.a.b.smudge\0" });
+		await runWork({ ...options, approvePush: false }, fake.deps);
+		const off = [
+			"-c",
+			"filter.lfs.clean=",
+			"-c",
+			"filter.lfs.smudge=",
+			"-c",
+			"filter.lfs.process=",
+			"-c",
+			"filter.lfs.required=false",
+			"-c",
+			"filter.a.b.clean=",
+			"-c",
+			"filter.a.b.smudge=",
+			"-c",
+			"filter.a.b.process=",
+			"-c",
+			"filter.a.b.required=false",
+		];
+		expect(fake.calls).toContainEqual([
+			"git",
+			"-C",
+			join(root, "repo"),
+			"-c",
+			"core.hooksPath=/dev/null",
+			"-c",
+			"core.fsmonitor=false",
+			"-c",
+			"submodule.recurse=false",
+			"-c",
+			"diff.ignoreSubmodules=all",
+			"config",
+			"--name-only",
+			"-z",
+			"--get-regexp",
+			"^filter\\.",
+		]);
+		// Everything after the read-only preflight probe and the filter lookup itself.
+		const gitCalls = fake.calls.filter(
+			(argv) => argv[0] === "git" && !argv.includes("--get-regexp") && !argv.includes("--version"),
+		);
+		expect(gitCalls.length).toBeGreaterThan(5);
+		for (const argv of gitCalls) expect(argv.slice(1, 1 + off.length)).toEqual(off);
+		expect(has(fake.calls, "worktree", "add")).toBe(true);
+		expect(has(fake.calls, "fetch")).toBe(true);
+	});
+
 	it("catches CI paths git would quote, including unicode and newlines", async () => {
 		const fake = fakeTools(root, { changedPaths: "src/a.ts\0.github/workflows/\u00e9.yml\0.github/x\ny.yml\0" });
 		const outcome = await runWork(options, fake.deps);
@@ -636,7 +823,7 @@ describe("runWork", () => {
 			reason: "ci_config_changed",
 			paths: [".github/workflows/\u00e9.yml", ".github/x\ny.yml"],
 		});
-		expect(fake.calls.find((argv) => argv.includes("--name-only"))).toEqual(
+		expect(fake.calls.find((argv) => argv.includes("diff") && argv.includes("--name-only"))).toEqual(
 			expect.arrayContaining(["--no-renames", "-z", "--name-only"]),
 		);
 	});
@@ -811,6 +998,680 @@ describe("runWork", () => {
 		const outcome = await runWork(options, fake.deps);
 		expect(outcome.report).toMatchObject({ status: "handoff", reason: "preparation_failed" });
 		expect(has(fake.calls, "submit")).toBe(false);
+	});
+
+	describe("agent sandbox", () => {
+		const ALLOW = "Bash(node_modules/.bin/vitest run *)";
+		const settings = (stateDir: string) => JSON.parse(readFileSync(join(stateDir, "agent-settings.json"), "utf8"));
+
+		it("writes the sandbox block whenever commands are allowed, and none without", async () => {
+			const fake = fakeTools(root);
+			await runWork({ ...options, approvePush: false, agentAllow: ALLOW }, fake.deps);
+			expect(settings(fake.stateDir)).toEqual({
+				permissions: {
+					allow: ["Bash(git status)", "Bash(git diff)", ALLOW],
+					deny: [
+						"Bash(git push)",
+						"Bash(git push *)",
+						"Bash(git commit)",
+						"Bash(git commit *)",
+						`Edit(/${realpathSync.native(fake.worktree)}/.git)`,
+						`Edit(/${realpathSync.native(fake.worktree)}/.claude/**)`,
+						`Edit(/${realpathSync.native(join(root, "repo"))})`,
+						`Edit(/${realpathSync.native(join(root, "repo"))}/**)`,
+						`Edit(/${realpathSync.native(join(root, "repo", ".git"))})`,
+						`Edit(/${realpathSync.native(join(root, "repo", ".git"))}/**)`,
+					],
+					defaultMode: "acceptEdits",
+				},
+				sandbox: {
+					enabled: true,
+					failIfUnavailable: true,
+					autoAllowBashIfSandboxed: false,
+					allowUnsandboxedCommands: false,
+					excludedCommands: [],
+					network: {
+						allowedDomains: [],
+						strictAllowlist: true,
+						allowLocalBinding: false,
+						allowAllUnixSockets: false,
+					},
+					filesystem: {
+						denyRead: [
+							"~/.ssh",
+							"~/.aws",
+							"~/.gnupg",
+							"~/.netrc",
+							"~/.npmrc",
+							"~/.docker",
+							"~/.kube",
+							"~/.config/gh",
+							"~/.config/gcloud",
+							"~/.config/gws*",
+							"~/Library/Keychains",
+						],
+					},
+				},
+			});
+			rmSync(join(root, "state"), { recursive: true });
+			rmSync(join(root, ".harnessy-work"), { recursive: true });
+			const plain = fakeTools(root);
+			await runWork({ ...options, approvePush: false }, plain.deps);
+			expect(settings(plain.stateDir).sandbox).toBeUndefined();
+			expect(has(plain.calls, "bwrap")).toBe(false);
+		});
+
+		it.each([
+			["win32", true, "Claude Code cannot sandbox commands on win32"],
+			["linux", false, "Claude Code's sandbox needs bwrap and socat on Linux"],
+		])("refuses to start on %s when the sandbox cannot run", async (platform, sandboxTools, problem) => {
+			const fake = fakeTools(root, { platform, sandboxTools });
+			const outcome = await runWork({ ...options, agentAllow: ALLOW }, fake.deps);
+			expect(outcome.exitCode).toBe(1);
+			expect(outcome.report).toMatchObject({ status: "preflight_failed" });
+			const sandbox = (outcome.report.tools as Array<{ name: string; problem?: string }>).find(
+				(tool) => tool.name === "sandbox",
+			);
+			expect(sandbox?.problem).toContain(problem);
+			expect(has(fake.calls, "claim")).toBe(false);
+			expect(has(fake.calls, "pane", "run")).toBe(false);
+		});
+
+		it("hands off when the worktree's .git file names no git directory", async () => {
+			const fake = fakeTools(root, { gitFile: "not a gitdir line\n" });
+			const outcome = await runWork({ ...options, approvePush: false, agentAllow: ALLOW }, fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "worktree_tampered" });
+			expect(has(fake.calls, "pane", "run")).toBe(false);
+		});
+
+		it("refuses to start when what it protects lies under the sandbox's writable temp directory", async () => {
+			// Created and removed here: a state root under the temp prefix the sandbox always grants.
+			const exposed = mkdtempSync("/tmp/claude-hsy-test-");
+			try {
+				const fake = fakeTools(root);
+				const outcome = await runWork({ ...options, agentAllow: ALLOW }, { ...fake.deps, stateRoot: exposed });
+				expect(outcome.report).toMatchObject({ status: "preflight_failed" });
+				const sandbox = (outcome.report.tools as Array<{ name: string; problem?: string }>).find(
+					(tool) => tool.name === "sandbox",
+				);
+				expect(sandbox?.problem).toContain(`${TASK} lies under Claude Code's sandbox temp directory`);
+				expect(has(fake.calls, "claim")).toBe(false);
+			} finally {
+				rmSync(exposed, { recursive: true, force: true });
+			}
+		});
+
+		it("runs on Linux when bubblewrap and socat are present", async () => {
+			const fake = fakeTools(root, { platform: "linux" });
+			const outcome = await runWork({ ...options, approvePush: false, agentAllow: ALLOW }, fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
+			expect(fake.calls).toContainEqual(["bwrap", "--version"]);
+			expect(fake.calls).toContainEqual(["socat", "-V"]);
+		});
+	});
+
+	describe("--agent-deps clone", () => {
+		const IGNORED = "node_modules/\0packages/a/dist/\0packages/a/src/\0.env\0../escape/node_modules/\0/abs/dist/\0";
+		const prepareSource = () => {
+			mkdirSync(join(root, "repo", "node_modules"), { recursive: true });
+			mkdirSync(join(root, "repo", "packages", "a", "dist"), { recursive: true });
+		};
+		const outside = () => {
+			const dir = join(root, "elsewhere");
+			mkdirSync(join(dir, "dist"), { recursive: true });
+			return dir;
+		};
+		const savedState = (fake: { stateDir: string }) =>
+			JSON.parse(readFileSync(join(fake.stateDir, "state.json"), "utf8"));
+		const copies = (calls: string[][]) => calls.filter((argv) => argv[0] === "cp");
+		/** `cp` writes only into a fresh private staging directory beside the worktree, never inside it. */
+		const stagedIn = (argv: string[]) => {
+			const staged = argv.at(-1) ?? "";
+			expect(basename(dirname(staged)).startsWith(`.${TASK}-deps-`)).toBe(true);
+			return [...argv.slice(0, -1), dirname(dirname(staged))];
+		};
+		const stagingLeft = () =>
+			readdirSync(join(root, ".harnessy-work")).filter((name) => name.startsWith(`.${TASK}-deps-`));
+		const beforeAgent = (calls: string[][], argv: string[]) => {
+			const pane = calls.findIndex((call) => call.join(" ").startsWith("herdr pane run"));
+			const index = calls.findIndex((call) => call.join("\0") === argv.join("\0"));
+			return index >= 0 && index < pane;
+		};
+		const clone = (opts: WorkOptions) => ({ ...opts, approvePush: false, agentDeps: "clone" as const });
+		const refusedBeforeCopy = (fake: ReturnType<typeof fakeTools>) => {
+			expect(copies(fake.calls)).toEqual([]);
+			expect(has(fake.calls, "pane", "run")).toBe(false);
+			expect(savedState(fake).agentDeps).toBeUndefined();
+		};
+
+		it("clones node_modules and dist with clonefile on macOS, staged outside the worktree, before the agent runs", async () => {
+			prepareSource();
+			const lines: string[] = [];
+			const fake = fakeTools(root, { ignoredDirs: IGNORED });
+			const outcome = await runWork(clone(options), { ...fake.deps, log: (line) => lines.push(line) });
+			expect(outcome.report).toMatchObject({ status: "handoff", reason: "awaiting_push_approval" });
+			const repo = realpathSync(join(root, "repo"));
+			const worktree = realpathSync(fake.worktree);
+			// Absolute and `..` entries from git never become copy sources.
+			expect(copies(fake.calls).map(stagedIn)).toEqual([
+				["cp", "-c", "-R", "-P", join(repo, "node_modules"), dirname(worktree)],
+				["cp", "-c", "-R", "-P", join(repo, "packages/a/dist"), dirname(worktree)],
+			]);
+			expect(stagingLeft()).toEqual([]);
+			expect(beforeAgent(fake.calls, copies(fake.calls)[1] ?? [])).toBe(true);
+			expect(fake.calls).toContainEqual([
+				"git",
+				"-C",
+				join(root, "repo"),
+				"-c",
+				"core.hooksPath=/dev/null",
+				"-c",
+				"core.fsmonitor=false",
+				"-c",
+				"submodule.recurse=false",
+				"-c",
+				"diff.ignoreSubmodules=all",
+				"ls-files",
+				"-z",
+				"--others",
+				"--ignored",
+				"--exclude-standard",
+				"--directory",
+			]);
+			expect(fake.calls).toContainEqual([
+				"git",
+				"-C",
+				fake.worktree,
+				"-c",
+				"core.hooksPath=/dev/null",
+				"-c",
+				"core.fsmonitor=false",
+				"-c",
+				"submodule.recurse=false",
+				"-c",
+				"diff.ignoreSubmodules=all",
+				"status",
+				"--porcelain=v1",
+				"-z",
+				"--untracked-files=all",
+				"--ignore-submodules=all",
+				"--",
+				":(literal,icase)packages/a/dist",
+			]);
+			expect(existsSync(join(fake.worktree, "packages/a/dist/installed.js"))).toBe(true);
+			expect(savedState(fake).agentDeps).toEqual({
+				copied: [
+					{ path: "node_modules", method: "clone" },
+					{ path: "packages/a/dist", method: "clone" },
+				],
+			});
+			expect(lines).toContain("Copied packages/a/dist into the worktree (clone)");
+			expect(readFileSync(join(fake.stateDir, "prompt.md"), "utf8")).toContain("and the formatter and linter");
+		});
+
+		it("copies paths with spaces and newlines exactly as git listed them", async () => {
+			const odd = ["pkg one/node_modules", "we\nird/dist"];
+			for (const path of odd) mkdirSync(join(root, "repo", path), { recursive: true });
+			const fake = fakeTools(root, { ignoredDirs: odd.map((path) => `${path}/\0`).join("") });
+			await runWork(clone(options), fake.deps);
+			copies(fake.calls).map(stagedIn);
+			for (const path of odd) expect(existsSync(join(fake.worktree, path, "installed.js"))).toBe(true);
+			// Checked once after copying and once after the agent, each with the exact path.
+			expect(fake.calls.filter((argv) => argv.includes("--untracked-files=all")).map((argv) => argv.at(-1))).toEqual(
+				[...odd, ...odd].map((path) => `:(literal,icase)${path}`),
+			);
+			expect(savedState(fake).agentDeps.copied.map((copy: { path: string }) => copy.path)).toEqual(odd);
+		});
+
+		it("uses cp --reflink=auto on Linux", async () => {
+			prepareSource();
+			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0", platform: "linux" });
+			await runWork(clone(options), fake.deps);
+			expect(copies(fake.calls).map(stagedIn)).toEqual([
+				[
+					"cp",
+					"--reflink=auto",
+					"-R",
+					"-P",
+					join(realpathSync(root), "repo", "node_modules"),
+					dirname(realpathSync(fake.worktree)),
+				],
+			]);
+			expect(savedState(fake).agentDeps).toEqual({ copied: [{ path: "node_modules", method: "reflink" }] });
+		});
+
+		it("falls back to a plain copy when cloning is unsupported, and logs it", async () => {
+			prepareSource();
+			const lines: string[] = [];
+			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0", cloneFailsFor: "node_modules" });
+			await runWork(clone(options), { ...fake.deps, log: (line) => lines.push(line) });
+			expect(copies(fake.calls).map((argv) => argv.slice(0, 4))).toEqual([
+				["cp", "-c", "-R", "-P"],
+				["cp", "-R", "-P", join(realpathSync(root), "repo", "node_modules")],
+			]);
+			expect(savedState(fake).agentDeps).toEqual({ copied: [{ path: "node_modules", method: "copy" }] });
+			expect(
+				lines.some((line) => line.includes("(cp: clonefile failed: Operation not supported); making a plain copy")),
+			).toBe(true);
+		});
+
+		it("stops, leaving nothing, when a copy fails", async () => {
+			prepareSource();
+			const lines: string[] = [];
+			const fake = fakeTools(root, {
+				ignoredDirs: IGNORED,
+				cloneFailsFor: "dist",
+				copyFailsFor: "dist",
+				cpQuiet: true,
+			});
+			await expect(runWork(clone(options), { ...fake.deps, log: (line) => lines.push(line) })).rejects.toThrow(
+				`copying ${join(realpathSync(root), "repo", "packages/a/dist")} failed: it did not start`,
+			);
+			expect(lines.some((line) => line.includes("(exit 1); making a plain copy"))).toBe(true);
+			expect(existsSync(join(fake.worktree, "node_modules"))).toBe(false);
+			expect(stagingLeft()).toEqual([]);
+			expect(has(fake.calls, "pane", "run")).toBe(false);
+			expect(savedState(fake).agentDeps).toBeUndefined();
+		});
+
+		it("stops, leaving nothing, when a failed clone cannot be cleared for the plain copy", async () => {
+			prepareSource();
+			const fake = fakeTools(root, {
+				ignoredDirs: "node_modules/\0",
+				cloneFailsFor: "node_modules",
+				cpLocksStaging: true,
+			});
+			await expect(runWork(clone(options), fake.deps)).rejects.toThrow("removing a failed clone of");
+			expect(stagingLeft()).toEqual([]);
+			expect(savedState(fake).agentDeps).toBeUndefined();
+		});
+
+		it("never walks through, and leaves nothing of, a staged copy that turns into a link", async () => {
+			prepareSource();
+			const elsewhere = outside();
+			writeFileSync(join(elsewhere, "dist", ".env"), "SECRET=1");
+			const fake = fakeTools(root, {
+				ignoredDirs: IGNORED,
+				afterCopy: {
+					"a/dist": (_, target) => {
+						rmSync(target, { recursive: true });
+						symlinkSync(join(elsewhere, "dist"), target);
+					},
+				},
+			});
+			await expect(runWork(clone(options), fake.deps)).rejects.toThrow(
+				"the copy of packages/a/dist is not a plain directory",
+			);
+			expect(readFileSync(join(elsewhere, "dist", ".env"), "utf8")).toBe("SECRET=1");
+			expect(existsSync(join(fake.worktree, "node_modules"))).toBe(false);
+			expect(stagingLeft()).toEqual([]);
+		});
+
+		it("withholds files that may hold secrets from the copy, and logs how many", async () => {
+			prepareSource();
+			const lines: string[] = [];
+			const fake = fakeTools(root, {
+				ignoredDirs: "node_modules/\0",
+				afterCopy: {
+					node_modules: (_, target) => {
+						writeFileSync(join(target, ".env"), "SECRET=1");
+						mkdirSync(join(target, ".cache"));
+					},
+				},
+			});
+			await runWork(clone(options), { ...fake.deps, log: (line) => lines.push(line) });
+			expect(existsSync(join(fake.worktree, "node_modules", ".env"))).toBe(false);
+			expect(existsSync(join(fake.worktree, "node_modules", ".cache"))).toBe(false);
+			expect(existsSync(join(fake.worktree, "node_modules", "installed.js"))).toBe(true);
+			expect(lines).toContain("Left 2 possibly secret files out of the copy of node_modules: .cache, .env");
+		});
+
+		it("records and logs a skip when the source has no node_modules or dist", async () => {
+			const lines: string[] = [];
+			const fake = fakeTools(root, { ignoredDirs: "packages/a/src/\0" });
+			const outcome = await runWork(clone(options), { ...fake.deps, log: (line) => lines.push(line) });
+			expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
+			expect(copies(fake.calls)).toEqual([]);
+			expect(savedState(fake).agentDeps).toEqual({ copied: [] });
+			expect(lines.some((line) => line.includes("no dependency copy"))).toBe(true);
+		});
+
+		it("does not copy again when a re-run starts the agent again", async () => {
+			prepareSource();
+			const blocked = JSON.stringify({
+				total_cost_usd: 0.5,
+				is_error: false,
+				structured_output: { outcome: "blocked", reason: "cannot" },
+			});
+			const first = fakeTools(root, { ignoredDirs: IGNORED, agentResult: blocked });
+			await runWork(clone(options), first.deps);
+			expect(copies(first.calls)).toHaveLength(2);
+			const again = fakeTools(root, { ignoredDirs: IGNORED });
+			const outcome = await runWork(clone(options), again.deps);
+			expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
+			expect(has(again.calls, "pane", "run")).toBe(true);
+			expect(has(again.calls, "ls-files")).toBe(false);
+			expect(copies(again.calls)).toEqual([]);
+		});
+
+		it("refuses a source that is a symbolic link or lies under one", async () => {
+			prepareSource();
+			mkdirSync(join(root, "repo", "packages", "b"), { recursive: true });
+			symlinkSync(join(root, "repo", "node_modules"), join(root, "repo", "packages", "b", "dist"));
+			symlinkSync(outside(), join(root, "repo", "packages", "c"));
+			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0packages/b/dist/\0packages/c/dist/\0" });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({ status: "handoff", reason: "agent_deps_source_unsafe" });
+			expect(String(outcome.report.detail)).toContain(
+				"source packages/b/dist is a symbolic link or not a directory; ",
+			);
+			expect(String(outcome.report.detail)).toContain("source packages/c/dist resolves to ");
+			expect(String(outcome.report.detail)).toContain(
+				": a link, a case or Unicode variant, or a path outside; nothing was copied",
+			);
+			refusedBeforeCopy(fake);
+		});
+
+		it.each([
+			[
+				"already exists",
+				{ inWorktree: "packages/a/dist" },
+				"destination packages/a/dist already exists in the worktree",
+			],
+			[
+				"is a dangling link",
+				{ worktreeLink: ["node_modules", "/nonexistent/harnessy"] as [string, string] },
+				"destination node_modules already exists in the worktree",
+			],
+			[
+				"lies under a link out of the worktree",
+				{ worktreeLink: ["packages/a", "/tmp"] as [string, string] },
+				"destination packages/a is a symbolic link or not a directory",
+			],
+		])("refuses a destination that %s", async (_, scenario, detail) => {
+			prepareSource();
+			const fake = fakeTools(root, { ignoredDirs: IGNORED, ...scenario });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "agent_deps_destination_unsafe" });
+			expect(String(outcome.report.detail)).toContain(detail);
+			refusedBeforeCopy(fake);
+		});
+
+		it("keeps workspace links and links into the source, and removes copies with links elsewhere or special files", async () => {
+			prepareSource();
+			const kept = fakeTools(root, {
+				ignoredDirs: IGNORED,
+				links: { workspace: "../packages/a", pending: "./not-built-yet", source: "{source}/installed.js" },
+			});
+			expect((await runWork(clone(options), kept.deps)).report).toMatchObject({ reason: "awaiting_push_approval" });
+			rmSync(join(root, "state"), { recursive: true });
+			rmSync(join(root, ".harnessy-work"), { recursive: true });
+			const fake = fakeTools(root, {
+				ignoredDirs: "node_modules/\0",
+				links: { out: "/" },
+				afterCopy: {
+					node_modules: (_, target) => {
+						execFileSync("mkfifo", [join(target, "pipe")]);
+						mkdirSync(join(target, "locked"));
+						writeFileSync(join(target, "locked", "f"), "");
+						chmodSync(join(target, "locked"), 0o555);
+					},
+				},
+			});
+			const outcome = await runWork(clone(options), fake.deps);
+			const copy = join(realpathSync(fake.worktree), "node_modules");
+			expect(outcome.report).toMatchObject({
+				reason: "agent_deps_unsafe_entry",
+				paths: [join(copy, "out"), join(copy, "pipe")],
+			});
+			expect(String(outcome.report.detail)).toContain("the copies were removed");
+			expect(existsSync(join(fake.worktree, "node_modules"))).toBe(false);
+			expect(has(fake.calls, "pane", "run")).toBe(false);
+			expect(savedState(fake).agentDeps).toBeUndefined();
+		});
+
+		it("removes the copies when git would stage them", async () => {
+			prepareSource();
+			const fake = fakeTools(root, { ignoredDirs: IGNORED, notIgnored: ["packages/a/dist"] });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome).toMatchObject({
+				exitCode: 2,
+				report: { status: "handoff", reason: "agent_deps_not_ignored", paths: ["packages/a/dist"] },
+			});
+			expect(existsSync(join(fake.worktree, "node_modules"))).toBe(false);
+			expect(existsSync(join(fake.worktree, "packages/a/dist"))).toBe(false);
+			expect(has(fake.calls, "pane", "run")).toBe(false);
+			expect(savedState(fake).agentDeps).toBeUndefined();
+		});
+
+		it("commits nothing when the agent's change makes git stage a copy", async () => {
+			prepareSource();
+			const fake = fakeTools(root, { ignoredDirs: IGNORED, notIgnoredAfterAgent: ["node_modules"] });
+			const outcome = await runWork(clone(options), fake.deps);
+			expect(outcome.report).toMatchObject({
+				status: "handoff",
+				reason: "agent_deps_not_ignored",
+				paths: ["node_modules"],
+				cost_usd: 0.5,
+			});
+			expect(has(fake.calls, "add", "--all")).toBe(false);
+			expect(has(fake.calls, "commit")).toBe(false);
+			expect(savedState(fake)).toMatchObject({ spentUsd: 0.5 });
+		});
+
+		it("stops, leaving nothing, when a copy cannot be moved into place", async () => {
+			prepareSource();
+			const fake = fakeTools(root, { ignoredDirs: "node_modules/\0" });
+			const run = fake.deps.run;
+			const outcome = runWork(clone(options), {
+				...fake.deps,
+				run: async (argv, opts) => {
+					const result = await run(argv, opts);
+					// The worktree root turns read-only while the copy is staged.
+					if (argv[0] === "cp") chmodSync(fake.worktree, 0o555);
+					return result;
+				},
+			});
+			await expect(outcome).rejects.toThrow("moving the copy of node_modules into place failed");
+			chmodSync(fake.worktree, 0o755);
+			expect(stagingLeft()).toEqual([]);
+			expect(existsSync(join(fake.worktree, "node_modules"))).toBe(false);
+			expect(savedState(fake).agentDeps).toBeUndefined();
+		});
+
+		it("blocks every agent run while copies it could not remove are left, then removes them", async () => {
+			prepareSource();
+			const elsewhere = outside();
+			const fake = fakeTools(root, { ignoredDirs: IGNORED, notIgnored: ["packages/a/dist"] });
+			const run = fake.deps.run;
+			let swapped = false;
+			const outcome = await runWork(clone(options), {
+				...fake.deps,
+				run: async (argv, opts) => {
+					// While the copies are checked, the worktree's packages/a becomes a link out.
+					if (argv.includes("--untracked-files=all") && !swapped) {
+						swapped = true;
+						renameSync(join(fake.worktree, "packages", "a"), join(root, "moved-a"));
+						symlinkSync(elsewhere, join(fake.worktree, "packages", "a"));
+					}
+					return run(argv, opts);
+				},
+			});
+			expect(outcome.report).toMatchObject({ reason: "agent_deps_not_ignored" });
+			expect(String(outcome.report.detail)).toContain("the copies could not all be removed");
+			// The removal never went through the link.
+			expect(existsSync(join(elsewhere, "dist"))).toBe(true);
+			expect(savedState(fake).agentDeps.pending).toEqual(["node_modules", "packages/a/dist"]);
+			const blocked = fakeTools(root, { ignoredDirs: IGNORED });
+			const stopped = await runWork({ ...options, approvePush: false }, blocked.deps);
+			expect(stopped.report).toMatchObject({
+				reason: "agent_deps_cleanup_failed",
+				paths: ["node_modules", "packages/a/dist"],
+			});
+			expect(has(blocked.calls, "pane", "run")).toBe(false);
+			rmSync(join(fake.worktree, "packages", "a"));
+			const lines: string[] = [];
+			const cleared = fakeTools(root, { ignoredDirs: IGNORED });
+			const done = await runWork(
+				{ ...options, approvePush: false },
+				{ ...cleared.deps, log: (line) => lines.push(line) },
+			);
+			expect(done.report).toMatchObject({ reason: "awaiting_push_approval" });
+			expect(lines).toContain("Removed what an interrupted dependency copy left behind");
+			expect(savedState(cleared).agentDeps).toBeUndefined();
+		});
+
+		it.runIf(process.platform === "darwin")(
+			"keeps the pending record when a copy cannot be placed nor the placed ones removed",
+			async () => {
+				prepareSource();
+				const fake = fakeTools(root, {
+					ignoredDirs: IGNORED,
+					afterCopy: {
+						node_modules: (_, target) => {
+							writeFileSync(join(target, "immutable"), "");
+							execFileSync("chflags", ["uchg", join(target, "immutable")]);
+						},
+						"a/dist": () => {
+							mkdirSync(join(fake.worktree, "packages"));
+							chmodSync(join(fake.worktree, "packages"), 0o555);
+						},
+					},
+				});
+				await expect(runWork(clone(options), fake.deps)).rejects.toThrow(
+					"destination packages/a could not be created; the copies could not all be removed",
+				);
+				expect(savedState(fake).agentDeps.pending).toEqual(["node_modules", "packages/a/dist"]);
+				execFileSync("chflags", ["nouchg", join(fake.worktree, "node_modules", "immutable")]);
+				chmodSync(join(fake.worktree, "packages"), 0o755);
+			},
+		);
+
+		it("runs no git command in a worktree whose .git file an earlier agent rewrote", async () => {
+			const blocked = JSON.stringify({
+				total_cost_usd: 0.5,
+				is_error: false,
+				structured_output: { outcome: "blocked", reason: "cannot" },
+			});
+			const first = fakeTools(root, { agentResult: blocked });
+			await runWork({ ...options, approvePush: false }, first.deps);
+			writeFileSync(join(first.worktree, ".git"), "gitdir: /tmp/evil\n");
+			const again = fakeTools(root);
+			const outcome = await runWork(clone(options), again.deps);
+			expect(outcome.report).toMatchObject({ reason: "worktree_tampered" });
+			expect(again.calls.some((argv) => argv[0] === "git" && argv.includes(again.worktree))).toBe(false);
+		});
+
+		it("stops when a parent directory cannot be created", async () => {
+			prepareSource();
+			const fake = fakeTools(root, { ignoredDirs: "packages/a/dist/\0" });
+			const run = fake.deps.run;
+			const outcome = runWork(clone(options), {
+				...fake.deps,
+				run: async (argv, opts) => {
+					const result = await run(argv, opts);
+					if (argv[0] === "cp") chmodSync(fake.worktree, 0o555);
+					return result;
+				},
+			});
+			await expect(outcome).rejects.toThrow("destination packages could not be created");
+			chmodSync(fake.worktree, 0o755);
+			expect(stagingLeft()).toEqual([]);
+			expect(existsSync(join(fake.worktree, "packages"))).toBe(false);
+		});
+
+		it("never runs git code planted in a submodule path, hooks or fsmonitor", async () => {
+			const repo = join(root, "sub");
+			const git = (...args: string[]) =>
+				execRun(["git", "-C", repo, "-c", "user.email=a@b", "-c", "user.name=a", ...args]);
+			mkdirSync(repo);
+			await git("init", "-q");
+			await git("commit", "-q", "--allow-empty", "-m", "init");
+			const head = (await git("rev-parse", "HEAD")).stdout.trim();
+			await git("update-index", "--add", "--cacheinfo", `160000,${head},lib`);
+			writeFileSync(join(repo, ".gitmodules"), '[submodule "lib"]\n\tpath = lib\n\turl = ./x\n');
+			await git("add", ".gitmodules");
+			await git("commit", "-q", "-m", "submodule");
+			// What an agent with only file tools can write: a git directory with a program in its config.
+			const pwned = join(root, "PWNED");
+			mkdirSync(join(repo, "lib", ".gd", "objects"), { recursive: true });
+			mkdirSync(join(repo, "lib", ".gd", "refs"));
+			writeFileSync(join(repo, "lib", ".git"), "gitdir: .gd\n");
+			writeFileSync(join(repo, "lib", ".gd", "HEAD"), "ref: refs/heads/main\n");
+			writeFileSync(join(repo, "lib", ".gd", "config"), `[core]\n\tfsmonitor = "touch ${pwned}; false"\n`);
+			mkdirSync(join(repo, ".git", "hooks"), { recursive: true });
+			writeFileSync(join(repo, ".git", "hooks", "pre-commit"), `#!/bin/sh\ntouch ${pwned}\n`, { mode: 0o755 });
+			writeFileSync(join(repo, "f.txt"), "x");
+			await execRun(gitArgv.status(repo));
+			await stageable(execRun, repo, ["node_modules"]);
+			await execRun(gitArgv.addAll(repo));
+			await execRun([
+				...gitArgv.commit(repo, TASK).slice(0, 3),
+				"-c",
+				"user.email=a@b",
+				"-c",
+				"user.name=a",
+				...gitArgv.commit(repo, TASK).slice(3),
+			]);
+			expect(existsSync(pwned)).toBe(false);
+			// A filter driver from the user's config, named by the branch's .gitattributes, stays off.
+			await git("config", "filter.evil.clean", `touch ${pwned}; cat`);
+			await git("config", "filter.evil.process", `sh -c 'touch ${pwned}'`);
+			writeFileSync(join(repo, ".gitattributes"), "* filter=evil\n");
+			writeFileSync(join(repo, "g.txt"), "y");
+			const off = filterOverrides((await execRun(gitArgv.filterNames(repo))).stdout);
+			await execRun(["git", ...off, ...gitArgv.addAll(repo).slice(1)]);
+			expect(existsSync(pwned)).toBe(false);
+			await git("config", "--unset", "filter.evil.process");
+			await git("config", "--unset", "filter.evil.clean");
+			// The same planted directory runs its program under a plain git status.
+			await execRun(["git", "-C", repo, "status", "--porcelain"]);
+			expect(existsSync(pwned)).toBe(true);
+		});
+
+		it("copies nothing without the flag", async () => {
+			prepareSource();
+			const fake = fakeTools(root, { ignoredDirs: IGNORED });
+			await runWork({ ...options, approvePush: false }, fake.deps);
+			expect(has(fake.calls, "ls-files")).toBe(false);
+			expect(has(fake.calls, "--untracked-files=all")).toBe(false);
+			expect(copies(fake.calls)).toEqual([]);
+			expect(savedState(fake).agentDeps).toBeUndefined();
+			const plan = await runWork({ ...options, dryRun: true }, fakeTools(root).deps);
+			expect(plan.report).toMatchObject({ status: "dry_run", agent_deps: "off" });
+		});
+
+		it("asks real git what it would stage, including nested negations, nested repositories and odd names", async () => {
+			const repo = join(root, "real");
+			const git = (...args: string[]) => execRun(["git", "-C", repo, ...args]);
+			mkdirSync(repo);
+			await git("init", "-q");
+			writeFileSync(join(repo, ".gitignore"), "node_modules/\n*.js\nwe*/\n");
+			// A nested .gitignore re-includes one file inside a copied directory.
+			mkdirSync(join(repo, "lib", "dist"), { recursive: true });
+			writeFileSync(join(repo, "lib", ".gitignore"), "!keep.js\n");
+			writeFileSync(join(repo, "lib", "dist", "a.js"), "");
+			writeFileSync(join(repo, "lib", "dist", "keep.js"), "");
+			for (const path of ["node_modules", "pkg one/node_modules", "we\nird/dist", "plain*/dist", "plain [x]/dist"]) {
+				mkdirSync(join(repo, path), { recursive: true });
+				writeFileSync(join(repo, path, "index.json"), "{}");
+			}
+			// A copied package that is its own git repository, outside any ignore rule.
+			mkdirSync(join(repo, "vendor", "dist", "pkg"), { recursive: true });
+			await execRun(["git", "-C", join(repo, "vendor", "dist", "pkg"), "init", "-q"]);
+			// Literal pathspecs: `plain*` must not match `plain [x]`, which git does not ignore.
+			expect(
+				await stageable(execRun, repo, [
+					"node_modules",
+					"pkg one/node_modules",
+					"we\nird/dist",
+					"lib/dist",
+					"plain*/dist",
+					"vendor/dist",
+				]),
+			).toEqual(["lib/dist", "plain*/dist", "vendor/dist"]);
+			expect(await stageable(execRun, join(root, "missing"), ["node_modules"])).toEqual(["node_modules"]);
+		});
 	});
 
 	it("rejects bad input before running anything", async () => {
