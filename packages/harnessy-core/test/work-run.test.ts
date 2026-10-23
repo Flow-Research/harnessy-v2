@@ -850,7 +850,7 @@ describe("runWork", () => {
 		});
 		expect(String(outcome.report.detail)).toContain("git filter driver lfs");
 		expect(String(outcome.report.detail)).toContain(
-			"restage these paths with the filter enabled (for example `git add --renormalize -- <paths>`",
+			"restage these paths with the filter enabled (for example `git add --renormalize -- <paths>` for tracked paths, or `git add -- <paths>` for new files",
 		);
 		expect(String(outcome.report.detail)).toContain("check the staged content with `git diff --cached`");
 		expect(has(fake.calls, "add", "--all")).toBe(false);
