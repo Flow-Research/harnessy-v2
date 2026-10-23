@@ -43,6 +43,7 @@ import {
 	parsePrView,
 	parseRunList,
 	parseState,
+	parseSubmissionOutcome,
 	parseVersion,
 	pathsWithDriver,
 	plainCopyArgv,
@@ -55,6 +56,7 @@ import {
 	SANDBOX_MIN_CLAUDE,
 	sandboxProblem,
 	splitCli,
+	submissionIdOf,
 	validateAgentAllow,
 	WORK_TOOLS,
 	type WorkBinding,
@@ -816,6 +818,12 @@ describe("WorkStream and GitHub parsing", () => {
 		expect(parseState(JSON.stringify({ ...state, agentDeps: { copied: [] } }), TASK)).toBeDefined();
 		for (const bad of [{}, { copied: [{ path: "x", method: "symlink" }] }, { copied: [{ method: "copy" }] }])
 			expect(parseState(JSON.stringify({ ...state, agentDeps: bad }), TASK)).toBeUndefined();
+		expect(parseState(JSON.stringify({ ...state, outcome: "rejected" }), TASK)).toEqual({
+			...state,
+			outcome: "rejected",
+		});
+		for (const outcome of ["review_pending", 1, null])
+			expect(parseState(JSON.stringify({ ...state, outcome }), TASK)).toBeUndefined();
 		expect(bindingMismatch(binding, binding)).toBeUndefined();
 		expect(bindingMismatch(binding, { ...binding, repo: "/other" })).toBe("repo");
 		expect(bindingMismatch(binding, { ...binding, workstreamCli: ["workstream", "--as", "x"] })).toBe(
@@ -973,5 +981,39 @@ describe("pull request body", () => {
 		expect(passesLinter(body)).toBe(true);
 		expect(body).toContain("````text\n```\n## Verification\nfake\n````");
 		expect(body).toContain("- In scope: 0 changed files.");
+	});
+});
+
+describe("WorkStream submission outcome", () => {
+	const SUBMISSION = "99999999-8888-4777-8666-555555555555";
+
+	it("reads the submission show command and only decided statuses", () => {
+		expect(wsArgv.submissionShow(["workstream-local", "--as", "agent"], SUBMISSION)).toEqual([
+			"workstream-local",
+			"--as",
+			"agent",
+			"-o",
+			"json",
+			"submission",
+			"show",
+			SUBMISSION,
+		]);
+		for (const status of ["accepted", "rejected", "needs_revision"] as const)
+			expect(parseSubmissionOutcome(JSON.stringify({ id: SUBMISSION, status }))).toBe(status);
+		for (const text of [
+			JSON.stringify({ status: "evaluation_pending" }),
+			JSON.stringify({ status: "review_pending" }),
+			JSON.stringify({ status: "ACCEPTED" }),
+			JSON.stringify({ state: "accepted" }),
+			'{"status":"review_pending","status":"accepted"}',
+			"not json",
+		])
+			expect(parseSubmissionOutcome(text)).toBeUndefined();
+	});
+
+	it("takes the submission id from a receipt only when it is a UUID", () => {
+		expect(submissionIdOf({ submission_id: SUBMISSION, admission_id: "a" })).toBe(SUBMISSION);
+		for (const receipt of [{ submission_id: "../x" }, { submission_id: 7 }, "text receipt", undefined])
+			expect(submissionIdOf(receipt)).toBeUndefined();
 	});
 });

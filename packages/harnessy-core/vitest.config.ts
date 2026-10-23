@@ -130,6 +130,13 @@ export default defineConfig({
 				"src/attest/certificate.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
 				"src/attest/run.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
 				"src/cli/attest.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				// Built-in notifications and the `harnessy work` messages; one entry per file.
+				"src/notifications/config.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/notifications/desktop.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/notifications/notifier.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/notifications/remote.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/notifications/sanitize.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/work/notifications.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
 			},
 		},
 	},

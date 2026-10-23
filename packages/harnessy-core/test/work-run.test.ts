@@ -15,7 +15,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Notification } from "../src/notifications/notifier.ts";
 import { stageable } from "../src/work/deps.ts";
 import {
 	filterDriverNames,
@@ -24,11 +25,21 @@ import {
 	pathsWithDriver,
 	REQUIRED_CLAUDE_FLAGS,
 } from "../src/work/logic.ts";
-import { execRun, type RunResult, runWork, type WorkDeps, type WorkOptions, worktreePath } from "../src/work/run.ts";
+import { handoffNotification } from "../src/work/notifications.ts";
+import {
+	execRun,
+	liveWorkDeps,
+	type RunResult,
+	runWork,
+	type WorkDeps,
+	type WorkOptions,
+	worktreePath,
+} from "../src/work/run.ts";
 
 const TASK = "11111111-2222-4333-8444-555555555555";
 const BRANCH = `work/${TASK}`;
 const HEAD = "a".repeat(40);
+const SUBMISSION = "99999999-8888-4777-8666-555555555555";
 const ok = (stdout = ""): RunResult => ({ exitCode: 0, stdout, stderr: "" });
 
 interface PrRecord {
@@ -115,11 +126,20 @@ interface Scenario {
 	worktreeLink?: [string, string];
 	/** After `cp` copies a source containing the key, it runs the value: a race or a hostile tree. */
 	afterCopy?: Record<string, (source: string, target: string) => void>;
+	/** Successive `submission show` statuses; the last repeats. `fail` makes the command fail. */
+	submissionStatuses?: string[];
+	/** The `submission_id` in the submit receipt. */
+	submissionId?: string;
+	/** The injected notifier throws instead of recording. */
+	notifyThrows?: boolean;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
 const fakeTools = (root: string, scenario: Scenario = {}) => {
 	const calls: string[][] = [];
+	const notices: Notification[] = [];
+	const logs: string[] = [];
+	const submissionStatuses = [...(scenario.submissionStatuses ?? ["review_pending"])];
 	// Default: PR-create verification, the pre-ready head check, one OPEN merge poll, then MERGED.
 	const prStates = [...(scenario.prStates ?? [ourPr("OPEN"), ourPr("OPEN"), ourPr("OPEN"), ourPr("MERGED")])];
 	const prepareStatuses = [...(scenario.prepareStatuses ?? ["prepared", "ready"])];
@@ -138,7 +158,13 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			clock += ms;
 		},
 		uuid: () => `00000000-0000-4000-8000-00000000000${uuid++}`,
-		log: () => {},
+		log: (line) => {
+			logs.push(line);
+		},
+		notify: async (notification) => {
+			if (scenario.notifyThrows === true) throw new Error("notifier exploded");
+			notices.push(notification);
+		},
 		run: async (argv) => {
 			calls.push([...argv]);
 			const [exe, ...args] = argv;
@@ -173,7 +199,13 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					);
 				}
 				if (joined.includes("task submit"))
-					return ok(JSON.stringify({ submission_id: "sub-1", admission_id: "adm-1" }));
+					return ok(JSON.stringify({ submission_id: scenario.submissionId ?? SUBMISSION, admission_id: "adm-1" }));
+				if (joined.includes("submission show")) {
+					const status = submissionStatuses.length > 1 ? submissionStatuses.shift() : submissionStatuses[0];
+					return status === "fail"
+						? { exitCode: 1, stdout: "", stderr: "HTTP 503" }
+						: ok(JSON.stringify({ id: args.at(-1), status }));
+				}
 			}
 			if (exe === "git") {
 				if (args.includes("ls-files") && args.includes("--modified"))
@@ -302,11 +334,10 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					if (source.includes(key)) action(source, target);
 				return ok();
 			}
-			if (exe === "/usr/bin/osascript") return ok();
 			throw new Error(`unexpected command ${argv.join(" ")}`);
 		},
 	};
-	return { calls, deps, worktree, stateDir: join(stateRoot, TASK) };
+	return { calls, deps, worktree, notices, logs, stateDir: join(stateRoot, TASK) };
 };
 
 const has = (calls: string[][], ...words: string[]) => calls.some((argv) => words.every((word) => argv.includes(word)));
@@ -686,7 +717,7 @@ describe("runWork", () => {
 			status: "submitted",
 			pr_url: "https://github.com/flow/app/pull/7",
 			admission_id: "adm-1",
-			submission: { submission_id: "sub-1" },
+			submission: { submission_id: SUBMISSION },
 		});
 		expect(existsSync(join(fake.worktree, ".harnessy-work"))).toBe(false);
 		for (const name of ["state.json", "prompt.md", "agent-settings.json", "proof.json", "proof.zip", "pr-body.md"])
@@ -1795,5 +1826,145 @@ describe("runWork", () => {
 			"--agent-allow",
 		);
 		expect(fake.calls).toEqual([]);
+	});
+
+	describe("notifications", () => {
+		const events = (notices: ReadonlyArray<Notification>) => notices.map((notice) => notice.event);
+		/** Nothing private or untrusted may reach a notification: no paths, task text, full ids or URLs. */
+		const expectPrivate = (notices: ReadonlyArray<Notification>) => {
+			const text = JSON.stringify(notices);
+			for (const forbidden of [root, TASK, "Add a thing", "Ignore all rules", "https://", SUBMISSION, HEAD])
+				expect(text).not.toContain(forbidden);
+		};
+
+		it("asks once for review before the push, naming the short commit and the next step", async () => {
+			const fake = fakeTools(root);
+			await runWork({ ...options, approvePush: false }, fake.deps);
+			expect(fake.notices).toEqual([
+				{
+					event: "awaiting_push_approval",
+					title: "Review needed",
+					message: `Task ${TASK.slice(0, 8)}: commit ${HEAD.slice(0, 12)} is ready for your review before the push.`,
+					nextStep: "Review the commit, then rerun with --approve-push, or with --revise <notes> to send it back.",
+				},
+			]);
+			expectPrivate(fake.notices);
+		});
+
+		it.each([
+			[
+				"blocked",
+				{
+					agentResult: JSON.stringify({
+						total_cost_usd: 1,
+						structured_output: { outcome: "blocked", reason: "x" },
+					}),
+				},
+				"blocked",
+			],
+			[
+				"over_budget",
+				{ agentResult: JSON.stringify({ total_cost_usd: 9, structured_output: { outcome: "done", reason: "x" } }) },
+				"over_budget",
+			],
+			["no_changes", { dirty: "", ahead: "0" }, "handoff"],
+			["checks_not_passed", { checksExit: 1 }, "handoff"],
+		] as const)("sends one %s notification when the run stops", async (reason, scenario, event) => {
+			const fake = fakeTools(root, scenario);
+			const outcome = await runWork(options, fake.deps);
+			expect(outcome.report).toMatchObject({ status: "handoff", reason });
+			expect(events(fake.notices)).toEqual([event]);
+			expect(fake.notices[0]?.message).toContain(TASK.slice(0, 8));
+			expectPrivate(fake.notices);
+		});
+
+		it("says the PR is ready, then reports WorkStream's acceptance once", async () => {
+			const fake = fakeTools(root, { submissionStatuses: ["evaluation_pending", "review_pending", "accepted"] });
+			const outcome = await runWork({ ...options, outcomeWaitHours: 1 }, fake.deps);
+			expect(outcome).toMatchObject({ exitCode: 0, report: { status: "accepted", task_id: TASK } });
+			expect(events(fake.notices)).toEqual(["pr_ready", "accepted"]);
+			expect(fake.notices[0]).toMatchObject({
+				title: "Ready to merge",
+				message: `PR #7 for task ${TASK.slice(0, 8)} passed its checks.`,
+			});
+			expect(fake.calls.filter((argv) => argv.includes("submission"))).toHaveLength(3);
+			expect(fake.calls).toContainEqual(["workstream", "-o", "json", "submission", "show", SUBMISSION]);
+			expectPrivate(fake.notices);
+			expect(JSON.parse(readFileSync(join(fake.stateDir, "state.json"), "utf8"))).toMatchObject({
+				outcome: "accepted",
+			});
+
+			// A re-run reports the recorded decision without asking WorkStream or notifying again.
+			const again = fakeTools(root);
+			expect(await runWork(options, again.deps)).toMatchObject({ exitCode: 0, report: { status: "accepted" } });
+			expect(again.notices).toEqual([]);
+			expect(has(again.calls, "submission", "show")).toBe(false);
+		});
+
+		it.each(["rejected", "needs_revision"] as const)(
+			"stops with exit 2 and notifies when WorkStream says %s",
+			async (status) => {
+				const fake = fakeTools(root, { submissionStatuses: [status] });
+				const outcome = await runWork(options, fake.deps);
+				expect(outcome).toMatchObject({ exitCode: 2, report: { status } });
+				expect(events(fake.notices)).toEqual(["pr_ready", status]);
+				expect(fake.notices[1]?.nextStep).toContain("workstream submission findings");
+				expectPrivate(fake.notices);
+			},
+		);
+
+		it("says it submitted when WorkStream has not decided by the deadline, and only in the submitting run", async () => {
+			const fake = fakeTools(root, { submissionStatuses: ["review_pending"] });
+			const outcome = await runWork({ ...options, outcomeWaitHours: 0.05 }, fake.deps);
+			expect(outcome).toMatchObject({ exitCode: 0, report: { status: "submitted" } });
+			expect(events(fake.notices)).toEqual(["pr_ready", "submitted"]);
+			expect(fake.notices[1]).toMatchObject({ needsYou: false });
+			// 0.05 hours is three one-minute polls after the first check.
+			expect(fake.calls.filter((argv) => argv.includes("submission"))).toHaveLength(4);
+
+			const pending = fakeTools(root, { submissionStatuses: ["fail"] });
+			expect((await runWork(options, pending.deps)).report).toMatchObject({ status: "submitted" });
+			expect(pending.notices).toEqual([]);
+
+			const decided = fakeTools(root, { submissionStatuses: ["accepted"] });
+			expect((await runWork(options, decided.deps)).report).toMatchObject({ status: "accepted" });
+			expect(events(decided.notices)).toEqual(["accepted"]);
+		});
+
+		it("does not ask WorkStream for a decision when the receipt names no submission UUID", async () => {
+			const fake = fakeTools(root, { submissionId: "not-a-uuid" });
+			expect((await runWork(options, fake.deps)).report).toMatchObject({ status: "submitted" });
+			expect(has(fake.calls, "submission", "show")).toBe(false);
+			expect(events(fake.notices)).toEqual(["pr_ready", "submitted"]);
+		});
+
+		it("names the local commit when no SHA is recorded", () => {
+			expect(handoffNotification(TASK, "awaiting_push_approval", undefined).message).toBe(
+				`Task ${TASK.slice(0, 8)}: the local commit is ready for your review before the push.`,
+			);
+		});
+
+		it("wires the live notifier and log into the CLI dependencies", async () => {
+			const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+			try {
+				const deps = liveWorkDeps("off");
+				await expect(deps.notify(handoffNotification(TASK, "blocked", undefined))).resolves.toBeUndefined();
+				deps.log("hello");
+				expect(write).toHaveBeenCalledWith("hello\n");
+				expect(write).toHaveBeenCalledTimes(1);
+			} finally {
+				write.mockRestore();
+			}
+		});
+
+		it("finishes the run when the notifier throws, and logs a warning instead", async () => {
+			const fake = fakeTools(root, { notifyThrows: true, submissionStatuses: ["accepted"] });
+			const outcome = await runWork(options, fake.deps);
+			expect(outcome).toMatchObject({ exitCode: 0, report: { status: "accepted" } });
+			// Both the PR-ready and the acceptance notification failed; neither stopped the run.
+			expect(
+				fake.logs.filter((line) => line === "[harnessy] notification warning: notification failed"),
+			).toHaveLength(2);
+		});
 	});
 });

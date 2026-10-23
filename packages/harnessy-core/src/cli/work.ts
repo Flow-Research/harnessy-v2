@@ -1,11 +1,17 @@
 import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { causeMessage, HarnessError } from "../errors.ts";
+import { NOTIFY_MODES, type NotifyMode } from "../notifications/config.ts";
 import { MAX_REVIEW_NOTES, splitCli } from "../work/logic.ts";
 import { liveWorkDeps, runWork, type WorkDeps } from "../work/run.ts";
 
 const positive = (name: string, value: number): number => {
 	if (!Number.isFinite(value) || value <= 0) throw new Error(`--${name} must be a positive number`);
+	return value;
+};
+
+const notNegative = (name: string, value: number): number => {
+	if (!Number.isFinite(value) || value < 0) throw new Error(`--${name} must be zero or a positive number`);
 	return value;
 };
 
@@ -17,7 +23,7 @@ const reviewNotes = (value: string): string => {
 };
 
 /** Build `harnessy work` around injected dependencies; tests pass a fake runner. */
-export const makeWorkCommand = (deps: () => WorkDeps) =>
+export const makeWorkCommand = (deps: (notify: NotifyMode | undefined) => WorkDeps) =>
 	Command.make(
 		"work",
 		{
@@ -38,6 +44,18 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 			mergeWaitHours: Flag.float("merge-wait-hours").pipe(
 				Flag.withDefault(24),
 				Flag.withDescription("How long to wait for the PR to be merged, in hours."),
+			),
+			outcomeWaitHours: Flag.float("outcome-wait-hours").pipe(
+				Flag.withDefault(1),
+				Flag.withDescription(
+					"After submitting, how long to wait for WorkStream to accept, reject or return the submission, in hours. 0 checks once; a re-run checks again.",
+				),
+			),
+			notify: Flag.choice("notify", NOTIFY_MODES).pipe(
+				Flag.optional,
+				Flag.withDescription(
+					"auto (default): a desktop notification where a display exists, else one line on stderr; desktop: always try the desktop first; terminal: the line only; off: nothing. Overrides HSY_NOTIFY, NO_NOTIFY and the settings file; auto is off when CI is set.",
+				),
 			),
 			workstreamCli: Flag.string("workstream-cli").pipe(
 				Flag.withDefault("workstream"),
@@ -89,6 +107,7 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 								budgetUsd: positive("budget-usd", flags.budgetUsd),
 								maxMinutes: positive("max-minutes", flags.maxMinutes),
 								mergeWaitHours: positive("merge-wait-hours", flags.mergeWaitHours),
+								outcomeWaitHours: notNegative("outcome-wait-hours", flags.outcomeWaitHours),
 								workstreamCli: splitCli(flags.workstreamCli),
 								...(Option.isSome(flags.taskUrl) ? { taskUrl: flags.taskUrl.value } : {}),
 								...(Option.isSome(flags.agentAllow) ? { agentAllow: flags.agentAllow.value } : {}),
@@ -97,7 +116,7 @@ export const makeWorkCommand = (deps: () => WorkDeps) =>
 								approvePush: flags.approvePush,
 								dryRun: flags.dryRun,
 							},
-							deps(),
+							deps(Option.getOrUndefined(flags.notify)),
 						),
 					catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
 				});

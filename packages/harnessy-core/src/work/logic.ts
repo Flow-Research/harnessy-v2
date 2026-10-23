@@ -193,6 +193,14 @@ export const wsArgv = {
 		"--idempotency-key",
 		input.key,
 	],
+	submissionShow: (ws: ReadonlyArray<string>, submission: string) => [
+		...ws,
+		"-o",
+		"json",
+		"submission",
+		"show",
+		submission,
+	],
 	submit: (
 		ws: ReadonlyArray<string>,
 		input: {
@@ -968,6 +976,22 @@ export const TERMINAL_PREPARATION_STATUSES: ReadonlySet<string> = new Set([
 	"stale",
 ]);
 
+/** WorkStream's decided submission states; `evaluation_pending` and `review_pending` are still open. */
+export const SUBMISSION_OUTCOMES = ["accepted", "needs_revision", "rejected"] as const;
+export type SubmissionOutcome = (typeof SUBMISSION_OUTCOMES)[number];
+
+/** The decided outcome in `submission show -o json`, or undefined while it is open or unreadable. */
+export const parseSubmissionOutcome = (json: string): SubmissionOutcome | undefined => {
+	const status = field(parseJson(json), "status");
+	return SUBMISSION_OUTCOMES.find((outcome) => outcome === status);
+};
+
+/** The submission id in a `task submit -o json` receipt, when it is a UUID. */
+export const submissionIdOf = (receipt: unknown): string | undefined => {
+	const id = field(receipt, "submission_id");
+	return typeof id === "string" && isTaskId(id) ? id : undefined;
+};
+
 export const parsePreparation = (json: string): Preparation => {
 	const value = parseJson(json);
 	const status = field(value, "submission_bundle_preparation_status");
@@ -1642,6 +1666,8 @@ export interface WorkState {
 	readonly mergeCommitSha?: string;
 	readonly admissionId?: string;
 	readonly submission?: unknown;
+	/** WorkStream's decision on the submission, recorded once so a re-run does not notify again. */
+	readonly outcome?: SubmissionOutcome;
 }
 
 const DEP_COPY_METHODS: ReadonlySet<unknown> = new Set(["clone", "reflink", "copy"]);
@@ -1682,6 +1708,10 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!["undefined", "string"].includes(typeof field(value, "pushedSha")) ||
 		!["undefined", "string"].includes(typeof field(value, "revisedFrom")) ||
 		!["undefined", "string"].includes(typeof field(value, "commentedSha")) ||
+		!(
+			field(value, "outcome") === undefined ||
+			SUBMISSION_OUTCOMES.includes(field(value, "outcome") as SubmissionOutcome)
+		) ||
 		!validAgentDeps(field(value, "agentDeps")) ||
 		!(
 			field(value, "earlierReports") === undefined ||

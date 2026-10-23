@@ -14,6 +14,8 @@ import {
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import * as Result from "effect/Result";
+import type { NotifyMode } from "../notifications/config.ts";
+import { liveNotifier, type Notification } from "../notifications/notifier.ts";
 import {
 	auditCopy,
 	copyTree,
@@ -67,6 +69,7 @@ import {
 	parseRepoName,
 	parseRunList,
 	parseState,
+	parseSubmissionOutcome,
 	parseTask,
 	pathsWithDriver,
 	prBody,
@@ -76,6 +79,7 @@ import {
 	reviewEvidenceProblem,
 	revisionComment,
 	sandboxProblem,
+	submissionIdOf,
 	TERMINAL_PREPARATION_STATUSES,
 	type ToolCheck,
 	validateAgentAllow,
@@ -84,6 +88,12 @@ import {
 	type WorkState,
 	wsArgv,
 } from "./logic.ts";
+import {
+	handoffNotification,
+	outcomeNotification,
+	prReadyNotification,
+	submittedNotification,
+} from "./notifications.ts";
 import { zipSingleFile } from "./zip.ts";
 
 /** Captured result of one argv command. `exitCode` is undefined when it could not start or was killed. */
@@ -114,6 +124,8 @@ export interface WorkDeps {
 	readonly stateRoot: string;
 	/** Claude Code managed settings files; any that exists fails preflight closed. */
 	readonly managedSettingsPaths: ReadonlyArray<string>;
+	/** Tell the person something needs them. A failure here never fails the run. */
+	readonly notify: (notification: Notification) => Promise<void>;
 }
 
 export interface WorkOptions {
@@ -123,6 +135,8 @@ export interface WorkOptions {
 	readonly budgetUsd: number;
 	readonly maxMinutes: number;
 	readonly mergeWaitHours: number;
+	/** How long to wait after submission for WorkStream's decision; 0 checks once. */
+	readonly outcomeWaitHours?: number;
 	readonly workstreamCli: ReadonlyArray<string>;
 	readonly taskUrl?: string;
 	/** Extra validated Claude Code rules, e.g. `Bash(npm test *)`, so the agent can run tests. */
@@ -194,29 +208,35 @@ export const execRun: Run = (argv, options) =>
 export const defaultStateRoot = (): string =>
 	join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local", "state"), "harnessy", "work");
 
-/** Live dependencies for the CLI. */
-export const liveWorkDeps = (): WorkDeps => ({
-	run: execRun,
-	platform: process.platform,
-	now: Date.now,
-	sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-	uuid: randomUUID,
-	log: (line) => process.stderr.write(`${line}\n`),
-	stateRoot: defaultStateRoot(),
-	managedSettingsPaths: managedClaudeSettingsPaths(process.platform),
-});
+/** Live dependencies for the CLI; `notifyMode` is the `--notify` flag, when given. */
+export const liveWorkDeps = (notifyMode?: NotifyMode): WorkDeps => {
+	const log = (line: string) => {
+		process.stderr.write(`${line}\n`);
+	};
+	return {
+		run: execRun,
+		platform: process.platform,
+		now: Date.now,
+		sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+		uuid: randomUUID,
+		log,
+		stateRoot: defaultStateRoot(),
+		managedSettingsPaths: managedClaudeSettingsPaths(process.platform),
+		notify: liveNotifier(notifyMode, log).notify,
+	};
+};
 
 /** Worktree path for a task: a sibling `.harnessy-work/<task>` of the target checkout. */
 export const worktreePath = (repo: string, task: string): string => resolve(repo, "..", ".harnessy-work", task);
 
-/** Desktop notification. Only fixed text, task ids, PR numbers and SHAs enter the message. */
-export const notify = async (deps: WorkDeps, message: string): Promise<void> => {
-	if (deps.platform !== "darwin") return;
-	const safe = message.replace(/[\\"]/g, "");
-	await deps.run(["/usr/bin/osascript", "-e", `display notification "${safe}" with title "Harnessy work"`], {
-		timeoutMs: 5000,
-	});
-};
+/**
+ * Send a notification. The live notifier never rejects; this guard keeps
+ * that true for any injected one, so a notification can never fail a run.
+ */
+const tell = (deps: WorkDeps, notification: Notification): Promise<void> =>
+	Promise.resolve()
+		.then(() => deps.notify(notification))
+		.catch(() => deps.log("[harnessy] notification warning: notification failed"));
 
 /** Check every required tool, and the sandbox when the agent may run commands. */
 export const preflight = async (
@@ -482,7 +502,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		detail: string,
 		extra: Readonly<Record<string, unknown>> = {},
 	): Promise<WorkOutcome> => {
-		await notify(deps, `Task ${options.task.slice(0, 8)} needs attention: ${reason.replaceAll("_", " ")}.`);
+		await tell(deps, handoffNotification(options.task, reason, state.headSha));
 		return {
 			exitCode: 2,
 			report: {
@@ -827,11 +847,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			return handoff("ci_config_changed", "the change edits CI configuration, which a same-repo PR would run", {
 				paths: ci,
 			});
-		if (!options.approvePush) {
-			await notify(
-				deps,
-				`Review commit ${headSha.slice(0, 12)} for task ${options.task.slice(0, 8)}, then re-run with --approve-push.`,
-			);
+		if (!options.approvePush)
 			return handoff(
 				"awaiting_push_approval",
 				"review the local commit, then re-run with --approve-push, or with --revise <notes> to send it back",
@@ -840,7 +856,6 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 					review: ["git", "-C", worktree, "diff", `origin/${options.base}...${headSha}`],
 				},
 			);
-		}
 		deps.log(`Pushing ${headSha} to ${branch}`);
 		await must(gitArgv.push(worktree, branch, headSha), "git push");
 		save({ pushedSha: headSha, readyMarked: undefined });
@@ -939,7 +954,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			// Not recorded as requested, so a re-run tries again.
 			if (ready.exitCode !== 0)
 				return handoff("pr_not_ready", `PR #${pr.number} passed its checks but could not be marked ready`);
-			await notify(deps, `PR #${pr.number} passed its checks and is ready for review. Merge it when satisfied.`);
+			await tell(deps, prReadyNotification(options.task, pr.number));
 		}
 		save({ readyMarked: true });
 	}
@@ -1032,6 +1047,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		}
 	}
 
+	const submittedNow = state.submission === undefined;
 	if (state.submission === undefined) {
 		await assertActor();
 		deps.log("Submitting");
@@ -1048,11 +1064,31 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		save({ submission: parseJson(receipt) ?? receipt.trim() });
 	}
 
-	await notify(deps, `Task ${options.task.slice(0, 8)} submitted to WorkStream after PR #${pr.number} merged.`);
+	// WorkStream's decision: read-only polling, recorded once so a re-run reports it without notifying again.
+	const decidedEarlier = state.outcome !== undefined;
+	const submissionId = submissionIdOf(state.submission);
+	if (!decidedEarlier && submissionId !== undefined) {
+		const deadline = deps.now() + (options.outcomeWaitHours ?? 0) * 3_600_000;
+		deps.log(`Waiting for WorkStream's decision on submission ${submissionId}`);
+		for (;;) {
+			const shown = await work.run(wsArgv.submissionShow(ws, submissionId));
+			const decided = shown.exitCode === 0 ? parseSubmissionOutcome(shown.stdout) : undefined;
+			if (decided !== undefined) {
+				save({ outcome: decided });
+				break;
+			}
+			if (deps.now() >= deadline) break;
+			await deps.sleep(MERGE_POLL_MS);
+		}
+	}
+	const outcome = state.outcome;
+	if (outcome !== undefined && !decidedEarlier) await tell(deps, outcomeNotification(options.task, outcome));
+	else if (outcome === undefined && submittedNow) await tell(deps, submittedNotification(options.task, pr.number));
 	return {
-		exitCode: 0,
+		// A rejection or a revision request needs a person, like a handoff.
+		exitCode: outcome === "rejected" || outcome === "needs_revision" ? 2 : 0,
 		report: {
-			status: "submitted",
+			status: outcome ?? "submitted",
 			task_id: options.task,
 			pr_url: pr.url,
 			head_sha: headSha,
