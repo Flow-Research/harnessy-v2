@@ -1,5 +1,6 @@
 import { Command } from "effect/unstable/cli";
 import { aiCommand } from "./cli/ai.ts";
+import { attestCommand } from "./cli/attest.ts";
 import { capabilityCommand } from "./cli/capability.ts";
 import { connectorCommand } from "./cli/connector.ts";
 import { depsCommand } from "./cli/deps.ts";
@@ -32,6 +33,7 @@ export const rootCommand = Command.make("harnessy").pipe(
 		aiCommand,
 		workspaceCommand,
 		workCommand,
+		attestCommand,
 	] as const),
 	Command.withDescription("Harnessy capability harness CLI"),
 );

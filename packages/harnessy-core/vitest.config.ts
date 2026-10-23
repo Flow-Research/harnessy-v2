@@ -125,6 +125,11 @@ export default defineConfig({
 					lines: 95,
 				},
 				"src/jarvis/community-briefing/schedule.ts": { statements: 98, branches: 80, functions: 100, lines: 98 },
+				// `harnessy attest`: TEST certificate signing, verification and the TEST key.
+				"src/attest/eas.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/attest/certificate.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/attest/run.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/cli/attest.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
 			},
 		},
 	},
