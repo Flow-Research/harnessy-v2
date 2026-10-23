@@ -519,12 +519,12 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	 * `node_modules` and `dist` directories: staged outside the worktree,
 	 * secrets withheld, renamed into place, then audited once.
 	 */
-	/** Paths `git add --all` would stage whose `filter` attribute names a configured driver. */
+	/** Paths the commit would include whose `filter` attribute names a configured driver. */
 	const pathsUsingDrivers = async (): Promise<ReadonlyArray<string>> => {
 		if (filterDrivers.length === 0) return [];
-		const changed = (await must(gitArgv.changedForAdd(worktree), "git ls-files", worktree))
-			.split("\0")
-			.filter((path) => path !== "");
+		// What git add --all would stage, plus what an earlier run or a person already staged.
+		const listed = `${await must(gitArgv.changedForAdd(worktree), "git ls-files", worktree)}\0${await must(gitArgv.stagedPaths(worktree), "git diff --cached", worktree)}`;
+		const changed = [...new Set(listed.split("\0").filter((path) => path !== ""))];
 		const driven: string[] = [];
 		// Bounded argv: check-attr reads the paths from the command line.
 		for (let start = 0; start < changed.length; start += ATTR_BATCH)

@@ -77,7 +77,8 @@
 - `harnessy work` no longer commits raw bytes for paths that a configured git
   filter driver (for example `filter=lfs`) should clean. Harnessy keeps filter
   drivers off on its own git commands, so before `git add --all` it asks
-  `git check-attr -z filter` about every path it would stage. When a path
+  `git check-attr -z filter` about every path the commit would include, both
+  the paths it would stage and the ones already staged. When a path
   names a driver defined in git config, the run hands off with
   `filter_driver_paths` and commits nothing, and the reviewer commits those
   paths with the filter enabled.

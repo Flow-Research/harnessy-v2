@@ -425,6 +425,23 @@ export const gitArgv = {
 		"--others",
 		"--exclude-standard",
 	],
+	/**
+	 * Paths already staged (index differs from HEAD), NUL-separated: the commit
+	 * includes them even though `--modified` no longer lists them.
+	 */
+	stagedPaths: (worktree: string) => [
+		"git",
+		"-C",
+		worktree,
+		...NO_HOOKS,
+		"diff",
+		"--cached",
+		"--no-ext-diff",
+		"--no-textconv",
+		"--no-renames",
+		"-z",
+		"--name-only",
+	],
 	/** The `filter` attribute of each path, as NUL-separated `path, filter, value` triples. */
 	filterAttribute: (worktree: string, paths: ReadonlyArray<string>) => [
 		"git",

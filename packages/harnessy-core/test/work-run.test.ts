@@ -97,6 +97,8 @@ interface Scenario {
 	filterKeys?: string;
 	/** `git ls-files -z --modified --others --exclude-standard` output after the agent. */
 	changedFiles?: string;
+	/** `git diff --cached -z --name-only` output: paths already staged. */
+	stagedFiles?: string;
 	/** The `filter` attribute value per path; unspecified when absent. */
 	filterAttr?: Record<string, string>;
 	/** Content of the new worktree's `.git` file. */
@@ -176,6 +178,7 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 			if (exe === "git") {
 				if (args.includes("ls-files") && args.includes("--modified"))
 					return ok(scenario.changedFiles ?? "src/a.ts\0");
+				if (args.includes("diff") && args.includes("--cached")) return ok(scenario.stagedFiles ?? "");
 				if (args.includes("check-attr")) {
 					const paths = args.slice(args.indexOf("--") + 1);
 					return ok(
@@ -854,6 +857,20 @@ describe("runWork", () => {
 		expect(state.headSha).toBeUndefined();
 	});
 
+	it("also checks paths an earlier run already staged, which --modified no longer lists", async () => {
+		const fake = fakeTools(root, {
+			filterKeys: "filter.lfs.clean\0",
+			changedFiles: "src/a.ts\0",
+			stagedFiles: "assets/big.bin\0src/a.ts\0",
+			filterAttr: { "assets/big.bin": "lfs" },
+		});
+		const outcome = await runWork({ ...options, approvePush: false }, fake.deps);
+		expect(outcome.report).toMatchObject({ reason: "filter_driver_paths", paths: ["assets/big.bin"] });
+		const checked = fake.calls.find((argv) => argv.includes("check-attr")) ?? [];
+		expect(checked.slice(checked.indexOf("--") + 1)).toEqual(["src/a.ts", "assets/big.bin"]);
+		expect(has(fake.calls, "commit")).toBe(false);
+	});
+
 	it("commits as before when no changed path uses a configured driver, checking paths in batches", async () => {
 		const many = Array.from({ length: 450 }, (_, index) => `src/f${index}.ts`);
 		const fake = fakeTools(root, {
@@ -895,10 +912,16 @@ describe("runWork", () => {
 		writeFileSync(join(repo, "-dash.bin"), "option-like name");
 		const drivers = filterDriverNames((await execRun(gitArgv.filterNames(repo))).stdout);
 		expect(drivers).toEqual(["lfs"]);
-		const changed = (await execRun(gitArgv.changedForAdd(repo))).stdout.split("\0").filter((path) => path !== "");
-		expect([...changed].sort()).toEqual(["-dash.bin", "big.bin", "keep.md", "notes.txt"]);
+		// A path staged before the run is in the index, so --modified no longer lists it.
+		writeFileSync(join(repo, "staged.bin"), "raw");
+		await git("-c", "filter.lfs.clean=", "add", "staged.bin");
+		const unstaged = (await execRun(gitArgv.changedForAdd(repo))).stdout.split("\0").filter((path) => path !== "");
+		expect([...unstaged].sort()).toEqual(["-dash.bin", "big.bin", "keep.md", "notes.txt"]);
+		const staged = (await execRun(gitArgv.stagedPaths(repo))).stdout.split("\0").filter((path) => path !== "");
+		expect(staged).toEqual(["staged.bin"]);
+		const changed = [...unstaged, ...staged];
 		const attrs = (await execRun(gitArgv.filterAttribute(repo, changed))).stdout;
-		expect([...pathsWithDriver(attrs, drivers)].sort()).toEqual(["-dash.bin", "big.bin"]);
+		expect([...pathsWithDriver(attrs, drivers)].sort()).toEqual(["-dash.bin", "big.bin", "staged.bin"]);
 	});
 
 	it("catches CI paths git would quote, including unicode and newlines", async () => {
