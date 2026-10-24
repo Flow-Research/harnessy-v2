@@ -1,1 +1,9 @@
-[]
+[
+	{
+		"package": "zod",
+		"url": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+		"vulnerableVersions": "<4.6.6",
+		"reason": "No fixed zod 3 release exists (4.6.6 is the first fix), and the newest @anthropic-ai/sandbox-runtime (0.0.81) still declares zod ^3.25.0. The only affected copy is zod 3.25.76 nested under @anthropic-ai/sandbox-runtime@0.0.26, a root development dependency of the private coding-agent sandbox example. That package calls its zod schemas only from its `srt` CLI, to validate a local settings file; the SandboxManager API the example uses never parses with zod, and Harnessy does not run `srt`. Every other root zod resolves 4.6.7, and scripts/security-invariants-lib.mjs fails if any other zod copy is below 4.6.6. Remove when sandbox-runtime moves to a fixed zod.",
+		"expires": "2026-11-07"
+	}
+]

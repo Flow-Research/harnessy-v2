@@ -281,6 +281,26 @@
   Effect calls (`parse`) is unchanged. `ip-address` moves to 10.7.4 with the
   root. The Bun 1.4.0 lock diff is limited to those three packages. The after
   audit is 0 at or above high with the same 3 records under reviewed exception.
+- **2026-10-24 revalidation:** New advisories made the Bun audit block on
+  `zod` (GHSA-mrhx-c7xc-m3w5, high; fixed in 4.6.6), `body-parser@2.3.0`
+  (GHSA-27r3-jxmh-p828, high; fixed in 2.4.0), `undici@8.11.2` and Miniflare's
+  `undici@7.29.0` (GHSA-xjj6-f33q-929c, high; fixed in 8.12.2 and 7.30.1).
+  Every workspace `zod` pin moves to 4.6.7; the exact overrides move to
+  `body-parser@2.4.0`, `fast-uri@3.1.9` and `qs@6.16.1` (body-parser 2.4.0
+  declares `qs@^6.16.1`); the lock resolves the runtime `undici` 8 copy to
+  8.12.3 and drops `@tanstack/router-generator`'s nested `zod@4.4.3` in favour
+  of the hoisted 4.6.7. Two reviewed exceptions, expiring 2026-11-07, cover the
+  rest: Miniflare's `undici@7.29.0` (no Miniflare release ships 7.30.1; see
+  V2D-010) and `zod` for two development-tool owners with no compatible fix,
+  `@tanstack/router-plugin@1.167.22` (zod 3.25.76; its config schema needs
+  zod 3, and 1.168.10 is the first release on zod 4) and
+  `@cloudflare/vitest-pool-workers@0.21.0` (exact zod 4.4.3, also in 0.23.0).
+  Both validate only repository-written build and test configuration. Because
+  an exception matches the advisory rather than one copy,
+  `scripts/security-invariants-lib.mjs` now fails if any other `zod` in
+  `executor/bun.lock` is below 4.6.6. The Bun 1.4.0 lock diff is limited to
+  those packages. The after audit is 0 at or above high with 4 records under
+  reviewed exception.
 - **Links:** `scripts/audit-executor.mjs`,
   `qa/security/findings/2026-09-02-v2-canonical-cutover.md`
 
@@ -341,6 +361,27 @@
   `scripts/harnessy-release-contract.test.mjs`. The
   coding-agent shrinkwrap and install-lock change only for `ip-address`. The
   after audits report zero advisories at every severity, with no exception.
+- **2026-10-24 revalidation:** New advisories made the root audit block on
+  `zod@4.3.6` and `zod@3.25.76` (GHSA-mrhx-c7xc-m3w5, high; fixed in 4.6.6),
+  `body-parser@2.3.0` (GHSA-27r3-jxmh-p828, high; fixed in 2.4.0),
+  `fast-uri@3.1.8` (four advisories; fixed in 3.1.9) and Miniflare's
+  `undici@7.29.1` (GHSA-xjj6-f33q-929c high, GHSA-4qv8-2p9j-2685 and
+  GHSA-f72v-6w45-q472 moderate; fixed in 7.30.1). The root, core and engine
+  `zod` pins move to 4.6.7, the exact overrides to `fast-uri@3.1.9` and
+  `qs@6.16.1`, and the lock resolves `body-parser@2.4.0`. The `miniflare`
+  override gains a nested `undici@7.30.1` pin (a patch release inside the
+  7.x line Miniflare declares); the packed-engine Cloudflare fixture carries
+  the same override, asserted in `scripts/harnessy-release-contract.test.mjs`.
+  The only remaining record is `zod@3.25.76` under
+  `@anthropic-ai/sandbox-runtime@0.0.26`, the root development dependency of
+  the private sandbox example: no zod 3 release is fixed and the newest
+  sandbox-runtime (0.0.81) still declares zod 3. It calls its zod schemas only
+  from its `srt` CLI to validate a local settings file, which Harnessy never
+  runs, so it is a reviewed exception expiring 2026-11-07, and
+  `scripts/security-invariants-lib.mjs` fails if any other root `zod` is below
+  4.6.6. The coding-agent shrinkwrap and install-lock change only for these
+  packages. With npm 11.6.0, `npm ls --all` and
+  `npm sbom --omit=dev --sbom-format=cyclonedx` both pass.
 - **Links:** `.github/workflows/qa-security-sweep.yml`,
   `qa/security/findings/2026-09-02-v2-canonical-cutover.md`
 
@@ -370,4 +411,9 @@
   `miniflare@5.20260815.0-alpha` with `undici@7.29.0`; `undici@7.29.1` still
   ships only in a newer Miniflare prerelease that no pool release selects. The
   two Executor `undici` exceptions stay until a coherent owner set exists.
+- **2026-10-24 revalidation:** GHSA-xjj6-f33q-929c is fixed only in
+  `undici@7.30.1`, and every published Miniflare, including the newest
+  `5.20261019.2-beta`, still pins 7.29.1 or older. The Executor keeps its
+  owner set and adds a third reviewed `undici` exception; the root, whose
+  Miniflare is selected by an exact override, pins the nested `undici@7.30.1`.
 - **Links:** `scripts/security-invariants-lib.mjs`, `executor/bun.lock`

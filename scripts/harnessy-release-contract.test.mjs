@@ -215,6 +215,8 @@ test("isolated release installs and the engine fixture pin the MCP SDK and toml 
 		readFileSync(new URL("../packages/harnessy-engine/test/fixtures/cloudflare-worker/package.json", import.meta.url), "utf8"),
 	);
 	assert.equal(fixture.overrides["@modelcontextprotocol/sdk"], pinned);
+	// The fixture install is audited, so it pins the same Miniflare and nested undici.
+	assert.deepEqual(fixture.overrides.miniflare, root.overrides.miniflare);
 	// npm 11 applies the root toml override to effect only through a root edge; see V2D-009.
 	const core = JSON.parse(readFileSync(new URL("../packages/harnessy-core/package.json", import.meta.url), "utf8"));
 	assert.equal(root.devDependencies.effect, core.dependencies.effect);
