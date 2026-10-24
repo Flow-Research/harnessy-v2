@@ -116,6 +116,8 @@ const dependencyContractFiles = () =>
 					"node_modules/qs": { version: "6.16.0" },
 					"node_modules/sharp": { version: "0.35.4" },
 					"node_modules/toml": { version: "4.3.0" },
+					"node_modules/zod": { version: "4.6.7" },
+					"node_modules/@anthropic-ai/sandbox-runtime/node_modules/zod": { version: "3.25.76" },
 				},
 			}),
 		],
@@ -151,6 +153,9 @@ const dependencyContractFiles = () =>
 				'    "wrangler": ["wrangler@4.120.1", "", { "dependencies": { "miniflare": "5.20260804.0-alpha" } }],',
 				'    "ws": ["ws@8.21.3", "", {}],',
 				'    "miniflare/ws": ["ws@8.21.0", "", {}],',
+				'    "zod": ["zod@4.6.7", "", {}],',
+				'    "@cloudflare/vitest-pool-workers/zod": ["zod@4.4.3", "", {}],',
+				'    "@tanstack/router-plugin/zod": ["zod@3.25.76", "", {}],',
 			].join("\n"),
 		],
 	]);
@@ -171,6 +176,21 @@ describe("dependency resolution security contract", () => {
 		assert.deepEqual(
 			new Set(checkDependencyResolutionContract(files).map((finding) => finding.rule)),
 			new Set(["unsafe-root-lock-resolution", "uncontrolled-cloudflare-owner-version"]),
+		);
+	});
+
+	it("rejects a vulnerable zod outside the excepted owners", () => {
+		const files = dependencyContractFiles();
+		const rootLock = JSON.parse(files.get("package-lock.json"));
+		rootLock.packages["packages/harnessy-core/node_modules/zod"] = { version: "4.3.6" };
+		files.set("package-lock.json", JSON.stringify(rootLock));
+		files.set(
+			"executor/bun.lock",
+			`${files.get("executor/bun.lock")}\n    "@tanstack/router-generator/zod": ["zod@4.4.3", "", {}],`,
+		);
+		assert.deepEqual(
+			new Set(checkDependencyResolutionContract(files).map((finding) => finding.rule)),
+			new Set(["unsafe-root-lock-resolution", "unsafe-executor-lock-resolution"]),
 		);
 	});
 

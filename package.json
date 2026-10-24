@@ -90,7 +90,7 @@
 		"openapi-types": "12.1.3",
 		"semver": "7.8.0",
 		"tldts": "7.0.28",
-		"zod": "4.3.6"
+		"zod": "4.6.7"
 	},
 	"devDependencies": {
 		"@anthropic-ai/sandbox-runtime": "0.0.26",
@@ -131,7 +131,7 @@
 		"@modelcontextprotocol/sdk": "1.32.1",
 		"brace-expansion": "5.0.12",
 		"browserslist": "4.28.8",
-		"fast-uri": "3.1.8",
+		"fast-uri": "3.1.9",
 		"hono": "4.13.13",
 		"ip-address": "10.7.4",
 		"postcss": {
@@ -139,7 +139,7 @@
 			"nanoid": "3.3.18"
 		},
 		"protobufjs": "7.6.5",
-		"qs": "6.16.0",
+		"qs": "6.16.1",
 		"rimraf": "6.1.2",
 		"sharp": "0.35.5",
 		"toml": "5.0.1",
@@ -148,7 +148,10 @@
 		},
 		"proxy-addr": "2.0.8",
 		"source-map-js": "1.2.2",
-		"miniflare": "5.20261006.0-alpha",
+		"miniflare": {
+			".": "5.20261006.0-alpha",
+			"undici": "7.30.1"
+		},
 		"vite": "8.1.6"
 	}
 }

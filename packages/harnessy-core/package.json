@@ -90,7 +90,7 @@
 		"shell-quote": "1.12.0",
 		"typebox": "1.3.3",
 		"yaml": "2.9.0",
-		"zod": "4.3.6"
+		"zod": "4.6.7"
 	},
 	"devDependencies": {
 		"@effect/vitest": "4.0.0-beta.85",

@@ -15,7 +15,10 @@
   },
   "overrides": {
     "@modelcontextprotocol/sdk": "1.32.1",
-    "miniflare": "5.20261006.0-alpha",
+    "miniflare": {
+      ".": "5.20261006.0-alpha",
+      "undici": "7.30.1"
+    },
     "sharp": "0.35.5",
     "toml": "5.0.1"
   }
