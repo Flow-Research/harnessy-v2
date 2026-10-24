@@ -88,8 +88,9 @@ export default defineConfig({
 				// Each screen and component has its own floor (test/coverage-floors.test.ts checks that every
 				// .tsx file has one), set just under what the app tests reach. test/app/today.test.tsx and
 				// test/app/jobs.test.tsx cover Today's and Jobs' absent-field fallbacks,
-				// test/app/learning.test.tsx covers Learning's empty-data and missing-job fallbacks, and
-				// test/app/connections.test.tsx covers Connections' fallbacks and every connection state.
+				// test/app/learning.test.tsx covers Learning's empty-data and missing-job fallbacks,
+				// test/app/connections.test.tsx covers Connections' fallbacks and every connection state, and
+				// test/app/inbox.test.tsx covers Inbox's empty-field fallbacks, every severity, tile state and key.
 				"src/portal/app/App.tsx": { statements: 95, branches: 85, functions: 90, lines: 95 },
 				"src/portal/app/components/actions.tsx": { statements: 95, branches: 90, functions: 90, lines: 95 },
 				"src/portal/app/components/DetailPane.tsx": { statements: 95, branches: 75, functions: 100, lines: 95 },
@@ -99,7 +100,7 @@ export default defineConfig({
 				"src/portal/app/components/SafeMarkdown.tsx": { statements: 85, branches: 70, functions: 100, lines: 85 },
 				"src/portal/app/components/Shell.tsx": { statements: 95, branches: 90, functions: 100, lines: 95 },
 				"src/portal/app/screens/Connections.tsx": { statements: 95, branches: 95, functions: 100, lines: 95 },
-				"src/portal/app/screens/Inbox.tsx": { statements: 90, branches: 80, functions: 90, lines: 95 },
+				"src/portal/app/screens/Inbox.tsx": { statements: 90, branches: 95, functions: 90, lines: 95 },
 				"src/portal/app/screens/Jobs.tsx": { statements: 95, branches: 75, functions: 90, lines: 95 },
 				"src/portal/app/screens/Learning.tsx": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/app/screens/Reviews.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
