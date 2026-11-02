@@ -191,6 +191,7 @@ test("reproducibility rejects canonical evidence that differs from matching reru
 test("Bun and npm lock parsers fail closed on malformed and unsupported input", () => {
 	assert.throws(() => parseBunLock("{ not json"), /Malformed Bun/u);
 	assert.throws(() => parseBunLock('{"lockfileVersion": 0, "packages": {}}'), /Unsupported Bun/u);
+	assert.throws(() => parseBunLock('{"lockfileVersion": 4, "packages": {}}'), /Unsupported Bun/u);
 	assert.throws(() => parseNpmLock("{"), /Malformed npm/u);
 	assert.throws(() => parseNpmLock('{"lockfileVersion":2,"packages":{}}'), /not a supported npm/u);
 	const lock = parseBunLock(`{
@@ -234,6 +235,11 @@ test("real Executor Bun graph has one component per lock identity and no depende
 		versions.set(metadata.name, manifest.version);
 	}
 	const bom = bunLockToCycloneDx(lock, new Map(), versions);
+	assert.equal(lock.lockfileVersion, 3);
+	const miniflareDependencies = bom.dependencies.find((row) => row.ref === "bun-lock:miniflare").dependsOn;
+	assert(miniflareDependencies.includes("bun-lock:miniflare%2Fundici"));
+	assert(!miniflareDependencies.includes("bun-lock:undici"));
+	assert.equal(bom.components.find((component) => component["bom-ref"] === "bun-lock:miniflare%2Fundici").version, "7.30.1");
 	const proxyCount = Object.values(lock.packages).filter((entry) => String(entry[0]).includes("@workspace:")).length;
 	assert.equal(bom.components.length, Object.keys(lock.packages).length - proxyCount + Object.keys(lock.workspaces).length - 1);
 	assert.equal(new Set(bom.components.map((component) => component["bom-ref"])).size, bom.components.length);

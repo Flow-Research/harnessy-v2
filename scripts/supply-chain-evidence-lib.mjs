@@ -87,7 +87,9 @@ export const parseBunLock = (source) => {
 	if (errors.length > 0) {
 		throw new Error(`Malformed Bun lockfile: ${errors.map((error) => printParseErrorCode(error.error)).join(", ")}`);
 	}
-	if (lock?.lockfileVersion !== 1 || lock.packages === null || typeof lock.packages !== "object" || Array.isArray(lock.packages)) {
+	// Bun 1.4 uses version 3 for scoped overrides; package identities and edges
+	// retain the same representation. Unknown future formats still fail closed.
+	if (![1, 3].includes(lock?.lockfileVersion) || lock.packages === null || typeof lock.packages !== "object" || Array.isArray(lock.packages)) {
 		throw new Error("Unsupported Bun lockfile structure");
 	}
 	return lock;
