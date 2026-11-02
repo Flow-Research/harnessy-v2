@@ -881,8 +881,22 @@ try {
 	assert(adoptionResult.activated === false, "Adoption must not activate a runtime.");
 	const adoptedBytes = readFileSync(adoptionResult.trustedKeyring.path);
 	assert(sha256(adoptedBytes) === adoptionResult.trustedKeyring.sha256, "Adoption returned an incorrect trust pin.");
+	const originalTrust = JSON.parse(adoptionBefore[0].toString());
+	let replayDevice = originalTrust.replay.device;
+	if (process.platform === "darwin") {
+		const filesystem = spawnSync("/bin/df", ["-P", fixture.replayPath], { encoding: "utf8", timeout: 5000 });
+		assert(filesystem.status === 0, "Could not identify the replay volume.");
+		const device = filesystem.stdout.split("\n")[1]?.split(/\s+/u)[0];
+		assert(device?.startsWith("/dev/disk"), "Replay volume device is invalid.");
+		const volume = spawnSync("/usr/sbin/diskutil", ["info", "-plist", device], { encoding: "utf8", timeout: 5000 });
+		assert(volume.status === 0, "Could not read replay volume identity.");
+		const uuid = volume.stdout.match(/<key>VolumeUUID<\/key>\s*<string>([A-Fa-f0-9-]{36})<\/string>/u)?.[1];
+		assert(uuid !== undefined, "Replay volume UUID is missing.");
+		replayDevice = `volume:${uuid.toLowerCase()}`;
+	}
 	assertStrict.deepEqual(JSON.parse(adoptedBytes.toString()), {
-		...JSON.parse(adoptionBefore[0].toString()),
+		...originalTrust,
+		replay: { ...originalTrust.replay, device: replayDevice },
 		kind: "harnessy.meeting-publication.service-trust",
 		audience: "harnessy.meeting-publication.service.v1",
 	});
@@ -1103,7 +1117,7 @@ try {
 			assertStrict.deepEqual(JSON.parse(parsed.stdout), {
 				Label: plan.label,
 				ProgramArguments: [process.execPath, join(installedHost, "dist/meeting-full-review-cli.js"), "--service", "--input", savedServicePath],
-				RunAtLoad: true, KeepAlive: false, ExitTimeOut: 45,
+				RunAtLoad: true, KeepAlive: true, ThrottleInterval: 30, ExitTimeOut: 45,
 			});
 		} else assert(planned.stdout === "", "Rejected launch-agent planning produced installable output.");
 		const serviceDirectory = mkdtempSync(join(freshPrivateRoot, "service-files-"));
@@ -1127,7 +1141,7 @@ try {
 			assertStrict.deepEqual(JSON.parse(parsed.stdout), {
 				Label: "org.harnessy.meeting-publication",
 				ProgramArguments: [process.execPath, join(installedHost, "dist/meeting-full-review-cli.js"), "--service", "--input", savedServicePath],
-				RunAtLoad: true, KeepAlive: false, ExitTimeOut: 45,
+				RunAtLoad: true, KeepAlive: true, ThrottleInterval: 30, ExitTimeOut: 45,
 				StandardOutPath: join(serviceDirectory, "stdout.log"), StandardErrorPath: join(serviceDirectory, "stderr.log"),
 			});
 			const files = [plistPath, join(serviceDirectory, "stdout.log"), join(serviceDirectory, "stderr.log")];

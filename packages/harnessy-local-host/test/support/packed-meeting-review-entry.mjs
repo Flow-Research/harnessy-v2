@@ -61,10 +61,10 @@ const sourceBefore = JSON.stringify(snapshot(sourcePath));
 // Sign read-only machine identity for the actual CLI; never inject its runtime.
 let bootId;
 if (process.platform === "darwin") {
-	const result = spawnSync("/usr/sbin/sysctl", ["-n", "kern.boottime"], {encoding: "utf8", timeout: 2000, maxBuffer: 4096});
+	const result = spawnSync("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], {encoding: "utf8", timeout: 2000, maxBuffer: 4096});
 	assert(result.status === 0, "Could not read fixture boot identity");
-	bootId = result.stdout.trim();
-	assert(/^\{ sec = \d+, usec = \d+ \} .+$/u.test(bootId), "Invalid Darwin boot identity");
+	bootId = result.stdout.trim().toLowerCase();
+	assert(/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u.test(bootId), "Invalid Darwin boot identity");
 } else {
 	assert(process.platform === "linux", "Unsupported review fixture platform");
 	bootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
