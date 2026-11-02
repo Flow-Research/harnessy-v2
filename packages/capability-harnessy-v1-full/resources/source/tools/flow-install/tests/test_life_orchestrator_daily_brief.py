@@ -9,12 +9,12 @@ import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
+import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+
+FLOW_INSTALL_ROOT = Path(__file__).resolve().parents[1]
 DAILY_BRIEF_PATH = (
-    REPO_ROOT
-    / "tools"
-    / "flow-install"
+    FLOW_INSTALL_ROOT
     / "skills"
     / "life-orchestrator"
     / "scripts"
@@ -380,3 +380,45 @@ def test_publish_preview_promotes_reviewed_artifact_without_regeneration(
     backups = list((Path(daily_brief.AGENTS_LIFE_DIR) / "previews").glob("*-before-reviewed-publish.md"))
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == "## Old Brief\n"
+
+
+@pytest.mark.parametrize("mode", ["--publish-preview", "--force"])
+def test_failed_replacement_retries_delivery(tmp_path, monkeypatch, mode):
+    daily_brief = load_daily_brief(tmp_path, monkeypatch)
+    canonical = Path(daily_brief.brief_path(daily_brief.datetime.date.today()))
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text("Old content", encoding="utf-8")
+    marker = Path(f"{canonical}.journaled")
+    marker.write_text("{}", encoding="utf-8")
+    preview = tmp_path / "preview.md"
+    preview.write_text("Replacement content", encoding="utf-8")
+    monkeypatch.setattr(daily_brief, "run_collect_state", lambda **kwargs: {})
+    monkeypatch.setattr(daily_brief, "wait_for_learning_readings", lambda today, state: state)
+    monkeypatch.setattr(daily_brief, "call_ai", lambda prompt: "Replacement content")
+    monkeypatch.setattr(daily_brief, "clean_text_hygiene", lambda path: True)
+    monkeypatch.setattr(daily_brief, "send_notification", lambda brief: None)
+    monkeypatch.setattr(daily_brief, "latest_journal_reference", lambda *args: None)
+    deliveries = []
+
+    def deliver(path, today):
+        deliveries.append(Path(path).read_text(encoding="utf-8"))
+        return len(deliveries) > 1
+
+    monkeypatch.setattr(daily_brief, "jarvis_journal", deliver)
+    arguments = ["daily-brief", mode]
+    if mode == "--publish-preview":
+        arguments.append(str(preview))
+    monkeypatch.setattr(sys, "argv", arguments)
+    with pytest.raises(SystemExit) as failed:
+        daily_brief.main()
+    assert failed.value.code == 1
+    assert canonical.read_text(encoding="utf-8") == "Replacement content"
+    assert not marker.exists()
+
+    monkeypatch.setattr(sys, "argv", ["daily-brief"])
+    monkeypatch.setattr(daily_brief, "call_ai", lambda prompt: pytest.fail("retry must not regenerate"))
+    with pytest.raises(SystemExit) as retried:
+        daily_brief.main()
+    assert retried.value.code == 0
+    assert deliveries == ["Replacement content", "Replacement content"]
+    assert marker.exists()

@@ -560,6 +560,7 @@ def brief_path(today):
 def save_brief(path, content):
     """Write brief to file, creating directories as needed."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    invalidate_journal_marker(path)
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
 
@@ -601,6 +602,14 @@ def clean_text_hygiene(path):
 
 def journal_marker_path(path):
     return f"{path}.journaled"
+
+
+def invalidate_journal_marker(path):
+    """An old delivery receipt must not certify replacement content."""
+    try:
+        os.unlink(journal_marker_path(path))
+    except FileNotFoundError:
+        pass
 
 
 def mark_journal_delivered(path, today):
@@ -935,6 +944,7 @@ def main():
             print(f"Existing brief backed up to {backup_path}", file=sys.stderr)
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        invalidate_journal_marker(path)
         shutil.copy2(source, path)
         # Preview generation already ran text hygiene. Publish the reviewed
         # bytes unchanged; another cleanup could alter validated source URLs.
