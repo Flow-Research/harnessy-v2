@@ -314,7 +314,10 @@ export const checkDependencyResolutionContract = (files) => {
 			["ws", ">=8.0.0 <8.21.0"],
 		]);
 		for (const [packageName, vulnerableRange] of miniflareDependencyRanges) {
-			const dependencyVersion = executorManifest?.overrides?.[packageName] ?? bunDependencyVersion(miniflareLine, packageName);
+			const dependencyVersion =
+				executorManifest?.overrides?.miniflare?.[packageName] ??
+				executorManifest?.overrides?.[packageName] ??
+				bunDependencyVersion(miniflareLine, packageName);
 			const nestedLine = bunEntryLine(executorLock, packageName === "sharp" ? packageName : `miniflare/${packageName}`);
 			if (!isExactSafeVersion(dependencyVersion, vulnerableRange)) {
 				findings.push({ rule: "unsafe-executor-owner-dependency", path: executorLockPath, line: 1 });

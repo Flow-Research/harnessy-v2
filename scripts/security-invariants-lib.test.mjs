@@ -161,6 +161,18 @@ const dependencyContractFiles = () =>
 	]);
 
 describe("dependency resolution security contract", () => {
+	it("checks a scoped Miniflare override against its actual nested resolution", () => {
+		const files = dependencyContractFiles();
+		const manifest = JSON.parse(files.get("executor/package.json"));
+		manifest.overrides.miniflare = { undici: "7.30.1" };
+		files.set("executor/package.json", JSON.stringify(manifest));
+		assert.ok(checkDependencyResolutionContract(files).some((finding) => finding.rule === "incoherent-cloudflare-owner-lock"));
+		files.set("executor/bun.lock", files.get("executor/bun.lock").replace('["undici@7.29.0"', '["undici@7.30.1"'));
+		assert.deepEqual(checkDependencyResolutionContract(files), []);
+		files.set("executor/bun.lock", files.get("executor/bun.lock").replace('["undici@7.30.1"', '["undici@7.24.8"'));
+		assert.ok(checkDependencyResolutionContract(files).some((finding) => finding.rule === "unsafe-executor-lock-resolution"));
+	});
+
 	it("accepts exact owners whose locks contain no known vulnerable resolution", () => {
 		assert.deepEqual(checkDependencyResolutionContract(dependencyContractFiles()), []);
 	});
