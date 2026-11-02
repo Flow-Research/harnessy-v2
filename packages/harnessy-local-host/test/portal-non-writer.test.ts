@@ -188,13 +188,19 @@ describe("portal non-writer regression", () => {
 									}
 								: { headers: await installProof(port, token, method, path) }),
 						});
-			expect([method, path, response.status]).toEqual([method, path, 200]);
+			// Opening a browser needs a page session and an explicit same-origin POST.
+			// Read proofs must never launch a helper or read its credentials.
+			const pageOnly =
+				path.startsWith("/v1/terminal/") ||
+				path.startsWith("/v1/open/") ||
+				path.startsWith("/v1/life/brief/generat");
+			expect([method, path, response.status]).toEqual([method, path, pageOnly ? 401 : 200]);
 			expect(response.text).not.toContain(CANARY);
 			expect(response.headers["content-security-policy"]).toBe(PORTAL_CSP);
 			if (path === "/v1/session/code") code = (response.json as { code: string }).code;
 			called.push(`${method} ${path}`);
 		}
-		expect(called).toHaveLength(18);
+		expect(called).toHaveLength(26);
 		// The page files are served from memory: they spawn nothing and open nothing per request.
 		for (const path of PORTAL_PAGE_PATHS) {
 			const response = await rawRequest(port, { path });

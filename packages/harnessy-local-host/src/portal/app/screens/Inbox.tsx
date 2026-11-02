@@ -6,12 +6,12 @@
 import { BookOpen, Cpu, Megaphone, Mic, Plug, Radio, Sun } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
-import { ActionList } from "../components/actions.tsx";
+import { ActionList, useHandoff } from "../components/actions.tsx";
 import { DetailPane } from "../components/DetailPane.tsx";
 import { EmptyState, Stat, StatusDot, type Tone, WithTile } from "../components/primitives.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
 import type { InboxItem, InboxResponse, JobsResponse } from "../lib/api-types.ts";
-import { copyText, followHandoff } from "../lib/browser.ts";
+import { copyText } from "../lib/browser.ts";
 import { useResource } from "../lib/data.tsx";
 import { dateTime, greeting, plural, relativeTime, visibleText, visibleTitle } from "../lib/format.ts";
 import { isPageFocus, useScreenKeys } from "../lib/keys.tsx";
@@ -62,12 +62,13 @@ const Detail = ({ item }: { item: InboxItem }) => (
 		{item.context === "" ? null : <p className="muted">{visibleText(item.context)}</p>}
 		<ActionList actions={item.actions} />
 		<p className="fine-print">
-			Approvals and publishing stay in the owning service. Harnessy shows, links and lets you copy; it runs nothing.
+			Approvals and publishing stay in the owning service. Review buttons open that service with a fresh sign-in.
 		</p>
 	</>
 );
 
 export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefined; now: number }) => {
+	const { follow, notice: handoffNotice } = useHandoff();
 	const inbox = useResource<InboxResponse>("/v1/inbox");
 	const jobs = useResource<JobsResponse>("/v1/jobs");
 	const tile = inbox.data?.tiles.inbox;
@@ -106,7 +107,7 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 		else if (action.kind === "copy") copyCommand(item);
 		else {
 			const handoff = item.actions.find((candidate) => candidate.kind === "handoff");
-			if (handoff !== undefined) followHandoff(handoff.target);
+			if (handoff !== undefined) void follow(handoff.target);
 			else if (action.kind === "primary") copyCommand(item);
 		}
 	});
@@ -209,7 +210,7 @@ export const InboxScreen = ({ selectedKey, now }: { selectedKey: string | undefi
 				<p className="fine-print">Could not read: {tile.data.unreadable.join(", ")}</p>
 			) : null}
 			<p className="copy-notice" aria-live="polite">
-				{notice}
+				{handoffNotice || notice}
 			</p>
 		</div>
 	);

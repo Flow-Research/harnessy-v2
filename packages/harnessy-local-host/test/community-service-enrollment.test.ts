@@ -271,7 +271,10 @@ describe("community offline service enrollment", () => {
 		expect(JSON.parse(readFileSync(join(output, "service.json"), "utf8"))).toMatchObject({
 			kind: "harnessy.community.briefing.service-config.v1",
 			authorizationPath: join(output, "enrollment.json"),
-			trustedKeyring: trust,
+			trustedKeyring: {
+				...trust,
+				device: process.platform === "darwin" ? expect.stringMatching(/^volume:/u) : trust.device,
+			},
 		});
 		for (const name of ["artifact-manifest.json", "request.json", "service.json"])
 			expect(lstatSync(join(output, name)).mode & 0o777).toBe(0o600);

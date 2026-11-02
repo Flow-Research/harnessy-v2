@@ -17,7 +17,8 @@ export const checkPackedServiceLaunchd = async ({ directory, servicePath, stateP
 	const job = JSON.parse(parsed.stdout);
 	assert.equal(job.Label, productionLabel);
 	assert.deepEqual(job.ProgramArguments.slice(2), ["--service", "--input", servicePath]);
-	assert.equal(job.KeepAlive, false);
+	assert.equal(job.KeepAlive, true);
+	assert.equal(job.ThrottleInterval, 30);
 	job.Label = label;
 	job.EnvironmentVariables = { NODE_OPTIONS: process.env.NODE_OPTIONS, NODE_NO_WARNINGS: "1", HOME: directory, PATH: "/usr/bin:/bin" };
 	const fixturePlist = join(directory, `${label}.plist`);

@@ -125,6 +125,9 @@ const startPortal = async () => {
 	const fixture = await buildPortalHome("app-e2e");
 	const token = newPortalSecret();
 	const server = await startPortalServer({
+		openService: async (service) => {
+			opened.push(service);
+		},
 		installToken: token,
 		sources: createPortalSources({
 			homeRoot: fixture.home,
@@ -185,8 +188,7 @@ describe("the app against a real portal", () => {
 		expect(window.sessionStorage.getItem("harnessy.portal.session")).not.toContain(code);
 		expect(text()).toContain("1 community briefing waiting");
 		expect(text()).toContain("Fathom (research) has not polled recently");
-		expect(text()).toContain("Read until");
-		expect(text()).toContain("actions locked");
+		expect(text()).toContain("Signed in until");
 		expect(container.querySelectorAll("script, style, iframe, object, embed")).toHaveLength(0);
 		for (const anchor of container.querySelectorAll("a"))
 			expect(anchor.getAttribute("href")).toMatch(/^(?:#main$|#\/|http:\/\/(?:127\.0\.0\.1|localhost):\d+\/)/u);
@@ -204,7 +206,7 @@ describe("the app against a real portal", () => {
 		await waitFor(() => expect(container.querySelector(".copy-notice")?.textContent).toMatch(/^Copied: harnessy-/u));
 		expect(container.querySelector(".copy-notice")!.getAttribute("aria-live")).toBe("polite");
 		await press("Enter");
-		expect(opened).toEqual(["http://127.0.0.1:8872/"]);
+		await waitFor(() => expect(opened).toEqual(["community-review"]));
 
 		// Enter on a focused control is that control's: it never runs the selected item's primary action.
 		const theme = container.querySelector<HTMLButtonElement>('button[aria-label^="Use the"]')!;
@@ -216,14 +218,14 @@ describe("the app against a real portal", () => {
 		const copyButton = container.querySelector<HTMLButtonElement>('.detail button[aria-label^="Copy command"]')!;
 		copyButton.focus();
 		await pressOn(copyButton, "Enter");
-		expect(opened).toEqual(["http://127.0.0.1:8872/"]);
+		expect(opened).toEqual(["community-review"]);
 		// In the list itself j/k still move, but Enter is the focused row link's own.
 		const row = container.querySelector<HTMLAnchorElement>('.list a[href="#/inbox/community%3Apending"]')!;
 		row.focus();
 		await pressOn(row, "j");
 		await waitFor(() => expect(window.location.hash).not.toBe("#/inbox/community%3Apending"));
 		await pressOn(row, "Enter");
-		expect(opened).toEqual(["http://127.0.0.1:8872/"]);
+		expect(opened).toEqual(["community-review"]);
 		row.blur();
 
 		// The second key of a `g` chord belongs to the chord: `g j` goes to Jobs without moving the
@@ -253,13 +255,23 @@ describe("the app against a real portal", () => {
 		expect(text()).toContain("Decisions and Actions for You");
 		expect(text()).toContain("Settle the mandate.");
 		expect(text()).toContain("<script>alert(1)</script>");
-		expect(text()).toContain("(https://example.test/a)");
-		expect(container.querySelector('a[href^="https://"]')).toBeNull();
+		expect(text()).not.toContain("https://example.test/a");
+		expect(container.querySelector('a[href="https://example.test/a"]')?.textContent).toBe("A note");
 		expect(container.querySelector('.date-switcher a[aria-current="page"]')?.getAttribute("href")).toBe(
 			"#/today/2026-10-17",
 		);
 		expect(text()).toContain("in queue");
 		expect(text()).toContain("sent in a brief");
+		await act(async () =>
+			[...container.querySelectorAll("button")]
+				.find((button) => button.textContent === "Regenerate today’s brief")!
+				.click(),
+		);
+		await waitFor(() => expect(text()).toContain("Could not start the daily brief"));
+		await navigate("#/terminal");
+		await waitFor(() => expect(text()).toContain("Could not read terminals"));
+		await pressOn(container.querySelector(".terminal-screen button")!, "k", { ctrlKey: true });
+		expect(container.querySelector('[role="dialog"]')).toBeNull();
 
 		await navigate("#/today/draft/0000");
 		await waitFor(() => expect(text()).toContain("Back to today"));
@@ -633,17 +645,13 @@ describe("app pieces", () => {
 			["\u2028", "⟨U+2028⟩"],
 		] as const;
 		await mount(
-			<>
-				{cases.map(([hidden], index) => (
-					// biome-ignore lint/suspicious/noArrayIndexKey: a fixed list
-					<div key={index}>
-						<CommandChip command={`harnessy web${hidden} --evil`} />
-						<HandoffButton
-							action={{ kind: "handoff", label: "Bad", target: `javascript:x${hidden}`, note: null }}
-						/>
-					</div>
-				))}
-			</>,
+			cases.map(([hidden], index) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: a fixed list
+				<div key={index}>
+					<CommandChip command={`harnessy web${hidden} --evil`} />
+					<HandoffButton action={{ kind: "handoff", label: "Bad", target: `javascript:x${hidden}`, note: null }} />
+				</div>
+			)),
 		);
 		expect([...container.querySelectorAll(".command-text")].map((node) => node.textContent)).toEqual(
 			cases.map(([, shown]) => `harnessy web${shown} --evil`),
@@ -858,7 +866,7 @@ describe("app pieces", () => {
 	it("filters palette entries by every word and builds them from held data", () => {
 		const entries = paletteEntries(undefined, undefined, undefined);
 		expect(entries).toEqual(screenEntries());
-		expect(filterEntries(entries, "  ").length).toBe(7);
+		expect(filterEntries(entries, "  ").length).toBe(8);
 		expect(filterEntries(entries, "screens jobs").map((entry) => entry.title)).toEqual(["Jobs"]);
 		expect(filterEntries(entries, "nothing-matches")).toEqual([]);
 	});
@@ -891,7 +899,7 @@ describe("app pieces", () => {
 		await waitFor(() => expect(text()).toContain("Nothing needs you."));
 		for (const [hash, expected] of [
 			// A brief that was not written is "not written yet", never "not set up yet".
-			["#/today", "Not written yet (file_missing)"],
+			["#/today", "Today’s briefing hasn’t been generated yet."],
 			["#/tasks", "No tasks here."],
 			["#/jobs", "Fathom poll"],
 			["#/reviews", "Not set up yet"],

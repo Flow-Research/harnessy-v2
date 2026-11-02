@@ -3,6 +3,7 @@ import { closeSync, constants, fsyncSync, lstatSync, openSync, readdirSync, writ
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Schema } from "effect";
+import { publicationDeviceIdentity, publicationDeviceMatches } from "../meeting-publication/device-identity.ts";
 import {
 	ArtifactManifest,
 	canonicalMeetingPublicationSmokeJson,
@@ -125,7 +126,7 @@ const readCommunityAuthority = (
 ) => {
 	const trust = readJson(input.trustedKeyring.path, observation.uid);
 	if (
-		trust.identity.device !== input.trustedKeyring.device ||
+		!publicationDeviceMatches(trust.identity.path, trust.stat.dev, input.trustedKeyring.device) ||
 		trust.identity.inode !== input.trustedKeyring.inode ||
 		sha256MeetingPublicationSmokeBytes(trust.bytes) !== input.trustedKeyring.sha256
 	)
@@ -189,7 +190,7 @@ const assertCommunityLedger = (ledger: typeof Identity.Type, uid: bigint) => {
 		stat.nlink !== 1n ||
 		stat.uid !== uid ||
 		(stat.mode & 0o7777n) !== 0o600n ||
-		stat.dev.toString() !== ledger.device ||
+		!publicationDeviceMatches(ledger.path, stat.dev, ledger.device) ||
 		stat.ino.toString() !== ledger.inode
 	)
 		throw new Error("ledger_changed");
@@ -233,12 +234,20 @@ export const prepareCommunityServiceRequest = (
 	const bound = (path: string, role: "private" | "artifact" = "private") => {
 		if (!isAbsolute(path) || resolve(path) !== path) throw new Error("invalid_path");
 		const file = readStableMeetingPublicationSmokeFile(path, owner, role, 512 * 1024 * 1024);
-		const binding = { ...file.identity, sha256: sha256MeetingPublicationSmokeBytes(file.bytes) };
+		const binding = {
+			...file.identity,
+			device: publicationDeviceIdentity(path, file.stat.dev),
+			sha256: sha256MeetingPublicationSmokeBytes(file.bytes),
+		};
 		if (role === "private") snapshots.push(binding);
 		return binding;
 	};
 	const trust = bound(input.trustedKeyring.path);
-	if (canonicalMeetingPublicationSmokeJson(trust) !== canonicalMeetingPublicationSmokeJson(input.trustedKeyring))
+	if (
+		trust.inode !== input.trustedKeyring.inode ||
+		trust.sha256 !== input.trustedKeyring.sha256 ||
+		!publicationDeviceMatches(trust.path, lstatSync(trust.path, { bigint: true }).dev, input.trustedKeyring.device)
+	)
 		throw new Error("untrusted_keyring");
 	const keyring = decode(Keyring, readJson(trust.path, owner).value);
 	if (
@@ -409,11 +418,15 @@ export const prepareCommunityServiceRequest = (
 	// Re-read all private inputs after inspection; reject replacement or concurrent writes.
 	for (const expected of snapshots) {
 		const file = readStableMeetingPublicationSmokeFile(expected.path, owner, "private", 512 * 1024 * 1024);
-		const actual = { ...file.identity, sha256: sha256MeetingPublicationSmokeBytes(file.bytes) };
+		const actual = {
+			...file.identity,
+			device: publicationDeviceIdentity(expected.path, file.stat.dev),
+			sha256: sha256MeetingPublicationSmokeBytes(file.bytes),
+		};
 		if (canonicalMeetingPublicationSmokeJson(expected) !== canonicalMeetingPublicationSmokeJson(actual))
 			throw new Error("input_changed");
 	}
-	return { request: `${request.canonical}\n`, trustedKeyring: input.trustedKeyring };
+	return { request: `${request.canonical}\n`, trustedKeyring: trust };
 };
 
 /** Owner control verifies the signed identity, not publication eligibility or artifact health. */
@@ -522,7 +535,7 @@ export const readCommunityOperation = (
 	) => {
 		const current = readStableMeetingPublicationSmokeFile(file.path, observation.uid, role, 512 * 1024 * 1024);
 		if (
-			(file.device !== undefined && current.identity.device !== file.device) ||
+			(file.device !== undefined && !publicationDeviceMatches(file.path, current.stat.dev, file.device)) ||
 			(file.inode !== undefined && current.identity.inode !== file.inode) ||
 			sha256MeetingPublicationSmokeBytes(current.bytes) !== file.sha256
 		)
@@ -544,7 +557,7 @@ export const readCommunityOperation = (
 				stat.nlink !== 1n ||
 				stat.uid !== observation.uid ||
 				(stat.mode & 0o7777n) !== 0o600n ||
-				stat.dev.toString() !== expected.device ||
+				!publicationDeviceMatches(expected.path, stat.dev, expected.device) ||
 				stat.ino.toString() !== expected.inode
 			)
 				throw new Error("database_identity_changed");

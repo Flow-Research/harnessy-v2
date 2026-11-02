@@ -4,7 +4,7 @@
  * relays the Executor token.
  */
 import { useEffect, useRef } from "react";
-
+import { handoffTarget } from "../../handoff.ts";
 import { CommandChip, HandoffButton } from "../components/actions.tsx";
 import { Card, StatusDot, type Tone, WithTile } from "../components/primitives.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
@@ -115,16 +115,14 @@ export const ConnectionsScreen = ({ rest }: { rest: ReadonlyArray<string> }) => 
 						command="harnessy web"
 						note="Starts the cockpit if needed and opens it with its own sign-in."
 					/>
-					{live === undefined ? null : (
-						<HandoffButton
-							action={{
-								kind: "handoff",
-								label: "Open cockpit",
-								target: "http://localhost:4788/",
-								note: "Sign-in code needed: run harnessy web.",
-							}}
-						/>
-					)}
+					<HandoffButton
+						action={{
+							kind: "handoff",
+							label: "Open cockpit",
+							target: handoffTarget("cockpit"),
+							note: "Starts or opens the cockpit with its own sign-in.",
+						}}
+					/>
 					<p className="fine-print">Harnessy never holds, reads or relays the cockpit's token.</p>
 				</Card>
 			</section>

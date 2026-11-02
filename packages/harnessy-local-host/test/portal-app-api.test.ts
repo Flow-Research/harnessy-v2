@@ -384,7 +384,7 @@ describe("inbox derivation", () => {
 			context: "Weeks of 24 Aug, 31 Aug, 7 Sep and older",
 			owner: { service: "community-review", port: 8872 },
 			actions: [
-				{ kind: "handoff", target: "http://127.0.0.1:8872/" },
+				{ kind: "handoff", target: "harnessy:open:community-review" },
 				{ kind: "copy", target: "harnessy-community-review-open --state-path /home/owner/community" },
 			],
 		});
@@ -455,7 +455,7 @@ describe("inbox derivation", () => {
 				pendingReviewTruncated: false,
 			}),
 		});
-		expect(inbox.items[0]!.actions[0]).toMatchObject({ kind: "handoff", target: "http://[::1]:8770/" });
+		expect(inbox.items[0]!.actions[0]).toMatchObject({ kind: "handoff", target: "harnessy:open:meeting-review" });
 		const context = (meetingHost: string | null): JobsContext => ({
 			now: NOW,
 			homeRoot: tempDir("jobs-host"),
@@ -472,12 +472,12 @@ describe("inbox derivation", () => {
 		const meeting = (host: string | null) =>
 			jobDefinitions(context(host)).find((entry) => entry.id === "meeting-publication")!;
 		const shape = (definition: ReturnType<typeof meeting>) => [definition.hosts, definition.controls[0]!.target];
-		expect(shape(meeting("::1"))).toEqual([["::1"], "http://[::1]:8770/"]);
-		expect(shape(meeting("127.0.0.1"))).toEqual([["127.0.0.1"], "http://127.0.0.1:8770/"]);
-		expect(shape(meeting(null))).toEqual([["127.0.0.1"], "http://127.0.0.1:8770/"]);
+		expect(shape(meeting("::1"))).toEqual([["::1"], "harnessy:open:meeting-review"]);
+		expect(shape(meeting("127.0.0.1"))).toEqual([["127.0.0.1"], "harnessy:open:meeting-review"]);
+		expect(shape(meeting(null))).toEqual([["127.0.0.1"], "harnessy:open:meeting-review"]);
 		expect(shape(jobDefinitions(context(null)).find((entry) => entry.id === "community-review")!)).toEqual([
 			["127.0.0.1", "::1"],
-			"http://localhost:8872/",
+			"harnessy:open:community-review",
 		]);
 	});
 

@@ -26,6 +26,7 @@ import type {
 } from "@harnessy/core/read-model";
 
 import { fathomConnectionId } from "./connections.ts";
+import { handoffTarget } from "./handoff.ts";
 import { HIDDEN_CHARACTERS, LAUNCHD_UNAVAILABLE, reviewUrl, shellPath } from "./jobs.ts";
 
 export interface InboxInputs {
@@ -156,7 +157,7 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 				since: oldest === undefined ? null : instantOrNull(`${oldest}T00:00:00Z`),
 				owner: communityOwner,
 				actions: [
-					...(communityLink === null ? [] : [handoff("Open community review", communityLink)]),
+					...(communityLink === null ? [] : [handoff("Open community review", handoffTarget("community-review"))]),
 					copy("Copy opener", communityOpener, "Opens the review page with a fresh session."),
 				],
 			});
@@ -297,7 +298,7 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 					label: `meeting review${meetingConfig?.reviewPort ? ` · ${meetingConfig.reviewPort}` : ""}`,
 				},
 				actions: [
-					...(link === null ? [] : [handoff("Open meeting review", link)]),
+					...(link === null ? [] : [handoff("Open meeting review", handoffTarget("meeting-review"))]),
 					copy(
 						"Copy opener",
 						`harnessy-meeting-review-open --state-path ${

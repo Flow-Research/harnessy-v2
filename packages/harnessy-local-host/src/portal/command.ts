@@ -12,10 +12,13 @@ import { DEFAULT_READ_TIMEOUT_MS, type LaunchdProbe } from "@harnessy/core/read-
 import * as Result from "effect/Result";
 
 import { isPortalServerProof, portalClientProofHeader } from "./auth.ts";
+import { createInstalledBriefGeneration } from "./brief-generation.ts";
 import { renderPortalLaunchAgent } from "./launchd-plan.ts";
+import { createPortalServiceOpener } from "./open-service.ts";
 import { loadPortalPageAssets } from "./page-assets.ts";
 import { PORTAL_DEFAULT_PORT, PORTAL_HOST, type PortalServer, startPortalServer } from "./server.ts";
 import { createPortalSources } from "./sources.ts";
+import { PortalTerminal } from "./terminal.ts";
 import {
 	newPortalSecret,
 	PortalStateError,
@@ -25,7 +28,16 @@ import {
 } from "./token-store.ts";
 
 /** The app screens `open --route` can land on. */
-export const PORTAL_OPEN_ROUTES = ["inbox", "today", "tasks", "jobs", "reviews", "learning", "connections"] as const;
+export const PORTAL_OPEN_ROUTES = [
+	"inbox",
+	"today",
+	"tasks",
+	"jobs",
+	"reviews",
+	"learning",
+	"connections",
+	"terminal",
+] as const;
 export type PortalOpenRoute = (typeof PORTAL_OPEN_ROUTES)[number];
 
 export const PORTAL_USAGE =
@@ -209,6 +221,21 @@ export const runPortalCommand = async (
 				version: io.version,
 				port,
 				page: loadPortalPageAssets(),
+				terminal: new PortalTerminal(workspaceRoot ?? io.homeDir, io.env),
+				briefGeneration: createInstalledBriefGeneration({
+					homeRoot: absolute(values["home-root"]) ?? io.homeDir,
+					workspaceRoot,
+					env: io.env,
+					nodePath: io.nodePath,
+					cliPath: io.cliPath,
+				}),
+				openService: createPortalServiceOpener({
+					homeRoot: absolute(values["home-root"]) ?? io.homeDir,
+					...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+					env: io.env,
+					nodePath: io.nodePath,
+					cliPath: io.cliPath,
+				}),
 				log: (entry) => io.write(`${JSON.stringify(entry)}\n`),
 			});
 			return { kind: "serving", server };

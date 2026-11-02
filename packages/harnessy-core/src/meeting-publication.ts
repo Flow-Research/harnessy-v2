@@ -71,6 +71,7 @@ export {
 	MeetingPublicationGoogleCheckpoint,
 	MeetingPublicationNotifier,
 } from "./jarvis/meeting-publication/service.ts";
+export { recoverMeetingPublicationService } from "./jarvis/meeting-publication/service-recovery.ts";
 export { provisionMeetingPublicationService } from "./jarvis/meeting-publication/service-setup.ts";
 export { assertMeetingPublicationRollbackDatabaseFile } from "./jarvis/meeting-publication/store-file-safety.ts";
 export { validateMeetingPublicationStoreSchema } from "./jarvis/meeting-publication/store-schema.ts";

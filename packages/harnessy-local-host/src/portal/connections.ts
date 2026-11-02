@@ -1,8 +1,8 @@
 /**
  * Connection status: one row per credential holder, with a hand-off to the
  * service that owns the credential. The portal never runs OAuth, never reads a
- * credential file and never runs an action: a `link` opens the owning service's
- * page and a `command` is text for Julian to copy.
+ * credential file. A `link` opens the owning service through its sign-in helper;
+ * a `command` is text for Julian to copy.
  */
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
@@ -20,6 +20,7 @@ import {
 	stateTile,
 	type TileResult,
 } from "@harnessy/core/read-model";
+import { handoffTarget } from "./handoff.ts";
 
 export const MAX_GWS_PROFILES = 32;
 /** The most rows one connection tile carries (`ConnectionListSchema` allows 64); the rest are counted in `omitted`. */
@@ -27,8 +28,7 @@ export const MAX_CONNECTIONS = 64;
 const GWS_PROFILE = /^gws-([A-Za-z0-9][A-Za-z0-9._-]{0,47})$/u;
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost"]);
 
-export const MEETING_RECONNECT_NOTE =
-	"If it says session, run harnessy-meeting-review-open, then Reconnect Google under Provider health.";
+export const MEETING_RECONNECT_NOTE = "Open meeting review, then select Reconnect Google under Provider health.";
 
 type ConnectionTile = TileResult<ConnectionListData>;
 
@@ -76,7 +76,7 @@ export const meetingConnections = (summary: MeetingSummary, now: Date): Connecti
 						? null
 						: {
 								kind: "link",
-								value: href,
+								value: handoffTarget("meeting-review"),
 								note:
 									provider === "google" ? MEETING_RECONNECT_NOTE : "Open Provider health on the review page.",
 							},
@@ -111,7 +111,8 @@ export const communityConnections = (summary: CommunitySummary, now: Date): Conn
 	if (summary.config.state !== "ok") return passState(summary.config, now);
 	const config = summary.config.data!;
 	const href = reviewLink(config.reviewHost, config.reviewPort);
-	const action = href === null ? null : ({ kind: "link", value: href, note: null } as const);
+	const action =
+		href === null ? null : ({ kind: "link", value: handoffTarget("community-review"), note: null } as const);
 	return list(
 		[
 			{

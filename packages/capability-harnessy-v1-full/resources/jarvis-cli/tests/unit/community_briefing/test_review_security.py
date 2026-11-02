@@ -9,6 +9,7 @@ import io
 import os
 import re
 import secrets
+import subprocess
 import threading
 import time
 from collections.abc import Iterator
@@ -222,11 +223,52 @@ class TestLauncherExchange:
 
         code = secrets.token_urlsafe(32)
         path = self._exchange(served, code)
-        status, headers, _ = served.request("GET", f"/?code={code}")
+        status, headers, page = served.request("GET", f"/?code={code}")
         assert status == 200
         assert headers["Set-Cookie"].split(";", 1)[0] == served.cookie
         assert headers["Referrer-Policy"] == "no-referrer"
+        assert '<meta http-equiv="refresh" content="0;url=/">' in page
+        assert '<a href="/">Continue to review</a>' in page
+        assert code not in page
+        status, headers, _ = served.request("GET", "/", headers={"Cookie": served.cookie})
+        assert status == 200
+        assert headers["Referrer-Policy"] == "same-origin"
         assert not path.exists()
+        assert served.request("GET", f"/?code={code}")[0] == 401
+
+    @pytest.mark.skipif(not os.environ.get("CHROME_PATH"), reason="CHROME_PATH is not set")
+    def test_file_launcher_reaches_clean_inbox_in_a_fresh_browser(
+        self, served: ReviewFixture, tmp_path: Path
+    ) -> None:
+        code = secrets.token_urlsafe(32)
+        self._exchange(served, code)
+        launcher = tmp_path / "open.html"
+        launcher.write_text(
+            '<meta name="referrer" content="no-referrer">'
+            f'<meta http-equiv="refresh" content="0;url={served.origin}/?code={code}">'
+        )
+        result = subprocess.run(
+            [
+                os.environ["CHROME_PATH"],
+                "--headless",
+                "--no-sandbox",
+                "--disable-gpu",
+                "--no-first-run",
+                "--use-mock-keychain",
+                "--password-store=basic",
+                f"--user-data-dir={tmp_path / 'browser'}",
+                "--virtual-time-budget=5000",
+                "--dump-dom",
+                launcher.as_uri(),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=True,
+        )
+        assert "Publication review" in result.stdout
+        assert "Unauthorized" not in result.stdout
+        assert "Opening review" not in result.stdout
         assert served.request("GET", f"/?code={code}")[0] == 401
 
     def test_exchange_code_is_consumed_even_with_a_valid_cookie(

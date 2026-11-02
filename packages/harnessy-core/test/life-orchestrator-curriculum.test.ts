@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+	DEEPINFER_CURRICULUM,
+	findLifeReadingCurriculum,
 	GITCOIN_FUNDING_MECHANISMS_CURRICULUM,
 	nextLifeCurriculumReadings,
 } from "../src/jarvis/life-orchestrator/curriculum.ts";
@@ -12,6 +14,20 @@ const selection = {
 };
 
 describe("Life Orchestrator reading curricula", () => {
+	it("offers DeepInfer as an additive ordered track with no repeated URLs", () => {
+		expect(findLifeReadingCurriculum("deepinfer-inference-systems")).toBe(DEEPINFER_CURRICULUM);
+		expect(findLifeReadingCurriculum("gitcoin-funding-mechanisms")).toBe(GITCOIN_FUNDING_MECHANISMS_CURRICULUM);
+		const track = { curriculum: DEEPINFER_CURRICULUM, maxPerBrief: 1 };
+		const delivered: Array<{ identity: string; canonicalUrl: string; status: "delivered" }> = [];
+		for (const item of DEEPINFER_CURRICULUM.items) {
+			const next = nextLifeCurriculumReadings(track, delivered);
+			expect(next).toHaveLength(1);
+			expect(next[0]!.url).toBe(item.url);
+			expect(new URL(item.url).protocol).toBe("https:");
+			delivered.push({ ...readingIdentity(next[0]!), status: "delivered" });
+		}
+		expect(nextLifeCurriculumReadings(track, delivered)).toEqual([]);
+	});
 	it("ships every Gitcoin mechanism once with a canonical HTTPS link", () => {
 		const items = GITCOIN_FUNDING_MECHANISMS_CURRICULUM.items;
 		expect(items).toHaveLength(78);

@@ -107,7 +107,7 @@ describe("portal sources", () => {
 						status: "attention",
 						detail: "authentication",
 						checkedAt: FIXTURE_NOW.toISOString(),
-						action: { kind: "link", value: "http://127.0.0.1:8770/", note: MEETING_RECONNECT_NOTE },
+						action: { kind: "link", value: "harnessy:open:meeting-review", note: MEETING_RECONNECT_NOTE },
 					},
 					expect.objectContaining({ id: "meeting.discord", status: "unknown", detail: "not_checked" }),
 				],
@@ -123,7 +123,7 @@ describe("portal sources", () => {
 				id: "community.discord",
 				status: "not_tracked",
 				detail: "configured",
-				action: { kind: "link", value: "http://127.0.0.1:8872/", note: null },
+				action: { kind: "link", value: "harnessy:open:community-review", note: null },
 			}),
 		]);
 		expect(

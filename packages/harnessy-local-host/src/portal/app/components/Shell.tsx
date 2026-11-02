@@ -15,6 +15,7 @@ import {
 	Rows3,
 	Rows4,
 	Search,
+	SquareTerminal,
 	Sun,
 	SunMedium,
 } from "lucide-react";
@@ -32,6 +33,7 @@ const ICONS: Readonly<Record<Screen, typeof Inbox>> = {
 	reviews: Megaphone,
 	learning: BookOpen,
 	connections: Plug,
+	terminal: SquareTerminal,
 };
 
 /** Rail order and the `g` + letter shortcut of each screen. */
@@ -43,6 +45,7 @@ export const NAV: ReadonlyArray<{ readonly screen: Screen; readonly key: string 
 	{ screen: "reviews", key: "r" },
 	{ screen: "learning", key: "l" },
 	{ screen: "connections", key: "c" },
+	{ screen: "terminal", key: "x" },
 ];
 
 const PHONE_PRIMARY: ReadonlyArray<Screen> = ["inbox", "today", "tasks", "jobs"];
@@ -224,8 +227,8 @@ export const TopBar = ({
 			<RefreshCw size={14} strokeWidth={1.5} />
 		</button>
 		{sessionExpiresAt === undefined ? null : (
-			<span className="session-chip" title="Read-only sign-in. Actions arrive in Phase B.">
-				Read until {clockTime(sessionExpiresAt)} · actions locked
+			<span className="session-chip" title="This tab’s Harnessy session expires at this time.">
+				Signed in until {clockTime(sessionExpiresAt)}
 			</span>
 		)}
 		<button type="button" className="search-button" onClick={onOpenPalette} aria-keyshortcuts="Meta+K Control+K">

@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { renderMeetingServiceLaunchAgent } from "../src/meeting-full-review-command.ts";
 import {
-	controlMeetingServiceFiles,
+	controlMeetingServiceFiles as controlServiceFiles,
 	installMeetingServiceFiles,
 	waitMeetingServiceStopped,
 } from "../src/meeting-service-enrollment.ts";
@@ -46,13 +46,16 @@ writeFileSync(${JSON.stringify(ready)}, String(process.pid), { mode: 0o600 });
 `,
 			{ mode: 0o600 },
 		);
-		const plist = renderMeetingServiceLaunchAgent(
-			process.execPath,
-			cli,
-			join(root, "unused.json"),
-			directory,
-		).replace("<string>org.harnessy.meeting-publication</string>", `<string>${label}</string>`);
+		const plist = renderMeetingServiceLaunchAgent(process.execPath, cli, join(root, "unused.json"), directory)
+			.replace("<string>org.harnessy.meeting-publication</string>", `<string>${label}</string>`)
+			.replace("<integer>30</integer>", "<integer>1</integer>");
 		installMeetingServiceFiles(directory, plist);
+		const controlMeetingServiceFiles = (
+			directory: string,
+			plist: string,
+			launchctl: Parameters<typeof controlServiceFiles>[2],
+			action: "enable" | "disable" = "enable",
+		) => controlServiceFiles(directory, plist, launchctl, action, join(root, "LaunchAgents"));
 		const calls: string[][] = [];
 		const launchctl = (args: ReadonlyArray<string>) => {
 			const isolated = args.map((arg) => (arg === productionTarget ? target : arg));
@@ -97,33 +100,27 @@ writeFileSync(${JSON.stringify(ready)}, String(process.pid), { mode: 0o600 });
 			await waitMeetingServiceStopped(launchctl);
 			await waitFor(stopped);
 			expect(calls.some((args) => args[0] === "bootout" && args[1] === target)).toBe(true);
-			// A crash must not become an automatic restart or a fabricated clean drain.
+			// The persistent job restarts a crashed owner without claiming a clean drain.
 			rmSync(ready);
 			rmSync(stopped);
 			controlMeetingServiceFiles(directory, plist, launchctl);
 			await waitFor(ready);
 			const crashPid = Number(readFileSync(ready, "utf8"));
-			expect(Number.isSafeInteger(crashPid) && crashPid > 0).toBe(true);
-			const loaded = launchctl(["print", target]);
-			expect(loaded.status).toBe(0);
-			expect(loaded.stdout).toMatch(new RegExp(`\\bpid = ${crashPid}\\b`));
 			process.kill(crashPid, "SIGKILL");
-			const crashDeadline = Date.now() + 10_000;
-			let exited = false;
-			while (Date.now() < crashDeadline) {
-				const observation = launchctl(["print", target]);
-				expect(observation.status).toBe(0);
-				if (observation.stdout.includes("state = not running")) {
-					exited = true;
-					break;
-				}
-				await new Promise((resolve) => setTimeout(resolve, 50));
-			}
-			expect(exited).toBe(true);
-			await new Promise((resolve) => setTimeout(resolve, 500));
-			expect(launchctl(["print", target]).stdout).toContain("state = not running");
-			expect(readFileSync(ready, "utf8")).toBe(String(crashPid));
+			const deadline = Date.now() + 15000;
+			while (Number(readFileSync(ready, "utf8")) === crashPid && Date.now() < deadline)
+				await new Promise((resolve) => setTimeout(resolve, 100));
+			expect(Number(readFileSync(ready, "utf8"))).not.toBe(crashPid);
 			expect(existsSync(stopped)).toBe(false);
+			const startup = join(root, "LaunchAgents/org.harnessy.meeting-publication.plist");
+			expect(readFileSync(startup, "utf8")).toBe(plist);
+			// Simulate the next GUI session loading the persisted startup file.
+			expect(launchctl(["bootout", target]).status).toBe(0);
+			await waitMeetingServiceStopped(launchctl);
+			rmSync(ready);
+			expect(launchctl(["bootstrap", `gui/${process.geteuid?.()}`, startup]).status).toBe(0);
+			await waitFor(ready);
+
 			controlMeetingServiceFiles(directory, plist, launchctl, "disable");
 			await waitMeetingServiceStopped(launchctl);
 		} catch (cause) {
@@ -145,5 +142,5 @@ writeFileSync(${JSON.stringify(ready)}, String(process.pid), { mode: 0o600 });
 		if (failure !== undefined) throw failure;
 		expect(cleanupConfirmed).toBe(true);
 	},
-	30_000,
+	60_000,
 );

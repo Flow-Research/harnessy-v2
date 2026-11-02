@@ -214,7 +214,9 @@ describe("the Inbox list", () => {
 		expect(detail.querySelector(".detail-title")?.textContent).toBe("Item a");
 		expect(detail.querySelector("p.muted")).toBeNull();
 		expect(detail.querySelector(".actions")?.textContent).toBe("");
-		expect(container.querySelector(".fine-print")?.textContent).toContain("it runs nothing");
+		expect(container.querySelector(".fine-print")?.textContent).toContain(
+			"Review buttons open that service with a fresh sign-in",
+		);
 		expect(header()).toBe("Nothing needs you.");
 	});
 

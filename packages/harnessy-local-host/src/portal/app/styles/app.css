@@ -1017,6 +1017,34 @@ h6 {
 	margin: 0;
 }
 
+.markdown .reading-list {
+	list-style: none;
+	padding: 0;
+	gap: 20px;
+}
+
+.reading-title {
+	font-weight: 600;
+}
+
+a.reading-title {
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 3px;
+}
+
+a.reading-title:hover,
+a.reading-title:focus-visible {
+	text-decoration-thickness: 2px;
+	background: var(--bg);
+}
+
+.markdown .reading-description {
+	margin-top: 6px;
+	color: var(--text-2);
+	line-height: 1.6;
+}
+
 .markdown ul,
 .markdown ol {
 	padding-left: 22px;

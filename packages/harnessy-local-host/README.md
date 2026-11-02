@@ -72,9 +72,9 @@ under this package's test support. It is not exported or packed, always reports
 Its contract is documented in
 `docs/local-cutover-backup-evidence-contract.md`.
 
-## Read-only portal API
+## Portal API
 
-`harnessy-portal` serves the read-only portal API on `127.0.0.1` (default port
+`harnessy-portal` serves the portal API on `127.0.0.1` (default port
 `8790`). It reads the Core read model for one home directory and returns
 versioned tiles: a busy, missing or unsafe source is a degraded tile in a `200`
 response. See [`ADR-0008`](../../docs/adr/0008-read-only-portal-api-boundary.md).
@@ -97,17 +97,28 @@ harnessy-portal service-plan [--port 8790] [--state-dir DIR]
   challenge, origin, method and path. `status` and `open` do this for you.
 - **Sign-in.** `POST /v1/session/code` with an install proof returns a
   one-time code (60 s). `POST /v1/session/exchange` with that code and the
-  exact portal `Origin` returns a read-only page token (8 h, in memory only).
+  exact portal `Origin` returns a page token (8 h, in memory only).
 - **Requests.** The exact `Host` is required. A foreign `Origin` or a
   cross-site `Sec-Fetch-Site` is refused. There are no CORS headers and no
   cookies. Bodies are at most 1 KiB and URLs at most 2 KiB.
-- **Non-writer.** The portal never opens SQLite for writing, never publishes,
+- **Data reads.** The portal never opens SQLite for writing, never publishes,
   approves, signs or consumes grants, and never reads another service's token
-  or bootstrap file. It starts only `/bin/launchctl print gui/<uid>/<label>`
-  for the fixed Harnessy labels.
+  or bootstrap file. Data reads start only `/bin/launchctl print
+  gui/<uid>/<label>` for the fixed Harnessy labels. An explicit same-origin
+  POST with a page session can also start one of three fixed browser openers:
+  meeting review, community review or `harnessy web`. Each opener establishes
+  its own sign-in. Failed launches return an error in the portal.
+- **Daily brief.** An explicit same-origin `POST /v1/life/brief/generate`
+  with a page session and `{}` starts the fixed Jarvis daily command with
+  `--force`. Jarvis owns the brief, journal and reading-ledger writes. The
+  browser cannot select arguments. The portal prevents duplicate starts and
+  Core holds the daily lock across processes. Status is available through
+  `GET /v1/life/brief/generation`. Status is kept until the portal restarts.
+  The runner uses the installed daily LaunchAgent environment on macOS and
+  permits 20 minutes for AI generation, with a 25-minute command deadline.
 - **Service.** `service-plan` prints the LaunchAgent and installs nothing.
-- **Page.** `serve` also serves a small read-only page at `/` (Today, Health
-  and Connections). `open` signs it in with a one-time code in the URL
+- **Page.** `serve` also serves the Harnessy app at `/`. `open` signs it in
+  with a one-time code in the URL
   fragment. The page and its scripts are sent with the same strict CSP; they
   contain no secret and need no credential, and every data request still needs
   the page token. See [`docs/portal.md`](../../docs/portal.md) for how to run
@@ -449,8 +460,8 @@ The JSON result contains `label` and `plist`. Planning requires unrevoked enroll
 in `not_started` or `cleanly_stopped` state and uses the existing read-only status
 validation. It does not attest activation readiness, write a plist, load launchd,
 contact providers or consume authority. Activation still performs all runtime
-checks. The proposal starts once when loaded, disables automatic crash restart,
-and allows 45 seconds for the runtime's bounded 30-second graceful drain.
+checks. The proposal starts when loaded and restarts after exit, with a 30-second
+restart interval. It allows 45 seconds for the runtime's bounded 30-second graceful drain.
 It uses direct executable/argument paths, not a shell. This proposal alone does
 not install or enable a service.
 
@@ -483,8 +494,9 @@ redirect page and any unredeemed code are removed on redemption, after 30
 seconds, on refusal, and on SIGINT, SIGTERM or SIGHUP.
 
 Installation writes a private plist and private stdout/stderr logs; it does not
-start anything. Enablement submits that exact plist to the current macOS GUI
-session. Its `service-start-submitted` result has `runtimeHealth:not_assessed`:
+start anything. Enablement copies the exact plist to `~/Library/LaunchAgents`
+and submits it to the current macOS GUI session. macOS loads it at login after
+a reboot. Disablement removes that startup copy and stops the loaded job. Its `service-start-submitted` result has `runtimeHealth:not_assessed`:
 confirm the ready event in the private stdout log and successful review access.
 Inspect the private stderr log if startup fails. Do not run foreground `--service`
 alongside the launch agent. Browser access and provider consent remain separate
@@ -504,9 +516,14 @@ reconciliation before restart. After `cleanly_stopped` (or `not_started`), the
 same unrevoked, unchanged enrollment can be enabled again without signing another
 time-boxed session. Never clear a lease to force restart.
 
-The launch agent deliberately does not automatically restart a crashed writer.
-These commands do not install login/reboot persistence or support Windows/Linux
-service managers. Changed artifacts or signed configuration require reviewed
+The launch agent restarts a crashed process. Before recovery, the service verifies
+the signed enrollment, revocations, absent listener and absent previous owner.
+It refuses recovery if an item has a publication lease or uncertain delivery.
+Successful recovery preserves approvals, provider receipts and replay history.
+macOS uses the boot-session UUID and volume UUIDs, so clock corrections and
+changed disk device numbers do not invalidate a persistent service. Legacy
+numeric file bindings require owner preparation of replacement enrollment.
+These commands do not install Windows or Linux service managers. Changed artifacts or signed configuration require reviewed
 replacement bindings, not an in-place overwrite of the existing enrollment or
 plist. Keep state, approvals and receipts intact during upgrade or recovery.
 
@@ -517,9 +534,10 @@ skip cleanup or extend the 30-second drain deadline. A successful drain exits ze
 and permits restart of the same unrevoked enrollment; a drain failure does not.
 Finite sessions retain interruption on `SIGINT`/`SIGTERM`. `SIGHUP` remains an
 interruption in either mode. These controls do not install an OS service manager.
-Expiry, revocation, crash and uncertain delivery require operator reconciliation;
-never clear a stale lease, replay consumed authority or restore a stale backup
-over newer external receipts. Automatic restart and renewal are not provided.
+Revocation and uncertain delivery still prevent automatic recovery. Never clear
+a publication lease or restore a stale backup over newer external receipts.
+Finite authorizations retain their expiry and replay protection. Use service
+disablement for an intentional stop; a loaded KeepAlive job restarts after exit.
 
 For an explicit local macOS stop alert, put `--notify-on-stop` before the existing
 authorization arguments. After failure cleanup it attempts a generic desktop
@@ -598,8 +616,9 @@ invocations. Disable the scheduler, preserve current receipts and reconcile the
 external result; never clear a lease or restore a stale queue. To retire an
 enrollment while stopped and lease-free, use `--revoke-service` before
 `--service-config`. Status reports control state, not process health or delivery
-success. Login/reboot installation and unattended crash recovery require separate
-OS integration evidence; a loaded local job alone does not prove them.
+success. The combined meeting host uses the persistent macOS service above.
+A community operation that expires before it acquires a publication lease is
+retried on the next cycle. An uncertain delivery is never retried automatically.
 
 ## State-only preparation and review
 

@@ -142,6 +142,19 @@ export const SessionExchangeResponseSchema = Type.Object(
 	strict,
 );
 export const ErrorResponseSchema = Type.Object({ error: code }, strict);
+export const ServiceOpenResponseSchema = Type.Object({ opened: Type.Literal(true) }, strict);
+export const BriefGenerationResponseSchema = Type.Object(
+	{
+		state: Type.Union([
+			Type.Literal("idle"),
+			Type.Literal("running"),
+			Type.Literal("succeeded"),
+			Type.Literal("failed"),
+		]),
+		message: Type.String({ maxLength: 512 }),
+	},
+	strict,
+);
 
 export const TodayResponseSchema = envelope("today", {
 	readings: TileSchema(LifeReadingCountsSchema),
@@ -213,6 +226,8 @@ export const PortalApiSchemas = {
 	SessionChallenge: SessionChallengeResponseSchema,
 	SessionCode: SessionCodeResponseSchema,
 	SessionExchange: SessionExchangeResponseSchema,
+	ServiceOpen: ServiceOpenResponseSchema,
+	BriefGeneration: BriefGenerationResponseSchema,
 	Error: ErrorResponseSchema,
 	Today: TodayResponseSchema,
 	Health: HealthResponseSchema,

@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { publicationDeviceIdentity } from "./device-identity.ts";
 
 import {
 	canonicalMeetingPublicationSmokeJson,
@@ -101,7 +102,12 @@ export const provisionMeetingPublicationService = (value: unknown) => {
 		schemaVersion: 1,
 		audience: MEETING_PUBLICATION_SERVICE_AUDIENCE,
 		keys: [{ issuer: input.issuer, keyId: input.keyId, publicKeyPem: pem, publicKeySha256: fingerprint }],
-		replay: { path: replayPath, device: replay.dev.toString(), inode: replay.ino.toString(), instanceId },
+		replay: {
+			path: replayPath,
+			device: publicationDeviceIdentity(replayPath, replay.dev),
+			inode: replay.ino.toString(),
+			instanceId,
+		},
 	};
 	return writeServiceTrust(control, trust, [state, control]);
 };
@@ -134,7 +140,7 @@ const writeServiceTrust = (control: string, trust: unknown, directories: readonl
 		activated: false,
 		trustedKeyring: {
 			path: trustPath,
-			device: pinned.dev.toString(),
+			device: publicationDeviceIdentity(trustPath, pinned.dev),
 			inode: pinned.ino.toString(),
 			sha256: sha256MeetingPublicationSmokeBytes(bytes),
 		},

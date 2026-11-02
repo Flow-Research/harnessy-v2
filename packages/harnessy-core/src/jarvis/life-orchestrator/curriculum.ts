@@ -193,8 +193,83 @@ export const GITCOIN_FUNDING_MECHANISMS_CURRICULUM: LifeReadingCurriculum = {
 	items: gitcoinItems,
 };
 
+/** Foundations interleaved with a guided reading of DeepInfer's public source. */
+export const DEEPINFER_CURRICULUM: LifeReadingCurriculum = {
+	id: "deepinfer-inference-systems",
+	name: "DeepInfer inference systems",
+	items: [
+		{
+			title: "DeepInfer: repository map and scope",
+			url: "https://github.com/deepseek-ai/DeepInfer",
+			question:
+				"Start with the README: what does the offline engine provide, and which serving components remain outside this release?",
+		},
+		{
+			title: "Attention Is All You Need",
+			url: "https://arxiv.org/abs/1706.03762",
+			question:
+				"Read the attention and decoder sections: what computation must an inference engine repeat for each generated token?",
+		},
+		{
+			title: "DeepInfer: the public LLM entry point",
+			url: "https://github.com/deepseek-ai/DeepInfer/blob/main/deepinfer/entrypoints/llm.py",
+			question:
+				"Trace a request from the public LLM interface toward the engine: where do prompts and sampling parameters enter?",
+		},
+		{
+			title: "DeepInfer: engine execution and scheduling",
+			url: "https://github.com/deepseek-ai/DeepInfer/blob/main/deepinfer/engine/llm_engine.py",
+			question:
+				"Follow one engine iteration: how do scheduling and device execution fit together, and where do prefill and decode differ?",
+		},
+		{
+			title: "PagedAttention: why KV-cache management matters",
+			url: "https://arxiv.org/abs/2309.06180",
+			question:
+				"Use this as background, not a claim of identical implementation: why do KV-cache fragmentation and sharing affect serving throughput?",
+		},
+		{
+			title: "DeepInfer: device cache management",
+			url: "https://github.com/deepseek-ai/DeepInfer/blob/main/deepinfer/worker/cache_engine.py",
+			question:
+				"Compare the device cache code with PagedAttention: what memory is managed here, and why is this not a complete external KV-cache service?",
+		},
+		{
+			title: "DeepInfer: deployment questions and parallelism",
+			url: "https://github.com/deepseek-ai/DeepInfer/blob/main/doc/inference_deployment_qa.md",
+			question:
+				"Build a glossary of data, context and expert parallelism: how do workload and hardware change the deployment choices?",
+		},
+		{
+			title: "Speculative decoding: draft and verify",
+			url: "https://arxiv.org/abs/2211.17192",
+			question:
+				"Understand draft-and-verify decoding before studying DSpark: how can proposed tokens accelerate generation without changing the target distribution?",
+		},
+		{
+			title: "DeepInfer: bounded replay and YoCo checks",
+			url: "https://github.com/deepseek-ai/DeepInfer/blob/main/examples/yoco/README.md",
+			question:
+				"What does the mask-versus-compact comparison test, and what evidence would justify reducing prefill work?",
+		},
+		{
+			title: "DeepInfer: benchmark methodology",
+			url: "https://github.com/deepseek-ai/DeepInfer/blob/main/examples/README.md",
+			question:
+				"Read the benchmark section: distinguish latency, steps per second and tokens per second, and identify assumptions about draft acceptance and profiler overhead?",
+		},
+		{
+			title: "DeepInfer: evaluation before performance claims",
+			url: "https://github.com/deepseek-ai/DeepInfer/blob/main/eval/README.md",
+			question:
+				"Which quality checks should accompany a speed claim, and what can you verify from source without the required accelerators?",
+		},
+	],
+};
+
 const curricula = new Map<string, LifeReadingCurriculum>([
 	[GITCOIN_FUNDING_MECHANISMS_CURRICULUM.id, GITCOIN_FUNDING_MECHANISMS_CURRICULUM],
+	[DEEPINFER_CURRICULUM.id, DEEPINFER_CURRICULUM],
 ]);
 
 export const findLifeReadingCurriculum = (id: string): LifeReadingCurriculum | null => curricula.get(id) ?? null;

@@ -127,10 +127,11 @@ if (mode === "redeem" && exchange !== undefined) fs.unlinkSync(exchange);
 		rendezvous();
 		const start = (
 			args: ReadonlyArray<string> = ["--state-path", state],
-			options: { stub?: StubMode; waitMs?: number } = {},
+			options: { stub?: StubMode; waitMs?: number; ipc?: boolean } = {},
 		) => {
 			const child = spawn(process.execPath, ["--import", "tsx", entry, ...args], {
 				cwd: packageRoot,
+				...(options.ipc ? { stdio: ["ignore", "pipe", "pipe", "ipc"] as const } : {}),
 				env: {
 					...process.env,
 					PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -145,6 +146,8 @@ if (mode === "redeem" && exchange !== undefined) fs.unlinkSync(exchange);
 			});
 			let stdout = "";
 			let stderr = "";
+			const messages: unknown[] = [];
+			child.on("message", (message: unknown) => messages.push(message));
 			child.stdout?.on("data", (chunk: Buffer) => {
 				stdout += chunk.toString();
 			});
@@ -154,7 +157,7 @@ if (mode === "redeem" && exchange !== undefined) fs.unlinkSync(exchange);
 			const done = new Promise<RunResult>((resolveRun) =>
 				child.on("close", (status, signal) => resolveRun({ status, signal, stdout, stderr })),
 			);
-			return { child: child as ChildProcess, done };
+			return { child: child as ChildProcess, done, messages };
 		};
 		const run = (args?: ReadonlyArray<string>, options?: { stub?: StubMode; waitMs?: number }) =>
 			start(args, options).done;

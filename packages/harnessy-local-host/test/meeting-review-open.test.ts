@@ -40,6 +40,12 @@ const waitFor = async (condition: () => boolean) => {
 };
 
 describe("harnessy-meeting-review-open", () => {
+	it("acknowledges a browser launch to the portal without sending any credential or URL", async () => {
+		const f = fixture(await listen());
+		const { done, messages } = f.start(undefined, { ipc: true });
+		expect((await done).status).toBe(0);
+		expect(messages).toEqual([{ kind: "review_opened" }]);
+	});
 	it("gives the opener only an owner-only page path that carries a single-use code", async () => {
 		const port = await listen();
 		const f = fixture(port);

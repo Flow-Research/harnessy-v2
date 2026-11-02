@@ -50,6 +50,49 @@ Build the contract first and a page later.
 
 ## Consequences
 
+### Interactive terminal amendment — 2026-11-02
+
+Julian requested a full interactive terminal. A page-authenticated, same-origin
+POST can now start and control a local login shell through a POSIX PTY. This is
+an explicit exception to the original non-writer rule. Shell commands run with
+the user's permissions; the portal does not restrict them to Harnessy commands.
+The existing publication guards still apply. Read proofs cannot reach terminal
+routes, and listing sessions does not start a shell. Four sessions and 1 MB of
+output per session bound retained state. Navigation and reloads preserve shells;
+portal shutdown closes them. The bridge requires `/usr/bin/python3`.
+
+The browser bundles xterm locally. Terminal bytes never enter the workflow
+Markdown renderer. The CSP permits inline styles for xterm's generated layout;
+inline scripts remain blocked. No terminal input or output goes into portal logs.
+
+### Daily brief generation amendment — 2026-11-02
+
+Julian requested a button to generate or regenerate today's missing Jarvis brief.
+An explicit same-origin POST with a page token and an empty JSON object can now
+start the fixed `jarvis life daily --force` command. Install proofs cannot start
+it. The request cannot supply arguments. Jarvis owns the output, journal and
+reading-ledger writes. The portal reuses the installed daily scheduler's provider
+environment and permits 20 minutes for AI generation. It reports bounded status
+messages without exposing provider output. The portal prevents duplicate starts;
+Core's daily lock also excludes concurrent scheduled runs. Reading status cannot
+start generation. This is an explicit exception to the original non-writer rule.
+
+### Browser launch amendment — 2026-11-02
+
+Julian requested authenticated navigation from the portal to each review view
+and the cockpit. The portal can now start three fixed sign-in commands through
+an explicit same-origin POST with a valid page session. An install proof alone
+cannot start them. The service configuration supplies review state paths; the
+request cannot supply a command, path or URL. The portal does not read or relay
+the helpers' credentials. Review helpers confirm the browser launch over IPC
+with a fixed message. One launch can run at a time, with a finite timeout.
+
+Read routes retain the original process and secret-read restrictions. Browser
+launches do not approve, publish, start a publisher, or restart a review service.
+The cockpit command can start its tools engine. Missing services and failed
+launches return an error in the portal. The application still requires each
+owning service for review decisions and provider sign-in.
+
 - Phase 1 ships the API, the CLI and a printed LaunchAgent plan only. Nothing
   is installed or enabled. Installing the service, one-click reconnect flows
   and registering the OpenAPI document with the cockpit are Phase 2 decisions

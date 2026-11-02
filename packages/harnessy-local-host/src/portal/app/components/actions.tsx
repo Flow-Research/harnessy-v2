@@ -1,14 +1,58 @@
 /**
- * Phase A actions. Every action is either a hand-off (↗: open the owning
- * service or an in-app screen) or a command to copy (⧉). Nothing runs from here.
+ * Actions open an owning service or in-app screen (↗), or show a command to
+ * copy (⧉). Fixed service destinations use authenticated local browser launchers.
  */
 import { Check, Copy, ExternalLink } from "lucide-react";
-import { useEffect, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+
+import { handoffService, type PortalHandoffService } from "../../handoff.ts";
 
 import type { AppAction } from "../lib/api-types.ts";
 import { copyText, followHandoff } from "../lib/browser.ts";
 import { hasFormatControls, visibleText } from "../lib/format.ts";
 import { safeAppRoute, safeHref } from "../lib/safe-href.ts";
+import type { ApiResult } from "../lib/session.ts";
+
+const HandoffContext = createContext<(service: PortalHandoffService) => Promise<ApiResult>>(async () => ({
+	kind: "signed_out",
+}));
+
+export const HandoffProvider = ({
+	open,
+	children,
+}: {
+	readonly open: (service: PortalHandoffService) => Promise<ApiResult>;
+	readonly children: ReactNode;
+}) => <HandoffContext.Provider value={open}>{children}</HandoffContext.Provider>;
+
+/** Buttons and Inbox keyboard shortcuts use the same authenticated launcher. */
+export const useHandoff = () => {
+	const open = useContext(HandoffContext);
+	const [notice, setNotice] = useState("");
+	const [opening, setOpening] = useState(false);
+	const follow = async (target: string) => {
+		const service = handoffService(target);
+		if (service === undefined) return void followHandoff(target);
+		if (opening) return;
+		setOpening(true);
+		setNotice("Opening in your browser…");
+		try {
+			const result = await open(service);
+			setNotice(
+				result.kind === "ok"
+					? "Opened in your browser."
+					: result.kind === "signed_out"
+						? "Your Harnessy session ended. Run harnessy open, then try again."
+						: result.message,
+			);
+		} catch {
+			setNotice("The view could not open. Check its service on the Jobs screen, then try again.");
+		} finally {
+			setOpening(false);
+		}
+	};
+	return { follow, notice, opening };
+};
 
 export const HANDOFF_GLYPH = "↗";
 export const COPY_GLYPH = "⧉";
@@ -59,26 +103,35 @@ export const CommandChip = ({ command, note }: { command: string; note?: string 
 
 /** A hand-off button. Only a loopback URL or an in-app route is followed; anything else is shown as text. */
 export const HandoffButton = ({ action, primary = false }: { action: AppAction; primary?: boolean }) => {
+	const { follow, notice, opening } = useHandoff();
+	const service = handoffService(action.target);
 	const route = safeAppRoute(action.target);
 	const href = safeHref(action.target);
-	if (route === undefined && href === undefined)
+	if (route === undefined && href === undefined && service === undefined)
 		return <span className="mono muted">{visibleText(action.target)}</span>;
 	return (
-		<button
-			type="button"
-			className={primary ? "button button-primary" : "button"}
-			onClick={() => followHandoff(action.target)}
-			title={action.note ?? undefined}
-		>
-			{action.label}
-			{route === undefined ? (
-				<>
-					{" "}
-					<ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
-					<span className="sr-only"> (opens a new tab)</span>
-				</>
-			) : null}
-		</button>
+		<>
+			<button
+				type="button"
+				className={primary ? "button button-primary" : "button"}
+				onClick={() => void follow(action.target)}
+				disabled={opening}
+				aria-busy={opening}
+				title={action.note ?? undefined}
+			>
+				{action.label}
+				{route === undefined ? (
+					<>
+						{" "}
+						<ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
+						<span className="sr-only">
+							{service === undefined ? " (opens a new tab)" : " (opens in your browser)"}
+						</span>
+					</>
+				) : null}
+			</button>
+			{notice === "" ? null : <output className="fine-print">{notice}</output>}
+		</>
 	);
 };
 

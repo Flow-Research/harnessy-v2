@@ -107,7 +107,8 @@ export const parseMeetingRuntimeCommandInput = (
 		const sha256 = options.get("--trusted-keyring-sha256") ?? "";
 		if (
 			![authorizationPath, path].every(isSafeAbsoluteMeetingCommandPath) ||
-			![device, inode].every((value) => /^(0|[1-9]\d{0,31})$/u.test(value)) ||
+			!/^(?:0|[1-9]\d{0,31}|volume:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/u.test(device) ||
+			!/^(0|[1-9]\d{0,31})$/u.test(inode) ||
 			!isMeetingCommandSha256(sha256)
 		) {
 			return yield* Effect.fail("invalid_arguments" as const);

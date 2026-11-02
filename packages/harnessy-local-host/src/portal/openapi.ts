@@ -17,9 +17,11 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 		const security =
 			route.auth === "install"
 				? [{ installProof: [] }]
-				: route.auth === "read"
-					? [{ bearer: [] }, { installProof: [] }]
-					: undefined;
+				: route.auth === "open" || route.auth === "brief" || route.auth === "terminal"
+					? [{ bearer: [] }]
+					: route.auth === "read"
+						? [{ bearer: [] }, { installProof: [] }]
+						: undefined;
 		const field = route.auth === "code" ? "code" : route.auth === "challenge" ? "nonce" : undefined;
 		const responses: Record<string, unknown> = {
 			"200": {
@@ -36,11 +38,65 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 		if (security !== undefined || route.auth === "code")
 			responses["401"] = errorResponse("Missing or invalid credential");
 		if (route.params !== undefined) responses["404"] = errorResponse("A path parameter does not match its pattern");
+		if (route.auth === "open") {
+			responses["409"] = errorResponse("Another view is opening");
+			responses["503"] = errorResponse("The local sign-in helper could not open the view");
+		}
+		if (route.auth === "brief") responses["503"] = errorResponse("Daily brief generation is unavailable");
+		if (route.auth === "terminal") responses["503"] = errorResponse("Interactive terminals are unavailable");
 		paths[route.path] = {
 			...paths[route.path],
 			[route.method.toLowerCase()]: {
 				operationId: route.operationId,
 				summary: route.summary,
+				...(route.auth === "terminal" && route.method === "POST"
+					? {
+							requestBody: {
+								required: true,
+								content: {
+									"application/json": {
+										schema: {
+											oneOf: [
+												{
+													type: "object",
+													properties: { action: { const: "create" } },
+													required: ["action"],
+													additionalProperties: false,
+												},
+												{
+													type: "object",
+													properties: { action: { const: "close" }, id: { type: "string" } },
+													required: ["action", "id"],
+													additionalProperties: false,
+												},
+												{
+													type: "object",
+													properties: {
+														action: { const: "input" },
+														id: { type: "string" },
+														data: { type: "string", description: "At most 256 UTF-8 bytes" },
+													},
+													required: ["action", "id", "data"],
+													additionalProperties: false,
+												},
+												{
+													type: "object",
+													properties: {
+														action: { const: "resize" },
+														id: { type: "string" },
+														cols: { type: "integer", minimum: 2, maximum: 500 },
+														rows: { type: "integer", minimum: 2, maximum: 200 },
+													},
+													required: ["action", "id", "cols", "rows"],
+													additionalProperties: false,
+												},
+											],
+										},
+									},
+								},
+							},
+						}
+					: {}),
 				...(security === undefined ? {} : { security }),
 				...(route.params === undefined
 					? {}
@@ -54,23 +110,30 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 								schema: { type: "string", pattern: param.pattern },
 							})),
 						}),
-				...(field !== undefined
+				...(route.auth === "open" || (route.auth === "brief" && route.method === "POST")
 					? {
 							requestBody: {
 								required: true,
-								content: {
-									"application/json": {
-										schema: {
-											type: "object",
-											properties: { [field]: { type: "string", minLength: 43, maxLength: 43 } },
-											required: [field],
-											additionalProperties: false,
+								content: { "application/json": { schema: { type: "object", additionalProperties: false } } },
+							},
+						}
+					: field !== undefined
+						? {
+								requestBody: {
+									required: true,
+									content: {
+										"application/json": {
+											schema: {
+												type: "object",
+												properties: { [field]: { type: "string", minLength: 43, maxLength: 43 } },
+												required: [field],
+												additionalProperties: false,
+											},
 										},
 									},
 								},
-							},
-						}
-					: {}),
+							}
+						: {}),
 				responses,
 			},
 		};
@@ -81,14 +144,14 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 			title: "Harnessy portal API",
 			version,
 			description:
-				"Read-only local portal API. Loopback only. It never publishes, approves, consumes grants or signs. " +
+				"Local portal API with fixed browser handoffs and daily brief generation. Loopback only. " +
 				`Response schema version ${PORTAL_SCHEMA_VERSION}.`,
 		},
 		servers: [{ url: "http://127.0.0.1:{port}", variables: { port: { default: "8790" } } }],
 		paths,
 		components: {
 			securitySchemes: {
-				bearer: { type: "http", scheme: "bearer", description: "A read-only page token from /v1/session/exchange" },
+				bearer: { type: "http", scheme: "bearer", description: "A page token from /v1/session/exchange" },
 				installProof: {
 					type: "apiKey",
 					in: "header",

@@ -6,6 +6,13 @@ type CommunityStopFields = { code?: string; reason?: string };
 
 const IDENTIFIER = /^[a-z][a-z_]{0,63}$/u;
 
+/** A service operation can expire while the machine sleeps before acquiring a lease. */
+export const communityExpiredBeforeLease = (value: unknown): boolean => {
+	if (typeof value !== "object" || value === null) return false;
+	const failure = value as { code?: unknown; reason?: unknown };
+	return failure.code === "runtime_rejected" && failure.reason === "expired_authorization";
+};
+
 /**
  * Records why community publication stopped and formats the single stop event
  * the combined meeting host writes to stderr.

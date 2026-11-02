@@ -3,11 +3,10 @@ import { chmodSync, lstatSync, readdirSync, readFileSync, realpathSync, writeFil
 import { arch, hostname } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-
 import * as Effect from "effect/Effect";
-
 import type { JarvisMeetingPublicationConfig } from "../../src/jarvis/config-model.ts";
 import type { LeaseCurrencyEvent } from "../../src/jarvis/lease-clock.ts";
+import { publicationDeviceIdentity } from "../../src/jarvis/meeting-publication/device-identity.ts";
 import {
 	canonicalMeetingPublicationSmokeJson,
 	MEETING_PUBLICATION_FULL_REVIEW_AUDIENCE,
@@ -336,7 +335,14 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 		simulateReboot: () => {
 			bootId = `fixture-${randomBytes(16).toString("hex")}`;
 		},
-		createServiceInput: (serviceOptions?: { readonly fresh: boolean }): MeetingPublicationFullReviewRuntimeInput => {
+		createServiceInput: (serviceOptions?: {
+			readonly fresh?: boolean;
+			readonly durable?: boolean;
+		}): MeetingPublicationFullReviewRuntimeInput => {
+			const durable = <T extends { path: string; device: string }>(file: T): T =>
+				serviceOptions?.durable
+					? { ...file, device: publicationDeviceIdentity(file.path, BigInt(file.device)) }
+					: file;
 			const serviceTrust = join(options.privateRoot, "service-trust.json");
 			writePrivate(
 				serviceTrust,
@@ -345,12 +351,15 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 					schemaVersion: 1,
 					audience: MEETING_PUBLICATION_SERVICE_AUDIENCE,
 					keys: [trustKey],
-					replay: replayIdentity,
+					replay: durable(replayIdentity),
 				}),
 			);
 			const servicePath = join(options.privateRoot, "service-enrollment.json");
 			const enrollment = {
 				...payload,
+				replay: durable(payload.replay),
+				stateDatabase: durable(payload.stateDatabase),
+				credentials: { ...payload.credentials, engineState: durable(payload.credentials.engineState) },
 				kind: "harnessy.meeting-publication.service-enrollment",
 				audience: MEETING_PUBLICATION_SERVICE_AUDIENCE,
 				runtimeMode: "service",
@@ -372,7 +381,7 @@ export const createMeetingPublicationFullReviewAuthorizationFixture = (
 					).toString("base64url"),
 				}),
 			);
-			return { mode: "service", authorizationPath: servicePath, trustedKeyring: boundFile(serviceTrust) };
+			return { mode: "service", authorizationPath: servicePath, trustedKeyring: durable(boundFile(serviceTrust)) };
 		},
 		revoke: () => {
 			const database = new DatabaseSync(replayPath, { allowExtension: false });

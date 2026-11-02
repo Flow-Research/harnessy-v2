@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * `harnessy-portal`: the read-only local portal API. See `portal/command.ts`.
- * A known non-writer: it never spawns a meeting or community writer command.
+ * `harnessy-portal`: local workflow views and explicit page actions.
+ * See `portal/command.ts` and ADR-0008 for the authenticated terminal boundary.
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";

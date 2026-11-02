@@ -3,11 +3,20 @@ import { describe, expect, it } from "vitest";
 import {
 	COMMUNITY_RESTART_LOOP_COOL_DOWN_MS,
 	COMMUNITY_RESTART_LOOP_MAX_RECOVERIES,
+	communityExpiredBeforeLease,
 	communityRestartLoopRecovery,
 	makeCommunityStopReporter,
 } from "../src/community-stop-event.ts";
 
 describe("community stop event", () => {
+	it("renews an expired pre-lease service operation but preserves uncertain delivery", () => {
+		expect(communityExpiredBeforeLease({ code: "runtime_rejected", reason: "expired_authorization" })).toBe(true);
+		expect(communityExpiredBeforeLease({ code: "publication_uncertain", reason: "expired_authorization" })).toBe(
+			false,
+		);
+		expect(communityExpiredBeforeLease({ code: "runtime_rejected", reason: "revoked" })).toBe(false);
+		expect(communityExpiredBeforeLease(undefined)).toBe(false);
+	});
 	it("reports a plain stop when no failure was recorded", () => {
 		expect(makeCommunityStopReporter().event()).toBe('{"error":"community_publication_stopped","retry":false}\n');
 	});

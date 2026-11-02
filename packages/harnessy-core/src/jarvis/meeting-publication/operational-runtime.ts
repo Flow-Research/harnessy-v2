@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { arch, hostname } from "node:os";
 import { DatabaseSync } from "node:sqlite";
-
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -40,6 +39,7 @@ import {
 	issueMeetingPublicationWriteGrant,
 	type MeetingPublicationWriteGrantValidator,
 } from "./authority-grant-registry.ts";
+import { publicationDeviceMatches } from "./device-identity.ts";
 import {
 	MeetingPublicationProviderError,
 	type MeetingPublicationReviewAddress,
@@ -287,11 +287,13 @@ const readLinuxBootId = () => {
  * inconclusive (retried by a running service); malformed successful output is unsupported.
  */
 export const readMeetingPublicationDarwinBootId = (run: ProcessProbeRunner = liveProbeRunner) => {
-	const result = runWriterCheckProbe(run, "sysctl", "/usr/sbin/sysctl", ["-n", "kern.boottime"]);
+	const result = runWriterCheckProbe(run, "sysctl", "/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"]);
 	if (result.status !== 0) throw new WriterCheckInconclusiveError("sysctl", "exit_status", result.status);
 	const value = result.stdout.trim();
-	if (!/^\{ sec = \d+, usec = \d+ \} .+$/u.test(value)) fail("unsupported_platform");
-	return value;
+	if (!/^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$/u.test(value))
+		fail("unsupported_platform");
+	// kern.boottime changes when macOS adjusts its wall clock. This UUID changes only for a new boot session.
+	return value.toLowerCase();
 };
 
 const liveObservation = (): MeetingPublicationSmokeRuntimeObservation => {
@@ -346,7 +348,7 @@ const replayTableColumns = {
 	revocations: ["sequence", "subject_type", "subject_id", "created_at"],
 } as const;
 
-const validateReplaySchema = (database: DatabaseSync, expectedInstanceId: string) => {
+export const validateReplaySchema = (database: DatabaseSync, expectedInstanceId: string) => {
 	if (Number(database.prepare("PRAGMA user_version").get()?.user_version) !== 1) fail("replay_unavailable");
 	if (database.prepare("PRAGMA integrity_check").get()?.integrity_check !== "ok") fail("replay_unavailable");
 	const tables = database
@@ -430,7 +432,7 @@ export const inspectMeetingPublicationService = (
 								? "lease_recorded"
 								: consumed === undefined
 									? "not_started"
-									: consumed.outcome === "drained"
+									: consumed.outcome === "drained" || consumed.outcome === "reconciled_no_delivery"
 										? "cleanly_stopped"
 										: "reconciliation_required",
 						runtimeHealth: "not_assessed",
@@ -516,7 +518,7 @@ const assertReplayFileIdentity = (verified: VerifiedMeetingPublicationRuntimeInp
 	);
 	if (
 		current.identity.path !== verified.replayIdentity.path ||
-		current.identity.device !== verified.replayIdentity.device ||
+		!publicationDeviceMatches(current.identity.path, current.stat.dev, verified.replayIdentity.device) ||
 		current.identity.inode !== verified.replayIdentity.inode
 	)
 		fail("replay_unavailable");
@@ -531,7 +533,7 @@ const assertCurrentItem = (
 	assertMeetingPublicationSqliteSidecarsAbsent(dbPath);
 	const before = assertMeetingPublicationRollbackDatabaseFile(dbPath);
 	if (
-		before.dev.toString() !== verified.authorization.stateDatabase.device ||
+		!publicationDeviceMatches(dbPath, before.dev, verified.authorization.stateDatabase.device) ||
 		before.ino.toString() !== verified.authorization.stateDatabase.inode
 	)
 		fail("state_drift");
@@ -577,7 +579,7 @@ const assertCurrentWorkerStore = (
 	assertMeetingPublicationSqliteSidecarsAbsent(dbPath);
 	const before = assertMeetingPublicationRollbackDatabaseFile(dbPath);
 	if (
-		before.dev.toString() !== verified.authorization.stateDatabase.device ||
+		!publicationDeviceMatches(dbPath, before.dev, verified.authorization.stateDatabase.device) ||
 		before.ino.toString() !== verified.authorization.stateDatabase.inode
 	)
 		fail("state_drift");
@@ -601,7 +603,7 @@ const assertCurrentWorkerItem = (
 	assertMeetingPublicationSqliteSidecarsAbsent(dbPath);
 	const before = assertMeetingPublicationRollbackDatabaseFile(dbPath);
 	if (
-		before.dev.toString() !== verified.authorization.stateDatabase.device ||
+		!publicationDeviceMatches(dbPath, before.dev, verified.authorization.stateDatabase.device) ||
 		before.ino.toString() !== verified.authorization.stateDatabase.inode
 	)
 		fail("state_drift");
@@ -641,7 +643,7 @@ const assertCurrentFullReviewItem = (
 	assertMeetingPublicationSqliteSidecarsAbsent(dbPath);
 	const before = assertMeetingPublicationRollbackDatabaseFile(dbPath);
 	if (
-		before.dev.toString() !== verified.authorization.stateDatabase.device ||
+		!publicationDeviceMatches(dbPath, before.dev, verified.authorization.stateDatabase.device) ||
 		before.ino.toString() !== verified.authorization.stateDatabase.inode
 	)
 		fail("state_drift");
@@ -746,7 +748,7 @@ export class MeetingRuntimeSession {
 						consumed.nonce !== verified.authorization.nonce ||
 						consumed.payload_sha256 !== verified.authorizationDigest ||
 						consumed.key_id !== verified.authorization.keyId ||
-						consumed.outcome !== "drained")
+						(consumed.outcome !== "drained" && consumed.outcome !== "reconciled_no_delivery"))
 				)
 					fail("replayed");
 				if (this.database.prepare("SELECT 1 AS present FROM active_lease WHERE singleton=1").get() !== undefined) {
@@ -766,7 +768,7 @@ export class MeetingRuntimeSession {
 						100 * 1024 * 1024,
 					);
 					if (
-						state.identity.device !== expected.device ||
+						!publicationDeviceMatches(expected.path, state.stat.dev, expected.device) ||
 						state.identity.inode !== expected.inode ||
 						sha256MeetingPublicationSmokeBytes(state.bytes) !== expected.sha256
 					)
@@ -963,7 +965,7 @@ export class MeetingRuntimeSession {
 			const current = hashed.get(expected.path);
 			if (
 				current === undefined ||
-				current.stat.dev.toString() !== expected.device ||
+				!publicationDeviceMatches(expected.path, current.stat.dev, expected.device) ||
 				current.stat.ino.toString() !== expected.inode ||
 				current.sha256 !== expected.sha256 ||
 				(current.stat.mode & 0o111n) === 0n
@@ -990,14 +992,21 @@ export class MeetingRuntimeSession {
 			512 * 1024 * 1024,
 		);
 		if (
-			engineState.identity.device !== this.verified.authorization.credentials.engineState.device ||
+			!publicationDeviceMatches(
+				engineState.identity.path,
+				engineState.stat.dev,
+				this.verified.authorization.credentials.engineState.device,
+			) ||
 			engineState.identity.inode !== this.verified.authorization.credentials.engineState.inode
 		)
 			return false;
 		const state = assertMeetingPublicationRollbackDatabaseFile(this.verified.authorization.stateDatabase.path);
 		return (
-			state.dev.toString() === this.verified.authorization.stateDatabase.device &&
-			state.ino.toString() === this.verified.authorization.stateDatabase.inode
+			publicationDeviceMatches(
+				this.verified.authorization.stateDatabase.path,
+				state.dev,
+				this.verified.authorization.stateDatabase.device,
+			) && state.ino.toString() === this.verified.authorization.stateDatabase.inode
 		);
 	}
 

@@ -241,7 +241,7 @@ describe("the cockpit card", () => {
 			});
 			expect(cockpit().querySelector(".status")?.className).toBe("status status-idle");
 			expect(cockpit().querySelector(".status")?.textContent).toBe("not running");
-			expect(cockpit().querySelector("button.button")).toBeNull();
+			expect(cockpit().querySelector("button.button")?.textContent).toContain("Open cockpit");
 			expect(cockpit().querySelector(".command-text")?.textContent).toBe("harnessy web");
 			await act(async () => root?.unmount());
 		}
@@ -258,7 +258,7 @@ describe("the cockpit card", () => {
 		expect(cockpit().querySelector(".status")?.className).toBe("status status-ok");
 		const open = cockpit().querySelector("button.button");
 		expect(open?.textContent).toContain("Open cockpit");
-		expect(open?.getAttribute("title")).toBe("Sign-in code needed: run harnessy web.");
+		expect(open?.getAttribute("title")).toBe("Starts or opens the cockpit with its own sign-in.");
 		await act(async () => root?.unmount());
 		await renderConnections([], { "/v1/jobs": executor([{ host: "127.0.0.1", port: 4788, open: true }]) });
 		await waitFor(() => expect(cockpit().querySelector(".status")?.textContent).toBe("running on 127.0.0.1:4788"));

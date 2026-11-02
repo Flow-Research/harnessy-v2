@@ -116,7 +116,9 @@ def _handler_class(
             # Redeem a supplied code first, so it is single-use even when a valid
             # cookie or token already authenticates this request.
             redeemed = bool(code and _redeem_exchange_code(state_root, code))
-            authenticated = self._cookie_token_valid() or _secret_matches(supplied, token) or redeemed
+            authenticated = (
+                self._cookie_token_valid() or _secret_matches(supplied, token) or redeemed
+            )
             supplied = supplied or code
             if not authenticated:
                 self._write(
@@ -127,6 +129,20 @@ def _handler_class(
             headers = {}
             if supplied:
                 headers["Set-Cookie"] = f"{_COOKIE_NAME}={token}; HttpOnly; SameSite=Strict; Path=/"
+            if redeemed and parsed.path == "/":
+                # Establish a local document before leaving the code URL. An HTTP
+                # redirect from a file launcher withholds the Strict cookie. The
+                # clean inbox also needs same-origin referrers for its forms.
+                self._write(
+                    HTTPStatus.OK,
+                    _page(
+                        "Opening review",
+                        '<meta http-equiv="refresh" content="0;url=/">'
+                        '<h1>Opening review</h1><a href="/">Continue to review</a>',
+                    ),
+                    headers=headers,
+                )
+                return
             # `no-referrer` makes browsers submit forms with `Origin: null`, which
             # POST rejects. Only query-free pages, which never carry the bearer
             # token, opt into a same-origin Referer so their forms send the origin.
@@ -643,8 +659,7 @@ def _briefing_page(
             '<section class="card attention-card"><h2>Operator reconciliation required</h2><p>'
             + html.escape(revision["error"])
             + " Do not retry or publish until the artifacts and queue "
-            "have been reconciled.</p></section>"
-            + body
+            "have been reconciled.</p></section>" + body
         )
     return _page("Weekly community briefing review", body, refresh=refresh)
 

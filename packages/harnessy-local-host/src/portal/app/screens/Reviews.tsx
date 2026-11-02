@@ -3,6 +3,8 @@
  * rejecting, archiving, editing and publishing stay on each service's own page.
  * The app never posts to 8770 or 8872.
  */
+
+import { handoffTarget } from "../../handoff.ts";
 import { CommandChip, HandoffButton } from "../components/actions.tsx";
 import { Card, Stat, StatusDot, WithTile } from "../components/primitives.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
@@ -42,7 +44,7 @@ const Opener = ({ command }: { command: string | undefined }) =>
 			The opener command appears here once the service's state path is known. The Jobs screen shows its state.
 		</p>
 	) : (
-		<CommandChip command={command} note="Use this when the review page asks for a session." />
+		<CommandChip command={command} note="You can also open the review page from a terminal." />
 	);
 
 export const ReviewsScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
@@ -93,7 +95,12 @@ export const ReviewsScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
 						<p className="text-2">Approve and publish on the meeting review page.</p>
 						{meetingLink === undefined ? null : (
 							<HandoffButton
-								action={{ kind: "handoff", label: "Open meeting review", target: meetingLink, note: null }}
+								action={{
+									kind: "handoff",
+									label: "Open meeting review",
+									target: handoffTarget("meeting-review"),
+									note: null,
+								}}
 								primary
 							/>
 						)}
@@ -136,7 +143,12 @@ export const ReviewsScreen = ({ rest }: { rest: ReadonlyArray<string> }) => {
 						</WithTile>
 						{communityLink === undefined ? null : (
 							<HandoffButton
-								action={{ kind: "handoff", label: "Open community review", target: communityLink, note: null }}
+								action={{
+									kind: "handoff",
+									label: "Open community review",
+									target: handoffTarget("community-review"),
+									note: null,
+								}}
 								primary
 							/>
 						)}

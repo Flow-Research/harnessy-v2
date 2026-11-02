@@ -8,6 +8,7 @@ import {
 	MeetingPublicationSmokeRuntimeError,
 	type MeetingPublicationSmokeRuntimeErrorCode,
 	readStableMeetingPublicationSmokeFile,
+	recoverMeetingPublicationService,
 	revokeStoppedMeetingPublicationService,
 } from "@harnessy/core/meeting-publication";
 import * as Deferred from "effect/Deferred";
@@ -97,7 +98,7 @@ export const parseMeetingFullReviewCommandInput = (
 	);
 };
 
-/** Inert macOS configuration; launchd never restarts an uncertain/crashed writer. */
+/** Persistent macOS service. Startup recovery retains the fence for uncertain delivery. */
 export const renderMeetingServiceLaunchAgent = (
 	nodePath: string,
 	cliPath: string,
@@ -120,7 +121,8 @@ export const renderMeetingServiceLaunchAgent = (
 ${[nodePath, cliPath, "--service", "--input", inputPath, ...(communityConfig === undefined ? [] : ["--community-service-config", communityConfig])].map((value) => `<string>${xml(value)}</string>`).join("\n")}
 </array>
 <key>RunAtLoad</key><true/>
-<key>KeepAlive</key><false/>
+<key>KeepAlive</key><true/>
+<key>ThrottleInterval</key><integer>30</integer>
 <key>ExitTimeOut</key><integer>45</integer>
 ${logDirectory === undefined ? "" : `<key>StandardOutPath</key><string>${xml(join(logDirectory, "stdout.log"))}</string>\n<key>StandardErrorPath</key><string>${xml(join(logDirectory, "stderr.log"))}</string>`}
 </dict></plist>\n`;
@@ -288,7 +290,8 @@ export const runMeetingFullReviewCommand: (
 					? inspectMeetingPublicationService(input).pipe(Effect.map((value) => ({ exitCode: 0, value })))
 					: args[0] === "--service-revoke"
 						? revokeStoppedMeetingPublicationService(input).pipe(Effect.map((value) => ({ exitCode: 0, value })))
-						: runLocalHostMeetingFullReview(input, onReady, drain, communityConfig).pipe(
+						: (input.mode === "service" ? recoverMeetingPublicationService(input) : Effect.void).pipe(
+								Effect.andThen(runLocalHostMeetingFullReview(input, onReady, drain, communityConfig)),
 								Effect.map(() => ({ exitCode: 0 })),
 							),
 		),

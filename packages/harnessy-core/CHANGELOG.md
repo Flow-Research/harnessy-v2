@@ -104,6 +104,15 @@
 
 ### Fixed
 
+- Keep the macOS meeting service running with persistent launchd startup, crash
+  recovery and stable boot-session and volume identities. Recovery preserves
+  publication leases and refuses uncertain delivery. The community worker retries
+  an operation that expires before it acquires a publication lease.
+
+- Review and cockpit buttons in `harnessy open` now use the authenticated local
+  openers. The portal shows progress and launch errors. Meeting and community
+  code exchange establish a local document before opening the clean inbox,
+  which preserves Strict cookies and the origin needed by review forms.
 - `harnessy work` sent two notifications when it stopped for review before
   the push; it now sends one.
 - `harnessy work` no longer commits raw bytes for paths that a configured git

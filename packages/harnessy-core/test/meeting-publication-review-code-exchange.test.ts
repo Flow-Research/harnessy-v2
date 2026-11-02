@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import {
 	chmodSync,
@@ -15,6 +16,8 @@ import {
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -41,7 +44,8 @@ import {
 import { MeetingPublicationStore } from "../src/jarvis/meeting-publication/store.ts";
 
 // The single-use code exchange and identity challenge used by
-// harnessy-meeting-review-open. In-process server only; nothing is spawned.
+// harnessy-meeting-review-open. The optional browser check uses CHROME_PATH;
+// all tests serve isolated state through the in-process review server.
 
 const roots: Array<string> = [];
 afterEach(() => {
@@ -243,13 +247,55 @@ describe("meeting review identity challenge", () => {
 });
 
 describe("meeting review single-use code exchange", () => {
+	it.skipIf(process.env.CHROME_PATH === undefined)(
+		"opens from a notification file in a fresh browser with strict cookies",
+		async () => {
+			await withReview(async ({ origin, state, root }) => {
+				const value = code("browser-notification");
+				issue(state, value);
+				const launcher = join(root, "notification.html");
+				writeFileSync(
+					launcher,
+					`<meta name="referrer" content="no-referrer"><meta http-equiv="refresh" content="0;url=${origin}/exchange?code=${value}">`,
+					{ mode: 0o600 },
+				);
+				const { stdout } = await promisify(execFile)(
+					process.env.CHROME_PATH as string,
+					[
+						"--headless",
+						"--no-sandbox",
+						"--disable-gpu",
+						"--no-first-run",
+						"--no-default-browser-check",
+						"--use-mock-keychain",
+						"--password-store=basic",
+						`--user-data-dir=${join(root, "browser")}`,
+						"--virtual-time-budget=5000",
+						"--dump-dom",
+						pathToFileURL(launcher).href,
+					],
+					{ timeout: 20_000, maxBuffer: 1_000_000 },
+				);
+				expect(stdout).toContain("<h1>Meeting review</h1>");
+				expect(stdout).not.toContain("Unauthorized");
+				expect(existsSync(exchangePath(state, value))).toBe(false);
+				expect((await call(origin, `/exchange?code=${value}`)).status).toBe(401);
+			});
+		},
+	);
+
 	it("redeems a fresh code once, deletes it and starts a working session", async () => {
 		await withReview(async ({ origin, state }) => {
 			const value = code("fresh");
 			const path = issue(state, value);
 			const exchanged = await call(origin, `/exchange?code=${value}`);
-			expect(exchanged.status).toBe(303);
-			expect(exchanged.headers.location).toBe("/");
+			expect(exchanged.status).toBe(200);
+			expect(exchanged.headers.location).toBeUndefined();
+			expect(exchanged.body).toContain('<meta http-equiv="refresh" content="0;url=/">');
+			expect(exchanged.body).toContain('<a href="/">Continue to review</a>');
+			expect(exchanged.body).not.toContain(value);
+			expect(exchanged.headers["cache-control"]).toBe("no-store");
+			expect(exchanged.headers["content-security-policy"]).toContain("default-src 'none'");
 			expect(exchanged.headers["referrer-policy"]).toBe("no-referrer");
 			expect(String(exchanged.headers["set-cookie"])).toMatch(
 				/^hsy_meeting_review=[A-Za-z0-9_-]{43}; HttpOnly; SameSite=Strict; Path=\/; Max-Age=60$/u,
@@ -329,7 +375,7 @@ describe("meeting review single-use code exchange", () => {
 			expect((await call(origin, `/exchange?code=${encodeURIComponent("é")}`)).status).toBe(401);
 			// None of the refused requests consumed the issued code.
 			expect(existsSync(path)).toBe(true);
-			expect((await call(origin, `/exchange?code=${value}`)).status).toBe(303);
+			expect((await call(origin, `/exchange?code=${value}`)).status).toBe(200);
 		});
 	});
 
@@ -339,7 +385,7 @@ describe("meeting review single-use code exchange", () => {
 			issue(state, value);
 			const responses = await Promise.all(Array.from({ length: 12 }, () => call(origin, `/exchange?code=${value}`)));
 			const statuses = responses.map((response) => response.status).sort();
-			expect(statuses.filter((status) => status === 303)).toHaveLength(1);
+			expect(statuses.filter((status) => status === 200)).toHaveLength(1);
 			expect(statuses.filter((status) => status === 401)).toHaveLength(11);
 			expect(responses.filter((response) => response.headers["set-cookie"] !== undefined)).toHaveLength(1);
 		});

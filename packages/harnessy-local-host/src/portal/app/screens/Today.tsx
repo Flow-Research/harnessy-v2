@@ -4,11 +4,13 @@
  * and what ran overnight. Readings are "in queue" or "sent in a brief": the
  * ledger has no read state, so the app never says "unread".
  */
-import { CommandChip } from "../components/actions.tsx";
+
 import { ErrorBoundary, PlainTextFallback } from "../components/ErrorBoundary.tsx";
+import { GenerateBrief } from "../components/GenerateBrief.tsx";
 import { Card, StatusDot, TileState, type Tone, WithTile } from "../components/primitives.tsx";
 import { MarkdownBlocks, SafeMarkdown } from "../components/SafeMarkdown.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
+import { WorthReading } from "../components/WorthReading.tsx";
 import type { Job, JobsResponse, LifeBriefResponse, LifeWeeklyDraftResponse, TodayResponse } from "../lib/api-types.ts";
 import { useResource } from "../lib/data.tsx";
 import { dateTime, dayLabel, relativeTime } from "../lib/format.ts";
@@ -43,7 +45,11 @@ const Brief = ({ text }: { text: string }) => {
 			{rest.map((section, index) => (
 				<section key={`${section.title ?? "intro"}-${index}`}>
 					{section.title === null ? null : <h2 className="md-section">{section.title}</h2>}
-					<MarkdownBlocks blocks={section.blocks} />
+					{section.title?.toLowerCase() === "worth reading" ? (
+						<WorthReading blocks={section.blocks} />
+					) : (
+						<MarkdownBlocks blocks={section.blocks} />
+					)}
 				</section>
 			))}
 		</div>
@@ -148,6 +154,8 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 						</>
 					) : brief.status === "loading" ? (
 						<p className="muted">Loading</p>
+					) : briefTile?.reason === "file_missing" ? (
+						<p>Today’s briefing hasn’t been generated yet. Use Generate today’s brief to create it.</p>
 					) : (
 						<TileState tile={briefTile} />
 					)}
@@ -245,11 +253,8 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 							)}
 						</WithTile>
 					</Card>
-					<Card title="Re-run the brief">
-						<CommandChip
-							command="harnessy jarvis life daily --max-output-bytes 1048576"
-							note="Spends AI budget."
-						/>
+					<Card title="Daily brief">
+						<GenerateBrief missing={briefTile?.state !== "ok"} />
 					</Card>
 					{brief.fetchedAt === undefined ? null : (
 						<p className="fine-print">

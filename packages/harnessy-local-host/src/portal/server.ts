@@ -1,8 +1,9 @@
 /**
  * The portal API server: `node:http` on 127.0.0.1 only.
  *
- * It is a known non-writer. It reads through the Core read model, spawns
- * nothing but the injected launchd probe, sets and reads no cookies, sends no
+ * Data reads use the Core read model and the injected launchd probe. Explicit
+ * page-authenticated POSTs can launch helpers, regenerate briefs or control shells.
+ * The portal sets and reads no cookies, sends no
  * CORS headers and never logs request headers, URLs or secrets. Every data
  * response is checked against its schema before it is sent or cached. With
  * `page`, it also serves the local page's static files under the same headers
@@ -19,10 +20,13 @@ import {
 } from "@harnessy/core/read-model";
 
 import { bearerSecret, PortalSessions } from "./auth.ts";
+import type { createBriefGeneration } from "./brief-generation.ts";
+import type { PortalHandoffService } from "./handoff.ts";
 import { buildPortalOpenApi } from "./openapi.ts";
 import type { PortalPageAssets } from "./page-assets.ts";
 import { matchPortalRoute, PORTAL_ROUTES, type PortalRoute, type PortalRouteParams } from "./routes.ts";
 import type { PortalSources } from "./sources.ts";
+import { type PortalTerminal, TerminalError } from "./terminal.ts";
 
 export const PORTAL_HOST = "127.0.0.1";
 export const PORTAL_DEFAULT_PORT = 8790;
@@ -31,7 +35,8 @@ export const PORTAL_MAX_BODY_BYTES = 1024;
 export const PORTAL_MAX_URL_BYTES = 2048;
 export const PORTAL_MAX_CONNECTIONS = 32;
 export const PORTAL_CSP =
-	"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; " +
+	// xterm uses generated style elements and inline dimensions; scripts remain self-only.
+	"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; " +
 	"base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 const SECURITY_HEADERS = {
@@ -60,6 +65,10 @@ export interface PortalServerOptions {
 	readonly log?: (entry: PortalLogEntry) => void;
 	/** The app's static files, pinned by its asset manifest. Without them only the API is served. */
 	readonly page?: PortalPageAssets;
+	/** Fixed local sign-in helpers. No publication, review decision or arbitrary command is accepted. */
+	readonly openService?: (service: PortalHandoffService) => Promise<void>;
+	readonly terminal?: PortalTerminal;
+	readonly briefGeneration?: ReturnType<typeof createBriefGeneration>;
 }
 
 export interface PortalServer {
@@ -125,6 +134,7 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 	const inFlight = new Map<string, Promise<unknown>>();
 	let host = "";
 	let origin = "";
+	let opening = false;
 
 	const respond = (
 		response: ServerResponse,
@@ -231,6 +241,56 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 				if (!sessions.isPageToken(bearerSecret(authorization)) && !installProof())
 					throw new RequestRefused(401, "unauthorized");
 				return dataValue(route, route.data!, path, params);
+			case "terminal": {
+				if (!sessions.isPageToken(bearerSecret(authorization))) throw new RequestRefused(401, "unauthorized");
+				if (!options.terminal) throw new RequestRefused(503, "terminal_unavailable");
+				try {
+					if (route.method === "POST") {
+						if (request.headers.origin !== origin) throw new RequestRefused(403, "origin_required");
+						requireJson(request);
+						let value: unknown;
+						try {
+							value = JSON.parse(body.toString("utf8"));
+						} catch {
+							throw new RequestRefused(400, "invalid_body");
+						}
+						return options.terminal.action(value);
+					}
+					return params.id ? options.terminal.read(params.id, Number(params.cursor)) : options.terminal.list();
+				} catch (error) {
+					if (error instanceof TerminalError) throw new RequestRefused(400, error.message);
+					throw error;
+				}
+			}
+			case "brief": {
+				if (!sessions.isPageToken(bearerSecret(authorization))) throw new RequestRefused(401, "unauthorized");
+				if (route.method === "POST") {
+					if (request.headers.origin !== origin) throw new RequestRefused(403, "origin_required");
+					requireJson(request);
+					if (body.toString("utf8") !== "{}") throw new RequestRefused(400, "invalid_body");
+				}
+				if (options.briefGeneration === undefined) throw new RequestRefused(503, "brief_generation_unavailable");
+				cache.clear();
+				return route.method === "POST" ? options.briefGeneration.start() : options.briefGeneration.status();
+			}
+			case "open": {
+				if (!sessions.isPageToken(bearerSecret(authorization))) throw new RequestRefused(401, "unauthorized");
+				if (request.headers.origin !== origin) throw new RequestRefused(403, "origin_required");
+				requireJson(request);
+				if (body.toString("utf8") !== "{}") throw new RequestRefused(400, "invalid_body");
+				if (options.openService === undefined) throw new RequestRefused(503, "service_open_unavailable");
+				if (opening) throw new RequestRefused(409, "service_open_in_progress");
+				opening = true;
+				return options
+					.openService(route.service!)
+					.then(() => ({ opened: true }))
+					.catch(() => {
+						throw new RequestRefused(503, "service_open_failed");
+					})
+					.finally(() => {
+						opening = false;
+					});
+			}
 		}
 	};
 
@@ -325,6 +385,7 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 					resolveClose();
 				});
 				server.closeAllConnections();
+				options.terminal?.close();
 			}),
 	};
 };

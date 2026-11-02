@@ -28,7 +28,7 @@ import {
 	type ServiceHealthData,
 	type TileResult,
 } from "@harnessy/core/read-model";
-
+import { handoffTarget } from "./handoff.ts";
 import type { LoopbackHost, PortProbe } from "./liveness.ts";
 
 const FATHOM_LABEL = "com.flow-harness.meeting-fathom-poll";
@@ -138,8 +138,6 @@ export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinitio
 		context.communityStatePath === null ? "<state path>" : shellPath(context.communityStatePath, "<state path>");
 	const meetingPort = context.meetingPort ?? MEETING_REVIEW_DEFAULT_PORT;
 	const communityPort = context.communityPort ?? COMMUNITY_REVIEW_DEFAULT_PORT;
-	const meetingUrl = reviewUrl(context.meetingHost, meetingPort) ?? `http://127.0.0.1:${meetingPort}/`;
-	const communityUrl = reviewUrl(context.communityHost, communityPort) ?? `http://127.0.0.1:${communityPort}/`;
 	const reinstall = (command: string) => copy("Reinstall schedule", command, "Writes the plist; does not load it.");
 	return [
 		{
@@ -217,7 +215,7 @@ export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinitio
 				"Never run `jarvis community briefing …` while publication runs.",
 			],
 			controls: [
-				link("Open community review", communityUrl, "If it asks for a session, run the opener."),
+				link("Open community review", handoffTarget("community-review"), "Opens with a fresh sign-in."),
 				copy("Open with a session", `harnessy-community-review-open --state-path ${communityState}`),
 				copy("Generation status", "harnessy jarvis community generation-status"),
 			],
@@ -235,7 +233,7 @@ export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinitio
 				"Approve and publish on the meeting review page. Harnessy never posts to it.",
 			],
 			controls: [
-				link("Open meeting review", meetingUrl, "If it asks for a session, run the opener."),
+				link("Open meeting review", handoffTarget("meeting-review"), "Opens with a fresh sign-in."),
 				copy("Open with a session", `harnessy-meeting-review-open --state-path ${meetingState}`),
 				copy("Service status", "harnessy-meeting-full-review --service-status"),
 				copy("Enable service", "harnessy-meeting-full-review --service-enable"),
@@ -277,7 +275,7 @@ export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinitio
 				"Unsupervised: started by `harnessy web`, not by launchd.",
 				"Holds the Executor token. This app never reads or relays it.",
 			],
-			controls: [copy("Start or open", "harnessy web")],
+			controls: [link("Open cockpit", handoffTarget("cockpit")), copy("Start or open", "harnessy web")],
 			neverPause: false,
 		},
 	];

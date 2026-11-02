@@ -1218,6 +1218,24 @@ export class MeetingPublicationReviewServer extends Context.Service<
 							createdAt: current,
 							expiresAt: current + config.reviewSessionSeconds * 1_000,
 						});
+						// Commit a same-site document before navigating to the inbox. An HTTP
+						// redirect from the launcher's file: page withholds SameSite=Strict
+						// cookies on the redirected request, even after a successful exchange.
+						if (kind === "code") {
+							response.setHeader(
+								"Set-Cookie",
+								`${cookieName}=${sessionId}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${config.reviewSessionSeconds}`,
+							);
+							send(
+								response,
+								200,
+								page(
+									"Opening meeting review",
+									'<meta http-equiv="refresh" content="0;url=/"><section class="card message-card"><h1>Opening meeting review</h1><a href="/">Continue to review</a></section>',
+								),
+							);
+							return;
+						}
 						redirect(
 							response,
 							"/",

@@ -23,6 +23,7 @@ import * as Result from "effect/Result";
 
 import { JarvisMeetingPublicationConfig } from "../config-model.ts";
 import { invokesCommand } from "../process-invocation.ts";
+import { publicationDeviceIdentity, publicationDeviceMatches } from "./device-identity.ts";
 import { assertMeetingPublicationRollbackDatabaseFile } from "./store-file-safety.ts";
 import { MEETING_PUBLICATION_STORE_SCHEMA_VERSION, validateMeetingPublicationStoreSchema } from "./store-schema.ts";
 
@@ -829,7 +830,12 @@ const readCanonical = <A>(path: string, uid: bigint, role: "private" | "artifact
 	return { ...file, value: decode(schema, raw) } as const;
 };
 const identityMatches = (actual: { path: string; device: string; inode: string }, expected: typeof FileIdentity.Type) =>
-	actual.path === expected.path && actual.device === expected.device && actual.inode === expected.inode;
+	actual.path === expected.path &&
+	actual.inode === expected.inode &&
+	(actual.device === expected.device ||
+		(/^\d+$/u.test(actual.device) && publicationDeviceMatches(actual.path, BigInt(actual.device), expected.device)) ||
+		(/^\d+$/u.test(expected.device) &&
+			publicationDeviceMatches(actual.path, BigInt(expected.device), actual.device)));
 const checkedFile = (
 	entry: { readonly path: string; readonly sha256: string },
 	uid: bigint,
@@ -840,7 +846,9 @@ const checkedFile = (
 	return { file, matches: sha256MeetingPublicationSmokeBytes(file.bytes) === entry.sha256 } as const;
 };
 const validateIdentity = (identity: typeof FileIdentity.Type) =>
-	absolutePath(identity.path) && /^\d+$/u.test(identity.device) && /^\d+$/u.test(identity.inode);
+	absolutePath(identity.path) &&
+	/^(?:\d+|volume:[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/u.test(identity.device) &&
+	/^\d+$/u.test(identity.inode);
 const assertPrivateDirectory = (path: string, uid: bigint) => {
 	directoryChain(path, uid);
 	const stat = lstatSync(path, { bigint: true });
@@ -1400,7 +1408,7 @@ const verifyMeetingPublicationWorkerLikeInput = <
 					record.authorization_id !== payload.authorizationId ||
 					record.nonce !== payload.nonce ||
 					record.key_id !== payload.keyId ||
-					record.outcome !== "drained" ||
+					(record.outcome !== "drained" && record.outcome !== "reconciled_no_delivery") ||
 					record.payload_sha256 !==
 						sha256MeetingPublicationSmokeBytes(`${audience}\0${canonicalMeetingPublicationSmokeJson(payload)}`)
 				)
@@ -1664,7 +1672,11 @@ export const prepareMeetingPublicationServiceTrustAdoption = (value: unknown) =>
 			...file.value,
 			kind: "harnessy.meeting-publication.service-trust" as const,
 			audience: MEETING_PUBLICATION_SERVICE_AUDIENCE,
-			replay: { ...file.value.replay, device: replay.identity.device, inode: replay.identity.inode },
+			replay: {
+				...file.value.replay,
+				device: publicationDeviceIdentity(replay.identity.path, replay.stat.dev),
+				inode: replay.identity.inode,
+			},
 		},
 	};
 };
@@ -1693,7 +1705,11 @@ export const prepareMeetingPublicationServiceRequest = (
 		fail("invalid_signature");
 	const bound = (path: string, role: "private" | "artifact", limit = MAX_ARTIFACT_BYTES) => {
 		const file = readStableMeetingPublicationSmokeFile(path, owner, role, limit);
-		return { ...file.identity, sha256: sha256MeetingPublicationSmokeBytes(file.bytes) };
+		return {
+			...file.identity,
+			device: publicationDeviceIdentity(path, file.stat.dev),
+			sha256: sha256MeetingPublicationSmokeBytes(file.bytes),
+		};
 	};
 	const replay = bound(trustFile.value.replay.path, "private");
 	if (!identityMatches(replay, trustFile.value.replay)) fail("replay_unavailable");
@@ -1774,6 +1790,26 @@ export const prepareMeetingPublicationServiceRequest = (
 	});
 	const manifestText = `${canonicalMeetingPublicationSmokeJson(manifest)}\n`;
 	const instant = new Date().toISOString();
+	const durableExecutable = (expected: typeof BoundFile.Type) => {
+		const current = bound(expected.path, "artifact", MAX_EXECUTABLE_BYTES);
+		if (!identityMatches(current, expected) || current.sha256 !== expected.sha256) fail("binding_mismatch");
+		return current;
+	};
+	const notifier =
+		input.notifier.kind === "unavailable"
+			? input.notifier
+			: {
+					...input.notifier,
+					executable: durableExecutable(input.notifier.executable),
+					...(input.notifier.reviewOpen === undefined
+						? {}
+						: {
+								reviewOpen: {
+									...input.notifier.reviewOpen,
+									executable: durableExecutable(input.notifier.reviewOpen.executable),
+								},
+							}),
+				};
 	const evidence = (path: string | null) =>
 		path === null ? null : { path, sha256: bound(path, "private", MAX_INPUT_BYTES).sha256 };
 	const request = encodeMeetingPublicationServiceEnrollmentRequest({
@@ -1793,7 +1829,7 @@ export const prepareMeetingPublicationServiceRequest = (
 		subject: input.subject,
 		google: input.google,
 		discord: input.discord,
-		notifier: input.notifier,
+		notifier,
 		maxItems: input.maxItems,
 		transport: input.transport ?? { mode: "production" },
 		credentials: { directory: input.credentialDirectory, engineState: bound(input.engineStatePath, "private") },

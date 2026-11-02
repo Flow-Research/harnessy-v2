@@ -325,6 +325,8 @@ export const runReviewOpen = async (
 		child.once("exit", (exitCode) => done(exitCode));
 	});
 	if (status !== 0) return fail();
+	// The portal can confirm the browser launch without receiving a URL, token or code.
+	process.send?.({ kind: "review_opened" });
 	// The server deletes the exchange file when the browser redeems the code. Remove
 	// the page then, or after a bounded wait.
 	const deadline = Date.now() + (options.redeemWaitMs ?? defaultRedeemWaitMs);

@@ -4,8 +4,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { CommandChip } from "./components/actions.tsx";
+import { CommandChip, HandoffProvider } from "./components/actions.tsx";
 import { ErrorBoundary, ScreenFailed } from "./components/ErrorBoundary.tsx";
+import { BriefGenerationProvider } from "./components/GenerateBrief.tsx";
 import { Palette, type PaletteEntry, screenEntries } from "./components/Palette.tsx";
 import { BottomBar, NAV, Rail, TopBar } from "./components/Shell.tsx";
 import type { InboxResponse, JobsResponse, TasksResponse } from "./lib/api-types.ts";
@@ -28,6 +29,7 @@ import { JobsScreen } from "./screens/Jobs.tsx";
 import { LearningScreen } from "./screens/Learning.tsx";
 import { ReviewsScreen } from "./screens/Reviews.tsx";
 import { TasksScreen } from "./screens/Tasks.tsx";
+import { TerminalScreen } from "./screens/Terminal.tsx";
 import { TodayScreen } from "./screens/Today.tsx";
 
 /** Palette entries from data the app already holds. */
@@ -78,15 +80,27 @@ const SignedOut = () => (
 	<main className="signed-out">
 		<h1 className="screen-title">Sign in to Harnessy</h1>
 		<p className="text-2">
-			The sign-in is read-only and lasts 8 hours in this tab. It also ends when the portal restarts. Run this, and
-			your browser opens a fresh link:
+			The sign-in lasts 8 hours in this tab. It also ends when the portal restarts. If you installed the Harnessy
+			launcher, open it from Applications for a fresh sign-in. You can also run:
 		</p>
 		<CommandChip command="harnessy open" />
 	</main>
 );
 
-const ScreenView = ({ screen, rest, now }: { screen: Screen; rest: ReadonlyArray<string>; now: number }) => {
+const ScreenView = ({
+	screen,
+	rest,
+	now,
+	client,
+}: {
+	screen: Screen;
+	rest: ReadonlyArray<string>;
+	now: number;
+	client: SessionClient;
+}) => {
 	switch (screen) {
+		case "terminal":
+			return <TerminalScreen client={client} />;
 		case "inbox":
 			return <InboxScreen selectedKey={rest[0]} now={now} />;
 		case "today":
@@ -135,6 +149,7 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 		let pendingG = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const onKey = (event: KeyboardEvent) => {
+			if (event.target instanceof Element && event.target.closest(".terminal-screen")) return;
 			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
 				event.preventDefault();
 				setPalette((open) => !open);
@@ -208,7 +223,7 @@ const SignedIn = ({ location, client }: { location: HashLocation; client: Sessio
 				<main id="main" className="content" tabIndex={-1}>
 					<ScreenKeysProvider handler={screenKeys}>
 						<ErrorBoundary fallback={<ScreenFailed />} resetKey={`${route.screen}/${route.rest.join("/")}`}>
-							<ScreenView screen={route.screen} rest={route.rest} now={now} />
+							<ScreenView client={client} screen={route.screen} rest={route.rest} now={now} />
 						</ErrorBoundary>
 					</ScreenKeysProvider>
 				</main>
@@ -251,5 +266,13 @@ export const App = ({
 		};
 	}, [client, store, location]);
 	if (state === "starting") return <p className="muted starting">Loading</p>;
-	return state === "signed_out" ? <SignedOut /> : <SignedIn location={location} client={client} />;
+	return state === "signed_out" ? (
+		<SignedOut />
+	) : (
+		<HandoffProvider open={(service) => client.open(service)}>
+			<BriefGenerationProvider generate={() => client.generateBrief()}>
+				<SignedIn location={location} client={client} />
+			</BriefGenerationProvider>
+		</HandoffProvider>
+	);
 };

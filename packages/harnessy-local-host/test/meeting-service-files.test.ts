@@ -16,12 +16,28 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { renderMeetingServiceLaunchAgent } from "../src/meeting-full-review-command.ts";
 import {
-	controlMeetingServiceFiles,
+	controlMeetingServiceFiles as controlServiceFiles,
 	installMeetingServiceFiles,
 	waitMeetingServiceStopped,
 } from "../src/meeting-service-enrollment.ts";
 
 const roots: string[] = [];
+const startupDirectories = new Map<string, string>();
+const startupFor = (directory: string) => {
+	let startup = startupDirectories.get(directory);
+	if (startup === undefined) {
+		startup = realpathSync(mkdtempSync(join(tmpdir(), "harnessy-startup-files-")));
+		roots.push(startup);
+		startupDirectories.set(directory, startup);
+	}
+	return startup;
+};
+const controlMeetingServiceFiles = (
+	directory: string,
+	plist: string,
+	launchctl: Parameters<typeof controlServiceFiles>[2],
+	action: "enable" | "disable" = "enable",
+) => controlServiceFiles(directory, plist, launchctl, action, startupFor(directory));
 // launchctl is injected below, so the service-control contract can run on the
 // Linux coverage runner without invoking a host process. Restore the real
 // platform after every case; the plutil assertion remains macOS-only.
@@ -36,6 +52,7 @@ beforeEach(() => Object.defineProperty(process, "platform", { ...platformDescrip
 afterEach(() => {
 	Object.defineProperty(process, "platform", platformDescriptor);
 	vi.useRealTimers();
+	startupDirectories.clear();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -161,7 +178,7 @@ it("enable validates exact files before submitting bounded service control", () 
 	expect(calls).toEqual([
 		["print", target],
 		["enable", target],
-		["bootstrap", domain, join(root, "org.harnessy.meeting-publication.plist")],
+		["bootstrap", domain, join(startupFor(root), "org.harnessy.meeting-publication.plist")],
 	]);
 	calls.length = 0;
 	expect(() => controlMeetingServiceFiles(root, `${plist}changed`, boundary)).toThrow("service_configuration_changed");
@@ -230,7 +247,7 @@ it("stages a valid private launch agent and logs without activating or overwriti
 		expect(JSON.parse(parsed.stdout)).toMatchObject({
 			StandardOutPath: join(root, "stdout.log"),
 			StandardErrorPath: join(root, "stderr.log"),
-			KeepAlive: false,
+			KeepAlive: true,
 		});
 	}
 	expect(readFileSync(join(root, "stderr.log"), "utf8")).toBe("");

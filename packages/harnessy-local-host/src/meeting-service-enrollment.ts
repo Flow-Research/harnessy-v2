@@ -1,6 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, constants, fsyncSync, lstatSync, openSync, readdirSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	constants,
+	fsyncSync,
+	lstatSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import {
@@ -83,6 +94,7 @@ export const controlMeetingServiceFiles = (
 	expectedPlist: string,
 	launchctl: MeetingLaunchctl = runMeetingLaunchctl,
 	action: "enable" | "disable" = "enable",
+	launchAgentsDirectory = join(homedir(), "Library", "LaunchAgents"),
 ) => {
 	const uid = process.geteuid?.();
 	if (process.platform !== "darwin" || uid === undefined || !isSafeAbsoluteMeetingCommandPath(directory))
@@ -100,6 +112,20 @@ export const controlMeetingServiceFiles = (
 	}
 	const domain = `gui/${uid}`;
 	const target = `${domain}/org.harnessy.meeting-publication`;
+	if (!isSafeAbsoluteMeetingCommandPath(launchAgentsDirectory)) throw new Error("unsafe_output");
+	mkdirSync(launchAgentsDirectory, { recursive: true, mode: 0o755 });
+	meetingPublicationDirectoryChain(launchAgentsDirectory, BigInt(uid));
+	const startupDirectory = lstatSync(launchAgentsDirectory);
+	if (!startupDirectory.isDirectory() || startupDirectory.uid !== uid || (startupDirectory.mode & 0o022) !== 0)
+		throw new Error("unsafe_output");
+	const startupPath = join(launchAgentsDirectory, "org.harnessy.meeting-publication.plist");
+	const startup = lstatSync(startupPath, { throwIfNoEntry: false });
+	if (
+		startup !== undefined &&
+		readStableMeetingPublicationSmokeFile(startupPath, BigInt(uid), "private", 64 * 1024).bytes.toString("utf8") !==
+			expectedPlist
+	)
+		throw new Error("service_configuration_changed");
 	const existing = launchctl(["print", target]);
 	if (action === "disable") {
 		if (existing.status === 0) {
@@ -109,19 +135,23 @@ export const controlMeetingServiceFiles = (
 				.split("\n")
 				.map((line) => line.trim())
 				.filter((line) => line.startsWith("path = "));
-			if (paths.length !== 1 || paths[0] !== `path = ${plistPath}`) throw new Error("service_configuration_changed");
+			if (paths.length !== 1 || ![plistPath, startupPath].some((path) => paths[0] === `path = ${path}`))
+				throw new Error("service_configuration_changed");
 		} else if (!existing.stderr.includes("Could not find service"))
 			throw new Error("service_already_loaded_or_unknown");
 		if (launchctl(["disable", target]).status !== 0) throw new Error("service_control_failed");
 		if (existing.status === 0 && launchctl(["bootout", target]).status !== 0)
 			throw new Error("service_control_failed");
+		if (startup !== undefined) unlinkSync(startupPath);
 		return { kind: "harnessy.meeting-publication.service-stop-submitted", runtimeHealth: "not_assessed" } as const;
 	}
 	if (existing.status === 0 || !existing.stderr.includes("Could not find service"))
 		throw new Error("service_already_loaded_or_unknown");
+	// launchd loads this directory again after login. A staged plist alone disappears from the job set at reboot.
+	if (startup === undefined) writeNewPrivateMeetingServiceFile(startupPath, expectedPlist);
 	for (const args of [
 		["enable", target],
-		["bootstrap", domain, plistPath],
+		["bootstrap", domain, startupPath],
 	]) {
 		if (launchctl(args).status !== 0) throw new Error("service_control_failed");
 	}

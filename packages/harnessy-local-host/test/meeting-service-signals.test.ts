@@ -7,24 +7,22 @@ import {
 	runMeetingFullReviewCommand,
 } from "../src/meeting-full-review-command.ts";
 
-it.runIf(process.platform === "darwin")(
-	"launch-agent plan preserves argv and allows drain without crash restart",
-	() => {
-		const paths = ["/fixture/node", "/fixture/a & b/command.js", "/fixture/owner's <config>.json"] as const;
-		const result = spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", "--", "-"], {
-			input: renderMeetingServiceLaunchAgent(...paths),
-			encoding: "utf8",
-		});
-		expect(result.status, result.stderr).toBe(0);
-		expect(JSON.parse(result.stdout)).toEqual({
-			Label: "org.harnessy.meeting-publication",
-			ProgramArguments: [paths[0], paths[1], "--service", "--input", paths[2]],
-			RunAtLoad: true,
-			KeepAlive: false,
-			ExitTimeOut: 45,
-		});
-	},
-);
+it.runIf(process.platform === "darwin")("launch-agent plan preserves argv and requests throttled crash restart", () => {
+	const paths = ["/fixture/node", "/fixture/a & b/command.js", "/fixture/owner's <config>.json"] as const;
+	const result = spawnSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", "--", "-"], {
+		input: renderMeetingServiceLaunchAgent(...paths),
+		encoding: "utf8",
+	});
+	expect(result.status, result.stderr).toBe(0);
+	expect(JSON.parse(result.stdout)).toEqual({
+		Label: "org.harnessy.meeting-publication",
+		ProgramArguments: [paths[0], paths[1], "--service", "--input", paths[2]],
+		RunAtLoad: true,
+		KeepAlive: true,
+		ThrottleInterval: 30,
+		ExitTimeOut: 45,
+	});
+});
 
 it("launch-agent planning rejects absent protected config without starting a runtime", async () => {
 	const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
@@ -71,7 +69,8 @@ it.runIf(process.platform === "darwin")(
 			community,
 		]);
 		expect(job.Label).toBe("org.harnessy.meeting-publication");
-		expect(job.KeepAlive).toBe(false);
+		expect(job.KeepAlive).toBe(true);
+		expect(job.ThrottleInterval).toBe(30);
 		expect(job.StandardErrorPath).toBe("/fixture/log/stderr.log");
 	},
 );

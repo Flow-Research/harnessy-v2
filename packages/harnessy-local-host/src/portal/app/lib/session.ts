@@ -2,14 +2,16 @@
  * Sign-in and API reads.
  *
  * `harnessy open` opens `/#code=<one-time code>[&route=<screen>]`. The app
- * clears the fragment at once, trades the code for a read-only page token and
+ * clears the fragment at once, trades the code for a page token and
  * keeps that token in `sessionStorage`, which belongs to this exact origin and
  * port. Requests send it as `Authorization: Bearer` with cookies omitted, so the
  * review cookies of other loopback services never reach the portal.
  *
- * The app only reads. It never holds the install token, an act token or the
+ * The app never holds the install token, an act token or the
  * Executor token.
  */
+
+import type { PortalHandoffService } from "../../handoff.ts";
 import { SCREENS } from "./router.ts";
 
 export const TOKEN_KEY = "harnessy.portal.session";
@@ -132,12 +134,33 @@ export class SessionClient {
 
 	/** GET one API path with the page token. */
 	async get(path: string): Promise<ApiResult> {
+		return this.#request(path, "GET");
+	}
+
+	/** Ask a fixed local service to open its own authenticated browser page. */
+	async open(service: PortalHandoffService): Promise<ApiResult> {
+		return this.#request(`/v1/open/${service}`, "POST");
+	}
+
+	async generateBrief(): Promise<ApiResult> {
+		return this.#request("/v1/life/brief/generate", "POST");
+	}
+
+	async terminalAction(body: Record<string, unknown>): Promise<ApiResult> {
+		return this.#request("/v1/terminal/action", "POST", JSON.stringify(body));
+	}
+
+	async #request(path: string, method: "GET" | "POST", body = "{}"): Promise<ApiResult> {
 		const session = this.session();
 		if (session === undefined) return { kind: "signed_out" };
 		try {
 			const response = await this.#env.fetch(path, {
-				method: "GET",
-				headers: { Authorization: `Bearer ${session.token}` },
+				method,
+				headers: {
+					Authorization: `Bearer ${session.token}`,
+					...(method === "POST" ? { "Content-Type": "application/json" } : {}),
+				},
+				...(method === "POST" ? { body } : {}),
 				credentials: "omit",
 				cache: "no-store",
 				redirect: "error",
@@ -146,7 +169,19 @@ export class SessionClient {
 				this.forget(session.token);
 				return { kind: "signed_out" };
 			}
-			if (response.status !== 200) return { kind: "error", message: `The portal answered ${response.status}.` };
+			if (response.status !== 200)
+				return {
+					kind: "error",
+					message: path.startsWith("/v1/terminal/")
+						? "Terminal request failed. Check the session or close an old terminal and try again."
+						: path === "/v1/life/brief/generate"
+							? "Could not start the daily brief. Try again shortly."
+							: method === "POST"
+								? response.status === 409
+									? "Another view is opening. Try again shortly."
+									: "The view could not open. Check its service on the Jobs screen, then try again."
+								: `The portal answered ${response.status}.`,
+				};
 			return { kind: "ok", body: await response.json() };
 		} catch {
 			return { kind: "error", message: "The portal is not reachable. Is the portal service running?" };

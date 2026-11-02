@@ -1,6 +1,6 @@
 /** The portal API route table. The server and the OpenAPI document are both built from it. */
 import type { PortalApiSchemaName } from "@harnessy/core/read-model";
-
+import { PORTAL_HANDOFF_SERVICES, type PortalHandoffService } from "./handoff.ts";
 import type { PortalSources } from "./sources.ts";
 
 /**
@@ -9,7 +9,7 @@ import type { PortalSources } from "./sources.ts";
  * is never sent). `code`: a one-time code and the exact portal Origin.
  * `read`: a page token or a client proof.
  */
-export type PortalRouteAuth = "none" | "challenge" | "install" | "code" | "read";
+export type PortalRouteAuth = "none" | "challenge" | "install" | "code" | "read" | "open" | "brief" | "terminal";
 
 /** One path parameter: the pattern its value must match whole, and an example for the OpenAPI document. */
 export interface PortalRouteParam {
@@ -28,6 +28,7 @@ export interface PortalRoute {
 	readonly auth: PortalRouteAuth;
 	/** The response schema; `null` for the OpenAPI document itself. */
 	readonly schema: PortalApiSchemaName | null;
+	readonly service?: PortalHandoffService;
 	/** For a data route: the response name and the source that fills its tiles. */
 	readonly data?: { readonly name: string; readonly source: keyof PortalSources };
 }
@@ -242,4 +243,62 @@ export const matchPortalRoute = (
 };
 
 /** Every portal route. The server, the OpenAPI document and the non-writer test all use this table. */
-export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [...PORTAL_CORE_ROUTES, ...PORTAL_APP_ROUTES];
+export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [
+	{
+		method: "GET",
+		path: "/v1/terminal/sessions",
+		operationId: "terminalSessions",
+		summary: "List interactive shell sessions",
+		auth: "terminal",
+		schema: null,
+	},
+	{
+		method: "POST",
+		path: "/v1/terminal/action",
+		operationId: "terminalAction",
+		summary: "Create, type into, resize or close an interactive shell",
+		auth: "terminal",
+		schema: null,
+	},
+	{
+		method: "GET",
+		path: "/v1/terminal/output/{id}/{cursor}",
+		operationId: "terminalOutput",
+		summary: "Read bounded terminal output",
+		auth: "terminal",
+		schema: null,
+		params: {
+			id: { pattern: "^[a-f0-9-]{36}$", description: "Session ID", example: "00000000-0000-0000-0000-000000000000" },
+			cursor: { pattern: "^[0-9]{1,16}$", description: "Byte cursor", example: "0" },
+		},
+	},
+	{
+		method: "POST",
+		path: "/v1/life/brief/generate",
+		operationId: "generateBrief",
+		summary: "Generate today's Jarvis daily brief",
+		auth: "brief",
+		schema: "BriefGeneration",
+	},
+	{
+		method: "GET",
+		path: "/v1/life/brief/generation",
+		operationId: "briefGenerationStatus",
+		summary: "Daily brief generation status",
+		auth: "brief",
+		schema: "BriefGeneration",
+	},
+	...PORTAL_CORE_ROUTES,
+	...PORTAL_APP_ROUTES,
+	...PORTAL_HANDOFF_SERVICES.map(
+		(service): PortalRoute => ({
+			method: "POST",
+			path: `/v1/open/${service}`,
+			operationId: `open-${service}`,
+			summary: `Open ${service} in the local browser with its own sign-in`,
+			auth: "open",
+			schema: "ServiceOpen",
+			service,
+		}),
+	),
+];

@@ -1,8 +1,7 @@
 /**
  * Builds the Harnessy app into `dist/portal-app/`.
  *
- * The output must run under the portal's unchanged CSP (`default-src 'self';
- * script-src 'self'; style-src 'self'`): no inline script (the module-preload
+ * The output must run under the portal's CSP: no inline script (the module-preload
  * polyfill is off), no inline asset as a `data:` URL, one extracted stylesheet
  * and no source maps. After the bundle is written, `asset-manifest.json` lists
  * every emitted file with its byte length and SHA-256; the portal serves only
@@ -24,6 +23,8 @@ const packageDir = (name: string) => dirname(require.resolve(`${name}/package.js
 /** Bundled third-party code and fonts, with the license each ships. */
 const NOTICE_PACKAGES = [
 	["react", "LICENSE"],
+	["@xterm/xterm", "LICENSE"],
+	["@xterm/addon-fit", "LICENSE"],
 	["react-dom", "LICENSE"],
 	["scheduler", "LICENSE"],
 	["lucide-react", "LICENSE"],

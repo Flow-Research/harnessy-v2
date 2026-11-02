@@ -385,8 +385,18 @@ describe("meeting boot identity probe", () => {
 		expect(() => readMeetingPublicationDarwinBootId(() => answer({ stdout: "garbage\n" }))).toThrowError(
 			expect.objectContaining({ code: "unsupported_platform" }),
 		);
-		const boot = "{ sec = 1760000000, usec = 1 } Thu Oct  9 00:00:00 2025";
-		expect(readMeetingPublicationDarwinBootId(() => answer({ stdout: `${boot}\n` }))).toBe(boot);
+		const boot = "A166EEFA-43CB-4FFF-B1FE-3F2CB4DAC65C";
+		expect(
+			readMeetingPublicationDarwinBootId((path, args) => {
+				expect([path, ...args]).toEqual(["/usr/sbin/sysctl", "-n", "kern.bootsessionuuid"]);
+				return answer({ stdout: `${boot}\n` });
+			}),
+		).toBe(boot.toLowerCase());
+		expect(() =>
+			readMeetingPublicationDarwinBootId(() =>
+				answer({ stdout: "{ sec = 1760000000, usec = 1 } Thu Oct 9 00:00:00 2025" }),
+			),
+		).toThrowError(expect.objectContaining({ code: "unsupported_platform" }));
 	});
 });
 

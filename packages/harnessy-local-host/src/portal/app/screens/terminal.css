@@ -1,0 +1,6 @@
+.terminal-screen { min-width: 0; }
+.terminal-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 20px 0; }
+.terminal-controls button, .terminal-controls select { padding: 8px 12px; border: 1px solid #777; border-radius: 6px; background: var(--surface); color: inherit; cursor: pointer; }
+.terminal-controls button:disabled { opacity: 0.5; cursor: default; }
+.terminal-host { height: min(65vh, 800px); min-height: 300px; background: #101218; padding: 12px; border-radius: 8px; overflow: hidden; }
+.terminal-host .xterm { height: 100%; }

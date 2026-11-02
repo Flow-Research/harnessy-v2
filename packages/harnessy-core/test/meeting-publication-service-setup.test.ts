@@ -116,7 +116,7 @@ it.each([
 		trust.audience = "harnessy.meeting-publication.full-review.v1";
 	}
 	if (failure === "remounted replay" || failure === "remounted stale hash")
-		trust.replay.device = String(BigInt(trust.replay.device) + 1n);
+		trust.replay.device = String(lstatSync(trust.replay.path, { bigint: true }).dev + 1n);
 	const finitePath = join(root, "finite-trust.json");
 	const finiteBytes = `${canonicalMeetingPublicationSmokeJson(trust)}\n`;
 	writeFileSync(finitePath, finiteBytes, { mode: 0o600 });
@@ -186,7 +186,10 @@ it.each([
 			...trust,
 			kind: "harnessy.meeting-publication.service-trust",
 			audience: "harnessy.meeting-publication.service.v1",
-			replay: currentReplay,
+			replay: {
+				...currentReplay,
+				device: process.platform === "darwin" ? expect.stringMatching(/^volume:/u) : currentReplay.device,
+			},
 		});
 		expect(readdirSync(control)).toEqual(["service-trust.json"]);
 		expect(() => provisionMeetingPublicationService(adoption)).toThrow();

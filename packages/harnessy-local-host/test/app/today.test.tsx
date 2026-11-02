@@ -262,7 +262,7 @@ describe("the Today screen", () => {
 			// An ok tile without data is no job data, not a crash.
 			"/v1/jobs": ok(envelope({ jobs: tile("ok") })),
 		});
-		await waitFor(() => expect(text()).toContain("Not written yet (file_missing)"));
+		await waitFor(() => expect(text()).toContain("Today’s briefing hasn’t been generated yet."));
 		// A route that is not a date reads today's brief.
 		expect(reads).toContain("/v1/life/brief");
 		expect(container.querySelector("h1.screen-title")?.textContent).toBe("Today");
