@@ -8,16 +8,31 @@ import "./terminal.css";
 interface SessionItem {
 	id: string;
 	state: string;
+	title?: string;
+	external?: boolean;
 }
 
-export const TerminalScreen = ({ client }: { client: Pick<SessionClient, "get" | "terminalAction"> }) => {
+export const TerminalScreen = ({
+	client,
+	initialSelected,
+}: {
+	client: Pick<SessionClient, "get" | "terminalAction">;
+	initialSelected?: string;
+}) => {
 	const host = useRef<HTMLDivElement>(null);
 	const [sessions, setSessions] = useState<SessionItem[]>([]);
+	const [tmuxSessions, setTmuxSessions] = useState<{ key: string; name: string }[]>([]);
+	const [tmuxKey, setTmuxKey] = useState("");
 	const [selected, setSelected] = useState("");
 	const [cwd, setCwd] = useState("");
 	const [error, setError] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [state, setState] = useState("");
+	const [persistent, setPersistent] = useState(false);
+	const [controlling, setControlling] = useState(false);
+	const takeover = useRef(false);
+	const [attachment, setAttachment] = useState(0);
+	const sendKey = useRef<(data: string) => void>(() => undefined);
 	useEffect(() => {
 		let cancelled = false;
 		void client.get("/v1/terminal/sessions").then((result) => {
@@ -26,7 +41,14 @@ export const TerminalScreen = ({ client }: { client: Pick<SessionClient, "get" |
 				setError("Could not read terminals. Open Harnessy again if your sign-in expired.");
 				return;
 			}
-			const body = result.body as { sessions: SessionItem[]; cwd: string };
+			const body = result.body as {
+				sessions: SessionItem[];
+				cwd: string;
+				persistent?: boolean;
+				tmuxSessions?: { key: string; name: string }[];
+			};
+			setTmuxSessions(body.tmuxSessions ?? []);
+			setPersistent(body.persistent === true);
 			setSessions(body.sessions);
 			setCwd(body.cwd);
 			let remembered: string | null = null;
@@ -35,21 +57,24 @@ export const TerminalScreen = ({ client }: { client: Pick<SessionClient, "get" |
 			} catch {
 				/* Storage is optional. */
 			}
-			setSelected(body.sessions.find((item) => item.id === remembered)?.id ?? body.sessions[0]?.id ?? "");
+			setSelected(
+				body.sessions.find((item) => item.id === (initialSelected || remembered))?.id ?? body.sessions[0]?.id ?? "",
+			);
 		});
 		return () => {
 			cancelled = true;
 		};
-	}, [client]);
+	}, [client, initialSelected]);
 	useEffect(() => {
 		if (!selected || !host.current) return;
+		const viewerId = `${crypto.randomUUID()}:${attachment}`;
 		try {
 			sessionStorage.setItem("harnessy.terminal.selected", selected);
 		} catch {
 			/* Storage is optional. */
 		}
 		let cancelled = false;
-		let inputBlocked = false;
+		let inputBlocked = persistent;
 		let replaying = true;
 		let cursor = 0;
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -71,7 +96,11 @@ export const TerminalScreen = ({ client }: { client: Pick<SessionClient, "get" |
 			queue = queue.then(async () => {
 				// Finish input already accepted before navigation; otherwise a command can be cut in half.
 				if (inputBlocked) return;
-				const result = await client.terminalAction({ ...body, id: selected });
+				const result = await client.terminalAction({
+					...body,
+					id: selected,
+					...(persistent ? { viewer: viewerId } : {}),
+				});
 				if (result.kind !== "ok") {
 					inputBlocked = true;
 					if (!cancelled)
@@ -82,15 +111,16 @@ export const TerminalScreen = ({ client }: { client: Pick<SessionClient, "get" |
 		const resize = () => {
 			if (cancelled) return;
 			fit.fit();
+			if (inputBlocked) return;
 			send({ action: "resize", cols: Math.min(500, terminal.cols), rows: Math.min(200, terminal.rows) });
 		};
 		const observer = new ResizeObserver(resize);
 		observer.observe(host.current);
-		resize();
+		if (!persistent) resize();
 		terminal.focus();
-		const input = terminal.onData((data) => {
+		const acceptInput = (data: string) => {
 			// Historical escape sequences must not send old terminal-query replies into the current shell.
-			if (replaying) return;
+			if (replaying || inputBlocked) return;
 			if (queued + data.length > 65536) {
 				setError("Paste is too large. Paste less than 64 KB at a time.");
 				return;
@@ -102,7 +132,9 @@ export const TerminalScreen = ({ client }: { client: Pick<SessionClient, "get" |
 			queue = queue.then(() => {
 				queued -= data.length;
 			});
-		});
+		};
+		sendKey.current = acceptInput;
+		const input = terminal.onData(acceptInput);
 		const poll = async () => {
 			const result = await client.get(`/v1/terminal/output/${selected}/${cursor}`);
 			if (cancelled) return;
@@ -133,23 +165,48 @@ export const TerminalScreen = ({ client }: { client: Pick<SessionClient, "get" |
 			);
 			if (replaying && body.cursor === body.endCursor) {
 				replaying = false;
-				terminal.options.disableStdin = false;
+				terminal.options.disableStdin = inputBlocked;
 			}
 			if (!cancelled && (body.state === "running" || body.data))
 				timer = setTimeout(() => void poll(), body.data ? 30 : 120);
 		};
 		setError("");
 		setState("running");
-		void poll();
+		if (persistent) {
+			const action = takeover.current ? "takeover" : "attach";
+			takeover.current = false;
+			void client.terminalAction({ action, id: selected, viewer: viewerId }).then((result) => {
+				if (cancelled) return;
+				if (result.kind !== "ok") {
+					setError(result.kind === "error" ? result.message : "Sign in again.");
+					return;
+				}
+				const control = (result.body as { controlling: boolean }).controlling;
+				setControlling(control);
+				inputBlocked = !control;
+				if (control) resize();
+				void poll();
+			});
+		} else void poll();
 		return () => {
 			cancelled = true;
 			clearTimeout(timer);
 			observer.disconnect();
 			input.dispose();
 			terminal.dispose();
+			sendKey.current = () => undefined;
+			if (persistent)
+				void queue.then(() => client.terminalAction({ action: "detach", id: selected, viewer: viewerId }));
 		};
-	}, [client, selected]);
+	}, [client, selected, persistent, attachment]);
 	const action = async (close: boolean) => {
+		if (
+			close &&
+			persistent &&
+			!sessions.find((s) => s.id === selected)?.external &&
+			!window.confirm("End this session and stop its running processes?")
+		)
+			return;
 		setBusy(true);
 		setError("");
 		try {
@@ -175,34 +232,155 @@ export const TerminalScreen = ({ client }: { client: Pick<SessionClient, "get" |
 		<section className="terminal-screen">
 			<h1 className="screen-title">Terminal</h1>
 			<p className="text-2">
-				Runs as you in {cwd || "your workspace"}. Sessions stay open when you switch views. A portal restart ends
-				them.
+				Runs as you in {cwd || "your workspace"}.{" "}
+				{persistent
+					? "Closing this view leaves sessions running, including across portal restarts."
+					: "Sessions stay open when you switch views. A portal restart ends them."}
 			</p>
+			{tmuxSessions.length ? (
+				<div className="terminal-controls">
+					<label>
+						Existing tmux session{" "}
+						<select
+							aria-label="Existing tmux session"
+							value={tmuxKey}
+							onChange={(e) => setTmuxKey(e.target.value)}
+						>
+							<option value="">Choose a session</option>
+							{tmuxSessions.map((s) => (
+								<option key={s.key} value={s.key}>
+									{s.name}
+								</option>
+							))}
+						</select>
+					</label>
+					<button
+						type="button"
+						disabled={!tmuxKey || busy}
+						onClick={() => {
+							setBusy(true);
+							void client
+								.terminalAction({ action: "import-tmux", tmuxKey })
+								.then(async (result) => {
+									if (result.kind !== "ok") {
+										setError(result.kind === "error" ? result.message : "Sign in again.");
+										return;
+									}
+									const listed = await client.get("/v1/terminal/sessions");
+									if (listed.kind === "ok") setSessions((listed.body as { sessions: SessionItem[] }).sessions);
+									setSelected((result.body as { id: string }).id);
+								})
+								.finally(() => setBusy(false));
+						}}
+					>
+						Attach existing session
+					</button>
+					<p>
+						Uses its existing permissions. Removing it here disconnects Harnessy; the tmux process keeps running.
+					</p>
+				</div>
+			) : null}
 			<div className="terminal-controls">
-				<button type="button" disabled={busy || sessions.length >= 4} onClick={() => void action(false)}>
+				<button
+					type="button"
+					disabled={busy || sessions.length >= (persistent ? 16 : 4)}
+					onClick={() => void action(false)}
+				>
 					New terminal
 				</button>
 				{sessions.length > 0 ? (
 					<>
-						<select
-							aria-label="Terminal session"
-							value={selected}
-							onChange={(event) => setSelected(event.target.value)}
-						>
-							{sessions.map((item, index) => (
-								<option key={item.id} value={item.id}>
-									Terminal {index + 1}
-								</option>
-							))}
-						</select>
+						<div className="terminal-session-picker">
+							<select
+								aria-label="Terminal session"
+								value={selected}
+								onChange={(event) => setSelected(event.target.value)}
+							>
+								{sessions.map((item, index) => (
+									<option key={item.id} value={item.id}>
+										{item.title || `Terminal ${index + 1}`}
+									</option>
+								))}
+							</select>
+						</div>
 						<button type="button" disabled={busy} onClick={() => void action(true)}>
-							Close terminal
+							{sessions.find((s) => s.id === selected)?.external
+								? "Remove attachment"
+								: persistent
+									? "End session"
+									: "Close terminal"}
 						</button>
 						<output>{state}</output>
+						{persistent && (state === "interrupted" || state === "failed") ? (
+							<button
+								type="button"
+								onClick={() => {
+									void client.terminalAction({ action: "resume", id: selected }).then((result) => {
+										if (result.kind !== "ok") {
+											setError(result.kind === "error" ? result.message : "Sign in again.");
+											return;
+										}
+										setSelected("");
+										setTimeout(() => setSelected(selected), 0);
+									});
+								}}
+							>
+								Resume saved conversation
+							</button>
+						) : null}
+						{persistent ? (
+							<button
+								type="button"
+								onClick={() => {
+									const title = window.prompt(
+										"Session name",
+										sessions.find((s) => s.id === selected)?.title ?? "",
+									);
+									if (title?.trim())
+										void client.terminalAction({ action: "rename", id: selected, title }).then((result) => {
+											if (result.kind === "ok")
+												setSessions((items) => items.map((s) => (s.id === selected ? { ...s, title } : s)));
+										});
+								}}
+							>
+								Rename
+							</button>
+						) : null}
+						{persistent && !controlling ? (
+							<button
+								type="button"
+								onClick={() => {
+									takeover.current = true;
+									setAttachment((value) => value + 1);
+								}}
+							>
+								Take control
+							</button>
+						) : null}
 					</>
 				) : null}
 			</div>
 			{error ? <p role="alert">{error}</p> : null}
+			{selected ? (
+				<div className="terminal-controls" role="toolbar" aria-label="Terminal keys">
+					{[
+						["Esc", "\u001b"],
+						["Tab", "\t"],
+						["Ctrl-C", "\u0003"],
+						["Up", "\u001b[A"],
+						["Down", "\u001b[B"],
+					].map(([label, data]) => (
+						<button
+							type="button"
+							key={label}
+							disabled={persistent && !controlling}
+							onClick={() => sendKey.current(data!)}
+						>
+							{label}
+						</button>
+					))}
+				</div>
+			) : null}
 			{selected ? (
 				<div ref={host} className="terminal-host" />
 			) : (

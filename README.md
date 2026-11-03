@@ -109,7 +109,7 @@ What integrations are connected?
 
 No separate engine command is required. Run `harnessy web` only when you want
 the cockpit for browser handoffs, connection setup, approvals, or audit. It
-starts or attaches Executor, registers Harnessy's bundled AnyType integration,
+starts or attaches Executor, registers Harnessy's bundled knowledge-tool integration,
 and opens the authenticated URL. Use `--port`, `--data-dir`, or `--scope` when
 you need explicit cockpit settings.
 
@@ -134,7 +134,7 @@ nothing to register:
 
 ```text
 What integrations are connected?
-Search my AnyType notes for the Q3 roadmap.
+Search my connected knowledge tool for the Q3 roadmap.
 ```
 
 Under the hood the agent uses three built-in tools and two commands:
@@ -164,20 +164,11 @@ harnessy mcp install --print          # show the command instead of running it
 This registers bundled `executor mcp` over stdio. Each agent starts or attaches
 the same Executor-owned daemon; there is no bearer token to copy.
 
-### 7. Try the AnyType connector (optional)
+### 7. Connect a knowledge tool (optional)
 
-Harnessy ships a local-first [AnyType](https://anytype.io) connector. In the
-AnyType desktop app: **Settings → API keys → create a key**, then:
-
-```bash
-harnessy connector anytype discover                  # readiness evidence: key, reachability, capabilities
-harnessy connector anytype spaces
-harnessy connector anytype search --space <space-id> --query "roadmap"
-```
-
-To use it from the cockpit/agent instead, open **AnyType → Add account** in the
-cockpit and paste the same key. Keys are only ever sent to loopback unless you
-pass `--allow-remote`.
+Choose a knowledge tool through an available integration. Provider setup and
+current workflow limits are in [Knowledge-tool support](docs/knowledge-tools.md).
+An engine integration does not automatically enable every Jarvis workflow.
 
 ---
 
@@ -216,7 +207,7 @@ After installing or changing extensions, run `/reload` inside `hsy`.
 | Memory | Scoped project facts and decisions under `.harnessy/memory/` |
 | Profiles | Load plans for context and memory files |
 | Skills | Project-local skills under `.harnessy/skills/` |
-| Connectors | Local-first integration capabilities, starting with AnyType |
+| Connectors | Integration contracts for connected tools |
 | Verification | Checks for lockfiles, generated files, capability paths, and dependencies |
 
 ### Project layout
@@ -262,11 +253,6 @@ harnessy skill metrics compute <name>
 harnessy web [--port] [--data-dir] [--scope]
 harnessy mcp install [--agent <a>] [--global] [--yes] [--print]
 
-# AnyType connector
-harnessy connector anytype discover
-harnessy connector anytype spaces
-harnessy connector anytype search --space <space-id> --query "roadmap"
-harnessy connector anytype get --space <space-id> --object-id <object-id>
 ```
 
 Most read commands support `--json`. `harnessy --help` lists everything.

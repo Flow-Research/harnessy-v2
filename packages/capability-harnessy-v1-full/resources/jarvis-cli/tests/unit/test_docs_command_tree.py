@@ -1,6 +1,7 @@
 """Regression tests for complete machine-readable Jarvis command documentation."""
 
 import json
+import re
 from pathlib import Path
 
 import click
@@ -27,7 +28,7 @@ def test_generated_docs_cover_live_click_tree() -> None:
     live = _live_nodes(cli, ("jarvis",))
 
     assert documented == [path for path, _ in live]
-    assert len(documented) == 156
+    assert len(documented) == 157
     assert len(set(documented)) == len(documented)
     assert ("jarvis", "wiki", "research") in documented
     assert ("jarvis", "whatsapp", "send-template") in documented
@@ -71,4 +72,53 @@ def test_docs_json_serializes_complete_tree() -> None:
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert len(payload["command_tree"]) == 156
+    assert len(payload["command_tree"]) == 157
+    assert payload["description"] == "AI-powered personal assistant"
+    assert "configured knowledge tool" in payload["commands"]["spaces"]["description"]
+    assert "configured knowledge tool" in payload["commands"]["task"]["description"]
+    assert not any("AnyType" in requirement for requirement in payload["requirements"])
+
+
+def test_live_command_and_option_descriptions_are_provider_neutral() -> None:
+    """Check the actual Click help, not just a snapshot that can bless old copy.
+
+    Literal command IDs and resolver choices remain valid protocol identifiers.
+    Setup and support limits belong in docs/knowledge-tools.md.
+    """
+    for path, command in _live_nodes(cli, ("jarvis",)):
+        assert "anytype" not in (command.help or "").lower(), path
+        assert "anytype" not in (command.short_help or "").lower(), path
+        for parameter in command.params:
+            if isinstance(parameter, click.Option):
+                assert "anytype" not in (parameter.help or "").lower(), (path, parameter.name)
+
+
+def test_curated_descriptions_are_provider_neutral() -> None:
+    def check(value: object, path: str) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "description" and isinstance(child, str):
+                    assert "anytype" not in child.lower(), path
+                check(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                check(child, f"{path}[{index}]")
+
+    check(_generate_docs(), "docs")
+
+
+def test_overview_docs_do_not_brand_jarvis_for_one_provider() -> None:
+    root = Path(__file__).resolve().parents[2]
+    for name in ("README.md", "AGENTS.md"):
+        assert not re.search("anytype", (root / name).read_text(), re.IGNORECASE), name
+    support = (root / "docs/knowledge-tools.md").read_text()
+    assert "These migration steps remain open" in support
+    assert "Obsidian" in support
+
+
+def test_sync_rendered_help_uses_destination_language() -> None:
+    for args in (["sync", "--help"], ["sync", "run", "--help"], ["sync", "dedupe", "--help"]):
+        result = CliRunner().invoke(cli, args)
+        assert result.exit_code == 0
+        assert "anytype" not in result.output.lower()
+    assert "knowledge-tool collection" in CliRunner().invoke(cli, ["sync", "--help"]).output

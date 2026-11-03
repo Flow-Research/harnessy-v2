@@ -268,7 +268,7 @@ def _interactive_update(
 def object_cli() -> None:
     """Inspect and update any object by ID.
 
-    Paste an object ID, AnyType link, or Notion URL to fetch
+    Paste an object ID or a supported knowledge-tool URL to fetch
     and inspect any object from your knowledge base.
     """
     pass
@@ -277,7 +277,7 @@ def object_cli() -> None:
 @object_cli.command(name="get")
 @click.argument("object_id_or_url", required=True)
 @click.option("--space", default=None, help="Space name or ID to use")
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use")
 @click.option("--raw", is_flag=True, help="Show raw API response as JSON")
 def get_object(
     object_id_or_url: str,
@@ -287,7 +287,7 @@ def get_object(
 ) -> None:
     """Fetch and display an object by ID or URL.
 
-    Accepts raw IDs, AnyType deeplinks, or Notion page URLs.
+    Accepts raw IDs and URLs supported by the selected adapter.
 
     Examples:
         jarvis object get bafyreig...
@@ -330,7 +330,7 @@ def get_object(
 @object_cli.command(name="edit")
 @click.argument("object_id_or_url", required=True)
 @click.option("--space", default=None, help="Space name or ID to use")
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use")
 @click.option("--set", "set_values", multiple=True, help="Set property: key=value (repeatable)")
 @click.option(
     "--body",

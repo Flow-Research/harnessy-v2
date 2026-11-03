@@ -13,12 +13,19 @@ import * as Result from "effect/Result";
 
 import { isPortalServerProof, portalClientProofHeader } from "./auth.ts";
 import { createInstalledBriefGeneration } from "./brief-generation.ts";
+import { DeviceAccess } from "./device-access.ts";
 import { renderPortalLaunchAgent } from "./launchd-plan.ts";
+import { ManagedTerminal } from "./managed-terminal.ts";
 import { createPortalServiceOpener } from "./open-service.ts";
 import { loadPortalPageAssets } from "./page-assets.ts";
-import { PORTAL_DEFAULT_PORT, PORTAL_HOST, type PortalServer, startPortalServer } from "./server.ts";
+import {
+	PORTAL_DEFAULT_PORT,
+	PORTAL_HOST,
+	type PortalServer,
+	type PortalServerOptions,
+	startPortalServer,
+} from "./server.ts";
 import { createPortalSources } from "./sources.ts";
-import { PortalTerminal } from "./terminal.ts";
 import {
 	newPortalSecret,
 	PortalStateError,
@@ -43,7 +50,7 @@ export type PortalOpenRoute = (typeof PORTAL_OPEN_ROUTES)[number];
 export const PORTAL_USAGE =
 	"harnessy-portal serve [--port N] [--state-dir DIR] [--home-root DIR] [--workspace-root DIR] | " +
 	`status [--port N] [--state-dir DIR] | open [--port N] [--state-dir DIR] [--route ${PORTAL_OPEN_ROUTES.join("|")}] [--print] | ` +
-	"service-plan [--port N] [--state-dir DIR]";
+	"signin --request ID [--port N] [--state-dir DIR] | service-plan [--port N] [--state-dir DIR]";
 
 const OPTIONS = {
 	port: { type: "string" },
@@ -53,6 +60,7 @@ const OPTIONS = {
 	host: { type: "string" },
 	print: { type: "boolean" },
 	route: { type: "string" },
+	request: { type: "string" },
 } as const;
 
 export interface PortalCommandIo {
@@ -200,6 +208,18 @@ export const runPortalCommand = async (
 	const timeoutMs = io.requestTimeoutMs ?? 5_000;
 
 	switch (command) {
+		case "signin": {
+			only(["port", "state-dir", "request"]);
+			if (!values.request || !/^[A-Za-z0-9_-]{43}$/u.test(values.request)) fail("invalid_signin_request");
+			await callWithInstallProof(
+				parsePort(values.port, false),
+				readPortalInstallToken(stateDir),
+				"POST",
+				`/v1/session/browser/approve/${values.request}`,
+				timeoutMs,
+			);
+			return { kind: "done" };
+		}
 		case "serve": {
 			only(["port", "state-dir", "home-root", "workspace-root", "host"]);
 			if (values.host !== undefined && values.host !== PORTAL_HOST) fail("host_refused");
@@ -215,13 +235,16 @@ export const runPortalCommand = async (
 				timeoutMs: DEFAULT_READ_TIMEOUT_MS,
 				clock: () => new Date(),
 			});
-			const server = await startPortalServer({
+			const options: PortalServerOptions = {
+				devices: io.env.HARNESSY_PORTAL_REMOTE_ORIGIN
+					? new DeviceAccess(root, io.env.HARNESSY_PORTAL_REMOTE_ORIGIN)
+					: undefined,
 				installToken,
 				sources,
 				version: io.version,
 				port,
 				page: loadPortalPageAssets(),
-				terminal: new PortalTerminal(workspaceRoot ?? io.homeDir, io.env),
+				terminal: new ManagedTerminal(join(root, "terminals"), workspaceRoot ?? io.homeDir, io.env),
 				briefGeneration: createInstalledBriefGeneration({
 					homeRoot: absolute(values["home-root"]) ?? io.homeDir,
 					workspaceRoot,
@@ -237,8 +260,29 @@ export const runPortalCommand = async (
 					cliPath: io.cliPath,
 				}),
 				log: (entry) => io.write(`${JSON.stringify(entry)}\n`),
-			});
-			return { kind: "serving", server };
+			};
+			const server = await startPortalServer(options);
+			if (!options.devices) return { kind: "serving", server };
+			try {
+				const remote = await startPortalServer({
+					...options,
+					remote: true,
+					port: parsePort(io.env.HARNESSY_PORTAL_REMOTE_PORT ?? "8791", false),
+				});
+				return {
+					kind: "serving",
+					server: {
+						...server,
+						close: async () => {
+							await remote.close();
+							await server.close();
+						},
+					},
+				};
+			} catch (error) {
+				await server.close();
+				throw error;
+			}
 		}
 		case "status": {
 			only(["port", "state-dir"]);

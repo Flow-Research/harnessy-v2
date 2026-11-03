@@ -40,7 +40,7 @@ export class PortalTerminal {
 			state: session.state,
 		};
 	}
-	action(value: unknown) {
+	action(value: unknown, _actor?: string) {
 		if (!value || typeof value !== "object" || Array.isArray(value))
 			throw new TerminalError("invalid_terminal_action");
 		const body = value as Record<string, unknown>;

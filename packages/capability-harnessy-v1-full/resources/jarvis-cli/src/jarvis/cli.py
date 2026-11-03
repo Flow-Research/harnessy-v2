@@ -176,11 +176,7 @@ def select_space(adapter: KnowledgeBaseAdapter) -> tuple[str, str]:
 @click.group()
 @click.version_option(version="0.1.0", prog_name="jarvis")
 def cli() -> None:
-    """Jarvis - AI-powered personal assistant for AnyType.
-
-    Features:
-    - Task scheduling: Analyze and optimize your schedule
-    - Journaling: AI-powered freeform journaling
+    """Jarvis, AI-powered personal assistant.
 
     Use 'jarvis <command> --help' for more information.
     """
@@ -664,7 +660,7 @@ def config() -> None:
     """Manage Jarvis configuration.
 
     Configuration is stored in ~/.jarvis/config.yaml and controls:
-    - Which backend to use (anytype, notion)
+    - Which registered knowledge-tool adapter to use
     - Backend-specific settings
     - Analytics preferences
     """
@@ -833,7 +829,6 @@ def config_backend(name: str | None) -> None:
 
     Examples:
         jarvis config backend           # Show current
-        jarvis config backend anytype   # Switch to AnyType
         jarvis config backend notion    # Switch to Notion
     """
     from jarvis.config import (
@@ -1509,7 +1504,7 @@ def _generate_docs() -> dict:
     documentation = {
         "name": "jarvis",
         "version": "0.1.0",
-        "description": "AI-powered personal assistant for AnyType",
+        "description": "AI-powered personal assistant",
         "commands": {
             "analyze": {
                 "description": "Analyze task distribution over a date range",
@@ -1546,7 +1541,7 @@ def _generate_docs() -> dict:
                 "examples": ["jarvis rebalance"],
             },
             "spaces": {
-                "description": "List available AnyType spaces and select one",
+                "description": "List available spaces in the configured knowledge tool and select one",
                 "options": {},
                 "examples": ["jarvis spaces"],
             },
@@ -1577,7 +1572,7 @@ def _generate_docs() -> dict:
                     "backend": {
                         "description": "Show or set the active backend",
                         "options": {
-                            "NAME": "Backend name (anytype, notion)",
+                            "NAME": "Knowledge-tool adapter name (see jarvis config capabilities)",
                         },
                         "examples": [
                             "jarvis config backend",
@@ -1663,7 +1658,7 @@ def _generate_docs() -> dict:
                 },
             },
             "journal": {
-                "description": "AI-powered journaling for AnyType",
+                "description": "AI-powered journaling (legacy destination only)",
                 "subcommands": {
                     "write": {
                         "description": "Write a new journal entry",
@@ -1809,10 +1804,10 @@ def _generate_docs() -> dict:
                         ),
                         "options": {
                             "SOURCE": (
-                                "File path, AnyType/Notion URL, generic URL, or '-' for stdin"
+                                "File path, supported knowledge-tool URL, generic URL, or '-' for stdin"
                             ),
                             "--resolver": (
-                                "Override source resolution (anytype, notion, file, url, stdin)"
+                                "Override source resolution with a supported resolver"
                             ),
                             "--backend": "Backend override for object-based resolvers",
                             "--title": "Override the inferred meeting title",
@@ -2432,7 +2427,7 @@ def _generate_docs() -> dict:
                 },
             },
             "task": {
-                "description": "Manage tasks in AnyType",
+                "description": "Manage tasks in the configured knowledge tool",
                 "subcommands": {
                     "create": {
                         "description": "Create a new task",
@@ -2505,13 +2500,13 @@ def _generate_docs() -> dict:
                     },
                     "audit-anytype": {
                         "description": (
-                            "Audit a synced Anytype content Collection for duplicate links"
+                            "Audit duplicate links in a synced content collection (legacy destination only)"
                         ),
                         "options": {
                             "PATH": "Content piece folder or index.md path",
                             "--sync-preset": "Sync preset/state name to audit",
                             "--sync-source": "Sync source root for ad-hoc sync state",
-                            "--sync-destination": "Anytype destination object_id:space_id",
+                            "--sync-destination": "Destination object_id:space_id for the sync adapter",
                         },
                         "examples": [
                             (
@@ -2527,16 +2522,16 @@ def _generate_docs() -> dict:
                         ),
                         "options": {
                             "PATH": "Content piece folder or index.md path",
-                            "--journal": "Write journal.md to Anytype Journal",
+                            "--journal": "Write journal.md to the journal destination",
                             "--no-journal": "Skip Journal write",
                             "--space": "Journal space name or ID; repeatable",
-                            "--sync": "Run Anytype content sync",
-                            "--no-sync": "Skip Anytype content sync",
+                            "--sync": "Run content sync with the supported adapter",
+                            "--no-sync": "Skip content sync",
                             "--dedupe": "Remove duplicate Collection links after sync",
                             "--no-dedupe": "Skip duplicate Collection-link cleanup",
                             "--sync-preset": "Sync preset/state name to use",
                             "--sync-source": "Sync source root for ad-hoc sync state",
-                            "--sync-destination": "Anytype destination object_id:space_id",
+                            "--sync-destination": "Destination object_id:space_id for the sync adapter",
                             "--require": "Text that must appear before publish; repeatable",
                             "--forbid": "Text that must not appear before publish; repeatable",
                             "--hygiene / --no-hygiene": (
@@ -2560,7 +2555,7 @@ def _generate_docs() -> dict:
                         "examples": ["jarvis content list --status draft"],
                     },
                     "approve": {
-                        "description": "Approve content and push to Anytype",
+                        "description": "Approve content and push to the destination (legacy destination only)",
                         "options": {
                             "PATH": "Content piece folder",
                             "--all": "Approve all pieces in review status",
@@ -2568,7 +2563,7 @@ def _generate_docs() -> dict:
                         "examples": ["jarvis content approve drafts/2026/Jun/01-harnessy"],
                     },
                     "push": {
-                        "description": "Push all approved content pieces to Anytype",
+                        "description": "Push all approved content pieces to the destination (legacy destination only)",
                         "options": {"--force": "Re-push even if already pushed"},
                         "examples": ["jarvis content push --force"],
                     },
@@ -2577,7 +2572,7 @@ def _generate_docs() -> dict:
                         "examples": ["jarvis content status"],
                     },
                     "strategy": {
-                        "description": "Push the content strategy document to Anytype",
+                        "description": "Push the strategy document to the destination (legacy destination only)",
                         "examples": ["jarvis content strategy"],
                     },
                 },
@@ -2619,27 +2614,27 @@ def _generate_docs() -> dict:
             },
             "sync": {
                 "description": (
-                    "Sync local folders into an Anytype Collection; directories "
+                    "Sync local folders into a destination collection (legacy destination only); directories "
                     "become Collections, text files become Pages, and other "
-                    "files upload as native Anytype file objects by default"
+                    "files upload as native file objects by default"
                 ),
                 "subcommands": {
                     "run": {
-                        "description": "Run an incremental source folder/file sync to Anytype",
+                        "description": "Run an incremental source folder/file sync to the destination",
                         "options": {
                             "--preset": "Use a saved sync preset",
                             "--source": "Source path, either a file or directory",
                             "--destination": (
-                                "Anytype object link for the target Collection, "
+                                "Supported object link for the target collection, "
                                 "or raw object_id:space_id"
                             ),
                             "--prune": (
-                                "Delete Anytype objects that were previously synced "
+                                "Delete destination objects that were previously synced "
                                 "but no longer exist locally"
                             ),
                             "--dry-run": (
                                 "Show the planned create/update/prune operations "
-                                "without connecting to Anytype or writing state"
+                                "without connecting to the destination or writing state"
                             ),
                             "--yes": "Skip confirmation prompts for writes",
                             "--include-extension": (
@@ -2661,7 +2656,7 @@ def _generate_docs() -> dict:
                         "examples": [
                             (
                                 "jarvis sync run --source ./notes --destination "
-                                "'anytype://object?objectId=...&spaceId=...' --dry-run"
+                                "'root_obj:space_id' --dry-run"
                             ),
                             (
                                 "jarvis sync run --source ./notes --destination "
@@ -2684,14 +2679,14 @@ def _generate_docs() -> dict:
                     },
                     "dedupe": {
                         "description": (
-                            "Remove duplicate Anytype Collection links by keeping "
+                            "Remove duplicate destination collection links by keeping "
                             "the object IDs recorded in sync state"
                         ),
                         "options": {
                             "--preset": "Use a saved sync preset/state",
                             "--source": "Source path for ad-hoc sync state lookup",
                             "--destination": (
-                                "Anytype target Collection link for ad-hoc state lookup"
+                                "Target collection link for ad-hoc state lookup"
                             ),
                             "--path": "Limit cleanup to one synced Collection relpath",
                             "--dry-run": "Show stale links without removing them",
@@ -2741,10 +2736,10 @@ def _generate_docs() -> dict:
                         "description": "Deep research and prioritize a reading list",
                         "options": {
                             "TARGET": (
-                                "AnyType URL, Notion URL, file path, generic URL, or '-' for stdin"
+                                "Supported knowledge-tool URL, file path, generic URL, or '-' for stdin"
                             ),
                             "--resolver": (
-                                "Override source resolution (anytype, notion, file, url, stdin)"
+                                "Override source resolution with a supported resolver"
                             ),
                             "--backend": "Backend override for object-based resolvers",
                             "--output": "Save markdown output to file",
@@ -2765,7 +2760,7 @@ def _generate_docs() -> dict:
                         "description": "Extract and display links from a reading list source",
                         "options": {
                             "TARGET": (
-                                "AnyType URL, Notion URL, file path, generic URL, or '-' for stdin"
+                                "Supported knowledge-tool URL, file path, generic URL, or '-' for stdin"
                             ),
                             "--resolver": "Override source resolution",
                             "--backend": "Backend override for object-based resolvers",
@@ -2785,7 +2780,7 @@ def _generate_docs() -> dict:
             "rl": {
                 "description": "Quick alias for 'reading-list organize'",
                 "options": {
-                    "TARGET": "AnyType URL, Notion URL, file path, generic URL, or '-' for stdin",
+                    "TARGET": "Supported knowledge-tool URL, file path, generic URL, or '-' for stdin",
                     "--resolver": "Override source resolution",
                     "--backend": "Backend override for object-based resolvers",
                     "--output": "Save markdown output to file",
@@ -2890,7 +2885,7 @@ def _generate_docs() -> dict:
         },
         "requirements": [
             "Python 3.11+",
-            "AnyType desktop app running on localhost:31009",
+            "A configured knowledge-tool adapter for commands that access remote knowledge",
         ],
     }
     documentation["command_tree"] = _generate_command_tree(cli, ["jarvis"])
@@ -2968,7 +2963,7 @@ def _format_docs_markdown(docs: dict) -> str:
 @cli.command()
 @click.option("--days", default=14, help="Number of days to analyze (default: 14)")
 @click.option("--space", default=None, help="Space name or ID to use")
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use (defaults to configuration)")
 def analyze(days: int, space: str | None, backend: str | None) -> None:
     """Analyze current schedule workload."""
     try:
@@ -3071,7 +3066,7 @@ def _display_analysis(analysis: WorkloadAnalysis) -> None:
 @cli.command()
 @click.option("--days", default=14, help="Number of days to consider (default: 14)")
 @click.option("--space", default=None, help="Space name or ID to use")
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use (defaults to configuration)")
 def suggest(days: int, space: str | None, backend: str | None) -> None:
     """Generate rescheduling suggestions using AI."""
     import os
@@ -3153,7 +3148,7 @@ def _display_suggestions(suggestions: list[Suggestion]) -> None:
 
 @cli.command()
 @click.option("--yes", "-y", is_flag=True, help="Apply all suggestions without prompting")
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use (defaults to configuration)")
 def apply(yes: bool, backend: str | None) -> None:
     """Apply pending suggestions to the backend."""
     suggestions, space_id = load_suggestions()
@@ -3222,7 +3217,7 @@ def apply(yes: bool, backend: str | None) -> None:
 @click.option("--space", default=None, help="Space name or ID to use")
 @click.option("--dry-run", is_flag=True, help="Show what would be done without applying")
 @click.option("--yes", "-y", is_flag=True, help="Apply all changes without prompting")
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use (defaults to configuration)")
 def rebalance(space: str | None, dry_run: bool, yes: bool, backend: str | None) -> None:
     """Rebalance all tasks: overdue + next 2 months → redistribute evenly.
 
@@ -3407,7 +3402,7 @@ def rebalance(space: str | None, dry_run: bool, yes: bool, backend: str | None) 
 @cli.command()
 @click.option("--days", default=14, help="Number of days to consider (default: 14)")
 @click.option("--space", default=None, help="Space name or ID to use")
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use (defaults to configuration)")
 @click.option("--dry-run", is_flag=True, help="Show plan without saving suggestions")
 def reorganize(days: int, space: str | None, backend: str | None, dry_run: bool) -> None:
     try:
@@ -3456,7 +3451,7 @@ def calendar() -> None:
 @calendar.command("plan")
 @click.option("--days", default=14, help="Planning horizon in days")
 @click.option("--space", default=None, help="Space name or ID to use")
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use (defaults to configuration)")
 @click.option("--min-block", default=30, type=int, help="Minimum block minutes")
 @click.option(
     "--interactive/--no-interactive",
@@ -3712,7 +3707,7 @@ def calendar_apply(plan_id: str | None, assume_yes: bool) -> None:
 
 
 @cli.command()
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use (defaults to configuration)")
 def spaces(backend: str | None) -> None:
     """List available spaces and select one."""
     from jarvis.state import clear_selected_space

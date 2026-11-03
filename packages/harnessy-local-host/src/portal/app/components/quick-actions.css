@@ -1,0 +1,13 @@
+.quick-actions-fab { position: fixed; right: 24px; bottom: 24px; z-index: 35; display: flex; gap: 8px; align-items: center; min-height: 48px; padding: 12px 18px; border-radius: 28px; background: var(--surface); color: inherit; border: 1px solid currentColor; box-shadow: 0 4px 20px #0003; cursor: pointer; }
+.quick-actions-backdrop { position: fixed; inset: 0; z-index: 60; background: #0006; display: flex; justify-content: flex-end; }
+.quick-actions-panel { width: min(680px, 100%); background: var(--surface, #171a22); color: var(--text, inherit); padding: 24px; overflow: auto; box-shadow: -8px 0 32px #0003; }
+.quick-actions-panel header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.quick-actions-panel button { cursor: pointer; min-height: 44px; padding: 10px 14px; }
+.quick-actions-panel label { display: grid; gap: 8px; margin-block: 16px; }
+.quick-actions-panel input, .quick-actions-panel textarea, .quick-actions-panel select { width: 100%; padding: 12px; color: inherit; background: var(--surface); border: 1px solid #888; border-radius: 8px; font: inherit; }
+.quick-actions-panel pre { white-space: pre-wrap; max-height: 200px; overflow: auto; font: inherit; }
+.quick-actions-menu { display: grid; gap: 12px; margin-block: 20px; }
+.quick-actions-menu button { display: flex; gap: 12px; align-items: center; }
+.quick-actions-panel .terminal-host { height: 60dvh; }
+.brief-section-action { margin-block: 8px 16px; min-height: 44px; cursor: pointer; }
+@media (max-width: 760px) { .quick-actions-fab { bottom: calc(80px + env(safe-area-inset-bottom)); right: 16px; } .quick-actions-panel { width: 100%; padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom)); } }

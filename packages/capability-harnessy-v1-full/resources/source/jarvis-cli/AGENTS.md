@@ -1,6 +1,6 @@
 # Jarvis - AI Assistant with Pluggable Backends
 
-This is a CLI tool for task scheduling and journaling that supports multiple knowledge base backends (AnyType, Notion).
+Jarvis is an AI-powered personal assistant with pluggable knowledge-tool adapters. Describe general workflows in provider-neutral terms. Keep literal adapter IDs, configuration keys and URL schemes accurate.
 
 ## AI Agent Discovery
 
@@ -56,7 +56,7 @@ uv run python -m jarvis <command>
 | `jarvis suggest` | Generate AI rescheduling suggestions |
 | `jarvis apply` | Apply pending suggestions interactively |
 | `jarvis rebalance` | Full schedule rebalance |
-| `jarvis spaces` | List/select AnyType spaces |
+| `jarvis spaces` | List/select spaces in the configured knowledge tool |
 | `jarvis init` | Initialize context directories |
 | `jarvis context status` | Show loaded context files |
 | `jarvis context edit <file>` | Edit a context file |
@@ -89,17 +89,16 @@ uv run python -m jarvis <command>
 | `jarvis whatsapp send-template` | Send an approved WhatsApp template |
 | `jarvis whatsapp threads list` | List local WhatsApp conversation threads |
 | `jarvis whatsapp threads read <id>` | Read a local WhatsApp conversation thread |
-| `jarvis task create` | Create a new task in AnyType |
+| `jarvis task create` | Create a task in the configured knowledge tool |
 | `jarvis t` | Alias for `task create` (quick capture) |
 | `jarvis content package <path>` | Build a journal-ready `journal.md` package for a content piece |
 | `jarvis content verify <path>` | Check required files and canonical wording before publish/sync |
 | `jarvis content publish-draft <path>` | Package, verify, optionally journal, sync, and dedupe a content draft |
-| `jarvis content audit-anytype <path>` | Audit a synced content Collection for duplicate Anytype links |
 | `jarvis text-hygiene check <path>` | Report configured AI-speak patterns in generated text |
 | `jarvis text-hygiene clean <path>` | Remove configured AI-speak patterns from generated text |
-| `jarvis sync run` | Sync a local folder tree into Anytype Collections, Pages, and file objects |
+| `jarvis sync run` | Sync a local folder tree into destination collections, pages and files |
 | `jarvis sync dedupe` | Remove duplicate Collection links using sync state as truth |
-| `jarvis sync preset add` | Save a reusable local source to Anytype destination sync preset |
+| `jarvis sync preset add` | Save a reusable local source to knowledge-tool destination sync preset |
 | `jarvis object get <id>` | Fetch and display any object by ID or URL |
 | `jarvis object edit <id>` | Edit object properties (interactive or --set) |
 | `jarvis o <id>` | Quick object lookup/edit alias |
@@ -161,7 +160,7 @@ jarvis o bafyreig... --set done=true
 ### Sync Commands
 
 ```bash
-# Plan a local folder → Anytype Collection sync without connecting or writing
+# Plan a local folder to destination collection sync without connecting or writing
 jarvis sync run --source ./notes --destination "root_obj:space_id" --dry-run
 
 # Apply the sync without an interactive confirmation prompt
@@ -170,13 +169,13 @@ jarvis sync run --source ./notes --destination "root_obj:space_id" --yes
 # Add another text extension for a one-off sync
 jarvis sync run --source ./repo --destination "root_obj:space_id" --include-extension py --dry-run
 
-# Upload non-text files as native Anytype file objects (default)
+# Upload non-text files as native destination file objects (default)
 jarvis sync run --source ./notes --destination "root_obj:space_id" --unsupported-mode upload --yes
 
 # Represent non-text files as metadata placeholder pages instead
 jarvis sync run --source ./notes --destination "root_obj:space_id" --unsupported-mode stub --yes
 
-# Delete Anytype objects previously synced by this preset when they disappear locally
+# Delete destination objects previously synced by this preset when they disappear locally
 jarvis sync run --preset flow-context --prune --yes
 
 # Remove stale duplicate Collection links caused by interrupted/failed syncs
@@ -188,8 +187,9 @@ jarvis sync preset add
 jarvis sync preset list
 ```
 
-`jarvis sync` maps local directories to AnyType Collections, supported text
-files to Pages, and non-text files to native AnyType file objects by default.
+The current `jarvis sync` implementation supports only the legacy destination. It maps
+local directories to collections, text files to pages, and other files to native
+file objects by default.
 Files outside the include-extension list, or files that cannot be read as UTF-8
 text, can be handled with `--unsupported-mode upload`, `warn`, `stub`, or
 `error`. `upload` is the default; `stub` creates metadata placeholder Pages when
@@ -206,13 +206,12 @@ jarvis content verify drafts/2026/Jun/01-harnessy \
   --require "agent capability harness" \
   --forbid "software project harness"
 
-# Package, verify, sync to Anytype, then clean duplicate Collection links
+# Package, verify, sync to the destination, then clean duplicate Collection links
 jarvis content publish-draft drafts/2026/Jun/01-harnessy \
   --require "agent capability harness" \
   --forbid "software project harness"
 
-# Audit Anytype links for one synced content piece
-jarvis content audit-anytype drafts/2026/Jun/01-harnessy
+# See the knowledge-tool support guide for the legacy destination audit command.
 ```
 
 `jarvis content package` writes `journal.md` beside `index.md` and platform
@@ -321,7 +320,7 @@ Scheduled Fathom polls must omit `--json`: that form includes transcript and raw
 markdown in captured cron output. Use the normal count/state output, and keep
 `~/.agents/cron/` directories at `0700` with log/state files at `0600`.
 
-Meeting publication is separate from AnyType sync. It stores note paths, hashes,
+Meeting publication is separate from knowledge-tool sync. It stores note paths, hashes,
 states, and remote IDs in an owner-only SQLite queue, never copied canonical note
 content. The review inbox has an **Update meeting note** action that validates
 and atomically writes the actual canonical Markdown file while leaving it
@@ -449,7 +448,6 @@ jarvis context status
 ```
 src/jarvis/
 ├── cli.py              # Main CLI entry point
-├── anytype_client.py   # AnyType API wrapper (legacy, use adapters)
 ├── context_reader.py   # Two-tier context loading
 ├── analyzer.py         # Workload analysis
 ├── ai_client.py        # Anthropic API client
@@ -462,7 +460,6 @@ src/jarvis/
 │   ├── base.py         # KnowledgeBaseAdapter Protocol
 │   ├── exceptions.py   # Typed exception hierarchy
 │   ├── retry.py        # Retry decorator with backoff
-│   ├── anytype.py      # AnyType adapter implementation
 │   └── notion/         # Notion adapter package
 │       ├── __init__.py
 │       ├── adapter.py  # Notion adapter implementation
@@ -506,7 +503,6 @@ src/jarvis/
 | `src/jarvis/journal/cli.py` | Journal subcommands |
 | `src/jarvis/task/cli.py` | Task subcommands |
 | `src/jarvis/object/cli.py` | Object get/edit subcommands |
-| `src/jarvis/anytype_client.py` | AnyType API integration |
 | `src/jarvis/context_reader.py` | Context file loading/merging |
 
 ## Testing & code quality
@@ -573,139 +569,19 @@ Pytest is intentionally NOT in pre-commit (~16s for the full suite is too slow p
 Requires:
 - `ANTHROPIC_API_KEY` - For AI features (task suggestions, journal insights)
 
-### Backend Requirements
+### Knowledge-tool architecture and documentation
 
-**AnyType (default):**
-- AnyType desktop app running on localhost:31009
-- 4-digit auth code approval on first connection
+Read [Knowledge-tool support](docs/knowledge-tools.md) before changing a knowledge
+workflow. This reference records the current adapter limits and setup requirements.
+General help and overview documentation must use provider-neutral terms.
+Keep exact provider IDs, URLs and configuration keys in the setup reference.
+Never claim support from an adapter method alone: test the full command path.
+New workflow code must use the selected adapter and check its capabilities before
+writes. It must not select a different provider silently.
 
-**Notion (optional):**
-- `JARVIS_NOTION_TOKEN` - Notion integration token
-- Config file at `~/.jarvis/config.yaml` with database IDs
-
-## Backend Abstraction Layer
-
-Jarvis uses a pluggable adapter pattern to support multiple knowledge base backends.
-
-### Supported Backends
-
-| Backend | Tasks | Journal | Tags | Search | Relations |
-|---------|-------|---------|------|--------|-----------|
-| AnyType | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Notion  | ✅ | ✅ | ✅ | ✅ | ✅ |
-
-### Capabilities
-
-Each adapter declares its capabilities, enabling graceful feature degradation:
-
-```python
-from jarvis.adapters import get_adapter
-
-adapter = get_adapter()  # Gets default backend
-print(adapter.capabilities)
-# {'tasks': True, 'journal': True, 'tags': True, 'search': True, ...}
-```
-
-### Configuration
-
-Create `~/.jarvis/config.yaml`:
-
-```yaml
-# Default backend (anytype, notion)
-default_backend: anytype
-
-backends:
-  anytype:
-    default_space_id: null  # Auto-detected
-
-  notion:
-    workspace_id: "your-workspace-id"
-    task_database_id: "your-tasks-db-id"
-    journal_database_id: "your-journal-db-id"
-    property_mappings:
-      title: "Name"
-      due_date: "Due Date"
-      priority: "Priority"
-      done: "Done"
-      tags: "Tags"
-```
-
-## Common Tasks
-
-### Using the adapter interface (recommended)
-
-```python
-from jarvis.adapters import get_adapter
-from jarvis.models import Priority
-from datetime import date, timedelta
-
-# Get the configured adapter (AnyType by default)
-adapter = get_adapter()
-adapter.connect()
-
-# Get default space
-space_id = adapter.get_default_space()
-
-# Create a task
-task = adapter.create_task(
-    space_id=space_id,
-    title="My Task",
-    due_date=date.today() + timedelta(days=1),
-    priority=Priority.HIGH,
-    tags=["work", "urgent"],
-    description="Task details here",
-)
-print(f"Created task: {task.id}")
-
-# Create a journal entry
-entry = adapter.create_journal_entry(
-    space_id=space_id,
-    content="Today I learned about adapters...",
-    title="Learning Notes",
-)
-print(f"Created entry: {entry.id}")
-
-# Query tasks
-tasks = adapter.get_tasks(
-    space_id,
-    start_date=date.today(),
-    end_date=date.today() + timedelta(days=7),
-    include_done=False,
-)
-```
-
-### Using a specific backend
-
-```python
-from jarvis.adapters import get_adapter
-
-# Explicitly use Notion
-adapter = get_adapter("notion")
-adapter.connect()
-
-# Explicitly use AnyType
-adapter = get_adapter("anytype")
-adapter.connect()
-```
-
-### Legacy AnyType client (deprecated)
-
-```python
-# Legacy API - use adapters instead
-from jarvis.anytype_client import AnyTypeClient
-from datetime import date
-
-client = AnyTypeClient()
-client.connect()
-space_id = client.get_default_space()
-
-task_id = client.create_task(
-    space_id=space_id,
-    title="My Task",
-    due_date=date.today(),
-    priority="high",
-)
-```
+Run `uv run pytest tests/unit/test_docs_command_tree.py` after documentation or
+command-help changes. These checks cover live command descriptions, option help,
+curated documentation and the general README files.
 
 ### Loading context
 

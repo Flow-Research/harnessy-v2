@@ -227,14 +227,14 @@ def verify(
     type=click.Path(exists=False),
     help="Sync source root.",
 )
-@click.option("--sync-destination", default=None, help="Anytype destination object_id:space_id.")
+@click.option("--sync-destination", default=None, help="Destination object_id:space_id.")
 def audit_anytype(
     path: str,
     sync_preset: str | None,
     sync_source: str | None,
     sync_destination: str | None,
 ) -> None:
-    """Audit Anytype Collection links for duplicates for one content piece."""
+    """Audit destination collection links for duplicates for one content piece."""
     content_root = resolve_content_root()
     piece_dir = _resolve_piece_dir(path, content_root)
     state_info = _resolve_sync_state_for_piece(
@@ -270,9 +270,9 @@ def audit_anytype(
 
 @content_cli.command(name="publish-draft")
 @click.argument("path")
-@click.option("--journal/--no-journal", default=False, help="Write journal.md to Anytype Journal.")
+@click.option("--journal/--no-journal", default=False, help="Write journal.md to the legacy journal destination.")
 @click.option("--space", "journal_spaces", multiple=True, help="Journal space name or ID.")
-@click.option("--sync/--no-sync", default=True, help="Run Anytype content sync after packaging.")
+@click.option("--sync/--no-sync", default=True, help="Run content sync after packaging (legacy destination only).")
 @click.option(
     "--dedupe/--no-dedupe",
     default=True,
@@ -285,7 +285,7 @@ def audit_anytype(
     type=click.Path(exists=False),
     help="Sync source root.",
 )
-@click.option("--sync-destination", default=None, help="Anytype destination object_id:space_id.")
+@click.option("--sync-destination", default=None, help="Destination object_id:space_id.")
 @click.option(
     "--require",
     "required_text",
@@ -450,7 +450,7 @@ def list_pieces(status: str | None) -> None:
     table.add_column("Platform")
     table.add_column("Audience")
     table.add_column("Scheduled")
-    table.add_column("AnyType", style="dim")
+    table.add_column("Synced", style="dim")
 
     for p in pieces:
         status_style = {
@@ -478,7 +478,7 @@ def list_pieces(status: str | None) -> None:
 @click.argument("path", required=False)
 @click.option("--all", "approve_all", is_flag=True, help="Approve all pieces in 'review' status")
 def approve(path: str | None, approve_all: bool) -> None:
-    """Approve content and push to AnyType.
+    """Approve content and push to the legacy destination.
 
     PATH is the piece folder (e.g., drafts/2026/Apr/02-flow-thesis-thread).
     Use --all to approve all pieces currently in 'review' status.
@@ -522,7 +522,7 @@ def approve(path: str | None, approve_all: bool) -> None:
 @content_cli.command()
 @click.option("--force", is_flag=True, help="Re-push even if already pushed")
 def push(force: bool) -> None:
-    """Push all approved pieces to AnyType."""
+    """Push all approved pieces to the legacy destination."""
     from jarvis.content.publisher import ContentPublisher
 
     content_root = resolve_content_root()
@@ -539,7 +539,7 @@ def push(force: bool) -> None:
     results = publisher.push_pending(force=force)
 
     if results:
-        console.print(f"[green]Pushed {len(results)} pieces to AnyType.[/green]")
+        console.print(f"[green]Pushed {len(results)} pieces to the destination.[/green]")
     else:
         console.print("[yellow]Nothing to push.[/yellow]")
 
@@ -581,7 +581,7 @@ def status() -> None:
 
 @content_cli.command()
 def strategy() -> None:
-    """Push the content strategy document to AnyType."""
+    """Push the content strategy document to the legacy destination."""
     from jarvis.content.publisher import ContentPublisher
 
     content_root = resolve_content_root()

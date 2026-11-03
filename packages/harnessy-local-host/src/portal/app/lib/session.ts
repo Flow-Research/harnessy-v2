@@ -22,7 +22,7 @@ export interface FetchInit {
 	readonly method: "GET" | "POST";
 	readonly headers: Readonly<Record<string, string>>;
 	readonly body?: string;
-	readonly credentials: "omit";
+	readonly credentials: "omit" | "same-origin";
 	readonly cache: "no-store";
 	readonly redirect: "error";
 }
@@ -40,6 +40,7 @@ export interface SessionStore {
 
 /** Everything the session needs from the browser. Tests pass their own. */
 export interface SessionEnvironment {
+	readonly remote?: boolean;
 	readonly hash: () => string;
 	/** Replace the URL without a reload or a history entry. */
 	readonly replaceUrl: (url: string) => void;
@@ -65,6 +66,66 @@ export class SessionClient {
 
 	constructor(env: SessionEnvironment) {
 		this.#env = env;
+	}
+	async beginBrowserSignIn(): Promise<{ id: string; claim: string }> {
+		if (this.#env.remote) throw new Error("Use device pairing on this device.");
+		const response = await this.#env.fetch("/v1/session/browser/start", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "{}",
+			credentials: "omit",
+			cache: "no-store",
+			redirect: "error",
+		});
+		const body = (await response.json()) as { id: string; claim: string };
+		if (response.status !== 200 || !TOKEN.test(body.id) || !TOKEN.test(body.claim))
+			throw new Error("Could not start sign-in. Wait a minute, then try again.");
+		return body;
+	}
+	async claimBrowserSignIn(id: string, claim: string): Promise<boolean> {
+		const response = await this.#env.fetch(`/v1/session/browser/claim/${id}`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ code: claim }),
+			credentials: "omit",
+			cache: "no-store",
+			redirect: "error",
+		});
+		if (response.status === 202) return false;
+		if (response.status !== 200) throw new Error("Sign-in expired. Try again and allow Harnessy to open.");
+		const body = (await response.json()) as { token: string; expiresAt: string };
+		const expiresAt = Date.parse(body.expiresAt);
+		if (!TOKEN.test(body.token) || !Number.isFinite(expiresAt)) throw new Error("Invalid sign-in response.");
+		this.#memory = { token: body.token, expiresAt };
+		try {
+			this.#env.storage?.setItem(TOKEN_KEY, JSON.stringify(this.#memory));
+		} catch {
+			/* Memory is sufficient. */
+		}
+		return true;
+	}
+	async restoreDevice(): Promise<void> {
+		if (!this.#env.remote) return;
+		const pair = /^#pair=([A-Za-z0-9_-]{43})$/u.exec(this.#env.hash());
+		if (pair) this.#env.replaceUrl("/#/today");
+		try {
+			const response = await this.#env.fetch(pair ? "/v1/session/pair" : "/v1/session/device", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(pair ? { code: pair[1] } : {}),
+				credentials: "same-origin",
+				cache: "no-store",
+				redirect: "error",
+			});
+			if (response.status !== 200) return;
+			const body = (await response.json()) as { token?: string; expiresAt?: string };
+			if (body.token && TOKEN.test(body.token) && body.expiresAt && Number.isFinite(Date.parse(body.expiresAt))) {
+				this.#memory = { token: body.token, expiresAt: Date.parse(body.expiresAt) };
+				this.#env.storage?.setItem(TOKEN_KEY, JSON.stringify(this.#memory));
+			}
+		} catch {
+			/* Offline or not enrolled. Keep the sign-in view. */
+		}
 	}
 
 	/** The current session, from memory or storage, when it has not expired. */
@@ -117,7 +178,7 @@ export class SessionClient {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ code }),
-				credentials: "omit",
+				credentials: this.#env.remote ? "same-origin" : "omit",
 				cache: "no-store",
 				redirect: "error",
 			});
@@ -161,7 +222,7 @@ export class SessionClient {
 					...(method === "POST" ? { "Content-Type": "application/json" } : {}),
 				},
 				...(method === "POST" ? { body } : {}),
-				credentials: "omit",
+				credentials: this.#env.remote ? "same-origin" : "omit",
 				cache: "no-store",
 				redirect: "error",
 			});
@@ -169,7 +230,25 @@ export class SessionClient {
 				this.forget(session.token);
 				return { kind: "signed_out" };
 			}
-			if (response.status !== 200)
+			if (response.status !== 200) {
+				if (path.startsWith("/v1/terminal/")) {
+					const failure = (await response.json()) as { error?: string };
+					const messages: Record<string, string> = {
+						terminal_backend_failed:
+							"The session backend could not complete the request. Check the session before retrying.",
+						terminal_observer_take_control:
+							"Another view controls this terminal. Choose Take control to type here.",
+						exact_conversation_unavailable:
+							"No verified conversation ID was saved. This task will not be restarted automatically.",
+						runner_unavailable: "This agent is not installed on the host.",
+						session_directory_missing: "The saved working directory is missing. Restore it before resuming.",
+						terminal_backend_unavailable: "Herdr did not start. Check its installation and try again.",
+					};
+					return {
+						kind: "error",
+						message: messages[failure.error ?? ""] ?? "Terminal request failed. Check the session and try again.",
+					};
+				}
 				return {
 					kind: "error",
 					message: path.startsWith("/v1/terminal/")
@@ -182,6 +261,7 @@ export class SessionClient {
 									: "The view could not open. Check its service on the Jobs screen, then try again."
 								: `The portal answered ${response.status}.`,
 				};
+			}
 			return { kind: "ok", body: await response.json() };
 		} catch {
 			return { kind: "error", message: "The portal is not reachable. Is the portal service running?" };
@@ -199,6 +279,7 @@ export const browserSessionEnvironment = (): SessionEnvironment => {
 		storage = undefined;
 	}
 	return {
+		remote: window.location.protocol === "https:",
 		hash: () => window.location.hash,
 		replaceUrl: (url) => window.history.replaceState(null, "", url),
 		storage,

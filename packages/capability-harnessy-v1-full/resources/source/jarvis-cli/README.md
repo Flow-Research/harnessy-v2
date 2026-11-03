@@ -1,6 +1,6 @@
-# Jarvis - AI Assistant for AnyType
+# Jarvis, AI-powered personal assistant
 
-A CLI tool for task scheduling and journaling that integrates with [AnyType](https://anytype.io/).
+Jarvis provides task scheduling, journaling and knowledge workflows through configured knowledge-tool adapters.
 
 ## Features
 
@@ -8,13 +8,13 @@ A CLI tool for task scheduling and journaling that integrates with [AnyType](htt
 - **Smart Scheduling** - AI-powered workload analysis and schedule rebalancing
 - **Journaling** - Freeform journaling with AI-generated titles and insights
 - **Context System** - Two-tier personalization (global + project-specific)
-- **AnyType Folder Sync** - Incrementally sync local folder trees into AnyType Collections, Pages, and file objects
+- **Folder Sync** - Sync local folders to destination collections, pages and files through the supported sync adapter
 
 ## Requirements
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- AnyType desktop app running locally (default: `localhost:31009`)
+- A configured knowledge-tool adapter for commands that access remote knowledge
 - Anthropic API key (for AI features)
 
 ## Installation
@@ -27,6 +27,13 @@ uv tool install --force ./jarvis-cli
 
 # Run the installed CLI
 jarvis --help
+```
+
+Help and usage errors display `jarvis` as the command name, including when the
+launcher uses the Python module internally:
+
+```text
+Usage: jarvis [OPTIONS] COMMAND [ARGS]...
 ```
 
 ### Using uv in a local checkout
@@ -76,6 +83,17 @@ eval "$(_JARVIS_COMPLETE=bash_source jarvis)"
 ```
 
 ## Configuration
+
+### Knowledge-tool support
+
+Select the knowledge tool through its adapter configuration. Tasks, spaces and
+object access use the configured adapter. Capabilities differ between adapters;
+run `jarvis config capabilities` before using a feature.
+
+The current journal CLI, folder sync and remote content publication still use
+the legacy destination. Other knowledge tools are not supported for those paths
+yet. See [Knowledge-tool support](docs/knowledge-tools.md) for the exact support limits. Local context, files and wiki workflows do not require a remote knowledge
+tool. Provider identifiers and URL schemes in examples are literal inputs.
 
 ### Environment Variables
 
@@ -128,27 +146,27 @@ For the dedicated step-by-step local Fathom webhook automation guide, see:
 
 - [`.jarvis/context/docs/operations/fathom-local-automation.md`](../.jarvis/context/docs/operations/fathom-local-automation.md)
 
-### AnyType Folder Sync
+### Folder Sync
 
-Jarvis can sync a local file or folder tree into an AnyType Collection. Local
-directories become AnyType Collections, supported text files become Pages, and
-other files upload as native AnyType file objects by default. Sync state is
+The current sync implementation supports only the legacy destination. It maps local
+directories to destination collections, text files to pages, and other files
+to native file objects. Sync state is
 stored under `~/.jarvis/sync/state/`, so reruns update changed pages/files and
 skip unchanged files. Preset runs use the preset name; ad-hoc runs use a stable
 hash of source path plus destination so separate folder syncs do not share
 state.
 
 ```bash
-# Preview a sync without connecting to AnyType or writing state
+# Preview a sync without connecting to the destination or writing state
 jarvis sync run \
   --source ./notes \
   --destination "root_obj:space_id" \
   --dry-run
 
-# Apply a sync to an AnyType Collection
+# Apply a sync to a destination collection
 jarvis sync run \
   --source ./notes \
-  --destination "anytype://object?objectId=root_obj&spaceId=space_id"
+  --destination "root_obj:space_id"
 
 # Skip the write confirmation for automation
 jarvis sync run --source ./notes --destination "root_obj:space_id" --yes
@@ -160,7 +178,7 @@ jarvis sync run \
   --include-extension py \
   --dry-run
 
-# Upload non-text files as native AnyType file objects (default)
+# Upload non-text files as native destination file objects (default)
 jarvis sync run \
   --source ./notes \
   --destination "root_obj:space_id" \
@@ -183,18 +201,17 @@ jarvis sync run --preset flow-context --prune --yes
 By default, sync includes `.md`, `.markdown`, `.txt`, and `.text` files, and
 ignores `.git`, `.DS_Store`, and `node_modules`. Use repeated
 `--include-extension` flags to add other text formats and repeated `--ignore`
-flags for additional traversal skips. `--prune` deletes AnyType objects that
+flags for additional traversal skips. `--prune` deletes destination objects that
 were previously synced by the preset and no longer exist locally. Real writes
-validate that the destination object is an AnyType Collection before creating or
+validate that the destination object is a destination collection before creating or
 updating pages.
 
 Files outside the text extension list, or included files that are not valid
 UTF-8 text, are handled by `--unsupported-mode`. The default is
-`--unsupported-mode upload`, which uploads those files through AnyType's Files
-API and attaches the resulting file objects to the matching Collection. Use
+`--unsupported-mode upload`, which uploads those files through the adapter's file API and attaches the resulting file objects to the matching Collection. Use
 `warn` to report and skip them, `error` to fail the run when any unsupported
 file is found, or `stub` to create/update metadata placeholder Pages when you
-want the AnyType tree to show the local folder structure without uploading the
+want the destination tree to show the local folder structure without uploading the
 binary content.
 
 ### Meeting Ingestion
@@ -244,7 +261,6 @@ If you use multiple Google/Fathom identities, configure named accounts in
 
 ```yaml
 version: 1
-active_backend: anytype
 
 fathom:
   default_account: work
@@ -518,7 +534,7 @@ jarvis journal insights --days 30
 ### Space Management
 
 ```bash
-# List available AnyType spaces
+# List available spaces in the configured knowledge tool
 jarvis spaces
 
 # Select a different space
@@ -588,7 +604,7 @@ uv run ruff format src/
 ```
 src/jarvis/
 ├── cli.py              # Main CLI entry point
-├── anytype_client.py   # AnyType API wrapper
+├── adapters/           # Knowledge-tool interfaces and implementations
 ├── context_reader.py   # Two-tier context loading
 ├── analyzer.py         # Workload analysis
 ├── ai_client.py        # Anthropic API client
@@ -614,11 +630,11 @@ src/jarvis/
 
 ## Troubleshooting
 
-### AnyType Connection Issues
+### Knowledge-tool Connection Issues
 
-Ensure AnyType desktop app is running and the gRPC server is enabled:
-- Default endpoint: `localhost:31009`
-- Check AnyType settings for API/gRPC configuration
+Run `jarvis config show` and `jarvis status --diagnose`. Check the selected
+adapter, credentials and endpoint. Follow the setup instructions for that
+adapter in [Knowledge-tool support](docs/knowledge-tools.md).
 
 ### API Key Issues
 
