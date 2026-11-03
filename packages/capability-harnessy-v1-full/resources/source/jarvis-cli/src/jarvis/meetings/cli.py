@@ -155,7 +155,7 @@ def ingest_command(
 ) -> None:
     """Ingest a meeting transcript-like source into one or more destinations.
 
-    SOURCE may be a file path, URL, AnyType/Notion object, or '-' for stdin.
+    SOURCE may be a file path, URL, supported knowledge-tool object, or '-' for stdin.
     """
 
     try:

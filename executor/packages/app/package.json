@@ -11,8 +11,8 @@
     "./index.html": "./index.html"
   },
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node init && vite",
+    "build": "node init && vite build",
     "preview": "vite preview",
     "typecheck": "tsgo --noEmit",
     "typecheck:slow": "tsc --noEmit",

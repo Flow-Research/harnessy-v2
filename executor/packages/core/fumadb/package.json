@@ -85,7 +85,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src",
+    "build": "node init && tsup && tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src",
     "typecheck": "tsgo --noEmit",
     "typecheck:slow": "tsc --noEmit",
     "test": "vitest run src test/generate.test.ts test/uuid.test.ts --passWithNoTests",

@@ -1,6 +1,6 @@
 # jarvis v0.1.0
 
-AI-powered personal assistant for AnyType
+AI-powered personal assistant
 
 ## Commands
 
@@ -47,7 +47,7 @@ Examples:
 
 ### `jarvis spaces`
 
-List available AnyType spaces and select one
+List available spaces in the configured knowledge tool and select one
 
 Examples:
   jarvis spaces
@@ -90,7 +90,7 @@ Examples:
 Show or set the active backend
 
 Options:
-  NAME: Backend name (anytype, notion)
+  NAME: Knowledge-tool adapter name (see jarvis config capabilities)
 
 Examples:
   jarvis config backend
@@ -178,7 +178,7 @@ Examples:
 
 ### `jarvis journal`
 
-AI-powered journaling for AnyType
+AI-powered journaling (legacy destination only)
 
 #### `jarvis journal write`
 
@@ -334,8 +334,8 @@ Ingest meeting transcripts and summaries into Jarvis destinations
 Normalize a meeting transcript-like source and route it to destinations
 
 Options:
-  SOURCE: File path, AnyType/Notion URL, generic URL, or '-' for stdin
-  --resolver: Override source resolution (anytype, notion, file, url, stdin)
+  SOURCE: File path, supported knowledge-tool URL, generic URL, or '-' for stdin
+  --resolver: Override source resolution with a supported resolver
   --backend: Backend override for object-based resolvers
   --title: Override the inferred meeting title
   --project: Attach a project slug or label; configured aliases are canonicalized
@@ -808,7 +808,7 @@ Examples:
 
 ### `jarvis task`
 
-Manage tasks in AnyType
+Manage tasks in the configured knowledge tool
 
 #### `jarvis task create`
 
@@ -875,13 +875,13 @@ Examples:
 
 #### `jarvis content audit-anytype`
 
-Audit a synced Anytype content Collection for duplicate links
+Audit duplicate links in a synced content collection (legacy destination only)
 
 Options:
   PATH: Content piece folder or index.md path
   --sync-preset: Sync preset/state name to audit
   --sync-source: Sync source root for ad-hoc sync state
-  --sync-destination: Anytype destination object_id:space_id
+  --sync-destination: Destination object_id:space_id for the sync adapter
 
 Examples:
   jarvis content audit-anytype drafts/2026/Jun/01-harnessy --sync-source .jarvis/context/private/julian/flow-content/drafts --sync-destination root_obj:space_1
@@ -892,16 +892,16 @@ Package, verify, optionally journal, sync, and dedupe a draft
 
 Options:
   PATH: Content piece folder or index.md path
-  --journal: Write journal.md to Anytype Journal
+  --journal: Write journal.md to the journal destination
   --no-journal: Skip Journal write
   --space: Journal space name or ID; repeatable
-  --sync: Run Anytype content sync
-  --no-sync: Skip Anytype content sync
+  --sync: Run content sync with the supported adapter
+  --no-sync: Skip content sync
   --dedupe: Remove duplicate Collection links after sync
   --no-dedupe: Skip duplicate Collection-link cleanup
   --sync-preset: Sync preset/state name to use
   --sync-source: Sync source root for ad-hoc sync state
-  --sync-destination: Anytype destination object_id:space_id
+  --sync-destination: Destination object_id:space_id for the sync adapter
   --require: Text that must appear before publish; repeatable
   --forbid: Text that must not appear before publish; repeatable
   --hygiene / --no-hygiene: Clean configured AI-speak patterns before publishing
@@ -922,7 +922,7 @@ Examples:
 
 #### `jarvis content approve`
 
-Approve content and push to Anytype
+Approve content and push to the destination (legacy destination only)
 
 Options:
   PATH: Content piece folder
@@ -933,7 +933,7 @@ Examples:
 
 #### `jarvis content push`
 
-Push all approved content pieces to Anytype
+Push all approved content pieces to the destination (legacy destination only)
 
 Options:
   --force: Re-push even if already pushed
@@ -950,7 +950,7 @@ Examples:
 
 #### `jarvis content strategy`
 
-Push the content strategy document to Anytype
+Push the strategy document to the destination (legacy destination only)
 
 Examples:
   jarvis content strategy
@@ -989,18 +989,18 @@ Examples:
 
 ### `jarvis sync`
 
-Sync local folders into an Anytype Collection; directories become Collections, text files become Pages, and other files upload as native Anytype file objects by default
+Sync local folders into a destination collection (legacy destination only); directories become Collections, text files become Pages, and other files upload as native file objects by default
 
 #### `jarvis sync run`
 
-Run an incremental source folder/file sync to Anytype
+Run an incremental source folder/file sync to the destination
 
 Options:
   --preset: Use a saved sync preset
   --source: Source path, either a file or directory
-  --destination: Anytype object link for the target Collection, or raw object_id:space_id
-  --prune: Delete Anytype objects that were previously synced but no longer exist locally
-  --dry-run: Show the planned create/update/prune operations without connecting to Anytype or writing state
+  --destination: Supported object link for the target collection, or raw object_id:space_id
+  --prune: Delete destination objects that were previously synced but no longer exist locally
+  --dry-run: Show the planned create/update/prune operations without connecting to the destination or writing state
   --yes: Skip confirmation prompts for writes
   --include-extension: Additional text file extension to include; repeat to extend the preset/default extension list. Other extensions follow --unsupported-mode
   --ignore: Additional ignore glob for traversal; repeatable
@@ -1008,7 +1008,7 @@ Options:
   --unsupported-mode: Non-text file behavior: upload native file objects (default), warn and skip, create metadata stub pages, or fail the run
 
 Examples:
-  jarvis sync run --source ./notes --destination 'anytype://object?objectId=...&spaceId=...' --dry-run
+  jarvis sync run --source ./notes --destination 'root_obj:space_id' --dry-run
   jarvis sync run --source ./notes --destination root_obj:space_1 --yes
   jarvis sync run --source ./repo --destination root_obj:space_1 --include-extension py --dry-run
   jarvis sync run --source ./notes --destination root_obj:space_1 --unsupported-mode upload --yes
@@ -1017,12 +1017,12 @@ Examples:
 
 #### `jarvis sync dedupe`
 
-Remove duplicate Anytype Collection links by keeping the object IDs recorded in sync state
+Remove duplicate destination collection links by keeping the object IDs recorded in sync state
 
 Options:
   --preset: Use a saved sync preset/state
   --source: Source path for ad-hoc sync state lookup
-  --destination: Anytype target Collection link for ad-hoc state lookup
+  --destination: Target collection link for ad-hoc state lookup
   --path: Limit cleanup to one synced Collection relpath
   --dry-run: Show stale links without removing them
   --yes: Skip confirmation prompts for removals
@@ -1084,8 +1084,8 @@ Organize and prioritize a reading list against current project context
 Deep research and prioritize a reading list
 
 Options:
-  TARGET: AnyType URL, Notion URL, file path, generic URL, or '-' for stdin
-  --resolver: Override source resolution (anytype, notion, file, url, stdin)
+  TARGET: Supported knowledge-tool URL, file path, generic URL, or '-' for stdin
+  --resolver: Override source resolution with a supported resolver
   --backend: Backend override for object-based resolvers
   --output: Save markdown output to file
   --format: Output format: table, json, markdown
@@ -1105,7 +1105,7 @@ Examples:
 Extract and display links from a reading list source
 
 Options:
-  TARGET: AnyType URL, Notion URL, file path, generic URL, or '-' for stdin
+  TARGET: Supported knowledge-tool URL, file path, generic URL, or '-' for stdin
   --resolver: Override source resolution
   --backend: Backend override for object-based resolvers
 
@@ -1125,7 +1125,7 @@ Examples:
 Quick alias for 'reading-list organize'
 
 Options:
-  TARGET: AnyType URL, Notion URL, file path, generic URL, or '-' for stdin
+  TARGET: Supported knowledge-tool URL, file path, generic URL, or '-' for stdin
   --resolver: Override source resolution
   --backend: Backend override for object-based resolvers
   --output: Save markdown output to file

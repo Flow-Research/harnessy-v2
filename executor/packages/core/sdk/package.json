@@ -87,7 +87,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && (tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src || true)",
+    "build": "node init && tsup && (tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src || true)",
     "typecheck": "tsgo --noEmit",
     "test": "vitest run",
     "typecheck:slow": "tsc --noEmit"

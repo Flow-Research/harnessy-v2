@@ -21,7 +21,7 @@
   },
   "scripts": {
     "clean": "node ../../scripts/fs-tool.mjs rm -rf dist",
-    "build": "tsup && node scripts/audit-bundles.mjs",
+    "build": "node init && tsup && node scripts/audit-bundles.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:fixture": "node scripts/fixture-smoke.mjs",

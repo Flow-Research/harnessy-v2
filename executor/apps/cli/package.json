@@ -10,12 +10,12 @@
     ".": "./src/main.ts"
   },
   "scripts": {
-    "build": "bun run src/build.ts binary --single",
-    "build:all": "bun run src/build.ts binary",
-    "build:preview": "bun run src/build.ts preview",
-    "build:preview:tarball": "bun run src/build.ts preview-tarball",
-    "build:preview:wrapper": "bun run src/build.ts preview-wrapper",
-    "build:publish": "bun run src/build.ts publish",
+    "build": "node init && bun run src/build.ts binary --single",
+    "build:all": "node init && bun run src/build.ts binary",
+    "build:preview": "node init && bun run src/build.ts preview",
+    "build:preview:tarball": "node init && bun run src/build.ts preview-tarball",
+    "build:preview:wrapper": "node init && bun run src/build.ts preview-wrapper",
+    "build:publish": "node init && bun run src/build.ts publish",
     "release:publish:dry-run": "bun run src/release.ts --dry-run",
     "release:publish": "bun run src/release.ts",
     "test": "bun --bun vitest run",

@@ -21,12 +21,15 @@ import {
 
 import { bearerSecret, PortalSessions } from "./auth.ts";
 import type { createBriefGeneration } from "./brief-generation.ts";
+import { BrowserSignIn } from "./browser-signin.ts";
+import type { DeviceAccess } from "./device-access.ts";
 import type { PortalHandoffService } from "./handoff.ts";
 import { buildPortalOpenApi } from "./openapi.ts";
 import type { PortalPageAssets } from "./page-assets.ts";
 import { matchPortalRoute, PORTAL_ROUTES, type PortalRoute, type PortalRouteParams } from "./routes.ts";
 import type { PortalSources } from "./sources.ts";
-import { type PortalTerminal, TerminalError } from "./terminal.ts";
+import { TerminalError } from "./terminal.ts";
+import type { TerminalBackend } from "./terminal-contract.ts";
 
 export const PORTAL_HOST = "127.0.0.1";
 export const PORTAL_DEFAULT_PORT = 8790;
@@ -67,7 +70,9 @@ export interface PortalServerOptions {
 	readonly page?: PortalPageAssets;
 	/** Fixed local sign-in helpers. No publication, review decision or arbitrary command is accepted. */
 	readonly openService?: (service: PortalHandoffService) => Promise<void>;
-	readonly terminal?: PortalTerminal;
+	readonly terminal?: TerminalBackend;
+	readonly devices?: DeviceAccess;
+	readonly remote?: boolean;
 	readonly briefGeneration?: ReturnType<typeof createBriefGeneration>;
 }
 
@@ -88,10 +93,10 @@ class RequestRefused extends Error {
 	}
 }
 
-const readBody = (request: IncomingMessage): Promise<Buffer> =>
+const readBody = (request: IncomingMessage, limit = PORTAL_MAX_BODY_BYTES): Promise<Buffer> =>
 	new Promise((resolveBody, rejectBody) => {
 		const declared = Number(request.headers["content-length"] ?? "0");
-		if (!Number.isFinite(declared) || declared > PORTAL_MAX_BODY_BYTES) {
+		if (!Number.isFinite(declared) || declared > limit) {
 			rejectBody(new RequestRefused(413, "body_too_large"));
 			return;
 		}
@@ -99,7 +104,7 @@ const readBody = (request: IncomingMessage): Promise<Buffer> =>
 		let size = 0;
 		request.on("data", (chunk: Buffer) => {
 			size += chunk.byteLength;
-			if (size > PORTAL_MAX_BODY_BYTES) {
+			if (size > limit) {
 				rejectBody(new RequestRefused(413, "body_too_large"));
 				request.pause();
 				return;
@@ -128,6 +133,7 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 	const ttl = options.cacheTtlMs ?? PORTAL_CACHE_TTL_MS;
 	const log = options.log ?? (() => undefined);
 	const sessions = new PortalSessions(options.installToken, clock);
+	const browserSignIn = new BrowserSignIn(clock);
 	const openApi = buildPortalOpenApi(PORTAL_ROUTES, options.version);
 	const cache = new Map<string, { readonly expiresAt: number; readonly value: unknown }>();
 	/** Requests for the same path while its sources are read share one read. */
@@ -203,13 +209,13 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 	};
 
 	/** Check the route's credential and build its response value. */
-	const authorize = (
+	const authorize = async (
 		route: PortalRoute,
 		request: IncomingMessage,
 		body: Buffer,
 		path: string,
 		params: PortalRouteParams,
-	): unknown => {
+	): Promise<unknown> => {
 		const authorization = request.headers.authorization;
 		const installProof = () => sessions.isInstallProof(authorization, origin, route.method, path);
 		switch (route.auth) {
@@ -254,9 +260,28 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 						} catch {
 							throw new RequestRefused(400, "invalid_body");
 						}
-						return options.terminal.action(value);
+						if (!value || typeof value !== "object" || Array.isArray(value))
+							throw new RequestRefused(400, "invalid_body");
+						const action = value as Record<string, unknown>;
+						if (action.action === "pair-device" || action.action === "revoke-device") {
+							if (options.remote || !options.devices) throw new RequestRefused(403, "desktop_required");
+							if (action.action === "pair-device" && typeof action.name === "string")
+								return options.devices.pair(action.name);
+							if (action.action === "revoke-device" && typeof action.id === "string") {
+								options.devices.revoke(action.id);
+								return { ok: true };
+							}
+							throw new RequestRefused(400, "invalid_body");
+						}
+						return await options.terminal.action(value, authorization);
 					}
-					return params.id ? options.terminal.read(params.id, Number(params.cursor)) : options.terminal.list();
+					return params.id
+						? options.terminal.read(params.id, Number(params.cursor))
+						: {
+								...options.terminal.list(),
+								devices: options.remote ? [] : options.devices?.list(),
+								remoteOrigin: options.devices?.origin,
+							};
 				} catch (error) {
 					if (error instanceof TerminalError) throw new RequestRefused(400, error.message);
 					throw error;
@@ -313,6 +338,63 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		if (request.method === "OPTIONS") throw new RequestRefused(405, "method_not_allowed");
 		if (!url.startsWith("/")) throw new RequestRefused(400, "invalid_target");
 		const path = url.split("?", 1)[0]!;
+		if (path.startsWith("/v1/session/browser/")) {
+			if (options.remote) throw new RequestRefused(403, "local_only");
+			if (request.method !== "POST") throw new RequestRefused(405, "method_not_allowed");
+			const approval = /^\/v1\/session\/browser\/approve\/([A-Za-z0-9_-]{43})$/u.exec(path);
+			if (approval) {
+				if (!sessions.isInstallProof(request.headers.authorization, origin, "POST", path))
+					throw new RequestRefused(401, "unauthorized");
+				await readBody(request);
+				if (!browserSignIn.approve(approval[1]!)) throw new RequestRefused(401, "invalid_signin_request");
+				respond(response, 200, { approved: true });
+				return;
+			}
+			if (request.headers.origin !== origin) throw new RequestRefused(403, "origin_required");
+			requireJson(request);
+			const body = await readBody(request);
+			if (path === "/v1/session/browser/start") {
+				if (body.toString() !== "{}") throw new RequestRefused(400, "invalid_body");
+				const pending = browserSignIn.begin();
+				if (!pending) throw new RequestRefused(429, "too_many_signin_requests");
+				respond(response, 200, pending);
+				return;
+			}
+			const claim = /^\/v1\/session\/browser\/claim\/([A-Za-z0-9_-]{43})$/u.exec(path);
+			if (!claim) throw new RequestRefused(404, "not_found");
+			const secret = parseField(body, "code");
+			const status = secret ? browserSignIn.claim(claim[1]!, secret) : "invalid";
+			if (status === "invalid") throw new RequestRefused(401, "invalid_signin_request");
+			if (status === "pending") respond(response, 202, { pending: true });
+			else {
+				const grant = sessions.exchange(sessions.mintCode().secret)!;
+				respond(response, 200, { token: grant.secret, expiresAt: grant.expiresAt.toISOString() });
+			}
+			return;
+		}
+		if (options.remote && options.devices && (path === "/v1/session/device" || path === "/v1/session/pair")) {
+			if (request.method !== "POST" || request.headers.origin !== origin)
+				throw new RequestRefused(403, "origin_required");
+			requireJson(request);
+			let cookie: string | undefined;
+			if (path.endsWith("/pair")) {
+				const code = parseField(await readBody(request), "code");
+				const token = code ? options.devices.exchange(code) : undefined;
+				if (!token) throw new RequestRefused(401, "invalid_pairing_code");
+				cookie = options.devices.cookie(token);
+			} else if (!options.devices.identify(request.headers.cookie))
+				throw new RequestRefused(401, "device_not_enrolled");
+			if (path.endsWith("/device")) await readBody(request);
+			const code = sessions.mintCode();
+			const grant = sessions.exchange(code.secret)!;
+			respond(
+				response,
+				200,
+				{ token: grant.secret, expiresAt: grant.expiresAt.toISOString() },
+				cookie ? { "Set-Cookie": cookie } : {},
+			);
+			return;
+		}
 		const asset = options.page?.get(path);
 		if (asset !== undefined) {
 			onRoute(path);
@@ -333,12 +415,17 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		const matched = matchPortalRoute(PORTAL_ROUTES, path);
 		if (matched === undefined) throw new RequestRefused(404, "not_found");
 		const { route, params } = matched;
+		if (options.remote) {
+			if (["challenge", "install", "code", "open"].includes(route.auth)) throw new RequestRefused(403, "local_only");
+			if (route.auth !== "none" && !options.devices?.identify(request.headers.cookie))
+				throw new RequestRefused(401, "device_not_enrolled");
+		}
 		onRoute(route.path);
 		if (request.method !== route.method) {
 			respond(response, 405, { error: "method_not_allowed" }, { Allow: route.method });
 			return;
 		}
-		const body = await readBody(request);
+		const body = await readBody(request, route.auth === "terminal" ? 128 * 1024 : PORTAL_MAX_BODY_BYTES);
 		respond(response, 200, await authorize(route, request, body, path, params));
 	};
 
@@ -374,6 +461,10 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 	const port = (server.address() as AddressInfo).port;
 	host = `${PORTAL_HOST}:${port}`;
 	origin = `http://${host}`;
+	if (options.remote && options.devices) {
+		origin = options.devices.origin;
+		host = new URL(origin).host;
+	}
 	log({ kind: "ready", port });
 	return {
 		port,

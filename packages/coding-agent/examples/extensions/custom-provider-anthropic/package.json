@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "clean": "echo 'nothing to clean'",
-    "build": "echo 'nothing to build'",
+    "build": "node init && echo 'nothing to build'",
     "check": "echo 'nothing to check'"
   },
   "pi": {

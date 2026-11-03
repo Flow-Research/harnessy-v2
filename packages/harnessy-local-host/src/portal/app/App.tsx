@@ -5,9 +5,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CommandChip, HandoffProvider } from "./components/actions.tsx";
+import { BrowserSignIn } from "./components/BrowserSignIn.tsx";
 import { ErrorBoundary, ScreenFailed } from "./components/ErrorBoundary.tsx";
 import { BriefGenerationProvider } from "./components/GenerateBrief.tsx";
 import { Palette, type PaletteEntry, screenEntries } from "./components/Palette.tsx";
+import { QuickActions } from "./components/QuickActions.tsx";
 import { BottomBar, NAV, Rail, TopBar } from "./components/Shell.tsx";
 import type { InboxResponse, JobsResponse, TasksResponse } from "./lib/api-types.ts";
 import {
@@ -76,14 +78,32 @@ export const paletteEntries = (
 	return [...unique.values()];
 };
 
-const SignedOut = () => (
+const SignedOut = ({ client, onSignedIn }: { client: SessionClient; onSignedIn: () => void }) => (
 	<main className="signed-out">
 		<h1 className="screen-title">Sign in to Harnessy</h1>
-		<p className="text-2">
-			The sign-in lasts 8 hours in this tab. It also ends when the portal restarts. If you installed the Harnessy
-			launcher, open it from Applications for a fresh sign-in. You can also run:
-		</p>
-		<CommandChip command="harnessy open" />
+		{window.location.protocol === "https:" ? (
+			<p>
+				On your signed-in desktop, open Actions → Connect a device. Open the one-time pairing link on this device
+				while connected to the configured private network. Reload after reconnecting.
+			</p>
+		) : (
+			<>
+				<p className="text-2">
+					Sign in to use Terminal, Today, reviews and the cockpit. The Harnessy app signs you in here without
+					opening another browser tab.
+				</p>
+				<BrowserSignIn client={client} onSignedIn={onSignedIn} />
+				<p className="text-2">Allow your browser to open Harnessy when prompted.</p>
+				<details>
+					<summary>Other ways to sign in</summary>
+					<p className="text-2">
+						Open Harnessy from Applications or run the command below. Sign-in lasts 8 hours in this tab and ends
+						when the portal restarts.
+					</p>
+					<CommandChip command="harnessy open" />
+				</details>
+			</>
+		)}
 	</main>
 );
 
@@ -100,7 +120,7 @@ const ScreenView = ({
 }) => {
 	switch (screen) {
 		case "terminal":
-			return <TerminalScreen client={client} />;
+			return <TerminalScreen client={client} initialSelected={rest[0]} />;
 		case "inbox":
 			return <InboxScreen selectedKey={rest[0]} now={now} />;
 		case "today":
@@ -248,6 +268,7 @@ export const App = ({
 	useEffect(() => {
 		let cancelled = false;
 		const check = async () => {
+			await client.restoreDevice();
 			if (location.hash().startsWith("#code=")) {
 				await client.signInFromHash();
 				store.reset();
@@ -267,11 +288,19 @@ export const App = ({
 	}, [client, store, location]);
 	if (state === "starting") return <p className="muted starting">Loading</p>;
 	return state === "signed_out" ? (
-		<SignedOut />
+		<SignedOut
+			client={client}
+			onSignedIn={() => {
+				store.reset();
+				setState("signed_in");
+			}}
+		/>
 	) : (
 		<HandoffProvider open={(service) => client.open(service)}>
 			<BriefGenerationProvider generate={() => client.generateBrief()}>
-				<SignedIn location={location} client={client} />
+				<QuickActions client={client}>
+					<SignedIn location={location} client={client} />
+				</QuickActions>
 			</BriefGenerationProvider>
 		</HandoffProvider>
 	);

@@ -8,6 +8,7 @@
 import { ErrorBoundary, PlainTextFallback } from "../components/ErrorBoundary.tsx";
 import { GenerateBrief } from "../components/GenerateBrief.tsx";
 import { Card, StatusDot, TileState, type Tone, WithTile } from "../components/primitives.tsx";
+import { useBriefAction } from "../components/QuickActions.tsx";
 import { MarkdownBlocks, SafeMarkdown } from "../components/SafeMarkdown.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
 import { WorthReading } from "../components/WorthReading.tsx";
@@ -27,29 +28,49 @@ export const JOB_TONE: Readonly<Record<Job["health"], Tone>> = {
 	unknown: "idle",
 };
 
-const Brief = ({ text }: { text: string }) => {
+const Brief = ({ text, date }: { text: string; date: string }) => {
+	const workOn = useBriefAction();
+	const sectionAction = (title: string) => (
+		<button
+			type="button"
+			className="brief-section-action"
+			onClick={(event) => {
+				const content =
+					event.currentTarget.parentElement?.querySelector<HTMLElement>(".brief-section-content")?.innerText ?? "";
+				workOn({ text: content, source: `${date} · ${title}`, title });
+			}}
+		>
+			Work on this
+		</button>
+	);
 	const sections = sectionsOf(parseMarkdown(text));
 	const pinned = PINNED_SECTIONS.map((title) =>
 		sections.find((section) => section.title?.toLowerCase() === title.toLowerCase()),
 	);
 	const rest = sections.filter((section) => !pinned.includes(section));
 	return (
-		<div className="markdown">
+		<div className="markdown" data-brief-source={date}>
 			{pinned.map((section, index) =>
 				section === undefined ? null : (
 					<Card key={PINNED_SECTIONS[index]} title={PINNED_SECTIONS[index]} className="card-raised">
-						<MarkdownBlocks blocks={section.blocks} />
+						<div className="brief-section-content">
+							<MarkdownBlocks blocks={section.blocks} />
+						</div>
+						{sectionAction(PINNED_SECTIONS[index]!)}
 					</Card>
 				),
 			)}
 			{rest.map((section, index) => (
 				<section key={`${section.title ?? "intro"}-${index}`}>
 					{section.title === null ? null : <h2 className="md-section">{section.title}</h2>}
-					{section.title?.toLowerCase() === "worth reading" ? (
-						<WorthReading blocks={section.blocks} />
-					) : (
-						<MarkdownBlocks blocks={section.blocks} />
-					)}
+					<div className="brief-section-content">
+						{section.title?.toLowerCase() === "worth reading" ? (
+							<WorthReading blocks={section.blocks} />
+						) : (
+							<MarkdownBlocks blocks={section.blocks} />
+						)}
+					</div>
+					{sectionAction(section.title ?? "Introduction")}
 				</section>
 			))}
 		</div>
@@ -149,13 +170,16 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 								fallback={<PlainTextFallback text={briefTile.data.text} />}
 								resetKey={briefTile.data.text}
 							>
-								<Brief text={briefTile.data.text} />
+								<Brief text={briefTile.data.text} date={briefTile.data.date} />
 							</ErrorBoundary>
 						</>
 					) : brief.status === "loading" ? (
 						<p className="muted">Loading</p>
 					) : briefTile?.reason === "file_missing" ? (
-						<p>Today’s briefing hasn’t been generated yet. Use Generate today’s brief to create it.</p>
+						<>
+							<p>Today’s briefing hasn’t been generated yet. Use Generate today’s brief to create it.</p>
+							<GenerateBrief missing />
+						</>
 					) : (
 						<TileState tile={briefTile} />
 					)}
@@ -253,9 +277,11 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 							)}
 						</WithTile>
 					</Card>
-					<Card title="Daily brief">
-						<GenerateBrief missing={briefTile?.state !== "ok"} />
-					</Card>
+					{briefTile?.reason === "file_missing" ? null : (
+						<Card title="Daily brief">
+							<GenerateBrief missing={briefTile?.state !== "ok"} />
+						</Card>
+					)}
 					{brief.fetchedAt === undefined ? null : (
 						<p className="fine-print">
 							Brief read {relativeTime(new Date(brief.fetchedAt).toISOString(), now)}; generated{" "}

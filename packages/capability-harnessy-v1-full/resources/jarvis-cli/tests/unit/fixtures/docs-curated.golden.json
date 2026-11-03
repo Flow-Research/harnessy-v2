@@ -135,7 +135,7 @@
             "jarvis config backend notion"
           ],
           "options": {
-            "NAME": "Backend name (anytype, notion)"
+            "NAME": "Knowledge-tool adapter name (see jarvis config capabilities)"
           }
         },
         "capabilities": {
@@ -200,7 +200,7 @@
       "description": "Manage the content publishing pipeline",
       "subcommands": {
         "approve": {
-          "description": "Approve content and push to Anytype",
+          "description": "Approve content and push to the destination (legacy destination only)",
           "examples": [
             "jarvis content approve drafts/2026/Jun/01-harnessy"
           ],
@@ -210,12 +210,12 @@
           }
         },
         "audit-anytype": {
-          "description": "Audit a synced Anytype content Collection for duplicate links",
+          "description": "Audit duplicate links in a synced content collection (legacy destination only)",
           "examples": [
             "jarvis content audit-anytype drafts/2026/Jun/01-harnessy --sync-source .jarvis/context/private/julian/flow-content/drafts --sync-destination root_obj:space_1"
           ],
           "options": {
-            "--sync-destination": "Anytype destination object_id:space_id",
+            "--sync-destination": "Destination object_id:space_id for the sync adapter",
             "--sync-preset": "Sync preset/state name to audit",
             "--sync-source": "Sync source root for ad-hoc sync state",
             "PATH": "Content piece folder or index.md path"
@@ -251,21 +251,21 @@
             "--forbid": "Text that must not appear before publish; repeatable",
             "--hygiene / --no-hygiene": "Clean configured AI-speak patterns before publishing",
             "--hygiene-config": "Text hygiene pattern registry YAML",
-            "--journal": "Write journal.md to Anytype Journal",
+            "--journal": "Write journal.md to the journal destination",
             "--no-dedupe": "Skip duplicate Collection-link cleanup",
             "--no-journal": "Skip Journal write",
-            "--no-sync": "Skip Anytype content sync",
+            "--no-sync": "Skip content sync",
             "--require": "Text that must appear before publish; repeatable",
             "--space": "Journal space name or ID; repeatable",
-            "--sync": "Run Anytype content sync",
-            "--sync-destination": "Anytype destination object_id:space_id",
+            "--sync": "Run content sync with the supported adapter",
+            "--sync-destination": "Destination object_id:space_id for the sync adapter",
             "--sync-preset": "Sync preset/state name to use",
             "--sync-source": "Sync source root for ad-hoc sync state",
             "PATH": "Content piece folder or index.md path"
           }
         },
         "push": {
-          "description": "Push all approved content pieces to Anytype",
+          "description": "Push all approved content pieces to the destination (legacy destination only)",
           "examples": [
             "jarvis content push --force"
           ],
@@ -280,7 +280,7 @@
           ]
         },
         "strategy": {
-          "description": "Push the content strategy document to Anytype",
+          "description": "Push the strategy document to the destination (legacy destination only)",
           "examples": [
             "jarvis content strategy"
           ]
@@ -349,7 +349,7 @@
       }
     },
     "journal": {
-      "description": "AI-powered journaling for AnyType",
+      "description": "AI-powered journaling (legacy destination only)",
       "subcommands": {
         "insights": {
           "description": "Get AI-powered insights across journal entries",
@@ -605,11 +605,11 @@
             "--enrich-ai / --no-enrich-ai": "Use AI to fill missing sections",
             "--json": "Emit the result as JSON",
             "--project": "Attach a project slug or label; configured aliases are canonicalized",
-            "--resolver": "Override source resolution (anytype, notion, file, url, stdin)",
+            "--resolver": "Override source resolution with a supported resolver",
             "--tag": "Tags to attach (repeatable)",
             "--title": "Override the inferred meeting title",
             "--wiki-domain": "Wiki domain when using the wiki destination",
-            "SOURCE": "File path, AnyType/Notion URL, generic URL, or '-' for stdin"
+            "SOURCE": "File path, supported knowledge-tool URL, generic URL, or '-' for stdin"
           }
         },
         "publish approve": {
@@ -738,7 +738,7 @@
           "options": {
             "--backend": "Backend override for object-based resolvers",
             "--resolver": "Override source resolution",
-            "TARGET": "AnyType URL, Notion URL, file path, generic URL, or '-' for stdin"
+            "TARGET": "Supported knowledge-tool URL, file path, generic URL, or '-' for stdin"
           }
         },
         "organize": {
@@ -755,10 +755,10 @@
             "--no-cache": "Ignore cached content and results",
             "--no-fetch": "Skip deep URL fetching; prioritize from metadata only",
             "--output": "Save markdown output to file",
-            "--resolver": "Override source resolution (anytype, notion, file, url, stdin)",
+            "--resolver": "Override source resolution with a supported resolver",
             "--tier": "Filter to a specific tier",
             "--topic": "Filter to a specific topic",
-            "TARGET": "AnyType URL, Notion URL, file path, generic URL, or '-' for stdin"
+            "TARGET": "Supported knowledge-tool URL, file path, generic URL, or '-' for stdin"
           }
         }
       }
@@ -788,11 +788,11 @@
         "--resolver": "Override source resolution",
         "--tier": "Filter to a specific tier",
         "--topic": "Filter to a specific topic",
-        "TARGET": "AnyType URL, Notion URL, file path, generic URL, or '-' for stdin"
+        "TARGET": "Supported knowledge-tool URL, file path, generic URL, or '-' for stdin"
       }
     },
     "spaces": {
-      "description": "List available AnyType spaces and select one",
+      "description": "List available spaces in the configured knowledge tool and select one",
       "examples": [
         "jarvis spaces"
       ],
@@ -820,16 +820,16 @@
       }
     },
     "sync": {
-      "description": "Sync local folders into an Anytype Collection; directories become Collections, text files become Pages, and other files upload as native Anytype file objects by default",
+      "description": "Sync local folders into a destination collection (legacy destination only); directories become Collections, text files become Pages, and other files upload as native file objects by default",
       "subcommands": {
         "dedupe": {
-          "description": "Remove duplicate Anytype Collection links by keeping the object IDs recorded in sync state",
+          "description": "Remove duplicate destination collection links by keeping the object IDs recorded in sync state",
           "examples": [
             "jarvis sync dedupe --preset flow-content --dry-run",
             "jarvis sync dedupe --source ./drafts --destination root_obj:space_1 --path 2026/Jun/01-harnessy --yes"
           ],
           "options": {
-            "--destination": "Anytype target Collection link for ad-hoc state lookup",
+            "--destination": "Target collection link for ad-hoc state lookup",
             "--dry-run": "Show stale links without removing them",
             "--path": "Limit cleanup to one synced Collection relpath",
             "--preset": "Use a saved sync preset/state",
@@ -877,9 +877,9 @@
           }
         },
         "run": {
-          "description": "Run an incremental source folder/file sync to Anytype",
+          "description": "Run an incremental source folder/file sync to the destination",
           "examples": [
-            "jarvis sync run --source ./notes --destination 'anytype://object?objectId=...&spaceId=...' --dry-run",
+            "jarvis sync run --source ./notes --destination 'root_obj:space_id' --dry-run",
             "jarvis sync run --source ./notes --destination root_obj:space_1 --yes",
             "jarvis sync run --source ./repo --destination root_obj:space_1 --include-extension py --dry-run",
             "jarvis sync run --source ./notes --destination root_obj:space_1 --unsupported-mode upload --yes",
@@ -887,12 +887,12 @@
             "jarvis sync run --preset flow-context --prune --yes"
           ],
           "options": {
-            "--destination": "Anytype object link for the target Collection, or raw object_id:space_id",
-            "--dry-run": "Show the planned create/update/prune operations without connecting to Anytype or writing state",
+            "--destination": "Supported object link for the target collection, or raw object_id:space_id",
+            "--dry-run": "Show the planned create/update/prune operations without connecting to the destination or writing state",
             "--ignore": "Additional ignore glob for traversal; repeatable",
             "--include-extension": "Additional text file extension to include; repeat to extend the preset/default extension list. Other extensions follow --unsupported-mode",
             "--preset": "Use a saved sync preset",
-            "--prune": "Delete Anytype objects that were previously synced but no longer exist locally",
+            "--prune": "Delete destination objects that were previously synced but no longer exist locally",
             "--skip-destination-check": "Do not verify that the destination object is a Collection before writing",
             "--source": "Source path, either a file or directory",
             "--unsupported-mode": "Non-text file behavior: upload native file objects (default), warn and skip, create metadata stub pages, or fail the run",
@@ -916,7 +916,7 @@
       }
     },
     "task": {
-      "description": "Manage tasks in AnyType",
+      "description": "Manage tasks in the configured knowledge tool",
       "subcommands": {
         "create": {
           "description": "Create a new task",
@@ -1128,7 +1128,7 @@
     "global_path": "~/.jarvis/context/",
     "merge_behavior": "Folder overrides global. Use {{global}} placeholder to include global content."
   },
-  "description": "AI-powered personal assistant for AnyType",
+  "description": "AI-powered personal assistant",
   "environment": {
     "ANTHROPIC_API_KEY": "Required for AI features",
     "EDITOR": "Editor for context/journal editing (default: vim)",
@@ -1145,7 +1145,7 @@
   "name": "jarvis",
   "requirements": [
     "Python 3.11+",
-    "AnyType desktop app running on localhost:31009"
+    "A configured knowledge-tool adapter for commands that access remote knowledge"
   ],
   "version": "0.1.0"
 }

@@ -350,9 +350,11 @@ def generate_title(content: str) -> str:
 
 @click.group(name="journal")
 def journal_cli() -> None:
-    """AI-powered journaling for AnyType.
+    """AI-powered journaling.
 
     Write, search, and analyze your journal entries with AI assistance.
+    This command currently uses the legacy journal destination.
+    See the knowledge-tool support guide for adapter limits.
     """
     pass
 

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "deploy:cloudflare": "wrangler deploy",
-    "dev:cloudflare": "wrangler dev",
+    "dev:cloudflare": "node init && wrangler dev",
     "typecheck": "tsgo --noEmit",
     "test": "vitest run"
   },

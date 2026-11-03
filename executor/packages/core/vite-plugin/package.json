@@ -34,8 +34,8 @@
     }
   },
   "scripts": {
-    "build": "tsup && (tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src || true)",
-    "build:bundle": "tsup",
+    "build": "node init && tsup && (tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src || true)",
+    "build:bundle": "node init && tsup",
     "typecheck": "tsgo --noEmit",
     "test": "vitest run",
     "typecheck:slow": "tsc --noEmit"

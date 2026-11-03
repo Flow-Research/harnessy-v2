@@ -73,7 +73,7 @@ def task_cli() -> None:
 @click.option("--tag", "-t", "tags", multiple=True, help="Tags (repeatable)")
 @click.option("--editor", "-e", is_flag=True, help="Open editor for description")
 @click.option("--space", default=None, help="Override space selection")
-@click.option("--backend", default=None, help="Backend to use (anytype, notion)")
+@click.option("--backend", default=None, help="Knowledge-tool adapter to use")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 def create_task(
     title: str,

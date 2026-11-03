@@ -11,14 +11,12 @@ packages/*/dist-firefox/
 *.cpuprofile
 
 # Environment
-.env
 
 # Owner-private context and machine bindings; never part of public source.
 /.jarvis/context/private/
 /.jarvis/context/local.md
 
 # Editor files
-.vscode/
 .zed/
 .idea/
 .claude/
@@ -57,3 +55,4 @@ harnessy-v1/
 # Python bytecode
 __pycache__/
 *.pyc
+config.bat

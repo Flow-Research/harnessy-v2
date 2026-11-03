@@ -1,7 +1,7 @@
 {
   "name": "@executor-js/cli",
   "version": "0.2.40",
-  "description": "CLI for the executor SDK — schema generation, migrations",
+  "description": "CLI for the executor SDK \u2014 schema generation, migrations",
   "homepage": "https://github.com/UsefulSoftwareCo/executor/tree/main/packages/core/cli",
   "bugs": {
     "url": "https://github.com/UsefulSoftwareCo/executor/issues"
@@ -34,8 +34,8 @@
     }
   },
   "scripts": {
-    "build": "tsup && (tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src || true)",
-    "dev": "node --import jiti/register src/index.ts",
+    "build": "node init && tsup && (tsc --declaration --emitDeclarationOnly --outDir dist --rootDir src || true)",
+    "dev": "node init && node --import jiti/register src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

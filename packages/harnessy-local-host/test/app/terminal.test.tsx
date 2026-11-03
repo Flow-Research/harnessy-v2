@@ -154,6 +154,47 @@ it("stops browser polling on unmount without closing the shell", async () => {
 	expect(terminalAction.mock.calls.some(([body]) => body.action === "close")).toBe(false);
 });
 
+it("imports an existing tmux session, takes control explicitly and removes only its attachment", async () => {
+	const external = { id: "imported", title: "tmux · existing", state: "running", external: true };
+	let imported = false;
+	get.mockImplementation(async (path) =>
+		path.endsWith("/sessions")
+			? {
+					kind: "ok",
+					body: {
+						cwd: "/workspace",
+						persistent: true,
+						sessions: imported ? [external] : [],
+						tmuxSessions: [{ key: "42:123:$0", name: "existing" }],
+					},
+				}
+			: output(),
+	);
+	terminalAction.mockImplementation(async (body) => {
+		if (body.action === "import-tmux") {
+			imported = true;
+			return { kind: "ok", body: { id: "imported" } };
+		}
+		return { kind: "ok", body: { controlling: body.action === "takeover" } };
+	});
+	const confirm = vi.spyOn(window, "confirm");
+	await render();
+	const select = container.querySelector<HTMLSelectElement>('[aria-label="Existing tmux session"]')!;
+	await act(async () => {
+		select.value = "42:123:$0";
+		select.dispatchEvent(new Event("change", { bubbles: true }));
+	});
+	await click("Attach existing session");
+	expect(terminalAction).toHaveBeenCalledWith({ action: "import-tmux", tmuxKey: "42:123:$0" });
+	expect(current().options.disableStdin).toBe(true);
+	await click("Take control");
+	expect(current().options.disableStdin).toBe(false);
+	expect(terminalAction.mock.calls.some(([body]) => body.action === "takeover")).toBe(true);
+	await click("Remove attachment");
+	expect(confirm).not.toHaveBeenCalled();
+	expect(terminalAction).toHaveBeenCalledWith({ action: "close", id: "imported" });
+});
+
 it("reports truncated output, stops after shell exit and refuses oversized paste", async () => {
 	sessions = [{ id: "one", state: "running" }];
 	replies = [output("recent", 100, 100, true, "exited"), output("", 100, 100, false, "exited")];

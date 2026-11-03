@@ -373,7 +373,7 @@ def list_command(target: str, resolver: str | None, backend: str | None) -> None
 @click.option(
     "--write-back",
     is_flag=True,
-    help="Write prioritized result back to the source object (AnyType/Notion only)",
+    help="Write prioritized result back to the source object (requires a writable adapter)",
 )
 def organize_command(
     target: str,
@@ -488,7 +488,7 @@ def write_back_command(
     """Write agent-formatted markdown back to a reading list source.
 
     Accepts markdown from --file or --stdin and writes it to the target
-    object (AnyType/Notion). Use after the agent has scored and formatted
+    object through its adapter. Use after the agent has scored and formatted
     items independently.
     """
     if not input_file and not use_stdin:

@@ -11,6 +11,12 @@
 
 ## Code Quality
 
+- Knowledge workflows must follow [the knowledge-tool architecture contract](docs/knowledge-tools.md).
+  Keep general product descriptions and command help provider neutral. Put exact
+  provider setup and support limits in the knowledge-tool reference. New workflows
+  must use the selected adapter and reject unsupported capabilities before writes.
+  Do not claim support for a tool from neutral wording or an adapter stub.
+
 - Read files in full before wide-ranging changes, before editing files you have not fully inspected, and when asked to investigate or audit. Do not rely on search snippets for broad changes.
 - No `any` unless absolutely necessary.
 - Inline single-line helpers that have only one call site.

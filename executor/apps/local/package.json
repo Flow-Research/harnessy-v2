@@ -8,11 +8,11 @@
     "./auth": "./src/auth.ts"
   },
   "scripts": {
-    "dev": "bun run dev:proxy && bun run dev:vite",
-    "dev:proxy": "portless proxy start --multiplex --port 1355 || true",
-    "dev:vite": "EXECUTOR_DATA_DIR=${EXECUTOR_DATA_DIR:-.executor-dev} portless --name executor-local bunx --bun vite dev",
-    "build": "turbo run build --filter @executor-js/vite-plugin && bunx --bun vite build",
-    "start": "bun run src/serve.ts",
+    "dev": "node init && bun run dev:proxy && bun run dev:vite",
+    "dev:proxy": "node init && portless proxy start --multiplex --port 1355 || true",
+    "dev:vite": "node init && EXECUTOR_DATA_DIR=${EXECUTOR_DATA_DIR:-.executor-dev} portless --name executor-local bunx --bun vite dev",
+    "build": "node init && turbo run build --filter @executor-js/vite-plugin && bunx --bun vite build",
+    "start": "node init && bun run src/serve.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "test": "bunx --bun vitest run",

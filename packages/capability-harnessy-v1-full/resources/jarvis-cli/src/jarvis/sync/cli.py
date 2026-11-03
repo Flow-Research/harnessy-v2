@@ -58,7 +58,10 @@ class DedupePlan:
 
 @click.group(name="sync")
 def sync_group() -> None:
-    """Sync local folders/files to an Anytype Collection."""
+    """Sync local folders/files to a knowledge-tool collection.
+
+    Writes currently support only the legacy destination. See the knowledge-tool
+    support guide for adapter limits."""
 
 
 # ---------------------------------------------------------------------------
@@ -80,10 +83,10 @@ def sync_group() -> None:
     "destination_str",
     type=str,
     default=None,
-    help="Anytype object link for the target Collection. Overrides the preset's destination.",
+    help="Object link for the destination collection. Overrides the preset's destination.",
 )
-@click.option("--prune", is_flag=True, help="Delete on Anytype what's gone locally.")
-@click.option("--dry-run", is_flag=True, help="Show what would change without touching Anytype.")
+@click.option("--prune", is_flag=True, help="Delete previously synced destination objects that no longer exist locally.")
+@click.option("--dry-run", is_flag=True, help="Show what would change without writing to the destination.")
 @click.option("--yes", "assume_yes", is_flag=True, help="Skip confirmation prompts for writes.")
 @click.option(
     "--include-extension",
@@ -100,7 +103,7 @@ def sync_group() -> None:
 @click.option(
     "--skip-destination-check",
     is_flag=True,
-    help="Do not verify that the destination object is an Anytype Collection before writing.",
+    help="Do not verify that the destination object is a destination collection before writing.",
 )
 @click.option(
     "--unsupported-mode",
@@ -221,7 +224,7 @@ def run_cmd(
     "destination_str",
     type=str,
     default=None,
-    help="Anytype target Collection link for ad-hoc sync state lookup.",
+    help="Destination collection link for ad-hoc sync state lookup.",
 )
 @click.option(
     "--path",
@@ -303,7 +306,7 @@ def dedupe_cmd(
 
     remover = getattr(adapter, "remove_from_collection", None)
     if remover is None:
-        console.print("[red]Anytype adapter cannot remove Collection links.[/red]")
+        console.print("[red]Sync adapter cannot remove Collection links.[/red]")
         raise SystemExit(1)
 
     removed = 0
@@ -356,7 +359,7 @@ def preset_add() -> None:
 
     destination: str | None = None
     if Confirm.ask("Pre-fill a destination link? (No = ask each time)", default=False):
-        link_str = Prompt.ask("Anytype object link").strip()
+        link_str = Prompt.ask("Destination object link").strip()
         try:
             parse_link(link_str)
         except InvalidLinkError as e:
@@ -580,7 +583,7 @@ def _build_dedupe_plan(
     """Find links in synced Collections that no longer match sync state."""
     lister = getattr(adapter, "list_collection_objects", None)
     if lister is None:
-        console.print("[red]Anytype adapter cannot list Collection objects.[/red]")
+        console.print("[red]Sync adapter cannot list Collection objects.[/red]")
         raise SystemExit(1)
 
     expected = _expected_children_by_collection(state)
@@ -730,7 +733,7 @@ def _resolve_destination(cli_destination: str | None, preset: Preset | None) -> 
     selected_space_id = _pick_space()
     if selected_space_id is None:
         return None
-    raw = Prompt.ask("Paste the Anytype object link for the target folder/collection").strip()
+    raw = Prompt.ask("Paste the destination object link for the target folder/collection").strip()
     try:
         link = parse_link(raw)
     except InvalidLinkError as e:
@@ -754,11 +757,11 @@ def _pick_space() -> str | None:
         client.connect()
         spaces = client.get_spaces()
     except Exception as e:
-        console.print(f"[red]Could not connect to Anytype: {e}[/red]")
+        console.print(f"[red]Could not connect to the sync destination: {e}[/red]")
         return None
 
     if not spaces:
-        console.print("[red]No Spaces found in Anytype.[/red]")
+        console.print("[red]No spaces found in the sync destination.[/red]")
         return None
 
     console.print("\n[bold]Available Spaces:[/bold]")
@@ -786,7 +789,7 @@ def _get_anytype_adapter() -> SyncAdapter | None:
         adapter.connect()
         return adapter  # type: ignore[return-value]
     except Exception as e:
-        console.print(f"[red]Could not connect to Anytype: {e}[/red]")
+        console.print(f"[red]Could not connect to the sync destination: {e}[/red]")
         return None
 
 
@@ -801,7 +804,7 @@ def _validate_destination_collection(adapter: SyncAdapter, destination: AnytypeL
     except Exception as e:
         console.print(f"[red]Invalid sync destination: {e}[/red]")
         console.print(
-            "[dim]Pass an Anytype Collection link, or use --skip-destination-check "
+            "[dim]Pass a destination collection link, or use --skip-destination-check "
             "if you know this object can accept children.[/dim]"
         )
         return False
