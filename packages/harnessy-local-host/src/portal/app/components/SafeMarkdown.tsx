@@ -1,24 +1,54 @@
 /**
  * Renders the Markdown tree as React elements. Text is escaped by React; a link
- * becomes an anchor only when `safeHref` accepts it and is shown as text with
+ * becomes an anchor only when `safeExternalHref` accepts it and is shown as text with
  * its target otherwise. There is no path from source text to markup.
  */
 import { type Block, type Inline, type ListBlock, parseMarkdown } from "../lib/markdown.ts";
-import { safeHref } from "../lib/safe-href.ts";
+import { safeExternalHref } from "../lib/safe-href.ts";
 import { ErrorBoundary, PlainTextFallback } from "./ErrorBoundary.tsx";
 
 /** Pair each item with a key. A parsed document never reorders, so position is each item's identity. */
 const withKeys = <T,>(items: ReadonlyArray<T>, prefix: string) =>
 	items.map((value, position) => ({ value, key: `${prefix}-${position}` }));
 
-const InlineNodes = ({ nodes }: { nodes: ReadonlyArray<Inline> }) => (
+/** Link prose URLs without interpreting HTML or changing literal code. */
+export const LinkedText = ({ text }: { text: string }) => {
+	const parts = [];
+	let offset = 0;
+	for (const match of text.matchAll(/https?:\/\/[^\s<>"'`]+/giu)) {
+		const start = match.index;
+		if (start > 0 && /[\p{L}\p{N}_/@:]/u.test(text[start - 1]!)) continue;
+		let url = match[0].replace(/[.,;:!?]+$/u, "");
+		for (const [open, close] of [
+			["(", ")"],
+			["[", "]"],
+			["{", "}"],
+		] as const) {
+			while (url.endsWith(close) && url.split(close).length > url.split(open).length) url = url.slice(0, -1);
+		}
+		url = url.replace(/[.,;:!?]+$/u, "");
+		const href = safeExternalHref(url);
+		if (href === undefined) continue;
+		parts.push(text.slice(offset, start));
+		parts.push(
+			<a key={start} href={href} target="_blank" rel="noopener noreferrer">
+				{url}
+			</a>,
+		);
+		offset = start + url.length;
+	}
+	parts.push(text.slice(offset));
+	return <>{parts}</>;
+};
+
+const InlineNodes = ({ nodes, insideLink = false }: { nodes: ReadonlyArray<Inline>; insideLink?: boolean }) => (
 	<>
 		{nodes.map((node, index) => {
 			// A parsed document never reorders: position is each node's identity.
 			const key = `${node.type}-${index}`;
 			switch (node.type) {
 				case "text":
-					return <span key={key}>{node.text}</span>;
+					return <span key={key}>{insideLink ? node.text : <LinkedText text={node.text} />}</span>;
 				case "code":
 					return (
 						<code key={key} className="inline-code">
@@ -28,24 +58,24 @@ const InlineNodes = ({ nodes }: { nodes: ReadonlyArray<Inline> }) => (
 				case "strong":
 					return (
 						<strong key={key}>
-							<InlineNodes nodes={node.children} />
+							<InlineNodes nodes={node.children} insideLink={insideLink} />
 						</strong>
 					);
 				case "em":
 					return (
 						<em key={key}>
-							<InlineNodes nodes={node.children} />
+							<InlineNodes nodes={node.children} insideLink={insideLink} />
 						</em>
 					);
 				case "link": {
-					const href = safeHref(node.href);
+					const href = safeExternalHref(node.href);
 					return href === undefined ? (
 						<span key={key} className="link-text">
-							<InlineNodes nodes={node.children} /> <span className="muted">({node.href})</span>
+							<InlineNodes nodes={node.children} insideLink /> <span className="muted">({node.href})</span>
 						</span>
 					) : (
 						<a key={key} href={href} target="_blank" rel="noreferrer noopener">
-							<InlineNodes nodes={node.children} />
+							<InlineNodes nodes={node.children} insideLink />
 						</a>
 					);
 				}

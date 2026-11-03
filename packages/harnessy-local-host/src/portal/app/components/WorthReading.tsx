@@ -1,5 +1,6 @@
 import { type Block, inlineText } from "../lib/markdown.ts";
-import { MarkdownBlocks } from "./SafeMarkdown.tsx";
+import { safeExternalHref } from "../lib/safe-href.ts";
+import { LinkedText, MarkdownBlocks } from "./SafeMarkdown.tsx";
 
 /** Decode entity tokens only. Source HTML never enters the DOM. */
 export const readingText = (text: string): string =>
@@ -10,15 +11,7 @@ export const readingText = (text: string): string =>
 
 export const readingHref = (source: string): string | undefined => {
 	const value = readingText(source.startsWith("<") && source.endsWith(">") ? source.slice(1, -1) : source);
-	if (value.length > 2048 || !/^https?:\/\//iu.test(value) || /[\s\p{Cc}\p{Cf}\\<>]/u.test(value)) return undefined;
-	try {
-		const url = new URL(value);
-		return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password
-			? url.href
-			: undefined;
-	} catch {
-		return undefined;
-	}
+	return safeExternalHref(value);
 };
 
 export const WorthReading = ({ blocks }: { blocks: ReadonlyArray<Block> }) => (
@@ -31,7 +24,12 @@ export const WorthReading = ({ blocks }: { blocks: ReadonlyArray<Block> }) => (
 					{block.items.map((item, index) => {
 						const [title, ...description] = item.children;
 						const itemKey = `reading-${index}`;
-						if (title?.type !== "link") return <li key={itemKey}>{readingText(inlineText(item.children))}</li>;
+						if (title?.type !== "link")
+							return (
+								<li key={itemKey}>
+									<LinkedText text={readingText(inlineText(item.children))} />
+								</li>
+							);
 						const href = readingHref(title.href);
 						const label = readingText(inlineText(title.children));
 						const detail = readingText(inlineText(description))
@@ -46,7 +44,11 @@ export const WorthReading = ({ blocks }: { blocks: ReadonlyArray<Block> }) => (
 								) : (
 									<span className="reading-title">{label}</span>
 								)}
-								{detail ? <p className="reading-description">{detail}</p> : null}
+								{detail ? (
+									<p className="reading-description">
+										<LinkedText text={detail} />
+									</p>
+								) : null}
 							</li>
 						);
 					})}

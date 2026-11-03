@@ -100,6 +100,31 @@ const cardText = (title: string) =>
 	[...container.querySelectorAll(".card")].find((card) => card.textContent?.startsWith(title))?.textContent ?? "";
 
 describe("the Today screen", () => {
+	it("makes URLs clickable in pinned actions, section headings and reading descriptions", async () => {
+		await renderToday([], {
+			"/v1/life/brief": ok(
+				envelope({
+					brief: tile("ok", {
+						date: "2026-11-03",
+						journaled: false,
+						truncated: false,
+						text: "## Decisions and Actions for You\n\nSlides (https://docs.google.com/presentation/d/example/edit).\n\n## https://example.test/section\n\nRead https://example.test/note.\n\n## Worth Reading\n\n- [Article](https://example.test/article) — See https://example.test/background.\n- Also https://example.test/extra",
+					}),
+				}),
+			),
+		});
+		await waitFor(() => expect(container.querySelectorAll(".markdown a")).toHaveLength(6));
+		for (const link of container.querySelectorAll<HTMLAnchorElement>(".markdown a")) {
+			expect(link.target).toBe("_blank");
+			expect(link.relList.contains("noopener")).toBe(true);
+			expect(link.relList.contains("noreferrer")).toBe(true);
+			expect(link.href.endsWith(".")).toBe(false);
+		}
+		expect(container.querySelector(".card-raised a")?.getAttribute("href")).toBe(
+			"https://docs.google.com/presentation/d/example/edit",
+		);
+	});
+
 	it("shows a full brief for a chosen date with its pinned section, badges, switcher and every side card", async () => {
 		const runs = [
 			{ periodId: "2026-W42", runHash: DRAFT_HASH, state: "drafted" },

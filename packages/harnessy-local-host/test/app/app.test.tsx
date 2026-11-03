@@ -536,7 +536,7 @@ describe("app pieces", () => {
 		});
 	};
 
-	it("renders Markdown as text and links only to loopback", async () => {
+	it("renders HTML as text and permits safe HTTP/HTTPS document links", async () => {
 		await mount(
 			<SafeMarkdown
 				text={[
@@ -560,6 +560,7 @@ describe("app pieces", () => {
 		);
 		expect(container.querySelectorAll("img, script")).toHaveLength(0);
 		expect([...container.querySelectorAll("a")].map((anchor) => anchor.getAttribute("href"))).toEqual([
+			"https://example.test/",
 			"http://127.0.0.1:8770/",
 		]);
 		expect(container.querySelector("a")!.getAttribute("rel")).toBe("noreferrer noopener");

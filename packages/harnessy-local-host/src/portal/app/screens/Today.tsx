@@ -9,7 +9,7 @@ import { ErrorBoundary, PlainTextFallback } from "../components/ErrorBoundary.ts
 import { GenerateBrief } from "../components/GenerateBrief.tsx";
 import { Card, StatusDot, TileState, type Tone, WithTile } from "../components/primitives.tsx";
 import { useBriefAction } from "../components/QuickActions.tsx";
-import { MarkdownBlocks, SafeMarkdown } from "../components/SafeMarkdown.tsx";
+import { LinkedText, MarkdownBlocks, SafeMarkdown } from "../components/SafeMarkdown.tsx";
 import { ScreenHeader } from "../components/Shell.tsx";
 import { WorthReading } from "../components/WorthReading.tsx";
 import type { Job, JobsResponse, LifeBriefResponse, LifeWeeklyDraftResponse, TodayResponse } from "../lib/api-types.ts";
@@ -62,7 +62,11 @@ const Brief = ({ text, date }: { text: string; date: string }) => {
 			)}
 			{rest.map((section, index) => (
 				<section key={`${section.title ?? "intro"}-${index}`}>
-					{section.title === null ? null : <h2 className="md-section">{section.title}</h2>}
+					{section.title === null ? null : (
+						<h2 className="md-section">
+							<LinkedText text={section.title} />
+						</h2>
+					)}
 					<div className="brief-section-content">
 						{section.title?.toLowerCase() === "worth reading" ? (
 							<WorthReading blocks={section.blocks} />

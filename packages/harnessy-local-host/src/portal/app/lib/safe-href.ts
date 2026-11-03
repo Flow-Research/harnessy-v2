@@ -9,6 +9,19 @@
  */
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "[::1]", "localhost"]);
 
+/** External document links; separate from the stricter service-navigation policy. */
+export const safeExternalHref = (value: string): string | undefined => {
+	if (value.length > 2048 || !/^https?:\/\//iu.test(value) || /[\s\p{Cc}\p{Cf}\\<>]/u.test(value)) return undefined;
+	try {
+		const url = new URL(value);
+		return (url.protocol === "http:" || url.protocol === "https:") && !url.username && !url.password
+			? url.href
+			: undefined;
+	} catch {
+		return undefined;
+	}
+};
+
 export const safeHref = (value: unknown): string | undefined => {
 	if (typeof value !== "string" || value.length > 256) return undefined;
 	// Judge the URL the browser will follow, parsed by the browser's own parser,
