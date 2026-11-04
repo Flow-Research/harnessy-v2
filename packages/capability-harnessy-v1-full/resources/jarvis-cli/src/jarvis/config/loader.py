@@ -3,7 +3,7 @@
 import os
 import shlex
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -13,7 +13,13 @@ from .defaults import (
     ENV_NOTION_TOKEN_FALLBACK,
 )
 from .fathom_setup import default_env_file_path
-from .schema import JarvisConfig, WhatsAppAccountConfig, get_config_path
+from .schema import (
+    CommunityBriefingConfig,
+    JarvisConfig,
+    MeetingPublicationConfig,
+    WhatsAppAccountConfig,
+    get_config_path,
+)
 from .whatsapp_setup import default_whatsapp_env_file_path
 
 
@@ -67,6 +73,60 @@ def load_config(config_path: Path | None = None, reload: bool = False) -> Jarvis
     # Create config (Pydantic Settings will merge env vars)
     _config_instance = JarvisConfig(**config_data)
     return _config_instance
+
+
+PublicationSection = Literal["meeting_publication", "community_briefing"]
+
+
+def _publication_setup_data(path: Path) -> dict[str, Any]:
+    data = yaml.safe_load(path.read_text()) if path.exists() else {}
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigError("Jarvis configuration must be a mapping")
+    return data
+
+
+def load_publication_setup(
+    section: PublicationSection,
+    config_path: Path | None = None,
+) -> MeetingPublicationConfig | CommunityBriefingConfig:
+    """Read one disabled setup candidate without validating unrelated workflows."""
+    data = _publication_setup_data(config_path or get_config_path())
+    current = data.get(section, {})
+    if not isinstance(current, dict):
+        raise ConfigError(f"{section} must be a configuration mapping")
+    # Retain the existing nested environment support, but never enable a
+    # provisional candidate or load unrelated publication values for a save.
+    settings = {
+        "meeting_publication": {"enabled": False},
+        "community_briefing": {"enabled": False},
+    }
+    settings[section] = {**current, "enabled": False}
+    config = JarvisConfig(**settings)
+    return getattr(config, section)
+
+
+def save_publication_setup(
+    section: PublicationSection,
+    config: MeetingPublicationConfig | CommunityBriefingConfig,
+    config_path: Path | None = None,
+) -> Path:
+    """Validate and replace only the selected section, retaining other raw settings."""
+    model = (
+        MeetingPublicationConfig if section == "meeting_publication" else CommunityBriefingConfig
+    )
+    validated = model.model_validate(config.model_dump())
+    path = config_path or get_config_path()
+    data = _publication_setup_data(path)
+    current = data.get(section, {})
+    if not isinstance(current, dict):
+        raise ConfigError(f"{section} must be a configuration mapping")
+    data[section] = {**current, **validated.model_dump(mode="json")}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    clear_config_cache()
+    return path
 
 
 def get_config() -> JarvisConfig:

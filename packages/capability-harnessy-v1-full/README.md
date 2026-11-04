@@ -32,6 +32,30 @@ When added as a local or npm capability source, Harnessy materializes the preser
 
 The manifest checks assert that the key v1 entrypoints are present.
 
+Skill registration preserves entries that it does not manage. A conflicting name
+stops registration with the conflicting path. Skill upgrades require a matching
+`.harnessy-install.json` ownership record; `--force` does not bypass this check.
+If an older installation has no record, inspect and back up that skill, then
+move it outside the installation target before retrying. Do not create ownership
+records manually to bypass the check. Registration does not remove unrelated
+skills, marketplace settings or plugin caches. Invalid agent settings must be
+repaired before registration can continue.
+
+Meeting and community publication start disabled. Enabling either workflow
+requires an explicit Google owner email, Drive folder and Discord channel.
+Use its `setup` command with `--google-owner-email`, `--google-drive-folder`
+and `--discord-channel-id`. Omitted options retain saved values. Use `setup
+--disable` to disable an incomplete profile. Setup changes only the selected
+publication section; it does not approve content or start publication. Normal
+runtime loading rejects an enabled profile with missing destinations.
+
+If a publication request can have reached Google or Discord but its response is
+lost, the queue retains the publishing state and known receipts. It does not
+automatically retry. Process exit and lease expiry do not prove that delivery
+failed. The review inbox shows these items for inspection. Check the recorded
+Google document and Discord message before reconciling through the owning
+service. Do not clear a lease or approve the item again to force a retry.
+
 ## Exact source reconstruction
 
 npm omits the original `.gitignore` files from its tarball. Their exact bytes

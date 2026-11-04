@@ -94,47 +94,29 @@ export const normalizePath = async (candidate) => {
   }
 };
 
-const copyDir = async (src, dest) => {
-  await fs.mkdir(dest, { recursive: true });
-  for (const entry of await fs.readdir(src, { withFileTypes: true })) {
-    const s = path.join(src, entry.name);
-    const d = path.join(dest, entry.name);
-    if (entry.isDirectory()) await copyDir(s, d);
-    else await fs.copyFile(s, d);
-  }
-};
-
-const syncSkillDirectory = async (skills, targetDir) => {
+// Registration is additive. A name alone is not proof of ownership.
+// Retain unmatched entries and refuse collisions, including dangling symlinks.
+// If a later entry conflicts, earlier links remain valid and rerunning is safe.
+const syncSkillDirectory = async (skills, targetDir, { dryRun = false } = {}) => {
+  if (dryRun || skills.length === 0) return skills.length;
   await fs.mkdir(targetDir, { recursive: true });
-  const desired = new Map(skills.map((skill) => [skill.name, skill.skillDir]));
-
   for (const skill of skills) {
+    if (!skill.name || skill.name === "." || skill.name === ".." || /[/\\]/.test(skill.name)) {
+      throw new Error(`Invalid skill name: ${skill.name}`);
+    }
     const targetPath = path.join(targetDir, skill.name);
+    const sourcePath = path.resolve(skill.skillDir);
     try {
-      const existing = await fs.lstat(targetPath);
-      if (existing.isSymbolicLink()) {
-        const existingTarget = await fs.readlink(targetPath);
-        const resolvedExisting = path.resolve(path.dirname(targetPath), existingTarget);
-        if (resolvedExisting === skill.skillDir) continue;
-      }
-      await fs.rm(targetPath, { recursive: true, force: true });
-    } catch {}
-
-    try {
-      await fs.symlink(skill.skillDir, targetPath, "dir");
-    } catch {
-      await fs.cp(skill.skillDir, targetPath, { recursive: true });
+      await fs.symlink(sourcePath, targetPath, "dir");
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const existingTarget = await fs.readlink(targetPath).catch(() => null);
+      if (existingTarget !== null && path.resolve(path.dirname(targetPath), existingTarget) === sourcePath) continue;
+      throw new Error(`Skill registration conflict at ${targetPath}; existing entry preserved. Move or rename it explicitly, then retry.`, { cause: error });
     }
   }
-
-  const existingEntries = await fs.readdir(targetDir, { withFileTypes: true }).catch(() => []);
-  for (const entry of existingEntries) {
-    if (!desired.has(entry.name)) {
-      await fs.rm(path.join(targetDir, entry.name), { recursive: true, force: true });
-    }
-  }
+  return skills.length;
 };
-
 export const listActiveSkills = async (skillsRoot = GLOBAL_SKILLS_DIR) => {
   const entries = await fs.readdir(skillsRoot, { withFileTypes: true }).catch(() => []);
   const skills = [];
@@ -154,6 +136,7 @@ export const listActiveSkills = async (skillsRoot = GLOBAL_SKILLS_DIR) => {
 };
 
 export const registerClaudeSkills = async (skills) => {
+  if (skills.length === 0) return 0;
   await syncSkillDirectory(skills, GLOBAL_CLAUDE_SKILLS_DIR);
 
   const pluginRoot = path.join(GLOBAL_CLAUDE_MARKETPLACE, FLOW_CLAUDE_PLUGIN_ID);
@@ -182,19 +165,16 @@ export const registerClaudeSkills = async (skills) => {
     }],
   });
 
-  const settings = (await readJsonSafe(GLOBAL_CLAUDE_SETTINGS)) || {};
+  const settings = (await readRegistrationJson(GLOBAL_CLAUDE_SETTINGS)) || {};
   if (!settings.extraKnownMarketplaces) settings.extraKnownMarketplaces = {};
   settings.extraKnownMarketplaces.harnessy = {
     source: { source: "directory", path: GLOBAL_CLAUDE_MARKETPLACE },
   };
-  delete settings.extraKnownMarketplaces.duru_claude_plugins;
   if (!settings.enabledPlugins) settings.enabledPlugins = {};
   settings.enabledPlugins[`${FLOW_CLAUDE_PLUGIN_ID}@harnessy`] = true;
-  delete settings.enabledPlugins["flow-skills@harnessy"];
-  for (const skill of skills) delete settings.enabledPlugins[`${skill.name}@harnessy`];
   await writeJson(GLOBAL_CLAUDE_SETTINGS, settings);
 
-  const known = (await readJsonSafe(GLOBAL_CLAUDE_KNOWN_MARKETPLACES)) || {};
+  const known = (await readRegistrationJson(GLOBAL_CLAUDE_KNOWN_MARKETPLACES)) || {};
   known.harnessy = {
     source: { source: "directory", path: GLOBAL_CLAUDE_MARKETPLACE },
     installLocation: GLOBAL_CLAUDE_MARKETPLACE,
@@ -202,38 +182,13 @@ export const registerClaudeSkills = async (skills) => {
   };
   await writeJson(GLOBAL_CLAUDE_KNOWN_MARKETPLACES, known);
 
-  const installed = await readJsonSafe(GLOBAL_CLAUDE_INSTALLED_PLUGINS);
-  if (installed?.plugins) {
-    const bundledKey = `${FLOW_CLAUDE_PLUGIN_ID}@harnessy`;
-    const staleKeys = Object.keys(installed.plugins).filter((key) => key.endsWith("@harnessy") && key !== bundledKey);
-    if (staleKeys.length > 0) {
-      for (const key of staleKeys) delete installed.plugins[key];
-      await writeJson(GLOBAL_CLAUDE_INSTALLED_PLUGINS, installed);
-    }
-  }
-
-  if (await pathExists(GLOBAL_CLAUDE_PLUGIN_CACHE)) {
-    const cacheEntries = await fs.readdir(GLOBAL_CLAUDE_PLUGIN_CACHE, { withFileTypes: true });
-    for (const entry of cacheEntries.filter((item) => item.isDirectory() && item.name !== FLOW_CLAUDE_PLUGIN_ID)) {
-      await fs.rm(path.join(GLOBAL_CLAUDE_PLUGIN_CACHE, entry.name), { recursive: true, force: true });
-    }
-  }
-
-  const oldMarketplaceSkills = path.join(GLOBAL_CLAUDE_MARKETPLACE, "skills");
-  if (await pathExists(oldMarketplaceSkills)) {
-    await fs.rm(oldMarketplaceSkills, { recursive: true, force: true });
-  }
-
-  for (const skill of skills) {
-    const perSkillPluginDir = path.join(skill.skillDir, ".claude-plugin");
-    if (await pathExists(perSkillPluginDir)) await fs.rm(perSkillPluginDir, { recursive: true, force: true });
-  }
+  // Destructive legacy migrations belong to the explicit cleanup command.
 
   return skills.length;
 };
 
 export const registerOpenCodeSkills = async (skillsRoot = GLOBAL_SKILLS_DIR) => {
-  const config = (await readJsonSafe(GLOBAL_OPENCODE_CONFIG)) || { $schema: "https://opencode.ai/config.json" };
+  const config = (await readRegistrationJson(GLOBAL_OPENCODE_CONFIG)) || { $schema: "https://opencode.ai/config.json" };
   if (!config.skills) config.skills = {};
   if (!Array.isArray(config.skills.paths)) config.skills.paths = [];
   const normalizedPaths = [];
@@ -259,4 +214,69 @@ export const registerAllAgentSkills = async (skillsRoot = GLOBAL_SKILLS_DIR) => 
   const opencodePathCount = await registerOpenCodeSkills(skillsRoot);
   const codexCount = await registerCodexSkills(skills);
   return { skills, claudeCount, opencodePathCount, codexCount };
+};
+
+// Ownership is explicit. Existing names, versions and --force do not prove it.
+export const installOwnedSkill = async (source, target, sourceId, { dryRun = false } = {}) => {
+  const markerName = ".harnessy-install.json";
+  const owner = { version: 1, owner: "harnessy", sourceId };
+  const existing = await fs.lstat(target).catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (existing) {
+    const markerPath = path.join(target, markerName);
+    const markerInfo = await fs.lstat(markerPath).catch(() => null);
+    let marker = null;
+    if (existing.isDirectory() && !existing.isSymbolicLink() && markerInfo?.isFile() && !markerInfo.isSymbolicLink()) {
+      try { marker = JSON.parse(await fs.readFile(markerPath, "utf8")); } catch {}
+    }
+    if (marker?.version !== owner.version || marker?.owner !== owner.owner || marker?.sourceId !== sourceId) {
+      throw new Error(`Skill install conflict at ${target}; ownership is unverified. Existing entry preserved. Move or rename it explicitly, then retry.`);
+    }
+  }
+  if (dryRun) return;
+  await fs.mkdir(path.dirname(target), { recursive: true });
+  const staging = await fs.mkdtemp(path.join(path.dirname(target), ".harnessy-stage-"));
+  const next = path.join(staging, "next");
+  const previous = path.join(staging, "previous");
+  let moved = false;
+  let completed = false;
+  try {
+    await fs.cp(source, next, { recursive: true, dereference: false });
+    const copiedMarker = path.join(next, markerName);
+    await fs.rm(copiedMarker, { force: true });
+    await fs.writeFile(copiedMarker, JSON.stringify(owner) + "\n", { flag: "wx" });
+    if (existing) { await fs.rename(target, previous); moved = true; }
+    else await fs.mkdir(target); // Claim only an absent target; never replace a racing install.
+    try { await fs.rename(next, target); completed = true; }
+    catch (error) {
+      if (moved) { await fs.rename(previous, target); moved = false; }
+      else await fs.rmdir(target);
+      throw error;
+    }
+  } finally {
+    // If rollback itself fails, keep the previous directory for recovery.
+    if (!moved || completed) await fs.rm(staging, { recursive: true, force: true });
+  }
+};
+
+const readRegistrationJson = async (file) => {
+  const raw = await readFileSafe(file);
+  if (raw === null) return null;
+  let value;
+  try { value = JSON.parse(raw); }
+  catch (cause) { throw new Error(`Invalid registration configuration at ${file}; existing file preserved. Repair the JSON, then retry.`, { cause }); }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`Invalid registration configuration at ${file}; expected an object. Existing file preserved.`);
+  }
+  for (const key of ["enabledPlugins", "extraKnownMarketplaces", "skills"]) {
+    if (key in value && (value[key] === null || typeof value[key] !== "object" || Array.isArray(value[key]))) {
+      throw new Error(`Invalid registration configuration at ${file}; ${key} must be an object. Existing file preserved.`);
+    }
+  }
+  if (value.skills && "paths" in value.skills && (!Array.isArray(value.skills.paths) || value.skills.paths.some((entry) => typeof entry !== "string"))) {
+    throw new Error(`Invalid registration configuration at ${file}; skills.paths must contain paths. Existing file preserved.`);
+  }
+  return value;
 };

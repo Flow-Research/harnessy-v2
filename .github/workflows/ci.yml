@@ -152,6 +152,9 @@ jobs:
           "$HARNESSY_TEST_JARVIS_PYTHON" -I -B scripts/test-community-collector-pruning.py
           "$HARNESSY_TEST_JARVIS_PYTHON" scripts/test-community-review-consumer.py
 
+      - name: Test publication configuration and recovery without user credentials
+        run: bash scripts/test-publication-config.sh
+
       - name: Execute canonical-cutover QA scenarios
         run: npm run test:qa-scenarios
 

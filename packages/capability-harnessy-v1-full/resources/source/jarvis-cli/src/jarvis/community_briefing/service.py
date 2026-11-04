@@ -23,7 +23,11 @@ import httpx
 from jarvis.config import ConfigError, get_meeting_publication_discord_token
 from jarvis.config.schema import CommunityBriefingConfig
 from jarvis.meetings.publication.discord import DiscordMessage, DiscordPublisher
-from jarvis.meetings.publication.errors import PublicationConfigError, PublicationError
+from jarvis.meetings.publication.errors import (
+    PublicationConfigError,
+    PublicationError,
+    PublicationUncertainError,
+)
 from jarvis.meetings.publication.google import GoogleDocsPublisher, GoogleDocument
 from jarvis.meetings.publication.launchd import (
     briefing_generation_worker_running,
@@ -824,7 +828,7 @@ class CommunityBriefingService:
     def notify_due(self) -> int:
         due = self.store.pending_due_for_notification(self.config.reminder_hours)
         review = [item for item in due if item.status == PublicationStatus.PENDING_REVIEW]
-        errors = [item for item in due if item.status == PublicationStatus.BLOCKED]
+        errors = [item for item in due if item.status != PublicationStatus.PENDING_REVIEW]
         notified: list[str] = []
         pending_method = getattr(self.notifier, "briefing_pending", None)
         error_method = getattr(self.notifier, "briefing_error", None)
@@ -1139,6 +1143,8 @@ class CommunityBriefingService:
                 message_id=message.message_id,
             )
             return True
+        except PublicationUncertainError as exc:
+            self.store.mark_uncertain(item.briefing_id, message=str(exc))
         except PublicationError as exc:
             self.store.mark_failure(
                 item.briefing_id,

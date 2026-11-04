@@ -21,6 +21,7 @@ from jarvis.config import (
     load_config,
     save_config,
 )
+from jarvis.config.loader import load_publication_setup, save_publication_setup
 from jarvis.config.schema import MeetingPublicationConfig
 
 from .google import GoogleDocsPublisher, authorize_google_workspace
@@ -49,6 +50,9 @@ def publication_cli() -> None:
     help="Environment variable containing the Discord bot token",
 )
 @click.option("--google-owner-email", default=None, help="Required active Google owner email")
+@click.option(
+    "--google-drive-folder", default=None, help="Required Google Drive destination folder"
+)
 @click.option("--source-path", type=click.Path(path_type=Path), default=None)
 @click.option("--authorize-google", is_flag=True, help="Open Google OAuth in the browser")
 @click.option("--install-review/--no-install-review", default=False)
@@ -57,6 +61,7 @@ def setup_command(
     discord_channel_id: str | None,
     discord_token_env_var: str | None,
     google_owner_email: str | None,
+    google_drive_folder: str | None,
     source_path: Path | None,
     authorize_google: bool,
     install_review: bool,
@@ -65,8 +70,7 @@ def setup_command(
     """Configure non-secret destinations and optionally authorize Google."""
 
     try:
-        root = load_config(reload=True)
-        current = root.meeting_publication.model_dump()
+        current = load_publication_setup("meeting_publication").model_dump()
         current["enabled"] = enable
         if discord_channel_id is not None:
             current["discord_channel_id"] = discord_channel_id
@@ -74,14 +78,17 @@ def setup_command(
             current["discord_bot_token_env_var"] = discord_token_env_var
         if google_owner_email is not None:
             current["google_owner_email"] = google_owner_email
+        if google_drive_folder is not None:
+            current["google_drive_folder"] = google_drive_folder
         if source_path is not None:
             current["source_path"] = str(source_path.expanduser().resolve())
         publication = MeetingPublicationConfig(**current)
+        if authorize_google:
+            publication.require_destinations(publication.discord_channel_id)
         source_root = resolve_source_root(publication)
         if publication.source_path is None:
             publication = publication.model_copy(update={"source_path": str(source_root)})
-        updated = root.model_copy(update={"meeting_publication": publication})
-        path = save_config(updated)
+        path = save_publication_setup("meeting_publication", publication)
         if authorize_google:
             authorize_google_workspace()
             publisher = GoogleDocsPublisher(

@@ -1,5 +1,25 @@
 # Skill Catalog (Unified)
 
+---
+name: repository-audit
+type: opencode
+version: 0.1.0
+status: experimental
+owner: julian
+blast_radius: low
+description: "Read-only architecture, documentation, privacy and test-quality audit with pinned Git evidence and explicit review coverage."
+location: tools/flow-install/skills/repository-audit
+invoke: "/repository-audit"
+permissions: [read, write-report]
+data_categories: [pii]
+egress: []
+phase: review
+tags: [architecture, standards, review, privacy]
+depends_on: [code-review]
+created: 2026-11-04
+updated: 2026-11-04
+---
+
 This catalog is the single discovery layer for **all skills and plugins** across OpenCode, openclaw, and n8n. It is **readable by humans and agents** and should be updated whenever a skill is published or updated.
 
 > Lifecycle currently stops at **MAINTAIN** (no deprecation phase).
@@ -411,7 +431,7 @@ updated: 2026-03-16
 ---
 name: jarvis
 type: opencode
-version: 0.1.0
+version: 0.2.12
 status: experimental
 owner: julian
 blast_radius: medium

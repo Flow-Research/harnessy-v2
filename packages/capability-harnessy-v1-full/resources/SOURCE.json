@@ -2539,34 +2539,34 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "1a0adada26b43d8027c0e01a824e05671dd9ae017210510d51477341fe71ba43",
-    "fileCount": 715,
-    "byteCount": 5012051
+    "digest": "d9ea326fc66dc3bc6c7fb9cb59aacab14a0ec51388e68d72bd8d1e3ff16c022d",
+    "fileCount": 724,
+    "byteCount": 5076645
   },
   "projections": [
     {
       "id": "flow-install",
       "source": "tools/flow-install",
       "projection": "flow-install",
-      "digest": "61aa7b502a1ff97e28f7706fc9bb7937cbfb8da9cd71e06714270e348247250e",
-      "fileCount": 342,
-      "byteCount": 1874152
+      "digest": "5b2d0a56a295108d143d28830365edd8afe7770ee7e11ea2ed41ba4b5eee8433",
+      "fileCount": 347,
+      "byteCount": 1900695
     },
     {
       "id": "context-vault",
       "source": ".jarvis/context",
       "projection": "context-vault",
-      "digest": "f89ec077292e5a63638e0020097905db9b3cf1b79e2cc351d9f3ee18bd609a34",
+      "digest": "24f6d2a3934c8cadc4f70306a7fb543a27aeb09633ba89c4fcc71dd870e63fd5",
       "fileCount": 44,
-      "byteCount": 166975
+      "byteCount": 167509
     },
     {
       "id": "jarvis-cli",
       "source": "jarvis-cli",
       "projection": "jarvis-cli",
-      "digest": "fb6ff4b05f1da3ddfe61ebcebf7f5970389380592fc3a8f0702a9bd8d6482123",
-      "fileCount": 285,
-      "byteCount": 2774103
+      "digest": "a00ad6b1a35432b311cbf06f61deccdb12b9fedef610637e6cee55fbfa5a9d14",
+      "fileCount": 289,
+      "byteCount": 2810170
     },
     {
       "id": "root-installer",

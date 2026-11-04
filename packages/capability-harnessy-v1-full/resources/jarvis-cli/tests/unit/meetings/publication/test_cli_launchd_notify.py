@@ -39,6 +39,9 @@ def _root_config(tmp_path: Path, *, enabled: bool = False) -> JarvisConfig:
     return JarvisConfig(
         meeting_publication=MeetingPublicationConfig(
             enabled=enabled,
+            google_owner_email="owner@example.org",
+            google_drive_folder="Team/Notes",
+            backfill_days=365,
             source_path=str(notes),
             state_path=str(tmp_path / "state"),
             discord_channel_id="123456789012345678",
@@ -80,13 +83,21 @@ class TestPublicationCli:
 
         config = _root_config(tmp_path)
         captured: list[JarvisConfig] = []
-        monkeypatch.setattr("jarvis.meetings.publication.cli.load_config", lambda **_kwargs: config)
+        monkeypatch.setattr(
+            "jarvis.meetings.publication.cli.load_publication_setup",
+            lambda _section: config.meeting_publication,
+        )
 
         def fake_save(updated: JarvisConfig) -> Path:
             captured.append(updated)
             return tmp_path / "config.yaml"
 
-        monkeypatch.setattr("jarvis.meetings.publication.cli.save_config", fake_save)
+        monkeypatch.setattr(
+            "jarvis.meetings.publication.cli.save_publication_setup",
+            lambda _section, value: fake_save(
+                config.model_copy(update={"meeting_publication": value})
+            ),
+        )
         result = CliRunner().invoke(
             publication_cli,
             ["setup", "--discord-channel-id", "999999999999999999"],
@@ -103,16 +114,22 @@ class TestPublicationCli:
             meeting_publication=MeetingPublicationConfig(state_path=str(tmp_path / "state"))
         )
         captured: list[JarvisConfig] = []
-        monkeypatch.setattr("jarvis.meetings.publication.cli.load_config", lambda **_kwargs: config)
+        monkeypatch.setattr(
+            "jarvis.meetings.publication.cli.load_publication_setup",
+            lambda _section: config.meeting_publication,
+        )
         monkeypatch.setattr(
             "jarvis.meetings.publication.cli.resolve_source_root", lambda _config: notes
         )
         monkeypatch.setattr(
-            "jarvis.meetings.publication.cli.save_config",
-            lambda updated: captured.append(updated) or tmp_path / "config.yaml",
+            "jarvis.meetings.publication.cli.save_publication_setup",
+            lambda _section, value: (
+                captured.append(config.model_copy(update={"meeting_publication": value}))
+                or tmp_path / "config.yaml"
+            ),
         )
 
-        result = CliRunner().invoke(publication_cli, ["setup"])
+        result = CliRunner().invoke(publication_cli, ["setup", "--disable"])
 
         assert result.exit_code == 0
         assert captured[0].meeting_publication.source_path == str(notes)
@@ -187,9 +204,7 @@ class TestPublicationCli:
         monkeypatch.setattr(
             "jarvis.meetings.publication.cli.uninstall_review_launch_agent", lambda: True
         )
-        monkeypatch.setattr(
-            "jarvis.meetings.publication.cli.serve_review", lambda *_services: None
-        )
+        monkeypatch.setattr("jarvis.meetings.publication.cli.serve_review", lambda *_services: None)
         runner = CliRunner()
         assert runner.invoke(publication_cli, ["review", "open"]).exit_code == 0
         assert runner.invoke(publication_cli, ["review", "install"]).exit_code == 0

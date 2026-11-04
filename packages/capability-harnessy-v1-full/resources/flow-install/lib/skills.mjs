@@ -9,9 +9,7 @@ import path from "node:path";
 import {
   pathExists,
   readFileSafe,
-  readJsonSafe,
   writeJson,
-  copyDir,
   ensureDir,
   parseSimpleYaml,
   compareSemver,
@@ -27,6 +25,7 @@ import {
   registerOpenCodeSkills as registerOpenCodeAgentSkills,
   registerCodexSkills as registerCodexAgentSkills,
   listActiveSkills,
+  installOwnedSkill,
 } from "./agents.mjs";
 import { planSkillsRoot } from "./dependencies.mjs";
 
@@ -193,7 +192,7 @@ export const installSkills = async (flowInstallRoot, { dryRun = false, force = f
     const targetDir = path.join(GLOBAL_SKILLS_DIR, skill.name);
     const targetManifest = path.join(targetDir, "manifest.yaml");
 
-    if (await pathExists(targetDir)) {
+    if (await fs.lstat(targetDir).then(() => true, (error) => { if (error.code === "ENOENT") return false; throw error; })) {
       // Check version
       const existingContent = await readFileSafe(targetManifest);
       const existing = existingContent ? parseSimpleYaml(existingContent) : {};
@@ -217,7 +216,7 @@ export const installSkills = async (flowInstallRoot, { dryRun = false, force = f
         }
         log.skip(`${skill.name} (${existing.version || "unknown"} >= ${skill.version})`);
         skipped++;
-        commandShims += await installSkillExecutables(targetDir, { dryRun });
+        // A skipped legacy directory is not proof of ownership; do not chmod or expose its commands.
         continue;
       }
 
@@ -235,13 +234,13 @@ export const installSkills = async (flowInstallRoot, { dryRun = false, force = f
       }
 
       if (dryRun) {
+        await installOwnedSkill(skill.sourceDir, targetDir, `bundled:${skill.name}`, { dryRun });
         log.dryRun(`Would upgrade ${skill.name}: ${existing.version} -> ${skill.version}`);
         upgraded++;
         continue;
       }
 
-      await fs.rm(targetDir, { recursive: true });
-      await copyDir(skill.sourceDir, targetDir);
+      await installOwnedSkill(skill.sourceDir, targetDir, `bundled:${skill.name}`);
       log.ok(`${skill.name} upgraded: ${existing.version} -> ${skill.version}`);
       upgraded++;
       commandShims += await installSkillExecutables(targetDir, { dryRun });
@@ -253,7 +252,7 @@ export const installSkills = async (flowInstallRoot, { dryRun = false, force = f
         continue;
       }
 
-      await copyDir(skill.sourceDir, targetDir);
+      await installOwnedSkill(skill.sourceDir, targetDir, `bundled:${skill.name}`);
       log.ok(`${skill.name} v${skill.version} installed`);
       installed++;
       commandShims += await installSkillExecutables(targetDir, { dryRun });

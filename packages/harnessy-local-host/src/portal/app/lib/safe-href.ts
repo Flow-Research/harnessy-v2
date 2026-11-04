@@ -1,10 +1,10 @@
 /**
- * The only links the app renders as links.
+ * Service-navigation links use safeHref; document links use safeExternalHref.
  *
  * A link must be `http://127.0.0.1:<port>/...`, `http://[::1]:<port>/...` or
  * `http://localhost:<port>/...` with an explicit port, no credentials, no query string and no fragment.
- * Anything else, including `javascript:` and every other host, is shown as text
- * until an allow-list for external links has been reviewed. The value must
+ * Other destinations are refused by this service-navigation policy. Document
+ * links have a separate HTTP/HTTPS policy below. A service link must
  * already be in the form the URL parser gives it (see `safeHref`).
  */
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "[::1]", "localhost"]);

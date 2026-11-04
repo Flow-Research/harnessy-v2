@@ -60,7 +60,14 @@ def _item() -> PublicationItem:
 class TestGoogleDocsPublisher:
     """Google adapter should keep note content in HTTP bodies and upsert by property."""
 
-    def test_create_format_and_share(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    @pytest.mark.parametrize(
+        "owner,folder",
+        [
+            ("alice@example.org", "Alice/Notes"),
+            ("bob@example.net", "Bob/Briefings"),
+        ],
+    )
+    def test_create_format_and_share(self, monkeypatch, owner, folder) -> None:  # type: ignore[no-untyped-def]
         """Create folder hierarchy, document, formatted body, and public-reader link."""
 
         monkeypatch.setattr(
@@ -87,9 +94,7 @@ class TestGoogleDocsPublisher:
             if request.url.host == "oauth2.googleapis.com":
                 return httpx.Response(200, json={"access_token": "access"})
             if request.url.path.endswith("/about"):
-                return httpx.Response(
-                    200, json={"user": {"emailAddress": "julian.duru@flowresearch.tech"}}
-                )
+                return httpx.Response(200, json={"user": {"emailAddress": owner}})
             if request.method == "GET" and request.url.path.endswith("/files"):
                 return httpx.Response(200, json={"files": []})
             if request.method == "POST" and request.url.path.endswith("/files"):
@@ -106,13 +111,19 @@ class TestGoogleDocsPublisher:
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
         publisher = GoogleDocsPublisher(
-            expected_owner_email="julian.duru@flowresearch.tech",
-            folder_path="Flow Research/Meeting Notes",
+            expected_owner_email=owner,
+            folder_path=folder,
             client=client,
         )
         document = publisher.publish(_note(), _item())
         assert document.doc_id == "doc-1"
         assert document.url.endswith("/doc-1/view")
+        created_names = [
+            json.loads(request.content)["name"]
+            for request in requests
+            if request.method == "POST" and request.url.path.endswith("/files")
+        ]
+        assert created_names[:2] == folder.split("/")
         batch = next(request for request in requests if request.url.path.endswith(":batchUpdate"))
         payload = json.loads(batch.content)
         inserted = payload["requests"][0]["insertText"]["text"]
@@ -128,8 +139,8 @@ class TestGoogleDocsPublisher:
             transport=httpx.MockTransport(lambda _request: httpx.Response(400, json={}))
         )
         publisher = GoogleDocsPublisher(
-            expected_owner_email="julian.duru@flowresearch.tech",
-            folder_path="Flow Research/Meeting Notes",
+            expected_owner_email="owner@example.org",
+            folder_path="Team/Notes",
             client=client,
         )
         publisher._access_token = "access"
@@ -140,3 +151,21 @@ class TestGoogleDocsPublisher:
                 "https://docs.googleapis.com/v1/documents/doc-1:batchUpdate",
                 json_body={"requests": []},
             )
+
+    def test_other_owner_cannot_publish_to_any_destination(self) -> None:
+        requests = []
+
+        def handler(request):
+            requests.append(request)
+            return httpx.Response(200, json={"user": {"emailAddress": "other@example.org"}})
+
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            publisher = GoogleDocsPublisher(
+                expected_owner_email="owner@example.org", folder_path="Team/Notes", client=client
+            )
+            publisher._access_token = "test-access"
+            with pytest.raises(PublicationConfigError, match="does not match"):
+                publisher.publish(_note(), _item())
+        assert len(requests) == 1
+        assert requests[0].method == "GET"
+        assert requests[0].url.path.endswith("/about")

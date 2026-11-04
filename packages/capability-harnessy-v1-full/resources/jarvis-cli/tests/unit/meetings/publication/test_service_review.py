@@ -68,7 +68,7 @@ class FakeGoogle:
         return
 
     def verify_owner(self) -> str:
-        return "julian.duru@flowresearch.tech"
+        return "owner@example.org"
 
 
 class FakeDiscord:
@@ -105,6 +105,9 @@ class FakeNotifier:
 def _config(tmp_path: Path, notes: Path, *, port: int = 8770) -> MeetingPublicationConfig:
     return MeetingPublicationConfig(
         enabled=True,
+        google_owner_email="owner@example.org",
+        google_drive_folder="Team/Notes",
+        backfill_days=365,
         source_path=str(notes),
         state_path=str(tmp_path / "state"),
         cutover_date="2026-08-27",  # type: ignore[arg-type]

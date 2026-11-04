@@ -264,12 +264,14 @@ Configure the private weekly evidence root, draft directory, and dedicated Disco
 
 Options:
   --discord-channel-id: Dedicated Discord text-channel numeric ID
+  --google-owner-email: Google owner email; retain saved value if omitted
+  --google-drive-folder: Google Drive folder; retain saved value if omitted
   --source-path: Private contributor context root override
   --draft-path: Owner-only weekly artifact directory override
-  --enable / --disable: Enable only after a channel is configured
+  --enable / --disable: Enable requires owner, folder and channel; disable needs none
 
 Examples:
-  jarvis community briefing setup --discord-channel-id 123456789012345678
+  jarvis community briefing setup --discord-channel-id 123456789012345678 --google-owner-email owner@example.com --google-drive-folder "Team/Weekly Briefings"
 
 #### `jarvis community briefing generate`
 
@@ -358,14 +360,15 @@ Configure approval-gated Flow meeting publication to Google Docs and a configura
 Options:
   --discord-channel-id: Discord text-channel numeric ID
   --discord-token-env-var: Environment variable containing the Discord bot token
-  --google-owner-email: Required active Google owner email
+  --google-owner-email: Google owner email; retain saved value if omitted
+  --google-drive-folder: Google Drive folder; retain saved value if omitted
   --source-path: Canonical Flow meeting-note directory override
-  --authorize-google: Open least-privilege Google OAuth
+  --authorize-google: Open Google OAuth after owner, folder and channel validation
   --install-review / --no-install-review: Install the localhost review inbox as a launchd service
-  --enable / --disable: Enable or disable worker activity
+  --enable / --disable: Enable requires owner, folder and channel; disable needs none
 
 Examples:
-  jarvis meeting publish setup --discord-channel-id 123456789012345678 --authorize-google --install-review
+  jarvis meeting publish setup --discord-channel-id 123456789012345678 --google-owner-email owner@example.com --google-drive-folder "Team/Meetings" --authorize-google --install-review
 
 #### `jarvis meeting publish scan`
 

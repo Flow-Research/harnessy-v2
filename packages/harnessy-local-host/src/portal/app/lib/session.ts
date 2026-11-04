@@ -4,8 +4,9 @@
  * `harnessy open` opens `/#code=<one-time code>[&route=<screen>]`. The app
  * clears the fragment at once, trades the code for a page token and
  * keeps that token in `sessionStorage`, which belongs to this exact origin and
- * port. Requests send it as `Authorization: Bearer` with cookies omitted, so the
- * review cookies of other loopback services never reach the portal.
+ * port. Local requests send it as `Authorization: Bearer` with cookies omitted.
+ * Remote HTTPS requests also send the same-origin paired-device cookie.
+ * Review cookies are not used as portal credentials.
  *
  * The app never holds the install token, an act token or the
  * Executor token.

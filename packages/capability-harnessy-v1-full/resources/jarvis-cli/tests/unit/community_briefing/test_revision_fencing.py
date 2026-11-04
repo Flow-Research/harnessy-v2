@@ -224,7 +224,7 @@ def test_interrupted_artifact_commit_blocks_retry_and_publication(prepared, stag
     service, item = prepared
     environment = dict(os.environ)
     environment["PYTHONPATH"] = os.pathsep.join(
-        [str(Path(__file__).resolve().parents[3]), os.environ["PYTHONPATH"]]
+        filter(None, [str(Path(__file__).resolve().parents[3]), os.environ.get("PYTHONPATH")])
     )
     result = subprocess.run(
         [

@@ -10,7 +10,7 @@ import httpx
 from jarvis.config import ConfigError, get_meeting_publication_discord_token
 from jarvis.config.schema import MeetingPublicationConfig
 
-from .errors import PublicationConfigError, PublicationTransientError
+from .errors import PublicationConfigError, PublicationTransientError, PublicationUncertainError
 from .models import MeetingNote, PublicationItem
 
 DISCORD_PURPOSE_MAX_LENGTH = 280
@@ -136,7 +136,7 @@ class DiscordPublisher:
             )
         resolved_message_id = str(response.get("id") or message_id or "")
         if not resolved_message_id:
-            raise PublicationTransientError("Discord did not return a message ID")
+            raise PublicationUncertainError("Discord did not return a message ID")
         return DiscordMessage(channel_id=target_channel, message_id=resolved_message_id)
 
     def _request(
@@ -145,6 +145,9 @@ class DiscordPublisher:
         path: str,
         payload: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        failure = (
+            PublicationTransientError if method.upper() == "GET" else PublicationUncertainError
+        )
         try:
             response = self._client.request(
                 method,
@@ -153,7 +156,7 @@ class DiscordPublisher:
                 headers={"Authorization": f"Bot {self.bot_token}"},
             )
         except httpx.HTTPError as exc:
-            raise PublicationTransientError("Discord API network request failed") from exc
+            raise failure("Discord API network request failed") from exc
         if response.status_code == 429:
             retry_after = _discord_retry_after(response)
             raise PublicationTransientError(
@@ -164,15 +167,15 @@ class DiscordPublisher:
                 "Discord bot authentication, channel access, or message access was rejected"
             )
         if response.status_code >= 500:
-            raise PublicationTransientError("Discord API is temporarily unavailable")
+            raise failure("Discord API is temporarily unavailable")
         if response.status_code >= 400:
-            raise PublicationConfigError(
-                f"Discord rejected the post (HTTP {response.status_code})"
-            )
+            raise PublicationConfigError(f"Discord rejected the post (HTTP {response.status_code})")
         try:
             data = response.json()
         except ValueError as exc:
-            raise PublicationTransientError("Discord returned invalid JSON") from exc
+            raise failure("Discord returned invalid JSON") from exc
+        if not isinstance(data, dict):
+            raise failure("Discord returned an invalid response")
         return data if isinstance(data, dict) else {}
 
 

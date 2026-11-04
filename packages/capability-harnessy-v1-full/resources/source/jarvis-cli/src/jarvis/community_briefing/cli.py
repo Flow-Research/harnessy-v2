@@ -16,8 +16,8 @@ from jarvis.config import (
     ConfigError,
     get_meeting_publication_discord_token,
     load_config,
-    save_config,
 )
+from jarvis.config.loader import load_publication_setup, save_publication_setup
 from jarvis.config.schema import CommunityBriefingConfig
 from jarvis.meetings.publication.launchd import briefing_review_service_installed
 from jarvis.meetings.publication.notify import build_review_url, review_token
@@ -41,11 +41,17 @@ def briefing_group() -> None:
 
 @briefing_group.command(name="setup")
 @click.option("--discord-channel-id", default=None, help="Dedicated Discord channel numeric ID")
+@click.option("--google-owner-email", default=None, help="Required active Google owner email")
+@click.option(
+    "--google-drive-folder", default=None, help="Required Google Drive destination folder"
+)
 @click.option("--source-path", type=click.Path(path_type=Path), default=None)
 @click.option("--draft-path", type=click.Path(path_type=Path), default=None)
 @click.option("--enable/--disable", default=True)
 def setup_command(
     discord_channel_id: str | None,
+    google_owner_email: str | None,
+    google_drive_folder: str | None,
     source_path: Path | None,
     draft_path: Path | None,
     enable: bool,
@@ -53,25 +59,26 @@ def setup_command(
     """Configure non-secret paths and the dedicated briefing destination."""
 
     try:
-        root = load_config(reload=True)
-        current = root.community_briefing.model_dump()
+        current = load_publication_setup("community_briefing").model_dump()
         if discord_channel_id is not None:
             current["discord_channel_id"] = discord_channel_id
+        if google_owner_email is not None:
+            current["google_owner_email"] = google_owner_email
+        if google_drive_folder is not None:
+            current["google_drive_folder"] = google_drive_folder
         if source_path is not None:
             current["source_path"] = str(source_path.expanduser().resolve())
         if draft_path is not None:
             current["draft_path"] = str(draft_path.expanduser().resolve())
         current["enabled"] = enable
         briefing = CommunityBriefingConfig(**current)
-        if enable and not briefing.discord_channel_id:
-            raise ValueError("a dedicated Discord channel ID is required before enabling")
         if briefing.source_path is None:
             briefing = briefing.model_copy(
                 update={"source_path": str(resolve_source_root(briefing))}
             )
         if briefing.draft_path is None:
             briefing = briefing.model_copy(update={"draft_path": str(resolve_draft_root(briefing))})
-        path = save_config(root.model_copy(update={"community_briefing": briefing}))
+        path = save_publication_setup("community_briefing", briefing)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
     console.print(f"[green]Weekly community briefing configured:[/green] {path}")
