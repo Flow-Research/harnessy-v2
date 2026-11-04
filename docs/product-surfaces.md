@@ -1,6 +1,6 @@
 # Harnessy product surfaces
 
-Harnessy is one product with one engine and three surfaces. The engine is the
+Harnessy is one product with an integration engine and several surfaces. The engine is the
 vendored Executor (see [`executor/VENDOR.md`](../executor/VENDOR.md) and
 [`executor-philosophy.md`](executor-philosophy.md)); it owns integrations,
 connections, credentials, policies, approvals, and audit. Everything a person
@@ -10,9 +10,10 @@ or agent touches goes through one of these surfaces:
 | --- | --- | --- |
 | Agent | `hsy` | Talk to a model that already has the engine's tools |
 | CLI | `harnessy` | Operate the product from the terminal or scripts |
+| Portal | `harnessy open` → http://127.0.0.1:8790 | Workflow views, explicit actions and terminals |
 | Cockpit | `harnessy web` → http://127.0.0.1:4788 | Connect integrations, approve runs, inspect audit |
 
-External agents (Claude Code, Codex, Cursor, OpenCode, ...) get a fourth door:
+External agents (Claude Code, Codex, Cursor, OpenCode, ...) can also use
 bundled Executor's standard stdio MCP server, registered with
 `harnessy mcp install`.
 
@@ -166,13 +167,13 @@ root-graph Effect code into it would split the runtime.
 
 ## Harnessy app and portal API (`harnessy open`, `harnessy portal`)
 
-Harnessy is one read-only local app served by `harnessy-portal` in
+Harnessy is a local workflow app served by `harnessy-portal` in
 `@harnessy/local-host` at `http://127.0.0.1:8790`: Inbox, Today, Tasks, Jobs,
-Reviews, Learning and Connections. Every action is a link to the owning
-service or a command to copy. The cockpit (`harnessy web`) is its Tools &
+Reviews, Learning, Connections and Terminal. Explicit authenticated actions
+include brief generation, Inbox controls, weekly reconciliation and agent tasks. The cockpit (`harnessy web`) is its Tools &
 integrations destination, on its own origin.
 
-- **`harnessy open [--route inbox|today|tasks|jobs|reviews|learning|connections] [--print]`**
+- **`harnessy open [--route inbox|today|tasks|jobs|reviews|learning|connections|terminal] [--print]`**
   opens the app with a one-time code in the URL fragment. It is the same
   command as `harnessy portal open`.
 - **`harnessy portal serve --state-dir DIR [--port 8790] [--home-root DIR] [--workspace-root DIR]`**
@@ -184,16 +185,19 @@ integrations destination, on its own origin.
   (`org.harnessy.portal`). It installs nothing.
 - **`harnessy web`** starts or attaches the Tools engine (the Executor cockpit).
 
-`GET /v1/openapi.json` describes every route, including the app's read routes
+`GET /v1/openapi.json` describes the route table, including the app's read routes
 (`/v1/inbox`, `/v1/life/brief`, `/v1/life/weekly/{runId}/draft`, `/v1/tasks`,
 `/v1/jobs`). The response schemas live in `@harnessy/core/read-model`
 (`PortalApiSchemas`), so other consumers, such as Garden, can use the same
-contract. The portal is a known non-writer: it never publishes, approves,
-signs or consumes grants, and it never reads another service's token. The app
-is a React bundle pinned by an asset manifest and served under the unchanged
-strict CSP. See [`ADR-0008`](adr/0008-read-only-portal-api-boundary.md),
-[`ADR-0009`](adr/0009-one-harnessy-app.md) and
-[Use Harnessy, the one local app](portal.md).
+contract. Native browser sign-in and device-pairing endpoints are handled
+separately by the server and are not in this OpenAPI table. Publication and
+provider credentials remain owned by the destination services. The portal is
+not a read-only process: its page actions can execute general shell commands.
+The React bundle is pinned by an asset manifest. Scripts are self-only; inline
+styles are permitted for xterm. Local requests omit cookies; paired remote
+HTTPS requests also require a secure device cookie. See the current
+[ADR-0010](adr/0010-portal-actions-and-session-ownership.md), the
+[ADR index](adr/README.md) and the [portal guide](portal.md).
 
 ## SDK surface (`@harnessy/sdk`)
 

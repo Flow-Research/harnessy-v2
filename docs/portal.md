@@ -41,14 +41,16 @@ It has eight screens. Use `g` and a letter to move between them, and `⌘K` (or
 - **Learning** (`g l`): the learning library and the reading queue.
 - **Connections** (`g c`): each connection's status and owner, and **Tools &
   integrations**, which is the cockpit (`harnessy web`).
-- **Terminal** (`g x`): select **New terminal** to start an interactive login
-  shell in the configured workspace. Git, Python, editors and other terminal
-  programs run as your OS user. Up to four sessions can stay open. Use the
-  selector to return to a session, or **Close terminal** to end it. Navigation
-  and page reloads keep the shell running. A portal restart ends the sessions.
-  The terminal retains the latest 1 MB of output. Keyboard input in the terminal
-  goes to the shell, including Ctrl-C and Ctrl-K. The bridge needs POSIX and
-  Python 3 at `/usr/bin/python3`; it does not support Windows.
+- **Terminal** (`g x`): start a shell, open an agent task or attach a discovered
+  tmux session. Programs run as your OS user. Select a session to inspect its
+  output; select **Take control** to type when another view owns input.
+  Managed Herdr sessions survive page closure and portal restart. A host reboot
+  stops processes; **Resume task** requires a verified saved conversation and
+  does not silently start a new one. **End session** is a separate action with
+  confirmation. Removing an imported tmux attachment leaves tmux running.
+  The local PTY backend instead permits four sessions and ends them at portal
+  shutdown. Its bridge needs POSIX and `/usr/bin/python3`; Windows terminal
+  support is not established. The view reports its backend's persistence.
 
 Today also has a **Generate today’s brief** button. If a brief exists, the button
 says **Regenerate today’s brief**. It runs Jarvis with your configured AI provider,
@@ -56,9 +58,15 @@ shows progress, and refreshes the brief when generation completes. You can leave
 the page while it runs. A failed run shows a retry message. Generation can take
 several minutes. Concurrent requests cannot start duplicate daily runs.
 
-The app reads workflow data. Workflow actions open the owning service (↗) or show a
-command for you to copy (⧉). Approvals, publishing and sign-in to Google or any
-other provider stay in the service that owns them. The community review service
+The app reads workflow data and supports explicit actions. Inbox selection and
+row menus can archive or restore alerts without changing their source records.
+Weekly inspection can close an eligible attempt with a reason; it does not retry
+or approve the plan. Quick actions can start an agent task from selected brief
+text or an Inbox item. Project selection is optional; selecting a project scopes
+its working directory, with a worktree as the default. You can inspect and
+interact with the task from Terminal. Other workflow actions open the owning
+service (↗) or show a command for you to copy (⧉). Approvals, publishing and
+sign-in to Google or any other provider stay in the service that owns them. The community review service
 has no stop or restart button. The Terminal view can run commands with your
 normal user permissions.
 
@@ -75,8 +83,8 @@ and expires after 60 seconds.
 
 `harnessy portal open` is the same command and keeps working.
 
-The portal runs as the LaunchAgent `org.harnessy.portal` (KeepAlive). To check
-it, run `harnessy portal status`. `harnessy portal service-plan` prints the
+When installed as a service, the portal uses the LaunchAgent
+`org.harnessy.portal` (KeepAlive). To check it, run `harnessy portal status`. `harnessy portal service-plan` prints the
 LaunchAgent; it installs nothing.
 
 To run the portal by hand instead, for example from a source checkout:
@@ -92,8 +100,15 @@ Without the bundle, the portal serves only the API and a short page that says so
 ## Sign in again
 
 The sign-in lasts 8 hours and lives only in that browser tab. It also ends when
-the portal restarts. When the app says "Sign in to Harnessy", run
-`harnessy open` again.
+the portal restarts. When the app says "Sign in to Harnessy", select the sign-in
+button and allow the installed Harnessy app to open. The original tab completes sign-in. If the
+native app is unavailable, `harnessy open` remains a fallback.
+
+Remote HTTPS access requires explicit device pairing from the local portal.
+A paired browser stores a secure device cookie and can restore a page session.
+Revoke access from the local portal when the device must no longer connect.
+Remote pages cannot launch local review sign-in helpers. A network connection,
+including Tailscale, does not replace device pairing or page authentication.
 
 ## Tools & integrations
 
@@ -107,7 +122,7 @@ its own sign-in. The terminal command is still available.
 Review buttons on Inbox, Jobs, Reviews and Connections use the same sign-in
 helpers. They open the default browser. If a review service is stopped, the
 portal shows an error and directs you to Jobs. It does not start a publisher.
-If the portal session expires, run `harnessy open` and try again.
+If the portal session expires, sign in again in the existing tab and retry.
 
 When a portal service must use a specific workspace, set `--workspace-root DIR`
 on `serve`. The cockpit launcher uses that directory as its workspace scope.
@@ -117,36 +132,42 @@ on `serve`. The cockpit launcher uses that directory as its workspace scope.
 Harnessy never signs in to Google itself. Each card on the Connections screen
 names the owner of the credential and how to reconnect it:
 
-- **Meeting publication: Google.** Select Open the owner. On the authenticated
-  meeting review page, select Reconnect Google under Provider health.
+- **Meeting publication: Google.** Select the Google reconnect action. The fixed
+  authenticated handoff opens the owning service's reconnect page. Complete
+  Google consent, then verify the configured account on that page.
 - **Google Workspace CLI profiles.** Each `gws-<slug>` profile shows the
   command to run, for example `gws-login flow`. Check it with
   `gws-status flow`.
 
 ## Safety
 
-- The app and the API answer only `127.0.0.1` requests with the exact `Host`,
-  from the portal's own origin.
+- Servers bind to loopback. Local mode checks the exact local Host and Origin.
+  Optional remote mode uses a separate loopback listener behind the configured
+  HTTPS origin and checks that origin, enrolled device and page token.
 - Scripts, fonts and images come only from the portal itself. Inline scripts
   remain blocked. Styles also permit the inline dimensions and generated styles
   that xterm needs. The app's files are listed with
   their SHA-256 in an asset manifest; the portal serves only those files and
   refuses to start if one was changed.
 - Text from your data is always shown as text. Markdown is parsed into a tree,
-  never into HTML. Worth Reading permits HTTP/HTTPS article links without URL
-  credentials, whitespace or control characters; other Markdown links remain
-  restricted to loopback. A loopback link is judged as
+  never into HTML. All brief sections permit HTTP/HTTPS document links without URL
+  credentials, whitespace or control characters. These links open in a new tab
+  with `noopener noreferrer`; unsafe schemes remain text. Service navigation
+  uses a separate loopback policy or fixed authenticated handoffs.
+  A loopback service link is judged as
   the browser's URL parser reads it, and a link the parser would rewrite is
   shown as text. Hidden characters (format characters such as bidi and
   zero-width controls, control characters such as a newline, and line or
   paragraph separators) in titles and commands are shown as `⟨U+202E⟩`, and a
   command that holds one is never copied, from a chip or from the palette.
 - Workflow views hold only the page sign-in. They never see the install
-  token, the cockpit (Executor) token or any provider credential, and it sends
-  no cookies.
+  token, the cockpit (Executor) token or any provider credential. Local requests
+  omit cookies. Paired HTTPS requests send a same-origin device cookie with
+  `Secure`, `HttpOnly` and `SameSite=Strict`; page authentication is still required.
 - Read routes do not write to a Harnessy database or start a publisher. A
   same-origin `POST /v1/open/<service>` with a valid page session can start only
-  the meeting review opener, community review opener or `harnessy web`.
+  the meeting review or Google reconnect opener, community review opener,
+  or `harnessy web`.
   The browser cannot supply a command, file path or destination URL. Each
   opener owns the destination's credentials. These handoffs cannot approve
   or publish. Only one browser launch can run at a time.
@@ -162,5 +183,5 @@ names the owner of the credential and how to reconnect it:
   HTML, and is not written to portal logs. Sessions belong to this single-user
   portal and can be resumed from another authenticated page.
 
-See [`ADR-0008`](adr/0008-read-only-portal-api-boundary.md) and
-[`ADR-0009`](adr/0009-one-harnessy-app.md) for the design.
+See [ADR-0010](adr/0010-portal-actions-and-session-ownership.md) for the current
+security and process boundaries, and the [ADR index](adr/README.md) for history.

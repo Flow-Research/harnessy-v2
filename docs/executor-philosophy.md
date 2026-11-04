@@ -1,6 +1,10 @@
 # Harnessy and Executor
 
-**Status:** shared direction, not an implementation plan
+**Status:** shared direction, with historical provider choices superseded below.
+This document does not establish shipped capability. The current
+[knowledge-tool support contract](knowledge-tools.md) owns provider selection
+and workflow limits. The earlier reference-backend choice is not a product
+requirement or permission to switch a user to that provider.
 
 ## The idea
 
@@ -11,7 +15,7 @@ how does it act safely?*
 
 That question has three parts, and they map directly to what the SDK provides:
 
-1. **Typed capability contracts.** Semantic, cross-backend contracts like the knowledge contract (`spaces / tasks / journal / objects / …`) that an agent or app codes against once, regardless of which backend sits underneath. AnyType is the reference backend. This is the layer no one else in the ecosystem builds: Executor's unit is the per-integration tool, Garden's unit is the product workspace. Harnessy's unit is the capability.
+1. **Typed capability contracts.** Semantic, cross-backend contracts like the knowledge contract (`spaces / tasks / journal / objects / …`) that an agent or app codes against once, regardless of which backend sits underneath. AnyType was the reference backend for this early design. This is the layer no one else in the ecosystem builds: Executor's unit is the per-integration tool, Garden's unit is the product workspace. Harnessy's unit is the capability.
 2. **Discovery and readiness with evidence.** Not "AnyType is configured" but "objects are readable, mutations are blocked, and here is why." The capability-evidence pattern in `knowledge.ts` and the Jarvis readiness readers are this, and it extends to every capability the SDK exposes.
 3. **Portable packs.** Skills, context, memory, and connector capabilities that install into any supported agent environment (Claude Code, Codex, Pi, MCP hosts) and verify themselves.
 
@@ -59,7 +63,12 @@ The division of labor:
 - Harnessy owns the open runtime, CLI, portable capability and workflow
   semantics. Its SDK is a narrow programmatic boundary, not the whole product;
   Executor remains the integration engine.
-- AnyType is the reference backend and stays. Notion is scrapped for now; the knowledge contract it validated stays (the seam was extracted from two real adapters, per ADR-0002).
+- **Historical, superseded provider choice:** “AnyType is the reference backend
+  and stays. Notion is scrapped for now.” The current requirement is independent
+  knowledge-tool selection. Jarvis has a partial Notion adapter; no registered
+  Obsidian adapter exists. Direct legacy-provider workflows remain. The
+  [support contract](knowledge-tools.md) records these limits. The shared
+  capability seam remains; this change does not add an adapter.
 - One execution-mechanics policy seam. Garden retains workspace authorization,
   reviewer routing, durable product records, audit presentation, and final-write
   authority; Executor enforces connector and run mechanics beneath that host
@@ -79,7 +88,8 @@ The division of labor:
 - [Garden boundary](../packages/capability-org-knowledge/context/garden-boundary.md)
 - [Knowledge contract](../packages/harnessy-core/src/connectors/knowledge.ts)
 - [ADR-0002: connector seam](adr/0002-defer-connector-seam-until-second-adapter.md)
-- [Current Flow platform plan](../plans/flow-agent-platform-rewrite.md)
+- Historical Flow platform rewrite plan: the former `plans/flow-agent-platform-rewrite.md`
+  is not in this checkout. It is not the current implementation contract.
 - [Executor vision](https://github.com/RhysSullivan/executor/blob/main/vision.md)
 - [Executor overview](https://github.com/RhysSullivan/executor/blob/5cd7a779a7154e94845323812f07bfe585e1d0b2/README.md)
 - [July 10 Garden meeting](https://fathom.video/share/aX9J1Pebbb8URvAmFMAe-PDoRxQ9VXaz)

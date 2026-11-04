@@ -216,8 +216,9 @@
   Bun SQLite is not a drop-in replacement for the current async libSQL,
   schema-transaction, ownership-lock, and V1 data-migration contracts; changing
   those vendored files requires a reviewed vendor decision. The independent
-  Windows package-test launcher defect is fixed and locally verified (see
-  `status.md`), but neither Windows ARM64 support nor hosted evidence is proved.
+  Windows package-test launcher defect was fixed and locally verified at this
+  historical checkpoint, but neither Windows ARM64 support nor hosted evidence
+  was proved by that local check.
   The owner-approved decision on 2026-09-08 is to defer Windows ARM64
   publication rather than weaken the gate or ship an unusable artifact.
 - **2026-09-06 build evidence:** The repository's pinned Bun build produced the
