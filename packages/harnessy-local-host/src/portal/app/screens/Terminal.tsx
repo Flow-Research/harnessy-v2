@@ -113,8 +113,11 @@ export const TerminalScreen = ({
 				});
 				if (result.kind !== "ok") {
 					inputBlocked = true;
-					if (!cancelled)
+					if (!cancelled) {
+						terminal.options.disableStdin = true;
+						setControlling(false);
 						setError(result.kind === "error" ? result.message : "Sign-in expired. Open Harnessy again.");
+					}
 				}
 			});
 		};
@@ -182,6 +185,7 @@ export const TerminalScreen = ({
 		};
 		setError("");
 		setState("running");
+		setControlling(false);
 		if (persistent) {
 			const action = takeover.current ? "takeover" : "attach";
 			takeover.current = false;

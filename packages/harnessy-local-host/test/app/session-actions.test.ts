@@ -92,6 +92,18 @@ describe("session action requests", () => {
 		});
 	});
 
+	it("explains an unverified end without claiming the session stopped or retrying the destructive action", async () => {
+		const { client, fetch } = setup();
+		fetch.mockResolvedValue({ status: 409, json: async () => ({ error: "terminal_end_unverified" }) });
+		expect(await client.terminalAction({ action: "close", id: "session" })).toEqual({
+			kind: "error",
+			message:
+				"Could not verify that the process ended. The session is retained. Refresh its status and check the host before trying again.",
+		});
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(client.session()?.token).toBe(token);
+	});
+
 	it("forgets refused credentials and never sends a later write until signed in again", async () => {
 		const { client, fetch, storage } = setup(true);
 		fetch.mockResolvedValue({ status: 401, json: async () => ({}) });

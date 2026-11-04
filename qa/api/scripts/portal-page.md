@@ -11,12 +11,14 @@ Expected: Only files listed in `asset-manifest.json` are served, each checked fo
 
 - Execute the bundle loader and HTTP cases.
 
-## PRTP-002 The app renders API data as text and links only to loopback services
+## PRTP-002 The app renders API data as text, permits safe document links and restricts service hand-offs
 Layer: api
 Status: implemented
 Test File: qa/tests/portal-page.api.test.mjs
 Linked Refs: packages/harnessy-local-host/test/app/lib.test.ts, packages/harnessy-local-host/test/app/app.test.tsx, packages/harnessy-local-host/test/app/tokens.test.ts, packages/harnessy-local-host/src/portal/app/lib/markdown.ts, packages/harnessy-local-host/src/portal/app/lib/safe-href.ts, packages/harnessy-local-host/src/portal/app/components/SafeMarkdown.tsx
-Expected: Markdown is parsed to a tree and rendered as React text, so script, image, style and event-handler text, `javascript:` links and bidi controls stay text; an anchor is created only for `http://127.0.0.1:<port>/`, `http://[::1]:<port>/` or `http://localhost:<port>/` with no credentials, query or fragment, and only when the URL parser would not rewrite the value; a hand-off to anything else is shown as text; the parser bounds its output and its block-quote depth and always terminates, and an error boundary shows text instead of a blank page; hidden characters (Unicode format and control characters, line and paragraph separators) are shown escaped and such commands are never copied, from a chip or from the palette; every text colour reaches 4.5:1 on every surface; `dangerouslySetInnerHTML` and markup assignment are banned by lint.
+Expected: Markdown is parsed to a tree and rendered as React text. Script, image, style and event-handler text cannot execute. Document links can use safe HTTP or HTTPS URLs and open in a new tab with `rel="noopener noreferrer"`. Unsafe schemes, embedded credentials and hidden control characters cannot create an active document link. Service hand-offs remain separate: only approved loopback service targets can open an owning service, and other targets are shown as text. The loopback URL validator accepts `http://127.0.0.1:<port>/`, `http://[::1]:<port>/` or `http://localhost:<port>/` with no credentials, query or fragment, and only when the URL parser would not rewrite the value. The parser bounds its output and its block-quote depth and always terminates. An error boundary shows text instead of a blank page. Hidden characters (Unicode format and control characters, line and paragraph separators) are shown escaped in commands, and those commands are never copied from a chip or the palette. Every text colour reaches 4.5:1 on every surface. Lint rules prohibit `dangerouslySetInnerHTML` and markup assignment.
+
+This case includes the later daily-brief link update. The Phase A introduction describes the original read-only surface; its loopback-only link claim does not apply to document links in this case.
 
 - Execute the link, Markdown and rendering cases.
 

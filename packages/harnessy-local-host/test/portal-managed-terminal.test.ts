@@ -6,6 +6,141 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ManagedTerminal } from "../src/portal/managed-terminal.ts";
 
+it.each([true, false])(
+	"recovers a restored starting agent (backend survives: %s) and verifies identity before ending it",
+	async (survives) => {
+		const root = mkdtempSync(join(tmpdir(), "hsy-crash-"));
+		const bin = join(root, "bin");
+		mkdirSync(bin);
+		const argsFile = join(root, "args.txt");
+		writeFileSync(join(bin, "hsy"), `#!/bin/sh\nprintf '%s\\n' "$@" >> '${argsFile}'\nexec /bin/cat\n`);
+		chmodSync(join(bin, "hsy"), 0o700);
+		const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+		let manager = new ManagedTerminal(join(root, "state"), root, env);
+		const session = manager.session;
+		const herdr = (...args: string[]) =>
+			execFileSync("herdr", ["--session", session, ...args], {
+				env,
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+		try {
+			const { id } = (await manager.action({
+				action: "launch",
+				runner: "hsy",
+				title: "Crash fixture",
+				instructions: "Fixture only",
+				isolation: "existing",
+			})) as { id: string };
+			await expect
+				.poll(() => {
+					try {
+						return readFileSync(argsFile, "utf8");
+					} catch {
+						return "";
+					}
+				})
+				.toContain("--session-id");
+			const row = manager.records.get(id)!;
+			const conversation = row.conversation!;
+			row.state = "starting";
+			expect(manager.list().sessions[0]?.state).toBe("starting");
+			writeFileSync(join(root, "state", "sessions.json"), JSON.stringify([...manager.records.values()]));
+			manager.close();
+			if (!survives) {
+				herdr("server", "stop");
+				await expect
+					.poll(() => {
+						try {
+							herdr("pane", "list");
+							return true;
+						} catch {
+							return false;
+						}
+					})
+					.toBe(false);
+			}
+			manager = new ManagedTerminal(join(root, "state"), root, env);
+			expect(manager.list().sessions[0]).toMatchObject({
+				state: survives ? "running" : "interrupted",
+				recoverable: true,
+			});
+			if (!survives) {
+				await expect(manager.action({ action: "close", id })).rejects.toThrow("terminal_end_unverified");
+				expect(manager.records.get(id)?.state).toBe("interrupted");
+				await manager.action({ action: "resume", id });
+				await expect.poll(() => readFileSync(argsFile, "utf8")).toContain(`--session\n${conversation}`);
+			} else {
+				expect(readFileSync(argsFile, "utf8").match(/--session-id/g)).toHaveLength(1);
+			}
+			await manager.action({ action: "attach", id }, "fixture");
+			manager.streams.get(id)!.child.kill();
+			await expect.poll(() => manager.records.get(id)?.state).toBe("interrupted");
+			const current = manager.records.get(id)!;
+			const stamp = current.processStamp!;
+			const pane = current.pane!;
+			const terminal = current.terminal!;
+			// PID reuse or a replaced pane must never terminate an unrelated process.
+			current.processStamp = "1:unrelated process";
+			await expect(manager.action({ action: "close", id })).rejects.toThrow("terminal_end_unverified");
+			expect(herdr("pane", "list")).toContain(pane);
+			expect(current.state).toBe("interrupted");
+			current.processStamp = stamp;
+			current.terminal = "unrelated-terminal";
+			await expect(manager.action({ action: "close", id })).rejects.toThrow("terminal_end_unverified");
+			expect(herdr("pane", "list")).toContain(pane);
+			current.terminal = terminal;
+			const backend = manager as unknown as { herdr(args: string[]): string };
+			const execute = backend.herdr.bind(manager);
+			const missingPane = vi
+				.spyOn(backend, "herdr")
+				.mockImplementation((args) =>
+					args[0] === "pane" && args[1] === "list" ? JSON.stringify({ result: { panes: [] } }) : execute(args),
+				);
+			await expect(manager.action({ action: "close", id })).rejects.toThrow("terminal_end_unverified");
+			missingPane.mockRestore();
+			expect(current.state).toBe("interrupted");
+			expect(herdr("pane", "list")).toContain(pane);
+			let hidden = false;
+			const incompleteClose = vi.spyOn(backend, "herdr").mockImplementation((args) => {
+				if (args[0] === "pane" && args[1] === "close") {
+					hidden = true;
+					return "{}";
+				}
+				if (hidden && args[0] === "pane" && args[1] === "list") return JSON.stringify({ result: { panes: [] } });
+				return execute(args);
+			});
+			await expect(manager.action({ action: "close", id })).rejects.toThrow("terminal_end_unverified");
+			incompleteClose.mockRestore();
+			expect(current.state).toBe("interrupted");
+			expect(herdr("pane", "list")).toContain(pane);
+			await manager.action({ action: "close", id });
+			expect(current.state).toBe("ended");
+			expect(herdr("pane", "list")).not.toContain(pane);
+			await expect
+				.poll(() => {
+					try {
+						process.kill(Number(stamp.split(":", 1)[0]), 0);
+						return true;
+					} catch {
+						return false;
+					}
+				})
+				.toBe(false);
+			expect(manager.list().sessions).toHaveLength(0);
+		} finally {
+			manager.close();
+			try {
+				herdr("server", "stop");
+			} catch {
+				/* Fixture already stopped. */
+			}
+			rmSync(root, { recursive: true, force: true });
+		}
+	},
+	20000,
+);
+
 it("preserves a real shell across manager restart and enforces input ownership", async () => {
 	const root = mkdtempSync(join(tmpdir(), "hsy-managed-"));
 	let manager = new ManagedTerminal(root, root);

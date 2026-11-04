@@ -306,6 +306,53 @@ it("shows session state as a word and who controls input, then hands control ove
 	);
 });
 
+it("can reclaim input after another view takes over without replaying rejected or queued commands", async () => {
+	persistentSessions("running");
+	let owner: unknown;
+	const accepted: string[] = [];
+	terminalAction.mockImplementation(async (body) => {
+		if (body.action === "attach" || body.action === "takeover") {
+			owner = body.viewer;
+			return { kind: "ok", body: { controlling: true } };
+		}
+		if (body.action === "input") {
+			if (body.viewer !== owner)
+				return { kind: "error", message: "Another view controls this terminal. Choose Take control to type here." };
+			accepted.push(String(body.data));
+		}
+		if (body.action === "detach" && body.viewer === owner) owner = undefined;
+		return { kind: "ok", body: {} };
+	});
+	await render();
+	const original = current();
+	expect(original.options.disableStdin).toBe(false);
+	owner = "second-view";
+	terminalAction.mockClear();
+	await act(async () => {
+		// The paste queues several chunks before its first rejected response arrives.
+		original.input?.("unwanted".repeat(20));
+		original.input?.("queued-command\r");
+	});
+	expect(terminalAction.mock.calls.filter(([body]) => body.action === "input")).toHaveLength(1);
+	expect(original.options.disableStdin).toBe(true);
+	expect(container.querySelector(".terminal-status")?.textContent).toContain("Viewing only");
+	expect(
+		[...container.querySelectorAll<HTMLButtonElement>('[aria-label="Terminal keys"] button')].every(
+			(key) => key.disabled,
+		),
+	).toBe(true);
+	await click("Take control");
+	expect(current()).not.toBe(original);
+	expect(current().options.disableStdin).toBe(false);
+	expect(container.querySelector(".terminal-status")?.textContent).toContain("This view controls input");
+	expect(container.querySelector('[role="alert"]')).toBeNull();
+	expect(accepted).toEqual([]);
+	await act(async () => current().input?.("fresh-command\r"));
+	expect(accepted).toEqual(["fresh-command\r"]);
+	expect(terminalAction.mock.calls.filter(([body]) => body.action === "takeover")).toHaveLength(1);
+	expect(terminalAction.mock.calls.some(([body]) => body.action === "create" || body.action === "close")).toBe(false);
+});
+
 it("ends its own session only after confirmation, which is the one danger action", async () => {
 	persistentSessions("running");
 	terminalAction.mockImplementation(async () => ({ kind: "ok", body: { controlling: true } }));
