@@ -1,0 +1,270 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+@source "../**/*.{ts,tsx}";
+@source "../../../../apps/local/src/**/*.{ts,tsx}";
+@source "../../../../apps/cloud/src/**/*.{ts,tsx}";
+@source "../../../plugins/*/src/**/*.{ts,tsx}";
+
+@theme inline {
+  /* Geist sets UI and prose; Geist Mono sets code, slugs, IDs, counts, and labels.
+     font-display maps to Geist too: headings are sans, the wordmark uses font-mono. */
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: "Geist", ui-sans-serif, system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-active: var(--sidebar-active);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+}
+
+/* Light theme.
+   Grayscale, registry-grade minimal: white surfaces, a near-neutral gray ramp,
+   hairline borders, and color held back to one role (destructive). Hierarchy
+   comes from tone and borders, not hue. */
+:root {
+  color-scheme: light dark;
+  --radius: 0.5rem;
+
+  --background: #ffffff;
+  --foreground: #111111;
+  --card: #ffffff;
+  --card-foreground: #111111;
+  --popover: #ffffff;
+  --popover-foreground: #111111;
+  --primary: #0a0a0a;
+  --primary-foreground: #ffffff;
+  --secondary: #fafafa;
+  --secondary-foreground: #0a0a0a;
+  --muted: #fafafa;
+  --muted-foreground: #666666;
+  --accent: #f5f5f5;
+  --accent-foreground: #0a0a0a;
+  --destructive: #b4261a;
+  --border: #eaeaea;
+  --input: #d4d4d4;
+  --ring: #888888;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #666666;
+  --sidebar-border: #eaeaea;
+  --sidebar-active: #f5f5f5;
+
+  --scrollbar-thumb: #d4d4d4;
+  --scrollbar-thumb-hover: #999999;
+  --sidebar-primary: #0a0a0a;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f5f5f5;
+  --sidebar-accent-foreground: #0a0a0a;
+  --sidebar-ring: #888888;
+}
+
+/* Dark theme.
+   The gray ramp inverts: near-black surfaces, a white primary, hairlines at low
+   contrast. Depth comes from a one-step-lighter surface, not a heavier shadow. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+    --card: #0f0f0f;
+    --card-foreground: #ededed;
+    --popover: #141414;
+    --popover-foreground: #ededed;
+    --primary: #ffffff;
+    --primary-foreground: #0a0a0a;
+    --secondary: #141414;
+    --secondary-foreground: #ededed;
+    --muted: #141414;
+    --muted-foreground: #9a9a9a;
+    --accent: #1a1a1a;
+    --accent-foreground: #ededed;
+    --destructive: #e0726a;
+    --border: #1f1f1f;
+    --input: #333333;
+    --ring: #777777;
+
+    --sidebar: #0a0a0a;
+    --sidebar-foreground: #9a9a9a;
+    --sidebar-border: #1f1f1f;
+    --sidebar-active: #141414;
+
+    --scrollbar-thumb: #333333;
+    --scrollbar-thumb-hover: #444444;
+    --sidebar-primary: #ffffff;
+    --sidebar-primary-foreground: #0a0a0a;
+    --sidebar-accent: #1a1a1a;
+    --sidebar-accent-foreground: #ededed;
+    --sidebar-ring: #777777;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+  }
+}
+
+/* The sidebar header sits at the top-left of the desktop window, under the
+   native macOS traffic-light controls (trafficLightPosition {x:16,y:17} in
+   apps/desktop/src/main/index.ts). Offset its content past the lights and make
+   the freed strip draggable like a native title bar. The desktop window stays
+   at or above the mobile breakpoint (minWidth 768), so the sidebar header is
+   the only header the lights ever overlap. */
+.executor-desktop-macos .desktop-macos-titlebar {
+  -webkit-app-region: drag;
+  padding-left: 88px;
+}
+
+.executor-desktop-macos .desktop-macos-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* The main content area sits to the right of the sidebar. On the frameless
+   desktop window it renders page content straight to the top edge with nothing
+   marked as a drag region, so the window could not be moved or
+   double-clicked-to-zoom from there (only the sidebar header worked, see
+   .desktop-macos-titlebar above). Lay a title-bar-height drag strip along the
+   top of the main area so the whole top row behaves like the native title bar.
+   Hidden off-desktop. It OVERLAYS the top of the main area (absolute, behind
+   page content via z-index) rather than reserving its own row: reserving space
+   pushed every page header down a full title-bar height, so its bottom border
+   no longer lined up with the sidebar header's. Sitting behind, it keeps page
+   headers flush with the top (borders aligned again) while the empty/text parts
+   of the header stay draggable. Interactive controls carve themselves out of
+   the drag region via the global no-drag rule below, so the strip never
+   swallows their clicks. The traffic lights sit over the sidebar, never the
+   main area, so no left offset is needed here. */
+.desktop-macos-main-titlebar {
+  display: none;
+}
+
+.executor-desktop-macos .desktop-macos-main-titlebar {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3rem; /* matches the sidebar header (h-12) */
+  z-index: -1; /* behind page content so header controls stay clickable */
+  -webkit-app-region: drag;
+}
+
+/* Safety net for the overlaid main drag strip: any interactive control that
+   ends up within the top title-bar strip must carve itself out of the drag
+   region, or the native window-drag would steal its clicks. Mirrors the
+   explicit .desktop-macos-no-drag the sidebar header uses on its controls. */
+.executor-desktop-macos button,
+.executor-desktop-macos a,
+.executor-desktop-macos input,
+.executor-desktop-macos select,
+.executor-desktop-macos textarea,
+.executor-desktop-macos [role="button"],
+.executor-desktop-macos [role="tab"] {
+  -webkit-app-region: no-drag;
+}
+
+/* The 88px title-bar offset eats into the sidebar's width; without extra room
+   the brand wordmark and the server-connection menu collide. Widen the macOS
+   sidebar so both clear the traffic lights with comfortable spacing. */
+.executor-desktop-macos .desktop-macos-sidebar {
+  width: 15rem;
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --card: #0f0f0f;
+  --card-foreground: #ededed;
+  --popover: #141414;
+  --popover-foreground: #ededed;
+  --primary: #ffffff;
+  --primary-foreground: #0a0a0a;
+  --secondary: #141414;
+  --secondary-foreground: #ededed;
+  --muted: #141414;
+  --muted-foreground: #9a9a9a;
+  --accent: #1a1a1a;
+  --accent-foreground: #ededed;
+  --destructive: #e0726a;
+  --border: #1f1f1f;
+  --input: #333333;
+  --ring: #777777;
+
+  --sidebar: #0a0a0a;
+  --sidebar-foreground: #9a9a9a;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #1a1a1a;
+  --sidebar-accent-foreground: #ededed;
+  --sidebar-border: #1f1f1f;
+  --sidebar-active: #141414;
+  --sidebar-ring: #777777;
+  --scrollbar-thumb: #333333;
+  --scrollbar-thumb-hover: #444444;
+}
+
+@keyframes ios-spinner-fade {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.25;
+  }
+}

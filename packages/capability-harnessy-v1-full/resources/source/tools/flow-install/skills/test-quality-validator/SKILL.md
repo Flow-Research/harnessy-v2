@@ -1,0 +1,89 @@
+---
+name: test-quality-validator
+description: "Validate generated or hand-written tests for coverage completeness, correctness, and false-green risks using the canonical QA runtime, regression artifacts, and optional delivery-profile rules."
+disable-model-invocation: false
+allowed-tools: Read, Grep, Glob, Bash, Write
+argument-hint: "[--epic <epic_name>] [--suite <X>] [--api-only] [--browser-only] [--profile .jarvis/context/profiles/qa.json]"
+---
+
+# Test Quality Validator
+
+## Purpose
+
+Validate that generated or maintained tests are complete, trustworthy, and aligned with approved specs and regression artifacts.
+
+## Required contract
+
+- canonical QA profile, typically `.jarvis/context/profiles/qa.json`
+- optional regression adapter paths, role inventory, validator rules, and mock policy from the active profile
+
+- Template paths are resolved from `${AGENTS_SKILLS_ROOT}/test-quality-validator/`.
+
+## Checks
+
+1. Coverage completeness against acceptance criteria and regression scenarios.
+2. False-green risk detection in generated or hand-written suites.
+3. Pattern adherence against delivery-profile-configured validator rules.
+4. Role and authorization coverage.
+5. Canonical QA contract compliance: `@qa-spec` / `@qa-suite` headers, canonical ID format, and `Status: implemented` scenarios must align with tests.
+6. Persistence-sensitive browser scenarios preserve `DB Assert:` coverage or document why DB validation is unavailable in the target environment.
+7. Mock-heavy tests and internal DB/client/auth/service mocks are warning-level false-green risks unless the QA profile documents an allowed external boundary or exception.
+
+## Steps
+
+1. Run the canonical drift preflight first:
+
+```bash
+qa drift --profile <qa-profile> --json
+```
+
+2. Treat any of these as quality defects:
+   - missing `@qa-spec` / `@qa-suite` headers
+   - non-canonical ID prefixes
+   - `Status: implemented` scenarios without matching tests
+   - tests referencing nonexistent spec scenarios
+3. Parse criteria with `${AGENTS_SKILLS_ROOT}/spec-to-regression/scripts/extract-criteria.ts` when acceptance-criteria coverage is in scope.
+4. Parse API regression scenarios with `${AGENTS_SKILLS_ROOT}/api-integration-codegen/scripts/parse-api-regression.ts`.
+5. Run `${AGENTS_SKILLS_ROOT}/test-quality-validator/scripts/validate-coverage.ts` with the optional delivery profile.
+6. Run `${AGENTS_SKILLS_ROOT}/test-quality-validator/scripts/validate-correctness.ts` against the project's browser/API suites with the optional profile.
+7. Synthesize the drift defects and validator output into a single quality report.
+8. Flag browser suites that appear to have been generated only from source assumptions when no walkthrough artifacts, accessible selectors, or stable selector rationale are present.
+
+## Decision Trace Protocol
+
+This skill participates in the skill evolution system by capturing decision traces at gate resolutions and consulting accumulated feedback.
+
+### Trace Consultation (short loop)
+
+Before executing any step with a quality or human gate, query accumulated decision traces:
+
+```bash
+python3 "${AGENTS_SKILLS_ROOT}/_shared/trace_query.py" recent \
+    --skill "test-quality-validator" --gate "<gate_name>" --limit 5 --min-loops 1
+```
+
+If patterns or recent feedback exist, incorporate them as additional constraints. Do not cite traces to the user unless asked.
+
+### Trace Capture (after gate resolution)
+
+After every gate resolves, capture a decision trace:
+
+```bash
+python3 "${AGENTS_SKILLS_ROOT}/_shared/trace_capture.py" capture \
+    --skill "test-quality-validator" \
+    --gate "<gate_name>" --gate-type "<human|quality>" \
+    --outcome "<approved|rejected|passed|failed>" \
+    --refinement-loops <N> \
+    [--feedback "<user's feedback text>"] \
+    [--category <CATEGORY>]
+```
+
+### Post-Run Retrospective
+
+After completion, ask: **"Any feedback on this test-quality-validator run? (skip to finish)"**
+If provided, capture via trace_capture.py with gate "run_retrospective" and gate-type "retrospective".
+
+## Output
+
+- quality report with drift defects, coverage %, false-green risks, pattern violations, and role coverage gaps
+- explicit failures and warnings suitable for PR review or CI gating

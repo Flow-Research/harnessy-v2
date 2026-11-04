@@ -1,8 +1,7 @@
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { stream, streamSimple } from "../src/index.ts";
-import { getModel } from "../src/models.ts";
-import { convertMessages } from "../src/providers/openai-completions.ts";
+import { convertMessages } from "../src/api/openai-completions.ts";
+import { getModel, stream, streamSimple } from "../src/compat.ts";
 import type { AssistantMessage, Model, SimpleStreamOptions, Tool, ToolResultMessage } from "../src/types.ts";
 
 const mockState = vi.hoisted(() => ({
@@ -344,9 +343,69 @@ describe("openai-completions tool_choice", () => {
 			).result();
 
 			const params = (payload ?? mockState.lastParams) as { thinking?: unknown; reasoning_effort?: string };
-			expect(params.thinking).toEqual({ type: "enabled" });
+			expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
 			expect(params.reasoning_effort).toBe(testCase.effort);
 		}
+	});
+
+	it("preserves z.ai thinking when replaying reasoning_content", async () => {
+		const model = getModel("zai", "glm-5.2")!;
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			api: "openai-completions",
+			provider: "zai",
+			model: "glm-5.2",
+			content: [
+				{ type: "thinking", thinking: "prior reasoning", thinkingSignature: "reasoning_content" },
+				{ type: "toolCall", id: "call_1", name: "read", arguments: { path: "README.md" } },
+			],
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp: Date.now(),
+		};
+		const toolResult: ToolResultMessage = {
+			role: "toolResult",
+			toolCallId: "call_1",
+			toolName: "read",
+			content: [{ type: "text", text: "contents" }],
+			isError: false,
+			timestamp: Date.now(),
+		};
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{ role: "user", content: "Read README.md", timestamp: Date.now() },
+					assistantMessage,
+					toolResult,
+					{ role: "user", content: "Continue", timestamp: Date.now() },
+				],
+			},
+			{
+				apiKey: "test",
+				reasoning: "high",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			messages?: Array<Record<string, unknown>>;
+			thinking?: unknown;
+		};
+		const replayedAssistant = params.messages?.find((message) => message.role === "assistant");
+		expect(replayedAssistant).toMatchObject({ reasoning_content: "prior reasoning" });
+		expect(params.thinking).toEqual({ type: "enabled", clear_thinking: false });
 	});
 
 	it("omits z.ai GLM-5.2 reasoning_effort when thinking is off", async () => {
@@ -1010,6 +1069,8 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("stores OpenRouter Kimi K2.6 reasoning replay compat in built-in metadata", () => {
+		// `:free` variant delisted from the OpenRouter API; the generator override
+		// matches any `moonshotai/kimi-k2.6*` variant that is listed.
 		const model = getModel("openrouter", "moonshotai/kimi-k2.6")!;
 		expect(model.compat?.supportsDeveloperRole).toBe(false);
 		expect(model.compat?.requiresReasoningContentOnAssistantMessages).toBe(true);

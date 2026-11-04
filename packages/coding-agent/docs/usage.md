@@ -25,7 +25,7 @@ The editor can be replaced temporarily by built-in UI such as `/settings` or by 
 | Images | Paste with Ctrl+V, Alt+V on Windows, or drag into the terminal |
 | Shell command | `!command` runs and sends output to the model |
 | Hidden shell command | `!!command` runs without sending output to the model |
-| External editor | Ctrl+G opens `$VISUAL` or `$EDITOR` |
+| External editor | Ctrl+G opens `externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere |
 
 See [Keybindings](keybindings.md) for all shortcuts and customization.
 
@@ -39,21 +39,30 @@ Type `/` in the editor to open command completion. Extensions can register custo
 | `/model` | Switch models |
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
+| `/plan` | Toggle built-in read-only planning and approve tracked execution; `/plan status` shows progress |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
 | `/session` | Show session file, ID, messages, tokens, and cost |
 | `/tree` | Jump to any point in the session and continue from there |
+| `/trust` | Save project trust decision for future sessions |
 | `/fork` | Create a new session from a previous user message |
 | `/clone` | Duplicate the current active branch into a new session |
 | `/compact [prompt]` | Manually compact context, optionally with custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
-| `/export [file]` | Export session to HTML |
+| `/export [file]` | Export session to HTML or JSONL |
+| `/import <file>` | Import and resume a session from a JSONL file |
 | `/share` | Upload as private GitHub gist with shareable HTML link |
 | `/reload` | Reload keybindings, extensions, skills, prompts, and context files |
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
 | `/quit` | Quit pi |
+
+## Plan Mode
+
+Plan mode is built in and inactive by default. The model has an `enter_plan_mode` tool and decides whether planning would help before implementation. You can also toggle it explicitly with `/plan` or Ctrl+Alt+P, or start a session with `pi --plan`.
+
+While planning, built-in write tools are disabled and Bash is restricted to a read-only allowlist. Other active tools remain available without widening explicit `--tools` restrictions; plan mode cannot classify third-party tools, so only enable extension tools you trust. When the assistant returns numbered steps under a `Plan:` heading, pi offers to execute, keep planning, or refine the plan. Approved execution restores the original tool set, shows `plan n/total` in the status line, and tracks `[DONE:n]` markers in the progress widget. `/plan status` prints the current progress.
 
 ## Message Queue
 
@@ -234,6 +243,7 @@ pi --no-extensions -e ./my-extension.ts
 |--------|-------------|
 | `--system-prompt <text>` | Replace default prompt; context files and skills are still appended |
 | `--append-system-prompt <text>` | Append to system prompt |
+| `--plan` | Start in built-in plan mode |
 | `--verbose` | Force verbose startup |
 | `-a`, `--approve` | Trust project-local files for this run |
 | `-na`, `--no-approve` | Ignore project-local files for this run |
@@ -277,6 +287,9 @@ pi --model sonnet:high "Solve this complex problem"
 # Limit model cycling
 pi --models "claude-*,gpt-4o"
 
+# Start in built-in plan mode
+pi --plan "Plan the authentication refactor"
+
 # Read-only mode
 pi --tools read,grep,find,ls -p "Review the code"
 
@@ -295,12 +308,12 @@ pi --exclude-tools ask_question
 | `PI_SKIP_VERSION_CHECK` | Skip the Pi version update check at startup. This prevents the `pi.dev` latest-version request |
 | `PI_TELEMETRY` | Override install/update telemetry and provider attribution headers: `1`/`true`/`yes` or `0`/`false`/`no`. This does not disable update checks |
 | `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache where supported |
-| `VISUAL`, `EDITOR` | External editor for Ctrl+G |
+| `VISUAL`, `EDITOR` | Fallback external editor for Ctrl+G when `externalEditor` is unset; defaults to Notepad on Windows and `nano` elsewhere |
 
 ## Design Principles
 
 Pi keeps the core small and pushes workflow-specific behavior into extensions, skills, prompt templates, and packages.
 
-It intentionally does not include built-in MCP, sub-agents, permission popups, plan mode, to-dos, or background bash. You can build or install those workflows as extensions or packages, or use external tools such as containers and tmux.
+It includes a focused plan mode, with its own plan progress tracking, but intentionally leaves MCP, sub-agents, permission popups, general-purpose to-do management, and background bash to extensions, packages, or external tools such as containers and tmux.
 
 For the full rationale, read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/).

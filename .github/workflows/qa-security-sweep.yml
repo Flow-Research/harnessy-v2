@@ -1,0 +1,91 @@
+name: Security Gates
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  root-dependencies-and-invariants:
+    name: Root dependencies and invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22.22.2
+          cache: npm
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Create evidence directory
+        run: mkdir -p .security-sweep-output
+
+      - name: Audit root dependencies
+        run: node scripts/audit-root.mjs --json > .security-sweep-output/root-npm-audit.json
+
+      - name: Test and run repository security invariants
+        run: node --test scripts/security-invariants-lib.test.mjs && node scripts/check-security-invariants.mjs --output .security-sweep-output/security-invariants.json
+
+      - name: Upload root security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: root-security-${{ github.run_id }}
+          path: .security-sweep-output/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+
+  executor-dependencies:
+    name: Executor dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.0
+
+      - name: Install Executor dependencies without lifecycle scripts
+        working-directory: executor
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Create evidence directory
+        run: mkdir -p .security-sweep-output
+
+      - name: Audit Executor dependency graph
+        run: node scripts/audit-executor.mjs --json > .security-sweep-output/executor-bun-audit.json
+
+      - name: Upload Executor security evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: executor-security-${{ github.run_id }}
+          path: .security-sweep-output/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30

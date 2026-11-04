@@ -54,6 +54,13 @@ const defaultFindOperations: FindOperations = {
 export interface FindToolOptions {
 	/** Custom operations for find. Default: local filesystem plus fd */
 	operations?: FindOperations;
+	/** Resolve the fd process. Intended for deterministic process-boundary tests. */
+	resolveFd?: () => Promise<string | FindExecutable | undefined> | string | FindExecutable | undefined;
+}
+
+export interface FindExecutable {
+	command: string;
+	args?: string[];
 }
 
 function formatFindCall(args: { pattern: string; path?: string; limit?: number } | undefined, theme: Theme): string {
@@ -211,27 +218,36 @@ export function createFindToolDefinition(
 						}
 
 						// Default implementation uses fd.
-						const fdPath = await ensureTool("fd", true);
+						const resolvedFd =
+							options?.resolveFd === undefined ? await ensureTool("fd", true) : await options.resolveFd();
 						if (signal?.aborted) {
 							settle(() => reject(new Error("Operation aborted")));
 							return;
 						}
-						if (!fdPath) {
+						if (!resolvedFd) {
 							settle(() => reject(new Error("fd is not available and could not be downloaded")));
 							return;
 						}
+						const fd = typeof resolvedFd === "string" ? { command: resolvedFd, args: [] } : resolvedFd;
 
-						// Build fd arguments. --no-require-git makes fd apply hierarchical .gitignore
-						// semantics whether or not the search path is inside a git repository, without
-						// leaking sibling-directory rules the way --ignore-file (a global source) would.
-						const args: string[] = [
-							"--glob",
-							"--color=never",
-							"--hidden",
-							"--no-require-git",
-							"--max-results",
-							String(effectiveLimit),
-						];
+						const args: string[] = ["--glob", "--color=never", "--hidden"];
+
+						// fd normally ignores .gitignore outside git repos, so keep --no-require-git
+						// there. Inside repos, use fd's default git-aware behavior so parent
+						// .gitignore rules stop at nested repo boundaries:
+						// https://github.com/earendil-works/pi/issues/5960
+						let insideGitRepo = false;
+						for (let current = searchPath; ; ) {
+							if (await pathExists(path.join(current, ".git"))) {
+								insideGitRepo = true;
+								break;
+							}
+							const parent = path.dirname(current);
+							if (parent === current) break;
+							current = parent;
+						}
+						if (!insideGitRepo) args.push("--no-require-git");
+						args.push("--max-results", String(effectiveLimit));
 
 						// fd --glob matches against the basename unless --full-path is set; in --full-path
 						// mode it matches against the absolute candidate path, so a path-containing
@@ -245,7 +261,7 @@ export function createFindToolDefinition(
 						}
 						args.push("--", effectivePattern, searchPath);
 
-						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+						const child = spawn(fd.command, [...(fd.args ?? []), ...args], { stdio: ["ignore", "pipe", "pipe"] });
 						const rl = createInterface({ input: child.stdout });
 						let stderr = "";
 						const lines: string[] = [];

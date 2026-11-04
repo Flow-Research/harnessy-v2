@@ -1,0 +1,26 @@
+name: browser-integration-codegen
+type: opencode
+version: 0.2.2
+owner: julian
+status: experimental
+blast_radius: medium
+description: "Generate browser integration test suites from Harnessy regression artifacts using profile-driven fixtures, imports, and selector verification."
+permissions: [read-source, read-regression-spec, read-dom-artifacts, write-test-suites, execute-scripts]
+data_categories: [none]
+egress: []
+invoke: /browser-integration-codegen
+location: tools/flow-install/skills/browser-integration-codegen
+autoresearch:
+  enabled: true
+  metric_layer: 1
+  time_budget_seconds: 1200
+  evaluation_window: 3
+  constraints:
+    max_regression_rate: 0.1
+    max_human_intervention: 0.5
+traces:
+  enabled: true
+  gates:
+    quality:
+      - selector_certainty
+      - todo_resolution

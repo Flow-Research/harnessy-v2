@@ -1,0 +1,76 @@
+name: life-orchestrator
+type: opencode
+version: 0.1.19
+owner: julian
+status: experimental
+blast_radius: medium
+description: "Monthly, weekly, and daily life orchestration — reads priorities and project state to produce actionable reviews, plans, and briefs"
+install_scope: global
+permissions: [terminal, filesystem, network]
+data_categories: [personal]
+egress: [api.anthropic.com, api.openai.com, rekt.news]
+invoke: /life
+location: tools/flow-install/skills/life-orchestrator
+traces:
+  enabled: true
+  gates:
+    quality:
+      - monthly_review
+      - weekly_plan
+      - daily_brief
+    human:
+      - feedback_capture
+state:
+  - path: "~/.agents/life/YYYY/Mon/monthly-review.md"
+    description: "Monthly review output from goal-agent"
+  - path: "~/.agents/life/YYYY/Mon/week-NN-plan.md"
+    description: "Weekly plan for the current week"
+  - path: "~/.agents/life/YYYY/Mon/dd-daily-brief.md"
+    description: "Daily brief with focus items and journal entry"
+  - path: "~/.agents/life/feedback/"
+    description: "Feedback annotations captured via /life feedback"
+schedule:
+  - name: learning-research
+    cron: "15 4 * * *"
+    type: shell
+    command: 'python3 "${AGENTS_SKILLS_ROOT:-$HOME/.agents/skills}/life-orchestrator/scripts/learning-research"'
+    description: "Bounded strategy-aligned reading research before the morning brief (daily at 04:15)"
+    timeout: 5700
+    enabled: false
+  - name: daily-brief
+    cron: "30 5 * * *"
+    type: shell
+    command: 'python3 "${AGENTS_SKILLS_ROOT:-$HOME/.agents/skills}/life-orchestrator/scripts/daily-brief"'
+    description: "Daily focus brief at 05:30 (chief-of-staff synthesis)"
+    timeout: 2400
+    enabled: false
+  - name: weekly-plan
+    cron: "0 18 * * 0"
+    type: shell
+    command: 'bash "${AGENTS_SKILLS_ROOT:-$HOME/.agents/skills}/life-orchestrator/scripts/weekly-plan"'
+    description: "Weekly plan, Sundays 18:00 (anchors next week's briefs)"
+    timeout: 2400
+    enabled: false
+  - name: monthly-review
+    cron: "0 9 1 * *"
+    type: prompt
+    command: "/life monthly"
+    description: "Monthly review on the 1st at 09:00 (goal-agent driven)"
+    enabled: false
+dependencies:
+  - tool: claude
+    description: "Optional AI provider for briefs and plans"
+    check: "claude --version"
+    required: false
+  - tool: codex
+    description: "Optional AI provider for briefs and plans"
+    check: "codex --version"
+    required: false
+  - tool: opencode
+    description: "Optional AI provider for briefs and plans"
+    check: "opencode --version"
+    required: false
+  - tool: python3
+    description: "Python 3 for collect-state, daily-brief, and AI runner scripts"
+    check: "python3 --version"
+    required: true

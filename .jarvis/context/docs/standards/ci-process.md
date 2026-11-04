@@ -1,0 +1,37 @@
+# CI and release process
+
+- Pull requests and pushes to both `main` and `dev` run the required jobs in
+  `.github/workflows/ci.yml` and `.github/workflows/qa-security-sweep.yml`.
+- Local reproduction commands and exact hosted check names are in
+  `profiles/ci.json`.
+- A declared matrix proves configuration only. Cross-platform evidence exists
+  only after the corresponding hosted checks pass on a pushed commit.
+- Build/check gates must finish with `git diff --exit-code`; generated artifacts
+  must be checked, not silently rewritten.
+- The Harnessy gates run as parallel CI jobs. The `build` job builds once and
+  uploads its outputs; every other gate job restores them and ends with its own
+  `git diff --exit-code` and `npm run check:clean-worktree`. The required check
+  `CI / Harnessy build, QA, and packages` is an aggregate job that needs every
+  gate job and fails unless all of them succeed. The packed release smoke runs as
+  two parts (`test:release-artifacts:installed-local-host` and
+  `test:release-artifacts:installed-product`); `npm run test:release-artifacts`
+  still runs both parts in one process locally and in release preflight.
+  The build artifact is named by run ID and commit, not by attempt, so "Re-run
+  failed jobs" restores the first attempt's build; each restore fails unless the
+  stamped build commit equals the checked-out commit.
+  `npm run check:ci-contract` enforces this shape.
+- Tag release preflight must pass before the first draft release or npm
+  mutation. The SDK remains private and outside the publication list.
+- Root npm and Executor full-graph audits are executable gates. The repository
+  scanner has negative controls. Dedicated deterministic SBOM, comprehensive
+  license-report, artifact-ledger, and reproducibility commands are wired, but
+  evidence must cover the declared release targets. Windows ARM64 is explicitly
+  deferred; do not infer support from another platform's passing smoke test.
+- Publication requires a clean reviewed commit, authoritative license/artifact
+  evidence, complete hosted checks, a protected-branch tag, and explicit
+  approval.
+- Deployment and operational cutover are not configured or authorized by CI.
+  Verify current ownership per capability against live evidence and the migration
+  execution plan. Keep replaced V1 writers disabled; ADR 0006's accepted recovery
+  amendment uses isolated native-state restore/reconciliation and V2 recovery,
+  not mandatory V1 reactivation.

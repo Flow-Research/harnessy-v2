@@ -1,0 +1,7 @@
+version: 1
+active_backend: anytype
+backends:
+  anytype:
+    default_space_id: null
+analytics:
+  enabled: false

@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+FLOW_REPO_URL="${FLOW_REPO_URL:-https://github.com/Flow-Research/harnessy.git}"
+FLOW_INSTALL_DIR="${FLOW_INSTALL_DIR:-$HOME/harnessy}"
+FLOW_CACHE_DIR="${FLOW_CACHE_DIR:-$HOME/.cache/harnessy}"
+FLOW_NONINTERACTIVE="${FLOW_NONINTERACTIVE:-0}"
+FLOW_SKIP_SUBPROJECTS="${FLOW_SKIP_SUBPROJECTS:-0}"
+# Community skills are intentionally not auto-installed. Skills available to
+# agents must be deliberately curated, not bulk-imported from an external repo.
+
+SCRIPT_SOURCE="${BASH_SOURCE[0]-$0}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_SOURCE")" && pwd)"
+LOCAL_SOURCE=0
+INSTALL_MODE="bootstrap"
+TARGET_ROOT=""
+FLOW_RECONFIGURE="${FLOW_RECONFIGURE:-0}"
+FLOW_FORCE_SYNC="${FLOW_FORCE_SYNC:-0}"
+FLOW_REFRESH_SOURCE="${FLOW_REFRESH_SOURCE:-0}"
+
+if [[ -d "$SCRIPT_DIR/tools/flow-install" && -d "$SCRIPT_DIR/jarvis-cli" ]]; then
+  LOCAL_SOURCE=1
+fi
+
+log() {
+  printf '%s\n' "$1"
+}
+
+need_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+path_has_entry() {
+  local needle="$1"
+  local entry
+  IFS=':' read -r -a path_entries <<<"${PATH:-}"
+  for entry in "${path_entries[@]}"; do
+    [[ "$entry" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+local_commands_dir() {
+  if [[ -n "${XDG_BIN_HOME:-}" ]]; then
+    printf '%s' "$XDG_BIN_HOME"
+  else
+    printf '%s' "$HOME/.local/bin"
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+Harnessy installer
+
+Usage:
+  ./install.sh [--here] [--target PATH] [--yes] [--reconfigure] [--refresh-source]
+
+Modes:
+  default           Bootstrap a full Harnessy workspace locally
+  --here            Install Harnessy into the current repository in-place
+  --target PATH     Install Harnessy into the specified repository in-place
+
+Flags:
+  --yes             Non-interactive mode
+  --force           Force-sync all skills (bypass version check)
+  --refresh-source  Pull latest changes into the cached Harnessy source before install
+  --reconfigure     Ask for install destinations again even if saved in lockfile
+  --help            Show this help
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --here)
+        INSTALL_MODE="in-place"
+        TARGET_ROOT="$(pwd)"
+        ;;
+      --target)
+        if [[ $# -lt 2 ]]; then
+          log "[error] --target requires a path"
+          exit 1
+        fi
+        INSTALL_MODE="in-place"
+        TARGET_ROOT="$2"
+        shift
+        ;;
+      --yes)
+        FLOW_NONINTERACTIVE=1
+        ;;
+      --force)
+        FLOW_FORCE_SYNC=1
+        ;;
+      --refresh-source)
+        FLOW_REFRESH_SOURCE=1
+        ;;
+      --reconfigure)
+        FLOW_RECONFIGURE=1
+        ;;
+      --help|-h)
+        usage
+        exit 0
+        ;;
+      *)
+        log "[error] Unknown argument: $1"
+        usage
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  if [[ "$INSTALL_MODE" == "in-place" ]]; then
+    TARGET_ROOT="$(cd "$TARGET_ROOT" && pwd)"
+  fi
+}
+
+install_uv() {
+  if need_command uv; then
+    log "[ok] uv already installed"
+    return
+  fi
+
+  log "[info] Installing uv..."
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+}
+
+ensure_node_and_pnpm() {
+  if ! need_command node; then
+    log "[error] node is required for Harnessy installation. Install Node 18+ and rerun."
+    exit 1
+  fi
+
+  if need_command pnpm; then
+    log "[ok] pnpm already installed"
+    return
+  fi
+
+  if need_command corepack; then
+    log "[info] Enabling pnpm via corepack..."
+    corepack enable pnpm >/dev/null 2>&1 || true
+    corepack prepare pnpm@9.15.4 --activate >/dev/null 2>&1 || true
+  fi
+
+  if ! need_command pnpm; then
+    log "[error] pnpm is required for Harnessy installation. Install pnpm and rerun."
+    exit 1
+  fi
+}
+
+resolve_flow_source() {
+  if [[ "$LOCAL_SOURCE" -eq 1 ]]; then
+    FLOW_ROOT="$SCRIPT_DIR"
+    local source_root cache_root
+    source_root="$(cd "$FLOW_ROOT" && pwd)"
+    cache_root="$FLOW_CACHE_DIR"
+    if [[ -d "$cache_root" ]]; then
+      cache_root="$(cd "$cache_root" && pwd)"
+    fi
+
+    if [[ "$FLOW_REFRESH_SOURCE" == "1" && -d "$FLOW_ROOT/.git" && "$source_root" == "$cache_root" ]]; then
+      log "[info] Refreshing cached Harnessy checkout at $FLOW_ROOT"
+      git -C "$FLOW_ROOT" pull --ff-only
+    fi
+
+    log "[ok] Using local Harnessy checkout: $FLOW_ROOT"
+    return
+  fi
+
+  if [[ "$INSTALL_MODE" == "in-place" ]]; then
+    FLOW_ROOT="$FLOW_CACHE_DIR"
+  else
+    FLOW_ROOT="$FLOW_INSTALL_DIR"
+  fi
+
+  if [[ -d "$FLOW_ROOT/.git" ]]; then
+    log "[info] Updating existing Harnessy checkout at $FLOW_ROOT"
+    git -C "$FLOW_ROOT" pull --ff-only
+  else
+    mkdir -p "$(dirname "$FLOW_ROOT")"
+    log "[info] Cloning Harnessy into $FLOW_ROOT"
+    git clone "$FLOW_REPO_URL" "$FLOW_ROOT"
+  fi
+}
+
+install_jarvis() {
+  log "[info] Installing Jarvis CLI into PATH"
+  uv tool install --force "$FLOW_ROOT/jarvis-cli"
+}
+
+install_flow_framework() {
+  local flow_args=()
+  if [[ "$FLOW_NONINTERACTIVE" == "1" ]]; then
+    flow_args+=(--yes)
+  fi
+  if [[ "$FLOW_RECONFIGURE" == "1" ]]; then
+    flow_args+=(--reconfigure)
+  fi
+  if [[ "$FLOW_FORCE_SYNC" == "1" ]]; then
+    flow_args+=(--force)
+  fi
+
+  # When running via curl | bash, stdin is the pipe not the terminal.
+  # Redirect stdin from /dev/tty so interactive prompts work.
+  local use_tty=0
+  if [[ ! -t 0 ]] && [[ -e /dev/tty ]] && [[ "$FLOW_NONINTERACTIVE" != "1" ]]; then
+    use_tty=1
+  fi
+
+  if [[ "$INSTALL_MODE" == "in-place" ]]; then
+    log "[info] Installing Harnessy framework into target repo: $TARGET_ROOT"
+    if [[ "$use_tty" == "1" ]]; then
+      node "$FLOW_ROOT/tools/flow-install/index.mjs" "${flow_args[@]}" --target "$TARGET_ROOT" </dev/tty
+    else
+      node "$FLOW_ROOT/tools/flow-install/index.mjs" "${flow_args[@]}" --target "$TARGET_ROOT"
+    fi
+    return
+  fi
+
+  log "[info] Installing Harnessy framework into project root"
+  (
+    cd "$FLOW_ROOT"
+    if [[ "$use_tty" == "1" ]]; then
+      node tools/flow-install/index.mjs "${flow_args[@]}" </dev/tty
+    else
+      node tools/flow-install/index.mjs "${flow_args[@]}"
+    fi
+  )
+}
+
+clone_subprojects() {
+  if [[ "$INSTALL_MODE" == "in-place" ]]; then
+    log "[skip] In-place install selected; not cloning bundled sub-projects"
+    return
+  fi
+
+  if [[ "$FLOW_SKIP_SUBPROJECTS" == "1" ]]; then
+    log "[skip] Skipping bundled sub-project clone"
+    return
+  fi
+
+  if [[ "$LOCAL_SOURCE" -eq 1 ]]; then
+    log "[skip] Local checkout detected; not cloning sub-projects"
+    return
+  fi
+
+  if [[ "$FLOW_NONINTERACTIVE" != "1" ]]; then
+    log "[skip] No bundled sub-project repositories to clone"
+    return
+  fi
+
+  log "[skip] No bundled sub-project repositories to clone"
+}
+
+print_summary() {
+  local installed_root="$FLOW_ROOT"
+  if [[ "$INSTALL_MODE" == "in-place" ]]; then
+    installed_root="$TARGET_ROOT"
+  fi
+
+  log ""
+  log "Harnessy installation complete"
+  log "- Installer source: $FLOW_ROOT"
+  log "- Install target: $installed_root"
+  log "- Jarvis: $(command -v jarvis || printf 'not found')"
+  log "- Shared skills: $HOME/.agents/skills"
+  log "- Terminal command shims: $(local_commands_dir)"
+  log "- Lifecycle scripts: $HOME/.scripts"
+  if ! path_has_entry "$(local_commands_dir)"; then
+    log "- PATH warning: add '$(local_commands_dir)' to your shell PATH for Harnessy-installed commands"
+  fi
+  log ""
+  log "Next steps:"
+  log "1. Review .jarvis/context/ and fill in project-specific context files"
+  log "2. Run 'pnpm skills:register' or 'npm run skills:register' in any project with local .agents/skills/"
+  log "3. Run 'jarvis status' to verify the CLI install"
+}
+
+main() {
+  parse_args "$@"
+  install_uv
+  ensure_node_and_pnpm
+  resolve_flow_source
+  install_jarvis
+  install_flow_framework
+  clone_subprojects
+  print_summary
+}
+
+main "$@"

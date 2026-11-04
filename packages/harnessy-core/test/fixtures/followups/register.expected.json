@@ -1,0 +1,37 @@
+[
+	{
+		"title": "Approve the synthetic mandate",
+		"status": "todo",
+		"owner": "Julian",
+		"due": "2026-07-22",
+		"line": 9,
+		"raw": false,
+		"ref": "XX-01"
+	},
+	{
+		"title": "Start the synthetic cadence",
+		"status": "doing",
+		"owner": "Ebere",
+		"due": "2026-07-22",
+		"line": 10,
+		"raw": false,
+		"ref": "XX-02"
+	},
+	{
+		"title": "Close the synthetic books",
+		"status": "waiting",
+		"owner": "Julian + Ebere",
+		"due": "2026-07-24",
+		"line": 11,
+		"raw": false,
+		"ref": "XX-03"
+	},
+	{
+		"title": "| XX-06 | A short row |",
+		"status": "todo",
+		"owner": null,
+		"due": null,
+		"line": 14,
+		"raw": true
+	}
+]

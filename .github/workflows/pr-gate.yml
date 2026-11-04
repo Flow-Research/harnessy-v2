@@ -13,16 +13,25 @@ jobs:
       pull-requests: write
     steps:
       - name: Check if contributor is approved
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         with:
           script: |
             const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
             const VALID_CAPABILITIES = new Set(['issue', 'pr']);
+            const TRUSTED_BOT_AUTHORS = new Set(['dependabot[bot]', 'sentry[bot]', 'claude[bot]', 'flow-research-agents[bot]']);
+            const TRUSTED_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER']);
             const prAuthor = context.payload.pull_request.user.login;
+            const authorAssociation = context.payload.pull_request.author_association;
             const defaultBranch = context.payload.repository.default_branch;
+            const isBotAuthor = prAuthor.endsWith('[bot]');
 
-            if (prAuthor.endsWith('[bot]') || prAuthor === 'dependabot[bot]') {
-              console.log(`Skipping bot: ${prAuthor}`);
+            if (TRUSTED_BOT_AUTHORS.has(prAuthor)) {
+              console.log(`Skipping trusted bot: ${prAuthor}`);
+              return;
+            }
+
+            if (TRUSTED_AUTHOR_ASSOCIATIONS.has(authorAssociation)) {
+              console.log(`${prAuthor} is a trusted internal ${authorAssociation.toLowerCase()}`);
               return;
             }
 
@@ -97,7 +106,7 @@ jobs:
             }
 
             const permission = await getPermission(prAuthor);
-            if (['admin', 'maintain', 'write'].includes(permission)) {
+            if (!isBotAuthor && ['admin', 'maintain', 'write'].includes(permission)) {
               console.log(`${prAuthor} is a collaborator with ${permission} access`);
               return;
             }
@@ -106,7 +115,7 @@ jobs:
             const approvedUsers = parseApprovedUsers(approvedContent);
             const capability = approvedUsers.get(prAuthor.toLowerCase());
 
-            if (capability === 'pr') {
+            if (!isBotAuthor && capability === 'pr') {
               console.log(`${prAuthor} is approved for PRs`);
               return;
             }

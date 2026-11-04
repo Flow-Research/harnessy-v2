@@ -1,0 +1,182 @@
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from "node:fs";
+import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+import type { MeetingPublicationFullReviewRuntimeInput } from "@harnessy/core/meeting-publication";
+
+import { isSafeAbsoluteMeetingCommandPath } from "./meeting-command-input.ts";
+
+interface PinnedFile { readonly path: string; readonly sha256: string }
+export interface MeetingSupervisorReady {
+	readonly kind: "harnessy.meeting-publication.full-review-ready";
+	readonly origin: string;
+	readonly authorizationId: string;
+	readonly expiresAt: string;
+	readonly runtimeMode: "long_running";
+}
+export interface MeetingSupervisorInput {
+	readonly runtime: PinnedFile;
+	readonly fullReviewEntry: PinnedFile;
+	readonly initial: MeetingPublicationFullReviewRuntimeInput;
+	readonly queuePath: string;
+	readonly replayPath: string;
+	/** Independently provisioned policy enforcer; never receives credentials from this process. */
+	readonly issuer: PinnedFile & { readonly args: ReadonlyArray<string> };
+	readonly renewalLeadMs: number;
+	readonly startupTimeoutMs: number;
+	readonly issuerTimeoutMs: number;
+}
+export class MeetingSupervisorError extends Error {
+	readonly code: "invalid_input" | "unsafe_input" | "child_failed" | "issuer_failed" | "reconciliation_required" | "owner_uncertain";
+	constructor(code: MeetingSupervisorError["code"]) { super("Meeting supervisor stopped"); this.code = code; }
+}
+const fail = (code: MeetingSupervisorError["code"]): never => { throw new MeetingSupervisorError(code); };
+
+// Cooperative owner-local checks. The child independently verifies its complete signed artifact inventory.
+const ownedFile = (path: string, executable = false) => {
+	if (!isSafeAbsoluteMeetingCommandPath(path) || realpathSync(path) !== path) fail("unsafe_input");
+	const uid = process.geteuid?.();
+	if (uid === undefined || !["darwin", "linux"].includes(process.platform)) fail("unsafe_input");
+	let parent = dirname(path);
+	for (;;) {
+		const stat = lstatSync(parent);
+		const shared = stat.uid === 0 && (stat.mode & 0o7777) === 0o1777;
+		if (!stat.isDirectory() || realpathSync(parent) !== parent || (stat.uid !== uid && stat.uid !== 0) ||
+			(!shared && (stat.mode & 0o7022) !== 0)) fail("unsafe_input");
+		const next = dirname(parent); if (next === parent) break; parent = next;
+	}
+	const stat = lstatSync(path);
+	if (!stat.isFile() || stat.uid !== uid || stat.nlink !== 1 || (stat.mode & 0o7022) !== 0 ||
+		(stat.mode & 0o400) === 0 || (executable && (stat.mode & 0o100) === 0)) fail("unsafe_input");
+	return stat;
+};
+const verifyPinned = (file: PinnedFile, executable = false) => {
+	const before = ownedFile(file.path, executable);
+	if (!/^[a-f0-9]{64}$/u.test(file.sha256) || before.size > 256 * 1024 * 1024) fail("unsafe_input");
+	const fd = openSync(file.path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+	try {
+		const digest = createHash("sha256").update(readFileSync(fd)).digest("hex");
+		const after = fstatSync(fd);
+		const current = ownedFile(file.path, executable);
+		if (digest !== file.sha256 || [after, current].some((stat) => stat.dev !== before.dev || stat.ino !== before.ino ||
+			stat.size !== before.size || stat.mtimeMs !== before.mtimeMs || stat.ctimeMs !== before.ctimeMs)) fail("unsafe_input");
+	} finally { closeSync(fd); }
+};
+const stoppedState = (input: MeetingSupervisorInput) => {
+	for (const [path, query] of [
+		[input.replayPath, "SELECT COUNT(*) AS count FROM active_lease"],
+		[input.queuePath, "SELECT COUNT(*) AS count FROM publication_items WHERE status='publishing' OR lease_until IS NOT NULL"],
+	] as const) {
+		const before = ownedFile(path);
+		if ((before.mode & 0o777) !== 0o600 || ["-wal", "-shm", "-journal"].some((suffix) => existsSync(path + suffix))) fail("reconciliation_required");
+		const database = new DatabaseSync(path, { readOnly: true, allowExtension: false, timeout: 1000 });
+		try {
+			if (database.prepare("PRAGMA quick_check(1)").get()?.quick_check !== "ok" || database.prepare(query).get()?.count !== 0) fail("reconciliation_required");
+		} finally { database.close(); }
+		const after = ownedFile(path);
+		if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs) fail("reconciliation_required");
+	}
+};
+const bounded = async <A>(promise: Promise<A>, milliseconds: number, code: MeetingSupervisorError["code"]): Promise<A> => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => reject(new MeetingSupervisorError(code)), milliseconds);
+	})]); } finally { clearTimeout(timer); }
+};
+const start = (executable: string, args: ReadonlyArray<string>) => {
+	const child = spawn(executable, [...args], { shell: false, cwd: dirname(executable),
+		env: { PATH: "/usr/bin:/bin", NODE_NO_WARNINGS: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+	let output = "";
+	let stderrBytes = 0;
+	let resolveLine: (value: string) => void = () => {};
+	let rejectLine: (cause: unknown) => void = () => {};
+	const line = new Promise<string>((resolve, reject) => { resolveLine = resolve; rejectLine = reject; });
+	// Observe rejection even when a child fails before its caller begins waiting.
+	void line.catch(() => {});
+	let invalid = false;
+	child.stdout.on("data", (chunk: Buffer) => {
+		output += chunk.toString("utf8");
+		if (Buffer.byteLength(output) > 16_384 || output.split("\n").length > 2) { invalid = true; rejectLine(new MeetingSupervisorError("child_failed")); child.kill("SIGTERM"); }
+		else if (output.endsWith("\n")) resolveLine(output);
+	});
+	child.stderr.on("data", (chunk: Buffer) => { stderrBytes += chunk.length; if (stderrBytes > 16_384) { invalid = true; child.kill("SIGTERM"); } });
+	child.stdin.on("error", () => {});
+	const exit = new Promise<number | null>((resolve) => {
+		child.once("error", () => { invalid = true; rejectLine(new MeetingSupervisorError("child_failed")); resolve(null); });
+		child.once("close", (code) => { rejectLine(new MeetingSupervisorError("child_failed")); resolve(invalid ? null : code); });
+	});
+	return { child, line, exit, output: () => output, stderrBytes: () => stderrBytes };
+};
+const stop = async (child: ChildProcessWithoutNullStreams, exit: Promise<number | null>) => {
+	if (child.exitCode !== null || child.signalCode !== null) { await exit; return; }
+	child.kill("SIGTERM");
+	try { await bounded(exit, 3000, "owner_uncertain"); }
+	catch { child.kill("SIGKILL"); await bounded(exit, 3000, "owner_uncertain"); }
+};
+
+/** Explicit owner-local consumer. No scheduling/install, signing, lease clearing or crash recovery. */
+export const runMeetingSupervisor = async (
+	input: MeetingSupervisorInput,
+	control: { readonly signal: AbortSignal; readonly onReady?: (ready: MeetingSupervisorReady) => void },
+): Promise<{ readonly renewals: number }> => {
+	let current: ReturnType<typeof start> | undefined;
+	let renewals = 0;
+	try {
+		if (![input.startupTimeoutMs, input.issuerTimeoutMs].every((n) => Number.isSafeInteger(n) && n > 0 && n <= 60_000) ||
+			!Number.isSafeInteger(input.renewalLeadMs) || input.renewalLeadMs < 31_000 || input.renewalLeadMs > 300_000 ||
+			input.issuer.args.length > 32 || input.issuer.args.some((arg) => arg.length > 4096 || /[\u0000-\u001f\u007f]/u.test(arg))) fail("invalid_input");
+		const pin = input.initial.trustedKeyring;
+		const ids = new Set<string>();
+		let authorizationPath = input.initial.authorizationPath;
+		while (!control.signal.aborted) {
+			verifyPinned(input.runtime, true); verifyPinned(input.fullReviewEntry); verifyPinned(input.issuer, true);
+			verifyPinned(pin);
+			const trust = ownedFile(pin.path);
+			if (String(trust.dev) !== pin.device || String(trust.ino) !== pin.inode || !isSafeAbsoluteMeetingCommandPath(authorizationPath)) fail("unsafe_input");
+			stoppedState(input);
+			current = start(input.runtime.path, [input.fullReviewEntry.path, "--authorization", authorizationPath,
+				"--trusted-keyring", pin.path, "--trusted-keyring-device", pin.device, "--trusted-keyring-inode", pin.inode, "--trusted-keyring-sha256", pin.sha256]);
+			current.child.stdin.end();
+			const ready: unknown = JSON.parse(await bounded(current.line, input.startupTimeoutMs, "child_failed"));
+			if (typeof ready !== "object" || ready === null || !("kind" in ready) || ready.kind !== "harnessy.meeting-publication.full-review-ready" ||
+				!("runtimeMode" in ready) || ready.runtimeMode !== "long_running" || !("origin" in ready) || typeof ready.origin !== "string" ||
+				!/^http:\/\/(127\.0\.0\.1|\[::1\]):\d+$/u.test(ready.origin) || !("authorizationId" in ready) || typeof ready.authorizationId !== "string" ||
+				ready.authorizationId.length === 0 || ready.authorizationId.length > 256 || ids.has(ready.authorizationId) ||
+				!("expiresAt" in ready) || typeof ready.expiresAt !== "string" || !Number.isFinite(Date.parse(ready.expiresAt)) ||
+				new Date(ready.expiresAt).toISOString() !== ready.expiresAt || Date.parse(ready.expiresAt) <= Date.now()) fail("child_failed");
+			ids.add(ready.authorizationId);
+			control.onReady?.(ready as MeetingSupervisorReady);
+			let wake: (() => void) | undefined;
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			try {
+				await Promise.race([current.exit.then(() => fail("child_failed")), new Promise<void>((resolve) => {
+					wake = () => resolve(); control.signal.addEventListener("abort", wake, { once: true });
+					timer = setTimeout(resolve, Math.max(0, Date.parse(ready.expiresAt as string) - Date.now() - input.renewalLeadMs));
+					if (control.signal.aborted) resolve();
+				})]);
+			} finally { clearTimeout(timer); if (wake !== undefined) control.signal.removeEventListener("abort", wake); }
+			current.child.kill("SIGUSR2");
+			if (await bounded(current.exit, 35_000, "owner_uncertain") !== 0 || current.stderrBytes() !== 0) fail("child_failed");
+			current = undefined;
+			stoppedState(input);
+			if (control.signal.aborted) break;
+			verifyPinned(input.issuer, true);
+			current = start(input.issuer.path, input.issuer.args);
+			current.child.stdin.end(`${JSON.stringify({ kind: "harnessy.meeting-publication.renew", predecessorAuthorizationId: ready.authorizationId, requestId: randomUUID() })}\n`);
+			if (await bounded(current.exit, input.issuerTimeoutMs, "issuer_failed") !== 0 || current.stderrBytes() !== 0) fail("issuer_failed");
+			const issued: unknown = JSON.parse(current.output());
+			if (typeof issued !== "object" || issued === null || Object.keys(issued).length !== 1 || !("authorizationPath" in issued) ||
+				typeof issued.authorizationPath !== "string" || !isSafeAbsoluteMeetingCommandPath(issued.authorizationPath) || issued.authorizationPath === authorizationPath) fail("issuer_failed");
+			authorizationPath = issued.authorizationPath;
+			current = undefined;
+			renewals++;
+		}
+		return { renewals };
+	} catch (cause) {
+		if (current !== undefined) await stop(current.child, current.exit);
+		if (cause instanceof MeetingSupervisorError) throw cause;
+		throw new MeetingSupervisorError("unsafe_input");
+	}
+};

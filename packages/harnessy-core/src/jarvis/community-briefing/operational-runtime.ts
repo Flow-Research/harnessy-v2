@@ -1,0 +1,931 @@
+import { lstatSync, realpathSync } from "node:fs";
+import { basename, dirname, join, posix, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { Context, Effect, Result, Schema } from "effect";
+import {
+	assessLeaseClock,
+	isLeaseCurrencyCode,
+	LEASE_CLOCK_MAX_REANCHOR_STEP_MS,
+	type LeaseCurrencyCode,
+	type LeaseCurrencyReporter,
+	leaseCurrencyEvent,
+	stderrLeaseCurrencyReporter,
+} from "../lease-clock.ts";
+import {
+	artifactInventorySteps,
+	type MeetingPublicationSmokeRuntimeInput,
+	readStableMeetingPublicationSmokeFile,
+	sha256MeetingPublicationSmokeBytes,
+} from "../meeting-publication/operational-input.ts";
+import { MeetingPublicationSmokeRuntimeSystemReference } from "../meeting-publication/operational-runtime.ts";
+import { invokesCommand, launchedPrograms } from "../process-invocation.ts";
+import {
+	type ProcessProbeRunner,
+	retryWhileWriterCheckInconclusive,
+	runAllWriterCheckProbes,
+	runWriterCheckProbe,
+	spawnProcessProbe,
+	stderrWriterCheckReporter,
+	WriterCheckInconclusiveError,
+	type WriterCheckName,
+	type WriterCheckReporter,
+	writerCheckMonotonicMillis,
+} from "../writer-check.ts";
+import type { CommunityBriefingWriteGrant } from "./authority.ts";
+import { CommunityBriefingGrantHost } from "./grant-host.ts";
+import {
+	prepareCommunityServiceRequest,
+	readCommunityOperation,
+	readCommunityServiceEnrollment,
+} from "./operational-input.ts";
+
+/** @internal The launchd labels whose loaded job blocks community publication. */
+export const COMMUNITY_GUARD_LABELS = [
+	"tech.flowresearch.jarvis.meeting-review",
+	"tech.flowresearch.jarvis.briefing-review",
+	"com.flow-harness.community-review-v2",
+	"com.flow-harness.project.weekly-community-briefing-generate",
+	"com.flow-harness.project.weekly-community-briefing-worker",
+] as const;
+/** Only a root-owned, non-writable executable may answer a writer probe; anything else is tamper evidence. */
+const liveProbeRunner: ProcessProbeRunner = (path, args) => {
+	const executable = realpathSync(path),
+		stat = lstatSync(executable);
+	if (!stat.isFile() || stat.uid !== 0 || (stat.mode & 0o022) !== 0) throw new Error("unsafe_probe");
+	return spawnProcessProbe(executable, args);
+};
+
+/** Core files the reviewer runs that are not ES modules: its Python review adapter. */
+const COMMUNITY_REVIEW_ASSETS = ["resources/community-draft-adapter.py"] as const;
+/**
+ * One relative static `import`/`export … from` statement as tsc emits it, including the
+ * side-effect form (`import "./main.js";`). Bare package specifiers are not followed: those
+ * packages are outside Core and are not part of the compared service tree.
+ */
+const RELATIVE_STATIC_IMPORT = /^(?:import|export)\s+(?:[\w$*{},\s]+?\s+from\s*)?["'](\.\.?\/[^"'\n]+)["'];?[ \t]*$/gmu;
+/**
+ * Any relative module reference in any syntax: `from "./x"`, `import "./x"` and `import("./x")`.
+ * Each one must also be a statement the walk parses, or the walk fails closed: an import with
+ * attributes (`with { type: "json" }`) or a dynamic import would otherwise go uncompared.
+ */
+const RELATIVE_MODULE_REFERENCE =
+	/\bfrom\s*["'](\.\.?\/[^"'\n]+)["']|^\s*import\s*["'](\.\.?\/[^"'\n]+)["']|\bimport\s*\(\s*["'`](\.\.?\/[^"'`\n]+)/gmu;
+/** Bounds the walk; the reviewer's real graph is far smaller. */
+const MAX_COMMUNITY_REVIEW_IDENTITY_FILES = 2_000;
+
+/**
+ * @internal The reviewer's identity file set: every Core file the review entry `dist/cli.js` loads
+ * through relative static imports, plus its Python review adapter, each with its SHA-256. It is
+ * derived from the given (trusted) Core tree on every call, so a module the reviewer starts to load
+ * is compared without a list to keep current. A file that cannot be read safely, or an import that
+ * leaves `dist/`, throws, so the exemption fails closed.
+ */
+export const communityReviewIdentityDigests = (coreRoot: string, uid: bigint): ReadonlyMap<string, string> => {
+	const read = (relative: string) =>
+		readStableMeetingPublicationSmokeFile(join(coreRoot, relative), uid, "artifact", 1048576).bytes;
+	const digests = new Map<string, string>();
+	const pending = ["dist/cli.js"];
+	for (let relative = pending.pop(); relative !== undefined; relative = pending.pop()) {
+		if (digests.has(relative)) continue;
+		if (digests.size >= MAX_COMMUNITY_REVIEW_IDENTITY_FILES) throw new Error("probe_failed");
+		const bytes = read(relative);
+		digests.set(relative, sha256MeetingPublicationSmokeBytes(bytes));
+		const source = Buffer.from(bytes).toString("utf8");
+		const parsed = [...source.matchAll(RELATIVE_STATIC_IMPORT)];
+		if ([...source.matchAll(RELATIVE_MODULE_REFERENCE)].length !== parsed.length) throw new Error("probe_failed");
+		for (const match of parsed) {
+			const target = posix.normalize(posix.join(posix.dirname(relative), match[1]!));
+			if (!target.startsWith("dist/") || !target.endsWith(".js")) throw new Error("probe_failed");
+			pending.push(target);
+		}
+	}
+	for (const asset of COMMUNITY_REVIEW_ASSETS) digests.set(asset, sha256MeetingPublicationSmokeBytes(read(asset)));
+	return digests;
+};
+
+/** Stat identity of each file in each tree; any replacement or write changes it. */
+const treeSignature = (roots: ReadonlyArray<string>, files: ReadonlyArray<string>) =>
+	roots
+		.flatMap((root) =>
+			files.map((relative) => {
+				const stat = lstatSync(join(root, relative), { bigint: true });
+				return `${stat.dev}:${stat.ino}:${stat.mode}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+			}),
+		)
+		.join("|");
+
+/**
+ * The last positive identity comparison. Each guard check would otherwise read and hash about
+ * 130 files in each tree; while no compared file's stat identity changed, the answer stands.
+ */
+let identityCache:
+	| { readonly key: string; readonly files: ReadonlyArray<string>; readonly signature: string }
+	| undefined;
+let identityComparisons = 0;
+/** @internal Full identity comparisons run so far (cache misses). */
+export const communityReviewIdentityComparisons = (): number => identityComparisons;
+
+/** Every file the service tree's reviewer loads matches the sibling tree byte for byte. */
+const reviewerTreesMatch = (expectedRoot: string, observedRoot: string, uid: bigint): boolean => {
+	const key = `${uid}\0${expectedRoot}\0${observedRoot}`;
+	const cached = identityCache?.key === key ? identityCache : undefined;
+	if (cached !== undefined) {
+		const current = Result.try(() => treeSignature([expectedRoot, observedRoot], cached.files));
+		if (Result.isSuccess(current) && current.success === cached.signature) return true;
+	}
+	identityCache = undefined;
+	identityComparisons += 1;
+	const digests = communityReviewIdentityDigests(expectedRoot, uid);
+	const files = [...digests.keys()];
+	const before = treeSignature([expectedRoot, observedRoot], files);
+	for (const [relative, digest] of digests) {
+		const observed = readStableMeetingPublicationSmokeFile(join(observedRoot, relative), uid, "artifact", 1048576);
+		if (sha256MeetingPublicationSmokeBytes(observed.bytes) !== digest) return false;
+	}
+	// Cache only an answer no write could have raced: the trees were unchanged across the comparison.
+	const signature = treeSignature([expectedRoot, observedRoot], files);
+	if (signature === before) identityCache = { key, files, signature };
+	return true;
+};
+
+/** @internal Recognize only this installed Core's draft-only review entrypoint.
+ * Process text alone is insufficient: the caller also probes its executable.
+ * Unknown launch wrappers/options fail closed, rather than guessing at argv.
+ */
+export const isNativeCommunityReviewProcess = (
+	commandLine: string,
+	launchExecutable: string,
+	processExecutable: string,
+	expectedExecutable: string,
+	reviewEntry: string,
+): boolean => {
+	const route = " jarvis community briefing review serve";
+	const routeIndex = commandLine.indexOf(route);
+	if (routeIndex < 0) return false;
+	const suffix = commandLine.slice(routeIndex + route.length);
+	if (suffix !== "" && !suffix.startsWith(" ")) return false;
+	if (realpathSync(processExecutable) !== realpathSync(expectedExecutable)) return false;
+	const prefix = commandLine.slice(0, routeIndex);
+	// The launch spelling may be a stable release symlink. It is only argv
+	// syntax; processExecutable is independently bound to the living PID.
+	for (const executable of [expectedExecutable, launchExecutable, "node"]) {
+		if (!prefix.startsWith(`${executable} `)) continue;
+		const entry = prefix.slice(executable.length + 1);
+		// Require an absolute script path and no preceding Node execution options.
+		if (!entry.startsWith("/")) continue;
+		if (realpathSync(entry) === realpathSync(reviewEntry)) return true;
+		// The combined installer keeps the general CLI beside its smaller signed
+		// service tree. Accept only that exact sibling, with matching review code.
+		const serviceRoot = realpathSync(resolve(dirname(reviewEntry), "../../../.."));
+		const relativeEntry = "node_modules/@harnessy/core/dist/cli.js";
+		const sibling = join(dirname(serviceRoot), relativeEntry);
+		const uid = process.geteuid?.();
+		if (
+			uid === undefined ||
+			basename(serviceRoot) !== "service" ||
+			realpathSync(reviewEntry) !== join(serviceRoot, relativeEntry) ||
+			realpathSync(entry) !== sibling
+		)
+			return false;
+		// Everything the reviewer loads decides what it writes: its routing, the weekly
+		// trigger, credentials, provider calls, path resolution and file reads. The set is
+		// the service tree's own import graph, and each file must match byte for byte.
+		return reviewerTreesMatch(
+			join(serviceRoot, "node_modules/@harnessy/core"),
+			join(dirname(serviceRoot), "node_modules/@harnessy/core"),
+			BigInt(uid),
+		);
+	}
+	return false;
+};
+
+/** @internal Parse lsof's NUL-delimited field output. On macOS the first txt
+ * record is the process executable; later txt records may be libraries.
+ */
+export const darwinProcessExecutableFromLsof = (output: string, pid: number): string | undefined => {
+	const lines = output.split("\n");
+	if (lines.pop() !== "" || lines.shift() !== `p${pid}\0` || lines.length === 0) return undefined;
+	const paths: string[] = [];
+	for (const line of lines) {
+		const fields = line.split("\0");
+		if (fields.pop() !== "" || fields.length !== 2 || fields[0] !== "ftxt" || !fields[1]?.startsWith("n/"))
+			return undefined;
+		paths.push(fields[1].slice(1));
+	}
+	return paths[0];
+};
+
+/**
+ * Crash-loop escalation. More than this many launchd starts of the review label within
+ * COMMUNITY_REVIEW_RESTART_HORIZON_MS stop publication (`launchctl_restart_loop`). A crashing
+ * reviewer restarts every ThrottleInterval (10 s), so a loop passes the limit in about a minute,
+ * while an occasional restart (an operation timeout, an owner's kickstart) stays far below it.
+ */
+export const COMMUNITY_REVIEW_RESTART_LIMIT = 5;
+export const COMMUNITY_REVIEW_RESTART_HORIZON_MS = 30 * 60_000;
+/**
+ * A first observation cannot tell how fast the reviewer has been restarting. A verified reviewer
+ * is exempt when its process has run this long (`ps -o etime`), or when this guard has watched the
+ * label this long. Otherwise it pauses publication (`launchctl_restart_baseline`) while starts are
+ * counted, so a tight loop (one start per 10 s ThrottleInterval) passes the limit first. A stable
+ * long-running reviewer is therefore exempt at once, also for a one-shot run or a fresh service.
+ */
+export const COMMUNITY_REVIEW_RESTART_BASELINE_MS = 2 * 60_000;
+
+/** @internal Parse `ps -o etime=` (`[[dd-]hh:]mm:ss`) into milliseconds; undefined when malformed. */
+export const parseProcessElapsedMs = (output: string): number | undefined => {
+	const match = /^\s*(?:(\d+)-)?(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s*$/u.exec(output);
+	if (match === null) return undefined;
+	const [days, hours, minutes, seconds] = [match[1], match[2], match[3], match[4]].map((value) => Number(value ?? 0));
+	return (((days! * 24 + hours!) * 60 + minutes!) * 60 + seconds!) * 1000;
+};
+
+/** Default warning sink: one content-free JSON line on stderr. */
+const stderrRestartWarning = (warning: "community_review_runs_unavailable") => {
+	process.stderr.write(`${JSON.stringify({ warning })}\n`);
+};
+
+/**
+ * @internal Counts starts of the review label from launchd's `runs` counter over the horizon.
+ * The no-process pause (`launchctl_no_process`) ends at each verified start; this count does not
+ * reset then, so a reviewer that keeps dying ends in one clear stop. Times are monotonic
+ * milliseconds from the Effect clock (writerCheckMonotonicMillis), which does not advance while
+ * the Mac sleeps; `now` is only the fallback for callers without one.
+ */
+export const makeCommunityReviewRestartTracker = (
+	options: {
+		readonly now?: () => number;
+		readonly warn?: (warning: "community_review_runs_unavailable") => void;
+	} = {},
+) => {
+	const now = options.now ?? (() => Number(process.hrtime.bigint() / 1_000_000n));
+	/** Starts as one counter across loads: a reload restarts launchd's `runs`, never this total. */
+	let samples: Array<{ readonly at: number; readonly total: number }> = [];
+	let offset = 0;
+	let lastRuns: number | undefined;
+	/** When the guard first observed the label. */
+	let since: number | undefined;
+	let warned = false;
+	return {
+		/** Record the counter; returns the starts seen within the horizon and how long the label was watched. */
+		observe: (runs: number, at: number = now()): { readonly starts: number; readonly observedForMs: number } => {
+			// A lower counter means the label was reloaded between samples: every start of the new load counts.
+			if (lastRuns !== undefined && runs < lastRuns) offset += lastRuns;
+			lastRuns = runs;
+			// No sample inside the horizon: the starts since the last one happened at unknown times, so
+			// the count starts again and so does the baseline (process age or a fresh two-minute watch).
+			const last = samples.at(-1);
+			if (last !== undefined && at - last.at > COMMUNITY_REVIEW_RESTART_HORIZON_MS) since = at;
+			since ??= at;
+			const total = offset + runs;
+			samples = samples.filter((sample) => at - sample.at <= COMMUNITY_REVIEW_RESTART_HORIZON_MS);
+			if (samples.at(-1)?.total !== total) samples.push({ at, total });
+			return { starts: total - samples[0]!.total, observedForMs: at - since };
+		},
+		/** launchd printed no single `runs` line: the count is off. Warned once per tracker. */
+		unavailable: () => {
+			if (warned) return;
+			warned = true;
+			(options.warn ?? stderrRestartWarning)("community_review_runs_unavailable");
+		},
+	};
+};
+export type CommunityReviewRestartTracker = ReturnType<typeof makeCommunityReviewRestartTracker>;
+
+/** A label alone never exempts a legacy or stopped reviewer. */
+export const isNativeCommunityReviewLaunchAgent = (
+	label: string,
+	output: string,
+	verifiedProcessIds: ReadonlySet<number>,
+): boolean => {
+	const pids = [...output.matchAll(/^\s*pid = (\d+)\s*$/gmu)];
+	return (
+		label === "com.flow-harness.community-review-v2" &&
+		pids.length === 1 &&
+		verifiedProcessIds.has(Number(pids[0]![1]))
+	);
+};
+/** @internal Grammar of one OS process record, before filtering by owner. */
+export const communityProcessLinePattern = /^\s*(-?\d+)\s+(\d+)\s+(.+)$/u;
+
+/** @internal Parse the exact single record returned by a PID-scoped ps probe. */
+export const parseCommunityProcessConfirmation = (output: string): RegExpExecArray | undefined => {
+	const record = output.endsWith("\n") ? output.slice(0, -1) : output;
+	if (record === "" || record.includes("\n") || record.includes("\r")) return undefined;
+	return communityProcessLinePattern.exec(record) ?? undefined;
+};
+
+const COMMUNITY_COMPATIBILITY_WRITER_COMMANDS = [
+	["jarvis", "meeting", "publish", "review", "serve"],
+	["jarvis", "meeting", "review", "serve"],
+	...["jarvis", "harnessy", "hsy"].flatMap((program) => [
+		[program, "community", "briefing"],
+		[program, "community-briefing"],
+	]),
+] as const;
+
+/** @internal A process running a meeting/community writer command or a launched
+ * community briefing script. Text naming those commands inside another command's
+ * arguments (shells, search tools, agents, inline programs) is not a writer.
+ */
+export const isCommunityCompatibilityWriterCommand = (commandLine: string): boolean =>
+	COMMUNITY_COMPATIBILITY_WRITER_COMMANDS.some((words) => invokesCommand(commandLine, words)) ||
+	launchedPrograms(commandLine).some((program) =>
+		/(?:jarvis|harnessy|hsy).*\/community-briefing\/|briefing[-_](?:review|worker)/u.test(program),
+	);
+
+/** A probe executable that failed the root-owned, non-writable check. */
+const isTamperEvidence = (cause: unknown) => cause instanceof Error && cause.message === "unsafe_probe";
+
+/** Bounded known-process evidence, not protection from arbitrary same-UID code. */
+const proveCompatibilityAbsentWith = (
+	run: ProcessProbeRunner,
+	platform: NodeJS.Platform,
+	nativeReviewer: { readonly executable: string; readonly entry: string },
+	restarts: CommunityReviewRestartTracker,
+	nowMs: number | undefined,
+) => {
+	const command = (check: WriterCheckName, path: string, args: ReadonlyArray<string>) =>
+		runWriterCheckProbe(run, check, path, args);
+	const darwinProcessExecutable = (pid: number): string => {
+		const result = command("lsof", "/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "txt", "-F0pfn"]);
+		if (result.status !== 0) throw new WriterCheckInconclusiveError("lsof", "exit_status", result.status);
+		if (result.stderr !== "") throw new Error("probe_failed");
+		const executable = darwinProcessExecutableFromLsof(result.stdout, pid);
+		if (executable === undefined) throw new Error("probe_failed");
+		return executable;
+	};
+	const uid = process.geteuid?.();
+	if (uid === undefined) throw new Error("unsupported_platform");
+	if (platform !== "darwin" && platform !== "linux") throw new Error("unsupported_platform");
+	const scanProcesses = () => command("ps", "/bin/ps", ["-axo", "uid=,pid=,command="]);
+	/** Whether a writer-shaped process is exempt as this installation's native reviewer. */
+	const isNativeReviewer = (pid: string, commandLine: string) => {
+		const launchExecutable = command("ps", "/bin/ps", ["-p", pid, "-o", "comm="]);
+		if (launchExecutable.status !== 0)
+			throw new WriterCheckInconclusiveError("ps", "exit_status", launchExecutable.status);
+		const processExecutable = platform === "linux" ? `/proc/${pid}/exe` : darwinProcessExecutable(Number(pid));
+		const confirmed = command("ps", "/bin/ps", ["-p", pid, "-o", "uid=,pid=,command="]);
+		if (confirmed.status !== 0) throw new WriterCheckInconclusiveError("ps", "exit_status", confirmed.status);
+		const confirmedMatch = parseCommunityProcessConfirmation(confirmed.stdout);
+		return (
+			confirmedMatch !== undefined &&
+			Number(confirmedMatch[1]) === uid &&
+			confirmedMatch[2] === pid &&
+			confirmedMatch[3] === commandLine &&
+			isNativeCommunityReviewProcess(
+				commandLine,
+				launchExecutable.stdout.trim(),
+				processExecutable,
+				nativeReviewer.executable,
+				nativeReviewer.entry,
+			)
+		);
+	};
+	/** A fresh complete scan that no longer lists the PID with the same command proves it ended. */
+	const hasEnded = (pid: string, commandLine: string) => {
+		const fresh = Result.try({ try: scanProcesses, catch: (cause) => cause });
+		if (Result.isFailure(fresh) && isTamperEvidence(fresh.failure)) throw fresh.failure;
+		if (Result.isFailure(fresh) || fresh.success.status !== 0) return false;
+		let ended = true;
+		for (const line of fresh.success.stdout.split("\n")) {
+			if (!line.trim()) continue;
+			const match = communityProcessLinePattern.exec(line);
+			if (!match) return false;
+			if (Number(match[1]) === uid && match[2] === pid && match[3] === commandLine) ended = false;
+		}
+		return ended;
+	};
+	const nativeReviewProcesses = new Set<number>();
+	/** Writer-shaped PIDs whose exemption check could not answer. */
+	const unverifiedExemptions = new Map<number, WriterCheckInconclusiveError>();
+	/** Set when the process listing itself could not answer, so no PID could be checked. */
+	let processListing: WriterCheckInconclusiveError | undefined;
+	const proveProcessesAbsent = () => {
+		const listed = Result.try({ try: scanProcesses, catch: (cause) => cause });
+		if (Result.isFailure(listed)) {
+			if (listed.failure instanceof WriterCheckInconclusiveError) processListing = listed.failure;
+			throw listed.failure;
+		}
+		const processes = listed.success;
+		for (const line of processes.stdout.split("\n")) {
+			if (!line.trim()) continue;
+			const match = communityProcessLinePattern.exec(line);
+			if (!match) throw new Error("probe_failed");
+			if (Number(match[1]) !== uid || Number(match[2]) === process.pid) continue;
+			if (!isCommunityCompatibilityWriterCommand(match[3])) continue;
+			const native = Result.try({ try: () => isNativeReviewer(match[2], match[3]), catch: (cause) => cause });
+			if (Result.isSuccess(native)) {
+				// A definitive "not exempt" answer is an observed writer.
+				if (!native.success) throw new Error("compatibility_writer_present");
+				nativeReviewProcesses.add(Number(match[2]));
+				continue;
+			}
+			// An exemption probe that could not answer (e.g. lsof timing out in a dark wake)
+			// pauses rather than stops; keep scanning so an observed writer still wins.
+			if (native.failure instanceof WriterCheckInconclusiveError) {
+				unverifiedExemptions.set(Number(match[2]), native.failure);
+				continue;
+			}
+			// Tamper evidence from a probe always stops, even if the process ends meanwhile.
+			if (isTamperEvidence(native.failure)) throw native.failure;
+			// Any other unverifiable answer fails closed unless the process has since ended.
+			if (!hasEnded(match[2], match[3])) throw new Error("compatibility_writer_present");
+		}
+		// Writers in the output of a failed scan still stop at once (above); otherwise the
+		// failed scan, or an unanswered exemption check, proves nothing.
+		if (processes.status !== 0) {
+			processListing = new WriterCheckInconclusiveError("ps", "exit_status", processes.status);
+			throw processListing;
+		}
+		const [unverified] = unverifiedExemptions.values();
+		if (unverified !== undefined) throw unverified;
+	};
+	const proveSchedulersAbsent = () => {
+		if (platform === "darwin") {
+			runAllWriterCheckProbes(
+				COMMUNITY_GUARD_LABELS.map((label) => () => {
+					const result = command("launchctl", "/bin/launchctl", ["print", `gui/${uid}/${label}`]);
+					// A reviewer that keeps restarting stops publication at once, even while its current
+					// start verifies: each verified start would otherwise end the no-process pause.
+					let restartBaseline = false;
+					if (result.status === 0 && label === "com.flow-harness.community-review-v2") {
+						const runs = [...result.stdout.matchAll(/^\s*runs = (\d+)\s*$/gmu)];
+						if (runs.length === 1) {
+							const observed = restarts.observe(Number(runs[0]![1]), nowMs);
+							if (observed.starts > COMMUNITY_REVIEW_RESTART_LIMIT) throw new Error("launchctl_restart_loop");
+							restartBaseline = observed.observedForMs < COMMUNITY_REVIEW_RESTART_BASELINE_MS;
+						} else restarts.unavailable();
+					}
+					if (
+						result.status === 0 &&
+						isNativeCommunityReviewLaunchAgent(label, result.stdout, nativeReviewProcesses)
+					) {
+						// Before the guard has its own baseline, the verified process's age is the evidence:
+						// a reviewer that has run for the baseline period is not in a tight loop.
+						if (restartBaseline) {
+							const pid = /^\s*pid = (\d+)\s*$/mu.exec(result.stdout)![1]!;
+							const elapsed = command("ps", "/bin/ps", ["-p", pid, "-o", "etime="]);
+							if (elapsed.status !== 0)
+								throw new WriterCheckInconclusiveError("ps", "exit_status", elapsed.status);
+							const age = parseProcessElapsedMs(elapsed.stdout);
+							if (age === undefined || age < COMMUNITY_REVIEW_RESTART_BASELINE_MS)
+								throw new WriterCheckInconclusiveError("launchctl", "restart_baseline");
+						}
+						return;
+					}
+					// Only the native review agent can be exempt, and only while it runs exactly one
+					// process. That process's exemption is inconclusive when its own check could not
+					// answer, or when the process listing could not answer so it could not be checked.
+					// A loaded agent with no process is inconclusive too: no process exists to write,
+					// as while launchd restarts it under KeepAlive. It pauses, and escalates to a stop
+					// only if it stays without a process past the retry window. Several processes or a
+					// refuted process are writers at once.
+					if (result.status === 0 && label === "com.flow-harness.community-review-v2") {
+						const pids = [...result.stdout.matchAll(/^\s*pid = (\d+)\s*$/gmu)];
+						if (pids.length === 0) {
+							// A writer-shaped process still awaiting verification cannot be this label's
+							// process, because launchd owns none: it stays an observed writer.
+							if (unverifiedExemptions.size > 0) throw new Error("compatibility_writer_present");
+							throw new WriterCheckInconclusiveError("launchctl", "no_process");
+						}
+						const pid = pids.length === 1 ? Number(pids[0]![1]) : undefined;
+						const pending = pid === undefined ? undefined : (unverifiedExemptions.get(pid) ?? processListing);
+						if (pending !== undefined) throw pending;
+					}
+					// Any other loaded job is an observed writer; only "Could not find service" proves absence.
+					if (result.status === 0) throw new Error("compatibility_writer_present");
+					if (!`${result.stdout}\n${result.stderr}`.includes("Could not find service"))
+						throw new WriterCheckInconclusiveError("launchctl", "exit_status", result.status);
+				}),
+			);
+			return;
+		}
+		const result = command("crontab", "/usr/bin/crontab", ["-l"]);
+		if (/community[- ]briefing|briefing[-_]review/u.test(result.stdout))
+			throw new Error("compatibility_writer_present");
+		if (result.status !== 0 && !/no crontab for/iu.test(result.stderr))
+			throw new WriterCheckInconclusiveError("crontab", "exit_status", result.status);
+	};
+	// Every probe runs; an unanswered probe never hides an observed writer.
+	runAllWriterCheckProbes([proveProcessesAbsent, proveSchedulersAbsent]);
+};
+
+/**
+ * @internal The production compatibility-writer proof over an injectable process runner.
+ * An observed writer throws `compatibility_writer_present`; an unanswered probe throws
+ * `WriterCheckInconclusiveError`.
+ */
+export const makeCommunityCompatibilityProof =
+	(
+		run: ProcessProbeRunner,
+		platform: NodeJS.Platform = process.platform,
+		nativeReviewer = {
+			executable: process.execPath,
+			entry: fileURLToPath(new URL("../../cli.js", import.meta.url)),
+		},
+		// One count per proof; the live proof is built once per process (a cached reference default).
+		restarts: CommunityReviewRestartTracker = makeCommunityReviewRestartTracker(),
+	) =>
+	/** `nowMs`: monotonic milliseconds from the Effect clock (writerCheckMonotonicMillis). */
+	(nowMs?: number): void =>
+		proveCompatibilityAbsentWith(run, platform, nativeReviewer, restarts, nowMs);
+
+/** Source-private fixture seam; no observer, bypass or signing key is accepted by the CLI. */
+export const CommunityOperationSystemReference = Context.Reference<{
+	/** `nowMs`: monotonic milliseconds from the Effect clock, used for the restart count. */
+	readonly proveCompatibilityAbsent: (nowMs?: number) => void;
+	readonly coreAnchor: string;
+	/** Receives allow-listed writer-check events; defaults to one JSON line on stderr. */
+	readonly reportWriterCheck?: WriterCheckReporter;
+	/** Receives lease re-anchor and lease currency stop events; defaults to one JSON line on stderr. */
+	readonly reportLeaseCurrency?: LeaseCurrencyReporter;
+}>("@harnessy/core/CommunityOperationSystem", {
+	defaultValue: () => ({
+		proveCompatibilityAbsent: makeCommunityCompatibilityProof(liveProbeRunner),
+		coreAnchor: realpathSync(fileURLToPath(import.meta.url)),
+	}),
+});
+
+export class CommunityOperationError extends Schema.TaggedErrorClass<CommunityOperationError>()(
+	"CommunityOperationError",
+	{
+		code: Schema.Literals([
+			"invalid_authorization",
+			"runtime_rejected",
+			"publication_uncertain",
+			"reconciliation_required",
+		]),
+		/** Diagnostic identifier of the runtime check that rejected the operation. */
+		reason: Schema.optional(Schema.String),
+	},
+) {}
+
+/** Only fixed internal identifiers, never free-form error text, become diagnostics. */
+const rejectionReason = (cause: unknown): string | undefined =>
+	cause instanceof WriterCheckInconclusiveError
+		? cause.reason
+		: cause instanceof CommunityOperationError
+			? cause.reason
+			: cause instanceof Error && /^[a-z][a-z_]{0,63}$/u.test(cause.message)
+				? cause.message
+				: undefined;
+
+export interface CommunityOperationConsumer {
+	readonly artifactAnchors: { readonly host: string; readonly sdk: string; readonly dependencies: string };
+	readonly publish: (grant: CommunityBriefingWriteGrant) => Effect.Effect<
+		{
+			readonly briefingId: string;
+			readonly googleDocId: string;
+			readonly discordMessageId: string;
+		},
+		unknown
+	>;
+}
+
+/** Inert preparation observes this runtime; it does not probe or stop other writers. */
+export const prepareCommunityPublicationService = (
+	value: unknown,
+	anchors: CommunityOperationConsumer["artifactAnchors"],
+	outputDirectory: string,
+) =>
+	Effect.gen(function* () {
+		const runtime = yield* MeetingPublicationSmokeRuntimeSystemReference;
+		const system = yield* CommunityOperationSystemReference;
+		return yield* Effect.try(() =>
+			prepareCommunityServiceRequest(
+				value,
+				runtime.observe(),
+				{ ...anchors, core: system.coreAnchor },
+				outputDirectory,
+			),
+		);
+	});
+
+/** Read status or irreversibly revoke this enrollment while stopped; never clear a lease. */
+export const controlCommunityPublicationService = (
+	input: MeetingPublicationSmokeRuntimeInput,
+	action: "status" | "revoke",
+) =>
+	Effect.gen(function* () {
+		const system = yield* MeetingPublicationSmokeRuntimeSystemReference;
+		return yield* Effect.try({
+			try: () => {
+				const { envelope, assertLedger, digest } = readCommunityServiceEnrollment(input, system.observe());
+				const database = new DatabaseSync(envelope.operational.ledger.path, {
+					readOnly: action === "status",
+					allowExtension: false,
+					timeout: 1000,
+				});
+				try {
+					database.exec(
+						action === "status"
+							? "PRAGMA trusted_schema=OFF; BEGIN"
+							: "PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL; BEGIN IMMEDIATE",
+					);
+					assertLedger();
+					if (database.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger'").get())
+						throw new Error("ledger_trigger");
+					const enrolled = database
+						.prepare("SELECT payload_hash,consumed_at,revoked FROM community_briefing_grants WHERE grant_id=?")
+						.get(envelope.grantId);
+					if (
+						enrolled &&
+						((enrolled.payload_hash !== digest &&
+							!(enrolled.payload_hash === "" && enrolled.consumed_at === null && enrolled.revoked === 1)) ||
+							(enrolled.revoked !== 0 && enrolled.revoked !== 1) ||
+							(enrolled.revoked === 0 && (typeof enrolled.consumed_at !== "string" || !enrolled.consumed_at)))
+					)
+						throw new Error("enrollment_changed");
+					const lease = database
+						.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='community_briefing_lease'")
+						.get()
+						? database.prepare("SELECT 1 FROM community_briefing_lease").get()
+						: undefined;
+					if (action === "revoke") {
+						if (lease) throw new CommunityOperationError({ code: "reconciliation_required" });
+						database
+							.prepare(
+								"INSERT INTO community_briefing_grants(grant_id,payload_hash,revoked) VALUES (?,?,1) ON CONFLICT(grant_id) DO UPDATE SET revoked=1",
+							)
+							.run(envelope.grantId, digest);
+						database.exec("COMMIT");
+					}
+					return {
+						kind: "harnessy.community.briefing.service-status" as const,
+						revoked: action === "revoke" || enrolled?.revoked === 1,
+						enrollment:
+							typeof enrolled?.consumed_at === "string" ? ("enrolled" as const) : ("not_started" as const),
+						ownership: lease ? ("lease_recorded" as const) : ("none" as const),
+						runtimeHealth: "not_assessed" as const,
+					};
+				} finally {
+					database.close();
+				}
+			},
+			catch: (cause) =>
+				cause instanceof CommunityOperationError
+					? cause
+					: new CommunityOperationError({ code: "runtime_rejected" }),
+		});
+	});
+
+/** One scoped publication under one-shot or service authority; never repairs uncertainty. */
+export const runAuthorizedCommunityBriefing = (
+	input: MeetingPublicationSmokeRuntimeInput,
+	consumer:
+		| CommunityOperationConsumer
+		| {
+				readonly artifactAnchors: CommunityOperationConsumer["artifactAnchors"];
+				readonly enrollOnly: true;
+		  },
+) =>
+	Effect.scoped(
+		Effect.gen(function* () {
+			const observationSystem = yield* MeetingPublicationSmokeRuntimeSystemReference;
+			const system = yield* CommunityOperationSystemReference;
+			const initial = yield* Effect.try({
+				try: () => observationSystem.observe(),
+				catch: () => new CommunityOperationError({ code: "runtime_rejected" }),
+			});
+			const verified = yield* Effect.try({
+				try: () => readCommunityOperation(input, initial),
+				catch: () => new CommunityOperationError({ code: "invalid_authorization" }),
+			});
+			const { envelope } = verified;
+			if ("enrollOnly" in consumer && !verified.service)
+				return yield* new CommunityOperationError({ code: "invalid_authorization" });
+			for (const [role, path] of Object.entries(consumer.artifactAnchors)) {
+				if (!verified.manifest.anchors.some((anchor) => anchor.role === role && anchor.path === path))
+					return yield* new CommunityOperationError({ code: "runtime_rejected" });
+			}
+			const reportLeaseCurrency = system.reportLeaseCurrency ?? stderrLeaseCurrencyReporter;
+			let leaseFailureReported = false;
+			const reportLeaseFailure = (code: LeaseCurrencyCode, stepMs?: number) => {
+				if (leaseFailureReported) return;
+				leaseFailureReported = true;
+				reportLeaseCurrency(leaseCurrencyEvent("lease_currency_failed", "community", code, stepMs));
+			};
+			const leaseFailure = (code: LeaseCurrencyCode, stepMs?: number) => {
+				reportLeaseFailure(code, stepMs);
+				return new Error(code);
+			};
+			/** The grant host's lease checks (`lease_row_changed`, `boot_changed`) are logged here. */
+			const noteDenial = (cause: unknown) => {
+				const reason = rejectionReason(cause);
+				if (isLeaseCurrencyCode(reason)) reportLeaseFailure(reason);
+				return reason;
+			};
+			let active = true,
+				lastWall = initial.now,
+				lastMonotonic = initial.monotonic,
+				// A service may re-anchor a bounded backward step only before it holds a lease:
+				// the step pauses the pre-lease check, which reruns in full. A step during an
+				// in-flight publication ends it as uncertain, like any other revalidation failure.
+				reanchorable = verified.service,
+				// Backward time re-anchored in this run; capped so repeated steps cannot add up.
+				reanchoredMs = 0;
+			/**
+			 * Each failure has its own allow-listed reason: `boot_changed`, `clock_stepped_back`,
+			 * `expired_authorization`, or `runtime_changed` for another runtime identity change.
+			 */
+			const assertTime = () => {
+				const current = observationSystem.observe();
+				if (!active) throw new Error("runtime_changed");
+				if (current.bootId !== initial.bootId) throw leaseFailure("boot_changed");
+				if (
+					current.uid !== initial.uid ||
+					current.hostname !== initial.hostname ||
+					current.platform !== initial.platform ||
+					current.architecture !== initial.architecture ||
+					current.executablePath !== initial.executablePath
+				)
+					throw new Error("runtime_changed");
+				const clock = assessLeaseClock({
+					// The last wall time plus the monotonic time since. Sleep stalls the monotonic
+					// clock, so it only moves the wall clock ahead: never a step.
+					expectedWallMs:
+						lastWall +
+						(current.monotonic >= lastMonotonic ? Number((current.monotonic - lastMonotonic) / 1_000_000n) : 0),
+					nowMs: current.now,
+					toleranceMs: 0,
+					monotonicRegressed: current.monotonic < lastMonotonic,
+					reanchorable,
+				});
+				if (clock.kind === "stepped_back") throw leaseFailure("clock_stepped_back", clock.stepMs);
+				if (clock.kind === "reanchor" && reanchoredMs + clock.stepMs > LEASE_CLOCK_MAX_REANCHOR_STEP_MS)
+					throw leaseFailure("clock_stepped_back", reanchoredMs + clock.stepMs);
+				if (
+					current.now >= verified.expiry ||
+					current.monotonic - initial.monotonic >= BigInt(verified.expiry - initial.now) * 1_000_000n
+				)
+					throw new Error("expired_authorization");
+				lastWall = current.now;
+				lastMonotonic = current.monotonic;
+				if (clock.kind === "reanchor") {
+					reanchoredMs += clock.stepMs;
+					// Same boot and monotonic continuity. No lease or grant exists yet: pause, and
+					// let the retry rerun every check, including a fresh writer proof.
+					reportLeaseCurrency(
+						leaseCurrencyEvent("lease_clock_reanchored", "community", "clock_stepped_back", clock.stepMs),
+					);
+					throw new WriterCheckInconclusiveError("clock", "stepped_back");
+				}
+				verified.assertLedger();
+				verified.assertMutable();
+			};
+			const check = () =>
+				Effect.flatMap(writerCheckMonotonicMillis, (nowMs) =>
+					Effect.tryPromise({
+						try: async (signal) => {
+							assertTime();
+							verified.assertImmutable();
+							system.proveCompatibilityAbsent(nowMs);
+							let deadline = performance.now() + 8;
+							for (const _step of artifactInventorySteps(
+								verified.manifest,
+								initial.uid,
+								"smoke",
+								system.coreAnchor,
+							)) {
+								signal.throwIfAborted();
+								if (performance.now() >= deadline) {
+									await yieldToEventLoop(undefined, { signal });
+									deadline = performance.now() + 8;
+								}
+							}
+							assertTime();
+							system.proveCompatibilityAbsent(nowMs);
+						},
+						catch: (cause) => {
+							// Keep the typed probe error so the pre-lease retry can recognize it.
+							if (cause instanceof WriterCheckInconclusiveError) return cause;
+							const reason = rejectionReason(cause);
+							return new CommunityOperationError({
+								code: "runtime_rejected",
+								...(reason === undefined ? {} : { reason }),
+							});
+						},
+					}),
+				);
+			/**
+			 * Before any lease exists, an unanswered probe skips publication. A service run retries
+			 * it with bounded backoff and escalates to the existing rejection after the window; a
+			 * one-shot run fails fast. An observed writer always fails at once.
+			 */
+			const beforeLease = <A, E>(effect: Effect.Effect<A, E>) =>
+				retryWhileWriterCheckInconclusive(effect, {
+					service: "community",
+					inconclusive: (cause) => (cause instanceof WriterCheckInconclusiveError ? cause : undefined),
+					escalate: (cause) => new CommunityOperationError({ code: "runtime_rejected", reason: cause.reason }),
+					report: system.reportWriterCheck ?? stderrWriterCheckReporter,
+					failFast: !verified.service,
+				});
+			yield* beforeLease(check());
+			const host = yield* Effect.acquireRelease(
+				Effect.try(
+					() =>
+						new CommunityBriefingGrantHost(
+							envelope.statePath,
+							verified.keys,
+							envelope.queuePath,
+							envelope.statePath,
+							envelope.providerScope,
+							() => observationSystem.observe().now,
+						),
+				),
+				(value) =>
+					Effect.sync(() => {
+						active = false;
+						value.close();
+					}),
+			);
+			if (verified.service)
+				yield* Effect.try(() => {
+					verified.assertLedger();
+					host.enrollService(envelope);
+				});
+			// Adopt verified, quiescent state before a combined host opens its shared
+			// Executor. This issues no item grant and cannot call a provider.
+			if ("enrollOnly" in consumer)
+				return { kind: "harnessy.community.briefing.publication-result" as const, status: "enrolled" as const };
+			const item = yield* Effect.try(() => {
+				if (!verified.service) return { briefingId: envelope.briefingId!, sourceHash: envelope.sourceHash! };
+				const queue = new DatabaseSync(envelope.queuePath, { readOnly: true, allowExtension: false });
+				try {
+					if (
+						queue.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger'").get() ||
+						queue
+							.prepare("SELECT 1 FROM community_briefings WHERE status='publishing' OR lease_until IS NOT NULL")
+							.get()
+					)
+						throw new Error("community_queue_requires_reconciliation");
+					const row = queue
+						.prepare(
+							"SELECT briefing_id,draft_hash FROM community_briefings WHERE status='approved' AND approved_hash=draft_hash AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY week_start LIMIT 1",
+						)
+						.get(new Date(initial.now).toISOString());
+					if (!row) return undefined;
+					if (
+						typeof row.briefing_id !== "string" ||
+						!/^[a-f0-9]{24}$/u.test(row.briefing_id) ||
+						typeof row.draft_hash !== "string" ||
+						!/^[a-f0-9]{64}$/u.test(row.draft_hash)
+					)
+						throw new Error("invalid_approved_item");
+					return { briefingId: row.briefing_id, sourceHash: row.draft_hash };
+				} finally {
+					queue.close();
+				}
+			});
+			if (item === undefined)
+				return { kind: "harnessy.community.briefing.publication-result" as const, status: "idle" as const };
+			/** The first allow-listed reason a grant revalidation was denied for, if any. */
+			let deniedReason: string | undefined;
+			const binding = host.bind(envelope, {
+				check,
+				assertLedger: verified.assertLedger,
+				denied: (cause) => {
+					deniedReason ??= noteDenial(cause);
+				},
+				...(verified.service
+					? { serviceItem: item, bootId: initial.bootId, deadline: new Date(verified.expiry).toISOString() }
+					: {}),
+			});
+			const grant = yield* beforeLease(binding.authorize());
+			reanchorable = false;
+			const monitor = Effect.forever(
+				Effect.andThen(
+					Effect.sleep("250 millis"),
+					Effect.andThen(Effect.try({ try: assertTime, catch: (cause) => cause }), binding.revalidate(grant)),
+				),
+			);
+			// On interruption/failure the durable lease and consumed nonce remain.
+			// Only confirmed completion releases this process's exact lease.
+			const result = yield* consumer.publish(grant).pipe(
+				Effect.raceFirst(monitor),
+				Effect.mapError((cause) => {
+					const reason = deniedReason ?? noteDenial(cause);
+					return new CommunityOperationError({
+						code: "publication_uncertain",
+						...(reason === undefined ? {} : { reason }),
+					});
+				}),
+			);
+			if (result.briefingId !== item.briefingId || !result.googleDocId || !result.discordMessageId)
+				return yield* new CommunityOperationError({ code: "publication_uncertain" });
+			yield* Effect.try(() => binding.complete());
+			return { kind: "harnessy.community.briefing.publication-result" as const, status: "published" as const };
+		}),
+	).pipe(
+		Effect.mapError((cause) =>
+			cause instanceof CommunityOperationError
+				? cause
+				: new CommunityOperationError({
+						code: "runtime_rejected",
+						...(cause instanceof WriterCheckInconclusiveError ? { reason: cause.reason } : {}),
+					}),
+		),
+	);

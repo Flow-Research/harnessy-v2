@@ -1,0 +1,22 @@
+# CODEOWNERS for Flow-Research/harnessy-v2
+# Security team must review changes to installer and pre-commit paths
+
+# Flow installer tooling - require security review
+tools/flow-install/                       @Flow-Research/security
+/packages/capability-harnessy-v1-full/resources/source/tools/flow-install/ @Flow-Research/security
+/packages/capability-harnessy-v1-full/resources/source/scripts/flow/ @Flow-Research/security
+/packages/harnessy-core/src/runtime/       @Flow-Research/security
+
+# Pre-commit configuration - require security review
+.pre-commit-config.yaml                  @Flow-Research/security
+.husky/                                   @Flow-Research/security
+
+# Scripts directory - require security review
+scripts/                                  @Flow-Research/security
+
+# CI/CD workflows - require security review
+.github/workflows/                        @Flow-Research/security
+/.github/actions/                         @Flow-Research/security
+
+# Environment / secrets config
+.env*                                     @Flow-Research/security

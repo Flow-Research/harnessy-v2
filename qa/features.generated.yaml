@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "npm run qa:catalog",
+  "features": [
+    {
+      "slug": "capability-portability",
+      "name": "Capability portability",
+      "id_prefix": "CAP",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/canonical-cutover.md"
+      ],
+      "scenario_count": 1
+    },
+    {
+      "slug": "meeting-context-catalog",
+      "name": "Meeting context catalog",
+      "id_prefix": "MCTX",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/meeting-context.md"
+      ],
+      "scenario_count": 6
+    },
+    {
+      "slug": "meeting-publication-migration",
+      "name": "Meeting publication migration",
+      "id_prefix": "MEET",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/meeting-publication.md"
+      ],
+      "scenario_count": 1
+    },
+    {
+      "slug": "packaging-release-contracts",
+      "name": "Packaging and release contracts",
+      "id_prefix": "PKG",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/canonical-cutover.md"
+      ],
+      "scenario_count": 2
+    },
+    {
+      "slug": "portal-api",
+      "name": "Portal API",
+      "id_prefix": "PRTA",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/portal-api.md"
+      ],
+      "scenario_count": 6
+    },
+    {
+      "slug": "portal-read-model",
+      "name": "Portal read model",
+      "id_prefix": "PRTL",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/portal-read-model.md"
+      ],
+      "scenario_count": 5
+    },
+    {
+      "slug": "portal-page",
+      "name": "Portal page",
+      "id_prefix": "PRTP",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/portal-page.md"
+      ],
+      "scenario_count": 7
+    },
+    {
+      "slug": "v1-reconciliation",
+      "name": "V1 reconciliation",
+      "id_prefix": "RECON",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/canonical-cutover.md"
+      ],
+      "scenario_count": 1
+    },
+    {
+      "slug": "private-sdk-consumer",
+      "name": "Private SDK consumer",
+      "id_prefix": "SDK",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/canonical-cutover.md"
+      ],
+      "scenario_count": 2
+    },
+    {
+      "slug": "security-invariants",
+      "name": "Security invariants",
+      "id_prefix": "SEC",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "security"
+      ],
+      "specs": [
+        "qa/security/scripts/security-invariants.md"
+      ],
+      "scenario_count": 1
+    },
+    {
+      "slug": "personal-knowledge",
+      "name": "Personal learning library",
+      "id_prefix": "WIKI",
+      "apps": [
+        "harnessy-v2"
+      ],
+      "layers": [
+        "api"
+      ],
+      "specs": [
+        "qa/api/scripts/personal-knowledge.md"
+      ],
+      "scenario_count": 1
+    }
+  ]
+}

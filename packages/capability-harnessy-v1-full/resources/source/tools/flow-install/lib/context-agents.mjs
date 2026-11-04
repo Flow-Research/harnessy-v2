@@ -1,0 +1,158 @@
+#!/usr/bin/env node
+
+/**
+ * flow-install — .jarvis/context/AGENTS.md management
+ *
+ * Scaffolds a full Harnessy protocol file on first install and only updates the
+ * Harnessy-managed block when explicitly requested or accepted interactively.
+ */
+
+import crypto from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { log, pathExists, promptConfirm, readFileSafe } from "./utils.mjs";
+
+const FLOW_CONTEXT_START = "<!-- flow-context:start -->";
+const FLOW_CONTEXT_END = "<!-- flow-context:end -->";
+export const CONTEXT_AGENTS_VERSION = "1.3.0";
+
+const generateManagedSection = (installPaths) => `${FLOW_CONTEXT_START}
+## Harnessy Protocol
+
+This repo is Harnessy-managed. Use this file as the canonical Harnessy agent protocol for the installed project.
+
+### Session Start
+
+1. Read \`${installPaths.contextDir}/README.md\`
+2. Load context in order: \`status.md\` -> \`roadmap.md\` -> \`team.md\` -> \`technical-debt.md\`
+3. For ideation, issue intake, PRD, roadmap, and architecture tradeoff work, read \`${installPaths.contextDir}/docs/strategy/README.md\` when it exists, then load the relevant strategy docs it points to
+4. Treat \`projects.md\` and \`decisions.md\` as optional supporting docs when present
+5. Check \`${installPaths.contextDir}/skills/_catalog.md\` for project catalog entries
+6. For QA, testing, CI, deployment, or release work, read \`${installPaths.contextDir}/docs/standards/qa-process.md\`, \`${installPaths.contextDir}/docs/standards/testing-strategy.md\`, and \`${installPaths.contextDir}/docs/standards/ci-process.md\` when present
+7. For substantial skill-backed work, read \`${installPaths.contextDir}/docs/standards/skill-feedback-protocol.md\`
+8. Prefer deeper sub-project context when working inside a nested app with its own \`.jarvis/context/\`
+
+### Skills
+
+- Global skills live in \`~/.agents/skills/\`
+- Project-local skills live in \`${installPaths.skillsDir}/\` when present
+- Run \`pnpm skills:register\` after adding or updating project-local skills
+- Run \`pnpm harness:verify\` to confirm Harnessy and supported agent parity
+- Before finalizing skill-backed work, capture reusable skill lessons with \`skill-feedback\` or the shared trace recorder. Do not create empty traces for uneventful successful runs.
+
+### Context Vault
+
+- Canonical context root: \`${installPaths.contextDir}/\`
+- Standard strategy folder: \`${installPaths.contextDir}/docs/strategy/\`
+- Memory scope registry: \`${installPaths.contextDir}/scopes/_scopes.yaml\`
+- Technical debt register: \`${installPaths.contextDir}/technical-debt.md\`
+- Runtime profiles: \`${installPaths.contextDir}/profiles/qa.json\`, \`${installPaths.contextDir}/profiles/ci.json\`, \`${installPaths.contextDir}/profiles/deploy.json\`
+- Template token \`{{global}}\` is Jarvis templating; treat it as a no-op in raw files
+
+### Testing And Deployment
+
+- Prefer full integration and container-backed tests over mocks. Use Testcontainers first, Docker Compose when a full multi-service stack is needed, and document any mock exception.
+- Treat QA drift, test-quality validation, semantic versioning, packaging, deployment, smoke checks, rollback, and evidence capture as CI/profile-driven gates.
+- Local deployment overrides must run the same gates as CI unless the profile explicitly documents a stronger break-glass policy.
+- Treat missed skill steps, brittle assumptions, manual workarounds, deterministic-command gaps, provider/runtime gaps, security/package issues, and repeated user corrections as mandatory skill feedback capture triggers.
+
+### Conventions
+
+- Never commit \`.env\` files; use \`.env.example\`
+- Personal context belongs in \`${installPaths.contextDir}/private/<username>/\`
+- Keep debt tracked in the debt registers, not only in chat or TODO comments
+${FLOW_CONTEXT_END}`;
+
+const generateInitialFile = (installPaths) => `# Harnessy Context AGENTS
+
+This file contains Harnessy's installed agent protocol for this repository.
+
+- Harnessy manages only the dedicated managed block below.
+- You can add project-specific notes above or below the managed block.
+- Future Harnessy updates should merge only the managed block, never replace this file.
+
+${generateManagedSection(installPaths)}
+`;
+
+const managedHash = (content) => crypto.createHash("sha256").update(content).digest("hex");
+
+const extractManagedBlock = (content) => {
+  if (!content) return null;
+  const startMarker = `\n${FLOW_CONTEXT_START}\n`;
+  const endMarker = `\n${FLOW_CONTEXT_END}`;
+  const startIdx = content.indexOf(startMarker);
+  const endIdx = content.indexOf(endMarker, startIdx === -1 ? 0 : startIdx + startMarker.length);
+  if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) return null;
+  // startIdx + 1 skips the leading "\n" of startMarker; endIdx + endMarker.length
+  // sits one past the end marker's final ">" so the extracted block includes it.
+  return content.slice(startIdx + 1, endIdx + endMarker.length);
+};
+
+const mergeManagedBlock = (existing, managedSection) => {
+  const startMarker = `\n${FLOW_CONTEXT_START}\n`;
+  const endMarker = `\n${FLOW_CONTEXT_END}`;
+  const startIdx = existing.indexOf(startMarker);
+  const endIdx = existing.indexOf(endMarker, startIdx === -1 ? 0 : startIdx + startMarker.length);
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    // Tail slice starts one past the end marker's final ">"; the previous
+    // "- 1" here caused one extra ">" to accumulate on every install.
+    return existing.slice(0, startIdx + 1) + managedSection + existing.slice(endIdx + endMarker.length);
+  }
+  return existing.trimEnd() + "\n\n" + managedSection + "\n";
+};
+
+export const syncContextAgents = async (
+  projectRoot,
+  {
+    dryRun = false,
+    contextDirRel = ".jarvis/context",
+    installPaths = { contextDir: ".jarvis/context", skillsDir: ".agents/skills" },
+    forceUpdate = false,
+    promptOnUpdate = false,
+  } = {},
+) => {
+  const contextAgentsPath = path.join(projectRoot, contextDirRel, "AGENTS.md");
+  const managedSection = generateManagedSection(installPaths);
+  const templateHash = managedHash(managedSection);
+  const existing = await readFileSafe(contextAgentsPath);
+
+  if (!existing) {
+    if (dryRun) {
+      log.dryRun(`Would create ${contextDirRel}/AGENTS.md`);
+      return { status: "create", version: CONTEXT_AGENTS_VERSION, templateHash, changed: true };
+    }
+    await fs.mkdir(path.dirname(contextAgentsPath), { recursive: true });
+    await fs.writeFile(contextAgentsPath, generateInitialFile(installPaths), "utf8");
+    log.ok(`${contextDirRel}/AGENTS.md created`);
+    return { status: "created", version: CONTEXT_AGENTS_VERSION, templateHash, changed: true };
+  }
+
+  const currentBlock = extractManagedBlock(existing);
+  if (currentBlock === managedSection) {
+    log.skip(`${contextDirRel}/AGENTS.md (managed section already current)`);
+    return { status: "current", version: CONTEXT_AGENTS_VERSION, templateHash, changed: false };
+  }
+
+  let shouldUpdate = forceUpdate;
+  if (!shouldUpdate && promptOnUpdate && process.stdout.isTTY && process.stdin.isTTY) {
+    shouldUpdate = await promptConfirm(
+      `Harnessy update available for ${contextDirRel}/AGENTS.md. Apply managed-section update now?`,
+      false,
+    );
+  }
+
+  if (!shouldUpdate) {
+    log.warn(`${contextDirRel}/AGENTS.md has a Harnessy update available. Re-run flow-install with --update-context-agents to apply it.`);
+    return { status: "update_available", version: CONTEXT_AGENTS_VERSION, templateHash, changed: false };
+  }
+
+  const merged = mergeManagedBlock(existing, managedSection);
+  if (dryRun) {
+    log.dryRun(`Would update managed block in ${contextDirRel}/AGENTS.md`);
+    return { status: "update", version: CONTEXT_AGENTS_VERSION, templateHash, changed: true };
+  }
+
+  await fs.writeFile(contextAgentsPath, merged, "utf8");
+  log.ok(`${contextDirRel}/AGENTS.md managed section updated`);
+  return { status: currentBlock ? "updated" : "appended", version: CONTEXT_AGENTS_VERSION, templateHash, changed: true };
+};

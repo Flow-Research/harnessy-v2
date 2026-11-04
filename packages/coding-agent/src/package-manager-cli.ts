@@ -15,7 +15,7 @@ import {
 	type SelfUpdatePackageTarget,
 	VERSION,
 } from "./config.ts";
-import type { ExtensionFactory } from "./core/extensions/types.ts";
+import type { InlineExtension } from "./core/extensions/types.ts";
 import { DefaultPackageManager } from "./core/package-manager.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
 import { DefaultResourceLoader } from "./core/resource-loader.ts";
@@ -81,10 +81,29 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "remove":
 			return `${APP_NAME} remove <source> [-l] [--approve|--no-approve]`;
 		case "update":
-			return `${APP_NAME} update [source|self|pi] [--self|--extensions|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
+			return `${APP_NAME} update [source|self|${APP_NAME}] [--self|--extensions|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
 		case "list":
 			return `${APP_NAME} list [--approve|--no-approve]`;
 	}
+}
+
+function getConfigCommandUsage(): string {
+	return `${APP_NAME} config [-l] [--approve|--no-approve]`;
+}
+
+function printConfigCommandHelp(): void {
+	console.log(`${chalk.bold("Usage:")}
+  ${getConfigCommandUsage()}
+
+Open the resource configuration TUI to enable or disable package resources.
+Without -l, starts in global settings (~/${CONFIG_DIR_NAME}/agent/settings.json).
+Press Tab in the TUI to switch between global and project-local modes.
+
+Options:
+  -l, --local       Edit project overrides (${CONFIG_DIR_NAME}/settings.json)
+  -a, --approve     Trust project-local files for this command with -l
+  -na, --no-approve Ignore project-local files for this command with -l
+`);
 }
 
 function printPackageCommandHelp(command: PackageCommand): void {
@@ -132,22 +151,22 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update pi and installed packages.
+Update ${APP_NAME} and installed packages.
 
 Options:
-  --self                  Update pi only (default when no target is given)
+  --self                  Update ${APP_NAME} only (default when no target is given)
   --extensions            Update installed packages only
-  --all                   Update pi and installed packages
+  --all                   Update ${APP_NAME} and installed packages
   --extension <source>    Update one package only
   -a, --approve           Trust project-local files for this command
   -na, --no-approve       Ignore project-local files for this command
-  --force                 Reinstall pi even if the current version is latest
+  --force                 Reinstall ${APP_NAME} even if the current version is latest
 
 Short forms:
-  ${APP_NAME} update                Update pi only
-  ${APP_NAME} update --all          Update pi and all extensions
+  ${APP_NAME} update                Update ${APP_NAME} only
+  ${APP_NAME} update --all          Update ${APP_NAME} and all extensions
   ${APP_NAME} update <source>       Update one package
-  ${APP_NAME} update pi             Update pi only (self works as alias to pi)
+  ${APP_NAME} update self           Update ${APP_NAME} only
 `);
 			return;
 
@@ -305,7 +324,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 			}
 			updateTarget = { type: "extensions", source: extensionFlagSource };
 		} else if (source) {
-			const sourceIsSelf = source === "self" || source === "pi";
+			const sourceIsSelf = source === "self" || source === "pi" || source === APP_NAME;
 			if (sourceIsSelf) {
 				updateTarget = extensionsFlag ? { type: "all" } : { type: "self" };
 			} else {
@@ -364,12 +383,17 @@ function printSelfUpdateUnavailable(
 	const entrypoint = process.argv[1];
 	if (entrypoint) {
 		console.error("");
-		console.error(`Location of pi executable: ${entrypoint}`);
+		console.error(`Location of ${APP_NAME} executable: ${entrypoint}`);
 	}
 }
 
 function printSelfUpdateFallback(command: SelfUpdateCommand): void {
 	console.error(chalk.dim(`If this keeps failing, run this command yourself: ${command.display}`));
+}
+
+function printPnpmSelfUpdateMetadataHint(): void {
+	console.error(chalk.yellow("If pnpm reports missing package versions, its cached registry metadata may be stale."));
+	console.error(chalk.yellow(`Run \`pnpm store prune\` and retry \`${APP_NAME} update --self\`.`));
 }
 
 function printSelfUpdateNote(note: string): void {
@@ -461,20 +485,8 @@ function prepareWindowsNpmSelfUpdate(): void {
 	quarantineWindowsNativeDependencies(packageDir);
 }
 
-function parseProjectTrustOverride(args: readonly string[]): boolean | undefined {
-	let trustOverride: boolean | undefined;
-	for (const arg of args) {
-		if (arg === "--approve" || arg === "-a") {
-			trustOverride = true;
-		} else if (arg === "--no-approve" || arg === "-na") {
-			trustOverride = false;
-		}
-	}
-	return trustOverride;
-}
-
 export interface PackageCommandRuntimeOptions {
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }
 
 interface CommandSettingsResult {
@@ -497,7 +509,7 @@ async function createCommandSettingsManager(options: {
 	agentDir: string;
 	projectTrustOverride?: boolean;
 	useSavedProjectTrustOnly?: boolean;
-	extensionFactories?: ExtensionFactory[];
+	extensionFactories?: InlineExtension[];
 }): Promise<CommandSettingsResult> {
 	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false });
 	const projectTrustWarnings: string[] = [];
@@ -544,8 +556,36 @@ export async function handleConfigCommand(
 	args: string[],
 	runtimeOptions: PackageCommandRuntimeOptions = {},
 ): Promise<boolean> {
-	if (args[0] !== "config") {
+	const [command, ...rest] = args;
+	if (command !== "config") {
 		return false;
+	}
+
+	if (rest.includes("-h") || rest.includes("--help")) {
+		printConfigCommandHelp();
+		return true;
+	}
+
+	let local = false;
+	let projectTrustOverride: boolean | undefined;
+	for (const arg of rest) {
+		if (arg === "-l" || arg === "--local") {
+			local = true;
+		} else if (arg === "-a" || arg === "--approve") {
+			projectTrustOverride = true;
+		} else if (arg === "-na" || arg === "--no-approve") {
+			projectTrustOverride = false;
+		} else if (arg.startsWith("-")) {
+			console.error(chalk.red(`Unknown option ${arg} for "config".`));
+			console.error(chalk.dim(`Use "${APP_NAME} --help" or "${getConfigCommandUsage()}".`));
+			process.exitCode = 1;
+			return true;
+		} else {
+			console.error(chalk.red(`Unexpected argument ${arg}.`));
+			console.error(chalk.dim(`Usage: ${getConfigCommandUsage()}`));
+			process.exitCode = 1;
+			return true;
+		}
 	}
 
 	const cwd = process.cwd();
@@ -553,19 +593,33 @@ export async function handleConfigCommand(
 	const { settingsManager, projectTrustWarnings } = await createCommandSettingsManager({
 		cwd,
 		agentDir,
-		projectTrustOverride: parseProjectTrustOverride(args),
+		projectTrustOverride,
 		extensionFactories: runtimeOptions.extensionFactories,
 	});
 	reportProjectTrustWarnings(projectTrustWarnings);
+	if (local && !settingsManager.isProjectTrusted()) {
+		console.error(chalk.red("Project is not trusted. Use --approve to modify local resource config."));
+		process.exitCode = 1;
+		return true;
+	}
 	reportSettingsErrors(settingsManager, "config command");
-	const packageManager = new DefaultPackageManager({ cwd, agentDir, settingsManager });
-	const resolvedPaths = await packageManager.resolve();
+	const globalSettingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+	const globalResolvedPaths = await new DefaultPackageManager({
+		cwd,
+		agentDir,
+		settingsManager: globalSettingsManager,
+	}).resolve();
+	const projectResolvedPaths = settingsManager.isProjectTrusted()
+		? await new DefaultPackageManager({ cwd, agentDir, settingsManager }).resolve()
+		: globalResolvedPaths;
 
 	await selectConfig({
-		resolvedPaths,
+		resolvedPaths: { global: globalResolvedPaths, project: projectResolvedPaths },
 		settingsManager,
 		cwd,
 		agentDir,
+		writeScope: local ? "project" : "global",
+		projectModeAvailable: settingsManager.isProjectTrusted(),
 	});
 
 	process.exit(0);
@@ -753,6 +807,9 @@ export async function handlePackageCommand(
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : "Unknown package command error";
 						console.error(chalk.red(`Error: ${message}`));
+						if (installMethod === "pnpm") {
+							printPnpmSelfUpdateMetadataHint();
+						}
 						printSelfUpdateFallback(selfUpdateCommand);
 						process.exitCode = 1;
 						return true;

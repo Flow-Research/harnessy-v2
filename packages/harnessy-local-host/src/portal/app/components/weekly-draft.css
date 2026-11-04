@@ -1,0 +1,10 @@
+.weekly-review { padding-block: 1.25rem; border-block: 1px solid var(--hairline); margin-block: 1.25rem; }
+.weekly-review h2 { font-size: 1.1rem; margin-block: 0 0.75rem; }
+.weekly-review p { margin-block: 0.75rem; }
+.weekly-review label { display: block; margin-block: 1rem 0.5rem; }
+.weekly-review textarea { display: block; box-sizing: border-box; width: 100%; min-height: 6rem; padding: 0.75rem; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--hairline); border-radius: 6px; resize: vertical; }
+.weekly-review-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.weekly-review .button { min-height: 44px; }
+.weekly-review .back-link { display: inline-block; padding-block: 0.75rem; }
+.weekly-review pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85rem; }
+.weekly-review details { margin-block: 1rem; }

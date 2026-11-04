@@ -1,0 +1,14 @@
+name: catchup
+type: opencode
+version: 0.1.0
+owner: julian
+status: experimental
+blast_radius: low
+description: "Bring the user back up to speed after switching agent tabs: one-paragraph brief of goal, decisions, state, open questions and next step, then one-paragraph replies."
+permissions: [read]
+data_categories: [none]
+egress: []
+invoke: "/catchup"
+location: tools/flow-install/skills/catchup
+traces:
+  enabled: false

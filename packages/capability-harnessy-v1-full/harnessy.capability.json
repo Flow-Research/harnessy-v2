@@ -1,0 +1,207 @@
+{
+	"id": "npm:@harnessy/capability-harnessy-v1-full",
+	"name": "Harnessy v1 Full Compatibility",
+	"type": "compatibility-pack",
+	"version": "0.0.3",
+	"description": "Full Harnessy v1 compatibility pack containing the v1 installer, shared skills, hooks, scripts, context vault, Jarvis CLI source, and root bootstrap docs.",
+	"owner": "harnessy",
+	"status": "compatibility",
+	"installScope": "project",
+	"invoke": {
+		"command": "flow-install",
+		"description": "Preserved v1 installer entrypoint. Native Harnessy v2 commands should be preferred for new installs."
+	},
+	"context": [
+		"resources/source/README.md",
+		"resources/source/AGENTS.md",
+		"resources/source/.jarvis/context/AGENTS.md",
+		"resources/source/.jarvis/context/README.md",
+		"resources/source/.jarvis/context/skills/_catalog.md",
+		"resources/source/tools/flow-install/skills/_shared/autoresearch.md",
+		"resources/source/tools/flow-install/skills/_shared/text-hygiene.md",
+		"resources/source/jarvis-cli/README.md"
+	],
+	"resources": [
+		{
+			"kind": "reference",
+			"path": "resources/source",
+			"target": "source",
+			"description": "Reconciled v1 repository snapshot with reviewed privacy exclusions, preserved for migration parity."
+		},
+		{
+			"kind": "reference",
+			"path": "resources/SOURCE.json",
+			"target": "SOURCE.json",
+			"description": "V1 source commits, reviewed dirty-overlay digest, exclusions, and full-tree digest."
+		},
+		{
+			"kind": "reference",
+			"path": "resources/npm-transport.json",
+			"target": "npm-transport.json",
+			"description": "Exact bytes of source files omitted by npm packaging."
+		}
+	],
+	"checks": [
+		{
+			"id": "v1-source-root-present",
+			"kind": "path-exists",
+			"path": "resources/source/package.json",
+			"required": true,
+			"description": "Ensure the full v1 repository snapshot root is preserved."
+		},
+		{
+			"id": "v1-source-provenance-present",
+			"kind": "path-exists",
+			"path": "resources/SOURCE.json",
+			"required": true,
+			"description": "Ensure the compatibility snapshot carries deterministic source provenance."
+		},
+		{
+			"id": "v1-root-flow-scripts-present",
+			"kind": "path-exists",
+			"path": "resources/source/scripts/flow/verify-harness.mjs",
+			"required": true,
+			"description": "Ensure v1 root flow scripts are preserved."
+		},
+		{
+			"id": "v1-ci-workflows-present",
+			"kind": "path-exists",
+			"path": "resources/source/.github/workflows/harness-verify.yml",
+			"required": true,
+			"description": "Ensure v1 CI workflow definitions are preserved."
+		},
+		{
+			"id": "v1-harness-tests-present",
+			"kind": "path-exists",
+			"path": "resources/source/tests/harness/run-flow-install-eval.sh",
+			"required": true,
+			"description": "Ensure v1 harness eval scripts are preserved."
+		},
+		{
+			"id": "flow-install-entrypoint-present",
+			"kind": "path-exists",
+			"path": "resources/source/tools/flow-install/index.mjs",
+			"required": true,
+			"description": "Ensure the v1 flow-install entrypoint is preserved."
+		},
+		{
+			"id": "flow-install-skills-present",
+			"kind": "path-exists",
+			"path": "resources/source/tools/flow-install/skills/goal-agent/SKILL.md",
+			"required": true,
+			"description": "Ensure v1 shared skills are preserved."
+		},
+		{
+			"id": "context-vault-present",
+			"kind": "path-exists",
+			"path": "resources/source/.jarvis/context/AGENTS.md",
+			"required": true,
+			"description": "Ensure the v1 context vault protocol is preserved."
+		},
+		{
+			"id": "jarvis-cli-present",
+			"kind": "path-exists",
+			"path": "resources/source/jarvis-cli/pyproject.toml",
+			"required": true,
+			"description": "Ensure the v1 Jarvis CLI source is preserved."
+		},
+		{
+			"id": "root-bootstrap-present",
+			"kind": "path-exists",
+			"path": "resources/source/install.sh",
+			"required": true,
+			"description": "Ensure the v1 root bootstrap script is preserved."
+		}
+	],
+	"traces": [
+		{
+			"id": "v1-source-preservation",
+			"path": "README.md",
+			"description": "Compatibility pack documentation for the full v1 source preservation boundary."
+		}
+	],
+	"autoresearch": {
+		"enabled": false,
+		"description": "The compatibility pack preserves v1 autoresearch resources, but v2 does not auto-run them."
+	},
+	"blastRadius": "critical",
+	"permissions": [
+		"filesystem:read",
+		"filesystem:write",
+		"shell:execute",
+		"agent-runtimes:register",
+		"hooks:install",
+		"cron:install",
+		"skills:install",
+		"context:update",
+		"memory:update",
+		"network:conditional"
+	],
+	"dataCategories": [
+		"project_context",
+		"org_context",
+		"agent_runtime_config",
+		"credentials_metadata",
+		"meeting_metadata",
+		"meeting_transcript_summary",
+		"personal_context",
+		"github_issue_metadata",
+		"deployment_metadata"
+	],
+	"egress": [
+		"api.openai.com",
+		"api.anthropic.com",
+		"github.com",
+		"api.github.com",
+		"anytype-local-api",
+		"fathom.video",
+		"runtime-dependent"
+	],
+	"dependencies": [
+		{
+			"kind": "tool",
+			"name": "node",
+			"command": "node",
+			"required": false,
+			"install": {
+				"fallback": "Node.js is required to run preserved v1 flow-install scripts."
+			}
+		},
+		{
+			"kind": "tool",
+			"name": "python3",
+			"command": "python3",
+			"required": false,
+			"install": {
+				"fallback": "Python 3.11+ is required to run preserved v1 Jarvis and helper scripts."
+			}
+		},
+		{
+			"kind": "tool",
+			"name": "git",
+			"command": "git",
+			"required": false,
+			"install": {
+				"fallback": "Git is required by several preserved v1 workflows."
+			}
+		},
+		{
+			"kind": "tool",
+			"name": "uv",
+			"command": "uv",
+			"required": false,
+			"install": {
+				"fallback": "uv is required to install the preserved v1 Jarvis CLI toolchain."
+			}
+		},
+		{
+			"kind": "tool",
+			"name": "pnpm",
+			"command": "pnpm",
+			"required": false,
+			"install": {
+				"fallback": "pnpm is used by preserved v1 workspace and skill workflows."
+			}
+		}
+	]
+}

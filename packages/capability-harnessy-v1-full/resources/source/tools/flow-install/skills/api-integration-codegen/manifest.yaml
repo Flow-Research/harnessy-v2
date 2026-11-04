@@ -1,0 +1,26 @@
+name: api-integration-codegen
+type: opencode
+version: 0.2.2
+owner: julian
+status: experimental
+blast_radius: medium
+description: "Generate API integration test suites from Harnessy regression artifacts using profile-driven suite metadata, helper imports, and project adapters."
+permissions: [read-source, read-regression-spec, write-test-suites, execute-scripts]
+data_categories: [none]
+egress: []
+invoke: /api-integration-codegen
+location: tools/flow-install/skills/api-integration-codegen
+autoresearch:
+  enabled: true
+  metric_layer: 1
+  time_budget_seconds: 1200
+  evaluation_window: 3
+  constraints:
+    max_regression_rate: 0.1
+    max_human_intervention: 0.5
+traces:
+  enabled: true
+  gates:
+    quality:
+      - generation_completeness
+      - adapter_coverage

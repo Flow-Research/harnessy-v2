@@ -484,16 +484,66 @@ try {
 	if (err.code !== "ENOENT") throw e;
 }
 
-const piConfigName: string | undefined = pkg.piConfig?.name;
+const nonEmptyEnv = (name: string): string | undefined => {
+	const value = process.env[name]?.trim();
+	return value === "" ? undefined : value;
+};
+
+export interface AppIdentityConfig {
+	name?: string;
+	title?: string;
+	description?: string;
+	configDir?: string;
+	/** Extra help text appended to `--help`, for embedders shipping surfaces beyond the agent. */
+	helpEpilogue?: string;
+}
+
+interface ResolvedAppIdentity {
+	name: string;
+	title: string;
+	description: string;
+	configDir: string;
+	helpEpilogue: string;
+}
+
+const DEFAULT_APP_DESCRIPTION = "AI coding assistant with read, bash, edit, write tools";
+
+function resolveAppIdentity(config: AppIdentityConfig = {}): ResolvedAppIdentity {
+	const configuredName = config.name ?? nonEmptyEnv("PI_APP_NAME") ?? pkg.piConfig?.name;
+	const name = configuredName || "pi";
+	return {
+		name,
+		title: config.title ?? nonEmptyEnv("PI_APP_TITLE") ?? (configuredName ? name : "π"),
+		description: config.description ?? nonEmptyEnv("PI_APP_DESCRIPTION") ?? DEFAULT_APP_DESCRIPTION,
+		configDir: config.configDir ?? nonEmptyEnv("PI_CONFIG_DIR") ?? pkg.piConfig?.configDir ?? ".pi",
+		helpEpilogue: config.helpEpilogue ?? "",
+	};
+}
+
 export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent";
-export const APP_NAME: string = piConfigName || "pi";
-export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
-export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
+export let APP_NAME = "pi";
+export let APP_TITLE = "π";
+export let APP_DESCRIPTION = DEFAULT_APP_DESCRIPTION;
+export let APP_HELP_EPILOGUE = "";
+export let CONFIG_DIR_NAME = ".pi";
 export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
-export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
-export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+export let ENV_AGENT_DIR = "PI_CODING_AGENT_DIR";
+export let ENV_SESSION_DIR = "PI_CODING_AGENT_SESSION_DIR";
+
+export function configureAppIdentity(config?: AppIdentityConfig): void {
+	const identity = resolveAppIdentity(config);
+	APP_NAME = identity.name;
+	APP_TITLE = identity.title;
+	APP_DESCRIPTION = identity.description;
+	APP_HELP_EPILOGUE = identity.helpEpilogue;
+	CONFIG_DIR_NAME = identity.configDir;
+	ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
+	ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+}
+
+configureAppIdentity();
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);

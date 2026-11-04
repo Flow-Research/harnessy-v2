@@ -1,0 +1,138 @@
+import { fileURLToPath } from "node:url";
+import { defineConfig } from "vitest/config";
+
+const coreSource = fileURLToPath(new URL("../harnessy-core/src/meeting-publication-inspector.ts", import.meta.url));
+
+export default defineConfig({
+	// The app's tests render React components (`test/app/*.test.tsx`, jsdom per file).
+	oxc: { jsx: { runtime: "automatic", importSource: "react" } },
+	resolve: {
+		dedupe: ["effect", "@effect/vitest"],
+		alias: [
+			{ find: /^@harnessy\/core\/community-briefing$/, replacement: fileURLToPath(new URL("../harnessy-core/src/community-briefing.ts", import.meta.url)) },
+			{ find: /^@harnessy\/core\/wiki$/, replacement: fileURLToPath(new URL("../harnessy-core/src/wiki.ts", import.meta.url)) },
+			{
+				find: /^@harnessy\/core\/meeting-publication$/,
+				replacement: fileURLToPath(new URL("../harnessy-core/src/meeting-publication.ts", import.meta.url)),
+			},
+			{
+				find: /^@harnessy\/core\/read-model$/,
+				replacement: fileURLToPath(new URL("../harnessy-core/src/read-model.ts", import.meta.url)),
+			},
+			{
+				find: /^@harnessy\/core\/meeting-publication-inspector$/,
+				replacement: coreSource,
+			},
+		],
+	},
+	test: {
+		// Fixture auth.json files stay plaintext and never touch the owner's OS keychain.
+		env: { PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
+		projects: [
+			{ extends: true, test: { name: "node", include: ["test/**/*.test.ts"], exclude: ["test/app/**"] } },
+			{
+				// The app's tests run in jsdom, with Node module resolution so they can start a real portal.
+				extends: true,
+				test: {
+					name: "app",
+					include: ["test/app/**/*.test.ts", "test/app/**/*.test.tsx"],
+					environment: "./test/support/jsdom-ssr-environment.ts",
+				},
+			},
+		],
+		testTimeout: 30_000,
+		hookTimeout: 30_000,
+		coverage: {
+			provider: "v8",
+			include: ["src/**/*.ts", "src/**/*.tsx"],
+			exclude: [
+				"src/cli.ts",
+				"src/**/*-cli.ts",
+				"src/**/*.d.ts",
+				// Build configuration and the browser entry point; the browser smoke covers the entry.
+				"src/portal/app/vite.config.ts",
+				"src/portal/app/main.tsx",
+				// The development-only showcase entry; test/app/showcase.test.tsx renders the page itself.
+				"src/portal/app/showcase/main.tsx",
+				// Types only.
+				"src/portal/app/lib/api-types.ts",
+			],
+			reporter: ["text"],
+			reportsDirectory: "coverage",
+			thresholds: {
+				statements: 80,
+				branches: 75,
+				functions: 80,
+				lines: 80,
+				// H-10 portal API: loopback server, sessions, sources and connection status.
+				// One entry per file: a glob threshold is an aggregate, so a weak file could hide behind strong ones.
+				"src/portal/auth.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/browser-signin.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/portal/device-access.ts": { statements: 95, branches: 85, functions: 100, lines: 95 },
+				"src/portal/inbox-revision.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/portal/inbox-state.ts": { statements: 90, branches: 85, functions: 100, lines: 90 },
+				"src/portal/weekly-close.ts": { statements: 90, branches: 85, functions: 100, lines: 95 },
+				"src/portal/managed-terminal.ts": { statements: 80, branches: 70, functions: 80, lines: 85 },
+				"src/portal/tmux-sessions.ts": { statements: 95, branches: 85, functions: 100, lines: 95 },
+				"src/portal/command.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/connections.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/launchd-plan.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/learning.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/openapi.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				// H-10 one app (Phase A): manifest-pinned assets, read routes, inbox, jobs and liveness.
+				"src/portal/page-assets.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/inbox.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
+				"src/portal/jobs.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
+				"src/portal/liveness.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/task-changes.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
+				// The app's browser code: pure libraries at the portal floor.
+				"src/portal/app/lib/safe-href.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/app/lib/session.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
+				"src/portal/app/lib/markdown.ts": { statements: 95, branches: 90, functions: 100, lines: 95 },
+				"src/portal/app/lib/router.ts": { statements: 90, branches: 90, functions: 90, lines: 90 },
+				"src/portal/app/lib/data.tsx": { statements: 90, branches: 85, functions: 90, lines: 90 },
+				"src/portal/app/lib/format.ts": { statements: 90, branches: 85, functions: 90, lines: 90 },
+				"src/portal/app/lib/browser.ts": { statements: 85, branches: 80, functions: 100, lines: 90 },
+				"src/portal/app/lib/keys.tsx": { statements: 90, branches: 75, functions: 100, lines: 90 },
+				// Each screen and component has its own floor (test/coverage-floors.test.ts checks that every
+				// .tsx file has one), set just under what the app tests reach. test/app/today.test.tsx and
+				// test/app/jobs.test.tsx cover Today's and Jobs' absent-field fallbacks,
+				// test/app/learning.test.tsx covers Learning's empty-data and missing-job fallbacks,
+				// test/app/connections.test.tsx covers Connections' fallbacks and every connection state, and
+				// test/app/inbox.test.tsx covers Inbox's empty-field fallbacks, every severity, tile state and key.
+				"src/portal/app/App.tsx": { statements: 95, branches: 85, functions: 90, lines: 95 },
+				"src/portal/app/components/actions.tsx": { statements: 95, branches: 90, functions: 90, lines: 95 },
+				"src/portal/app/components/DetailPane.tsx": { statements: 95, branches: 75, functions: 100, lines: 95 },
+				"src/portal/app/components/ErrorBoundary.tsx": { statements: 85, branches: 95, functions: 80, lines: 85 },
+				"src/portal/app/components/Palette.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
+				"src/portal/app/components/primitives.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
+				"src/portal/app/components/SafeMarkdown.tsx": { statements: 85, branches: 70, functions: 100, lines: 85 },
+				"src/portal/app/components/Shell.tsx": { statements: 95, branches: 90, functions: 100, lines: 95 },
+				"src/portal/app/screens/Connections.tsx": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/app/screens/Inbox.tsx": { statements: 90, branches: 95, functions: 90, lines: 95 },
+				"src/portal/app/screens/Jobs.tsx": { statements: 95, branches: 75, functions: 90, lines: 95 },
+				"src/portal/app/screens/Learning.tsx": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/app/screens/Reviews.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
+				"src/portal/app/screens/Tasks.tsx": { statements: 95, branches: 90, functions: 95, lines: 95 },
+				"src/portal/app/screens/Today.tsx": { statements: 95, branches: 75, functions: 100, lines: 95 },
+				"src/portal/app/screens/Terminal.tsx": { statements: 95, branches: 90, functions: 95, lines: 95 },
+				"src/portal/app/components/GenerateBrief.tsx": { statements: 90, branches: 85, functions: 90, lines: 90 },
+				"src/portal/app/components/CloseWeeklyDraft.tsx": { statements: 85, branches: 75, functions: 85, lines: 85 },
+				"src/portal/app/components/InboxRowMenu.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
+				"src/portal/app/components/WorthReading.tsx": { statements: 90, branches: 80, functions: 100, lines: 95 },
+				// test/app/quick-actions.test.tsx covers the drawer, brief-to-agent launch and device pairing;
+				// test/app/browser-signin.test.ts covers the native-app sign-in button.
+				"src/portal/app/components/QuickActions.tsx": { statements: 95, branches: 85, functions: 90, lines: 95 },
+				"src/portal/app/components/PairDevice.tsx": { statements: 90, branches: 80, functions: 90, lines: 95 },
+				"src/portal/app/components/BrowserSignIn.tsx": { statements: 95, branches: 85, functions: 100, lines: 95 },
+				"src/portal/terminal.ts": { statements: 85, branches: 80, functions: 80, lines: 90 },
+				"src/portal/brief-generation.ts": { statements: 95, branches: 85, functions: 95, lines: 95 },
+				"src/portal/process.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/routes.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/server.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/sources.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/token-store.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+			},
+		},
+	},
+});

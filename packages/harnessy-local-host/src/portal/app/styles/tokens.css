@@ -1,0 +1,133 @@
+/*
+ * Harnessy palette and type scale. Dark is the default; light follows the
+ * system preference unless a theme was chosen (`data-theme` on <html>).
+ * Status always pairs a dot with a word; colour never stands alone.
+ *
+ * The values are the mockup's (decision 3, 2026-10-18), which corrected the
+ * spec table for contrast. Tone colours fill dots, rules, borders and badges;
+ * text set in a tone uses its `-text` token, which keeps 4.5:1 or more on
+ * --bg, --panel and --raised in both themes (test/app/tokens.test.ts).
+ */
+:root {
+	--bg: #12151a;
+	--panel: #1b1f26;
+	--raised: #222731;
+	--hairline: #2a2f38;
+	--text: #edefec;
+	--text-2: #a7adb5;
+	--muted: #878f9a;
+	--ok: #2fc7b0;
+	--attention: #e8963c;
+	--danger: #e2543d;
+	--idle: #8a93a0;
+	--ok-text: #2fc7b0;
+	--attention-text: #e8963c;
+	--danger-text: #ec6a54;
+	--idle-text: #8a93a0;
+	--on-accent: #0c1a17;
+	--focus: var(--ok);
+
+	--font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+	--font-title: "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	--space-1: 4px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-6: 24px;
+	--radius-control: 6px;
+	--radius-panel: 10px;
+	--radius-pill: 999px;
+	--row: 40px;
+	/* List rows (spec §2.5): 40 px, or 32 px in compact density. Controls keep --row. */
+	--list-row: var(--row);
+
+	/*
+	 * Controls (docs/portal-design-system.md). One height for buttons, fields and
+	 * selects; touch screens raise it to 44 px. --control-h-sm is for dense rows
+	 * with a pointer only. A select keeps --select-arrow-space clear for its arrow.
+	 */
+	--control-h: 36px;
+	--control-h-sm: 30px;
+	--control-pad-x: 14px;
+	--control-gap: 8px;
+	--icon-size: 16px;
+	--select-arrow-space: 40px;
+
+	/* Layers, lowest first. Only floating layers cast a shadow. */
+	--z-bar: 10;
+	--z-fab: 20;
+	--z-sheet: 40;
+	--z-overlay: 50;
+	--z-palette: 60;
+	--z-skip: 70;
+	--scrim: rgb(0 0 0 / 0.45);
+	--shadow-float: 0 12px 32px rgb(0 0 0 / 0.28);
+	/* The terminal surface matches xterm and stays dark in both themes. */
+	--terminal-bg: #101218;
+	/* Space the page keeps clear under its content for the floating Actions button. */
+	--fab-clearance: 72px;
+
+	/* Motion explains a state change; prefers-reduced-motion turns it off. */
+	--motion-fast: 120ms;
+	--motion-base: 180ms;
+	--ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+	--motion: var(--motion-fast) ease-out;
+	color-scheme: dark;
+}
+
+/* Touch screens: every control reaches 44 × 44 CSS px (WCAG 2.5.5 target size). */
+@media (pointer: coarse) {
+	:root {
+		--control-h: 44px;
+		--control-h-sm: 44px;
+	}
+}
+
+@media (prefers-color-scheme: light) {
+	:root:not([data-theme="dark"]) {
+		--bg: #edefec;
+		--panel: #f7f8f6;
+		--raised: #ffffff;
+		--hairline: #d6dad4;
+		--text: #12151a;
+		--text-2: #4a515b;
+		--muted: #5f6670;
+		--ok: #12806f;
+		--attention: #a65f12;
+		--danger: #b83a26;
+		--idle: #6b7480;
+		--ok-text: #0f7464;
+		--attention-text: #975611;
+		--danger-text: #b83a26;
+		--idle-text: #5f6670;
+		--on-accent: #ffffff;
+		color-scheme: light;
+	}
+}
+
+:root[data-theme="light"] {
+	--bg: #edefec;
+	--panel: #f7f8f6;
+	--raised: #ffffff;
+	--hairline: #d6dad4;
+	--text: #12151a;
+	--text-2: #4a515b;
+	--muted: #5f6670;
+	--ok: #12806f;
+	--attention: #a65f12;
+	--danger: #b83a26;
+	--idle: #6b7480;
+	--ok-text: #0f7464;
+	--attention-text: #975611;
+	--danger-text: #b83a26;
+	--idle-text: #5f6670;
+	--on-accent: #ffffff;
+	color-scheme: light;
+}
+
+/* Compact density, chosen with the top bar's density toggle (`data-density` on <html>). */
+:root[data-density="compact"] {
+	--list-row: 32px;
+}

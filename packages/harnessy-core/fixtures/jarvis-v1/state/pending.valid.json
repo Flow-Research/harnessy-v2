@@ -1,0 +1,17 @@
+{
+  "generated_at": "2026-01-02T03:04:05",
+  "space_id": "space-1",
+  "suggestions": [
+    {
+      "id": "suggestion-1",
+      "task_id": "task-1",
+      "task_name": "Review migration plan",
+      "current_date": "2026-01-03",
+      "proposed_date": "2026-01-05",
+      "reasoning": "Balance workload",
+      "confidence": 0.9,
+      "status": "pending",
+      "created_at": "2026-01-02T03:04:05"
+    }
+  ]
+}

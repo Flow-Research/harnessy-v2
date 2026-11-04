@@ -1,0 +1,223 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "path": "src/jarvis/adapters",
+    "pythonSourceSha256": "200aa2f707c0410680fe1b169bfefee718404236684e48234cd5a2cac6eb7977"
+  },
+  "capabilityKeys": [
+    "tasks",
+    "journal",
+    "tags",
+    "search",
+    "priorities",
+    "due_dates",
+    "daily_notes",
+    "relations",
+    "custom_properties"
+  ],
+  "missingCapabilityDefault": false,
+  "capabilities": {
+    "anytype": {
+      "tasks": true,
+      "journal": true,
+      "tags": true,
+      "search": true,
+      "priorities": true,
+      "due_dates": true,
+      "daily_notes": false,
+      "relations": true,
+      "custom_properties": false
+    },
+    "notion": {
+      "tasks": true,
+      "journal": true,
+      "tags": true,
+      "search": true,
+      "priorities": true,
+      "due_dates": true,
+      "daily_notes": false,
+      "relations": true,
+      "custom_properties": true
+    }
+  },
+  "errors": [
+    {
+      "type": "JarvisBackendError",
+      "base": "Exception",
+      "message": "representative failure",
+      "backend": "oracle",
+      "rendered": "[oracle] representative failure",
+      "retryableByDefault": false,
+      "fields": {}
+    },
+    {
+      "type": "ConnectionError",
+      "base": "JarvisBackendError",
+      "message": "representative failure",
+      "backend": "oracle",
+      "rendered": "[oracle] representative failure",
+      "retryableByDefault": true,
+      "fields": {}
+    },
+    {
+      "type": "AuthError",
+      "base": "JarvisBackendError",
+      "message": "representative failure",
+      "backend": "oracle",
+      "rendered": "[oracle] representative failure",
+      "retryableByDefault": false,
+      "fields": {}
+    },
+    {
+      "type": "RateLimitError",
+      "base": "JarvisBackendError",
+      "message": "representative failure",
+      "backend": "oracle",
+      "rendered": "[oracle] representative failure",
+      "retryableByDefault": true,
+      "fields": {
+        "retry_after": 12.5
+      }
+    },
+    {
+      "type": "NotFoundError",
+      "base": "JarvisBackendError",
+      "message": "representative failure",
+      "backend": "oracle",
+      "rendered": "[oracle] representative failure",
+      "retryableByDefault": false,
+      "fields": {
+        "resource_id": "task-1",
+        "resource_type": "task"
+      }
+    },
+    {
+      "type": "NotSupportedError",
+      "base": "JarvisBackendError",
+      "message": "representative failure",
+      "backend": "oracle",
+      "rendered": "[oracle] representative failure",
+      "retryableByDefault": false,
+      "fields": {
+        "capability": "daily_notes"
+      }
+    },
+    {
+      "type": "AdapterNotFoundError",
+      "base": "JarvisBackendError",
+      "message": "representative failure",
+      "backend": "oracle",
+      "rendered": "[oracle] representative failure",
+      "retryableByDefault": false,
+      "fields": {}
+    },
+    {
+      "type": "ConfigError",
+      "base": "JarvisBackendError",
+      "message": "representative failure",
+      "backend": "oracle",
+      "rendered": "[oracle] representative failure",
+      "retryableByDefault": false,
+      "fields": {}
+    },
+    {
+      "type": "ValidationError",
+      "base": "JarvisBackendError",
+      "message": "representative failure",
+      "backend": "oracle",
+      "rendered": "[oracle] representative failure",
+      "retryableByDefault": false,
+      "fields": {
+        "field": "title"
+      }
+    }
+  ],
+  "retryPolicy": {
+    "maxAttempts": 3,
+    "baseDelaySeconds": 1.0,
+    "maxDelaySeconds": 30.0,
+    "exponentialBase": 2.0,
+    "retryableErrors": [
+      "RateLimitError",
+      "ConnectionError"
+    ],
+    "nonRetryableErrors": [
+      "JarvisBackendError",
+      "AuthError",
+      "NotFoundError",
+      "NotSupportedError",
+      "AdapterNotFoundError",
+      "ConfigError",
+      "ValidationError"
+    ],
+    "delayCases": [
+      {
+        "errorType": "ConnectionError",
+        "attempt": 0,
+        "delaySeconds": 1.0
+      },
+      {
+        "errorType": "ConnectionError",
+        "attempt": 1,
+        "delaySeconds": 2.0
+      },
+      {
+        "errorType": "ConnectionError",
+        "attempt": 2,
+        "delaySeconds": 4.0
+      },
+      {
+        "errorType": "ConnectionError",
+        "attempt": 3,
+        "delaySeconds": 8.0
+      },
+      {
+        "errorType": "ConnectionError",
+        "attempt": 4,
+        "delaySeconds": 16.0
+      },
+      {
+        "errorType": "ConnectionError",
+        "attempt": 5,
+        "delaySeconds": 30.0
+      },
+      {
+        "errorType": "ConnectionError",
+        "attempt": 10,
+        "delaySeconds": 30.0
+      },
+      {
+        "errorType": "RateLimitError",
+        "attempt": 0,
+        "retryAfterSeconds": 45.0,
+        "delaySeconds": 30.0
+      }
+    ],
+    "executionCases": [
+      {
+        "case": "transient-then-success",
+        "calls": 2,
+        "sleeps": [
+          1.0
+        ],
+        "terminalError": null
+      },
+      {
+        "case": "auth-fail-fast",
+        "calls": 1,
+        "sleeps": [],
+        "terminalError": "AuthError"
+      },
+      {
+        "case": "transient-exhaustion",
+        "calls": 4,
+        "sleeps": [
+          1.0,
+          2.0,
+          2.5
+        ],
+        "terminalError": "ConnectionError"
+      }
+    ]
+  }
+}

@@ -1,0 +1,485 @@
+/** Public programmatic API for parsing and inspecting Harnessy project state. */
+
+export type { CapabilityCheckReport } from "./capabilities/checker.ts";
+export {
+	CapabilityChecker,
+	CapabilityCheckKind,
+	CapabilityCheckResult,
+	CapabilityCheckStatus,
+} from "./capabilities/checker.ts";
+export {
+	CapabilityFingerprinter,
+	CapabilityFingerprintFile,
+	CapabilityFingerprintKind,
+	CapabilityFingerprintResult,
+} from "./capabilities/fingerprint.ts";
+export {
+	BlastRadius,
+	CAPABILITY_MANIFEST_NAME,
+	CapabilityAutoresearchMetadata,
+	CapabilityCheck,
+	CapabilityInvoke,
+	CapabilityInvokeMetadata,
+	CapabilityManifest,
+	CapabilityRelativePath,
+	CapabilityResource,
+	CapabilityResourceKind,
+	CapabilityStateDeclaration,
+	CapabilityTraceDeclaration,
+	DependencyKind,
+	DependencyRequirement,
+	FileContainsCheck,
+	PathExistsCheck,
+	parseCapabilityManifest,
+	ToolAvailableCheck,
+} from "./capabilities/manifest.ts";
+export {
+	CapabilityMaterializationResult,
+	CapabilityMaterializedResource,
+	CapabilityMaterializer,
+	CapabilitySkippedResource,
+} from "./capabilities/materializer.ts";
+export type {
+	AddCapabilityResult,
+	CapabilityActivationResult,
+	CreateCapabilityOptions,
+	CreateCapabilityResult,
+	ExportCapabilityOptions,
+	ExportCapabilityResult,
+	MaterializeCapabilitiesResult,
+} from "./capabilities/registry.ts";
+export { CapabilityRegistry } from "./capabilities/registry.ts";
+export {
+	CapabilityArtifactMetadata,
+	CapabilityEntry,
+	CapabilityFingerprintMetadata,
+	CapabilityLocalResolution,
+	CapabilityRemoteFetch,
+	CapabilityRemoteFetchType,
+	CapabilityResolutionPlan,
+	CapabilitySource,
+	CapabilitySourceType,
+	CapabilityUrlArtifactKind,
+	defaultCapabilityName,
+	localCapabilityPath,
+	makeCapabilityCacheSlug,
+	makeCapabilityId,
+	makeCapabilitySlug,
+	normalizeCapabilitySource,
+	parseAndPlanCapabilitySource,
+	parseCapabilitySource,
+	planCapabilityResolution,
+} from "./capabilities/source.ts";
+export * from "./community-briefing.ts";
+export {
+	ANYTYPE_DEFAULT_BASE_URL,
+	ANYTYPE_DEFAULT_TIMEOUT_MS,
+	ANYTYPE_DEFAULT_VERSION,
+	AnytypeConfig,
+	anytypeKnowledgeLayer,
+} from "./connectors/anytype.ts";
+export type { ConnectorReadError, DisabledMutation } from "./connectors/knowledge.ts";
+export {
+	ConnectorAuthError,
+	ConnectorAuthorizationError,
+	ConnectorDataError,
+	ConnectorMutationDisabledError,
+	ConnectorNotFoundError,
+	ConnectorRateLimitError,
+	ConnectorTransportError,
+	ConnectorUnsupportedCapabilityError,
+	ConnectorValidationError,
+	CreateCollectionRequest,
+	CreateJournalEntryRequest,
+	CreateTagRequest,
+	CreateTaskRequest,
+	DeleteJournalEntryRequest,
+	DeleteTaskRequest,
+	KnowledgeBackend,
+	KnowledgeCapabilities,
+	KnowledgeCapability,
+	KnowledgeCapabilityEvidence,
+	KnowledgeCapabilityReport,
+	KnowledgeCollection,
+	KnowledgeCollections,
+	KnowledgeFile,
+	KnowledgeFiles,
+	KnowledgeJournal,
+	KnowledgeJournalEntry,
+	KnowledgeObject,
+	KnowledgeObjectSummary,
+	KnowledgeObjects,
+	KnowledgeSpace,
+	KnowledgeSpaces,
+	KnowledgeTag,
+	KnowledgeTags,
+	KnowledgeTask,
+	KnowledgeTasks,
+	MutationAuditMetadata,
+	MutationIdempotencyMetadata,
+	MutationMetadata,
+	MutationPolicyMetadata,
+	UpdateJournalEntryRequest,
+	UpdateObjectRequest,
+	UpdateTaskRequest,
+	UploadFileRequest,
+} from "./connectors/knowledge.ts";
+export { isLoopbackUrl } from "./connectors/loopback.ts";
+export {
+	NOTION_API_VERSION,
+	NOTION_DEFAULT_BASE_URL,
+	NOTION_DEFAULT_TIMEOUT_MS,
+	NOTION_MAX_ATTEMPTS,
+	NOTION_MAX_PAGES,
+	NotionConfig,
+	notionKnowledgeLayer,
+} from "./connectors/notion.ts";
+export { HARNESSY_VERSION } from "./constants.ts";
+export { HarnessError } from "./errors.ts";
+export {
+	type CommunityBriefingQueueItem,
+	type CommunityBriefingStatus,
+	type CommunityBriefingStatusOptions,
+	inspectCommunityBriefingStatus,
+	listCommunityBriefings,
+} from "./jarvis/community-briefing/status.ts";
+export { JarvisConfigInspection, JarvisConfigReader, JarvisConfigStatus } from "./jarvis/config.ts";
+export {
+	JarvisAnalyticsConfig,
+	JarvisAnytypeConfig,
+	JarvisBackend,
+	JarvisContentConfig,
+	JarvisFathomAccountConfig,
+	JarvisFathomConfig,
+	JarvisLegacyConfig,
+	JarvisLegacyConfigOverride,
+	JarvisMeetingPublicationConfig,
+	JarvisMeetingPublicationReviewHost,
+	JarvisNotionConfig,
+	JarvisResolvedConfig,
+	JarvisWhatsAppAccountConfig,
+	JarvisWhatsAppConfig,
+	mergeJarvisLegacyConfig,
+	resolveJarvisConfig,
+} from "./jarvis/config-model.ts";
+export {
+	JARVIS_CONTEXT_FILES,
+	JarvisContextDocument,
+	JarvisContextDocumentSummary,
+	JarvisContextLoader,
+	JarvisContextLoadResult,
+	JarvisContextSource,
+} from "./jarvis/context.ts";
+export {
+	JarvisCredential,
+	JarvisCredentialError,
+	JarvisCredentialPresence,
+	JarvisCredentialResolver,
+	JarvisCredentialSource,
+	JarvisSetting,
+	JarvisSettingSource,
+} from "./jarvis/credentials.ts";
+export { JarvisDiagnostic, JarvisDiagnosticResult, JarvisMigrationStatus } from "./jarvis/diagnostic.ts";
+export { decodeJarvisEnvironment, JarvisEnvironment } from "./jarvis/environment.ts";
+export { FathomFileStore, fathomFileStoreStateFile } from "./jarvis/fathom/file-store.ts";
+export { runConfiguredFathomPoll } from "./jarvis/fathom/host.ts";
+export {
+	createFathomHttpProvider,
+	FATHOM_API_BASE_URL,
+	FATHOM_INGEST_MAX_LIMIT,
+	FATHOM_INGEST_MAX_RESPONSE_BYTES,
+	FathomProviderError,
+	ingestFathomPage,
+} from "./jarvis/fathom/ingest.ts";
+export { FATHOM_POLL_INTERVAL_SECONDS, runFathomPoll } from "./jarvis/fathom/poll.ts";
+export {
+	FATHOM_LAUNCH_AGENT_LABEL,
+	FATHOM_POLL_INTERVAL_SECONDS as FATHOM_SCHEDULE_INTERVAL_SECONDS,
+	installFathomSchedule,
+	planFathomSchedule,
+} from "./jarvis/fathom/schedule.ts";
+export {
+	type FathomStatus,
+	type FathomStatusOptions,
+	inspectFathomStatus,
+} from "./jarvis/fathom/status.ts";
+export type { CodexLifeDraftProviderOptions } from "./jarvis/life-orchestrator/codex-provider.ts";
+export { createCodexLifeDraftProvider } from "./jarvis/life-orchestrator/codex-provider.ts";
+export {
+	generateLifeDraft,
+	LifeDraftAuthority,
+	type LifeDraftBoundary,
+	type LifeDraftProvider,
+	LifeDraftReceipt,
+	LifeDraftRequest,
+} from "./jarvis/life-orchestrator/draft-provider.ts";
+export type { MeetingPublicationWriteGrant } from "./jarvis/meeting-publication/authority.ts";
+export {
+	MeetingPublicationWriteAuthority,
+	MeetingPublicationWriteAuthorityCode,
+	MeetingPublicationWriteAuthorityError,
+	MeetingPublicationWriteAuthorityState,
+	MeetingPublicationWriteBinding,
+	MeetingPublicationWriteOperation,
+	resolveMeetingPublicationWriteBinding,
+	validateMeetingPublicationWriteGrant,
+} from "./jarvis/meeting-publication/authority.ts";
+export {
+	inspectMeetingPublicationQueue,
+	MeetingPublicationAuthorityInspection,
+	MeetingPublicationInspector,
+	MeetingPublicationInspectorError,
+	type MeetingPublicationProviderHealthInspection,
+	type MeetingPublicationQueueInspection,
+	type MeetingPublicationQueueOptions,
+	type MeetingPublicationQueueSnapshot,
+	MeetingPublicationStateInspection,
+} from "./jarvis/meeting-publication/inspector.ts";
+export {
+	MeetingPublicationConfigError,
+	MeetingPublicationEvent,
+	MeetingPublicationExclusionCode,
+	MeetingPublicationFailureStage,
+	MeetingPublicationItem,
+	MeetingPublicationNote,
+	MeetingPublicationPreflightCheck,
+	MeetingPublicationPreflightResult,
+	MeetingPublicationProviderError,
+	MeetingPublicationReviewAddress,
+	MeetingPublicationReviewError,
+	MeetingPublicationScanResult,
+	MeetingPublicationSourceError,
+	MeetingPublicationStatus,
+	MeetingPublicationStoreError,
+	MeetingPublicationTransitionError,
+	MeetingPublicationWorkerResult,
+	transitionMeetingPublication,
+	transitionMeetingPublicationSync,
+} from "./jarvis/meeting-publication/models.ts";
+export { MeetingPublicationSource } from "./jarvis/meeting-publication/notes.ts";
+export {
+	MeetingPublicationReviewRandom,
+	MeetingPublicationReviewServer,
+	meetingPublicationReviewExchangePrefix,
+	meetingPublicationReviewIdentityDomain,
+	meetingPublicationReviewRendezvousFileName,
+} from "./jarvis/meeting-publication/review.ts";
+export type {
+	MeetingPublicationDiscordRequest,
+	MeetingPublicationGoogleRequest,
+} from "./jarvis/meeting-publication/service.ts";
+export {
+	MEETING_PUBLICATION_PURPOSE_MAX_LENGTH,
+	MeetingPublicationClock,
+	MeetingPublicationDiscord,
+	MeetingPublicationDiscordCheckpoint,
+	MeetingPublicationGoogle,
+	MeetingPublicationGoogleCheckpoint,
+	MeetingPublicationNotifier,
+	MeetingPublicationService,
+	meetingPublicationDefaultPurpose,
+	normalizeMeetingPublicationPurpose,
+} from "./jarvis/meeting-publication/service.ts";
+export {
+	MEETING_PUBLICATION_STORE_SCHEMA_COLUMNS,
+	MEETING_PUBLICATION_STORE_SCHEMA_VERSION,
+	MeetingPublicationStore,
+} from "./jarvis/meeting-publication/store.ts";
+export {
+	JarvisAdapterErrorOracle,
+	JarvisAdapterOracle,
+	JarvisCommandArgument,
+	JarvisCommandEntry,
+	JarvisCommandManifest,
+	JarvisCommandOption,
+	JarvisMalformedBehavior,
+	JarvisMissingBehavior,
+	JarvisParityCounts,
+	JarvisParityEntry,
+	JarvisParityManifest,
+	JarvisParityStatus,
+	JarvisParitySummary,
+	JarvisParitySurfaceSummary,
+	JarvisParityValidationError,
+	JarvisProtocolSurface,
+	JarvisRetryDelayOracle,
+	JarvisRetryExecutionOracle,
+	JarvisStateFixtureOracle,
+	JarvisStateFixtureValidation,
+	JarvisStateFormat,
+	JarvisStateManifest,
+	JarvisStateStoreManifest,
+	parseJarvisAdapterOracle,
+	parseJarvisCommandManifest,
+	parseJarvisParityManifest,
+	parseJarvisStateFixtureOracle,
+	parseJarvisStateManifest,
+	summarizeJarvisParity,
+	validateJarvisParity,
+} from "./jarvis/parity.ts";
+export { JarvisParityReport, JarvisParityReporter } from "./jarvis/parity-report.ts";
+export { JarvisPathResolver, JarvisPaths, JarvisRuntimeRoots } from "./jarvis/paths.ts";
+export {
+	JarvisStateIssue,
+	JarvisStateIssueCode,
+	JarvisStateOverallReadiness,
+	JarvisStateReader,
+	JarvisStateReadiness,
+	JarvisStateReadinessCounts,
+	JarvisStateReadLimits,
+	JarvisStateStoreResult,
+	JarvisStateStoreStatus,
+} from "./jarvis/state.ts";
+export {
+	backfillLifeReadingLedger,
+	canonicalizeReadingUrl,
+	GITCOIN_FUNDING_MECHANISMS_CURRICULUM,
+	generateNativeLifePreview,
+	inspectLifeStatus,
+	LifeOrchestratorError,
+	LifeReadingCandidate,
+	LifeReadingLedger,
+	type NativeLifePreviewOptions,
+	prepareLifeDailyPrompt,
+	readingIdentity,
+	readNativeLifeRequest,
+	readPrivateLifeInput,
+	replaceWorthReadingSection,
+	resolveLifeOrchestratorSettings,
+	runLifeDaily,
+	runLifeResearch,
+	runLifeWeekly,
+	saveNativeLifeReview,
+} from "./life-orchestrator.ts";
+export type {
+	DoctorResult,
+	InitResult,
+	InstallResult,
+	InstallStep,
+	NativeBootstrapOptions,
+	NativeBootstrapResult,
+	NativeInstallOptions,
+	NativeInstallResult,
+	VerifyResult,
+} from "./operations.ts";
+export { HarnessProject } from "./operations.ts";
+export type { HarnessPaths } from "./paths.ts";
+export { pathsForTarget, resolveTargetDir, resolveTargetPaths, toTargetRelative } from "./paths.ts";
+export * from "./read-model.ts";
+export type { HarnessRuntimeAssetSyncOptions } from "./runtime/assets.ts";
+export { HarnessRuntimeAssetAction, HarnessRuntimeAssetSyncResult, HarnessRuntimeAssets } from "./runtime/assets.ts";
+export type { HarnessBootstrapPrepareOptions, HarnessBootstrapPrepareResult } from "./runtime/bootstrap.ts";
+export {
+	HarnessBootstrap,
+	HarnessBootstrapAction,
+	HarnessBootstrapMode,
+} from "./runtime/bootstrap.ts";
+export type { DependencyReport } from "./runtime/dependency-checker.ts";
+export { DependencyChecker, DependencyCheckResult, DependencyStatus } from "./runtime/dependency-checker.ts";
+export { RuntimeEnvironment } from "./runtime/environment.ts";
+export type { GeneratedFileInstallResult, GeneratedFileStatus } from "./runtime/generated-files.ts";
+export { GeneratedFiles } from "./runtime/generated-files.ts";
+export type { InstallPathOverrides } from "./runtime/install-paths.ts";
+export { defaultInstallPaths, InstallPaths, resolveInstallPaths } from "./runtime/install-paths.ts";
+export {
+	emptyLockfile,
+	formatLockfile,
+	formatManifestJson,
+	HarnessLockfile,
+	parseLockfile,
+} from "./runtime/lockfile.ts";
+export { LockfileStore } from "./runtime/lockfile-store.ts";
+export type { ManagedBlockResult, ManagedBlocksResult } from "./runtime/managed-blocks.ts";
+export { ManagedBlocks } from "./runtime/managed-blocks.ts";
+export type { PackageScriptPatchOptions, PackageScriptPatchResult } from "./runtime/package-scripts.ts";
+export { HARNESSY_PACKAGE_SCRIPTS, harnessyPackageScriptsFor, PackageScripts } from "./runtime/package-scripts.ts";
+export { HarnessPathResolver } from "./runtime/path-resolver.ts";
+export { HarnessProfile, parseProfile } from "./runtime/profile.ts";
+export type { ProfileVerification } from "./runtime/profile-store.ts";
+export { ProfileStore } from "./runtime/profile-store.ts";
+export {
+	ExistingHarnessState,
+	MonorepoInfo,
+	MonorepoType,
+	PackageManager,
+	ProjectDetector,
+	ProjectInfo,
+	parseGitRemote,
+	parsePnpmWorkspaceGlobs,
+	WorkspaceInfo,
+	WorkspaceKind,
+} from "./runtime/project-detection.ts";
+export type {
+	StructuredCapability,
+	StructuredCapabilityAutoresearchMetadata,
+	StructuredCapabilityCheck,
+	StructuredCapabilityCheckReport,
+	StructuredCapabilityCheckResult,
+	StructuredCapabilityFingerprint,
+	StructuredCapabilityInspectOutput,
+	StructuredCapabilityInvoke,
+	StructuredCapabilityLocalResolution,
+	StructuredCapabilityManifest,
+	StructuredCapabilityMaterializationResult,
+	StructuredCapabilityMaterializedResource,
+	StructuredCapabilityMaterializeOutput,
+	StructuredCapabilityRemoteFetch,
+	StructuredCapabilityResolvedSource,
+	StructuredCapabilityResource,
+	StructuredCapabilitySkippedResource,
+	StructuredCapabilitySource,
+	StructuredCapabilityStateDeclaration,
+	StructuredCapabilityTraceDeclaration,
+	StructuredDependencyCheckResult,
+	StructuredDepsCheckOutput,
+	StructuredDoctorOutput,
+	StructuredExistingHarnessState,
+	StructuredHarnessPaths,
+	StructuredLockfileSummary,
+	StructuredManifestDependency,
+	StructuredMonorepoInfo,
+	StructuredProjectInfo,
+	StructuredVerifyOutput,
+	StructuredWorkspaceInfo,
+} from "./structured-output.ts";
+export {
+	capabilityInspectJsonOutput,
+	capabilityMaterializeJsonOutput,
+	depsCheckJsonOutput,
+	doctorJsonOutput,
+	renderCapabilityInspectJson,
+	renderCapabilityMaterializeJson,
+	renderDepsCheckJson,
+	renderDoctorJson,
+	renderVerifyJson,
+	verifyJsonOutput,
+} from "./structured-output.ts";
+export {
+	initializeWorkspace,
+	inspectWorkspace,
+	parseWorkspaceManifest,
+	type ResolvedWorkspace,
+	readWorkspace,
+	registerWorkspaceProject,
+	resolveWorkspace,
+	resolveWorkspacePath,
+	WORKSPACE_MANIFEST,
+	type WorkspaceIssue,
+	type WorkspaceManifest,
+	type WorkspaceProject,
+	workspaceAgentContext,
+} from "./workspace.ts";
+export {
+	executeWorkspaceRelocation,
+	planWorkspaceRelocation,
+	type RelocationBackup,
+	type RelocationMove,
+	type RelocationPlan,
+	relocationTreeDigest,
+} from "./workspace-relocation.ts";
+export {
+	applyWorkspaceStateMigration,
+	planWorkspaceStateMigration,
+	type WorkspaceStateKind,
+	type WorkspaceStateMigration,
+} from "./workspace-state-migration.ts";

@@ -1,99 +1,302 @@
-<p align="center">
-  <a href="https://pi.dev">
-    <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
-  </a>
-</p>
-<p align="center">
-  <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
-</p>
+# Harnessy
 
-> New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
+> **Canonical repository:** this V2 codebase is the source of truth for all new Harnessy runtime, CLI, capability, workflow, connector-contract, test, packaging, and release work. The original Harnessy repository is being frozen into a provenance-verified compatibility pack. See [ADR 0004](docs/adr/0004-harnessy-v2-is-canonical.md) and the [cutover plan](docs/migrations/v1-to-v2-canonical-cutover.md).
 
-# Pi Agent Harness
+The current work is an uncommitted local migration checkpoint, not evidence of
+a push, release, hosted CI result, or operational cutover. Start with the
+[context vault](.jarvis/context/README.md) for exact status, evidence levels,
+blockers, and continuation order.
 
-This is the home of the Pi agent harness project including our self extensible coding agent.
+**Harnessy gives an agent a portable context; a governed engine
+for everything it connects to.**
 
-* **[@earendil-works/pi-coding-agent](packages/coding-agent)**: Interactive coding agent CLI
-* **[@earendil-works/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
-* **[@earendil-works/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
+Capabilities, skills, memory, connectors, and checks live with the repo instead
+of inside one agent app. Every integration call goes through the Harnessy
+engine, which owns credentials, policies, approvals, and audit.
 
-To learn more about Pi:
+```text
+you ──> hsy        (agent)   ──┐
+you ──> harnessy   (CLI)     ──┼──> Harnessy engine ──> your integrations
+you ──> cockpit    (web UI)  ──┘    credentials · policies · approvals · audit
+other agents ──> MCP endpoint ─┘    (OAuth, API keys, OpenAPI, MCP servers)
+```
 
-* [Visit pi.dev](https://pi.dev), the project website with demos
-* [Read the documentation](https://pi.dev/docs/latest), but you can also ask the agent to explain itself
+| Surface | Command | What it is for |
+|---------|---------|----------------|
+| **Agent** | `hsy` | Talk to a model that already has the engine's tools built in |
+| **CLI** | `harnessy` | Setup, capabilities, verification, connectors, engine ops |
+| **Cockpit** | `harnessy web` | Connect integrations, approve runs, inspect audit |
+| **MCP** | `harnessy mcp install` | Give external agents (Claude Code, Cursor, ...) the same engine |
 
-## All Packages
+The full surface map lives in [`docs/product-surfaces.md`](docs/product-surfaces.md).
 
-| Package | Description |
-|---------|-------------|
-| **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@earendil-works/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@earendil-works/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@earendil-works/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+Garden consumes these reusable capabilities as a hosted product; reusable Harnessy implementation work lands here. Executor remains the integration boundary for credentials, policy, approvals, and audit.
 
-For Slack/chat automation and workflows see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
+---
 
-## Permissions & Containerization
+## Getting started
 
-Pi does not include a built-in permission system for restricting filesystem, process, network, or credential access. By default, it runs with the permissions of the user and process that launched it.
+### 1. Install
 
-If you need stronger boundaries, containerize or sandbox Pi. See [packages/coding-agent/docs/containerization.md](packages/coding-agent/docs/containerization.md) for three patterns:
+From source (not yet published to npm):
 
-- **Gondolin extension**: keep `pi` and provider auth on the host while routing built-in tools and `!` commands into a local Linux micro-VM.
-- **Plain Docker**: run the whole `pi` process in a local container for simple isolation.
-- **OpenShell**: run the whole `pi` process in a policy-controlled sandbox.
+```bash
+git clone https://github.com/Flow-Research/harnessy-v2.git
+cd harnessy-v2
 
-## Contributing
+npm install --ignore-scripts
+(cd executor && bun install --frozen-lockfile --ignore-scripts)
+npm run build
+npm --workspace @harnessy/core link
+```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](AGENTS.md) for project-specific rules (for both humans and agents).  Longer term plans for Pi can also be found in [RFCs](https://rfc.earendil.com/keyword/pi/).
+The source checkout needs Bun to build the vendored Executor cockpit into
+`executor/apps/local/dist`. Published npm installs require Node 22.22.2 (or
+24.15.0 and newer). The scoped `@harnessy/executor` package selects a platform
+binary compiled from the vendored source, including the Harnessy-branded cockpit.
+
+Verify both binaries landed:
+
+```bash
+harnessy --help
+hsy --help
+```
+
+### 2. Sign in to a model provider
+
+`hsy` is the agent shell — it needs a model. Claude Code users can reuse their
+existing Claude Pro/Max session through Harnessy's built-in bridge:
+
+```bash
+claude auth login
+hsy
+```
+
+Then use `/claude-auth` to verify the session and `/model` to select a model
+under `claude-bridge`. Harnessy delegates authentication to Claude Code; it
+does not copy OAuth tokens or require an Anthropic API key. Set
+`HARNESSY_CLAUDE_CODE_BIN` only when `claude` is not on `PATH`.
+
+Other providers can use an API key before launch:
+
+```bash
+export OPENAI_API_KEY=sk-...   # or GEMINI_API_KEY, OPENROUTER_API_KEY, ...
+hsy
+```
+
+or the host's subscription login flow:
+
+```text
+hsy
+/login    # pick a provider, follow the OAuth flow
+/model    # pick a model (Ctrl+L)
+```
+
+Harnessy auth and settings live in `~/.hsy/agent`; Claude Code continues to own
+its credentials in its own user configuration. Existing Pi state is never
+touched.
+
+### 3. Use the built-in engine
+
+Open `hsy` and ask for an outcome. Executor is built in and starts its stdio
+MCP entrypoint on the first connector request; it owns runtime selection,
+background daemon lifecycle, and state under `~/.executor`:
+
+```text
+hsy
+What integrations are connected?
+```
+
+No separate engine command is required. Run `harnessy web` only when you want
+the cockpit for browser handoffs, connection setup, approvals, or audit. It
+starts or attaches Executor, registers Harnessy's bundled knowledge-tool integration,
+and opens the authenticated URL. Use `--port`, `--data-dir`, or `--scope` when
+you need explicit cockpit settings.
+
+### 4. Connect your first integration
+
+Ask the agent directly, for example `Connect my Google Calendar`, or open the
+cockpit and add an integration from any of three sources:
+
+- **Preset registry** — thousands of ready-made API definitions; search, pick, done.
+- **OpenAPI spec** — paste or upload a spec for any HTTP API.
+- **MCP servers** — point the engine at an existing MCP server and its tools
+  join the catalog.
+
+Then create a **connection** for it: run the OAuth flow or paste an API key.
+The engine stores the credential and injects it at call time — it never passes
+through the model or your prompts.
+
+### 5. Use it from the agent
+
+Open `hsy` and just ask — the engine's tools are compiled into every session,
+nothing to register:
+
+```text
+What integrations are connected?
+Search my connected knowledge tool for the Q3 roadmap.
+```
+
+Under the hood the agent uses three built-in tools and two commands:
+
+| Tool | Purpose |
+|------|---------|
+| `harnessy_execute` | Run code against the connected tool catalog (through policy, credentials, audit) |
+| `harnessy_skills` | Fetch the engine's own how-to guide |
+| `harnessy_resume` | Approve, decline, or cancel a run paused for approval |
+| `/harnessy` | Executor reachability and usage |
+| `/web` | Start or attach the engine and open the authenticated cockpit |
+
+If Executor cannot start, the tools report the bundled launch failure without
+requiring the user to know or start a separate service.
+
+### 6. Wire the engine into other agents (optional)
+
+The same engine can serve Claude Code, Cursor, OpenCode, or anything that
+speaks MCP:
+
+```bash
+harnessy mcp install                  # register with the default agent
+harnessy mcp install --agent cursor   # or pick one; repeatable
+harnessy mcp install --print          # show the command instead of running it
+```
+
+This registers bundled `executor mcp` over stdio. Each agent starts or attaches
+the same Executor-owned daemon; there is no bearer token to copy.
+
+### 7. Connect a knowledge tool (optional)
+
+Choose a knowledge tool through an available integration. Provider setup and
+current workflow limits are in [Knowledge-tool support](docs/knowledge-tools.md).
+An engine integration does not automatically enable every Jarvis workflow.
+
+---
+
+## Set up a project
+
+Give a repo a portable context:
+
+```bash
+harnessy install --yes --target /path/to/project
+harnessy verify  --target /path/to/project
+```
+
+Preview before writing anything with `--dry-run`. Then add capabilities:
+
+```bash
+harnessy capability add ./packages/capability-harnessy-v1-full
+harnessy capability materialize
+harnessy capability list
+```
+
+Useful first prompts inside `hsy`:
+
+```text
+Install Harnessy in this repo and verify it.
+Inspect this repo's Harnessy capabilities and tell me what is missing.
+```
+
+After installing or changing extensions, run `/reload` inside `hsy`.
+
+### What Harnessy manages
+
+| Area | What it means |
+|------|---------------|
+| Capabilities | Portable packs of context, skills, scripts, connector metadata, dependencies, and checks |
+| Context | Project instructions under `.harnessy/context/` |
+| Memory | Scoped project facts and decisions under `.harnessy/memory/` |
+| Profiles | Load plans for context and memory files |
+| Skills | Project-local skills under `.harnessy/skills/` |
+| Connectors | Integration contracts for connected tools |
+| Verification | Checks for lockfiles, generated files, capability paths, and dependencies |
+
+### Project layout
+
+```text
+.
+├── AGENTS.md
+├── .harnessy/
+│   ├── harnessy.lock.json
+│   ├── context/AGENTS.md
+│   ├── profiles/default.json
+│   ├── memory/
+│   ├── capabilities/
+│   └── skills/
+└── scripts/harnessy/
+```
+
+---
+
+## Command reference
+
+```bash
+# Project setup
+harnessy init
+harnessy install --yes
+harnessy verify
+harnessy doctor
+
+# Capabilities
+harnessy capability add <source>
+harnessy capability list
+harnessy capability inspect <id>
+harnessy capability materialize
+harnessy deps check
+
+# Skills
+harnessy skill create <name>
+harnessy skill validate
+harnessy skill list
+harnessy skill metrics compute <name>
+
+# Engine
+harnessy web [--port] [--data-dir] [--scope]
+harnessy mcp install [--agent <a>] [--global] [--yes] [--print]
+
+```
+
+Most read commands support `--json`. `harnessy --help` lists everything.
+
+## Safety
+
+Harnessy is local-first and reviewable:
+
+- use `--dry-run` before writes
+- user-global writes require `--apply-global`
+- bootstrap external commands require `--apply-bootstrap --run-external`
+- connector calls default to local/loopback endpoints
+- integration credentials live in the engine and are injected at call time,
+  never exposed to the model
+- capability metadata is inspectable before use
+
+Use a sandbox or container for untrusted capabilities.
 
 ## Development
 
 ```bash
-npm install --ignore-scripts  # Install all dependencies without running lifecycle scripts
-npm run build        # Build all packages
-npm run check        # Lint, format, and type check
-./test.sh            # Run tests (skips LLM-dependent tests without API keys)
-./pi-test.sh         # Run pi from sources (can be run from any directory)
+npm install --ignore-scripts
+npm run build
+npm run check
 ```
 
-## Supply-chain hardening
+Try the product as a brand-new user — throwaway HOME, no personal config,
+out-of-the-box package set:
 
-We treat npm dependency changes as reviewed code changes.
+```bash
+npm run hsy:fresh
+```
 
-- Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
-- `.npmrc` sets `save-exact=true` and `min-release-age=2` to avoid same-day dependency releases during npm resolution.
-- `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
-- `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent shrinkwrap.
-- The published CLI package includes `packages/coding-agent/npm-shrinkwrap.json`, generated from the root lockfile, to pin transitive deps for npm users.
-- Release smoke tests use `npm run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
-- Local release installs, documented npm installs, and `pi update --self` use `--ignore-scripts` where supported.
-- CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
-- Shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
-
-## Share your OSS coding agent sessions
-
-If you use Pi or other coding agents for open source work, please share your sessions.
-
-Public OSS session data helps improve coding agents with real-world tasks, tool use, failures, and fixes instead of toy benchmarks.
-
-For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
-
-To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). Read its README.md for setup instructions. All you need is a Hugging Face account, the Hugging Face CLI, and `pi-share-hf`.
-
-You can also watch [this video](https://x.com/badlogicgames/status/2041151967695634619), where I show how I publish my `pi-mono` sessions.
-
-I regularly publish my own `pi-mono` work sessions here:
-
-- [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
+| File | Purpose |
+|------|---------|
+| [`docs/product-surfaces.md`](docs/product-surfaces.md) | Full surface map: agent tools, CLI, cockpit, MCP, SDK |
+| [`docs/portal-design-system.md`](docs/portal-design-system.md) | App design system: tokens, buttons, fields, overlays, accessibility and the component showcase |
+| `PORT_MAP.md` | v1 to v2 migration map |
+| `HARNESSY_V1_FEATURES.md` | Preserved v1 feature inventory |
+| `AGENTS.md` | Repo instructions for agent sessions |
 
 ## License
 
-MIT
-
-<p align="center">
-  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
-  <br /><br />
-  <a href="https://exe.dev"><img src="packages/coding-agent/docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
-</p>
+The root [LICENSE](LICENSE) is the inherited Pi MIT notice, and the vendored
+Executor runtime retains its MIT notice. Publication of Harnessy-authored
+packages is blocked until their project license is approved and a matching
+package-level `LICENSE` is included in every tarball.

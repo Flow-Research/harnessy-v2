@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed harness split-turn compaction to serialize summary requests so single-concurrency providers are not asked to run overlapping generations ([#5536](https://github.com/earendil-works/pi/issues/5536)).
+- Fixed harness session storage short entry ids to use the random tail of the generated uuidv7 instead of the timestamp prefix, which was nearly constant between calls ([#6242](https://github.com/earendil-works/pi/issues/6242)).
+
+## [0.80.3] - 2026-06-30
+
+### Added
+
+- Added `prepareNextTurnWithContext` for `Agent` users that need the next-turn loop context.
+
+### Fixed
+
+- Fixed oversized harness shell execution timeouts to fail with a clear validation error instead of being clamped to an immediate timeout ([#6181](https://github.com/earendil-works/pi/issues/6181)).
+- Fixed `Agent.prepareNextTurn` to keep receiving the run abort signal instead of the next-turn context.
+
+## [0.80.2] - 2026-06-23
+
+### Changed
+
+- Renamed the public harness shell execution options type from `ExecutionEnvExecOptions` to `ShellExecOptions`.
+
+## [0.80.1] - 2026-06-23
+
+## [0.80.0] - 2026-06-23
+
+### Breaking Changes
+
+- `AgentHarnessOptions.models` is required and is the only auth path: the harness streams turns, compaction, and branch summarization through the provided `Models` instance (`models.streamSimple()`/`completeSimple()`), resolving auth through the providers. `AgentHarnessOptions.getApiKeyAndHeaders` is removed — apps that resolved keys per request now express that as provider auth (`ApiKeyAuth`/`OAuthAuth`) on the providers in the `Models` collection. Build one with `createModels()` + provider factories (or `builtinModels()` from `@earendil-works/pi-ai/providers/all`); tests use `fauxProvider()`.
+- `compact()`, `generateSummary()`, and `generateBranchSummary()` take a `Models` parameter and no longer accept explicit `apiKey`/`headers`.
+- `StreamFn` is defined structurally (`(model, context, options?) => AssistantMessageEventStream | Promise<...>`); `Models.streamSimple` satisfies it.
+- Removed the `@earendil-works/pi-agent-core/base` selective-provider entrypoint; use the root package with an explicit `Models` instance instead.
+
+### Fixed
+
+- Fixed harness session names to normalize newline characters before storing labels ([#5999](https://github.com/earendil-works/pi/pull/5999) by [@haoqixu](https://github.com/haoqixu)).
+- Fixed harness compaction estimates to ignore malformed all-zero assistant usage after truncated responses ([#5526](https://github.com/earendil-works/pi/pull/5526) by [@dmmulroy](https://github.com/dmmulroy)).
+
+## [0.79.10] - 2026-06-22
+
 ## [0.79.9] - 2026-06-20
 
 ### Fixed

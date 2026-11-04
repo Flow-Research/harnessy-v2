@@ -4,7 +4,14 @@
 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
-import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
+import {
+	APP_DESCRIPTION,
+	APP_HELP_EPILOGUE,
+	APP_NAME,
+	CONFIG_DIR_NAME,
+	ENV_AGENT_DIR,
+	ENV_SESSION_DIR,
+} from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 
 export type Mode = "text" | "json" | "rpc";
@@ -212,7 +219,7 @@ export function parseArgs(args: string[]): Args {
 export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 	const extensionFlagsText =
 		extensionFlags && extensionFlags.length > 0
-			? `\n${chalk.bold("Extension CLI Flags:")}\n${extensionFlags
+			? `\n${chalk.bold("Additional CLI Flags:")}\n${extensionFlags
 					.map((flag) => {
 						const value = flag.type === "string" ? " <value>" : "";
 						const description = flag.description ?? `Registered by ${flag.extensionPath}`;
@@ -220,7 +227,7 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 					})
 					.join("\n")}\n`
 			: "";
-	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
+	console.log(`${chalk.bold(APP_NAME)} - ${APP_DESCRIPTION}
 
 ${chalk.bold("Usage:")}
   ${APP_NAME} [options] [@files...] [messages...]
@@ -229,10 +236,10 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} install <source> [-l]     Install extension source and add to settings
   ${APP_NAME} remove <source> [-l]      Remove extension source from settings
   ${APP_NAME} uninstall <source> [-l]   Alias for remove
-  ${APP_NAME} update [source|self|pi]   Update pi (use --all for pi and extensions)
+  ${APP_NAME} update [source|self]      Update ${APP_NAME} (use --all for ${APP_NAME} and extensions)
   ${APP_NAME} list                      List installed extensions from settings
-  ${APP_NAME} config                    Open TUI to enable/disable package resources
-  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list
+  ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
+  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)
@@ -277,7 +284,7 @@ ${chalk.bold("Options:")}
   --help, -h                     Show this help
   --version, -v                  Show version number
 
-Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
+Built-ins and extensions can register additional flags.${extensionFlagsText}
 
 ${chalk.bold("Examples:")}
   # Interactive mode
@@ -322,6 +329,9 @@ ${chalk.bold("Examples:")}
   # Start with a specific thinking level
   ${APP_NAME} --thinking high "Solve this complex problem"
 
+  # Start in built-in plan mode
+  ${APP_NAME} --plan "Plan the authentication refactor"
+
   # Read-only mode (no file modifications possible)
   ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
 
@@ -352,7 +362,7 @@ ${chalk.bold("Environment Variables:")}
   TOGETHER_API_KEY                 - Together AI API key
   OPENROUTER_API_KEY               - OpenRouter API key
   AI_GATEWAY_API_KEY               - Vercel AI Gateway API key
-  ZAI_API_KEY                      - ZAI API key
+  ZAI_API_KEY                      - ZAI Coding Plan API key (Global)
   ZAI_CODING_CN_API_KEY            - ZAI Coding Plan API key (China)
   MISTRAL_API_KEY                  - Mistral API key
   MINIMAX_API_KEY                  - MiniMax API key
@@ -386,5 +396,5 @@ ${chalk.bold("Built-in Tool Names:")}
   grep   - Search file contents (read-only, off by default)
   find   - Find files by glob pattern (read-only, off by default)
   ls     - List directory contents (read-only, off by default)
-`);
+${APP_HELP_EPILOGUE ? `\n${APP_HELP_EPILOGUE}\n` : ""}`);
 }

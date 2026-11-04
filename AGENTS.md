@@ -11,6 +11,12 @@
 
 ## Code Quality
 
+- Knowledge workflows must follow [the knowledge-tool architecture contract](docs/knowledge-tools.md).
+  Keep general product descriptions and command help provider neutral. Put exact
+  provider setup and support limits in the knowledge-tool reference. New workflows
+  must use the selected adapter and reject unsupported capabilities before writes.
+  Do not claim support for a tool from neutral wording or an adapter stub.
+
 - Read files in full before wide-ranging changes, before editing files you have not fully inspected, and when asked to investigate or audit. Do not rely on search snippets for broad changes.
 - No `any` unless absolutely necessary.
 - Inline single-line helpers that have only one call site.
@@ -23,12 +29,28 @@
 - Never hardcode key checks (e.g. `matchesKey(keyData, "ctrl+x")`). Add defaults to `DEFAULT_EDITOR_KEYBINDINGS` or `DEFAULT_APP_KEYBINDINGS` so they stay configurable.
 - Never modify `packages/ai/src/models.generated.ts` directly; update `packages/ai/scripts/generate-models.ts` instead, then regenerate. Including the resulting `models.generated.ts` diff is always OK, even if regeneration includes unrelated upstream model metadata changes.
 
+## Effect Best Practices
+
+<!-- effect-solutions:start -->
+**IMPORTANT:** Always consult effect-solutions before writing Effect code.
+
+1. Run `effect-solutions list` to see available guides
+2. Run `effect-solutions show <topic>...` for relevant patterns (supports multiple topics)
+3. Search `open-src/effect-smol` for real implementations
+
+Topics: quick-start, project-setup, tsconfig, basics, services-and-layers, data-modeling, error-handling, config, testing, cli.
+
+Never guess at Effect patterns - check the guide first.
+<!-- effect-solutions:end -->
+
 ## Commands
 
 - After code changes (not docs): `npm run check` (full output, no tail). Fix all errors, warnings, and infos before committing. Does not run tests.
 - Never run `npm run build` or `npm test` unless requested by the user.
 - Never run the full vitest suite directly: it includes e2e tests that activate when endpoint/auth env vars are present. For all non-e2e tests, run `./test.sh` from the repo root. Otherwise run specific tests from the package root: `node ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`.
+- `npm run test:coverage` needs `HARNESSY_TEST_JARVIS_PYTHON` set to the Python of an isolated Jarvis install, built as CI's "Prepare isolated installed Jarvis test runtime" step does (`uv sync --frozen --no-dev --no-editable` of a copy of `packages/capability-harnessy-v1-full/resources/source/jarvis-cli`). Without it, the community and Jarvis consumer tests fail.
 - If you create or modify a test file, run it and iterate on test or implementation until it passes.
+- For browser workflow fixes, reproduce the failure with the real browser action before changing the implementation. Test the complete local journey and its resulting state. Rendering a page or finding a button does not verify form submission, redirects, cookies, or authentication. Do not inject headers that the browser must supply. Use isolated state and simulated external providers by default. Add the regression to CI, and report source tests, installed checks, and real-provider verification separately.
 - For `packages/coding-agent/test/suite/`, use `test/suite/harness.ts` + the faux provider. No real provider APIs, keys, or paid tokens.
 - Put issue-specific regressions under `packages/coding-agent/test/suite/regressions/` named `<issue-number>-<short-slug>.test.ts`.
 - For ad-hoc scripts, `write` them to a temp file (e.g. `/tmp`), run, edit if needed, remove when done. Don't embed multi-line scripts in `bash` commands.
@@ -119,43 +141,29 @@ Attribution:
 
 ## Releasing
 
-**Lockstep versioning**: all packages share one version; every release updates all together. `patch` = fixes + additions, `minor` = breaking changes. No major releases.
+Harnessy-authored packages use one `0.x` release cohort. Inherited Pi packages
+retain their upstream-compatible version cohort. Do not use `npm version -ws` or
+the legacy `sync-versions.js` path for a Harnessy release.
 
-1. **Update CHANGELOGs**: ask the user whether they ran the `/cl` prompt on the latest commit on `main`. If not, they must run `/cl` first to audit and update each package's `[Unreleased]` section before releasing.
-
-2. **Local smoke test**: build an unpublished release and smoke test from outside the repo (so it can't resolve workspace files):
-   ```bash
-   npm run release:local -- --out /tmp/pi-local-release --force
-   cd /tmp
-
-   # Node package install smoke tests
-   /tmp/pi-local-release/node/pi --help
-   /tmp/pi-local-release/node/pi --version
-   /tmp/pi-local-release/node/pi --list-models
-   /tmp/pi-local-release/node/pi -p "Say exactly: ok"
-   /tmp/pi-local-release/node/pi
-
-   # Bun binary smoke tests
-   /tmp/pi-local-release/bun/pi --help
-   /tmp/pi-local-release/bun/pi --version
-   /tmp/pi-local-release/bun/pi --list-models
-   /tmp/pi-local-release/bun/pi -p "Say exactly: ok"
-   /tmp/pi-local-release/bun/pi
-   ```
-   Verify both Node and Bun startup, model/account listing, interactive startup, and at least one real prompt with the intended default provider. The bare commands `/tmp/pi-local-release/node/pi` and `/tmp/pi-local-release/bun/pi` start interactive mode; run each in tmux, submit a prompt, and wait for the model reply before considering the interactive smoke test passed. Failures are release blockers unless the user explicitly accepts the risk.
-
-3. **Run the release script**:
-   ```bash
-   PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:patch    # fixes + additions
-   PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:minor    # breaking changes
-   ```
-   Use `npm_config_min_release_age=0` only for the release command. The repo's normal npm age gate can otherwise block the release lockfile refresh when the current workspace package version was published recently. Review any lockfile or shrinkwrap diffs the release creates before push.
-
-   The release script bumps all package versions, updates changelogs, regenerates release artifacts, runs `npm run check`, commits `Release vX.Y.Z`, tags `vX.Y.Z`, adds fresh `## [Unreleased]` changelog sections, commits `Add [Unreleased] section for next cycle`, then pushes `main` and the tag. Do not rerun the release script after a tag was pushed.
-
-4. **CI publishes npm packages**: pushing the `vX.Y.Z` tag triggers `.github/workflows/build-binaries.yml`. The `publish-npm` job uses npm trusted publishing through GitHub Actions OIDC with environment `npm-publish`; no local `npm publish`, `npm whoami`, OTP, or WebAuthn flow is required.
-
-5. **If CI publish fails**: inspect the failed `publish-npm` job. The publish helper is idempotent and skips package versions already present on npm, so rerun the tag workflow after fixing CI or transient npm issues. Do not rerun `npm run release:patch` or `npm run release:minor` for the same version.
+1. Resolve every blocker reported by `node scripts/publish.mjs --dry-run`. In
+   particular, do not publish until the Harnessy license is approved and every
+   public Harnessy tarball includes its matching `LICENSE`.
+2. Run `npm run release:local -- --out <absolute-temp-path> --force` and verify
+   the isolated `harnessy`, `hsy`, capability, and packaged cockpit surfaces.
+3. From a clean worktree, run `npm run release:patch` (or `release:minor`). The
+   command advances the requested Harnessy cohort and the inherited Pi patch
+   cohort, refreshes both Pi lock artifacts, and runs the root, security,
+   compatibility, Engine, Executor, packed-artifact, and publication-contract
+   gates. It intentionally does not commit, tag, push, or publish.
+4. Review the complete version and lockfile diff, then commit through the normal
+   protected-branch review process. Create `vX.Y.Z` only from the reviewed
+   canonical branch.
+5. The tag workflow repeats the release-critical gates, compiles all eight
+   scoped Executor platform packages, and publishes through npm trusted
+   publishing. Executor variants are published before the wrapper; the
+   Harnessy packages follow their dependency order.
+6. If publication fails, inspect the failed `publish-npm` job. Never rerun the
+   version-preparation command for an already-created version.
 
 ## User Override
 

@@ -1,0 +1,25 @@
+{
+	"name": "@harnessy/capability-org-knowledge",
+	"version": "0.0.3",
+	"description": "Harnessy org knowledge capability pack metadata, context, prompts, templates, and check docs.",
+	"type": "module",
+	"license": "AGPL-3.0-only",
+	"files": [
+		"LICENSE",
+		"harnessy.capability.json",
+		"README.md",
+		"context",
+		"prompts",
+		"templates",
+		"checks"
+	],
+	"keywords": [
+		"harnessy",
+		"capability",
+		"meetings",
+		"org-knowledge",
+		"briefs"
+	],
+	"dependencies": {},
+	"devDependencies": {}
+}

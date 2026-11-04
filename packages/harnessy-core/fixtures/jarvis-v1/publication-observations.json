@@ -1,0 +1,283 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "scripts/export-jarvis-publication-oracle.py",
+  "execution": "isolated-installed-python-local-sqlite-and-http-doubles",
+  "sources": [
+    {
+      "path": "meetings/publication/__init__.py",
+      "sha256": "65f6555de64a43aab918fb2820075a1967589a113bf64d6c844d90588ecf0b08"
+    },
+    {
+      "path": "meetings/publication/cli.py",
+      "sha256": "5a0fd196b4140140614f912358cd444f3e54e4aedbf2fb2d66bc950d5dcc0c31"
+    },
+    {
+      "path": "meetings/publication/discord.py",
+      "sha256": "c5c91c37c8a87f685a9da1829d58654674c354425f6645b6ce568ab474590a27"
+    },
+    {
+      "path": "meetings/publication/errors.py",
+      "sha256": "3558e4afd33887055a4e6901cab34f3c07e0d84a408ca24546f17959759942dd"
+    },
+    {
+      "path": "meetings/publication/google.py",
+      "sha256": "d46577a43414573b065058a791c0228460edd90dcee8e9d79af85b4a2d63ef70"
+    },
+    {
+      "path": "meetings/publication/launchd.py",
+      "sha256": "e060c6ab67214d2685c3c47b560b20180f396dec1bab6173f6505eb5067eb4cc"
+    },
+    {
+      "path": "meetings/publication/markdown.py",
+      "sha256": "121482bceac9ac987e2c2fa84ae53f330e075b75094c47c977a87a43e1a9b9c6"
+    },
+    {
+      "path": "meetings/publication/models.py",
+      "sha256": "0237b2235c22e7e00c66d016122381518eb8b388dff941528b0c15aab9f89e42"
+    },
+    {
+      "path": "meetings/publication/notes.py",
+      "sha256": "3703fe92a31c46ecaf00538ec4f664336c63b6261f2c3680907009050f08cbbd"
+    },
+    {
+      "path": "meetings/publication/notify.py",
+      "sha256": "4abab4714f368f90bd3068c02162024977a2021562c6366a2016643b180bc1ae"
+    },
+    {
+      "path": "meetings/publication/review.py",
+      "sha256": "f75bedc2cff58ae441ab82c22b02357a627e3bccab47aba6575c88a8adb48ed0"
+    },
+    {
+      "path": "meetings/publication/service.py",
+      "sha256": "aacf52291d00576357b9e8414ea06b3f5d43496e294d870322fbda15297f4b86"
+    },
+    {
+      "path": "meetings/publication/store.py",
+      "sha256": "95cfa2b1cce34a75e3be9cde515862d58882f68c694765f28738d32be4030b1f"
+    }
+  ],
+  "observations": {
+    "expiredLease": {
+      "status": "publishing",
+      "attemptsDelta": 0,
+      "existingGoogleDocId": "doc-1",
+      "claimed": false
+    },
+    "publishingScan": {
+      "status": "publishing",
+      "sourceHashRetained": true
+    },
+    "publishingDecisions": {
+      "approve": "rejected",
+      "reject": "rejected"
+    },
+    "uncertainDelivery": {
+      "status": "publishing",
+      "retryScheduled": false,
+      "existingGoogleDocId": "doc-1"
+    },
+    "explicitRetry": {
+      "status": "approved",
+      "retryScheduled": true,
+      "existingGoogleDocId": "doc-1"
+    },
+    "terminalFailure": {
+      "status": "blocked",
+      "retryScheduled": false
+    },
+    "providerRequests": [
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": "lost-response",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": "invalid-json",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": 503,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": "lost-response",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": "invalid-json",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": 503,
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": "lost-response",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": "invalid-json",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": 503,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": "lost-response",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": "invalid-json",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": 503,
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      }
+    ]
+  }
+}

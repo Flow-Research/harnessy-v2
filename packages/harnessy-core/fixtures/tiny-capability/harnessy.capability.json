@@ -1,0 +1,45 @@
+{
+	"id": "local:tiny-capability",
+	"name": "Tiny Capability",
+	"version": "0.1.0",
+	"description": "Minimal local capability fixture used by Harnessy core tests and examples.",
+	"context": ["context/AGENTS.md"],
+	"resources": [
+		{
+			"kind": "context",
+			"path": "context/AGENTS.md",
+			"description": "Starter agent guidance contributed by the tiny fixture."
+		},
+		{
+			"kind": "skill",
+			"path": "skills/tiny-skill",
+			"target": "skills/tiny-skill",
+			"description": "Tiny skill directory used to exercise native resource declarations."
+		}
+	],
+	"checks": [
+		{
+			"id": "tiny-context-contains-title",
+			"kind": "file-contains",
+			"path": "context/AGENTS.md",
+			"contains": "Tiny Capability",
+			"required": true,
+			"description": "Ensure the fixture context file is present and recognizable."
+		}
+	],
+	"blastRadius": "low",
+	"permissions": ["context:read"],
+	"dataCategories": ["project_context"],
+	"egress": [],
+	"dependencies": [
+		{
+			"kind": "tool",
+			"name": "tiny-tool",
+			"command": "tiny-tool",
+			"required": true,
+			"install": {
+				"fallback": "Install tiny-tool for fixture tests."
+			}
+		}
+	]
+}

@@ -1,0 +1,13 @@
+{
+  "entry_id": "entry_001",
+  "deep_dives": [
+    {
+      "id": "dd_001",
+      "entry_id": "entry_001",
+      "user_request": "explore feelings",
+      "ai_response": "Representative response",
+      "format_type": "emotional",
+      "created_at": "2026-01-24T15:00:00"
+    }
+  ]
+}

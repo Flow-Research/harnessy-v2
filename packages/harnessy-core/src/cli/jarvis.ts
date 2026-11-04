@@ -1,0 +1,1209 @@
+import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+
+import { Console, Redacted } from "effect";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import { Command, Flag as Options } from "effect/unstable/cli";
+import { DEFAULT_CODEX_MODEL } from "../ai/codex-model.ts";
+import {
+	COMMUNITY_REVIEW_PORT,
+	installCommunityReviewSchedule,
+	PUBLICATION_LAUNCH_AGENT_LABEL,
+	planCommunityReviewSchedule,
+} from "../jarvis/community-briefing/schedule.ts";
+import {
+	inspectCommunityBriefingStatus,
+	listCommunityBriefings,
+	preflightCommunityBriefingOffline,
+	resolveCommunityBriefingConfig,
+} from "../jarvis/community-briefing/status.ts";
+import {
+	COMMUNITY_GENERATION_STATUS_FILE,
+	isCommunityGenerationSchedulerRunning,
+	parseCommunityGenerationSchedule,
+	readCommunityGenerationStatus,
+	repairCommunityGenerationStatus,
+	requestCommunityGenerationRetry,
+	summarizeCommunityGenerationStatus,
+} from "../jarvis/community-briefing/weekly-generation.ts";
+import { JarvisConfigReader } from "../jarvis/config.ts";
+import { JarvisCredentialResolver } from "../jarvis/credentials.ts";
+import { JarvisDiagnostic } from "../jarvis/diagnostic.ts";
+import { runConfiguredFathomPoll } from "../jarvis/fathom/host.ts";
+import { installFathomSchedule, planFathomSchedule } from "../jarvis/fathom/schedule.ts";
+import { inspectFathomStatus, listFathomInbox, planFathomImport } from "../jarvis/fathom/status.ts";
+import { resolveLifeOrchestratorSettings } from "../jarvis/life-orchestrator/config.ts";
+import { installLifeSchedule, planLifeSchedule } from "../jarvis/life-orchestrator/schedule.ts";
+import {
+	backfillLifeReadingLedger,
+	inspectLifeStatus,
+	prepareLifeDailyPrompt,
+	prepareLifeWeeklyPrompt,
+	reconcileLifeWeekly,
+	runLifeDaily,
+	runLifeResearch,
+	runLifeWeekly,
+} from "../jarvis/life-orchestrator/service.ts";
+import { JarvisParityReporter } from "../jarvis/parity-report.ts";
+import { JarvisPathResolver } from "../jarvis/paths.ts";
+import { jarvisCalendarCommand } from "./calendar.ts";
+import { communityDraftCommand, communityReviewServeCommand } from "./community-draft.ts";
+import { jsonOption, targetOption } from "./shared.ts";
+import { runWikiHost, wikiCommand } from "./wiki.ts";
+
+const homeRootOption = Options.string("home-root").pipe(
+	Options.optional,
+	Options.withDescription("Override the home-like root containing Life state. Primarily for migration tests."),
+);
+const compatibilityRootOption = Options.string("compatibility-root").pipe(
+	Options.optional,
+	Options.withDescription("Pinned directory containing the frozen Life compatibility scripts."),
+);
+const dateOption = Options.string("date").pipe(
+	Options.optional,
+	Options.withDescription("Research date override in YYYY-MM-DD format."),
+);
+const previewOption = Options.boolean("preview").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Generate and validate a local Life preview without publishing it."),
+);
+const prepareNativePromptOption = Options.boolean("prepare-native-prompt").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Prepare an exact private Life prompt for owner signing; does not call an AI provider."),
+);
+const draftModelOption = Options.string("draft-model").pipe(
+	Options.withDefault(DEFAULT_CODEX_MODEL),
+	Options.withDescription("Explicit Codex model for a prepared native Life draft."),
+);
+const nativeRequestOption = Options.string("native-request").pipe(
+	Options.optional,
+	Options.withDescription("Owner-only Life request JSON produced by --prepare-native-prompt and bound by the grant."),
+);
+const nativeGrantOption = Options.string("native-grant").pipe(
+	Options.optional,
+	Options.withDescription("Owner-only signed Life grant JSON matching the native request."),
+);
+const nativeTrustOption = Options.string("native-trust").pipe(
+	Options.optional,
+	Options.withDescription("Owner-only trusted Ed25519 public-key PEM for the native Life issuer."),
+);
+const forceDailyOption = Options.boolean("force").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Regenerate today's brief and update its existing journal entry through V2."),
+);
+const dailyMaximumOutputBytesOption = Options.integer("max-output-bytes").pipe(
+	Options.withDefault(1048576),
+	Options.withDescription("Maximum accepted generated daily brief, 1–1048576 UTF-8 bytes."),
+);
+const noAgentFallbackOption = Options.boolean("no-agent-fallback").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Run only deterministic RSS and Crossref discovery."),
+);
+const cliEntryOption = Options.string("cli-entry").pipe(
+	Options.withDescription("Absolute path to the built V2 dist/cli.js entrypoint."),
+);
+const nodePathOption = Options.string("node-path").pipe(
+	Options.withDefault(process.execPath),
+	Options.withDescription("Absolute Node.js executable path to pin in LaunchAgents."),
+);
+const launchAgentsDirectoryOption = Options.string("launch-agents-directory").pipe(
+	Options.optional,
+	Options.withDescription("LaunchAgents directory override. Defaults to ~/Library/LaunchAgents."),
+);
+const applyScheduleOption = Options.boolean("apply").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Backup and atomically replace only the three Life LaunchAgent plists."),
+);
+
+const communityConfigOption = Options.string("config").pipe(
+	Options.optional,
+	Options.withDescription("Jarvis configuration file to inspect without mutation."),
+);
+const communityStateRootOption = Options.string("state-root").pipe(
+	Options.optional,
+	Options.withDescription("Briefing state directory override for read-only inspection."),
+);
+const fathomSourceRootOption = Options.string("source-root").pipe(
+	Options.optional,
+	Options.withDescription(
+		"Project-private root containing meeting-inbox/fathom when community_briefing.source_path is unset.",
+	),
+);
+const communityLimitOption = Options.integer("limit").pipe(
+	Options.withDefault(20),
+	Options.withDescription("Maximum queue entries to list (1-100)."),
+);
+const fathomAccountOption = Options.string("account").pipe(
+	Options.atLeast(0),
+	Options.withDescription("Fathom account label to poll (repeatable; defaults to the approved V2 scope)."),
+);
+const lifeSettings = (target: string, homeRoot: Option.Option<string>, compatibilityRoot: Option.Option<string>) =>
+	resolveLifeOrchestratorSettings({
+		projectRoot: resolve(target),
+		homeRoot: Option.getOrUndefined(homeRoot),
+		compatibilityRoot: Option.getOrUndefined(compatibilityRoot),
+	});
+
+export const parseResearchDate = (value: string): Date => {
+	const calendarDate = new Date(`${value}T00:00:00.000Z`);
+	const parsed = new Date(`${value}T12:00:00+01:00`);
+	if (
+		!/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+		!Number.isFinite(calendarDate.getTime()) ||
+		calendarDate.toISOString().slice(0, 10) !== value ||
+		!Number.isFinite(parsed.getTime())
+	)
+		throw new Error(`Invalid date: ${value}`);
+	return parsed;
+};
+
+const researchDate = (date: Option.Option<string>): Date | undefined => {
+	const value = Option.getOrUndefined(date);
+	return value === undefined ? undefined : parseResearchDate(value);
+};
+
+const lifeOptions = {
+	target: targetOption,
+	homeRoot: homeRootOption,
+	compatibilityRoot: compatibilityRootOption,
+	json: jsonOption,
+};
+
+export const jarvisLifeStatusCommand = Command.make(
+	"status",
+	lifeOptions,
+	({ target, homeRoot, compatibilityRoot, json }) =>
+		Effect.gen(function* () {
+			const result = yield* inspectLifeStatus(lifeSettings(target, homeRoot, compatibilityRoot));
+			if (json)
+				return yield* Console.log(JSON.stringify({ command: "jarvis life status", ok: true, ...result }, null, 2));
+			yield* Console.log(
+				`Life Orchestrator V2: ${result.compatibilityReady && result.steeringReady ? "ready" : "not ready"}`,
+			);
+			yield* Console.log(
+				`Reading queue: ${result.counts.available} unseen | ${result.counts.delivered} delivered | ${result.counts.reserved} reserved`,
+			);
+			yield* Console.log(`Historical briefs: ${result.canonicalBriefs} (${result.historicalLinks} reading links)`);
+			// Same rule as the reservation fence: every run that is not reconciled blocks its period.
+			const blocking = result.weeklyRuns.filter((run) => run.state !== "reconciled");
+			yield* Console.log(
+				`Weekly runs: ${result.weeklyRuns.length} reserved | ${blocking.length} block their period until reconciled`,
+			);
+			for (const run of blocking)
+				yield* Console.log(
+					`  ${run.periodId} ${run.state} ${run.runHash}${
+						run.state === "drafted" ? " (reviewed draft exists; reconcile as superseded to draft again)" : ""
+					}${run.incompleteReconciliation ? " (incomplete reconciliation.json ignored)" : ""}`,
+				);
+			yield* Console.log(`State: ${result.databasePath}`);
+		}),
+).pipe(Command.withDescription("Inspect the V2 Life scheduler and permanent reading ledger"));
+
+export const jarvisLifeBackfillCommand = Command.make(
+	"backfill",
+	lifeOptions,
+	({ target, homeRoot, compatibilityRoot, json }) =>
+		Effect.gen(function* () {
+			const result = yield* backfillLifeReadingLedger(lifeSettings(target, homeRoot, compatibilityRoot));
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis life backfill", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(
+				`Backfilled ${result.deliveredInserted} new permanent deliveries from ${result.briefsScanned} briefs (${result.linksFound} links scanned).`,
+			);
+		}),
+).pipe(Command.withDescription("Backfill delivered Worth Reading links from canonical historical briefs"));
+
+export const jarvisLifeResearchCommand = Command.make(
+	"research",
+	{ ...lifeOptions, date: dateOption, noAgentFallback: noAgentFallbackOption },
+	({ target, homeRoot, compatibilityRoot, date, noAgentFallback, json }) =>
+		Effect.gen(function* () {
+			const result = yield* runLifeResearch(lifeSettings(target, homeRoot, compatibilityRoot), {
+				now: researchDate(date),
+				agentFallback: !noAgentFallback,
+			});
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis life research", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(`Life research: ${result.inserted} new, ${result.available} unseen available.`);
+			yield* Console.log(`Topic: ${result.topic}`);
+			for (const failure of result.sourceFailures) yield* Console.log(`Source warning: ${failure}`);
+		}),
+).pipe(Command.withDescription("Discover unseen reading through RSS, Crossref, and the pinned agent fallback"));
+
+export const jarvisLifeDailyCommand = Command.make(
+	"daily",
+	{
+		...lifeOptions,
+		preview: previewOption,
+		force: forceDailyOption,
+		maximumOutputBytes: dailyMaximumOutputBytesOption,
+		prepareNativePrompt: prepareNativePromptOption,
+		draftModel: draftModelOption,
+		nativeRequest: nativeRequestOption,
+		nativeGrant: nativeGrantOption,
+		nativeTrust: nativeTrustOption,
+	},
+	({
+		target,
+		homeRoot,
+		compatibilityRoot,
+		preview,
+		force,
+		maximumOutputBytes,
+		prepareNativePrompt,
+		draftModel,
+		nativeRequest,
+		nativeGrant,
+		nativeTrust,
+		json,
+	}) =>
+		Effect.gen(function* () {
+			if (maximumOutputBytes < 1 || maximumOutputBytes > 1048576)
+				return yield* Effect.fail(new Error("Daily output limit must be between 1 and 1048576 bytes."));
+			const settings = lifeSettings(target, homeRoot, compatibilityRoot);
+			const requestPath = Option.getOrUndefined(nativeRequest);
+			const grantPath = Option.getOrUndefined(nativeGrant);
+			const trustedPublicKeyPath = Option.getOrUndefined(nativeTrust);
+			const nativePaths = [requestPath, grantPath, trustedPublicKeyPath].filter(
+				(value): value is string => value !== undefined,
+			);
+			if (prepareNativePrompt) {
+				if (nativePaths.length > 0)
+					return yield* Effect.fail(new Error("Prompt preparation cannot be combined with native grant inputs."));
+				const prepared = yield* prepareLifeDailyPrompt(settings, draftModel);
+				if (json)
+					return yield* Console.log(
+						JSON.stringify({ command: "jarvis life daily", ok: true, nativePrompt: prepared }, null, 2),
+					);
+				yield* Console.log(`Prepared native Life request: ${prepared.requestPath}`);
+				yield* Console.log(`Prompt hash: ${prepared.promptHash}`);
+				yield* Console.log(`Run ID: ${prepared.runId}`);
+				return;
+			}
+			if (nativePaths.length !== 0 && nativePaths.length !== 3)
+				return yield* Effect.fail(
+					new Error("Native Life preview requires --native-request, --native-grant, and --native-trust."),
+				);
+			if (nativePaths.length === 3 && !preview)
+				return yield* Effect.fail(new Error("Native Life preview requires --preview and never publishes."));
+			const result = yield* runLifeDaily(settings, {
+				publish: !preview,
+				force,
+				maximumOutputBytes,
+				nativePreview:
+					nativePaths.length === 3
+						? { requestPath: requestPath!, grantPath: grantPath!, trustedPublicKeyPath: trustedPublicKeyPath! }
+						: undefined,
+			});
+			if (result.published)
+				yield* Effect.tryPromise({
+					try: () =>
+						runWikiHost([
+							"sync",
+							"--home-root",
+							lifeSettings(target, homeRoot, compatibilityRoot).paths.homeRoot,
+							"--target",
+							resolve(target),
+							"--json",
+						]),
+					catch: (error) => new Error(String(error)),
+				}).pipe(Effect.catch((error) => Console.error(`Wiki sync pending for retry: ${error.message}`)));
+			if (json)
+				return yield* Console.log(JSON.stringify({ command: "jarvis life daily", ok: true, ...result }, null, 2));
+			yield* Console.log(`${result.published ? "Published" : "Prepared"} daily brief: ${result.briefPath}`);
+			yield* Console.log(
+				`Readings: ${result.selected}${result.shortage ? " (unseen queue shortage; no repeats used)" : ""}`,
+			);
+		}),
+).pipe(Command.withDescription("Generate, enforce no-repeat readings, and publish the daily brief"));
+
+export const jarvisLifeWeeklyCommand = Command.make(
+	"weekly",
+	{
+		...lifeOptions,
+		preview: previewOption,
+		prepareNativePrompt: prepareNativePromptOption,
+		draftModel: draftModelOption,
+		nativeRequest: nativeRequestOption,
+		nativeGrant: nativeGrantOption,
+		nativeTrust: nativeTrustOption,
+	},
+	({
+		target,
+		homeRoot,
+		compatibilityRoot,
+		preview,
+		prepareNativePrompt,
+		draftModel,
+		nativeRequest,
+		nativeGrant,
+		nativeTrust,
+		json,
+	}) =>
+		Effect.gen(function* () {
+			const settings = lifeSettings(target, homeRoot, compatibilityRoot);
+			const requestPath = Option.getOrUndefined(nativeRequest);
+			const grantPath = Option.getOrUndefined(nativeGrant);
+			const trustedPublicKeyPath = Option.getOrUndefined(nativeTrust);
+			if (prepareNativePrompt) {
+				if (requestPath !== undefined || grantPath !== undefined || trustedPublicKeyPath !== undefined)
+					return yield* Effect.fail(new Error("Prompt preparation cannot be combined with native grant inputs."));
+				const prepared = yield* prepareLifeWeeklyPrompt(settings, draftModel);
+				if (json)
+					return yield* Console.log(
+						JSON.stringify({ command: "jarvis life weekly", ok: true, nativePrompt: prepared }, null, 2),
+					);
+				yield* Console.log(`Prepared native weekly Life request: ${prepared.requestPath}`);
+				yield* Console.log(`Prompt hash: ${prepared.promptHash}`);
+				yield* Console.log(`Run ID: ${prepared.runId}`);
+				return;
+			}
+			if (!preview || requestPath === undefined || grantPath === undefined || trustedPublicKeyPath === undefined)
+				return yield* Effect.fail(
+					new Error(
+						"Weekly Life requires --prepare-native-prompt or --preview with --native-request, --native-grant, and --native-trust; it never publishes.",
+					),
+				);
+			const result = yield* runLifeWeekly(settings, {
+				publish: false,
+				nativePreview: { requestPath, grantPath, trustedPublicKeyPath },
+			});
+			if (result === undefined)
+				return yield* Effect.fail(new Error("Native weekly Life did not return a draft receipt."));
+			yield* Effect.tryPromise({
+				try: () => runWikiHost(["review", "--home-root", settings.paths.homeRoot, "--life-companion", "--json"]),
+				catch: (error) => new Error(String(error)),
+			}).pipe(
+				Effect.catch((error) =>
+					Console.error(
+						`Wiki weekly review not written: ${error.message}. Resolve the cause, then run \`harnessy jarvis wiki review --life-companion\`.`,
+					),
+				),
+			);
+			if (json)
+				return yield* Console.log(JSON.stringify({ command: "jarvis life weekly", ok: true, ...result }, null, 2));
+			yield* Console.log(`Prepared weekly plan: ${result.briefPath}`);
+		}),
+).pipe(
+	Command.withDescription(
+		"Prepare a supervised native weekly draft without journaling or publication, then write the local learning-library weekly review",
+	),
+);
+
+export const jarvisLifeWeeklyReconcileCommand = Command.make(
+	"weekly-reconcile",
+	{
+		...lifeOptions,
+		run: Options.string("run").pipe(
+			Options.withDescription("Reserved weekly run: its directory name, run hash, or weekly:<period>:<id> run ID."),
+		),
+		reason: Options.string("reason").pipe(
+			Options.withDescription("Why this run is abandoned or superseded; stored with the decision."),
+		),
+		confirmInactive: Options.boolean("confirm-inactive").pipe(
+			Options.withDefault(false),
+			Options.withDescription(
+				"Confirm that the process recorded for an unrecorded run is not that run (for example a PID reused after a reboot).",
+			),
+		),
+	},
+	({ target, homeRoot, compatibilityRoot, run, reason, confirmInactive, json }) =>
+		Effect.gen(function* () {
+			const result = yield* reconcileLifeWeekly(
+				lifeSettings(target, homeRoot, compatibilityRoot),
+				run,
+				reason,
+				new Date(),
+				{ confirmInactive },
+			);
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis life weekly-reconcile", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(`Recorded ${result.decision} weekly run ${result.name} (was ${result.priorState}).`);
+			yield* Console.log(
+				result.grant
+					? `Grant ${result.grant.grantId} stays ${result.grant.revoked ? "revoked" : "consumed"}${result.grant.consumedAt ? ` (consumed ${result.grant.consumedAt})` : ""}.`
+					: "No grant record was found for this run.",
+			);
+			yield* Console.log(`Decision: ${result.path}`);
+			if (result.incompleteRecordKeptAt)
+				yield* Console.log(`Incomplete earlier record kept at: ${result.incompleteRecordKeptAt}`);
+		}),
+).pipe(
+	Command.withDescription(
+		"Record the owner's decision on a failed, unrecorded or drafted weekly run so its period may run again; never resets grants, calls a provider or delivers",
+	),
+);
+
+export const jarvisLifeDraftCommand = Command.make(
+	"draft",
+	{
+		...lifeOptions,
+		kind: Options.string("kind").pipe(
+			Options.withDefault("daily"),
+			Options.withDescription("daily or weekly; defaults to daily."),
+		),
+		model: draftModelOption,
+		request: Options.string("native-request").pipe(
+			Options.optional,
+			Options.withDescription("Reuse an owner-only prepared request; consumed runs cannot be retried."),
+		),
+		timeoutSeconds: Options.integer("timeout-seconds").pipe(
+			Options.withDefault(600),
+			Options.withDescription("Execution timeout, 1–600 seconds; not a session requiring renewal."),
+		),
+		maximumOutputBytes: Options.integer("max-output-bytes").pipe(
+			Options.withDefault(65536),
+			Options.withDescription("Maximum accepted output, 1–1048576 bytes; not a provider spending cap."),
+		),
+	},
+	({ target, homeRoot, compatibilityRoot, kind, model, request, timeoutSeconds, maximumOutputBytes, json }) =>
+		Effect.gen(function* () {
+			if (
+				(kind !== "daily" && kind !== "weekly") ||
+				timeoutSeconds < 1 ||
+				timeoutSeconds > 600 ||
+				maximumOutputBytes < 1 ||
+				maximumOutputBytes > 1048576
+			)
+				return yield* Effect.fail(
+					new Error("Draft requires daily/weekly, 1–600 seconds and 1–1048576 output bytes."),
+				);
+			const settings = lifeSettings(target, homeRoot, compatibilityRoot);
+			const requestPath =
+				Option.getOrUndefined(request) ??
+				(yield* kind === "daily"
+					? prepareLifeDailyPrompt(settings, model)
+					: prepareLifeWeeklyPrompt(settings, model)).requestPath;
+			const options = {
+				publish: false,
+				nativePreview: { requestPath, local: { timeoutMs: timeoutSeconds * 1000, maximumOutputBytes } },
+			};
+			const result = yield* kind === "daily" ? runLifeDaily(settings, options) : runLifeWeekly(settings, options);
+			if (!result) return yield* Effect.fail(new Error("Life draft returned no review artifact."));
+			if (json)
+				return yield* Console.log(JSON.stringify({ command: "jarvis life draft", ok: true, ...result }, null, 2));
+			yield* Console.log(`Draft ready for review: ${result.briefPath}`);
+		}),
+).pipe(
+	Command.withDescription(
+		"Authorize one local Codex draft call; never publish or retry automatically. Time/output bounds are not a monetary cap.",
+	),
+);
+
+export const jarvisLifeScheduleCommand = Command.make(
+	"schedule",
+	{
+		...lifeOptions,
+		cliEntry: cliEntryOption,
+		nodePath: nodePathOption,
+		launchAgentsDirectory: launchAgentsDirectoryOption,
+		apply: applyScheduleOption,
+	},
+	({ target, homeRoot, compatibilityRoot, cliEntry, nodePath, launchAgentsDirectory, apply, json }) =>
+		Effect.gen(function* () {
+			const settings = lifeSettings(target, homeRoot, compatibilityRoot);
+			const options = {
+				nodePath: resolve(nodePath),
+				cliPath: resolve(cliEntry),
+				launchAgentsDirectory:
+					Option.getOrUndefined(launchAgentsDirectory) ?? join(settings.paths.homeRoot, "Library", "LaunchAgents"),
+			};
+			const result = apply
+				? yield* installLifeSchedule(settings, options)
+				: { applied: false, backupDirectory: null, files: yield* planLifeSchedule(settings, options) };
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis life schedule", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(`${result.applied ? "Installed" : "Planned"} ${result.files.length} V2 Life LaunchAgents.`);
+			if (result.backupDirectory !== null) yield* Console.log(`Rollback backup: ${result.backupDirectory}`);
+			for (const file of result.files) yield* Console.log(`${file.label}: ${file.path}`);
+			if (result.applied)
+				yield* Console.log(
+					"Plists are installed but not loaded; reload the three labels only after the one-writer smoke gate.",
+				);
+		}),
+).pipe(Command.withDescription("Plan or install the three pinned V2 Life LaunchAgents with rollback backups"));
+
+export const jarvisLifeCommand = Command.make("life").pipe(
+	Command.withSubcommands([
+		jarvisLifeStatusCommand,
+		jarvisLifeBackfillCommand,
+		jarvisLifeResearchCommand,
+		jarvisLifeDailyCommand,
+		jarvisLifeWeeklyCommand,
+		jarvisLifeWeeklyReconcileCommand,
+		jarvisLifeDraftCommand,
+		jarvisLifeScheduleCommand,
+	] as const),
+	Command.withDescription("Run the V2 Life Orchestrator and permanent reading ledger"),
+);
+
+export const jarvisCommunityBriefingStatusCommand = Command.make(
+	"status",
+	{ config: communityConfigOption, stateRoot: communityStateRootOption, json: jsonOption },
+	({ config, stateRoot, json }) =>
+		Effect.gen(function* () {
+			const result = inspectCommunityBriefingStatus({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+			});
+			if (json) {
+				yield* Console.log(
+					JSON.stringify({ command: "jarvis community briefing status", ok: result.ready, ...result }, null, 2),
+				);
+				return;
+			}
+			yield* Console.log(`Community briefing V2 boundary: ${result.ready ? "ready" : "not ready"}`);
+			yield* Console.log(
+				`Queue: ${Object.entries(result.counts)
+					.map(([key, value]) => `${key}=${value}`)
+					.join(" | ")}`,
+			);
+			yield* Console.log(`State: ${result.databasePath}`);
+			for (const issue of result.issues) yield* Console.log(`Issue: ${issue}`);
+		}),
+).pipe(Command.withDescription("Inspect the packaged community briefing queue without mutation or provider calls"));
+
+export const jarvisCommunityBriefingPreflightCommand = Command.make(
+	"preflight",
+	{ config: communityConfigOption, stateRoot: communityStateRootOption, json: jsonOption },
+	({ config, stateRoot, json }) =>
+		Effect.gen(function* () {
+			const result = preflightCommunityBriefingOffline({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+			});
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis community briefing preflight", ...result }, null, 2));
+			} else {
+				yield* Console.log(`Community briefing offline preflight: ${result.ready ? "ready" : "not ready"}`);
+				for (const check of result.checks) {
+					yield* Console.log(`${check.ok ? "OK" : "FAIL"} ${check.name}: ${check.detail}`);
+				}
+			}
+			if (!result.ready) yield* Effect.fail(new Error("community briefing preflight is not ready"));
+		}),
+).pipe(Command.withDescription("Validate the community briefing boundary without providers or mutation"));
+
+export const jarvisCommunityBriefingListCommand = Command.make(
+	"list",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		limit: communityLimitOption,
+		json: jsonOption,
+	},
+	({ config, stateRoot, limit, json }) =>
+		Effect.gen(function* () {
+			const entries = listCommunityBriefings({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+				limit,
+			});
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis community briefing list", entries }, null, 2));
+				return;
+			}
+			for (const entry of entries)
+				yield* Console.log(`${entry.weekStart}..${entry.weekEnd} ${entry.status} ${entry.briefingId}`);
+		}),
+).pipe(Command.withDescription("List the local community briefing queue without reading content or mutating state"));
+
+export const jarvisCommunityBriefingReviewServeCommand = communityReviewServeCommand;
+
+export const jarvisCommunityBriefingCommand = Command.make("briefing").pipe(
+	Command.withSubcommands([
+		jarvisCommunityBriefingStatusCommand,
+		jarvisCommunityBriefingPreflightCommand,
+		jarvisCommunityBriefingListCommand,
+		communityDraftCommand,
+		Command.make("review").pipe(Command.withSubcommands([jarvisCommunityBriefingReviewServeCommand] as const)),
+	] as const),
+	Command.withDescription("Prepare, inspect and review local community briefings through V2"),
+);
+
+/**
+ * Deliberately outside `community briefing`: the one-writer guard treats any
+ * `jarvis community briefing …` process except `review serve` as a rival
+ * writer, so planning the service must not run under that route.
+ */
+export const jarvisCommunityScheduleCommand = Command.make(
+	"schedule",
+	{
+		target: targetOption,
+		config: Options.string("config").pipe(Options.withDefault(join(homedir(), ".jarvis", "config.yaml"))),
+		pythonPath: Options.string("python-path").pipe(
+			Options.optional,
+			Options.withDescription("V2-installed Jarvis interpreter; omit to use community_briefing.python_path."),
+		),
+		port: Options.integer("port").pipe(Options.withDefault(COMMUNITY_REVIEW_PORT)),
+		cliEntry: cliEntryOption,
+		nodePath: nodePathOption,
+		launchAgentsDirectory: launchAgentsDirectoryOption,
+		apply: Options.boolean("apply").pipe(
+			Options.withDefault(false),
+			Options.withDescription("Backup and atomically replace only the community review LaunchAgent plist."),
+		),
+		publicationPlist: Options.string("publication-plist").pipe(
+			Options.optional,
+			Options.withDescription(
+				`The publication service plist whose release the reviewer must match. Defaults to the loaded ${PUBLICATION_LAUNCH_AGENT_LABEL} job.`,
+			),
+		),
+		withoutPublication: Options.boolean("without-publication").pipe(
+			Options.withDefault(false),
+			Options.withDescription("Install without a publication service on this machine (no release match)."),
+		),
+		json: jsonOption,
+	},
+	({
+		target,
+		config,
+		pythonPath,
+		port,
+		cliEntry,
+		nodePath,
+		launchAgentsDirectory,
+		apply,
+		publicationPlist,
+		withoutPublication,
+		json,
+	}) =>
+		Effect.gen(function* () {
+			const paths = yield* (yield* JarvisPathResolver).resolve(target);
+			const python = Option.getOrUndefined(pythonPath);
+			const publication =
+				!apply || withoutPublication
+					? withoutPublication
+						? null
+						: undefined
+					: yield* Effect.try({
+							try: () => readPublicationProgramArguments(Option.getOrUndefined(publicationPlist)),
+							catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+						});
+			const options = {
+				publication,
+				nodePath: resolve(nodePath),
+				cliPath: resolve(cliEntry),
+				configPath: resolve(config),
+				...(python === undefined ? {} : { pythonPath: resolve(python) }),
+				port,
+				launchAgentsDirectory:
+					Option.getOrUndefined(launchAgentsDirectory) ?? join(homedir(), "Library", "LaunchAgents"),
+			};
+			const result = apply
+				? yield* installCommunityReviewSchedule(paths, options)
+				: { applied: false, backupDirectory: null, file: yield* planCommunityReviewSchedule(paths, options) };
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis community schedule", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(
+				`${result.applied ? "Installed" : "Planned"} V2 community review LaunchAgent: ${result.file.path}`,
+			);
+			if (result.backupDirectory !== null) yield* Console.log(`Rollback backup: ${result.backupDirectory}`);
+			if (result.applied)
+				yield* Console.log(
+					"Plist is installed but not reloaded; restart only this label, from the same release as the publication service.",
+				);
+		}),
+).pipe(
+	Command.withDescription(
+		"Plan or install the V2 community review LaunchAgent, which also owns weekly draft generation; never publishes",
+	),
+);
+
+/**
+ * The loaded publication service's ProgramArguments, read with the system
+ * `plutil`. The plist path comes from `launchctl print` unless given.
+ */
+const readPublicationProgramArguments = (plistPath: string | undefined): ReadonlyArray<string> => {
+	let path = plistPath;
+	if (path === undefined) {
+		const printed = spawnSync(
+			"/bin/launchctl",
+			["print", `gui/${process.getuid?.() ?? 0}/${PUBLICATION_LAUNCH_AGENT_LABEL}`],
+			{ encoding: "utf8", timeout: 5000 },
+		);
+		path = printed.status === 0 ? /^\s*path = (\/.+)$/mu.exec(printed.stdout)?.[1] : undefined;
+		if (path === undefined)
+			throw new Error(
+				`${PUBLICATION_LAUNCH_AGENT_LABEL} is not loaded: pass --publication-plist, or --without-publication when no publication service runs here.`,
+			);
+	}
+	const extracted = spawnSync("/usr/bin/plutil", ["-extract", "ProgramArguments", "json", "-o", "-", path], {
+		encoding: "utf8",
+		timeout: 5000,
+	});
+	const value: unknown = extracted.status === 0 ? JSON.parse(extracted.stdout) : undefined;
+	if (!Array.isArray(value) || !value.every((item) => typeof item === "string"))
+		throw new Error(`Could not read ProgramArguments from ${path}.`);
+	return value;
+};
+
+/** Outside `community briefing` for the same one-writer reason as `schedule`. Read-only unless --repair. */
+export const jarvisCommunityGenerationStatusCommand = Command.make(
+	"generation-status",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		repair: Options.boolean("repair").pipe(
+			Options.withDefault(false),
+			Options.withDescription(
+				"Move a damaged or unsafe record aside (never deleted); the review service rebuilds it from the queue at its next tick.",
+			),
+		),
+		json: jsonOption,
+	},
+	({ config, stateRoot, repair, json }) =>
+		Effect.gen(function* () {
+			const resolved = resolveCommunityBriefingConfig({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+			});
+			// The same lenient reading the review service uses, so a bad setting shows here.
+			// The review service refuses a configuration with issues (missing, unreadable or YAML errors),
+			// so status reports them and fails, but still shows the record. One read of the file decides
+			// both the state root and the schedule.
+			const configIssues = resolved.issues;
+			const briefing = resolved.briefing;
+			const { schedule, issues } = parseCommunityGenerationSchedule(
+				briefing.enabled,
+				briefing.generation_schedule,
+				briefing.timezone ?? "Africa/Lagos",
+			);
+			const path = join(resolved.stateRoot, COMMUNITY_GENERATION_STATUS_FILE);
+			const repaired = repair ? repairCommunityGenerationStatus(path) : null;
+			const quarantined = repaired?.outcome === "quarantined" ? repaired.movedTo : null;
+			const read =
+				quarantined !== null
+					? { record: null, fault: null }
+					: yield* Effect.sync(() => {
+							const outcome = Result.try({
+								try: () => readCommunityGenerationStatus(path) ?? null,
+								catch: (cause) => (cause instanceof Error ? cause.message : "status_record_unreadable"),
+							});
+							return Result.isSuccess(outcome)
+								? { record: outcome.success, fault: null }
+								: { record: null, fault: outcome.failure };
+						});
+			const { record, fault } = read;
+			const summary = summarizeCommunityGenerationStatus(
+				record,
+				isCommunityGenerationSchedulerRunning(resolved.stateRoot),
+			);
+			const latestWeek = summary.latestWeek;
+			const ok = configIssues.length === 0 && issues.length === 0 && fault === null && summary.ok;
+			if (json)
+				yield* Console.log(
+					JSON.stringify(
+						{
+							command: "jarvis community generation-status",
+							ok,
+							path,
+							configIssues,
+							schedule: { ...schedule, issues },
+							fault,
+							repair: repaired?.outcome ?? null,
+							quarantined,
+							latestWeek,
+							state: summary.state,
+							standingFault: summary.standingFault,
+							record,
+						},
+						null,
+						2,
+					),
+				);
+			else {
+				for (const issue of configIssues)
+					yield* Console.log(`Configuration issue (the review service refuses it): ${issue}`);
+				for (const issue of issues) yield* Console.log(`Schedule issue (generation is off): ${issue}`);
+				if (quarantined !== null)
+					yield* Console.log(
+						`Moved the record to ${quarantined}; the review service rebuilds it from the queue at its next tick.`,
+					);
+				else if (repaired?.outcome === "busy")
+					yield* Console.log("The review service is writing the record right now; run --repair again.");
+				else if (repaired?.outcome === "valid")
+					yield* Console.log("The record is valid; it was left unchanged (it bounds paid retries).");
+				else if (repair) yield* Console.log("No record to repair.");
+				if (fault !== null)
+					yield* Console.log(`Record fault: ${fault}. Run with --repair to move it aside and rebuild it.`);
+				if (record === null && fault === null && !repair)
+					yield* Console.log("No scheduled community generation has run yet.");
+				if (record !== null) {
+					yield* Console.log(
+						summary.state === "generating"
+							? `Latest week ${latestWeek}: generating now (attempt ${summary.attempts})`
+							: `Latest week ${latestWeek}: ${summary.state} after ${summary.attempts} attempt(s)`,
+					);
+					if (summary.standingFault !== null)
+						yield* Console.log(`Standing fault: ${summary.standingFault} (generation is paused until it clears)`);
+					if (record.lastFailure !== null)
+						yield* Console.log(
+							`Last failure: week ${record.lastFailure.weekStart}, ${record.lastFailure.code}${record.lastFailure.subCode === undefined ? "" : ` (${record.lastFailure.subCode})`}, ${record.lastFailure.at}`,
+						);
+				}
+			}
+			if (repaired?.outcome === "busy") yield* Effect.fail(new Error("The record is busy; nothing was moved"));
+			// --repair cannot repair the configuration, so its issues stay fatal.
+			if (configIssues.length > 0) yield* Effect.fail(new Error("The community configuration needs attention"));
+			if (!ok && !repair) yield* Effect.fail(new Error("Weekly community generation needs attention"));
+		}),
+).pipe(
+	Command.withDescription(
+		"Show the review service's weekly community generation record and schedule; --repair moves a damaged record aside",
+	),
+);
+
+/**
+ * Outside `community briefing` for the same one-writer reason as `schedule`: this process
+ * never generates. It writes an owner-only request file that the running review service
+ * (the only exempt draft writer) consumes, so the guard never sees a second writer.
+ */
+export const jarvisCommunityGenerationRetryCommand = Command.make(
+	"generation-retry",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		weekStart: Options.string("week-start").pipe(Options.withDescription("Monday of the week, YYYY-MM-DD.")),
+		json: jsonOption,
+	},
+	({ config, stateRoot, weekStart, json }) =>
+		Effect.gen(function* () {
+			const resolved = resolveCommunityBriefingConfig({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+			});
+			// A request with no scheduler to consume it would wait for a later, unexpected paid run.
+			if (!isCommunityGenerationSchedulerRunning(resolved.stateRoot))
+				return yield* Effect.fail(
+					new Error(
+						"No running review service holds the weekly generation scheduler for this state directory; nothing was requested.",
+					),
+				);
+			const path = yield* Effect.try({
+				try: () => requestCommunityGenerationRetry(resolved.stateRoot, weekStart),
+				catch: (cause) =>
+					new Error(
+						cause instanceof Error && cause.message.startsWith("--week-start")
+							? cause.message
+							: "Could not write the retry request.",
+					),
+			});
+			if (json)
+				yield* Console.log(
+					JSON.stringify(
+						{
+							command: "jarvis community generation-retry",
+							requested: true,
+							weekStart,
+							path,
+							publication: false,
+						},
+						null,
+						2,
+					),
+				);
+			else
+				yield* Console.log(
+					`Requested a retry of week ${weekStart}; the review service runs it within a minute. Check \`harnessy jarvis community generation-status\`.`,
+				);
+		}),
+).pipe(
+	Command.withDescription(
+		"Ask the running review service to retry one week's draft now (drafts only; never publishes)",
+	),
+);
+
+export const jarvisCommunityCommand = Command.make("community").pipe(
+	Command.withSubcommands([
+		jarvisCommunityBriefingCommand,
+		jarvisCommunityScheduleCommand,
+		jarvisCommunityGenerationStatusCommand,
+		jarvisCommunityGenerationRetryCommand,
+	] as const),
+	Command.withDescription("Run V2-owned community workflow inspections"),
+);
+
+export const jarvisMeetingFathomStatusCommand = Command.make(
+	"status",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		sourceRoot: fathomSourceRootOption,
+		json: jsonOption,
+	},
+	({ config, stateRoot, sourceRoot, json }) =>
+		Effect.gen(function* () {
+			const result = inspectFathomStatus({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+				sourceRoot: Option.getOrUndefined(sourceRoot),
+			});
+			if (json) {
+				yield* Console.log(
+					JSON.stringify({ command: "jarvis meeting fathom status", ok: result.ready, ...result }, null, 2),
+				);
+				return;
+			}
+			yield* Console.log(`Fathom V2 boundary: ${result.ready ? "ready" : "not ready"}`);
+			yield* Console.log(`Accounts: ${result.accounts.join(", ") || "none"}`);
+			yield* Console.log(`Inbox: ${result.inboxPath}`);
+			const checkpoint = result.pollCheckpoint;
+			yield* Console.log(
+				`V2 poll checkpoint: ${checkpoint.path} (${checkpoint.state === "ok" ? "ok" : `${checkpoint.state}: ${checkpoint.reason}`})`,
+			);
+			for (const account of checkpoint.data?.accounts ?? [])
+				yield* Console.log(
+					`  ${account.account}: ${account.updatedAt === null ? "never polled" : `updated ${account.updatedAt}`}${account.stale ? " (stale)" : ""}`,
+				);
+			if (result.legacyPollState.present)
+				yield* Console.log(`Legacy V1 poll state (not written by V2): ${result.legacyPollState.path}`);
+			for (const issue of result.issues) yield* Console.log(`Issue: ${issue}`);
+		}),
+).pipe(
+	Command.withDescription("Inspect Fathom accounts, inbox state and the V2 poll checkpoint without provider calls"),
+);
+
+export const jarvisMeetingFathomListCommand = Command.make(
+	"list",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		sourceRoot: fathomSourceRootOption,
+		limit: communityLimitOption,
+		json: jsonOption,
+	},
+	({ config, stateRoot, sourceRoot, limit, json }) =>
+		Effect.gen(function* () {
+			const entries = listFathomInbox({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+				sourceRoot: Option.getOrUndefined(sourceRoot),
+				limit,
+			});
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis meeting fathom list", entries }, null, 2));
+				return;
+			}
+			for (const entry of entries)
+				yield* Console.log(`${entry.account}/${entry.bucket} ${entry.filename} ${entry.sha256}`);
+		}),
+).pipe(Command.withDescription("List bounded local Fathom inbox metadata without provider calls or mutation"));
+
+export const jarvisMeetingFathomImportPlanCommand = Command.make(
+	"import-plan",
+	{
+		config: communityConfigOption,
+		stateRoot: communityStateRootOption,
+		sourceRoot: fathomSourceRootOption,
+		limit: communityLimitOption,
+		json: jsonOption,
+	},
+	({ config, stateRoot, sourceRoot, limit, json }) =>
+		Effect.gen(function* () {
+			const entries = planFathomImport({
+				configPath: Option.getOrUndefined(config),
+				stateRoot: Option.getOrUndefined(stateRoot),
+				sourceRoot: Option.getOrUndefined(sourceRoot),
+				limit,
+			});
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis meeting fathom import-plan", entries }, null, 2));
+				return;
+			}
+			for (const entry of entries)
+				yield* Console.log(
+					`${entry.account}/${entry.bucket} ${entry.eligible ? "eligible" : "skip"} ${entry.recordingId ?? entry.filename}`,
+				);
+		}),
+).pipe(Command.withDescription("Plan local Fathom imports without writing state or contacting providers"));
+
+export const jarvisMeetingFathomPollCommand = Command.make(
+	"poll",
+	{
+		target: targetOption,
+		sourceRoot: fathomSourceRootOption,
+		limit: communityLimitOption,
+		accounts: fathomAccountOption,
+		json: jsonOption,
+	},
+	({ target, sourceRoot, limit, accounts, json }) =>
+		Effect.gen(function* () {
+			// Start a recent window with idempotent overlap. Ingest resumes any
+			// unfinished window with its saved filter before starting this new one.
+			const createdAfter = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+			const paths = yield* (yield* JarvisPathResolver).resolve(target);
+			const config = yield* (yield* JarvisConfigReader).loadResolved(paths);
+			const status = inspectFathomStatus({
+				configPath: paths.legacyGlobalConfigFile,
+				sourceRoot: Option.getOrUndefined(sourceRoot),
+			});
+			const credentials = yield* JarvisCredentialResolver;
+			const result = yield* Effect.tryPromise({
+				try: () =>
+					runConfiguredFathomPoll({
+						config,
+						paths,
+						inboxRoot: status.inboxPath,
+						stateRoot: `${paths.canonicalGlobalRoot}/state/fathom`,
+						accounts: accounts.length === 0 ? undefined : accounts,
+						limit,
+						createdAfter,
+						sourceRoot: config.meetingPublication.sourcePath,
+						readApiKey: (resolvedConfig, resolvedPaths, account) =>
+							Effect.runPromise(
+								credentials
+									.fathomApiKey(resolvedConfig, resolvedPaths, account)
+									.pipe(Effect.map((credential) => Redacted.value(credential.value))),
+							),
+					}),
+				catch: () => new Error("Fathom poll host operation failed"),
+			});
+			const ok = result.results.every((receipt) => receipt.failure === null);
+			if (json) {
+				yield* Console.log(JSON.stringify({ command: "jarvis meeting fathom poll", ok, ...result }, null, 2));
+			} else {
+				yield* Console.log(`Fathom V2 poll: ${result.accounts.join(", ")}`);
+				for (const receipt of result.results) {
+					yield* Console.log(
+						`${receipt.account}: fetched ${receipt.fetched}, imported ${receipt.imported}, duplicates ${receipt.duplicates}${receipt.failure === null ? "" : `, failed (${receipt.failure.code})`}`,
+					);
+				}
+			}
+			if (!ok) yield* Effect.fail(new Error("Fathom poll failed for one or more accounts"));
+		}),
+).pipe(Command.withDescription("Run one bounded V2 Fathom poll pass for the approved account scope"));
+
+export const jarvisMeetingFathomScheduleCommand = Command.make(
+	"schedule",
+	{
+		target: targetOption,
+		cliEntry: cliEntryOption,
+		nodePath: nodePathOption,
+		launchAgentsDirectory: launchAgentsDirectoryOption,
+		apply: applyScheduleOption,
+		json: jsonOption,
+	},
+	({ target, cliEntry, nodePath, launchAgentsDirectory, apply, json }) =>
+		Effect.gen(function* () {
+			const paths = yield* (yield* JarvisPathResolver).resolve(target);
+			const options = {
+				nodePath: resolve(nodePath),
+				cliPath: resolve(cliEntry),
+				launchAgentsDirectory:
+					Option.getOrUndefined(launchAgentsDirectory) ?? join(paths.canonicalGlobalRoot, "LaunchAgents"),
+			};
+			const file = yield* planFathomSchedule(paths, options);
+			const result = apply
+				? yield* installFathomSchedule(paths, options)
+				: { applied: false, backupDirectory: null, file };
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis meeting fathom schedule", ok: true, ...result }, null, 2),
+				);
+			yield* Console.log(`${result.applied ? "Installed" : "Planned"} V2 Fathom LaunchAgent: ${result.file.path}`);
+			if (result.backupDirectory !== null) yield* Console.log(`Rollback backup: ${result.backupDirectory}`);
+			if (result.applied)
+				yield* Console.log("Plist is installed but not loaded; load only after the one-writer gate.");
+		}),
+).pipe(Command.withDescription("Plan or install the pinned five-minute V2 Fathom LaunchAgent with rollback backup"));
+
+export const jarvisMeetingFathomCommand = Command.make("fathom").pipe(
+	Command.withSubcommands([
+		jarvisMeetingFathomStatusCommand,
+		jarvisMeetingFathomListCommand,
+		jarvisMeetingFathomImportPlanCommand,
+		jarvisMeetingFathomPollCommand,
+		jarvisMeetingFathomScheduleCommand,
+	] as const),
+	Command.withDescription("Inspect the V2 Fathom boundary"),
+);
+
+export const jarvisMeetingCommand = Command.make("meeting").pipe(
+	Command.withSubcommands([jarvisMeetingFathomCommand] as const),
+	Command.withDescription("Inspect migrated meeting capabilities"),
+);
+
+export const jarvisDiagnoseCommand = Command.make(
+	"diagnose",
+	{ target: targetOption, json: jsonOption },
+	({ target, json }) =>
+		Effect.gen(function* () {
+			const result = yield* (yield* JarvisDiagnostic).inspect(target);
+			if (json) {
+				yield* Console.log(
+					JSON.stringify({ command: "jarvis diagnose", ok: result.issues.length === 0, ...result }, null, 2),
+				);
+				return;
+			}
+
+			yield* Console.log(`Jarvis compatibility: ${result.migrationStatus}`);
+			yield* Console.log(`Target: ${result.paths.targetDir}`);
+			yield* Console.log(`Canonical store: ${result.paths.canonicalGlobalRoot}`);
+			yield* Console.log(`Legacy store: ${result.paths.legacyGlobalRoot}`);
+			yield* Console.log(`Legacy config: ${result.config.status} (${result.config.path})`);
+			const loaded = result.context.filter((entry) => entry.loaded);
+			yield* Console.log(`Legacy context files loaded: ${loaded.length}/${result.context.length}`);
+			for (const issue of result.issues) yield* Console.log(`Issue: ${issue}`);
+		}),
+).pipe(Command.withDescription("Inspect legacy Jarvis state without migrating or modifying it"));
+
+export const jarvisParityCommand = Command.make("parity", { json: jsonOption }, ({ json }) =>
+	Effect.gen(function* () {
+		const report = yield* (yield* JarvisParityReporter).inspect();
+		if (json) {
+			yield* Console.log(
+				JSON.stringify(
+					{
+						command: "jarvis parity",
+						ok: true,
+						evidenceKind: "static_compatibility_ledger",
+						operationalReadiness: "not_assessed",
+						...report,
+					},
+					null,
+					2,
+				),
+			);
+			return;
+		}
+
+		const { counts } = report.summary;
+		yield* Console.log(`Jarvis parity (${report.sourceVersion}): ${counts.total} entries`);
+		yield* Console.log("Static compatibility ledger only; operational readiness is not assessed.");
+		yield* Console.log(
+			`Missing ${counts.missing} | Partial ${counts.partial} | Compatible ${counts.compatible} | Retired ${counts.intentionallyRetired}`,
+		);
+		for (const surface of report.summary.surfaces) {
+			yield* Console.log(
+				`${surface.surface}: ${surface.counts.compatible} compatible, ${surface.counts.partial} partial, ${surface.counts.missing} missing, ${surface.counts.intentionallyRetired} retired`,
+			);
+		}
+	}),
+).pipe(Command.withDescription("Validate and report the frozen Jarvis protocol parity ledger"));
+
+export const jarvisCommand = Command.make("jarvis").pipe(
+	Command.withSubcommands([
+		jarvisDiagnoseCommand,
+		jarvisParityCommand,
+		jarvisLifeCommand,
+		jarvisCommunityCommand,
+		jarvisMeetingCommand,
+		jarvisCalendarCommand,
+		wikiCommand,
+	] as const),
+	Command.withDescription("Inspect Jarvis compatibility and run migrated V2 domains"),
+);

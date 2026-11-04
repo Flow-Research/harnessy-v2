@@ -1,8 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createFindToolDefinition } from "../../../src/core/tools/find.ts";
+import { createFindToolDefinition, type FindToolOptions } from "../../../src/core/tools/find.ts";
+
+const fixturePath = join(dirname(fileURLToPath(import.meta.url)), "../../fixtures/fake-fd.mjs");
 
 /**
  * Regression test for https://github.com/earendil-works/pi-mono/issues/3302
@@ -32,8 +35,12 @@ describe("issue #3302 find returns no results for path-based glob patterns", () 
 		rmSync(tempRoot, { recursive: true, force: true });
 	});
 
-	async function runFind(pattern: string): Promise<string[]> {
-		const def = createFindToolDefinition(tempRoot);
+	const fixtureOptions: FindToolOptions = {
+		resolveFd: () => ({ command: process.execPath, args: [fixturePath] }),
+	};
+
+	async function runFind(pattern: string, options: FindToolOptions = fixtureOptions): Promise<string[]> {
+		const def = createFindToolDefinition(tempRoot, options);
 		// The find tool implementation does not touch ctx; pass a minimal stub.
 		const ctx = {} as Parameters<typeof def.execute>[4];
 		const result = (await def.execute("call-1", { pattern }, undefined, undefined, ctx)) as {
@@ -68,5 +75,19 @@ describe("issue #3302 find returns no results for path-based glob patterns", () 
 	it("src/**/*.spec.ts matches nested spec file", async () => {
 		const files = await runFind("src/**/*.spec.ts");
 		expect(files).toEqual(["src/foo/bar/example.spec.ts"]);
+	});
+
+	it("rejects deterministically when fd is unavailable", async () => {
+		await expect(runFind("*.spec.ts", { resolveFd: () => undefined })).rejects.toThrow(
+			"fd is not available and could not be downloaded",
+		);
+	});
+
+	it("rejects a nonzero fd exit that produced no results", async () => {
+		await expect(runFind("__fail-empty__")).rejects.toThrow("fixture fd failure without output");
+	});
+
+	it("preserves fd output when fd returns partial results with a nonzero exit", async () => {
+		await expect(runFind("__fail-with-output__")).resolves.toEqual(["some/parent/child/file.ext"]);
 	});
 });

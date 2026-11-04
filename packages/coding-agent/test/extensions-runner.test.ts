@@ -560,7 +560,7 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
-	describe("message renderers", () => {
+	describe("message and entry renderers", () => {
 		it("gets message renderer by type", async () => {
 			const extCode = `
 				export default function(pi) {
@@ -577,6 +577,21 @@ describe("ExtensionRunner", () => {
 
 			const missing = runner.getMessageRenderer("not-exists");
 			expect(missing).toBeUndefined();
+		});
+
+		it("gets entry renderer by type", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.registerEntryRenderer("my-entry", (entry, options, theme) => null);
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "entry-renderer.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.getEntryRenderer("my-entry")).toBeDefined();
+			expect(runner.getEntryRenderer("not-exists")).toBeUndefined();
 		});
 	});
 
@@ -889,6 +904,60 @@ describe("ExtensionRunner", () => {
 
 			expect(runner.hasHandlers("tool_call")).toBe(true);
 			expect(runner.hasHandlers("agent_end")).toBe(false);
+		});
+	});
+
+	describe("before_provider_headers", () => {
+		it("lets a handler mutate headers in place and preserves existing headers", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_provider_headers", (event) => {
+						event.headers["X-Turn-Index"] = "3";
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "headers.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			expect(runner.hasHandlers("before_provider_headers")).toBe(true);
+
+			const headers = await runner.emitBeforeProviderHeaders({ "User-Agent": "kimchi/1.0" });
+			expect(headers["X-Turn-Index"]).toBe("3");
+			expect(headers["User-Agent"]).toBe("kimchi/1.0");
+		});
+
+		it("isolates a throwing handler and still applies the others", async () => {
+			const throwing = `
+				export default function(pi) {
+					pi.on("before_provider_headers", () => {
+						throw new Error("header handler boom");
+					});
+				}
+			`;
+			const good = `
+				export default function(pi) {
+					pi.on("before_provider_headers", (event) => {
+						event.headers["X-Good"] = "yes";
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "a-throwing.ts"), throwing);
+			fs.writeFileSync(path.join(extensionsDir, "b-good.ts"), good);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ event: string; error: string }> = [];
+			runner.onError((err) => errors.push(err));
+
+			const headers = await runner.emitBeforeProviderHeaders({ "User-Agent": "x" });
+
+			expect(headers["X-Good"]).toBe("yes");
+			expect(headers["User-Agent"]).toBe("x");
+			expect(errors).toHaveLength(1);
+			expect(errors[0].event).toBe("before_provider_headers");
+			expect(errors[0].error).toContain("header handler boom");
 		});
 	});
 });

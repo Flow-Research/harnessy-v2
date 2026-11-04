@@ -1,0 +1,42 @@
+[
+	{
+		"title": "Renew the synthetic licence by 2026-10-30",
+		"status": "todo",
+		"owner": null,
+		"due": "2026-10-30",
+		"line": 5,
+		"raw": false
+	},
+	{
+		"title": "Send the synthetic deck",
+		"status": "done",
+		"owner": null,
+		"due": null,
+		"line": 6,
+		"raw": false
+	},
+	{
+		"title": "confirm the venue",
+		"status": "todo",
+		"owner": "Dana",
+		"due": null,
+		"line": 7,
+		"raw": false
+	},
+	{
+		"title": "Plain reminder without a box",
+		"status": "todo",
+		"owner": null,
+		"due": null,
+		"line": 8,
+		"raw": false
+	},
+	{
+		"title": "A loose line that does not parse.",
+		"status": "todo",
+		"owner": null,
+		"due": null,
+		"line": 10,
+		"raw": true
+	}
+]

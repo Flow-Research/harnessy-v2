@@ -1,0 +1,349 @@
+/** The portal API route table. The server and the OpenAPI document are both built from it. */
+import type { PortalApiSchemaName } from "@harnessy/core/read-model";
+import { PORTAL_HANDOFF_SERVICES, type PortalHandoffService } from "./handoff.ts";
+import type { PortalSources } from "./sources.ts";
+
+/**
+ * `none`: open. `challenge`: open; returns a single-use challenge and the server's proof.
+ * `install`: a client proof made with the install token from `portal.token` (the token itself
+ * is never sent). `code`: a one-time code and the exact portal Origin.
+ * `read`: a page token or a client proof.
+ */
+export type PortalRouteAuth =
+	| "none"
+	| "challenge"
+	| "install"
+	| "code"
+	| "read"
+	| "open"
+	| "brief"
+	| "terminal"
+	| "weekly"
+	| "inbox-action";
+
+/** One path parameter: the pattern its value must match whole, and an example for the OpenAPI document. */
+export interface PortalRouteParam {
+	readonly pattern: string;
+	readonly description: string;
+	readonly example: string;
+}
+
+export interface PortalRoute {
+	readonly method: "GET" | "POST";
+	/** The path; a `{name}` segment is a parameter listed in `params`. */
+	readonly path: string;
+	readonly params?: Readonly<Record<string, PortalRouteParam>>;
+	readonly operationId: string;
+	readonly summary: string;
+	readonly auth: PortalRouteAuth;
+	/** The response schema; `null` for the OpenAPI document itself. */
+	readonly schema: PortalApiSchemaName | null;
+	readonly service?: PortalHandoffService;
+	/** For a data route: the response name and the source that fills its tiles. */
+	readonly data?: { readonly name: string; readonly source: keyof PortalSources };
+}
+
+const PORTAL_CORE_ROUTES: ReadonlyArray<PortalRoute> = [
+	{
+		method: "GET",
+		path: "/v1/healthz",
+		operationId: "getHealthz",
+		summary: "Liveness and version",
+		auth: "none",
+		schema: "Healthz",
+	},
+	{
+		method: "GET",
+		path: "/v1/openapi.json",
+		operationId: "getOpenApi",
+		summary: "This OpenAPI document",
+		auth: "none",
+		schema: null,
+	},
+	{
+		method: "POST",
+		path: "/v1/session/challenge",
+		operationId: "createSessionChallenge",
+		summary: "Get a single-use challenge (60 s) and the server's proof that it holds the install token",
+		auth: "challenge",
+		schema: "SessionChallenge",
+	},
+	{
+		method: "POST",
+		path: "/v1/session/code",
+		operationId: "createSessionCode",
+		summary: "Mint a one-time code (60 s, single use) with an install-token proof",
+		auth: "install",
+		schema: "SessionCode",
+	},
+	{
+		method: "POST",
+		path: "/v1/session/exchange",
+		operationId: "exchangeSessionCode",
+		summary: "Exchange a one-time code for an owner page token with read and action access (8 h)",
+		auth: "code",
+		schema: "SessionExchange",
+	},
+	{
+		method: "GET",
+		path: "/v1/today",
+		operationId: "getToday",
+		summary: "Life brief, readings, weekly runs and what waits for you",
+		auth: "read",
+		schema: "Today",
+		data: { name: "today", source: "today" },
+	},
+	{
+		method: "GET",
+		path: "/v1/health",
+		operationId: "getHealth",
+		summary: "Service state from launchd",
+		auth: "read",
+		schema: "Health",
+		data: { name: "health", source: "health" },
+	},
+	{
+		method: "GET",
+		path: "/v1/connections",
+		operationId: "getConnections",
+		summary: "Connection status and the owning service for each credential",
+		auth: "read",
+		schema: "Connections",
+		data: { name: "connections", source: "connections" },
+	},
+	{
+		method: "GET",
+		path: "/v1/meetings/summary",
+		operationId: "getMeetingsSummary",
+		summary: "Meeting publication queue, provider health and Fathom",
+		auth: "read",
+		schema: "Meetings",
+		data: { name: "meetings", source: "meetings" },
+	},
+	{
+		method: "GET",
+		path: "/v1/community/summary",
+		operationId: "getCommunitySummary",
+		summary: "Community briefing configuration and queue",
+		auth: "read",
+		schema: "Community",
+		data: { name: "community", source: "community" },
+	},
+	{
+		method: "GET",
+		path: "/v1/learning/summary",
+		operationId: "getLearningSummary",
+		summary: "Learning library catalog counts",
+		auth: "read",
+		schema: "Learning",
+		data: { name: "learning", source: "learning" },
+	},
+	{
+		method: "GET",
+		path: "/v1/workspace/summary",
+		operationId: "getWorkspaceSummary",
+		summary: "Registered workspace, doctor issues and skill count",
+		auth: "read",
+		schema: "Workspace",
+		data: { name: "workspace", source: "workspace" },
+	},
+];
+
+const DATE_PARAM: PortalRouteParam = {
+	pattern: "^\\d{4}-\\d{2}-\\d{2}$",
+	description: "A day within the last seven days, Africa/Lagos (YYYY-MM-DD)",
+	example: "2026-10-18",
+};
+
+/** The one Harnessy app's read routes (Phase A). */
+export const PORTAL_APP_ROUTES: ReadonlyArray<PortalRoute> = [
+	{
+		method: "GET",
+		path: "/v1/inbox",
+		operationId: "getInbox",
+		summary: "What needs you, across every service, ranked by severity (computed on the server)",
+		auth: "read",
+		schema: "Inbox",
+		data: { name: "inbox", source: "inbox" },
+	},
+	{
+		method: "GET",
+		path: "/v1/life/brief",
+		operationId: "getLifeBrief",
+		summary: "Today's Life brief as bounded text, and the briefs of the last seven days",
+		auth: "read",
+		schema: "LifeBrief",
+		data: { name: "lifeBrief", source: "lifeBrief" },
+	},
+	{
+		method: "GET",
+		path: "/v1/life/brief/{date}",
+		params: { date: DATE_PARAM },
+		operationId: "getLifeBriefForDate",
+		summary: "One recent Life brief as bounded text",
+		auth: "read",
+		schema: "LifeBrief",
+		data: { name: "lifeBrief", source: "lifeBrief" },
+	},
+	{
+		method: "GET",
+		path: "/v1/life/weekly/{runId}/draft",
+		params: {
+			runId: {
+				pattern: "^[a-f0-9]{64}$",
+				description: "The weekly run hash, as `weekly-reconcile --run` takes it",
+				example: "a".repeat(64),
+			},
+		},
+		operationId: "getLifeWeeklyDraft",
+		summary: "One weekly run's draft as bounded text",
+		auth: "read",
+		schema: "LifeWeeklyDraft",
+		data: { name: "lifeWeeklyDraft", source: "lifeWeeklyDraft" },
+	},
+	{
+		method: "GET",
+		path: "/v1/tasks",
+		operationId: "getTasks",
+		summary: "Follow-ups and tasks derived read-only from briefs, reminders, the action register and status files",
+		auth: "read",
+		schema: "Tasks",
+		data: { name: "tasks", source: "tasks" },
+	},
+	{
+		method: "GET",
+		path: "/v1/jobs",
+		operationId: "getJobs",
+		summary: "Jobs and services: schedule, next run, launchd state, loopback liveness and copy-only controls",
+		auth: "read",
+		schema: "Jobs",
+		data: { name: "jobs", source: "jobs" },
+	},
+];
+
+/** Path parameters found in a request path. */
+export type PortalRouteParams = Readonly<Record<string, string>>;
+
+const SEGMENT = /^\{([a-zA-Z]+)\}$/u;
+
+/**
+ * Find the route for `method`-independent `path`. A parameter segment matches one
+ * path segment whose value matches the parameter's whole pattern; nothing else does.
+ */
+export const matchPortalRoute = (
+	routes: ReadonlyArray<PortalRoute>,
+	path: string,
+): { readonly route: PortalRoute; readonly params: PortalRouteParams } | undefined => {
+	const parts = path.split("/");
+	for (const route of routes) {
+		const template = route.path.split("/");
+		if (template.length !== parts.length) continue;
+		const params: Record<string, string> = {};
+		const matched = template.every((segment, index) => {
+			const name = SEGMENT.exec(segment)?.[1];
+			if (name === undefined) return segment === parts[index];
+			const param = route.params?.[name];
+			if (param === undefined || !new RegExp(param.pattern, "u").test(parts[index]!)) return false;
+			params[name] = parts[index]!;
+			return true;
+		});
+		if (matched) return { route, params };
+	}
+	return undefined;
+};
+
+/** Every portal route. The server, the OpenAPI document and the non-writer test all use this table. */
+export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [
+	{
+		method: "GET",
+		path: "/v1/inbox/archived",
+		operationId: "archivedInbox",
+		summary: "Current alerts archived by the owner",
+		auth: "read",
+		schema: "Inbox",
+		data: { name: "inbox", source: "inbox" },
+	},
+	{
+		method: "POST",
+		path: "/v1/inbox/action",
+		operationId: "inboxAction",
+		summary: "Archive or restore selected alert versions without changing their sources",
+		auth: "inbox-action",
+		schema: null,
+	},
+	{
+		method: "GET",
+		path: "/v1/life/weekly/{runId}/status",
+		params: { runId: { pattern: "^[a-f0-9]{64}$", description: "Weekly run hash", example: "a".repeat(64) } },
+		operationId: "weeklyRunStatus",
+		summary: "Read bounded weekly failure evidence",
+		auth: "weekly",
+		schema: null,
+	},
+	{
+		method: "POST",
+		path: "/v1/life/weekly/{runId}/close",
+		params: { runId: { pattern: "^[a-f0-9]{64}$", description: "Weekly run hash", example: "a".repeat(64) } },
+		operationId: "closeWeeklyDraft",
+		summary: "Mark a completed weekly draft superseded, retaining its history",
+		auth: "weekly",
+		schema: null,
+	},
+	{
+		method: "GET",
+		path: "/v1/terminal/sessions",
+		operationId: "terminalSessions",
+		summary: "List interactive shell sessions",
+		auth: "terminal",
+		schema: null,
+	},
+	{
+		method: "POST",
+		path: "/v1/terminal/action",
+		operationId: "terminalAction",
+		summary: "Create, type into, resize or close an interactive shell",
+		auth: "terminal",
+		schema: null,
+	},
+	{
+		method: "GET",
+		path: "/v1/terminal/output/{id}/{cursor}",
+		operationId: "terminalOutput",
+		summary: "Read bounded terminal output",
+		auth: "terminal",
+		schema: null,
+		params: {
+			id: { pattern: "^[a-f0-9-]{36}$", description: "Session ID", example: "00000000-0000-0000-0000-000000000000" },
+			cursor: { pattern: "^[0-9]{1,16}$", description: "Byte cursor", example: "0" },
+		},
+	},
+	{
+		method: "POST",
+		path: "/v1/life/brief/generate",
+		operationId: "generateBrief",
+		summary: "Generate today's Jarvis daily brief",
+		auth: "brief",
+		schema: "BriefGeneration",
+	},
+	{
+		method: "GET",
+		path: "/v1/life/brief/generation",
+		operationId: "briefGenerationStatus",
+		summary: "Daily brief generation status",
+		auth: "brief",
+		schema: "BriefGeneration",
+	},
+	...PORTAL_CORE_ROUTES,
+	...PORTAL_APP_ROUTES,
+	...PORTAL_HANDOFF_SERVICES.map(
+		(service): PortalRoute => ({
+			method: "POST",
+			path: `/v1/open/${service}`,
+			operationId: `open-${service}`,
+			summary: `Open ${service} in the local browser with its own sign-in`,
+			auth: "open",
+			schema: "ServiceOpen",
+			service,
+		}),
+	),
+];

@@ -1,0 +1,269 @@
+#!/bin/bash
+# weekly-plan — Generate the weekly plan via the Harnessy AI runner.
+#
+# Called by launchd (com.flow-harness.project.weekly-plan). Can also be run
+# manually: `bash tools/flow-install/skills/life-orchestrator/scripts/weekly-plan`
+#
+# Pattern: keep raw state and the bounded prompt in temporary files, pass the
+# prompt to ai_runner.py via stdin, and capture its output in an artifact
+# candidate. File-backed input plus deterministic compaction prevents provider
+# adapters from hitting the OS argument-size limit.
+#
+# Exit codes:
+#   0 = success
+#   1 = transient failure (claude timeout, network — retry OK)
+#   2 = permanent failure (script bug, missing dep — do not retry)
+
+set -u
+
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPTS_DIR/.." && pwd)"
+if [ -n "${FLOW_PROJECT_ROOT:-}" ]; then
+    PROJECT_ROOT="$FLOW_PROJECT_ROOT"
+else
+    PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+fi
+
+DATE_PARTS=$(python3 - <<'PY'
+import datetime
+import os
+
+raw = os.environ.get("LIFE_ORCHESTRATOR_TODAY")
+today = datetime.date.fromisoformat(raw) if raw else datetime.date.today()
+target = today + datetime.timedelta(days=1) if today.weekday() == 6 else today
+print(target.strftime("%Y %b %V"))
+PY
+) || { echo "ERROR: cannot resolve weekly planning date" >&2; exit 2; }
+IFS=' ' read -r YEAR MONTH WEEK <<< "$DATE_PARTS"
+
+OUTPUT_DIR="$HOME/.agents/life/$YEAR/$MONTH"
+OUTPUT_FILE="$OUTPUT_DIR/week-$WEEK-plan.md"
+
+# Public, shared project context (safe for any project that installs this skill).
+STATUS_FILE="$PROJECT_ROOT/.jarvis/context/status.md"
+ROADMAP_FILE="$PROJECT_ROOT/.jarvis/context/roadmap.md"
+
+# Priorities are user-private. Prefer the repo-private context file so weekly
+# planning uses the same source as collect-state; keep the historical
+# ~/.agents/life/priorities.md path as a fallback for older installs.
+FLOW_CONTEXT_USER="${FLOW_USER:-}"
+if [ -z "$FLOW_CONTEXT_USER" ]; then
+    FLOW_CONTEXT_USER="${USER:-}"
+fi
+if [ -z "$FLOW_CONTEXT_USER" ]; then
+    FLOW_CONTEXT_USER="default"
+fi
+PRIVATE_PRIORITIES_FILE="$PROJECT_ROOT/.jarvis/context/private/$FLOW_CONTEXT_USER/priorities.md"
+PRIVATE_COMPETENCE_PRIORITIES_FILE="$PROJECT_ROOT/.jarvis/context/private/$FLOW_CONTEXT_USER/competence-priorities.md"
+LEGACY_PRIORITIES_FILE="$HOME/.agents/life/priorities.md"
+if [ -n "${LIFE_PRIORITIES_FILE:-}" ]; then
+    PRIORITIES_FILE="$LIFE_PRIORITIES_FILE"
+elif [ -f "$PRIVATE_PRIORITIES_FILE" ]; then
+    PRIORITIES_FILE="$PRIVATE_PRIORITIES_FILE"
+else
+    PRIORITIES_FILE="$LEGACY_PRIORITIES_FILE"
+fi
+if [ -n "${LIFE_COMPETENCE_PRIORITIES_FILE:-}" ]; then
+    COMPETENCE_PRIORITIES_FILE="$LIFE_COMPETENCE_PRIORITIES_FILE"
+else
+    COMPETENCE_PRIORITIES_FILE="$PRIVATE_COMPETENCE_PRIORITIES_FILE"
+fi
+
+MONTHLY_REVIEW_FILE="$OUTPUT_DIR/monthly-review.md"
+TEMPLATE_FILE="$SKILL_DIR/templates/weekly-plan.md"
+
+mkdir -p "$OUTPUT_DIR"
+
+cd "$PROJECT_ROOT" || { echo "ERROR: cannot cd to $PROJECT_ROOT" >&2; exit 2; }
+
+STATE_FILE=""
+STATE_ERR=""
+PROMPT_FILE=""
+RUNNER_ERR=""
+PLAN_TMP=""
+JOURNAL_BODY_FILE=""
+
+cleanup() {
+    [ -z "$STATE_FILE" ] || rm -f "$STATE_FILE"
+    [ -z "$STATE_ERR" ] || rm -f "$STATE_ERR"
+    [ -z "$PROMPT_FILE" ] || rm -f "$PROMPT_FILE"
+    [ -z "$RUNNER_ERR" ] || rm -f "$RUNNER_ERR"
+    [ -z "$PLAN_TMP" ] || rm -f "$PLAN_TMP"
+    [ -z "$JOURNAL_BODY_FILE" ] || rm -f "$JOURNAL_BODY_FILE"
+}
+trap cleanup EXIT
+
+# Step 1: collect state
+echo "Collecting state..." >&2
+STATE_FILE=$(mktemp -t weekly-plan-state.XXXXXX) || { echo "ERROR: cannot create state file" >&2; exit 2; }
+STATE_ERR=$(mktemp -t weekly-plan-state-error.XXXXXX) || { echo "ERROR: cannot create state error file" >&2; exit 2; }
+python3 "$SCRIPTS_DIR/collect-state" >"$STATE_FILE" 2>"$STATE_ERR"
+STATE_EXIT=$?
+if [ $STATE_EXIT -ne 0 ]; then
+    echo "ERROR: collect-state failed" >&2
+    sed 's/^/  /' "$STATE_ERR" >&2
+    exit 2
+fi
+if [ ! -s "$STATE_FILE" ]; then
+    echo "ERROR: collect-state produced empty output" >&2
+    exit 2
+fi
+echo "State collected: $(wc -c < "$STATE_FILE" | tr -d ' ') bytes" >&2
+
+if [ ! -f "$TEMPLATE_FILE" ]; then
+    echo "ERROR: weekly-plan template missing at $TEMPLATE_FILE" >&2
+    exit 2
+fi
+
+# Step 2: build a bounded prompt from file-backed inputs. The shared runner's
+# OpenCode adapter forwards its prompt as one argument, so the fixed 64 KB cap
+# is part of this job's reliability contract.
+PROMPT_BUILDER="$SCRIPTS_DIR/prepare-weekly-prompt"
+if [ ! -f "$PROMPT_BUILDER" ]; then
+    echo "ERROR: weekly prompt builder missing at $PROMPT_BUILDER" >&2
+    exit 2
+fi
+PROMPT_FILE=$(mktemp -t weekly-plan-prompt.XXXXXX) || { echo "ERROR: cannot create prompt file" >&2; exit 2; }
+python3 "$PROMPT_BUILDER" \
+    --state-file "$STATE_FILE" \
+    --priorities "$PRIORITIES_FILE" \
+    --competence-priorities "$COMPETENCE_PRIORITIES_FILE" \
+    --status "$STATUS_FILE" \
+    --roadmap "$ROADMAP_FILE" \
+    --monthly-review "$MONTHLY_REVIEW_FILE" \
+    --template "$TEMPLATE_FILE" \
+    --week "$WEEK" \
+    --year "$YEAR" \
+    --month "$MONTH" \
+    --output "$PROMPT_FILE"
+PROMPT_EXIT=$?
+if [ $PROMPT_EXIT -ne 0 ] || [ ! -s "$PROMPT_FILE" ]; then
+    echo "ERROR: weekly prompt preparation failed" >&2
+    exit 2
+fi
+
+# Step 3: invoke the provider-agnostic AI runner
+AI_RUNNER="$SKILL_DIR/../_shared/ai_runner.py"
+if [ ! -f "$AI_RUNNER" ]; then
+    echo "ERROR: Harnessy AI runner missing at $AI_RUNNER" >&2
+    exit 2
+fi
+
+echo "Invoking Harnessy AI runner..." >&2
+RUNNER_ERR=$(mktemp -t weekly-plan-ai-runner.XXXXXX)
+PLAN_TMP_BASE=$(mktemp "$OUTPUT_DIR/.week-$WEEK-plan.XXXXXX") || { echo "ERROR: cannot create plan artifact candidate" >&2; exit 2; }
+PLAN_TMP="${PLAN_TMP_BASE}.md"
+if ! mv "$PLAN_TMP_BASE" "$PLAN_TMP"; then
+    echo "ERROR: cannot prepare markdown plan artifact candidate" >&2
+    exit 2
+fi
+python3 "$AI_RUNNER" \
+    --provider "${HARNESSY_AI_PROVIDER:-auto}" \
+    --model "${HARNESSY_AI_MODEL:-sonnet}" \
+    --fallback-model "${HARNESSY_AI_FALLBACK_MODEL:-haiku}" \
+    --budget-usd "${HARNESSY_AI_BUDGET_USD:-0.75}" \
+    --timeout "${HARNESSY_AI_TIMEOUT:-540}" \
+    --cwd "$PROJECT_ROOT" <"$PROMPT_FILE" >"$PLAN_TMP" 2>"$RUNNER_ERR"
+RUNNER_EXIT=$?
+
+if [ $RUNNER_EXIT -ne 0 ]; then
+    echo "ERROR: Harnessy AI runner exited $RUNNER_EXIT" >&2
+    sed 's/^/  /' "$RUNNER_ERR" >&2
+    exit 1
+fi
+sed 's/^/  /' "$RUNNER_ERR" >&2
+
+if [ ! -s "$PLAN_TMP" ]; then
+    echo "ERROR: Harnessy AI runner produced empty output" >&2
+    exit 1
+fi
+
+# Step 4: post-process and validate the candidate before publishing it. A stale
+# file from a prior run never counts as new success, and a failed cleanup cannot
+# replace the last known-good plan with an empty file.
+if command -v jarvis >/dev/null 2>&1; then
+    echo "Running text hygiene cleanup..." >&2
+    HYGIENE_OUTPUT=$(jarvis text-hygiene clean "$PLAN_TMP" --report 2>&1)
+    HYGIENE_EXIT=$?
+    echo "$HYGIENE_OUTPUT" | sed 's/^/  /' >&2
+    if [ $HYGIENE_EXIT -ne 0 ]; then
+        echo "ERROR: text hygiene cleanup failed (exit $HYGIENE_EXIT)" >&2
+        exit 1
+    fi
+else
+    echo "WARN: jarvis CLI not on PATH — skipping text hygiene cleanup" >&2
+fi
+if [ ! -s "$PLAN_TMP" ]; then
+    echo "ERROR: weekly plan artifact candidate missing or empty" >&2
+    exit 1
+fi
+if ! mv "$PLAN_TMP" "$OUTPUT_FILE"; then
+    echo "ERROR: could not publish weekly plan to $OUTPUT_FILE" >&2
+    exit 1
+fi
+PLAN_TMP=""
+echo "Weekly plan written to $OUTPUT_FILE ($(wc -c < "$OUTPUT_FILE") bytes)" >&2
+
+# Step 5: push to Jarvis journal (Anytype). Logs failures explicitly so they're
+# visible in cron logs, but does not fail the run if Jarvis is unavailable —
+# the local file is still written.
+#
+# We strip the leading H1 from the body before pushing to the journal — the
+# entry title in Anytype already shows it, so keeping it in the body would
+# duplicate. The local file keeps the H1 (useful when reading directly).
+JOURNAL_TITLE="Weekly Plan — Week $WEEK, $YEAR"
+JOURNAL_BODY_FILE=$(mktemp -t weekly-plan-journal.XXXXXX)
+# Skip the first H1 line and any blank lines that follow it
+awk '
+    NR==1 && /^# / { skipping=1; next }
+    skipping && /^$/ { next }
+    { skipping=0; print }
+' "$OUTPUT_FILE" > "$JOURNAL_BODY_FILE"
+
+echo "Writing to Jarvis journal: $JOURNAL_TITLE" >&2
+if command -v jarvis >/dev/null 2>&1; then
+    JOURNAL_COMMAND=(
+        jarvis journal write
+        --file "$JOURNAL_BODY_FILE"
+        --title "$JOURNAL_TITLE"
+        --no-deep-dive
+    )
+    WEEKLY_JOURNAL_SPACE=$(python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+space = os.environ.get("LIFE_ORCHESTRATOR_WEEKLY_JOURNAL_SPACE", "").strip()
+if not space:
+    life_dir = Path(os.path.expanduser(os.environ.get("AGENTS_LIFE_DIR", "~/.agents/life")))
+    try:
+        config = json.loads((life_dir / "config.json").read_text(encoding="utf-8"))
+        space = str((config.get("journal_spaces") or {}).get("weekly") or "").strip()
+    except (OSError, ValueError, AttributeError):
+        pass
+if not space:
+    space = os.environ.get("LIFE_ORCHESTRATOR_JOURNAL_SPACE", "").strip()
+print(space)
+PY
+)
+    if [ -n "$WEEKLY_JOURNAL_SPACE" ]; then
+        JOURNAL_COMMAND+=(--space "$WEEKLY_JOURNAL_SPACE")
+    fi
+    JOURNAL_OUTPUT=$("${JOURNAL_COMMAND[@]}" 2>&1)
+    JOURNAL_EXIT=$?
+    if [ $JOURNAL_EXIT -eq 0 ]; then
+        echo "Jarvis journal write: success" >&2
+    else
+        echo "Jarvis journal write FAILED (exit $JOURNAL_EXIT)" >&2
+        echo "$JOURNAL_OUTPUT" | sed 's/^/  /' >&2
+    fi
+else
+    echo "WARN: jarvis CLI not on PATH — skipping journal write" >&2
+fi
+
+if [ ! -s "$OUTPUT_FILE" ]; then
+    echo "ERROR: weekly plan artifact missing or empty at $OUTPUT_FILE" >&2
+    exit 1
+fi
+
+exit 0

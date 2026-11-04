@@ -1,0 +1,14 @@
+{
+  "preset": "flow-context",
+  "destination_object_id": "collection-root",
+  "space_id": "space-1",
+  "last_synced_at": "2026-01-02T03:04:05+00:00",
+  "objects": {
+    "preferences.md": {
+      "object_id": "page-1",
+      "kind": "page",
+      "content_sha256": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+      "last_synced_at": "2026-01-02T03:04:05+00:00"
+    }
+  }
+}

@@ -1,0 +1,165 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "AnyType",
+    "version": "2025-11-08",
+    "description": "Local AnyType app API (read surface). Mirrors the endpoints Harnessy's native AnyType connector uses: list spaces, search objects in a space, fetch one object. The app must be running and paired; requests carry the pairing API key as a bearer token and are only sent to the local loopback address."
+  },
+  "servers": [{ "url": "http://127.0.0.1:31009" }],
+  "security": [{ "apiKey": [] }],
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "AnyType pairing API key (Settings -> API keys in the AnyType app)"
+      }
+    },
+    "schemas": {
+      "Space": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" }
+        },
+        "required": ["id"]
+      },
+      "ObjectSummary": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": {
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+          }
+        },
+        "required": ["id"]
+      },
+      "Object": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "snippet": { "type": "string" },
+          "markdown": { "type": "string" },
+          "type": {
+            "type": "object",
+            "properties": { "name": { "type": "string" } }
+          }
+        },
+        "required": ["id"]
+      },
+      "Pagination": {
+        "type": "object",
+        "properties": {
+          "has_more": { "type": "boolean" },
+          "next_cursor": { "type": "string" },
+          "offset": { "type": "integer" },
+          "limit": { "type": "integer" },
+          "total": { "type": "integer" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/v1/spaces": {
+      "get": {
+        "operationId": "spaces_list",
+        "summary": "List spaces",
+        "description": "List the spaces in the paired AnyType vault.",
+        "parameters": [
+          { "name": "offset", "in": "query", "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer" } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spaces page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Space" } },
+                    "pagination": { "$ref": "#/components/schemas/Pagination" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/spaces/{space_id}/search": {
+      "post": {
+        "operationId": "objects_search",
+        "summary": "Search objects in a space",
+        "description": "Full-text search over the objects of one space.",
+        "parameters": [
+          { "name": "space_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": { "type": "string" },
+                  "offset": { "type": "integer" },
+                  "limit": { "type": "integer" },
+                  "cursor": { "type": "string" }
+                },
+                "required": ["query"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching objects page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/ObjectSummary" }
+                    },
+                    "pagination": { "$ref": "#/components/schemas/Pagination" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/spaces/{space_id}/objects/{object_id}": {
+      "get": {
+        "operationId": "objects_get",
+        "summary": "Fetch one object",
+        "description": "Fetch a single object, including its markdown body when available.",
+        "parameters": [
+          { "name": "space_id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "object_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "The object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "object": { "$ref": "#/components/schemas/Object" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

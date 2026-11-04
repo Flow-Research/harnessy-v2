@@ -1,0 +1,69 @@
+---
+description: Validate tests against the canonical QA runtime, regression artifacts, and optional profile rules
+argument-hint: "[--epic <epic_name>] [--suite <X>] [--api-only] [--browser-only] [--qa-profile .jarvis/context/profiles/qa.json] [--profile .jarvis/context/profiles/qa.json]"
+---
+
+# Test Quality Validator Command
+
+## Inputs
+
+- canonical QA profile
+- optional profile for role inventory, validator adapter rules, and mock policy
+- optional epic or suite scoping
+
+See `.jarvis/context/docs/standards/qa-process.md` for the shared QA contract this validator is expected to enforce.
+
+## Workflow
+
+1. Resolve the QA profile. Default to `.jarvis/context/profiles/qa.json`, then legacy `.harnessy/qa-profile.json`, `.flow/qa-profile.json`, then `qa/qa-profile.json`.
+2. Run the deterministic drift preflight:
+
+```bash
+qa drift --profile <qa-profile> --json
+```
+
+3. Treat these drift findings as quality defects:
+
+- missing `@qa-spec` / `@qa-suite` headers
+- non-canonical scenario IDs
+- `Status: implemented` scenarios without matching tests
+- tests referencing nonexistent specs
+- persistence-sensitive browser scenarios with no `DB Assert:` coverage or explicit environment limitation
+- internal DB/client/auth/service mocks without documented mock-policy exception
+
+4. If acceptance-criteria coverage is part of the request, parse criteria with:
+
+```bash
+pnpm exec tsx ${AGENTS_SKILLS_ROOT}/spec-to-regression/scripts/extract-criteria.ts <spec-root>
+```
+
+5. Parse API regression scenarios with:
+
+```bash
+pnpm exec tsx ${AGENTS_SKILLS_ROOT}/api-integration-codegen/scripts/parse-api-regression.ts <api-regression-spec>
+```
+
+6. Run coverage and correctness validators:
+
+```bash
+pnpm exec tsx ${AGENTS_SKILLS_ROOT}/test-quality-validator/scripts/validate-coverage.ts ...
+pnpm exec tsx ${AGENTS_SKILLS_ROOT}/test-quality-validator/scripts/validate-correctness.ts ...
+```
+
+7. Report a merged result that includes both runtime drift defects and validator findings.
+
+For browser suites, explicitly call out false-green risks from unverified
+selectors, missing Playwright walkthrough evidence, missing DB assertions, and
+assertions that only check navigation without verifying the user-visible or
+persisted outcome.
+
+For API and service suites, explicitly call out mock-heavy tests. Mocks for
+external providers are acceptable when the QA profile lists the boundary under
+`testEnvironment.mockPolicy.allowedExternalBoundaries` or `exceptions`.
+
+## Completion criteria
+
+- drift defects are surfaced as blocking issues
+- false-green risks are identified explicitly
+- coverage gaps are tied back to criteria or regression scenarios
+- output is suitable for PR review or CI gating

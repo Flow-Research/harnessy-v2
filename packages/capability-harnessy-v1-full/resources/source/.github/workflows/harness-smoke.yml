@@ -1,0 +1,51 @@
+name: Harness Smoke
+
+on:
+  push:
+    paths:
+      - '.github/workflows/harness-smoke.yml'
+      - 'tools/flow-install/**'
+      - 'scripts/flow/**'
+      - 'jarvis-cli/**'
+      - 'README.md'
+      - 'tests/fixtures/harness-smoke/**'
+  pull_request:
+    paths:
+      - '.github/workflows/harness-smoke.yml'
+      - 'tools/flow-install/**'
+      - 'scripts/flow/**'
+      - 'jarvis-cli/**'
+      - 'README.md'
+      - 'tests/fixtures/harness-smoke/**'
+
+jobs:
+  harness-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Add local bin to PATH
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run Harnessy install evaluation harness
+        run: |
+          bash tests/harness/run-flow-install-eval.sh

@@ -1,0 +1,811 @@
+"""Exercise the packaged draft adapter against a real isolated Jarvis install."""
+
+import fcntl
+import hashlib
+import importlib.util
+from http.client import HTTPConnection
+import json
+import os
+from pathlib import Path
+import sqlite3
+import select
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+import uuid
+import re
+from urllib.parse import urlencode, urlsplit
+
+
+ADAPTER = Path(os.environ.get("HARNESSY_COMMUNITY_TEST_ADAPTER", str(
+    Path(__file__).resolve().parents[1] / "packages/harnessy-core/resources/community-draft-adapter.py"
+)))
+if not ADAPTER.is_absolute() or not ADAPTER.is_file():
+    raise ValueError("Community test adapter must be an existing absolute file")
+
+
+class CommunityDraftAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="community-adapter-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.source = self.root / "sources"
+        self.source.mkdir()
+        self.config = {
+            "source_path": str(self.source),
+            "draft_path": str(self.root / "drafts"),
+            "state_path": str(self.root / "state"),
+            "timezone": "Africa/Lagos",
+        }
+
+    def run_adapter(self, action="generate", responses=(), **fields):
+        request = {"run_id": str(uuid.uuid4()), "action": action, "config": self.config, "week_start": "2026-09-14", **fields}
+        responses = [
+            {"receiptId": "synthetic-response", "model": "synthetic-model",
+             **{key: value for key, value in response.items() if key != "data"},
+             **({"text": json.dumps(response["data"])} if "data" in response else {})}
+            for response in responses
+        ]
+        result = subprocess.run(
+            [sys.executable, "-I", str(ADAPTER)],
+            input="".join(json.dumps(value) + "\n" for value in (request, *responses)),
+            text=True, capture_output=True, timeout=10,
+            cwd=self.root, env={"PATH": os.defpath},
+        )
+        events = [json.loads(line) for line in result.stdout.splitlines()]
+        return result, events
+
+    def queue(self):
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            db.row_factory = sqlite3.Row
+            return [dict(row) for row in db.execute("SELECT * FROM community_briefings")]
+
+    def add_source(self):
+        (self.source / "flow.md").write_text(
+            "# Flow Research update\n\n- Date: 2026-09-16\n\n## Key takeaways\n\n"
+            "The team reviewed the community learning materials and documented the next steps.\n"
+        )
+        return hashlib.sha256(b"flow.md").hexdigest()[:16]
+
+    def test_quiet_week_is_unapproved_idempotent_and_does_not_acknowledge_notification(self):
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["status"], "pending_review")
+        self.assertEqual(events[0]["provider_calls"], 0)
+        self.assertTrue(events[0]["notification_pending"])
+        row = self.queue()[0]
+        for field in ("approved_hash", "google_doc_id", "discord_message_id", "last_notified_at"):
+            self.assertIsNone(row[field])
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(events[0]["existing"])
+        self.assertEqual(self.queue(), [row])
+
+    def test_start_marks_runs_orphaned_by_a_killed_adapter_interrupted(self):
+        result, _ = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        database = self.root / "state/weekly-briefings.sqlite3"
+        with sqlite3.connect(database) as db:
+            # What a SIGKILLed adapter leaves behind: a run that never recorded its outcome.
+            db.execute(
+                "INSERT INTO community_draft_runs(run_id,request_hash,status,calls) VALUES ('killed-run',?,'running',2)",
+                ("0" * 64,),
+            )
+        result, _ = self.run_adapter(week_start="2026-09-21")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with sqlite3.connect(database) as db:
+            runs = {run_id: (status, calls) for run_id, status, calls in db.execute(
+                "SELECT run_id,status,calls FROM community_draft_runs")}
+        self.assertEqual(runs.pop("killed-run"), ("interrupted", 2))
+        self.assertEqual(sorted(runs.values()), [("completed", 0), ("completed", 0)])
+
+    def test_classifier_uses_parent_only_and_exclusion_produces_quiet_draft(self):
+        source_id = self.add_source()
+        response = {"sequence": 1, "provider": "codex", "data": {"decisions": [{
+            "source_id": source_id, "include": False, "reason": "Not public yet",
+            "sensitivity": "private", "facts": [],
+        }]}}
+        result, events = self.run_adapter(responses=[response])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[0]["type"], "generate")
+        self.assertIn(source_id, events[0]["prompt"])
+        self.assertEqual(events[-1]["provider_calls"], 1)
+        self.assertEqual(self.queue()[0]["status"], "pending_review")
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            status, encoded = db.execute("SELECT status,receipts_json FROM community_draft_runs").fetchone()
+        self.assertEqual(status, "completed")
+        self.assertEqual(len(json.loads(encoded)), 1)
+        self.assertEqual(json.loads(encoded)[0]["receiptId"], "synthetic-response")
+
+    def test_existing_run_ledger_is_upgraded_without_losing_consumption(self):
+        (self.root / "state").mkdir()
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            db.execute("CREATE TABLE community_draft_runs (run_id TEXT PRIMARY KEY, request_hash TEXT NOT NULL, status TEXT NOT NULL, calls INTEGER NOT NULL DEFAULT 0)")
+            db.execute("INSERT INTO community_draft_runs VALUES ('old-run','old-hash','failed',1)")
+        result, _ = self.run_adapter()
+        self.assertEqual(result.returncode, 0)
+        result, events = self.run_adapter(run_id="old-run")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(events[-1]["type"], "error")
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT request_hash,status,calls,receipts_json FROM community_draft_runs WHERE run_id='old-run'").fetchone(), ("old-hash", "failed", 1, "[]"))
+
+    def test_eof_and_wrong_provider_fail_without_fallback_or_queue_entry(self):
+        self.add_source()
+        for responses in ([], [{"sequence": 1, "provider": "claude", "data": {}}]):
+            with self.subTest(responses=responses):
+                result, events = self.run_adapter(responses=responses)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual([event["type"] for event in events], ["generate", "error"])
+                self.assertEqual(self.queue(), [])
+
+    def test_string_false_is_not_accepted_as_classifier_approval(self):
+        source_id = self.add_source()
+        response = {"sequence": 1, "provider": "codex", "data": {"decisions": [{
+            "source_id": source_id, "include": "false", "sensitivity": "public",
+            "facts": ["Synthetic fact"],
+        }]}}
+        result, events = self.run_adapter(responses=[response])
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(self.queue(), [])
+
+    def test_publication_action_rejected_before_state_creation(self):
+        result, events = self.run_adapter(action="publish")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(events, [{"type": "error", "code": "community_draft_failed", "publication": False}])
+        self.assertFalse((self.root / "state").exists())
+
+    def test_unsafe_source_files_fail_before_state_or_provider_access(self):
+        candidate = self.source / "unsafe.md"
+        for kind in ("symlink", "hardlink", "fifo", "oversize"):
+            with self.subTest(kind=kind):
+                if kind == "symlink":
+                    candidate.symlink_to(self.root / "not-present")
+                elif kind == "hardlink":
+                    target = self.root / "external.md"
+                    target.write_text("PRIVATE")
+                    os.link(target, candidate)
+                elif kind == "fifo":
+                    os.mkfifo(candidate)
+                else:
+                    with candidate.open("wb") as stream:
+                        stream.truncate(1048577)
+                result, events = self.run_adapter()
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual([event["type"] for event in events], ["error"])
+                self.assertFalse((self.root / "state").exists())
+                candidate.unlink()
+
+    def test_overlapping_roots_are_rejected(self):
+        for changed in (
+            {"draft_path": str(self.source)},
+            {"draft_path": str(self.source / "generated")},
+            {"state_path": str(self.source / "state")},
+        ):
+            with self.subTest(changed=changed):
+                result, events = self.run_adapter(config={**self.config, **changed})
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual([event["type"] for event in events], ["error"])
+                self.assertFalse((self.root / "state").exists())
+
+    def test_generated_trees_are_pruned_before_validation_and_collection(self):
+        source_id = self.add_source()
+        generated = self.source / "node_modules"
+        generated.mkdir()
+        (generated / "flow.md").write_text(
+            (self.source / "flow.md").read_text() + "\nGENERATED_PRIVATE_SENTINEL\n"
+        )
+        for index in range(10001):
+            (generated / f"{index}.md").write_text("GENERATED_PRIVATE_SENTINEL")
+        for name in (".git", ".goal-agent", ".venv", "venv", "__pycache__", ".turbo", "coverage"):
+            (self.source / name).symlink_to(generated, target_is_directory=True)
+        result, events = self.run_adapter(responses=[{
+            "sequence": 1, "provider": "codex", "data": {"decisions": [{
+                "source_id": source_id, "include": False, "reason": "Not public",
+                "sensitivity": "private", "facts": [],
+            }]},
+        }])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[0]["type"], "generate")
+        self.assertIn(source_id, events[0]["prompt"])
+        self.assertNotIn("GENERATED_PRIVATE_SENTINEL", events[0]["prompt"])
+        self.assertEqual(events[-1]["provider_calls"], 1)
+
+    def add_dated_history(self):
+        # Generated output in an old dated folder holds more entries than the
+        # traversal limit; a whole-tree walk failed on exactly this shape.
+        history = self.source / "flow/strategy/2026/Aug/13-research/experiments"
+        history.mkdir(parents=True)
+        for index in range(10050):
+            (history / f"{index}.txt").touch()
+
+    def start_review(self):
+        child = subprocess.Popen(
+            [sys.executable, "-I", str(ADAPTER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, cwd=self.root, env={"PATH": os.defpath}, bufsize=0,
+        )
+        self.addCleanup(child.communicate, timeout=5)
+        self.addCleanup(child.kill)
+        child.stdin.write((json.dumps({"action": "review", "config": {**self.config, "review_port": 0}}) + "\n").encode())
+        child.stdin.flush()
+        deadline = time.monotonic() + 10
+        data = bytearray()
+        while not data.endswith(b"\n"):
+            remaining = deadline - time.monotonic()
+            self.assertGreater(remaining, 0, "adapter event timed out")
+            self.assertTrue(select.select([child.stdout], [], [], remaining)[0])
+            chunk = os.read(child.stdout.fileno(), 1)
+            self.assertTrue(chunk, "adapter closed without event")
+            data.extend(chunk)
+        return json.loads(data)
+
+    def test_review_starts_with_dated_history_beyond_the_entry_limit(self):
+        self.add_dated_history()
+        ready = self.start_review()
+        self.assertEqual(ready["type"], "ready")
+        self.assertFalse(ready["publication"])
+
+    def test_review_startup_still_refuses_unsafe_undated_content(self):
+        (self.source / "notes").mkdir()
+        (self.source / "notes/linked.md").symlink_to(self.root / "absent")
+        self.assertEqual(self.start_review(), {"type": "error", "code": "community_draft_failed", "publication": False})
+
+    def test_generation_reads_the_week_despite_dated_history_beyond_the_entry_limit(self):
+        self.add_dated_history()
+        relative = "flow/meetings/2026/Sep/16-update.md"
+        (self.source / relative).parent.mkdir(parents=True)
+        (self.source / relative).write_text(
+            "# Flow Research update\n\n- Date: 2026-09-16\n\n## Key takeaways\n\n"
+            "The team reviewed the community learning materials and documented the next steps.\n"
+        )
+        source_id = hashlib.sha256(relative.encode()).hexdigest()[:16]
+        result, events = self.run_adapter(responses=[{
+            "sequence": 1, "provider": "codex", "data": {"decisions": [{
+                "source_id": source_id, "include": False, "reason": "Not public",
+                "sensitivity": "private", "facts": [],
+            }]},
+        }])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[0]["type"], "generate")
+        self.assertIn(source_id, events[0]["prompt"])
+        self.assertEqual(events[-1]["provider_calls"], 1)
+
+    def test_unsafe_content_in_the_requested_week_fails_before_state(self):
+        folder = self.source / "flow/docs/2026/Sep/15-work"
+        folder.mkdir(parents=True)
+        (folder / "linked.md").symlink_to(self.root / "absent")
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+        self.assertFalse((self.root / "state").exists())
+
+    def test_dated_content_outside_the_requested_week_is_neither_validated_nor_read(self):
+        folder = self.source / "flow/docs/2026/Aug/03-old"
+        folder.mkdir(parents=True)
+        (folder / "linked.md").symlink_to(self.root / "absent")
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[-1]["provider_calls"], 0)
+
+    def test_legitimate_entry_limit_is_not_relaxed(self):
+        for index in range(10001):
+            (self.source / f"{index}.txt").touch()
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+        self.assertFalse((self.root / "state").exists())
+
+    def test_generated_names_do_not_bypass_output_validation(self):
+        draft = self.root / "drafts"
+        draft.mkdir()
+        (draft / "node_modules").symlink_to(self.root / "absent")
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+        self.assertFalse((self.root / "state").exists())
+
+    def test_total_source_bytes_remain_bounded(self):
+        for index in range(33):
+            with (self.source / f"{index}.md").open("wb") as stream:
+                stream.truncate(1048576)
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+        self.assertFalse((self.root / "state").exists())
+
+    def test_private_categories_remain_excluded_from_provider_input(self):
+        self.add_source()
+        content = (self.source / "flow.md").read_text() + "\nPRIVATE_CATEGORY_SENTINEL\n"
+        (self.source / "flow.md").unlink()
+        (self.source / "legal").mkdir()
+        (self.source / "legal/flow.md").write_text(content)
+        (self.source / "priorities.md").write_text(content)
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[-1]["provider_calls"], 0)
+        self.assertNotIn("PRIVATE_CATEGORY_SENTINEL", result.stdout)
+
+    def test_existing_nested_briefing_output_remains_supported(self):
+        config = {**self.config, "draft_path": str(self.source / "flow/community-briefings")}
+        result, _ = self.run_adapter(config=config)
+        self.assertEqual(result.returncode, 0)
+        result, events = self.run_adapter(config=config, action="regenerate")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(events[-1]["provider_calls"], 0)
+
+    def test_missing_source_cannot_be_reported_as_a_quiet_week(self):
+        result, events = self.run_adapter(config={**self.config, "source_path": str(self.root / "missing")})
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+        self.assertFalse((self.root / "state").exists())
+
+    def test_output_link_is_rejected_without_touching_its_target(self):
+        draft = self.root / "drafts"
+        draft.mkdir()
+        target = self.root / "unrelated"
+        target.write_text("UNCHANGED")
+        (draft / "artifact.md").symlink_to(target)
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+        self.assertEqual(target.read_text(), "UNCHANGED")
+        self.assertFalse((self.root / "state").exists())
+
+    def test_source_depth_is_bounded_before_state_creation(self):
+        directory = self.source
+        for _ in range(65):
+            directory = directory / "nested"
+            directory.mkdir()
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+        self.assertFalse((self.root / "state").exists())
+
+    def test_shared_state_only_checks_this_workflows_queue_files(self):
+        state = self.root / "state"
+        state.mkdir()
+        unrelated = state / "unrelated-executor-link"
+        unrelated.symlink_to(self.root / "absent-unrelated-state")
+        result, _ = self.run_adapter()
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(unrelated.is_symlink())
+        (state / "weekly-briefings.sqlite3-wal").symlink_to(self.root / "absent-sidecar")
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+
+    def test_invalid_json_preserves_receipt_without_content_or_retry(self):
+        self.add_source()
+        output = "PRIVATE_OUTPUT_NOT_JSON"
+        result, events = self.run_adapter(run_id="invalid-json", responses=[{
+            "sequence": 1, "provider": "codex", "text": output,
+        }])
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["generate", "error"])
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            status, calls, encoded = db.execute(
+                "SELECT status,calls,receipts_json FROM community_draft_runs WHERE run_id='invalid-json'"
+            ).fetchone()
+        self.assertEqual((status, calls), ("failed", 1))
+        self.assertNotIn(output, encoded)
+        self.assertEqual(json.loads(encoded), [{
+            "sequence": 1, "provider": "codex", "receiptId": "synthetic-response", "model": "synthetic-model",
+            "promptHash": hashlib.sha256(events[0]["prompt"].encode()).hexdigest(),
+            "outputHash": hashlib.sha256(output.encode()).hexdigest(),
+        }])
+        self.assertEqual(self.queue(), [])
+
+    def test_boolean_sequence_is_not_an_integer_binding(self):
+        self.add_source()
+        result, events = self.run_adapter(responses=[{
+            "sequence": True, "provider": "codex", "data": {},
+        }])
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(events[-1]["type"], "error")
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT receipts_json FROM community_draft_runs").fetchone()[0], "[]")
+
+    def test_failed_run_cannot_replay_even_with_changed_input(self):
+        self.add_source()
+        result, events = self.run_adapter(run_id="same-run")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(events[0]["type"], "generate")
+        result, events = self.run_adapter(run_id="same-run", week_start="2026-09-07")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual([event["type"] for event in events], ["error"])
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT status,calls FROM community_draft_runs WHERE run_id='same-run'").fetchone(), ("failed", 1))
+
+    def test_revision_preserves_review_flow_and_stays_unapproved(self):
+        result, _ = self.run_adapter()
+        self.assertEqual(result.returncode, 0)
+        previous = self.queue()[0]
+        response = {"sequence": 1, "provider": "codex", "data": {
+            "title": "We have a short update this week.",
+            "discord_summary": "We have fewer public updates this week.",
+            "sections": {heading: "We have no further verified public updates to share this week. We will keep this summary brief." for heading in (
+                "This week in brief", "What moved", "What we learned", "What comes next", "How to take part",
+            )},
+        }}
+        result, events = self.run_adapter(
+            action="revise", responses=[response], briefing_id=previous["briefing_id"],
+            instruction="Make the update shorter.", markdown=Path(previous["briefing_path"]).read_text(),
+            discord_summary=Path(previous["discord_path"]).read_text(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(events[-1]["status"], "pending_review")
+        current = self.queue()[0]
+        self.assertNotEqual(current["draft_hash"], previous["draft_hash"])
+        self.assertIsNone(current["approved_hash"])
+        self.assertTrue((Path(current["artifact_dir"]) / "revisions.ndjson").is_file())
+
+    def test_regeneration_revokes_approval_but_refuses_existing_delivery_receipts(self):
+        result, _ = self.run_adapter()
+        self.assertEqual(result.returncode, 0)
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            db.execute("UPDATE community_briefings SET status='approved', approved_hash=draft_hash")
+        result, _ = self.run_adapter(action="regenerate")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(self.queue()[0]["status"], "pending_review")
+        self.assertIsNone(self.queue()[0]["approved_hash"])
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            db.execute("UPDATE community_briefings SET google_doc_id='synthetic-receipt'")
+        before = self.queue()
+        result, events = self.run_adapter(action="regenerate")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(events[-1]["type"], "error")
+        self.assertEqual(self.queue(), before)
+
+    def test_native_review_routes_revision_through_bound_parent_protocol(self):
+        for mismatch in (False, True, None):
+            with self.subTest(mismatch=mismatch):
+                # Separate weeks retain real queue history between the cases.
+                week = "2026-08-31" if mismatch is None else "2026-09-07" if mismatch else "2026-09-14"
+                result, events = self.run_adapter(week_start=week)
+                self.assertEqual(result.returncode, 0)
+                item_id = events[-1]["briefing_id"]
+                child = subprocess.Popen(
+                    [sys.executable, "-I", str(ADAPTER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, cwd=self.root, env={"PATH": os.defpath}, bufsize=0,
+                )
+                try:
+                    def send(value):
+                        child.stdin.write((json.dumps(value) + "\n").encode())
+                        child.stdin.flush()
+
+                    def event():
+                        deadline = time.monotonic() + 5
+                        data = bytearray()
+                        while not data.endswith(b"\n"):
+                            remaining = deadline - time.monotonic()
+                            self.assertGreater(remaining, 0, "adapter event timed out")
+                            self.assertTrue(select.select([child.stdout], [], [], remaining)[0])
+                            chunk = os.read(child.stdout.fileno(), 1)
+                            self.assertTrue(chunk, "adapter closed without event")
+                            data.extend(chunk)
+                            self.assertLess(len(data), 1048576)
+                        return json.loads(data)
+
+                    send({"action": "review", "config": {**self.config, "review_port": 0}})
+                    ready = event()
+                    self.assertEqual(ready["type"], "ready")
+                    url = urlsplit(ready["url"])
+                    # harnessy-community-review-open reads this; it names the token file, never the token.
+                    state = Path(self.config["state_path"]).resolve()
+                    rendezvous_path = state / "community-review.rendezvous.json"
+                    self.assertEqual(rendezvous_path.stat().st_mode & 0o7777, 0o600)
+                    self.assertEqual(rendezvous_path.stat().st_nlink, 1)
+                    rendezvous_text = rendezvous_path.read_text()
+                    rendezvous_value = json.loads(rendezvous_text)
+                    self.assertRegex(rendezvous_value.pop("instance"), r"^[0-9a-f]{32}$")
+                    self.assertEqual(rendezvous_value, {
+                        "kind": "harnessy.community.review-rendezvous.v1",
+                        "origin": f"http://127.0.0.1:{url.port}",
+                        "port": url.port,
+                        "tokenPath": str(state / "review.token"),
+                    })
+                    self.assertNotIn(url.query.removeprefix("token="), rendezvous_text)
+                    self.assertEqual((state / "review.token").stat().st_mode & 0o7777, 0o600)
+
+                    def http(method, path, fields=None, cookie=None):
+                        connection = HTTPConnection(url.hostname, url.port, timeout=2)
+                        try:
+                            headers = {
+                                "Origin": f"http://{url.netloc}",
+                                "Content-Type": "application/x-www-form-urlencoded",
+                            }
+                            if cookie:
+                                headers["Cookie"] = cookie
+                            connection.request(method, path, urlencode(fields) if fields else None, headers)
+                            response = connection.getresponse()
+                            return response.status, dict(response.getheaders()), response.read().decode()
+                        finally:
+                            connection.close()
+
+                    status, headers, _ = http("GET", "/?" + url.query)
+                    self.assertEqual(status, 200)
+                    cookie = headers["Set-Cookie"].split(";", 1)[0]
+                    status, _, page = http("GET", f"/briefing/{item_id}", cookie=cookie)
+                    self.assertEqual(status, 200)
+                    csrf = re.search(r'name="csrf" value="([^"]+)"', page)[1]
+                    before = next(row for row in self.queue() if row["briefing_id"] == item_id)
+                    fields = {
+                        "csrf": csrf, "briefing_markdown": Path(before["briefing_path"]).read_text(),
+                        "discord_summary": Path(before["discord_path"]).read_text(),
+                        "revise_instruction": "Make the update shorter.", "revise_provider": "claude",
+                    }
+                    self.assertEqual(http("POST", f"/briefing/revise/{item_id}", fields, cookie)[0], 409)
+                    fields["revise_provider"] = "codex"
+                    self.assertEqual(http("POST", f"/briefing/revise/{item_id}", fields, cookie)[0], 303)
+                    started, generation = event(), event()
+                    self.assertEqual(started["type"], "run_started")
+                    self.assertEqual(generation["type"], "generate")
+                    self.assertEqual(started["run_id"], generation["run_id"])
+                    self.assertIn("Make the update shorter", generation["prompt"])
+                    if mismatch is None:
+                        child.kill()
+                        child.communicate(timeout=5)
+                        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+                            self.assertEqual(db.execute(
+                                "SELECT status,calls,receipts_json FROM community_draft_runs WHERE run_id=?", (started["run_id"],)
+                            ).fetchone(), ("running", 1, "[]"))
+                        current = next(row for row in self.queue() if row["briefing_id"] == item_id)
+                        self.assertEqual(current, before)
+                        job = json.loads((Path(current["artifact_dir"]) / "revision-status.json").read_text())
+                        self.assertEqual(job["state"], "running")
+                        # Interruption is retained, never disguised as a clean
+                        # completion or automatically cleared for retry.
+                        continue
+                    send({
+                        "run_id": "wrong-run" if mismatch else started["run_id"],
+                        "sequence": generation["sequence"], "provider": "codex",
+                        "receiptId": "synthetic-native-review", "model": "synthetic-model",
+                        "text": json.dumps({"title": "We have a short update this week.",
+                            "discord_summary": "We have fewer public updates this week.",
+                            "sections": {heading: "We have no further verified public updates to share this week. We will keep this summary brief." for heading in (
+                                "This week in brief", "What moved", "What we learned", "What comes next", "How to take part",
+                            )}}),
+                    })
+                    finished = event()
+                    self.assertEqual(finished["type"], "run_finished")
+                    self.assertEqual(finished["status"], "failed" if mismatch else "completed")
+                    self.assertEqual(finished["provider_calls"], 1)
+                    current = next(row for row in self.queue() if row["briefing_id"] == item_id)
+                    self.assertIsNone(current["approved_hash"])
+                    self.assertIsNone(current["google_doc_id"])
+                    self.assertIsNone(current["discord_message_id"])
+                    self.assertEqual(current["draft_hash"] == before["draft_hash"], mismatch)
+                    with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+                        status, calls, receipts = db.execute(
+                            "SELECT status,calls,receipts_json FROM community_draft_runs WHERE run_id=?", (started["run_id"],)
+                        ).fetchone()
+                    self.assertEqual(status, finished["status"])
+                    self.assertEqual(calls, 1)
+                    self.assertEqual(len(json.loads(receipts)), 0 if mismatch else 1)
+                finally:
+                    child.kill()
+                    child.communicate(timeout=5)
+
+    def test_orphaned_artifacts_are_refused_before_any_run_or_provider_call(self):
+        self.add_source()
+        orphan = self.root / "drafts/2026/week-2026-09-14"
+        orphan.mkdir(parents=True)
+        (orphan / "briefing.md").write_text("Left by a generation stopped while committing.\n")
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        # A refusal, not a request for a paid call: no "generate" event and no run.
+        self.assertEqual(events, [{"type": "error", "code": "orphan_artifacts", "publication": False}])
+        with sqlite3.connect(self.root / "state/weekly-briefings.sqlite3") as db:
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if "community_draft_runs" in tables:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM community_draft_runs").fetchone()[0], 0)
+        self.assertEqual(self.queue(), [])
+        # A week that already has its draft is answered as before.
+        orphan.joinpath("briefing.md").unlink()
+        orphan.rmdir()
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1, "the source still needs a provider; the refusal is gone")
+        self.assertNotIn("orphan_artifacts", json.dumps(events))
+
+    def test_one_native_draft_per_state_directory_across_processes(self):
+        (self.root / "state").mkdir()
+        lock = os.open(self.root / "state/community-native-draft.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, lock)
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(events, [{"type": "error", "code": "native_draft_busy", "publication": False}])
+        self.assertEqual(self.queue(), [])
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        result, events = self.run_adapter()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(events[-1]["status"], "pending_review")
+        self.assertEqual(os.stat(self.root / "state/community-native-draft.lock").st_mode & 0o777, 0o600)
+
+
+class ReviewRendezvousTests(unittest.TestCase):
+    """The rendezvous file under KeepAlive restarts: never blocks startup, never removes a newer one."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Importing must not write resources/__pycache__ into the packaged tree.
+        previous = sys.dont_write_bytecode
+        sys.dont_write_bytecode = True
+        cls.addClassCleanup(setattr, sys, "dont_write_bytecode", previous)
+        spec = importlib.util.spec_from_file_location("community_draft_adapter", ADAPTER)
+        cls.adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.adapter)
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="community-rendezvous-")
+        self.addCleanup(temp.cleanup)
+        self.state = Path(temp.name)
+        self.state.chmod(0o700)
+
+    def staged(self):
+        return sorted(p.name for p in self.state.iterdir() if p.name.startswith(".community-review.rendezvous.json."))
+
+    def test_a_leftover_staged_file_from_a_reused_pid_never_blocks_startup(self):
+        leftover = self.state / f".community-review.rendezvous.json.{os.getpid()}"
+        leftover.write_text("left by a review that died while publishing\n")
+        path, body, previous = self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertIsNone(previous)
+        self.assertEqual(path.read_bytes(), body)
+        self.assertEqual(json.loads(body)["port"], 8872)
+        self.assertEqual(path.stat().st_mode & 0o7777, 0o600)
+
+    def test_stale_staged_files_are_swept_without_following_links(self):
+        stale = self.state / ".community-review.rendezvous.json.111.old"
+        stale.write_text("stale\n")
+        old = time.time() - 3600
+        os.utime(stale, (old, old))
+        fresh = self.state / ".community-review.rendezvous.json.222.starting"
+        fresh.write_text("another review is publishing right now\n")
+        outside = self.state.parent / f"{self.state.name}-outside"
+        outside.write_text("must survive\n")
+        self.addCleanup(outside.unlink, missing_ok=True)
+        link = self.state / ".community-review.rendezvous.json.333.link"
+        link.symlink_to(outside)
+        os.utime(link, (old, old), follow_symlinks=False)
+        self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertFalse(stale.exists())
+        self.assertTrue(fresh.exists())
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(outside.read_text(), "must survive\n")
+        self.assertEqual(self.staged(), [fresh.name, link.name])
+
+    def test_a_review_withdraws_only_its_own_rendezvous(self):
+        first_path, first, _ = self.adapter.publish_review_rendezvous(self.state, 8872)
+        # KeepAlive started a new review before the old one finished shutting down.
+        second_path, second, replaced = self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertEqual(first_path, second_path)
+        self.assertNotEqual(first, second)
+        self.assertEqual(replaced, first)
+        self.adapter.withdraw_review_rendezvous(first_path, first, None)
+        self.assertEqual(second_path.read_bytes(), second)
+        self.adapter.withdraw_review_rendezvous(second_path, second, None)
+        self.assertFalse(second_path.exists())
+        # Already gone, or replaced by a link: nothing to withdraw, nothing followed.
+        self.adapter.withdraw_review_rendezvous(second_path, second, None)
+        target = self.state / "target"
+        target.write_bytes(second)
+        second_path.symlink_to(target)
+        self.adapter.withdraw_review_rendezvous(second_path, second, None)
+        self.assertTrue(second_path.is_symlink())
+        self.assertEqual(self.staged(), [])
+
+    def test_a_foreground_review_hands_the_rendezvous_back_to_the_service(self):
+        path, service, _ = self.adapter.publish_review_rendezvous(self.state, 8872)
+        _, foreground, previous = self.adapter.publish_review_rendezvous(self.state, 8873)
+        self.assertEqual(previous, service)
+        self.assertEqual(json.loads(path.read_bytes())["port"], 8873)
+        # The foreground review exits while the service keeps serving.
+        self.adapter.withdraw_review_rendezvous(path, foreground, previous)
+        self.assertEqual(path.read_bytes(), service)
+        self.assertEqual(path.stat().st_mode & 0o7777, 0o600)
+        self.assertEqual(self.staged(), [])
+
+    def test_publication_and_withdrawal_wait_for_the_rendezvous_lock(self):
+        """#127: an exiting review never removes or overwrites a rendezvous published meanwhile."""
+        path, first, _ = self.adapter.publish_review_rendezvous(self.state, 8872)
+        lock = os.open(self.state / ".community-review.rendezvous.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, lock)
+        # A newer review holds the lock while it publishes.
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        withdrawing = threading.Thread(target=self.adapter.withdraw_review_rendezvous, args=(path, first, None))
+        withdrawing.start()
+        newer = first.replace(b"8872", b"8873")
+        try:
+            withdrawing.join(0.5)
+            self.assertTrue(withdrawing.is_alive(), "withdrawal did not wait for the rendezvous lock")
+            self.assertEqual(path.read_bytes(), first)
+            path.write_bytes(newer)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            withdrawing.join(5)
+        self.assertFalse(withdrawing.is_alive())
+        self.assertEqual(path.read_bytes(), newer)
+        # A publication waits the same way, so it never reads a `previous` that is about to change.
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        published = []
+        publishing = threading.Thread(
+            target=lambda: published.append(self.adapter.publish_review_rendezvous(self.state, 8874)))
+        publishing.start()
+        try:
+            publishing.join(0.5)
+            self.assertTrue(publishing.is_alive(), "publication did not wait for the rendezvous lock")
+            self.assertEqual(path.read_bytes(), newer)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            publishing.join(5)
+        self.assertEqual(published[0][2], newer)
+        self.assertEqual(json.loads(path.read_bytes())["port"], 8874)
+        self.assertEqual(os.stat(self.state / ".community-review.rendezvous.lock").st_mode & 0o7777, 0o600)
+        self.assertEqual(self.staged(), [])
+
+    def test_an_unsafe_rendezvous_lock_is_refused(self):
+        """A lock that is a link, shared or not a regular file is never used."""
+        lock = self.state / ".community-review.rendezvous.lock"
+        lock.write_text("")
+        lock.chmod(0o644)
+        with self.assertRaises(PermissionError):
+            self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertFalse((self.state / "community-review.rendezvous.json").exists())
+        lock.unlink()
+        outside = self.state / "outside"
+        outside.write_text("")
+        outside.chmod(0o600)
+        lock.symlink_to(outside)
+        with self.assertRaises(OSError):
+            self.adapter.publish_review_rendezvous(self.state, 8872)
+        lock.unlink()
+        lock.mkdir(mode=0o700)
+        with self.assertRaises(OSError):
+            self.adapter.publish_review_rendezvous(self.state, 8872)
+        self.assertEqual(self.staged(), [])
+
+    def test_a_stuck_rendezvous_lock_times_out(self):
+        path, body, _ = self.adapter.publish_review_rendezvous(self.state, 8872)
+        lock = os.open(self.state / ".community-review.rendezvous.lock", os.O_RDWR)
+        self.addCleanup(os.close, lock)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        self.addCleanup(setattr, self.adapter, "RENDEZVOUS_LOCK_TIMEOUT_SECONDS",
+                        self.adapter.RENDEZVOUS_LOCK_TIMEOUT_SECONDS)
+        self.adapter.RENDEZVOUS_LOCK_TIMEOUT_SECONDS = 0.2
+        started = time.monotonic()
+        with self.assertRaises(TimeoutError):
+            self.adapter.publish_review_rendezvous(self.state, 8873)
+        # An exiting review gives up and leaves the rendezvous rather than hanging.
+        self.adapter.withdraw_review_rendezvous(path, body, None)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(path.read_bytes(), body)
+        self.assertEqual(self.staged(), [])
+
+    def test_a_lock_file_error_never_leaves_the_review_lock_held(self):
+        sources = self.state / "sources"
+        sources.mkdir()
+        config = self.adapter.CommunityBriefingConfig(
+            source_path=str(sources), draft_path=str(self.state / "drafts"),
+            state_path=str(self.state / "state"), timezone="Africa/Lagos",
+            ai_provider="codex", enabled=False,
+        )
+        service = self.adapter.NativeReviewService(config)
+        self.addCleanup(service.close)
+        # The lock path is a link: opening it fails with ELOOP, not "busy".
+        lock = Path(config.state_path) / "community-native-draft.lock"
+        lock.symlink_to(self.state / "elsewhere")
+        for _ in range(2):
+            with self.assertRaises(OSError):
+                with service.native_run({"action": "revise"}):
+                    pass
+        self.assertTrue(service.native_lock.acquire(blocking=False))
+        service.native_lock.release()
+
+
+if __name__ == "__main__":
+    unittest.main()

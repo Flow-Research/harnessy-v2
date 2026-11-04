@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "updated_at": "2026-01-24T14:00:00",
+  "entries": [
+    {
+      "id": "entry_001",
+      "space_id": "space_123",
+      "path": "Journal/2026/January",
+      "title": "24 - Test Entry",
+      "entry_date": "2026-01-24",
+      "created_at": "2026-01-24T14:00:00",
+      "tags": [],
+      "has_deep_dive": false,
+      "content_preview": ""
+    }
+  ]
+}

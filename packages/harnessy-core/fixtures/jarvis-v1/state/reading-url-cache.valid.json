@@ -1,0 +1,15 @@
+{
+  "item": {
+    "url": "https://example.com",
+    "title": "",
+    "description": "",
+    "section": "",
+    "domain": "example.com",
+    "item_type": "article"
+  },
+  "fetched_title": "Example",
+  "fetched_text": "Representative body",
+  "authors": [],
+  "fetch_status": "success",
+  "fetched_at": "2026-07-11T00:00:00Z"
+}

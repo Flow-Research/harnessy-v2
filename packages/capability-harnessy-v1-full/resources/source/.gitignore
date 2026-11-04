@@ -1,0 +1,88 @@
+# === Sub-projects (all live under projects/, gitignored wholesale) ===
+/projects/
+/test/
+
+# === Personal context (gitignored per personal-context-protocol) ===
+.jarvis/context/local.md
+.jarvis/context/private/
+.jarvis/cron.yaml
+.jarvis/context/projects.md
+.jarvis/context/status.md
+.jarvis/context/roadmap.md
+.jarvis/context/team.md
+.jarvis/context/decisions.md
+.jarvis/context/technical-debt.md
+.jarvis/context/meetings/
+.jarvis/context/plans/
+.jarvis/context/runbooks/
+.jarvis/context/specs/
+.jarvis/context/deployments/
+.jarvis/context/evidence/
+.jarvis/context/profiles/*.local.json
+.jarvis/context/profiles/local/
+.jarvis/context/docs/strategy/
+tools/flow-install/skills/jarvis/jarvis.local.md
+jarvis-cli/specs/
+
+# === Agent tool working directories ===
+.claude/
+.opencode/
+.jarvis/context/autoflow/
+.goal-agent/
+
+# === Editor / IDE ===
+.obsidian/
+.jarvis/context/.obsidian/
+.vscode/
+.idea/
+
+# === OS artifacts ===
+.DS_Store
+
+# === Environment files ===
+.env
+.env.*
+.env.local
+.env.*.local
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.*
+.streamlit/secrets.toml
+
+# === Dependencies ===
+node_modules/
+
+# === Build artifacts ===
+dist/
+build/
+.next/
+target/
+
+# === Python ===
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage/
+
+# === Logs ===
+*.log
+
+# === Git / release scratch ===
+.gitmodules
+
+# === Non-canonical planning artifacts ===
+task_plan.md
+findings.md
+progress.md
+
+
+.playwright-mcp

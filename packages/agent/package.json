@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-agent-core",
-	"version": "0.79.9",
+	"version": "0.80.3",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -10,10 +10,6 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
-		"./base": {
-			"types": "./dist/base.d.ts",
-			"import": "./dist/base.js"
-		},
 		"./node": {
 			"types": "./dist/node.d.ts",
 			"import": "./dist/node.js"
@@ -22,10 +18,11 @@
 	},
 	"files": [
 		"dist",
+		"LICENSE",
 		"README.md"
 	],
 	"scripts": {
-		"clean": "shx rm -rf dist",
+		"clean": "node ../../scripts/fs-tool.mjs rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json",
 		"test": "vitest --run",
 		"test:harness": "vitest --run --config vitest.harness.config.ts",
@@ -33,7 +30,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@earendil-works/pi-ai": "^0.79.9",
+		"@earendil-works/pi-ai": "^0.80.3",
 		"ignore": "7.0.5",
 		"typebox": "1.1.38",
 		"yaml": "2.9.0"
@@ -57,8 +54,8 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.12.4",
-		"@vitest/coverage-v8": "4.1.9",
+		"@vitest/coverage-v8": "4.1.12",
 		"typescript": "5.9.3",
-		"vitest": "4.1.9"
+		"vitest": "4.1.12"
 	}
 }

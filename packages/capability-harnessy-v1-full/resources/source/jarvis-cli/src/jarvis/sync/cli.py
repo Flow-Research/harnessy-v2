@@ -1,0 +1,885 @@
+"""Click command group ``jarvis sync`` — preset CRUD plus the actual ``sync run``.
+
+UX patterns mirror the rest of jarvis:
+    - rich.console.Console for output, rich.prompt for input.
+    - Confirm/Prompt for interactive flows; click options for ad-hoc runs.
+    - Errors print in red and exit with status 1; we never raise unhandled.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import cast
+
+import click
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
+from rich.table import Table
+
+from jarvis.sync.engine import (
+    SyncAdapter,
+    SyncOperation,
+    SyncResult,
+    UnsupportedMode,
+    run_sync,
+)
+from jarvis.sync.object_link import AnytypeLink, InvalidLinkError, parse_link
+from jarvis.sync.presets import (
+    Preset,
+    PresetOptions,
+    load_registry,
+    save_registry,
+)
+from jarvis.sync.state import SyncState, load_state, save_state
+
+console = Console()
+
+
+@dataclass(frozen=True)
+class DedupeRemoval:
+    """One stale object link that should be removed from a Collection."""
+
+    collection_relpath: str
+    collection_id: str
+    object_id: str
+    name: str
+    expected_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DedupePlan:
+    """Planned stale object-link removals for a sync state."""
+
+    removals: tuple[DedupeRemoval, ...]
+
+
+@click.group(name="sync")
+def sync_group() -> None:
+    """Sync local folders/files to a knowledge-tool collection.
+
+    Writes currently support only the legacy destination. See the knowledge-tool
+    support guide for adapter limits."""
+
+
+# ---------------------------------------------------------------------------
+# `jarvis sync run`
+# ---------------------------------------------------------------------------
+
+
+@sync_group.command(name="run")
+@click.option("--preset", "preset_name", type=str, default=None, help="Use a saved preset.")
+@click.option(
+    "--source",
+    "source_str",
+    type=click.Path(exists=False),
+    default=None,
+    help="Source path (file or directory). Overrides the preset's source.",
+)
+@click.option(
+    "--destination",
+    "destination_str",
+    type=str,
+    default=None,
+    help="Object link for the destination collection. Overrides the preset's destination.",
+)
+@click.option("--prune", is_flag=True, help="Delete previously synced destination objects that no longer exist locally.")
+@click.option("--dry-run", is_flag=True, help="Show what would change without writing to the destination.")
+@click.option("--yes", "assume_yes", is_flag=True, help="Skip confirmation prompts for writes.")
+@click.option(
+    "--include-extension",
+    "include_extension",
+    multiple=True,
+    help="Additional text file extension to include, e.g. .md or py. Repeatable.",
+)
+@click.option(
+    "--ignore",
+    "ignore_glob",
+    multiple=True,
+    help="Additional glob to ignore during traversal. Repeatable.",
+)
+@click.option(
+    "--skip-destination-check",
+    is_flag=True,
+    help="Do not verify that the destination object is a destination collection before writing.",
+)
+@click.option(
+    "--unsupported-mode",
+    type=click.Choice(["upload", "warn", "stub", "error"]),
+    default=None,
+    help=("How to handle files that cannot sync as text: upload, warn, stub, or error."),
+)
+def run_cmd(
+    preset_name: str | None,
+    source_str: str | None,
+    destination_str: str | None,
+    prune: bool,
+    dry_run: bool,
+    assume_yes: bool,
+    include_extension: tuple[str, ...],
+    ignore_glob: tuple[str, ...],
+    skip_destination_check: bool,
+    unsupported_mode: str | None,
+) -> None:
+    """Run a sync. Prompts interactively for any missing source/destination."""
+    preset: Preset | None = None
+    if preset_name:
+        registry = load_registry()
+        preset = registry.get(preset_name)
+        if preset is None:
+            console.print(f"[red]Unknown preset: {preset_name}[/red]")
+            raise SystemExit(1)
+
+    # Source resolution: CLI flag > preset > prompt
+    source = _resolve_source(source_str, preset)
+    if source is None:
+        return  # user cancelled
+
+    # Space + destination resolution
+    destination = _resolve_destination(destination_str, preset)
+    if destination is None:
+        return
+
+    if preset is not None:
+        include_extensions = preset.options.include_extensions
+        effective_unsupported_mode: UnsupportedMode = preset.options.unsupported_mode
+        ignore = preset.ignore
+    else:
+        default_options = PresetOptions()
+        include_extensions = default_options.include_extensions
+        effective_unsupported_mode = default_options.unsupported_mode
+        ignore = [".git", ".DS_Store", "node_modules"]
+    if include_extension:
+        include_extensions = _normalize_extensions([*include_extensions, *include_extension])
+    if ignore_glob:
+        ignore = [*ignore, *ignore_glob]
+    if unsupported_mode:
+        effective_unsupported_mode = cast(UnsupportedMode, unsupported_mode)
+    eff_preset_name = _state_name(preset_name, source, destination)
+
+    # Show plan
+    prior_state = load_state(eff_preset_name)
+    console.print(
+        Panel.fit(
+            f"[bold]Source:[/bold] {source}\n"
+            f"[bold]Destination object:[/bold] {destination.object_id}\n"
+            f"[bold]Destination space:[/bold] {destination.space_id}\n"
+            f"[bold]Preset:[/bold] {eff_preset_name}\n"
+            f"[bold]Unsupported files:[/bold] {effective_unsupported_mode}\n"
+            f"[bold]Prune:[/bold] {prune}    [bold]Dry run:[/bold] {dry_run}",
+            title="About to sync",
+        )
+    )
+    if not dry_run and not assume_yes and not Confirm.ask("Proceed?", default=True):
+        console.print("Cancelled.")
+        return
+
+    if dry_run:
+        adapter: SyncAdapter = _DryRunAdapter()
+    else:
+        adapter = _get_anytype_adapter()
+        if adapter is None:
+            return
+        if not skip_destination_check and not _validate_destination_collection(
+            adapter, destination
+        ):
+            return
+
+    result = run_sync(
+        preset_name=eff_preset_name,
+        source=source,
+        destination=destination,
+        include_extensions=include_extensions,
+        ignore=ignore,
+        adapter=adapter,
+        prior_state=prior_state,
+        dry_run=dry_run,
+        prune=prune,
+        unsupported_mode=effective_unsupported_mode,
+    )
+
+    state_saved = False
+    if not dry_run and result.state is not None and not result.errors:
+        save_state(result.state)
+        state_saved = True
+
+    _print_summary(result, dry_run, state_saved=state_saved)
+    if result.errors:
+        raise SystemExit(1)
+
+
+@sync_group.command(name="dedupe")
+@click.option("--preset", "preset_name", type=str, default=None, help="Use a saved preset/state.")
+@click.option(
+    "--source",
+    "source_str",
+    type=click.Path(exists=False),
+    default=None,
+    help="Source path for ad-hoc sync state lookup.",
+)
+@click.option(
+    "--destination",
+    "destination_str",
+    type=str,
+    default=None,
+    help="Destination collection link for ad-hoc sync state lookup.",
+)
+@click.option(
+    "--path",
+    "target_path",
+    type=str,
+    default=None,
+    help="Limit cleanup to one synced Collection relpath.",
+)
+@click.option("--dry-run", is_flag=True, help="Show stale links without removing them.")
+@click.option("--yes", "assume_yes", is_flag=True, help="Skip confirmation prompts for removals.")
+def dedupe_cmd(
+    preset_name: str | None,
+    source_str: str | None,
+    destination_str: str | None,
+    target_path: str | None,
+    dry_run: bool,
+    assume_yes: bool,
+) -> None:
+    """Remove duplicate Collection links using the current sync state as truth."""
+    preset: Preset | None = None
+    if preset_name:
+        registry = load_registry()
+        preset = registry.get(preset_name)
+
+    source: Path | None = None
+    destination: AnytypeLink | None = None
+    state_name = preset_name
+    if preset_name is None:
+        if not source_str or not destination_str:
+            console.print(
+                "[red]Provide --preset, or provide both --source and --destination "
+                "for an ad-hoc sync state.[/red]"
+            )
+            raise SystemExit(1)
+        source = _resolve_source(source_str, None)
+        destination = _resolve_destination(destination_str, None)
+        if source is None or destination is None:
+            raise SystemExit(1)
+        state_name = _state_name(None, source, destination)
+    elif preset is not None and preset.source is not None:
+        source = preset.source.expanduser().resolve()
+
+    assert state_name is not None
+    state = load_state(state_name)
+    if state is None:
+        console.print(f"[red]No sync state found for '{state_name}'. Run sync first.[/red]")
+        raise SystemExit(1)
+
+    if destination is None:
+        if destination_str:
+            destination = _resolve_destination(destination_str, preset)
+            if destination is None:
+                raise SystemExit(1)
+        else:
+            destination = AnytypeLink(
+                object_id=state.destination_object_id,
+                space_id=state.space_id,
+            )
+
+    normalized_target = _normalize_state_relpath(target_path, source)
+    adapter = _get_anytype_adapter()
+    if adapter is None:
+        raise SystemExit(1)
+
+    plan = _build_dedupe_plan(
+        state=state,
+        destination=destination,
+        adapter=adapter,
+        target_relpath=normalized_target,
+    )
+    _print_dedupe_plan(plan, dry_run=dry_run)
+    if dry_run or not plan.removals:
+        return
+    if not assume_yes and not Confirm.ask(
+        f"Remove {len(plan.removals)} stale Collection link(s)?", default=True
+    ):
+        console.print("Cancelled.")
+        return
+
+    remover = getattr(adapter, "remove_from_collection", None)
+    if remover is None:
+        console.print("[red]Sync adapter cannot remove Collection links.[/red]")
+        raise SystemExit(1)
+
+    removed = 0
+    errors: list[str] = []
+    for removal in plan.removals:
+        try:
+            remover(destination.space_id, removal.collection_id, removal.object_id)
+            removed += 1
+        except Exception as e:
+            errors.append(f"{removal.collection_relpath}/{removal.name}: {e}")
+
+    if errors:
+        console.print(f"[red]Removed {removed}, failed {len(errors)}.[/red]")
+        for err in errors:
+            console.print(f"  • {err}")
+        raise SystemExit(1)
+    console.print(f"[green]Removed {removed} stale Collection link(s).[/green]")
+
+
+# ---------------------------------------------------------------------------
+# `jarvis sync preset ...`
+# ---------------------------------------------------------------------------
+
+
+@sync_group.group(name="preset")
+def preset_group() -> None:
+    """Manage saved sync presets."""
+
+
+@preset_group.command(name="add")
+def preset_add() -> None:
+    """Interactively define a new preset."""
+    name = Prompt.ask("Preset name (slug-safe; no spaces, slashes, colons)").strip()
+    if not name:
+        console.print("[red]Empty name.[/red]")
+        raise SystemExit(1)
+
+    registry = load_registry()
+    if registry.get(name) is not None:
+        if not Confirm.ask(f"Preset '{name}' already exists. Overwrite?", default=False):
+            return
+
+    source: Path | None = None
+    if Confirm.ask("Pre-fill a source path? (No = ask each time)", default=False):
+        path_str = Prompt.ask("Source path").strip()
+        candidate = Path(path_str).expanduser()
+        if not candidate.exists():
+            console.print(f"[yellow]Warning: {candidate} does not exist yet.[/yellow]")
+        source = candidate
+
+    destination: str | None = None
+    if Confirm.ask("Pre-fill a destination link? (No = ask each time)", default=False):
+        link_str = Prompt.ask("Destination object link").strip()
+        try:
+            parse_link(link_str)
+        except InvalidLinkError as e:
+            console.print(f"[red]Invalid link: {e}[/red]")
+            raise SystemExit(1) from e
+        destination = link_str
+
+    ignore_default = [".git", ".DS_Store", "node_modules"]
+    ignore = ignore_default
+    if Confirm.ask(f"Use default ignore globs? [{', '.join(ignore_default)}]", default=True):
+        pass
+    else:
+        raw = Prompt.ask("Ignore globs (comma-separated)", default=", ".join(ignore_default))
+        ignore = [g.strip() for g in raw.split(",") if g.strip()]
+
+    options = PresetOptions()
+    if not Confirm.ask(
+        f"Use default included extensions? [{', '.join(options.include_extensions)}]",
+        default=True,
+    ):
+        raw = Prompt.ask(
+            "Included file extensions (comma-separated)",
+            default=", ".join(options.include_extensions),
+        )
+        options = PresetOptions(
+            include_extensions=_normalize_extensions(raw.split(",")),
+            unsupported_mode=options.unsupported_mode,
+        )
+    unsupported_raw = Prompt.ask(
+        "Unsupported file handling",
+        choices=["upload", "warn", "stub", "error"],
+        default=options.unsupported_mode,
+    )
+    options = PresetOptions(
+        include_extensions=options.include_extensions,
+        unsupported_mode=cast(UnsupportedMode, unsupported_raw),
+    )
+
+    try:
+        preset = Preset(
+            name=name,
+            source=source,
+            destination=destination,
+            ignore=ignore,
+            options=options,
+        )
+    except ValueError as e:
+        console.print(f"[red]Invalid preset: {e}[/red]")
+        raise SystemExit(1) from e
+
+    registry.upsert(preset)
+    save_registry(registry)
+    console.print(f"[green]✓ Saved preset '{name}'.[/green]")
+
+
+@preset_group.command(name="list")
+def preset_list() -> None:
+    """List all saved presets."""
+    registry = load_registry()
+    if not registry.presets:
+        console.print("No presets yet. Run [bold]jarvis sync preset add[/bold] to create one.")
+        return
+
+    table = Table(title="Sync presets")
+    table.add_column("Name")
+    table.add_column("Source")
+    table.add_column("Destination")
+    table.add_column("Ignore")
+    for p in registry.presets:
+        table.add_row(
+            p.name,
+            str(p.source) if p.source else "[dim]ask at run time[/dim]",
+            p.destination or "[dim]ask at run time[/dim]",
+            ", ".join(p.ignore) if p.ignore else "—",
+        )
+    console.print(table)
+
+
+@preset_group.command(name="show")
+@click.argument("name")
+def preset_show(name: str) -> None:
+    """Show one preset's full config."""
+    registry = load_registry()
+    p = registry.get(name)
+    if p is None:
+        console.print(f"[red]No preset named '{name}'.[/red]")
+        raise SystemExit(1)
+    console.print(Panel(p.model_dump_json(indent=2), title=f"Preset: {name}"))
+
+
+@preset_group.command(name="edit")
+@click.argument("name")
+def preset_edit(name: str) -> None:
+    """Edit an existing preset interactively."""
+    registry = load_registry()
+    existing = registry.get(name)
+    if existing is None:
+        console.print(f"[red]No preset named '{name}'.[/red]")
+        raise SystemExit(1)
+
+    new_source_str = Prompt.ask(
+        "Source path",
+        default=str(existing.source) if existing.source else "",
+    ).strip()
+    new_source = Path(new_source_str).expanduser() if new_source_str else None
+
+    new_dest_raw = Prompt.ask(
+        "Destination link",
+        default=existing.destination or "",
+    ).strip()
+    new_dest: str | None
+    if new_dest_raw:
+        try:
+            parse_link(new_dest_raw)
+        except InvalidLinkError as e:
+            console.print(f"[red]Invalid link: {e}[/red]")
+            raise SystemExit(1) from e
+        new_dest = new_dest_raw
+    else:
+        new_dest = None
+
+    new_ignore_str = Prompt.ask(
+        "Ignore globs (comma-separated)",
+        default=", ".join(existing.ignore),
+    ).strip()
+    new_ignore = [g.strip() for g in new_ignore_str.split(",") if g.strip()]
+    new_extensions_str = Prompt.ask(
+        "Included file extensions (comma-separated)",
+        default=", ".join(existing.options.include_extensions),
+    ).strip()
+    new_options = PresetOptions(
+        include_extensions=_normalize_extensions(new_extensions_str.split(",")),
+        unsupported_mode=existing.options.unsupported_mode,
+    )
+    new_unsupported_mode = Prompt.ask(
+        "Unsupported file handling",
+        choices=["upload", "warn", "stub", "error"],
+        default=existing.options.unsupported_mode,
+    ).strip()
+    new_options = PresetOptions(
+        include_extensions=new_options.include_extensions,
+        unsupported_mode=cast(UnsupportedMode, new_unsupported_mode),
+    )
+
+    updated = Preset(
+        name=name,
+        source=new_source,
+        destination=new_dest,
+        ignore=new_ignore,
+        options=new_options,
+    )
+    registry.upsert(updated)
+    save_registry(registry)
+    console.print(f"[green]✓ Updated preset '{name}'.[/green]")
+
+
+@preset_group.command(name="delete")
+@click.argument("name")
+def preset_delete(name: str) -> None:
+    """Delete a preset (with confirmation)."""
+    registry = load_registry()
+    if registry.get(name) is None:
+        console.print(f"[red]No preset named '{name}'.[/red]")
+        raise SystemExit(1)
+    if not Confirm.ask(f"Delete preset '{name}'?", default=False):
+        return
+    registry.remove(name)
+    save_registry(registry)
+    console.print(f"[green]✓ Deleted preset '{name}'.[/green]")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_source(cli_source: str | None, preset: Preset | None) -> Path | None:
+    if cli_source:
+        p = Path(cli_source).expanduser().resolve()
+        if not p.exists():
+            console.print(f"[red]Path does not exist: {p}[/red]")
+            return None
+        return p
+    if preset is not None and preset.source is not None:
+        return preset.source.expanduser().resolve()
+    raw = Prompt.ask("Source path (file or directory)").strip()
+    if not raw:
+        console.print("[red]No source provided.[/red]")
+        return None
+    p = Path(raw).expanduser().resolve()
+    if not p.exists():
+        console.print(f"[red]Path does not exist: {p}[/red]")
+        return None
+    return p
+
+
+def _normalize_state_relpath(target_path: str | None, source: Path | None) -> str | None:
+    """Normalize a CLI path to the POSIX relpath keys used in sync state."""
+    if not target_path:
+        return None
+    raw = target_path.strip()
+    if raw in {"", "."}:
+        return ""
+    candidate = Path(raw).expanduser()
+    if candidate.is_absolute() and source is not None:
+        try:
+            return candidate.resolve().relative_to(source.resolve()).as_posix()
+        except ValueError:
+            console.print(f"[red]--path is not inside --source: {candidate}[/red]")
+            raise SystemExit(1)
+    return raw.strip("/").removeprefix("./")
+
+
+def _build_dedupe_plan(
+    *,
+    state: SyncState,
+    destination: AnytypeLink,
+    adapter: object,
+    target_relpath: str | None = None,
+) -> DedupePlan:
+    """Find links in synced Collections that no longer match sync state."""
+    lister = getattr(adapter, "list_collection_objects", None)
+    if lister is None:
+        console.print("[red]Sync adapter cannot list Collection objects.[/red]")
+        raise SystemExit(1)
+
+    expected = _expected_children_by_collection(state)
+    collection_ids = {"": destination.object_id}
+    collection_ids.update(
+        {
+            relpath: rec.object_id
+            for relpath, rec in state.objects.items()
+            if rec.kind == "collection"
+        }
+    )
+    if target_relpath is not None:
+        if target_relpath not in collection_ids:
+            console.print(f"[red]No Collection in sync state for --path '{target_relpath}'.[/red]")
+            raise SystemExit(1)
+        collection_ids = {target_relpath: collection_ids[target_relpath]}
+
+    removals: list[DedupeRemoval] = []
+    for collection_relpath, collection_id in sorted(collection_ids.items()):
+        expected_by_name = expected.get(collection_relpath, {})
+        if not expected_by_name:
+            continue
+        objects = lister(destination.space_id, collection_id)
+        for obj in objects:
+            object_id = _anytype_object_id(obj)
+            name = _anytype_object_name(obj)
+            if not object_id or not name:
+                continue
+            expected_ids = expected_by_name.get(name)
+            if expected_ids and object_id not in expected_ids:
+                removals.append(
+                    DedupeRemoval(
+                        collection_relpath=collection_relpath or ".",
+                        collection_id=collection_id,
+                        object_id=object_id,
+                        name=name,
+                        expected_ids=tuple(sorted(expected_ids)),
+                    )
+                )
+    return DedupePlan(removals=tuple(removals))
+
+
+def _expected_children_by_collection(state: SyncState) -> dict[str, dict[str, set[str]]]:
+    """Map collection relpath -> child display name -> expected object ids."""
+    collection_relpaths = {
+        relpath
+        for relpath, rec in state.objects.items()
+        if rec.kind == "collection" and rec.object_id
+    }
+    collection_relpaths.add("")
+    expected: dict[str, dict[str, set[str]]] = {}
+    for relpath, rec in state.objects.items():
+        if not rec.object_id:
+            continue
+        parent_relpath = "/".join(relpath.split("/")[:-1])
+        if parent_relpath not in collection_relpaths:
+            continue
+        name = _state_object_name(relpath, rec.kind)
+        expected.setdefault(parent_relpath, {}).setdefault(name, set()).add(rec.object_id)
+    return expected
+
+
+def _state_object_name(relpath: str, kind: str) -> str:
+    base = relpath.split("/")[-1]
+    if kind == "page" and "." in base:
+        stem = ".".join(base.split(".")[:-1])
+        return stem or base
+    return base
+
+
+def _anytype_object_id(obj: object) -> str:
+    if isinstance(obj, dict):
+        return str(obj.get("id") or obj.get("object_id") or obj.get("objectId") or "")
+    return str(
+        getattr(obj, "id", "")
+        or getattr(obj, "object_id", "")
+        or getattr(obj, "objectId", "")
+        or ""
+    )
+
+
+def _anytype_object_name(obj: object) -> str:
+    if isinstance(obj, dict):
+        return str(obj.get("name") or "")
+    return str(getattr(obj, "name", "") or "")
+
+
+def _print_dedupe_plan(plan: DedupePlan, *, dry_run: bool) -> None:
+    title = "Sync dedupe dry run" if dry_run else "Sync dedupe"
+    if not plan.removals:
+        console.print(f"[green]{title}: no duplicate Collection links found.[/green]")
+        return
+    table = Table(title=title)
+    table.add_column("Collection")
+    table.add_column("Name")
+    table.add_column("Remove object")
+    table.add_column("Keep object")
+    for removal in plan.removals:
+        table.add_row(
+            removal.collection_relpath,
+            removal.name,
+            removal.object_id,
+            ", ".join(removal.expected_ids),
+        )
+    console.print(table)
+
+
+def _normalize_extensions(values: tuple[str, ...] | list[str]) -> list[str]:
+    """Return cleaned extensions with leading dots and no empty entries."""
+    out: list[str] = []
+    for value in values:
+        ext = value.strip()
+        if not ext:
+            continue
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        if ext not in out:
+            out.append(ext)
+    return out
+
+
+def _state_name(preset_name: str | None, source: Path, destination: AnytypeLink) -> str:
+    """Return the state bucket for a sync run.
+
+    Presets keep their explicit name. Ad-hoc runs get a deterministic source +
+    destination key so different one-off syncs do not overwrite each other's
+    incremental state.
+    """
+    if preset_name:
+        return preset_name
+    raw = f"{source.resolve()}|{destination.space_id}|{destination.object_id}"
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return f"_adhoc_{digest}"
+
+
+def _resolve_destination(cli_destination: str | None, preset: Preset | None) -> AnytypeLink | None:
+    if cli_destination:
+        try:
+            return parse_link(cli_destination)
+        except InvalidLinkError as e:
+            console.print(f"[red]Invalid destination link: {e}[/red]")
+            return None
+    if preset is not None and preset.destination is not None:
+        return preset.resolved_destination()
+
+    # Prompt: pick Space first, then ask for the object link, verify the link's space matches.
+    selected_space_id = _pick_space()
+    if selected_space_id is None:
+        return None
+    raw = Prompt.ask("Paste the destination object link for the target folder/collection").strip()
+    try:
+        link = parse_link(raw)
+    except InvalidLinkError as e:
+        console.print(f"[red]Invalid link: {e}[/red]")
+        return None
+    if link.space_id != selected_space_id:
+        if not Confirm.ask(
+            "That link is in a different Space than the one you just picked. Continue anyway?",
+            default=False,
+        ):
+            return None
+    return link
+
+
+def _pick_space() -> str | None:
+    """Use the existing AnyTypeClient.get_spaces helper to let the operator pick a Space."""
+    from jarvis.anytype_client import AnyTypeClient
+
+    try:
+        client = AnyTypeClient()
+        client.connect()
+        spaces = client.get_spaces()
+    except Exception as e:
+        console.print(f"[red]Could not connect to the sync destination: {e}[/red]")
+        return None
+
+    if not spaces:
+        console.print("[red]No spaces found in the sync destination.[/red]")
+        return None
+
+    console.print("\n[bold]Available Spaces:[/bold]")
+    for i, (sid, sname) in enumerate(spaces, start=1):
+        console.print(f"  {i}. {sname}  [dim]({sid})[/dim]")
+    choice = Prompt.ask(
+        "Pick a Space (number)",
+        choices=[str(i) for i in range(1, len(spaces) + 1)],
+        default="1",
+    )
+    return spaces[int(choice) - 1][0]
+
+
+def _get_anytype_adapter() -> SyncAdapter | None:
+    """Get a connected AnyTypeAdapter from the registry.
+
+    The adapter satisfies the SyncAdapter Protocol structurally — no inheritance
+    needed. Returns None if connection fails (the caller prints a message and
+    exits).
+    """
+    from jarvis.adapters import get_adapter
+
+    try:
+        adapter = get_adapter("anytype")
+        adapter.connect()
+        return adapter  # type: ignore[return-value]
+    except Exception as e:
+        console.print(f"[red]Could not connect to the sync destination: {e}[/red]")
+        return None
+
+
+def _validate_destination_collection(adapter: SyncAdapter, destination: AnytypeLink) -> bool:
+    """Verify real syncs only target a Collection/list-like Anytype object."""
+    validator = getattr(adapter, "validate_collection", None)
+    if validator is None:
+        return True
+    try:
+        validator(destination.space_id, destination.object_id)
+        return True
+    except Exception as e:
+        console.print(f"[red]Invalid sync destination: {e}[/red]")
+        console.print(
+            "[dim]Pass a destination collection link, or use --skip-destination-check "
+            "if you know this object can accept children.[/dim]"
+        )
+        return False
+
+
+class _DryRunAdapter:
+    """Adapter guard for dry-runs; the engine should never call it."""
+
+    def create_collection_in(
+        self, space_id: str, parent_collection_id: str | None, name: str
+    ) -> str:
+        raise RuntimeError("dry-run attempted to create a collection")
+
+    def create_page_in(
+        self,
+        space_id: str,
+        parent_collection_id: str | None,
+        name: str,
+        body_markdown: str,
+    ) -> str:
+        raise RuntimeError("dry-run attempted to create a page")
+
+    def update_page_content(self, space_id: str, object_id: str, body_markdown: str) -> None:
+        raise RuntimeError("dry-run attempted to update a page")
+
+    def upload_file_in(
+        self, space_id: str, parent_collection_id: str | None, file_path: Path
+    ) -> str:
+        raise RuntimeError("dry-run attempted to upload a file")
+
+    def delete_object(self, space_id: str, object_id: str) -> bool:
+        raise RuntimeError("dry-run attempted to delete an object")
+
+    def delete_file(self, space_id: str, file_id: str) -> bool:
+        raise RuntimeError("dry-run attempted to delete a file")
+
+
+def _print_summary(result: SyncResult, dry_run: bool, *, state_saved: bool = False) -> None:
+    title = "Dry run summary" if dry_run else "Sync summary"
+    console.print(
+        Panel.fit(
+            f"[bold]Created:[/bold] {result.created}\n"
+            f"[bold]Updated:[/bold] {result.updated}\n"
+            f"[bold]Unchanged:[/bold] {result.unchanged}\n"
+            f"[bold]Skipped:[/bold] {result.skipped}\n"
+            f"[bold]Stubbed:[/bold] {result.stubbed}\n"
+            f"[bold]Pruned:[/bold] {result.pruned}\n"
+            f"[bold]Warnings:[/bold] {len(result.warnings)}\n"
+            f"[bold]Errors:[/bold] {len(result.errors)}",
+            title=title,
+        )
+    )
+    if result.warnings:
+        console.print("\n[yellow bold]Warnings:[/yellow bold]")
+        for warning in result.warnings[:25]:
+            console.print(f"  • {warning}")
+        if len(result.warnings) > 25:
+            console.print(f"  [dim]… {len(result.warnings) - 25} more[/dim]")
+    if result.errors:
+        console.print("\n[red bold]Errors:[/red bold]")
+        for err in result.errors:
+            console.print(f"  • {err}")
+    if dry_run:
+        console.print("\n[dim]No changes were made. Re-run without --dry-run to apply.[/dim]")
+    elif result.errors:
+        console.print("\n[yellow]State was not written because the sync had errors.[/yellow]")
+    elif state_saved and result.state is not None:
+        console.print(
+            f"\n[dim]State written to ~/.jarvis/sync/state/{result.state.preset}.json[/dim]"
+        )
+
+
+# Helper used by tests — not exported for end users.
+def _operations_summary(ops: list[SyncOperation]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for op in ops:
+        out[op.kind] = out.get(op.kind, 0) + 1
+    return out

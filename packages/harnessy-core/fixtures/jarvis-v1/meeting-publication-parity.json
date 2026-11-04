@@ -1,0 +1,666 @@
+{
+  "schemaVersion": 1,
+  "oracle": {
+    "kind": "normalized-domain-contract-with-observed-python-safety",
+    "sources": [
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/models.py",
+        "sha256": "0237b2235c22e7e00c66d016122381518eb8b388dff941528b0c15aab9f89e42"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/notes.py",
+        "sha256": "3703fe92a31c46ecaf00538ec4f664336c63b6261f2c3680907009050f08cbbd"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/store.py",
+        "sha256": "95cfa2b1cce34a75e3be9cde515862d58882f68c694765f28738d32be4030b1f"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/service.py",
+        "sha256": "aacf52291d00576357b9e8414ea06b3f5d43496e294d870322fbda15297f4b86"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/review.py",
+        "sha256": "f75bedc2cff58ae441ab82c22b02357a627e3bccab47aba6575c88a8adb48ed0"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/discord.py",
+        "sha256": "c5c91c37c8a87f685a9da1829d58654674c354425f6645b6ce568ab474590a27"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/google.py",
+        "sha256": "d46577a43414573b065058a791c0228460edd90dcee8e9d79af85b4a2d63ef70"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/notify.py",
+        "sha256": "4abab4714f368f90bd3068c02162024977a2021562c6366a2016643b180bc1ae"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/markdown.py",
+        "sha256": "121482bceac9ac987e2c2fa84ae53f330e075b75094c47c977a87a43e1a9b9c6"
+      },
+      {
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/errors.py",
+        "sha256": "3558e4afd33887055a4e6901cab34f3c07e0d84a408ca24546f17959759942dd"
+      }
+    ],
+    "observations": "publication-observations.json"
+  },
+  "contractScope": "Transition cases are normalized domain expectations, not a claim that all Python store operations implement the same state machine. Recovery and safety cases use executed installed-Python observations.",
+  "pythonObservations": {
+    "expiredLease": {
+      "status": "publishing",
+      "attemptsDelta": 0,
+      "existingGoogleDocId": "doc-1",
+      "claimed": false
+    },
+    "publishingScan": {
+      "status": "publishing",
+      "sourceHashRetained": true
+    },
+    "publishingDecisions": {
+      "approve": "rejected",
+      "reject": "rejected"
+    },
+    "uncertainDelivery": {
+      "status": "publishing",
+      "retryScheduled": false,
+      "existingGoogleDocId": "doc-1"
+    },
+    "explicitRetry": {
+      "status": "approved",
+      "retryScheduled": true,
+      "existingGoogleDocId": "doc-1"
+    },
+    "terminalFailure": {
+      "status": "blocked",
+      "retryScheduled": false
+    },
+    "providerRequests": [
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": "lost-response",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": "invalid-json",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": 503,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": "lost-response",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": "invalid-json",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": 503,
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": "lost-response",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": "invalid-json",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": 503,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": "lost-response",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": "invalid-json",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": 503,
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      }
+    ]
+  },
+  "knownDifferences": [
+    {
+      "boundary": "HTTP 408 read response",
+      "python": "PublicationConfigError without retry",
+      "native": "request_timeout with bounded retry",
+      "evidence": "Installed Python request observations and meeting-publication-providers.test.ts GET /about case."
+    },
+    {
+      "boundary": "Expired publishing claim",
+      "python": "No candidate returned; row retained",
+      "native": "Writer admission rejects; row retained",
+      "evidence": "Real restartable SQLite parity case, not a simulated fresh claim."
+    }
+  ],
+  "nativeDomainOnlyTransitionCases": [
+    {
+      "id": "pre-delivery-change-publishing",
+      "from": "publishing",
+      "event": "source_changed",
+      "expected": "pending_review",
+      "scope": "Pre-delivery domain invalidation only; ordinary scans must not clear an uncertain publishing row."
+    }
+  ],
+  "statuses": {
+    "v1": [
+      "pending_review",
+      "approved",
+      "publishing",
+      "published",
+      "rejected",
+      "blocked",
+      "archived"
+    ],
+    "v2": [
+      "pending_review",
+      "approved",
+      "publishing",
+      "published",
+      "rejected",
+      "blocked",
+      "archived"
+    ]
+  },
+  "transitionCases": [
+    {
+      "id": "update-pending",
+      "from": "pending_review",
+      "event": "update",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    },
+    {
+      "id": "approve-pending",
+      "from": "pending_review",
+      "event": "approve",
+      "v1": "approved",
+      "v2": "approved"
+    },
+    {
+      "id": "reject-pending",
+      "from": "pending_review",
+      "event": "reject",
+      "v1": "rejected",
+      "v2": "rejected"
+    },
+    {
+      "id": "archive-pending",
+      "from": "pending_review",
+      "event": "archive",
+      "v1": "archived",
+      "v2": "archived"
+    },
+    {
+      "id": "claim-approved",
+      "from": "approved",
+      "event": "claim",
+      "v1": "publishing",
+      "v2": "publishing"
+    },
+    {
+      "id": "archive-approved",
+      "from": "approved",
+      "event": "archive",
+      "v1": "archived",
+      "v2": "archived"
+    },
+    {
+      "id": "retry-publishing",
+      "from": "publishing",
+      "event": "retry",
+      "v1": "approved",
+      "v2": "approved"
+    },
+    {
+      "id": "block-publishing",
+      "from": "publishing",
+      "event": "block",
+      "v1": "blocked",
+      "v2": "blocked"
+    },
+    {
+      "id": "publish-publishing",
+      "from": "publishing",
+      "event": "publish",
+      "v1": "published",
+      "v2": "published"
+    },
+    {
+      "id": "approve-blocked",
+      "from": "blocked",
+      "event": "approve",
+      "v1": "approved",
+      "v2": "approved"
+    },
+    {
+      "id": "restore-archived",
+      "from": "archived",
+      "event": "restore",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    },
+    {
+      "id": "change-approved",
+      "from": "approved",
+      "event": "source_changed",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    },
+    {
+      "id": "change-rejected",
+      "from": "rejected",
+      "event": "source_changed",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    },
+    {
+      "id": "change-blocked",
+      "from": "blocked",
+      "event": "source_changed",
+      "v1": "pending_review",
+      "v2": "pending_review"
+    }
+  ],
+  "invalidTransitionCases": [
+    {
+      "id": "update-blocked",
+      "from": "blocked",
+      "event": "update",
+      "v1": "rejected",
+      "v2": "rejected"
+    },
+    {
+      "id": "publish-unreviewed",
+      "from": "pending_review",
+      "event": "publish",
+      "v1": "rejected",
+      "v2": "rejected"
+    },
+    {
+      "id": "claim-rejected",
+      "from": "rejected",
+      "event": "claim",
+      "v1": "rejected",
+      "v2": "rejected"
+    },
+    {
+      "id": "approve-published",
+      "from": "published",
+      "event": "approve",
+      "v1": "rejected",
+      "v2": "rejected"
+    }
+  ],
+  "recoveryCases": [
+    {
+      "id": "expired-lease-google-checkpoint",
+      "input": {
+        "status": "publishing",
+        "lease": "expired",
+        "googleDocId": "doc-1"
+      },
+      "admissionDifference": "Python returns no candidate; native writer admission rejects the uncertain queue. Both retain the exact row and do not claim again.",
+      "v1Expected": {
+        "status": "publishing",
+        "attemptsDelta": 0,
+        "existingGoogleDocId": "doc-1",
+        "claimed": false
+      }
+    },
+    {
+      "id": "discord-retry-after",
+      "input": {
+        "status": "publishing",
+        "retryAfterSeconds": 10,
+        "googleDocId": "doc-1"
+      },
+      "v1Expected": {
+        "status": "approved",
+        "retryScheduled": true,
+        "existingGoogleDocId": "doc-1"
+      }
+    },
+    {
+      "id": "terminal-provider-failure",
+      "input": {
+        "status": "publishing",
+        "retryAfterSeconds": null
+      },
+      "v1Expected": {
+        "status": "blocked",
+        "retryScheduled": false
+      }
+    }
+  ],
+  "reviewCases": [
+    {
+      "id": "reviewed-purpose-normalization",
+      "input": "  Publish the owner reviewed outcome  ",
+      "v1Expected": {
+        "outcome": "accepted",
+        "discordPurpose": "Publish the owner reviewed outcome."
+      }
+    },
+    {
+      "id": "empty-reviewed-purpose",
+      "input": "   ",
+      "v1Expected": {
+        "outcome": "rejected"
+      }
+    },
+    {
+      "id": "oversized-reviewed-purpose",
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "v1Expected": {
+        "outcome": "rejected"
+      }
+    }
+  ],
+  "reviewLifecycle": {
+    "retry": "retained",
+    "restart": "retained",
+    "sourceChanged": "cleared",
+    "archive": "cleared",
+    "published": "cleared"
+  },
+  "canonicalNoteEditing": {
+    "maxCodePoints": 50000,
+    "normalization": "crlf-and-cr-to-lf-trim-single-terminal-newline",
+    "validation": [
+      "project",
+      "iso-date",
+      "executive-summary",
+      "no-transcript",
+      "item-identity"
+    ],
+    "path": "existing-non-symlink-under-explicit-source-root",
+    "write": "same-directory-atomic-replace-preserve-mode",
+    "lifecycle": "pending-review-only-hash-refreshed-approval-cleared",
+    "providerSideEffects": "none-until-separate-approval",
+    "reviewAction": "separate-update-note-post",
+    "defaultMaxFormBytes": 1000000
+  },
+  "privacy": {
+    "persistedContent": "metadata-digests-and-bounded-transient-purpose-only",
+    "reviewerPurposeOverride": "bounded-transient-owner-only-queue-state",
+    "providerResponseBody": "never"
+  },
+  "providerContract": {
+    "scope": "Native provider contract. Python request-helper outcomes are recorded separately in pythonObservations.providerRequests; equivalent names or HTTP statuses do not establish parity.",
+    "order": [
+      "google",
+      "discord"
+    ],
+    "google": {
+      "identity": "exact-owner-before-every-write",
+      "credentialAuthority": "oauth-drive.file",
+      "folderIdentity": "deterministic-app-property",
+      "documentIdentity": "meeting-item-app-property",
+      "update": "replace-existing-document-content",
+      "publicPermission": "anyone-reader-idempotent",
+      "duplicateMatch": "terminal-without-duplicate-document-write"
+    },
+    "discord": {
+      "identity": "bot-and-exact-target-channel-before-every-write",
+      "create": "item-id-nonce-with-enforcement",
+      "update": "checkpointed-channel-and-message-without-create-fallback",
+      "mentions": "suppressed",
+      "content": "approved-purpose-and-stable-google-url-only"
+    },
+    "failures": {
+      "mutationUncertainty": "Potentially delivered mutations are non-retryable and retain publishing state; transient classifications below apply only to safe reads or explicit rejection.",
+      "terminal": [
+        "authentication_failed",
+        "permission_denied",
+        "provider_not_found",
+        "identity_mismatch",
+        "duplicate_resource",
+        "checkpoint_mismatch",
+        "unsafe_redirect"
+      ],
+      "transient": [
+        "request_timeout",
+        "rate_limited",
+        "provider_unavailable",
+        "network_error",
+        "timeout",
+        "invalid_response",
+        "response_too_large"
+      ],
+      "retryAfter": "bounded-positive-seconds-or-safe-default"
+    },
+    "notifier": "content-free-kind-and-count-with-bounded-process-lifecycle",
+    "persistence": "provider-bodies-and-credentials-never-in-workflow-state"
+  },
+  "providerCases": {
+    "scope": "Native read-request classifications; not Python outcomes and not permission to replay publication mutations.",
+    "httpFailures": [
+      {
+        "id": "authentication",
+        "status": 401,
+        "code": "authentication_failed",
+        "retryable": false,
+        "retryAfterSeconds": null
+      },
+      {
+        "id": "permission",
+        "status": 403,
+        "code": "permission_denied",
+        "retryable": false,
+        "retryAfterSeconds": null
+      },
+      {
+        "id": "not-found",
+        "status": 404,
+        "code": "provider_not_found",
+        "retryable": false,
+        "retryAfterSeconds": null
+      },
+      {
+        "id": "request-timeout",
+        "status": 408,
+        "code": "request_timeout",
+        "retryable": true,
+        "retryAfter": "2",
+        "retryAfterSeconds": 2
+      },
+      {
+        "id": "rate-limit",
+        "status": 429,
+        "code": "rate_limited",
+        "retryable": true,
+        "retryAfter": "7",
+        "retryAfterSeconds": 7
+      },
+      {
+        "id": "unavailable",
+        "status": 503,
+        "code": "provider_unavailable",
+        "retryable": true,
+        "retryAfter": "4",
+        "retryAfterSeconds": 4
+      },
+      {
+        "id": "redirect",
+        "status": 302,
+        "code": "unsafe_redirect",
+        "retryable": false,
+        "retryAfterSeconds": null
+      }
+    ],
+    "retryPolicy": {
+      "providerMaxAttempts": null,
+      "terminalAttemptSchedulesRetry": true
+    },
+    "unsafeLoopbackOrigins": [
+      "https://127.0.0.1:9443",
+      "http://localhost:9443",
+      "http://example.test:9443",
+      "http://user:secret@127.0.0.1:9443",
+      "http://127.0.0.1:9443/provider"
+    ],
+    "discordContent": {
+      "maxCodePoints": 2000,
+      "maxBytes": 8000,
+      "escapesMarkupBeforeMeasuring": true
+    },
+    "lostResponseRecovery": {
+      "policy": "retain-publishing-until-owning-service-reconciles; identity hints alone do not authorize retry",
+      "googleDocumentIdentity": "harnessyMeetingItemId",
+      "discordCreateIdentity": "enforced-item-id-nonce"
+    }
+  }
+}

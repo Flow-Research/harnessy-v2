@@ -1,0 +1,62 @@
+name: issue-flow
+type: opencode
+version: 0.8.0
+owner: julian
+status: experimental
+blast_radius: high
+description: "Drive one GitHub issue through clarification recovery, specs, implementation, regression generation, test generation, validation, QA, simplicity review, PR, and acceptance with enforced human review gates, quality gates, and standardized project-container worktrees."
+permissions: [read-issues, read-projects, write-specs, write-state, write-reports, run-tests, run-validation, create-pr]
+data_categories: [none]
+egress: [api.github.com, github.com]
+invoke: /issue-flow
+location: tools/flow-install/skills/issue-flow
+traces:
+  enabled: true
+  gates:
+    quality:
+      - issue_readiness_check
+      - issue_clarification_recovery_gate
+      - brainstorm_discovery_gate
+      - spec_gate
+      - design_completeness_gate
+      - design_simplicity_gate
+      - regression_coverage_gate
+      - generated_test_gate
+      - test_quality_gate
+      - qa_execution_gate
+      - implementation_simplicity_gate
+      - final_verification_gate
+    human:
+      - brainstorm_approval
+      - issue_append_approval
+      - prd_approval
+      - design_approval
+      - tech_spec_approval
+      - execution_scope_approval
+      - final_acceptance
+autoresearch:
+  enabled: true
+  metric_layer: 1
+  time_budget_seconds: 1800
+  evaluation_window: 3
+  constraints:
+    max_regression_rate: 0.1
+    max_human_intervention: 0.5
+dependencies:
+  - tool: gh
+    description: "GitHub CLI for issue operations"
+    check: "gh --version"
+    install:
+      darwin: "brew install gh"
+      linux: "sudo apt install gh || conda install gh --channel conda-forge"
+      fallback: "https://cli.github.com/"
+    auth_check: "gh auth status"
+    required: true
+  - tool: git
+    description: "Git version control"
+    check: "git --version"
+    required: true
+  - tool: python3
+    description: "Python 3 for state and worktree scripts"
+    check: "python3 --version"
+    required: true

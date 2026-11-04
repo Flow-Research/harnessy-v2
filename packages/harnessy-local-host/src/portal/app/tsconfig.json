@@ -1,0 +1,19 @@
+{
+	"extends": "../../../../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"jsx": "react-jsx",
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"types": ["node"],
+		"declaration": false,
+		"declarationMap": false,
+		"sourceMap": false,
+		"inlineSources": false,
+		"emitDecoratorMetadata": false,
+		"experimentalDecorators": false
+	},
+	"include": ["**/*.ts", "**/*.tsx", "../../../test/app/**/*.ts", "../../../test/app/**/*.tsx"],
+	"exclude": ["node_modules"]
+}

@@ -1,0 +1,197 @@
+{
+	"id": "npm:@harnessy/capability-org-knowledge",
+	"name": "Harnessy Org Knowledge",
+	"type": "capability-pack",
+	"version": "0.0.3",
+	"description": "Metadata-only capability pack for meeting ingest, normalized meeting artifacts, org wiki/context updates, daily and weekly briefs, and GitHub issue suggestions.",
+	"owner": "harnessy",
+	"status": "skeleton",
+	"installScope": "project",
+	"invoke": {
+		"command": "harnessy-org-knowledge",
+		"description": "Capability guidance entrypoint; no runtime command is shipped in the skeleton pack."
+	},
+	"context": [
+		"context/AGENTS.md",
+		"context/product-flow.md",
+		"context/garden-boundary.md",
+		"context/resource-map.md",
+		"templates/normalized-meeting-artifact.md",
+		"templates/org-wiki-update.md",
+		"templates/brief.md",
+		"templates/github-issue-suggestion.md",
+		"prompts/meeting-ingest.md",
+		"prompts/org-wiki-update.md",
+		"prompts/daily-brief.md",
+		"prompts/weekly-brief.md",
+		"prompts/github-issue-suggestions.md",
+		"checks/README.md",
+		"checks/org-knowledge-readiness.md"
+	],
+	"resources": [
+		{
+			"kind": "context",
+			"path": "context/AGENTS.md",
+			"description": "Primary operating protocol for the org knowledge flow."
+		},
+		{
+			"kind": "reference",
+			"path": "context/product-flow.md",
+			"description": "End-to-end product flow from meeting artifact to issue suggestions."
+		},
+		{
+			"kind": "reference",
+			"path": "context/garden-boundary.md",
+			"description": "Boundary between open Harnessy capability metadata and Garden enterprise controls."
+		},
+		{
+			"kind": "reference",
+			"path": "context/resource-map.md",
+			"description": "Resource map for prompts, templates, and readiness checks."
+		},
+		{
+			"kind": "template",
+			"path": "templates/normalized-meeting-artifact.md",
+			"description": "Template for normalized meeting artifacts."
+		},
+		{
+			"kind": "template",
+			"path": "templates/org-wiki-update.md",
+			"description": "Template for proposed org wiki/context updates."
+		},
+		{
+			"kind": "template",
+			"path": "templates/brief.md",
+			"description": "Template for daily and weekly briefs."
+		},
+		{
+			"kind": "template",
+			"path": "templates/github-issue-suggestion.md",
+			"description": "Template for evidence-backed GitHub issue suggestions."
+		},
+		{
+			"kind": "prompt",
+			"path": "prompts/meeting-ingest.md",
+			"description": "Focused prompt for meeting ingestion and normalization."
+		},
+		{
+			"kind": "prompt",
+			"path": "prompts/org-wiki-update.md",
+			"description": "Focused prompt for org wiki/context update proposals."
+		},
+		{
+			"kind": "prompt",
+			"path": "prompts/daily-brief.md",
+			"description": "Focused prompt for daily brief generation."
+		},
+		{
+			"kind": "prompt",
+			"path": "prompts/weekly-brief.md",
+			"description": "Focused prompt for weekly brief generation."
+		},
+		{
+			"kind": "prompt",
+			"path": "prompts/github-issue-suggestions.md",
+			"description": "Focused prompt for GitHub issue suggestion drafts."
+		},
+		{
+			"kind": "reference",
+			"path": "checks/README.md",
+			"description": "Readiness check overview for this metadata-only pack."
+		},
+		{
+			"kind": "reference",
+			"path": "checks/org-knowledge-readiness.md",
+			"description": "Manual readiness checks until core check runners execute manifest checks."
+		}
+	],
+	"checks": [
+		{
+			"id": "primary-context-present",
+			"kind": "path-exists",
+			"path": "context/AGENTS.md",
+			"required": true,
+			"description": "Ensure the primary capability context exists."
+		},
+		{
+			"id": "garden-boundary-documented",
+			"kind": "file-contains",
+			"path": "context/garden-boundary.md",
+			"contains": "Garden",
+			"required": true,
+			"description": "Ensure the Garden enterprise boundary is explicit."
+		},
+		{
+			"id": "issue-template-present",
+			"kind": "path-exists",
+			"path": "templates/github-issue-suggestion.md",
+			"required": true,
+			"description": "Ensure the GitHub issue suggestion template exists."
+		}
+	],
+	"traces": [
+		{
+			"id": "readiness-review",
+			"path": "checks/org-knowledge-readiness.md",
+			"description": "Manual readiness review trace for the skeleton pack."
+		}
+	],
+	"autoresearch": {
+		"enabled": false,
+		"description": "Autoresearch is intentionally disabled until the deterministic capability runtime exists."
+	},
+	"blastRadius": "medium",
+	"permissions": [
+		"meetings:read",
+		"meeting-artifacts:write",
+		"org-context:read",
+		"org-context:update-proposal",
+		"briefs:write",
+		"github-issues:suggest"
+	],
+	"dataCategories": [
+		"meeting_metadata",
+		"meeting_transcript_summary",
+		"attendee_names",
+		"org_context",
+		"decisions",
+		"action_items",
+		"project_status",
+		"github_issue_metadata"
+	],
+	"egress": [
+		"none-by-default",
+		"garden-managed:meeting-source",
+		"garden-managed:org-wiki",
+		"garden-managed:github"
+	],
+	"dependencies": [
+		{
+			"kind": "tool",
+			"name": "garden-meeting-connector",
+			"command": "garden-meeting-connector",
+			"required": false,
+			"install": {
+				"fallback": "Deferred to Garden enterprise connector layer for meeting source auth and ingestion."
+			}
+		},
+		{
+			"kind": "tool",
+			"name": "garden-org-wiki-connector",
+			"command": "garden-org-wiki-connector",
+			"required": false,
+			"install": {
+				"fallback": "Deferred to Garden enterprise connector layer for org wiki writes, access control, and audit."
+			}
+		},
+		{
+			"kind": "tool",
+			"name": "garden-github-connector",
+			"command": "garden-github-connector",
+			"required": false,
+			"install": {
+				"fallback": "Deferred to Garden enterprise connector layer for repository auth and issue creation."
+			}
+		}
+	]
+}

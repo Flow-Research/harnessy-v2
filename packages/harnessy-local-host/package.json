@@ -1,0 +1,82 @@
+{
+	"name": "@harnessy/local-host",
+	"version": "0.0.3",
+	"description": "Private migration planning host with guarded meeting smoke, review, and offline import runtimes",
+	"private": true,
+	"type": "module",
+	"license": "AGPL-3.0-only",
+	"bin": {
+		"harnessy-community-publication": "dist/community-publication-cli.js",
+		"harnessy-community-review-open": "dist/community-review-open-cli.js",
+		"harnessy-wiki": "dist/wiki-cli.js",
+		"harnessy-local-host": "dist/cli.js",
+		"harnessy-meeting-full-review": "dist/meeting-full-review-cli.js",
+		"harnessy-meeting-review-open": "dist/meeting-review-open-cli.js",
+		"harnessy-meeting-import": "dist/meeting-import-cli.js",
+		"harnessy-meeting-review": "dist/meeting-review-cli.js",
+		"harnessy-meeting-setup": "dist/meeting-setup-cli.js",
+		"harnessy-meeting-smoke": "dist/meeting-smoke-cli.js",
+		"harnessy-meeting-worker": "dist/meeting-worker-cli.js",
+		"harnessy-portal": "dist/portal-cli.js"
+	},
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		"./wiki-cli": "./dist/wiki-cli.js",
+		"./portal-cli": "./dist/portal-cli.js",
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./meeting-runtime": {
+			"types": "./dist/meeting-runtime.d.ts",
+			"import": "./dist/meeting-runtime.js"
+		},
+		"./meeting-review-runtime": {
+			"types": "./dist/meeting-review-runtime.d.ts",
+			"import": "./dist/meeting-review-runtime.js"
+		},
+		"./meeting-import-runtime": {
+			"types": "./dist/meeting-import-runtime.d.ts",
+			"import": "./dist/meeting-import-runtime.js"
+		}
+	},
+	"files": [
+		"dist",
+		"resources/macos",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"clean": "node ../../scripts/fs-tool.mjs rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json && vite build --config src/portal/app/vite.config.ts && node ../../scripts/fs-tool.mjs chmod +x dist/community-publication-cli.js dist/community-review-open-cli.js dist/cli.js dist/meeting-full-review-cli.js dist/meeting-import-cli.js dist/meeting-review-cli.js dist/meeting-review-open-cli.js dist/meeting-setup-cli.js dist/meeting-smoke-cli.js dist/meeting-worker-cli.js dist/portal-cli.js dist/wiki-cli.js",
+		"typecheck": "tsgo --noEmit -p tsconfig.json && tsgo --noEmit -p src/portal/app/tsconfig.json",
+		"test": "vitest --run",
+		"test:fixture": "node scripts/test-fixture.mjs"
+	},
+	"dependencies": {
+		"@harnessy/core": "0.0.3",
+		"@harnessy/sdk": "0.0.3",
+		"effect": "4.0.0-beta.85"
+	},
+	"devDependencies": {
+		"@effect/vitest": "4.0.0-beta.85",
+		"@fontsource/ibm-plex-sans": "5.2.8",
+		"@fontsource/jetbrains-mono": "5.2.8",
+		"@fontsource/space-grotesk": "5.2.10",
+		"@types/node": "22.19.19",
+		"@types/react": "19.2.17",
+		"@types/react-dom": "19.2.3",
+		"@xterm/addon-fit": "0.11.0",
+		"@xterm/xterm": "6.0.0",
+		"jsdom": "30.1.0",
+		"lucide-react": "1.48.0",
+		"react": "19.2.7",
+		"react-dom": "19.2.7",
+		"vite": "8.1.6",
+		"vitest": "4.1.12"
+	},
+	"engines": {
+		"node": "^22.22.2 || >=24.15.0"
+	}
+}
