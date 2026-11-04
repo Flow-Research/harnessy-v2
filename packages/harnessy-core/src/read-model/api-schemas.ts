@@ -136,7 +136,10 @@ export const SessionChallengeResponseSchema = Type.Object(
 export const SessionExchangeResponseSchema = Type.Object(
 	{
 		token: Type.String({ minLength: 43, maxLength: 43 }),
-		scope: Type.Literal("read"),
+		scope: Type.Literal("read", {
+			description:
+				"Legacy compatibility label. This page token permits authenticated owner actions, including terminal control; it is not a read-only credential.",
+		}),
 		expiresAt: instant,
 	},
 	strict,

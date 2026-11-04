@@ -120,6 +120,8 @@ name: Build Binaries
 jobs:
   release-preflight:
     steps:
+      - uses: ./.github/actions/harnessy-ci-setup
+        with: { test-runtime: 'true' }
       - run: npm run release:preflight
       - uses: actions/upload-artifact@sha
         with: { name: release-supply-chain-tag, path: .supply-chain-evidence/ }
@@ -129,6 +131,9 @@ jobs:
   publish-npm:
     needs: stage-github-release
     steps:
+      - uses: ./.github/actions/harnessy-ci-setup
+        with: { test-runtime: 'true' }
+      - run: ./test.sh
       - run: npm run supply-chain:generate
       - run: npm run supply-chain:verify
       - run: npm run supply-chain:reproducibility
@@ -225,6 +230,34 @@ test("CI contract rejects a release mutation that is not gated by preflight", ()
 	const result = validate({ releaseSource: releaseSource.replace("needs: [build, release-preflight]", "needs: build") });
 	assert.equal(result.ok, false);
 	assert(result.issues.includes("Build Binaries:stage-github-release must need release-preflight"));
+});
+
+test("release jobs must prepare an unconditional isolated runtime before tests", () => {
+	const setup = "      - uses: ./.github/actions/harnessy-ci-setup\n        with: { test-runtime: 'true' }\n";
+	for (const command of ["npm run release:preflight", "./test.sh"]) {
+		const original = `${setup}      - run: ${command}\n`;
+		for (const replacement of [
+			`      - run: ${command}\n`,
+			`      - run: ${command}\n${setup}`,
+			original.replace("test-runtime: 'true'", "test-runtime: 'false'"),
+			original.replace("        with:", "        if: false\n        with:"),
+			original.replace("        with:", "        continue-on-error: true\n        with:"),
+		]) {
+			const source = releaseSource.replace(original, replacement);
+			assert.notEqual(source, releaseSource);
+			const result = validate({ releaseSource: source });
+			assert.equal(result.ok, false);
+			assert(result.issues.some((issue) => issue.includes(`must prepare the isolated test runtime before ${command}`)));
+		}
+	}
+});
+
+test("release registry setup must not replace the private Node runtime", () => {
+	const result = validate({
+		releaseSource: releaseSource.replace("      - run: ./test.sh", "      - uses: actions/setup-node@sha\n      - run: ./test.sh"),
+	});
+	assert.equal(result.ok, false);
+	assert(result.issues.includes("Build Binaries:publish-npm must configure Node before the private test runtime"));
 });
 
 test("CI contract rejects a gate job without its own tracked-file check", () => {

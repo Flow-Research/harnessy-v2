@@ -14,6 +14,49 @@ const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
 
 describe("Harnessy runtime assets", () => {
+	for (const owned of [true, false]) {
+		it.effect(`repairs missing same-version shims only when ownership is verified (${owned})`, () =>
+			provideLive(
+				Effect.gen(function* () {
+					const fs = yield* FileSystem.FileSystem;
+					const project = yield* HarnessProject;
+					const targetDir = yield* fs.makeTempDirectoryScoped();
+					const globalRoot = yield* fs.makeTempDirectoryScoped();
+					const options = {
+						force: false,
+						step: "runtime-assets" as const,
+						applyGlobal: true,
+						globalRoot,
+						globalCommandsDir: `${globalRoot}/bin`,
+						globalSkillsDir: `${globalRoot}/skills`,
+					};
+					yield* project.runInstaller(targetDir, options);
+					const skill = `${globalRoot}/skills/qa-runtime`;
+					const command = `${globalRoot}/bin/qa`;
+					const script = `${skill}/scripts/qa`;
+					const original = yield* fs.readFileString(script);
+					const edited = `${original}\n// Owner fixture edit.\n`;
+					yield* fs.writeFileString(script, edited);
+					yield* fs.chmod(script, 0o600);
+					yield* fs.remove(command);
+					if (!owned) yield* fs.remove(`${skill}/.harnessy-install.json`);
+					const retainedCommand = `${globalRoot}/bin/flow-qa`;
+					yield* fs.remove(retainedCommand);
+					yield* fs.writeFileString(retainedCommand, "independent command");
+					const result = yield* project.runInstaller(targetDir, options);
+					expect(yield* fs.readFileString(script)).toBe(edited);
+					expect(yield* fs.readFileString(retainedCommand)).toBe("independent command");
+					expect(yield* fs.exists(command)).toBe(owned);
+					expect((yield* fs.stat(script)).mode & 0o777).toBe(owned ? 0o755 : 0o600);
+					if (owned) {
+						expect(yield* fs.readLink(command)).toBe(script);
+						expect(result.runtimeAssets?.written).toContain(command);
+					} else expect(result.runtimeAssets?.written).not.toContain(command);
+				}),
+			),
+		);
+	}
+
 	it.effect("fails registration without replacing malformed account-independent agent configuration", () =>
 		provideLive(
 			Effect.gen(function* () {
