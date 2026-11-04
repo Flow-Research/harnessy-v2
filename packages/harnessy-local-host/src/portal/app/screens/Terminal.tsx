@@ -43,6 +43,10 @@ export const TerminalScreen = ({
 	const takeover = useRef(false);
 	const [attachment, setAttachment] = useState(0);
 	const sendKey = useRef<(data: string) => void>(() => undefined);
+	const sessionList = useRef(sessions);
+	sessionList.current = sessions;
+	const attachmentGeneration = useRef(0);
+	const resuming = useRef(false);
 	useEffect(() => {
 		let cancelled = false;
 		void client.get("/v1/terminal/sessions").then((result) => {
@@ -77,6 +81,8 @@ export const TerminalScreen = ({
 	}, [client, initialSelected]);
 	useEffect(() => {
 		if (!selected || !host.current) return;
+		attachmentGeneration.current += 1;
+		let lifecycle = sessionList.current.find((item) => item.id === selected)?.state ?? "starting";
 		const viewerId = `${crypto.randomUUID()}:${attachment}`;
 		try {
 			sessionStorage.setItem("harnessy.terminal.selected", selected);
@@ -168,7 +174,18 @@ export const TerminalScreen = ({
 				setError("Older output was discarded. The most recent 1 MB is shown.");
 			}
 			cursor = body.cursor;
+			lifecycle = body.state;
 			setState(body.state);
+			setSessions((items) =>
+				items.some((item) => item.id === selected && item.state !== body.state)
+					? items.map((item) => (item.id === selected ? { ...item, state: body.state } : item))
+					: items,
+			);
+			if (persistent && body.state !== "running") {
+				inputBlocked = true;
+				terminal.options.disableStdin = true;
+				setControlling(false);
+			}
 			await new Promise<void>((resolve) =>
 				// oxlint-disable-next-line eslint-js/no-restricted-syntax -- xterm.write parses terminal bytes, never HTML or document.write.
 				terminal.write(
@@ -176,15 +193,16 @@ export const TerminalScreen = ({
 					resolve,
 				),
 			);
+			if (cancelled) return;
 			if (replaying && body.cursor === body.endCursor) {
 				replaying = false;
 				terminal.options.disableStdin = inputBlocked;
 			}
-			if (!cancelled && (body.state === "running" || body.data))
-				timer = setTimeout(() => void poll(), body.data ? 30 : 120);
+			if (!cancelled && (body.state === "running" || body.data || (persistent && body.state !== "ended")))
+				timer = setTimeout(() => void poll(), body.data ? 30 : body.state === "running" ? 120 : 2000);
 		};
 		setError("");
-		setState("running");
+		setState(lifecycle);
 		setControlling(false);
 		if (persistent) {
 			const action = takeover.current ? "takeover" : "attach";
@@ -195,15 +213,18 @@ export const TerminalScreen = ({
 					setError(result.kind === "error" ? result.message : "Sign in again.");
 					return;
 				}
-				const control = (result.body as { controlling: boolean }).controlling;
+				const control = (result.body as { controlling: boolean }).controlling && lifecycle === "running";
 				setControlling(control);
 				inputBlocked = !control;
+				terminal.options.disableStdin = replaying || inputBlocked;
 				if (control) resize();
-				void poll();
 			});
-		} else void poll();
+		}
+		// Saved lifecycle and output remain readable even when no process can be attached.
+		void poll();
 		return () => {
 			cancelled = true;
+			attachmentGeneration.current += 1;
 			clearTimeout(timer);
 			observer.disconnect();
 			input.dispose();
@@ -336,15 +357,29 @@ export const TerminalScreen = ({
 							<button
 								type="button"
 								className="button button-primary"
+								disabled={busy}
 								onClick={() => {
-									void client.terminalAction({ action: "resume", id: selected }).then((result) => {
-										if (result.kind !== "ok") {
-											setError(result.kind === "error" ? result.message : "Sign in again.");
-											return;
-										}
-										setSelected("");
-										setTimeout(() => setSelected(selected), 0);
-									});
+									if (resuming.current) return;
+									resuming.current = true;
+									setBusy(true);
+									const generation = attachmentGeneration.current;
+									void client
+										.terminalAction({ action: "resume", id: selected })
+										.then((result) => {
+											if (generation !== attachmentGeneration.current) return;
+											if (result.kind !== "ok") {
+												setError(result.kind === "error" ? result.message : "Sign in again.");
+												return;
+											}
+											setSessions((items) =>
+												items.map((item) => (item.id === selected ? { ...item, state: "running" } : item)),
+											);
+											setAttachment((value) => value + 1);
+										})
+										.finally(() => {
+											resuming.current = false;
+											setBusy(false);
+										});
 								}}
 							>
 								Resume saved conversation
@@ -371,7 +406,7 @@ export const TerminalScreen = ({
 								Rename
 							</button>
 						) : null}
-						{persistent && !controlling ? (
+						{persistent && !controlling && state === "running" ? (
 							<button
 								type="button"
 								className="button"
@@ -391,7 +426,11 @@ export const TerminalScreen = ({
 					<StatusDot tone={SESSION_TONE[state] ?? "idle"} label={state || "connecting"} />
 					{persistent ? (
 						<span className="muted">
-							{controlling ? "This view controls input." : "Viewing only. Another view controls input."}
+							{controlling
+								? "This view controls input."
+								: state === "running"
+									? "Viewing only. Take control to type here."
+									: "Input is unavailable until the session is running."}
 						</span>
 					) : null}
 				</p>

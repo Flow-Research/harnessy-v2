@@ -288,7 +288,7 @@ it("shows session state as a word and who controls input, then hands control ove
 	}));
 	await render();
 	const status = () => container.querySelector(".terminal-status")!.textContent;
-	expect(status()).toBe("runningViewing only. Another view controls input.");
+	expect(status()).toBe("runningViewing only. Take control to type here.");
 	// A viewer cannot type or press the touch keys until it takes control.
 	expect(
 		[...container.querySelectorAll('[aria-label="Terminal keys"] button')].every(
@@ -392,6 +392,139 @@ it("offers Resume saved conversation after an interruption, and reports a failed
 	// The view re-attaches to the same session instead of starting a new one.
 	expect(terminalAction.mock.calls.filter(([body]) => body.action === "create")).toEqual([]);
 	expect(container.querySelector<HTMLSelectElement>('[aria-label="Terminal session"]')?.value).toBe("agent");
+});
+
+it.each(["interrupted", "failed"])(
+	"keeps %s recovery available when attachment fails and resumes without replaying input",
+	async (savedState) => {
+		let lifecycle = savedState;
+		persistentSessions(savedState);
+		get.mockImplementation(async (path) =>
+			path.endsWith("/sessions")
+				? {
+						kind: "ok",
+						body: { cwd: "/workspace", persistent: true, sessions: [{ id: "agent", state: savedState }] },
+					}
+				: output("QUERY", 5, 5, false, lifecycle),
+		);
+		terminalAction.mockImplementation(async (body) => {
+			if (body.action === "resume") {
+				lifecycle = "running";
+				return { kind: "ok", body: {} };
+			}
+			if (body.action === "attach")
+				return lifecycle === "running"
+					? { kind: "ok", body: { controlling: true } }
+					: { kind: "error", message: "Backend process unavailable" };
+			return { kind: "ok", body: {} };
+		});
+		await render();
+		expect(container.querySelector(".terminal-status")?.textContent).toContain(savedState);
+		expect(container.querySelector(".terminal-status")?.textContent).not.toContain("Another view");
+		expect(current().options.disableStdin).toBe(true);
+		await act(async () => current().input?.("do-not-replay\r"));
+		await click("Resume saved conversation");
+		expect(container.querySelector<HTMLSelectElement>('[aria-label="Terminal session"]')?.value).toBe("agent");
+		expect(current().options.disableStdin).toBe(false);
+		expect(container.querySelector(".terminal-status")?.textContent).toContain("runningThis view controls input.");
+		expect(terminalAction.mock.calls.filter(([body]) => body.action === "input")).toEqual([]);
+		await act(async () => current().input?.("fresh\r"));
+		expect(terminalAction.mock.calls.filter(([body]) => body.action === "input").map(([body]) => body.data)).toEqual([
+			"fresh\r",
+		]);
+	},
+);
+
+it("keeps checking lifecycle after stream interruption and offers explicit control when the process recovers", async () => {
+	persistentSessions("running");
+	terminalAction.mockImplementation(async () => ({ kind: "ok", body: { controlling: true } }));
+	await render();
+	replies.push(output("", 0, 0, false, "interrupted"));
+	await act(async () => vi.advanceTimersByTimeAsync(120));
+	expect(current().options.disableStdin).toBe(true);
+	expect(container.querySelector(".terminal-status")?.textContent).toContain("interrupted");
+	await act(async () => current().input?.("discard\r"));
+	await act(async () => vi.advanceTimersByTimeAsync(2000));
+	expect(container.querySelector(".terminal-status")?.textContent).toContain("running");
+	await click("Take control");
+	expect(current().options.disableStdin).toBe(false);
+	expect(terminalAction.mock.calls.some(([body]) => body.action === "resume" || body.action === "input")).toBe(false);
+});
+
+it("takes control of an initially interrupted session after recovery even when the new output request is delayed", async () => {
+	persistentSessions("interrupted");
+	terminalAction.mockImplementation(async (body) =>
+		body.action === "attach"
+			? { kind: "error", message: "Backend unavailable" }
+			: { kind: "ok", body: { controlling: true } },
+	);
+	await render();
+	replies.push(output("", 0, 0, false, "running"));
+	await act(async () => vi.advanceTimersByTimeAsync(2000));
+	let finish: (value: ApiResult) => void = () => undefined;
+	get.mockImplementationOnce(
+		() =>
+			new Promise<ApiResult>((resolve) => {
+				finish = resolve;
+			}),
+	);
+	await click("Take control");
+	expect(container.querySelector(".terminal-status")?.textContent).toContain("This view controls input.");
+	expect(current().options.disableStdin).toBe(true);
+	await act(async () => finish(output("QUERY", 5, 5, false, "running")));
+	expect(current().options.disableStdin).toBe(false);
+	expect(terminalAction.mock.calls.filter(([body]) => body.action === "input")).toEqual([]);
+	await act(async () => current().input?.("live\r"));
+	expect(terminalAction).toHaveBeenLastCalledWith(expect.objectContaining({ action: "input", data: "live\r" }));
+});
+
+it("does not switch back or send duplicate resume requests when another session is selected while resuming", async () => {
+	let finish: (value: ApiResult) => void = () => undefined;
+	get.mockImplementation(async (path) =>
+		path.endsWith("/sessions")
+			? {
+					kind: "ok",
+					body: {
+						cwd: "/workspace",
+						persistent: true,
+						sessions: [
+							{ id: "agent", state: "interrupted" },
+							{ id: "other", state: "running" },
+						],
+					},
+				}
+			: output("", 0, 0, false, path.includes("/other/") ? "running" : "interrupted"),
+	);
+	terminalAction.mockImplementation(async (body) =>
+		body.action === "resume"
+			? new Promise<ApiResult>((resolve) => {
+					finish = resolve;
+				})
+			: { kind: "ok", body: { controlling: true } },
+	);
+	await render();
+	const button = [...container.querySelectorAll("button")].find(
+		(el) => el.textContent === "Resume saved conversation",
+	)!;
+	await act(async () => {
+		button.click();
+		button.click();
+	});
+	expect(terminalAction.mock.calls.filter(([body]) => body.action === "resume")).toHaveLength(1);
+	const select = container.querySelector<HTMLSelectElement>('[aria-label="Terminal session"]')!;
+	await act(async () => {
+		select.value = "other";
+		select.dispatchEvent(new Event("change", { bubbles: true }));
+	});
+	const other = current();
+	await act(async () => finish({ kind: "ok", body: {} }));
+	await act(async () => vi.advanceTimersByTimeAsync(10));
+	expect(select.value).toBe("other");
+	expect(current()).toBe(other);
+	await act(async () => current().input?.("for-other\r"));
+	expect(terminalAction.mock.calls.filter(([body]) => body.action === "input")).toEqual([
+		[expect.objectContaining({ id: "other", data: "for-other\r" })],
+	]);
 });
 
 it("renames a session through the prompt and keeps the name when the prompt is cancelled", async () => {

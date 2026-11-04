@@ -411,6 +411,38 @@ try {
 	);
 	if (!hostile) failures.push("hostile brief text was not shown as text");
 
+	// A saved task can be read even when its process can no longer be attached.
+	// Replace only the terminal HTTP boundary; never start a real shell or agent.
+	await evaluate(`(() => {
+		const original = window.fetch.bind(window);
+		window.__recovery = { state: 'interrupted', actions: [], resumed: false };
+		window.fetch = async (path, init) => {
+			const fixture = window.__recovery;
+			const json = (body, status=200) => new Response(JSON.stringify(body), {status, headers:{'Content-Type':'application/json'}});
+			if (path === '/v1/terminal/sessions') return json({cwd:'/fixture', persistent:true, sessions:[{id:'saved-task',title:'Saved interrupted task',state:fixture.state}]});
+			if (String(path).startsWith('/v1/terminal/output/')) return json({data:'',cursor:0,endCursor:0,truncated:false,state:fixture.state});
+			if (path === '/v1/terminal/action') {
+				const body = JSON.parse(init.body); fixture.actions.push(body);
+				if (body.action === 'resume') {fixture.state='running';fixture.resumed=true;return json({id:'saved-task'});}
+				if (body.action === 'attach' || body.action === 'takeover') return fixture.resumed ? json({controlling:true}) : json({error:'terminal_backend_failed'},409);
+				return json({ok:true});
+			}
+			return original(path,init);
+		};
+	})()`);
+	await evaluate("location.hash='#/terminal/saved-task'");
+	await until("saved task attachment refusal", () => evaluate("document.querySelector('.terminal-screen [role=alert]') !== null"));
+	const recovery = await evaluate("({status:document.querySelector('.terminal-status')?.textContent, resume:[...document.querySelectorAll('button')].some(el=>el.textContent==='Resume saved conversation')})");
+	if (!recovery.resume || !recovery.status.includes('interrupted')) failures.push(`saved task recovery missing after refused attachment: ${JSON.stringify(recovery)}`);
+	else {
+		const point = await evaluate("(() => {const el=[...document.querySelectorAll('button')].find(el=>el.textContent==='Resume saved conversation');el.scrollIntoView();const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
+		await page("Input.dispatchMouseEvent", {type:"mousePressed",...point,button:"left",clickCount:1});
+		await page("Input.dispatchMouseEvent", {type:"mouseReleased",...point,button:"left",clickCount:1});
+		await until("saved task resumed and attached", () => evaluate("document.querySelector('.terminal-status')?.textContent.includes('runningThis view controls input.')"));
+		const actions = await evaluate("window.__recovery.actions.map(body=>body.action)");
+		if (actions.filter(action=>action==='resume').length!==1 || actions.some(action=>['input','create','close'].includes(action))) failures.push(`unexpected recovery actions: ${JSON.stringify(actions)}`);
+	}
+
 	for (const event of events) {
 		if (event.method === "Runtime.exceptionThrown")
 			failures.push(`uncaught exception: ${event.params.exceptionDetails?.exception?.description ?? event.params.exceptionDetails?.text}`);
