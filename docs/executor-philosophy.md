@@ -84,7 +84,7 @@ The division of labor:
 ## References
 
 - [Harnessy direction](../VISION.md)
-- [Harnessy positioning](../packages/capability-harnessy-v1-full/resources/context-vault/docs/harnessy-positioning.md)
+- [Harnessy positioning](../packages/capability-harnessy-v1-full/resources/source/.jarvis/context/docs/harnessy-positioning.md)
 - [Garden boundary](../packages/capability-org-knowledge/context/garden-boundary.md)
 - [Knowledge contract](../packages/harnessy-core/src/connectors/knowledge.ts)
 - [ADR-0002: connector seam](adr/0002-defer-connector-seam-until-second-adapter.md)

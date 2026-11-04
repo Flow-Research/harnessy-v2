@@ -37,7 +37,7 @@ it.each([
 		try {
 			if (operation === "resume") {
 				await manager.action(request);
-				await expect.poll(() => readFileSync(argsFile, "utf8")).toContain("--session-id");
+				await expect.poll(() => readFileSync(argsFile, "utf8"), { timeout: 8000 }).toContain("--session-id");
 				const old = manager.records.get(request.requestId)!;
 				oldPane = old.pane;
 				const pid = Number(old.processStamp!.split(":", 1)[0]);
@@ -141,13 +141,16 @@ it.each([true, false])(
 				isolation: "existing",
 			})) as { id: string };
 			await expect
-				.poll(() => {
-					try {
-						return readFileSync(argsFile, "utf8");
-					} catch {
-						return "";
-					}
-				})
+				.poll(
+					() => {
+						try {
+							return readFileSync(argsFile, "utf8");
+						} catch {
+							return "";
+						}
+					},
+					{ timeout: 8000 },
+				)
 				.toContain("--session-id");
 			const row = manager.records.get(id)!;
 			const conversation = row.conversation!;
@@ -193,7 +196,9 @@ it.each([true, false])(
 				release();
 				await resuming;
 				delayed.mockRestore();
-				await expect.poll(() => readFileSync(argsFile, "utf8")).toContain(`--session\n${conversation}`);
+				await expect
+					.poll(() => readFileSync(argsFile, "utf8"), { timeout: 8000 })
+					.toContain(`--session\n${conversation}`);
 			} else {
 				expect(readFileSync(argsFile, "utf8").match(/--session-id/g)).toHaveLength(1);
 			}

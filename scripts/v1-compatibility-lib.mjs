@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { chmod, cp, lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
-export const V1_PROVENANCE_SCHEMA_VERSION = 2;
+export const V1_PROVENANCE_SCHEMA_VERSION = 3;
 export const V1_LEGACY_PROVENANCE_SCHEMA_VERSION = 1;
 
 // npm omits these ignore files even when the directory is explicitly packed.
@@ -42,13 +42,15 @@ export const stageV1Compatibility = async (packageRoot, destination) => {
 	});
 	// Validate source/projection paths before copying; the full provenance check
 	// below is authoritative only after the exact omitted bytes are reconstructed.
-	await inspectV1Compatibility(packageRoot);
+	const inspection = await inspectV1Compatibility(packageRoot);
+	if (inspection.issues.some((issue) => !issue.startsWith("projection-drift:"))) throw new Error(`Invalid V1 layout: ${inspection.issues.join(", ")}`);
+	const provenance = await readV1Provenance(packageRoot);
 	await mkdir(output, { mode: 0o700 });
 	await cp(resources, join(output, "resources"), { recursive: true, errorOnExist: true, force: false });
 	if ((await describeV1Tree(join(output, "resources"))).digest !== before.digest ||
 		(await describeV1Tree(resources)).digest !== before.digest) throw new Error("V1 staging input changed");
 	for (const [path, bytes] of [...files.map(([path, bytes]) => [`source/${path}`, bytes]),
-		["jarvis-cli/.gitignore", files[1][1]]]) {
+		...(provenance.schemaVersion < 3 ? [["jarvis-cli/.gitignore", files[1][1]]] : [])]) {
 		const target = join(output, "resources", path);
 		const existing = await lstat(target).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
 		if (existing === null) await writeFile(target, bytes, { flag: "wx", mode: 0o644 });
@@ -165,7 +167,9 @@ const fileProjectionDefinitions = [
 	{ id: "root-agents", source: "AGENTS.md", projection: "AGENTS.v1.md", executable: false },
 ];
 
-export const inspectV1Compatibility = async (packageRoot) => {
+export const inspectV1Compatibility = async (packageRoot, schemaVersion) => {
+	const version = schemaVersion ?? (await readV1Provenance(packageRoot)).schemaVersion;
+	if (![1, 2, 3].includes(version)) throw new Error(`Unsupported V1 provenance schema version: ${String(version)}`);
 	const resources = join(resolve(packageRoot), "resources");
 	const sourceRoot = join(resources, "source");
 	const source = await describeV1Tree(sourceRoot);
@@ -178,6 +182,13 @@ export const inspectV1Compatibility = async (packageRoot) => {
 	}
 
 	const projections = [];
+	if (version === 3) {
+		for (const name of await readdir(resources)) {
+			if (!["source", "SOURCE.json", "npm-transport.json"].includes(name))
+				issues.push(`unexpected-resource: ${name}`);
+		}
+		return { source, projections, issues: [...new Set(issues)].sort() };
+	}
 	for (const definition of projectionDefinitions) {
 		const sourceTree = await describeV1Tree(join(sourceRoot, definition.source));
 		const projectionTree = await describeV1Tree(join(resources, definition.projection));
@@ -227,14 +238,18 @@ export const readV1Provenance = async (packageRoot) =>
 export const verifyV1Compatibility = async (packageRoot) => {
 	const inspection = await inspectV1Compatibility(packageRoot);
 	const provenance = await readV1Provenance(packageRoot);
+	return validateV1Provenance(inspection, provenance);
+};
+
+const validateV1Provenance = (inspection, provenance) => {
 	const issues = [...inspection.issues];
-	if (![V1_LEGACY_PROVENANCE_SCHEMA_VERSION, V1_PROVENANCE_SCHEMA_VERSION].includes(provenance.schemaVersion))
+	if (![V1_LEGACY_PROVENANCE_SCHEMA_VERSION, 2, V1_PROVENANCE_SCHEMA_VERSION].includes(provenance.schemaVersion))
 		issues.push(`unsupported-provenance-schema: ${String(provenance.schemaVersion)}`);
 	if (provenance.tree?.digest !== inspection.source.digest) issues.push("source-digest-mismatch");
 	if (provenance.tree?.fileCount !== inspection.source.fileCount) issues.push("source-file-count-mismatch");
 	if (provenance.tree?.byteCount !== inspection.source.byteCount) issues.push("source-byte-count-mismatch");
 	const selectedInputs = provenance.source?.selectedInputs;
-	if (provenance.schemaVersion === V1_PROVENANCE_SCHEMA_VERSION && selectedInputs === undefined)
+	if (provenance.schemaVersion >= 2 && selectedInputs === undefined)
 		issues.push("selected-inputs-missing");
 	if (selectedInputs !== undefined) {
 		if (selectedInputs.algorithm !== "sha256") issues.push("selected-inputs-algorithm-mismatch");
@@ -273,7 +288,7 @@ export const verifyV1Compatibility = async (packageRoot) => {
 			issues.push("selected-inputs-source-count-mismatch");
 	}
 	const dirtyInput = provenance.source?.dirtyInput;
-	if (provenance.schemaVersion === V1_PROVENANCE_SCHEMA_VERSION && dirtyInput === undefined)
+	if (provenance.schemaVersion >= 2 && dirtyInput === undefined)
 		issues.push("dirty-input-missing");
 	if (dirtyInput !== undefined) {
 		if (dirtyInput.algorithm !== "sha256") issues.push("dirty-input-algorithm-mismatch");
@@ -311,9 +326,9 @@ export const writeV1Provenance = async (
 	sourceMetadata,
 	{ schemaVersion = V1_PROVENANCE_SCHEMA_VERSION } = {},
 ) => {
-	if (![V1_LEGACY_PROVENANCE_SCHEMA_VERSION, V1_PROVENANCE_SCHEMA_VERSION].includes(schemaVersion))
+	if (![V1_LEGACY_PROVENANCE_SCHEMA_VERSION, 2, V1_PROVENANCE_SCHEMA_VERSION].includes(schemaVersion))
 		throw new Error(`Unsupported V1 provenance schema version: ${String(schemaVersion)}`);
-	const inspection = await inspectV1Compatibility(packageRoot);
+	const inspection = await inspectV1Compatibility(packageRoot, schemaVersion);
 	if (inspection.issues.length > 0) throw new Error(inspection.issues.join("\n"));
 	const provenance = {
 		schemaVersion,
@@ -326,8 +341,10 @@ export const writeV1Provenance = async (
 			fileCount: inspection.source.fileCount,
 			byteCount: inspection.source.byteCount,
 		},
-		projections: inspection.projections.map(({ matches: _matches, ...projection }) => projection),
+		...(schemaVersion < 3 ? { projections: inspection.projections.map(({ matches: _matches, ...projection }) => projection) } : {}),
 	};
+	const validation = validateV1Provenance(inspection, provenance);
+	if (!validation.ok) throw new Error(`Invalid V1 provenance: ${validation.issues.join(", ")}`);
 	const destination = join(resolve(packageRoot), "resources", "SOURCE.json");
 	await writeFile(destination, `${JSON.stringify(provenance, null, 2)}\n`, { mode: 0o644 });
 	await chmod(destination, 0o644);

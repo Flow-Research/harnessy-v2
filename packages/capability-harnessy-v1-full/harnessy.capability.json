@@ -12,14 +12,14 @@
 		"description": "Preserved v1 installer entrypoint. Native Harnessy v2 commands should be preferred for new installs."
 	},
 	"context": [
-		"resources/README.v1.md",
-		"resources/AGENTS.v1.md",
-		"resources/context-vault/AGENTS.md",
-		"resources/context-vault/README.md",
-		"resources/context-vault/skills/_catalog.md",
-		"resources/flow-install/skills/_shared/autoresearch.md",
-		"resources/flow-install/skills/_shared/text-hygiene.md",
-		"resources/jarvis-cli/README.md"
+		"resources/source/README.md",
+		"resources/source/AGENTS.md",
+		"resources/source/.jarvis/context/AGENTS.md",
+		"resources/source/.jarvis/context/README.md",
+		"resources/source/.jarvis/context/skills/_catalog.md",
+		"resources/source/tools/flow-install/skills/_shared/autoresearch.md",
+		"resources/source/tools/flow-install/skills/_shared/text-hygiene.md",
+		"resources/source/jarvis-cli/README.md"
 	],
 	"resources": [
 		{
@@ -32,44 +32,13 @@
 			"kind": "reference",
 			"path": "resources/SOURCE.json",
 			"target": "SOURCE.json",
-			"description": "V1 source commits, reviewed dirty-overlay digest, exclusions, full-tree digest, and projection digests."
-		},
-		{
-			"kind": "tool",
-			"path": "resources/flow-install",
-			"target": "flow-install",
-			"description": "Complete v1 flow-install installer, skill registry, hooks, scripts, templates, and tests."
-		},
-		{
-			"kind": "context",
-			"path": "resources/context-vault",
-			"target": "context-vault",
-			"description": "Complete v1 .jarvis/context vault including docs, profiles, scopes, templates, and skill catalog."
-		},
-		{
-			"kind": "tool",
-			"path": "resources/jarvis-cli",
-			"target": "jarvis-cli",
-			"description": "Complete v1 Jarvis CLI Python project source and tests."
-		},
-		{
-			"kind": "script",
-			"path": "resources/install.sh",
-			"target": "install.sh",
-			"executable": true,
-			"description": "Original v1 bootstrap script."
+			"description": "V1 source commits, reviewed dirty-overlay digest, exclusions, and full-tree digest."
 		},
 		{
 			"kind": "reference",
-			"path": "resources/README.v1.md",
-			"target": "README.v1.md",
-			"description": "Original v1 README preserved for compatibility."
-		},
-		{
-			"kind": "reference",
-			"path": "resources/AGENTS.v1.md",
-			"target": "AGENTS.v1.md",
-			"description": "Original v1 agent instructions preserved for compatibility."
+			"path": "resources/npm-transport.json",
+			"target": "npm-transport.json",
+			"description": "Exact bytes of source files omitted by npm packaging."
 		}
 	],
 	"checks": [
@@ -111,35 +80,35 @@
 		{
 			"id": "flow-install-entrypoint-present",
 			"kind": "path-exists",
-			"path": "resources/flow-install/index.mjs",
+			"path": "resources/source/tools/flow-install/index.mjs",
 			"required": true,
 			"description": "Ensure the v1 flow-install entrypoint is preserved."
 		},
 		{
 			"id": "flow-install-skills-present",
 			"kind": "path-exists",
-			"path": "resources/flow-install/skills/goal-agent/SKILL.md",
+			"path": "resources/source/tools/flow-install/skills/goal-agent/SKILL.md",
 			"required": true,
 			"description": "Ensure v1 shared skills are preserved."
 		},
 		{
 			"id": "context-vault-present",
 			"kind": "path-exists",
-			"path": "resources/context-vault/AGENTS.md",
+			"path": "resources/source/.jarvis/context/AGENTS.md",
 			"required": true,
 			"description": "Ensure the v1 context vault protocol is preserved."
 		},
 		{
 			"id": "jarvis-cli-present",
 			"kind": "path-exists",
-			"path": "resources/jarvis-cli/pyproject.toml",
+			"path": "resources/source/jarvis-cli/pyproject.toml",
 			"required": true,
 			"description": "Ensure the v1 Jarvis CLI source is preserved."
 		},
 		{
 			"id": "root-bootstrap-present",
 			"kind": "path-exists",
-			"path": "resources/install.sh",
+			"path": "resources/source/install.sh",
 			"required": true,
 			"description": "Ensure the v1 root bootstrap script is preserved."
 		}

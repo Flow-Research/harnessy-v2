@@ -1174,12 +1174,18 @@ source preservation is not being counted as their acceptance.
 
 Port the entire v1 surface first, so v2 always has the source-compatible behavior available as a capability pack. Then promote the preserved v1 pieces into native Effect services, commands, and smaller capability packs.
 
-Current full-source bridge:
+### Current full-source bridge
 
 - `packages/capability-harnessy-v1-full/`
-- Contains `resources/source/`, a complete v1 repository snapshot excluding only `.git`.
-- Also exposes direct runtime resources for `flow-install`, the v1 context vault, `jarvis-cli`, and root bootstrap docs.
+- Contains `resources/source/`, the reviewed v1 repository snapshot. Provenance records the private, sensitive and generated-file exclusions.
+- The installer, context vault, Jarvis source and root bootstrap documents use paths inside that single source tree.
+- Schema 3 stores the canonical source digest without duplicate resource trees. Schema 1 and 2 artifacts retain their original validation rules.
 - Covered by `packages/harnessy-core/test/v1-full-pack.test.ts`, including a live CLI path via `Command.runWith(rootCommand)`.
+
+Earlier checkpoints describe the layout tested at their recorded dates. Their
+references to source/projection copies are historical evidence. Current packages
+use the paths below. This consolidation preserves the canonical source bytes;
+it does not retire a workflow or establish new feature parity.
 
 ## Success test
 
@@ -1195,9 +1201,9 @@ Expected materialized paths include:
 
 - `.harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources/source/package.json`
 - `.harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources/source/scripts/flow/verify-harness.mjs`
-- `.harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources/flow-install/index.mjs`
-- `.harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources/context-vault/AGENTS.md`
-- `.harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources/jarvis-cli/pyproject.toml`
+- `.harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources/source/tools/flow-install/index.mjs`
+- `.harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources/source/.jarvis/context/AGENTS.md`
+- `.harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources/source/jarvis-cli/pyproject.toml`
 
 ## Phase 1 — Core harness foundation
 
@@ -1225,7 +1231,7 @@ Target shape now exists in `packages/harnessy-core/`.
 
 Ported as a direct compatibility source pack:
 
-- Complete v1 repository snapshot.
+- Reviewed v1 repository snapshot with the exclusions recorded in provenance.
 - v1 `flow-install` installer, libs, skills, hooks, scripts, templates, and tests.
 - v1 `.jarvis/context` vault docs, profiles, scoped memory registry, templates, and skill catalog.
 - v1 `jarvis-cli` Python project and tests.

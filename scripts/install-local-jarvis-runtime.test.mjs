@@ -44,7 +44,7 @@ test("unknown sync source rejects before dependency installation and preserves t
 			const target = join(source, "src/jarvis", path);
 			mkdirSync(join(target, ".."), { recursive: true });
 			writeFileSync(target, path === "sync/cli.py" ? "unknown sync source" : readFileSync(
-				new URL(`../packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/${path}`, import.meta.url)));
+				new URL(`../packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/${path}`, import.meta.url)));
 		}
 		const environment = join(root, "environment");
 		assert.throws(() => installLocalJarvisRuntime(source, environment), /Unknown Jarvis sync source/u);
@@ -56,9 +56,7 @@ test("unknown sync source rejects before dependency installation and preserves t
 
 
 test("reviewed neutral sync help accepts only current source and retains failure corrections", () => {
-	const source = readFileSync(new URL("../packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/sync/cli.py", import.meta.url), "utf8");
-	const mirror = readFileSync(new URL("../packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/sync/cli.py", import.meta.url), "utf8");
-	assert.equal(source, mirror);
+	const source = readFileSync(new URL("../packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/sync/cli.py", import.meta.url), "utf8");
 	const corrected = correctJarvisSyncSource(source);
 	assert.match(corrected, /Sync local folders\/files to a knowledge-tool collection/u);
 	assert.match(corrected, /if adapter is None:\n            raise SystemExit\(1\)/u);
@@ -77,7 +75,7 @@ test("installer sends corrected current source to the locked dependency installe
 		for (const path of ["services/planning_service.py", "anytype_client.py", "community_briefing/collector.py", "sync/cli.py"]) {
 			const target = join(source, "src/jarvis", path);
 			mkdirSync(join(target, ".."), { recursive: true });
-			cpSync(new URL(`../packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/${path}`, import.meta.url), target);
+			cpSync(new URL(`../packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/${path}`, import.meta.url), target);
 		}
 		const syncFile = join(source, "src/jarvis/sync/cli.py");
 		const before = readFileSync(syncFile, "utf8");

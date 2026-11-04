@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 
 import {
 	describeV1Tree,
+	readV1Provenance,
 	digestV1InputEntries,
 	verifyV1Compatibility,
 	writeV1NpmTransport,
@@ -436,10 +437,11 @@ const collectReconciliationInput = async ({ sourceRoot, overlayCommits, allowedP
 	};
 };
 
-const validateRetainedMigrationControlDocuments = async (resources) => {
+const validateRetainedMigrationControlDocuments = async (resources, schemaVersion) => {
+	const version = schemaVersion ?? (await readV1Provenance(dirname(resources))).schemaVersion;
 	for (const { source, projection } of retainedMigrationControlDocuments) {
 		const sourcePath = join(resources, "source", source);
-		const projectionPath = join(resources, projection);
+		const projectionPath = version === 3 ? sourcePath : join(resources, projection);
 		const [sourceInfo, projectionInfo] = await Promise.all([
 			lstat(sourcePath).catch(() => undefined),
 			lstat(projectionPath).catch(() => undefined),
@@ -679,17 +681,10 @@ const applyPlan = async (candidateSnapshotRoot, plan) => {
 	}
 };
 
-const rebuildProjections = async (candidatePackageRoot) => {
+const removeLegacyProjections = async (candidatePackageRoot) => {
 	const resources = join(candidatePackageRoot, "resources");
-	const sourceRoot = join(resources, "source");
-	for (const definition of projectionDefinitions) {
-		const destination = join(resources, definition.projection);
-		if (!destination.startsWith(`${resources}${sep}`)) throw new Error(`Unsafe projection destination: ${destination}`);
-		await rm(destination, { recursive: true, force: true });
-		await cp(join(sourceRoot, definition.source), destination, { recursive: true, preserveTimestamps: false });
-	}
-	for (const definition of fileProjectionDefinitions)
-		await cp(join(sourceRoot, definition.source), join(resources, definition.projection));
+	for (const { projection } of [...projectionDefinitions, ...fileProjectionDefinitions])
+		await rm(join(resources, projection), { recursive: true, force: true });
 };
 
 const validateConfiguredHistory = ({
@@ -852,8 +847,8 @@ export const reconcileV1Compatibility = async ({
 		await mkdir(candidatePackageRoot, { recursive: true });
 		await cp(resources, candidateResources, { recursive: true, preserveTimestamps: false });
 		await applyPlan(join(candidateResources, "source"), plan);
-		await rebuildProjections(candidatePackageRoot);
-		await validateRetainedMigrationControlDocuments(candidateResources);
+		await removeLegacyProjections(candidatePackageRoot);
+		await validateRetainedMigrationControlDocuments(candidateResources, 3);
 		const repository = runGit(sourceRoot, ["config", "--get", "remote.origin.url"], { allowFailure: true }).stdout.trim() || null;
 		const sourceMetadata = {
 			repository,

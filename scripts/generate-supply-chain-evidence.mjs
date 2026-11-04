@@ -255,8 +255,7 @@ const inputPaths = [
 	"packages/harnessy-core/CLAUDE_BRIDGE_VENDOR.md",
 	"packages/harnessy-core/THIRD_PARTY_LICENSES/pi-claude-bridge.txt",
 	"packages/capability-harnessy-v1-full/resources/source/LICENSE",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/pyproject.toml",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/uv.lock",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/pyproject.toml",
 	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/uv.lock",
 	"scripts/generate-supply-chain-evidence.mjs",
 	"scripts/supply-chain-evidence-lib.mjs",
@@ -427,9 +426,7 @@ try {
 	const pythonArguments = [
 		"scripts/inspect-python-distributions.py",
 		"--project",
-		"packages/capability-harnessy-v1-full/resources/jarvis-cli/pyproject.toml",
-		"--lock",
-		"packages/capability-harnessy-v1-full/resources/jarvis-cli/uv.lock",
+		"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/pyproject.toml",
 		"--lock",
 		"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/uv.lock",
 	];

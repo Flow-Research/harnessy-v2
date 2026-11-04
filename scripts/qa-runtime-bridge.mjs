@@ -8,7 +8,7 @@ export const QA_RUNTIME_SHA256 = "6ab7985d9c7c5e752d3cc25d4e56785d6c04630ba6b16e
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const qaRuntimePath = resolve(
 	repositoryRoot,
-	"packages/capability-harnessy-v1-full/resources/flow-install/skills/qa-runtime/scripts/qa-runtime-lib.mjs",
+	"packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/qa-runtime/scripts/qa-runtime-lib.mjs",
 );
 
 export const qaRuntimeSha256 = (content) => createHash("sha256").update(content).digest("hex");

@@ -586,12 +586,12 @@ test("reconciles committed and dirty renames/deletions and binds untracked bytes
 	assert.equal(Buffer.from(transport["jarvis-cli/.gitignore"], "base64").toString("utf8"), ".venv/\nnew-cache/\n");
 	const packed = join(dirname(packageRoot), "packed");
 	await cp(packageRoot, packed, { recursive: true });
-	for (const path of ["source/.gitignore", "source/jarvis-cli/.gitignore", "jarvis-cli/.gitignore"])
+	for (const path of ["source/.gitignore", "source/jarvis-cli/.gitignore"])
 		await rm(join(packed, "resources", path));
 	const staged = await stageV1Compatibility(packed, join(dirname(packageRoot), "staged"));
 	assert.equal(staged.ok, true);
 	assert.equal(staged.source.digest, verification.source.digest);
-	assert.equal(verification.provenance.schemaVersion, 2);
+	assert.equal(verification.provenance.schemaVersion, 3);
 	assert.equal(
 		verification.provenance.source.dirtyPatchSha256,
 		applied.dirtyInput.trackedPatchSha256,

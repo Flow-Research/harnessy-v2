@@ -12,7 +12,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-node --test "$repository_root/scripts/v1-reconciliation-lib.test.mjs"
+node --test "$repository_root/scripts/v1-reconciliation-lib.test.mjs" "$repository_root/scripts/single-source-package.test.mjs"
 
 command -v uv >/dev/null 2>&1 || {
     echo "uv is required to test the V1 compatibility pack." >&2
@@ -38,5 +38,5 @@ node "$repository_root/scripts/verify-v1-compatibility.mjs"
     "$UV_PROJECT_ENVIRONMENT/bin/python" -m pytest -q tools/flow-install/tests
 )
 
-# Testing a compatibility pack must not mutate the preserved projection.
+# Testing a compatibility pack must not mutate the canonical source.
 node "$repository_root/scripts/verify-v1-compatibility.mjs"

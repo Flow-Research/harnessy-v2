@@ -131,7 +131,7 @@ export const resolveLifeOrchestratorSettings = (options: ResolveLifeSettingsOpti
 			process.env.HARNESSY_LIFE_V1_SCRIPTS ??
 			join(
 				dirname(createRequire(import.meta.url).resolve("@harnessy/capability-harnessy-v1-full/package.json")),
-				"resources/flow-install/skills/life-orchestrator/scripts",
+				"resources/source/tools/flow-install/skills/life-orchestrator/scripts",
 			),
 	);
 	return {

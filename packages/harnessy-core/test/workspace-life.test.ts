@@ -23,7 +23,7 @@ afterEach(() => {
 });
 const scripts = resolve(
 	dirname(fileURLToPath(import.meta.url)),
-	"../../capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts",
+	"../../capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts",
 );
 
 const fixture = () => {

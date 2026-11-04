@@ -52,7 +52,7 @@ const fixture = (community = false) => {
 	} else {
 		const python = readFileSync(
 			new URL(
-				"../../capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/community_briefing/store.py",
+				"../../capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/store.py",
 				import.meta.url,
 			),
 			"utf8",

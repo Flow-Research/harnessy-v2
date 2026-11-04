@@ -4,7 +4,10 @@ import { correctJarvisAnytypeSource } from "../src/runtime/jarvis-anytype-correc
 
 describe("V2 AnyType installation correction", () => {
 	const source = readFileSync(
-		new URL("../../capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/anytype_client.py", import.meta.url),
+		new URL(
+			"../../capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/anytype_client.py",
+			import.meta.url,
+		),
 		"utf8",
 	);
 	it("checks both collection and page attachment outcomes", () => {
