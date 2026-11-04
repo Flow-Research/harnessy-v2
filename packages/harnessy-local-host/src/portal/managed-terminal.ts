@@ -174,6 +174,7 @@ export class ManagedTerminal implements TerminalBackend {
 					}
 					const native = data.result.agents?.find((a) => a.pane_id === row.pane)?.agent_session;
 					if (
+						row.state === "running" &&
 						native &&
 						native.agent === row.runner &&
 						native.kind === "id" &&
@@ -238,8 +239,10 @@ export class ManagedTerminal implements TerminalBackend {
 		throw new TerminalError("terminal_backend_unavailable");
 	}
 	private connect(row: RecordEntry) {
+		if (this.resuming.has(row.id)) throw new TerminalError("terminal_transition_in_progress");
+		if (!row.terminal || row.state !== "running" || !row.processStamp || this.processStamp(row) !== row.processStamp)
+			throw new TerminalError("terminal_identity_unverified");
 		if (this.streams.has(row.id)) return;
-		if (!row.terminal || row.state !== "running") return;
 		const child = spawn("herdr", ["--session", this.session, "terminal", "session", "control", row.terminal], {
 			env: this.env,
 			stdio: "pipe",
@@ -370,7 +373,10 @@ export class ManagedTerminal implements TerminalBackend {
 				) as { result: { root_pane: { pane_id: string; terminal_id: string } } };
 				row.pane = made.result.root_pane.pane_id;
 				row.terminal = made.result.root_pane.terminal_id;
+				this.save();
 				row.processStamp = this.processStamp(row);
+				if (!row.processStamp) throw new TerminalError("terminal_identity_unverified");
+				this.save();
 				if (tmux)
 					this.herdr([
 						"pane",
@@ -424,6 +430,15 @@ export class ManagedTerminal implements TerminalBackend {
 			if (!existsSync(row.cwd)) throw new TerminalError("session_directory_missing");
 			const executable = row.runner === "shell" ? undefined : this.available(row.runner);
 			if (row.runner !== "shell" && !executable) throw new TerminalError("runner_unavailable");
+			// A missing backend registry does not prove the recorded process stopped.
+			// Verify before starting Herdr or replacing any saved recovery identity.
+			let alive: boolean;
+			try {
+				alive = this.savedProcessAlive(row);
+			} catch {
+				throw new TerminalError("terminal_resume_unverified");
+			}
+			if (alive) throw new TerminalError("terminal_already_running");
 			this.resuming.add(row.id);
 			try {
 				await this.ensureBackend();
@@ -435,12 +450,22 @@ export class ManagedTerminal implements TerminalBackend {
 				this.streams.get(row.id)?.child.stdin.end();
 				this.streams.delete(row.id);
 				this.owners.delete(row.id);
+				// A successful create can lose its reply. Persist uncertainty before the
+				// side effect so a retry cannot use the old dead process as permission.
+				delete row.pane;
+				delete row.terminal;
+				delete row.processStamp;
+				row.state = "starting";
+				this.save();
 				const made = JSON.parse(
 					this.herdr(["workspace", "create", "--cwd", row.cwd, "--label", row.title, "--no-focus"]),
 				) as { result: { root_pane: { pane_id: string; terminal_id: string } } };
 				row.pane = made.result.root_pane.pane_id;
 				row.terminal = made.result.root_pane.terminal_id;
+				this.save();
 				row.processStamp = this.processStamp(row);
+				if (!row.processStamp) throw new TerminalError("terminal_identity_unverified");
+				this.save();
 				if (row.tmux)
 					this.herdr([
 						"pane",
@@ -450,8 +475,6 @@ export class ManagedTerminal implements TerminalBackend {
 							.map(quote)
 							.join(" "),
 					]);
-				row.state = "starting";
-				this.save();
 				if (executable && row.conversation) {
 					const args =
 						row.runner === "codex"
@@ -486,6 +509,7 @@ export class ManagedTerminal implements TerminalBackend {
 			return { ok: true };
 		}
 		if (body.action === "close") {
+			if (this.resuming.has(row.id)) throw new TerminalError("terminal_transition_in_progress");
 			if (row.state !== "ended") {
 				try {
 					if (!row.pane || !row.terminal) throw new TerminalError("terminal_identity_unverified");

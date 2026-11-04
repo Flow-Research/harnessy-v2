@@ -704,7 +704,7 @@ class JarvisConsumerTests(unittest.TestCase):
             dry_run = self.invoke(*arguments, "--dry-run")
             self.assertIn("Dry run summary", dry_run)
             self.assertEqual(requests, [])
-            for credential, message in [("synthetic-rejected-token", "Could not connect to Anytype"),
+            for credential, message in [("synthetic-rejected-token", "Could not connect to the sync destination"),
                                         ("synthetic-consumer-token", "Invalid sync destination")]:
                 with self.subTest(message=message):
                     AdapterRegistry.clear_instances()

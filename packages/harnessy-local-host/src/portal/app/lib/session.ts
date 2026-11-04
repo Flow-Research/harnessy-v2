@@ -267,6 +267,14 @@ export class SessionClient {
 						terminal_backend_unavailable: "Herdr did not start. Check its installation and try again.",
 						terminal_end_unverified:
 							"Could not verify that the process ended. The session is retained. Refresh its status and check the host before trying again.",
+						terminal_already_running:
+							"This session is already running. Open its terminal to continue; no new process was started.",
+						terminal_resume_unverified:
+							"Could not verify the saved process. The session is retained and was not restarted. Check the host before trying again.",
+						terminal_identity_unverified:
+							"Could not verify the terminal process. The session is retained. Check the host before attaching or starting the agent.",
+						terminal_transition_in_progress:
+							"This session is being resumed. Wait for its status to update before changing or ending it.",
 					};
 					return {
 						kind: "error",

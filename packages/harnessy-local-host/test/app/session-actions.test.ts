@@ -81,6 +81,10 @@ describe("session action requests", () => {
 		["runner_unavailable", "not installed"],
 		["session_directory_missing", "working directory is missing"],
 		["terminal_backend_unavailable", "Herdr did not start"],
+		["terminal_already_running", "already running. Open its terminal to continue; no new process was started"],
+		["terminal_resume_unverified", "session is retained and was not restarted. Check the host"],
+		["terminal_identity_unverified", "session is retained. Check the host before attaching"],
+		["terminal_transition_in_progress", "Wait for its status to update before changing or ending"],
 		["unknown_private_error", "Terminal request failed"],
 		[undefined, "Terminal request failed"],
 	])("explains terminal failure %s without exposing raw errors", async (error, message) => {

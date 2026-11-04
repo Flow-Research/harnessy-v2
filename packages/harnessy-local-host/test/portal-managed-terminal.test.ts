@@ -6,6 +6,114 @@ import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { ManagedTerminal } from "../src/portal/managed-terminal.ts";
 
+it.each([
+	["launch", "missing"],
+	["launch", "throws"],
+	["resume", "missing"],
+	["resume", "throws"],
+	["resume", "reply-lost"],
+] as const)(
+	"retains uncertain %s without dispatch after identity failure: %s",
+	async (operation, mode) => {
+		const root = mkdtempSync(join(tmpdir(), "hsy-identity-"));
+		const bin = join(root, "bin");
+		mkdirSync(bin);
+		const argsFile = join(root, "args.txt");
+		writeFileSync(argsFile, "");
+		writeFileSync(join(bin, "hsy"), `#!/bin/sh\nprintf '%s\\n' "$@" >> '${argsFile}'\nexec /bin/cat\n`);
+		chmodSync(join(bin, "hsy"), 0o700);
+		const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+		let manager = new ManagedTerminal(join(root, "state"), root, env);
+		const session = manager.session;
+		const request = {
+			action: "launch",
+			requestId: randomUUID(),
+			runner: "hsy",
+			title: "Identity fixture",
+			instructions: "Fixture only",
+			isolation: "existing",
+		};
+		let oldPane: string | undefined;
+		try {
+			if (operation === "resume") {
+				await manager.action(request);
+				await expect.poll(() => readFileSync(argsFile, "utf8")).toContain("--session-id");
+				const old = manager.records.get(request.requestId)!;
+				oldPane = old.pane;
+				const pid = Number(old.processStamp!.split(":", 1)[0]);
+				manager.close();
+				execFileSync("herdr", ["--session", session, "server", "stop"], { env, stdio: "ignore" });
+				await expect
+					.poll(() => {
+						try {
+							process.kill(pid, 0);
+							return true;
+						} catch {
+							return false;
+						}
+					})
+					.toBe(false);
+				manager = new ManagedTerminal(join(root, "state"), root, env);
+				expect(manager.list().sessions[0]?.state).toBe("interrupted");
+			}
+			const before = readFileSync(argsFile, "utf8");
+			const backend = manager as unknown as {
+				processStamp(row: { pane?: string }): string | undefined;
+				herdr(args: string[]): string;
+			};
+			const probe = backend.processStamp.bind(manager);
+			const execute = backend.herdr.bind(manager);
+			const commands = vi.spyOn(backend, "herdr").mockImplementation((args) => {
+				const result = execute(args);
+				if (mode === "reply-lost" && args[0] === "workspace" && args[1] === "create")
+					throw new Error("fixture_create_reply_lost");
+				return result;
+			});
+			const failure = vi.spyOn(backend, "processStamp").mockImplementation((row) => {
+				if (oldPane && row.pane === oldPane) return probe(row);
+				if (mode === "throws") throw new Error("fixture_identity_probe_failed");
+				return undefined;
+			});
+			await expect(
+				manager.action(operation === "launch" ? request : { action: "resume", id: request.requestId }),
+			).rejects.toThrow(
+				mode === "reply-lost"
+					? "fixture_create_reply_lost"
+					: mode === "throws"
+						? "fixture_identity_probe_failed"
+						: "terminal_identity_unverified",
+			);
+			failure.mockRestore();
+			const row = manager.records.get(request.requestId)!;
+			expect(row.state).toBe("failed");
+			if (mode === "reply-lost") expect(row.pane).toBeUndefined();
+			else expect(row.pane).toBeTruthy();
+			expect(row.pane).not.toBe(oldPane);
+			expect(row.processStamp).toBeUndefined();
+			expect(readFileSync(argsFile, "utf8")).toBe(before);
+			expect(JSON.parse(readFileSync(join(root, "state", "sessions.json"), "utf8"))[0]).toMatchObject({
+				state: "failed",
+				...(row.pane ? { pane: row.pane, terminal: row.terminal } : {}),
+			});
+			commands.mockClear();
+			await expect(manager.action({ action: "resume", id: row.id })).rejects.toThrow(
+				operation === "resume" ? "terminal_resume_unverified" : "exact_conversation_unavailable",
+			);
+			expect(commands).not.toHaveBeenCalled();
+			commands.mockRestore();
+		} finally {
+			manager.close();
+			try {
+				execFileSync("herdr", ["--session", session, "server", "stop"], { env, stdio: "ignore" });
+			} catch {
+				/* Fixture already stopped. */
+			}
+			rmSync(root, { recursive: true, force: true });
+		}
+	},
+	20000,
+);
+
 it.each([true, false])(
 	"recovers a restored starting agent (backend survives: %s) and verifies identity before ending it",
 	async (survives) => {
@@ -68,7 +176,23 @@ it.each([true, false])(
 			if (!survives) {
 				await expect(manager.action({ action: "close", id })).rejects.toThrow("terminal_end_unverified");
 				expect(manager.records.get(id)?.state).toBe("interrupted");
-				await manager.action({ action: "resume", id });
+				const backend = manager as unknown as { ensureBackend(): Promise<void> };
+				const ensure = backend.ensureBackend.bind(manager);
+				let release = () => {};
+				const waiting = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				const delayed = vi.spyOn(backend, "ensureBackend").mockImplementation(async () => {
+					await waiting;
+					await ensure();
+				});
+				const before = JSON.stringify(manager.records.get(id));
+				const resuming = manager.action({ action: "resume", id });
+				await expect(manager.action({ action: "close", id })).rejects.toThrow("terminal_transition_in_progress");
+				expect(JSON.stringify(manager.records.get(id))).toBe(before);
+				release();
+				await resuming;
+				delayed.mockRestore();
 				await expect.poll(() => readFileSync(argsFile, "utf8")).toContain(`--session\n${conversation}`);
 			} else {
 				expect(readFileSync(argsFile, "utf8").match(/--session-id/g)).toHaveLength(1);
@@ -80,6 +204,36 @@ it.each([true, false])(
 			const stamp = current.processStamp!;
 			const pane = current.pane!;
 			const terminal = current.terminal!;
+			const inspector = manager as unknown as { herdr(args: string[]): string; checkedAt: number };
+			const inspect = inspector.herdr.bind(manager);
+			current.processStamp = "1:other process";
+			current.state = "running";
+			inspector.checkedAt = 0;
+			const replaced = vi.spyOn(inspector, "herdr").mockImplementation((args) =>
+				args[0] === "agent" && args[1] === "list"
+					? JSON.stringify({
+							result: {
+								agents: [
+									{
+										pane_id: pane,
+										agent_session: { agent: "hsy", kind: "id", value: "unrelated-conversation" },
+									},
+								],
+							},
+						})
+					: inspect(args),
+			);
+			expect(manager.list().sessions[0]?.state).toBe("interrupted");
+			expect(current.conversation).toBe(conversation);
+			current.state = "running";
+			await expect(manager.action({ action: "takeover", id }, "another-view")).rejects.toThrow(
+				"terminal_identity_unverified",
+			);
+			expect(manager.streams.has(id)).toBe(false);
+			expect(manager.owners.has(id)).toBe(false);
+			replaced.mockRestore();
+			current.state = "interrupted";
+			current.processStamp = stamp;
 			// PID reuse or a replaced pane must never terminate an unrelated process.
 			current.processStamp = "1:unrelated process";
 			await expect(manager.action({ action: "close", id })).rejects.toThrow("terminal_end_unverified");
@@ -97,6 +251,24 @@ it.each([true, false])(
 				.mockImplementation((args) =>
 					args[0] === "pane" && args[1] === "list" ? JSON.stringify({ result: { panes: [] } }) : execute(args),
 				);
+			const stateFile = join(root, "state", "sessions.json");
+			const beforeResume = readFileSync(stateFile, "utf8");
+			const originalIdentity = JSON.stringify(current);
+			const originalArguments = readFileSync(argsFile, "utf8");
+			await expect(manager.action({ action: "resume", id })).rejects.toThrow("terminal_already_running");
+			expect(missingPane).not.toHaveBeenCalled();
+			expect(JSON.stringify(current)).toBe(originalIdentity);
+			expect(readFileSync(stateFile, "utf8")).toBe(beforeResume);
+			expect(readFileSync(argsFile, "utf8")).toBe(originalArguments);
+			for (const invalidStamp of [undefined, "not-a-process-stamp"]) {
+				current.processStamp = invalidStamp;
+				const uncertainIdentity = JSON.stringify(current);
+				await expect(manager.action({ action: "resume", id })).rejects.toThrow("terminal_resume_unverified");
+				expect(missingPane).not.toHaveBeenCalled();
+				expect(JSON.stringify(current)).toBe(uncertainIdentity);
+				expect(readFileSync(stateFile, "utf8")).toBe(beforeResume);
+			}
+			current.processStamp = stamp;
 			await expect(manager.action({ action: "close", id })).rejects.toThrow("terminal_end_unverified");
 			missingPane.mockRestore();
 			expect(current.state).toBe("interrupted");
