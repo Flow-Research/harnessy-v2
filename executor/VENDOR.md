@@ -350,6 +350,22 @@ pinned upstream revision. Clean-commit review and hosted evidence remain open
 under V2D-005. Runtime-driver or operational-authority changes require their own
 explicit review; these records do not authorize them.
 
+### Workerd package selection overlay — 2026-11-04
+
+`apps/cli/src/build.ts` uses `apps/cli/src/workerd-binary.ts` to select its
+workerd sidecar. The resolver checks the package name and effective exact
+version on direct resolution and on all Bun-store fallback paths. The version
+comes from a root override if one exists, or from the runtime package dependency
+(the current exact pin). A missing matching binary stops packaging with an
+error on supported targets. Linux musl and Windows arm64 return no binary,
+consistent with the capability contract above; a GNU sidecar is not packaged
+as a musl runtime. This prevents an alternate transitive workerd version from entering an
+artifact when direct package resolution fails. No dependency pin or lockfile
+was changed. `apps/cli/src/workerd-binary.test.ts` covers direct resolution,
+multiple store versions, nested layouts, missing versions and override rules
+with local temporary fixtures. Reapply this overlay on an upstream sync unless
+upstream provides equivalent version checks.
+
 ## Self-hosted app world (`hsy web`)
 
 To run the vendored local web app (`apps/local`) as Harnessy's local test

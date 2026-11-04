@@ -1,10 +1,11 @@
 import { cp, mkdir, rm, writeFile, chmod } from "node:fs/promises";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { $ } from "bun";
+import { resolveWorkerdBinary } from "./workerd-binary";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const cliRoot = resolve(repoRoot, "apps/cli");
@@ -238,62 +239,6 @@ const resolveLibsqlNative = (t: Target): string | null => {
   }
 };
 
-const resolveWorkerdBinary = (t: Target): string | null => {
-  const platformMap: Record<string, string> = {
-    "darwin-arm64": "@cloudflare/workerd-darwin-arm64",
-    "darwin-x64": "@cloudflare/workerd-darwin-64",
-    "linux-arm64": "@cloudflare/workerd-linux-arm64",
-    "linux-x64": "@cloudflare/workerd-linux-64",
-    "linux-arm64-musl": "@cloudflare/workerd-linux-arm64",
-    "linux-x64-musl": "@cloudflare/workerd-linux-64",
-    "win32-x64": "@cloudflare/workerd-windows-64",
-  };
-  const key = [t.os, t.arch, t.abi].filter(Boolean).join("-");
-  const pkg = platformMap[key];
-  if (!pkg) return null;
-  const binary = workerdBinaryName(t);
-  const findBinary = (packageRoot: string): string | null => {
-    for (const candidate of [join(packageRoot, "bin", binary), join(packageRoot, binary)]) {
-      if (existsSync(candidate)) return candidate;
-    }
-    return null;
-  };
-  try {
-    const req = createRequire(
-      join(repoRoot, "packages/kernel/runtime-workerd-subprocess/package.json"),
-    );
-    const pkgJson = req.resolve(`${pkg}/package.json`);
-    const resolved = findBinary(dirname(pkgJson));
-    if (resolved !== null) return resolved;
-  } catch {}
-  const storeRoot = join(repoRoot, "node_modules/.bun");
-  const sharedStoreBinary = findBinary(join(storeRoot, "node_modules", pkg));
-  if (sharedStoreBinary !== null) return sharedStoreBinary;
-  // Bun may materialize optional dependencies either as a direct store entry
-  // or beneath the parent `workerd@...` entry. Check each store entry so both
-  // layouts produce the same artifact.
-  for (const entry of readdirSync(storeRoot)) {
-    const resolved = findBinary(join(storeRoot, entry, "node_modules", pkg));
-    if (resolved !== null) return resolved;
-  }
-  // Keep a bounded fallback for future Bun store layouts. This still resolves
-  // only the exact scoped package and binary required by the target.
-  const findNested = (root: string, depth: number): string | null => {
-    if (depth > 6) return null;
-    const direct = findBinary(join(root, pkg));
-    if (direct !== null) return direct;
-    for (const entry of readdirSync(root, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const nested = findNested(join(root, entry.name), depth + 1);
-      if (nested !== null) return nested;
-    }
-    return null;
-  };
-  const nested = findNested(storeRoot, 0);
-  if (nested !== null) return nested;
-  return null;
-};
-
 // ---------------------------------------------------------------------------
 // Build mode
 // ---------------------------------------------------------------------------
@@ -460,7 +405,7 @@ const buildBinaries = async (targets: Target[], mode: BuildMode) => {
         await cp(libsqlNative, join(binDir, "libsql.node"));
       }
 
-      const workerdBinary = resolveWorkerdBinary(target);
+      const workerdBinary = resolveWorkerdBinary(repoRoot, target);
       if (workerdBinary && existsSync(workerdBinary)) {
         await cp(workerdBinary, join(binDir, workerdBinaryName(target)));
         if (target.os !== "win32") await chmod(join(binDir, workerdBinaryName(target)), 0o755);
