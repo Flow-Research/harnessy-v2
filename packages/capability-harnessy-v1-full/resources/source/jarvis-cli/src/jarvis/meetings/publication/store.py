@@ -100,7 +100,9 @@ class PublicationStore:
             conn.close()
             self._secure_files()
 
-    def upsert_note(self, note: MeetingNote) -> tuple[PublicationItem, bool, bool]:
+    def upsert_note(
+        self, note: MeetingNote, *, before_delivery: bool = False
+    ) -> tuple[PublicationItem, bool, bool]:
         """Insert a note or invalidate prior approval when its source changes."""
 
         now = utc_now().isoformat()
@@ -110,6 +112,10 @@ class PublicationStore:
                 "SELECT * FROM publication_items WHERE item_id = ? OR note_path = ?",
                 (note.item_id, str(note.path)),
             ).fetchone()
+            if row is not None and row["status"] == PublicationStatus.PUBLISHING.value:
+                if not before_delivery:
+                    # A scan cannot prove whether an external write already happened.
+                    return self._from_row(row), False, False
             if row is None:
                 conn.execute(
                     """INSERT INTO publication_items (
@@ -291,10 +297,15 @@ class PublicationStore:
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT source_hash FROM publication_items WHERE item_id = ?", (item_id,)
+                "SELECT source_hash, status FROM publication_items WHERE item_id = ?", (item_id,)
             ).fetchone()
             if row is None:
                 raise KeyError(item_id)
+            if row["status"] == PublicationStatus.PUBLISHING.value:
+                raise ValueError(
+                    "Publication is in progress or its outcome is uncertain; "
+                    "the owning service must reconcile delivery before a review decision."
+                )
             if row["source_hash"] != source_hash:
                 raise ValueError("meeting note changed before approval; refresh and review again")
             conn.execute(
@@ -323,6 +334,17 @@ class PublicationStore:
 
         now = utc_now().isoformat()
         with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT status FROM publication_items WHERE item_id = ?", (item_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(item_id)
+            if row["status"] == PublicationStatus.PUBLISHING.value:
+                raise ValueError(
+                    "Publication is in progress or its outcome is uncertain; "
+                    "the owning service must reconcile delivery before a review decision."
+                )
             cursor = conn.execute(
                 """UPDATE publication_items SET status = ?, approved_hash = NULL,
                     discord_summary_override = NULL, rejected_at = ?, updated_at = ?
@@ -346,14 +368,10 @@ class PublicationStore:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """SELECT * FROM publication_items
-                WHERE (
-                    status = ? OR (status = ? AND lease_until <= ?)
-                ) AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                WHERE status = ? AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                 ORDER BY meeting_date, created_at LIMIT 1""",
                 (
                     PublicationStatus.APPROVED.value,
-                    PublicationStatus.PUBLISHING.value,
-                    now,
                     now,
                 ),
             ).fetchone()
@@ -398,6 +416,17 @@ class PublicationStore:
             raise RuntimeError("published item disappeared")
         return item
 
+    def mark_uncertain(self, item_id: str, *, message: str) -> None:
+        """Retain the publishing fence and receipts until delivery is reconciled."""
+
+        with self.connect() as conn:
+            conn.execute(
+                """UPDATE publication_items SET error_stage = 'delivery_uncertain',
+                    error_message = ?, next_attempt_at = NULL, updated_at = ?
+                    WHERE item_id = ? AND status = ?""",
+                (message[:500], utc_now().isoformat(), item_id, PublicationStatus.PUBLISHING.value),
+            )
+
     def mark_failure(
         self,
         item_id: str,
@@ -436,7 +465,7 @@ class PublicationStore:
     def mark_changed(self, item_id: str, note: MeetingNote) -> PublicationItem:
         """Return an in-flight item to review when its live source changed."""
 
-        item, _created, _changed = self.upsert_note(note)
+        item, _created, _changed = self.upsert_note(note, before_delivery=True)
         return item
 
     def mark_notified(self, item_ids: list[str]) -> None:
@@ -461,7 +490,7 @@ class PublicationStore:
             rows = conn.execute(
                 """SELECT * FROM publication_items
                 WHERE (
-                    status IN (?, ?) OR (status = ? AND error_stage IS NOT NULL)
+                    status IN (?, ?) OR (status IN (?, ?) AND error_stage IS NOT NULL)
                 ) AND
                     (last_notified_at IS NULL OR last_notified_at <= ?)
                 ORDER BY meeting_date DESC""",
@@ -469,6 +498,7 @@ class PublicationStore:
                     PublicationStatus.PENDING_REVIEW.value,
                     PublicationStatus.BLOCKED.value,
                     PublicationStatus.APPROVED.value,
+                    PublicationStatus.PUBLISHING.value,
                     cutoff,
                 ),
             ).fetchall()

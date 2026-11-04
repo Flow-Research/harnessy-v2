@@ -3,8 +3,8 @@
  *
  * Data reads use the Core read model and the injected launchd probe. Explicit
  * page-authenticated POSTs can launch helpers, regenerate briefs or control shells.
- * The portal sets and reads no cookies, sends no
- * CORS headers and never logs request headers, URLs or secrets. Every data
+ * Local browser requests omit cookies; paired remote HTTPS uses a device cookie.
+ * The portal sends no CORS headers and never logs request headers, URLs or secrets. Every data
  * response is checked against its schema before it is sent or cached. With
  * `page`, it also serves the local page's static files under the same headers
  * and CSP; those files hold no secret and need no credential.

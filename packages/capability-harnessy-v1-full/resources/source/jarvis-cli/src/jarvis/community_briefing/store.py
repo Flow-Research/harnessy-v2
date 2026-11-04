@@ -307,6 +307,22 @@ class BriefingStore:
         )
         return self.get(briefing_id)  # type: ignore[return-value]
 
+    def mark_uncertain(self, briefing_id: str, *, message: str) -> None:
+        """Retain the publishing fence and receipts until delivery is reconciled."""
+
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE community_briefings SET error_stage = 'delivery_uncertain',
+                    error_message = ?, next_attempt_at = NULL, updated_at = ?
+                    WHERE briefing_id = ? AND status = ?""",
+                (
+                    message[:500],
+                    utc_now().isoformat(),
+                    briefing_id,
+                    PublicationStatus.PUBLISHING.value,
+                ),
+            )
+
     def mark_failure(
         self,
         briefing_id: str,
@@ -341,12 +357,14 @@ class BriefingStore:
         cutoff = (utc_now() - timedelta(hours=reminder_hours)).isoformat()
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT * FROM community_briefings WHERE status IN (?, ?)
+                """SELECT * FROM community_briefings WHERE (status IN (?, ?)
+                OR (status = ? AND error_stage = 'delivery_uncertain'))
                 AND (last_notified_at IS NULL OR last_notified_at <= ?)
                 ORDER BY week_start""",
                 (
                     PublicationStatus.PENDING_REVIEW.value,
                     PublicationStatus.BLOCKED.value,
+                    PublicationStatus.PUBLISHING.value,
                     cutoff,
                 ),
             ).fetchall()

@@ -1,3 +1,4 @@
+import { lstat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,6 +13,7 @@ import { causeMessage, HarnessError } from "../errors.ts";
 import type { HarnessPaths } from "../paths.ts";
 import type { InstallPaths } from "./install-paths.ts";
 import { correctLifeInstructions } from "./life-monthly-correction.ts";
+import { installOwnedSkill } from "./skill-ownership.ts";
 
 const v1SourceRoot = join(
 	dirname(createRequire(import.meta.url).resolve("@harnessy/capability-harnessy-v1-full/package.json")),
@@ -244,11 +246,30 @@ export class HarnessRuntimeAssets extends Context.Service<
 					.remove(targetPath, { recursive: true, force: true })
 					.pipe(Effect.mapError((cause) => mapPlatformError(`Could not remove ${targetPath}`, cause)));
 
-			const symlinkOrCopyDirectory = (sourcePath: string, targetPath: string) =>
+			const registerSkillLink = (sourcePath: string, targetPath: string) =>
 				Effect.gen(function* () {
 					yield* makeDirectory(path.dirname(targetPath));
-					yield* removePath(targetPath);
-					yield* fs.symlink(sourcePath, targetPath).pipe(Effect.catch(() => copyPath(sourcePath, targetPath)));
+					// Exclusive creation also protects dangling links and concurrent installs.
+					yield* fs.symlink(sourcePath, targetPath).pipe(
+						Effect.catch((cause) =>
+							Effect.gen(function* () {
+								if (cause.reason._tag !== "AlreadyExists")
+									return yield* Effect.fail(mapPlatformError(`Could not link ${targetPath}`, cause));
+								const existing = yield* fs.readLink(targetPath).pipe(Effect.orElseSucceed(() => null));
+								if (
+									existing !== null &&
+									path.resolve(path.dirname(targetPath), existing) === path.resolve(sourcePath)
+								)
+									return;
+								return yield* Effect.fail(
+									new HarnessError({
+										message: `Skill registration conflict at ${targetPath}; existing entry preserved. Move or rename it explicitly, then retry.`,
+										cause,
+									}),
+								);
+							}),
+						),
+					);
 				});
 
 			const symlinkExecutable = (sourcePath: string, targetPath: string, overwrite: boolean) =>
@@ -275,7 +296,28 @@ export class HarnessRuntimeAssets extends Context.Service<
 				Effect.gen(function* () {
 					if (!(yield* exists(filePath))) return null;
 					const raw = yield* readFileString(filePath);
-					return yield* Effect.try(() => JSON.parse(raw) as unknown).pipe(Effect.orElseSucceed(() => null));
+					return yield* Effect.try(() => {
+						const value: unknown = JSON.parse(raw);
+						if (!isRecord(value)) throw new Error("Expected a JSON object");
+						for (const key of ["enabledPlugins", "extraKnownMarketplaces", "skills"]) {
+							if (key in value && !isRecord(value[key])) throw new Error(`${key} must be an object`);
+						}
+						if (
+							isRecord(value.skills) &&
+							"paths" in value.skills &&
+							(!Array.isArray(value.skills.paths) ||
+								value.skills.paths.some((entry) => typeof entry !== "string"))
+						)
+							throw new Error("skills.paths must contain paths");
+						return value;
+					}).pipe(
+						Effect.mapError((cause) =>
+							mapPlatformError(
+								`Invalid registration configuration at ${filePath}; existing file preserved. Repair the JSON, then retry`,
+								cause,
+							),
+						),
+					);
 				});
 
 			const writeJson = (filePath: string, data: unknown) =>
@@ -461,7 +503,7 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 			) {
 				yield* makeDirectory(targetDir);
 				for (const skill of skills) {
-					yield* symlinkOrCopyDirectory(skill.skillDir, path.join(targetDir, skill.name));
+					yield* registerSkillLink(skill.skillDir, path.join(targetDir, skill.name));
 				}
 			});
 
@@ -918,7 +960,16 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 					const targetManifest = path.join(targetDir, "manifest.yaml");
 					let status: "planned" | "written" | "skipped" = "planned";
 					let reason: string | undefined;
-					if (yield* exists(targetDir)) {
+					const targetExists = yield* Effect.tryPromise(() =>
+						lstat(targetDir).then(
+							() => true,
+							(error: NodeJS.ErrnoException) => {
+								if (error.code === "ENOENT") return false;
+								throw error;
+							},
+						),
+					).pipe(Effect.mapError((cause) => mapPlatformError(`Could not inspect ${targetDir}`, cause)));
+					if (targetExists) {
 						const existingVersion = (yield* exists(targetManifest))
 							? parseSimpleYaml(yield* readFileString(targetManifest)).version
 							: undefined;
@@ -940,12 +991,14 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 								reason,
 							}),
 						);
-						yield* installSkillExecutableShims(targetDir, globals, options, actions, written);
+						// Skipping a legacy directory does not prove ownership of its commands.
 						continue;
 					}
 
-					yield* removePath(targetDir);
-					yield* copyPath(skill.sourceDir, targetDir);
+					yield* Effect.tryPromise({
+						try: () => installOwnedSkill(skill.sourceDir, targetDir, `bundled:${skill.name}`),
+						catch: (cause) => mapPlatformError(`Could not install ${skill.name}`, cause),
+					});
 					if (skill.name === "life-orchestrator") {
 						for (const file of ["SKILL.md", "commands/life.md"] as const) {
 							const target = path.join(targetDir, file);
@@ -1110,33 +1163,22 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 				extraKnownMarketplaces.harnessy = {
 					source: { source: "directory", path: globals.globalClaudeMarketplace },
 				};
-				delete extraKnownMarketplaces.duru_claude_plugins;
 				nextSettings.extraKnownMarketplaces = extraKnownMarketplaces;
 				const enabledPlugins = isRecord(nextSettings.enabledPlugins) ? { ...nextSettings.enabledPlugins } : {};
 				enabledPlugins["harnessy@harnessy"] = true;
-				delete enabledPlugins["flow-skills@harnessy"];
-				for (const skill of skills) delete enabledPlugins[`${skill.name}@harnessy`];
 				nextSettings.enabledPlugins = enabledPlugins;
 				yield* writeJson(globals.globalClaudeSettings, nextSettings);
 
+				const known = yield* readJsonSafe(globals.globalClaudeKnownMarketplaces);
 				yield* writeJson(globals.globalClaudeKnownMarketplaces, {
+					...(isRecord(known) ? known : {}),
 					harnessy: {
 						source: { source: "directory", path: globals.globalClaudeMarketplace },
 						installLocation: globals.globalClaudeMarketplace,
 					},
 				});
 
-				const installed = yield* readJsonSafe(globals.globalClaudeInstalledPlugins);
-				if (isRecord(installed) && isRecord(installed.plugins)) {
-					const plugins = { ...installed.plugins };
-					for (const key of Object.keys(plugins)) {
-						if (key.endsWith("@harnessy") && key !== "harnessy@harnessy") delete plugins[key];
-					}
-					yield* writeJson(globals.globalClaudeInstalledPlugins, { ...installed, plugins });
-				}
-				if (yield* exists(globals.globalClaudePluginCache)) {
-					yield* removePath(globals.globalClaudePluginCache);
-				}
+				// Registration does not own existing plugin caches or migration artifacts.
 
 				const openCodeConfig = yield* readJsonSafe(globals.globalOpenCodeConfig);
 				if (isRecord(openCodeConfig)) {

@@ -104,6 +104,10 @@
 
 ### Fixed
 
+- Skill registration preserves unrelated entries and rejects conflicting names.
+  Skill replacement requires a matching Harnessy ownership record, even with
+  `--force`. Unmarked older installations must be inspected and moved explicitly
+  before replacement. Malformed agent settings are preserved and reported.
 - Keep the macOS meeting service running with persistent launchd startup, crash
   recovery and stable boot-session and volume identities. Recovery preserves
   publication leases and refuses uncertain delivery. The community worker retries

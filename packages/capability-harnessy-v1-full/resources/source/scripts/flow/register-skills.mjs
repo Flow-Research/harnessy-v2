@@ -6,7 +6,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
-import { GLOBAL_SKILLS_DIR, pathExists, readJsonSafe, registerAllAgentSkills } from "./agents.mjs";
+import { GLOBAL_SKILLS_DIR, pathExists, readJsonSafe, registerAllAgentSkills, installOwnedSkill } from "./agents.mjs";
 
 const projectRoot = process.cwd();
 const GLOBAL_COMMANDS_DIR = (process.env.XDG_BIN_HOME || "").trim() || path.join(process.env.HOME, ".local", "bin");
@@ -34,16 +34,6 @@ const DEFAULT_INSTALL_PATHS = {
 const resolveInstallPaths = async () => {
   const lockfile = await readJsonSafe(path.join(projectRoot, "harnessy.lock.json"));
   return { ...DEFAULT_INSTALL_PATHS, ...(lockfile?.installPaths || {}) };
-};
-
-const copyDir = async (src, dest) => {
-  await fs.mkdir(dest, { recursive: true });
-  for (const entry of await fs.readdir(src, { withFileTypes: true })) {
-    const s = path.join(src, entry.name);
-    const d = path.join(dest, entry.name);
-    if (entry.isDirectory()) await copyDir(s, d);
-    else await fs.copyFile(s, d);
-  }
 };
 
 const installSkillExecutables = async (skillDir) => {
@@ -99,8 +89,7 @@ const run = async () => {
       const skillDir = path.join(projectSkillsRoot, entry.name);
       if (!(await pathExists(path.join(skillDir, "SKILL.md")))) continue;
       const target = path.join(GLOBAL_SKILLS_DIR, entry.name);
-      if (await pathExists(target)) await fs.rm(target, { recursive: true, force: true });
-      await copyDir(skillDir, target);
+      await installOwnedSkill(skillDir, target, `project:${skillDir}`);
       commandShims += await installSkillExecutables(target);
       copied += 1;
       console.log("  OK copied " + entry.name);

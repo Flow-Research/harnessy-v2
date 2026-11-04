@@ -305,8 +305,9 @@ jarvis meeting publish cutover --date 2026-08-28 --dry-run
 jarvis meeting publish cutover --date 2026-08-28 --apply
 jarvis meeting publish preflight
 
-# Configure a Discord text channel (numeric ID), then open the local inbox
-jarvis meeting publish setup --discord-channel-id 123456789012345678
+# Configure your Google owner and destinations, then open the local inbox
+jarvis meeting publish setup --discord-channel-id 123456789012345678 \
+  --google-owner-email owner@example.com --google-drive-folder "Team/Meetings"
 jarvis meeting publish review open
 ```
 
@@ -336,9 +337,19 @@ a hard floor; older unpublished rows remain auditable in the `archived` state.
 
 ### Community Briefing Commands
 
+Both setup commands enable publication configuration by default. First setup
+requires your `--google-owner-email`, a non-empty `--google-drive-folder` and a
+numeric `--discord-channel-id`. The example values are placeholders. Omitted
+options retain explicitly saved values. `--disable` needs no destination values.
+For meeting setup, `--authorize-google` still requires all destinations before
+saving configuration or opening OAuth, even with `--disable`. Setup does not
+approve notes or establish a successful publication receipt.
+
+
 ```bash
-# Configure only after creating the dedicated Discord channel
-jarvis community briefing setup --discord-channel-id 123456789012345678
+# Configure your Google owner, Drive folder and dedicated Discord channel
+jarvis community briefing setup --discord-channel-id 123456789012345678 \
+  --google-owner-email owner@example.com --google-drive-folder "Team/Weekly Briefings"
 
 # Preview a completed week without writing artifacts, then create the stable draft
 jarvis community briefing generate --week-start 2026-08-24 --dry-run
@@ -361,7 +372,7 @@ bounded excerpts; the writer sees only public-safe fact cards. The private
 while public output contains neither source paths nor meeting metadata.
 
 Approval binds the exact `briefing.md` and `discord.txt` pair. Google Docs are
-stored under `Flow Research/Weekly Briefings/YYYY` and become anyone-with-link
+stored under the configured `google_drive_folder`, in a `YYYY` subfolder and become anyone-with-link
 readable only during approved publication. Discord receives at most three short
 sentences plus the Google Doc link. A quiet week produces a shorter honest draft
 instead of recycling old updates.

@@ -67,6 +67,7 @@ export const harnessyGateCommands = [
 	"npm run qa:check",
 	"npm run test:qa-contract",
 	"npm run test:qa-scenarios",
+	"bash scripts/test-publication-config.sh",
 	"npm run test:sdk-fixture",
 	"npm run test:local-host-fixture",
 	"./test.sh",

@@ -263,10 +263,10 @@ jarvis android run ./builds/demo.apk --avd Medium_Phone_API_36.1 --reinstall
 | Preview/stage Flow meeting publication | `jarvis meeting publish scan --since-days 30 --dry-run`; rerun with `--enqueue` |
 | Establish publication launch floor | `jarvis meeting publish cutover --date YYYY-MM-DD --dry-run`; rerun with `--apply` |
 | Verify publication readiness | `jarvis meeting publish preflight` |
-| Configure Discord meeting channel | `jarvis meeting publish setup --discord-channel-id <numeric-id>` |
+| Configure Discord meeting channel | `jarvis meeting publish setup --discord-channel-id <numeric-id> --google-owner-email <owner-email> --google-drive-folder "Team/Meetings"` |
 | Open local meeting review | `jarvis meeting publish review open` |
 | Run approved publication worker | `jarvis meeting publish worker` |
-| Configure dedicated weekly briefing channel | `jarvis community briefing setup --discord-channel-id <numeric-id>` |
+| Configure dedicated weekly briefing channel | `jarvis community briefing setup --discord-channel-id <numeric-id> --google-owner-email <owner-email> --google-drive-folder "Team/Weekly Briefings"` |
 | Generate or preview weekly community briefing | `jarvis community briefing generate [--dry-run] [--week-start YYYY-MM-DD] [--regenerate]` |
 | Verify weekly briefing readiness | `jarvis community briefing preflight` |
 | Open weekly briefing review | `jarvis community briefing review open` |
@@ -305,6 +305,14 @@ Scheduled Fathom polls must omit `--json`, because full JSON includes transcript
 and raw markdown in cron-captured output. Use the normal count/state output and
 keep `~/.agents/cron/` directories at `0700` with files at `0600`.
 
+Both setup commands enable publication configuration by default. First setup
+requires your `--google-owner-email`, a non-empty `--google-drive-folder` and a
+numeric `--discord-channel-id`. The example values are placeholders. Omitted
+options retain explicitly saved values. `--disable` needs no destination values.
+For meeting setup, `--authorize-google` still requires all destinations before
+saving configuration or opening OAuth, even with `--disable`. Setup does not
+approve notes or establish a successful publication receipt.
+
 Meeting publication is approval-gated and Flow-only. The SQLite queue stores
 paths, hashes, state, and remote IDs, plus reviewer-edited Discord copy during
 approval or retry. The local review inbox can validate and atomically update the
@@ -327,7 +335,7 @@ an existing draft. Collection strips direct identifiers, links, credentials,
 participant metadata, and local paths before a classifier sees bounded excerpts;
 the writer sees only accepted public fact cards. Reviewers edit `briefing.md` and
 the at-most-three-sentence Discord copy together, and approval binds their exact
-combined hash. Google Docs use `Flow Research/Weekly Briefings/YYYY`; Discord
+combined hash. Google Docs use the configured `google_drive_folder` with a `YYYY` subfolder; Discord
 uses its dedicated configured channel. The generator and five-minute worker may
 use launchd `RunAtLoad` for reboot catch-up, but both schedules remain explicit
 machine opt-ins.

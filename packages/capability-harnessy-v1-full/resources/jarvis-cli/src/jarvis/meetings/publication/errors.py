@@ -15,6 +15,16 @@ class PublicationConfigError(PublicationError):
     """Configuration or authentication failure requiring human action."""
 
 
+class PublicationUncertainError(PublicationError):
+    """An external mutation may have completed; automatic retry is unsafe."""
+
+    def __init__(self, message: str):
+        super().__init__(
+            f"{message}. Delivery outcome is uncertain; reconcile with the owning service "
+            "before retrying."
+        )
+
+
 class PublicationTransientError(PublicationError):
     """Provider/network failure safe to retry later."""
 

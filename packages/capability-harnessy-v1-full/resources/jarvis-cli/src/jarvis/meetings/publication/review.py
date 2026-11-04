@@ -372,11 +372,30 @@ def _inbox_page(
     token: str,
     briefing_service: CommunityBriefingService | None = None,
 ) -> str:
+    publishing_guidance = (
+        "Publication is in progress or its delivery outcome is unconfirmed. "
+        "Inspect Google and Discord delivery receipts with the owning service before retrying."
+    )
+
+    def attention_message(status: PublicationStatus, message: str | None) -> str:
+        fallback = (
+            publishing_guidance if status == PublicationStatus.PUBLISHING else "Configuration error"
+        )
+        return html.escape(message or fallback)
+
     pending = service.store.list_items(PublicationStatus.PENDING_REVIEW) if service else []
     blocked = service.store.list_items(PublicationStatus.BLOCKED) if service else []
+    if service is not None:
+        blocked += service.store.list_items(PublicationStatus.PUBLISHING)
     counts = service.store.counts() if service else {}
     briefing_pending = (
         briefing_service.store.list_items(PublicationStatus.PENDING_REVIEW)
+        if briefing_service is not None
+        else []
+    )
+    briefing_blocked = (
+        briefing_service.store.list_items(PublicationStatus.BLOCKED)
+        + briefing_service.store.list_items(PublicationStatus.PUBLISHING)
         if briefing_service is not None
         else []
     )
@@ -418,21 +437,27 @@ def _inbox_page(
         """
     else:
         lede = (
-            "A weekly briefing is waiting below. No meetings need review."
+            "Publication needs attention below."
+            if blocked or briefing_blocked
+            else "A weekly briefing is waiting below. No meetings need review."
             if briefing_pending
             else "Everything has been reviewed. New publications will appear here automatically."
         )
+        empty_heading = (
+            "No meetings awaiting review" if blocked or briefing_blocked else "Queue clear"
+        )
+        empty_icon = "!" if blocked or briefing_blocked else "✓"
         body = f"""
         <header class="page-intro">
           <p class="eyebrow">Flow Research · Publication queue</p>
           <h1>Publication review</h1>
           <p class="lede">{lede}</p>
         </header>
-        <section class="card empty-card"><div class="empty-icon">✓</div><h2>Queue clear</h2>
+        <section class="card empty-card"><div class="empty-icon">{empty_icon}</div>
+        <h2>{empty_heading}</h2>
         <p>No meetings are waiting for review.</p></section>
         """
     if briefing_service is not None:
-        briefing_blocked = briefing_service.store.list_items(PublicationStatus.BLOCKED)
         if briefing_pending:
             briefing = briefing_pending[0]
             briefing_range = f"{briefing.week_start.isoformat()} to {briefing.week_end.isoformat()}"
@@ -458,7 +483,7 @@ def _inbox_page(
             )
             body += "".join(
                 f"<li>Week of {_format_date(item.week_start)} — "
-                f"{html.escape(item.error_message or 'Configuration error')}</li>"
+                f"{attention_message(item.status, item.error_message)}</li>"
                 for item in briefing_blocked
             )
             body += "</ul></section>"
@@ -480,7 +505,7 @@ def _inbox_page(
         )
         body += "".join(
             f"<li>{html.escape(item.title)} — "
-            f"{html.escape(item.error_message or 'Configuration error')}</li>"
+            f"{attention_message(item.status, item.error_message)}</li>"
             for item in blocked
         )
         body += "</ul></section>"

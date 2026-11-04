@@ -2,9 +2,9 @@
 
 from datetime import date
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -170,7 +170,23 @@ class WhatsAppConfig(BaseModel):
     accounts: dict[str, WhatsAppAccountConfig] = Field(default_factory=dict)
 
 
-class MeetingPublicationConfig(BaseModel):
+class PublicationDestinationConfig(BaseModel):
+    """Require explicit destinations when publication is enabled."""
+
+    google_owner_email: str = Field(default="")
+    google_drive_folder: str = Field(default="")
+
+    def require_destinations(self, channel: str | None) -> None:
+        """Reject incomplete setup before authentication or publication."""
+        if not self.google_owner_email.strip():
+            raise ValueError("google_owner_email is required before enabling publication")
+        if not any(part.strip() for part in self.google_drive_folder.split("/")):
+            raise ValueError("google_drive_folder is required before enabling publication")
+        if not channel:
+            raise ValueError("discord_channel_id is required before enabling publication")
+
+
+class MeetingPublicationConfig(PublicationDestinationConfig):
     """Local-first meeting review and publication settings.
 
     Secrets intentionally do not live in this model. Discord credentials are
@@ -204,14 +220,18 @@ class MeetingPublicationConfig(BaseModel):
     review_host: str = Field(default="127.0.0.1")
     review_port: int = Field(default=8770, ge=1024, le=65535)
     reminder_hours: int = Field(default=4, ge=1, le=168)
-    google_owner_email: str = Field(default="julian.duru@flowresearch.tech")
-    google_drive_folder: str = Field(default="Flow Research/Meeting Notes")
     discord_channel_id: str | None = Field(
         default=None,
         description="Configurable Discord text-channel ID for new meeting posts",
     )
     discord_bot_token_env_var: str = Field(default="JARVIS_DISCORD_BOT_TOKEN")
     discord_api_base: str = Field(default="https://discord.com/api/v10")
+
+    @model_validator(mode="after")
+    def validate_enabled_destinations(self) -> Self:
+        if self.enabled:
+            self.require_destinations(self.discord_channel_id)
+        return self
 
     @field_validator("review_host")
     @classmethod
@@ -235,7 +255,7 @@ class MeetingPublicationConfig(BaseModel):
         return cleaned
 
 
-class CommunityBriefingConfig(BaseModel):
+class CommunityBriefingConfig(PublicationDestinationConfig):
     """Approval-gated weekly community briefing settings.
 
     Source material and generated drafts stay local. Secrets remain outside the
@@ -260,8 +280,6 @@ class CommunityBriefingConfig(BaseModel):
     review_host: str = Field(default="127.0.0.1")
     review_port: int = Field(default=8770, ge=1024, le=65535)
     reminder_hours: int = Field(default=4, ge=1, le=168)
-    google_owner_email: str = Field(default="julian.duru@flowresearch.tech")
-    google_drive_folder: str = Field(default="Flow Research/Weekly Briefings")
     discord_channel_id: str | None = Field(
         default=None,
         description="Dedicated Discord text-channel ID for weekly community briefings",
@@ -270,6 +288,12 @@ class CommunityBriefingConfig(BaseModel):
     discord_api_base: str = Field(default="https://discord.com/api/v10")
     ai_provider: Literal["auto", "claude", "codex", "opencode"] = Field(default="auto")
     max_sources: int = Field(default=60, ge=1, le=200)
+
+    @model_validator(mode="after")
+    def validate_enabled_destinations(self) -> Self:
+        if self.enabled:
+            self.require_destinations(self.discord_channel_id)
+        return self
 
     @field_validator("timezone")
     @classmethod

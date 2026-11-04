@@ -17,7 +17,7 @@ from .discord import (
     DiscordPublisher,
     discord_purpose_for_publication,
 )
-from .errors import PublicationError
+from .errors import PublicationError, PublicationUncertainError
 from .google import GoogleDocsPublisher, GoogleDocument
 from .launchd import publication_worker_running, review_launch_agent_running
 from .models import MeetingNote, PublicationItem, PublicationStatus
@@ -375,6 +375,10 @@ class PublicationService:
                 message_id=message.message_id,
             )
             return True
+        except PublicationUncertainError as exc:
+            self.store.mark_uncertain(item.item_id, message=str(exc))
+            self.notify_due()
+            return False
         except PublicationError as exc:
             self.store.mark_failure(
                 item.item_id,

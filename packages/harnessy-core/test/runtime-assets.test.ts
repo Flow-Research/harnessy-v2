@@ -14,6 +14,77 @@ const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
 
 describe("Harnessy runtime assets", () => {
+	it.effect("fails registration without replacing malformed account-independent agent configuration", () =>
+		provideLive(
+			Effect.gen(function* () {
+				const fs = yield* FileSystem.FileSystem;
+				const project = yield* HarnessProject;
+				const targetDir = yield* fs.makeTempDirectoryScoped();
+				const globalRoot = yield* fs.makeTempDirectoryScoped();
+				const config = `${globalRoot}/.claude/settings.json`;
+				yield* fs.makeDirectory(`${globalRoot}/.claude`, { recursive: true });
+				for (const value of [
+					"{broken",
+					"[]",
+					"null",
+					JSON.stringify({ enabledPlugins: [] }),
+					JSON.stringify({ skills: { paths: 42 } }),
+				]) {
+					yield* fs.writeFileString(config, value);
+					const failure = yield* project
+						.runInstaller(targetDir, {
+							force: false,
+							step: "runtime-assets",
+							applyGlobal: true,
+							globalRoot,
+							globalCommandsDir: `${globalRoot}/bin`,
+							globalSkillsDir: `${globalRoot}/skills`,
+						})
+						.pipe(Effect.flip);
+					expect(failure.message).toContain("Invalid registration configuration");
+					expect(yield* fs.readFileString(config)).toBe(value);
+				}
+			}),
+		),
+	);
+	for (const kind of ["directory", "file", "symlink", "dangling-symlink"] as const) {
+		it.effect(`preserves an unmanaged skill ${kind} when native registration reports a name conflict`, () =>
+			provideLive(
+				Effect.gen(function* () {
+					const fs = yield* FileSystem.FileSystem;
+					const project = yield* HarnessProject;
+					const targetDir = yield* fs.makeTempDirectoryScoped();
+					const globalRoot = yield* fs.makeTempDirectoryScoped();
+					const entry = `${globalRoot}/.claude/skills/qa`;
+					const external = `${globalRoot}/independent`;
+					yield* fs.makeDirectory(`${globalRoot}/.claude/skills`, { recursive: true });
+					if (kind === "directory") {
+						yield* fs.makeDirectory(entry);
+						yield* fs.writeFileString(`${entry}/keep`, "independent");
+					} else if (kind === "file") yield* fs.writeFileString(entry, "independent");
+					else {
+						if (kind === "symlink") yield* fs.writeFileString(external, "independent");
+						yield* fs.symlink(external, entry);
+					}
+					const failure = yield* project
+						.runInstaller(targetDir, {
+							force: true,
+							step: "runtime-assets",
+							applyGlobal: true,
+							globalRoot,
+							globalCommandsDir: `${globalRoot}/bin`,
+							globalSkillsDir: `${globalRoot}/skills`,
+						})
+						.pipe(Effect.flip);
+					expect(failure.message).toContain("Skill registration conflict");
+					expect(failure.message).toContain("existing entry preserved");
+					if (kind === "directory") expect(yield* fs.readFileString(`${entry}/keep`)).toBe("independent");
+					else if (kind === "file") expect(yield* fs.readFileString(entry)).toBe("independent");
+					else expect(yield* fs.readLink(entry)).toBe(external);
+				}),
+			),
+		);
+	}
 	for (const kind of ["file", "symlink", "dangling-symlink"] as const) {
 		it.effect(`preserves an existing Jarvis ${kind} even during forced asset refresh`, () =>
 			provideLive(
@@ -140,8 +211,28 @@ describe("Harnessy runtime assets", () => {
 				const targetDir = yield* fs.makeTempDirectoryScoped();
 				const globalParent = yield* fs.makeTempDirectoryScoped();
 				const globalRoot = `${globalParent}/global root`;
+				for (const retained of [
+					".claude/skills/independent",
+					".codex/skills/harnessy/independent",
+					".claude/plugins/cache/harnessy/independent",
+				]) {
+					yield* fs.makeDirectory(`${globalRoot}/${retained}`, { recursive: true });
+					yield* fs.writeFileString(`${globalRoot}/${retained}/keep`, "independent");
+				}
+				yield* fs.writeFileString(
+					`${globalRoot}/.claude/plugins/known_marketplaces.json`,
+					JSON.stringify({ independent: { source: "keep" } }),
+				);
+				yield* fs.writeFileString(
+					`${globalRoot}/.claude/plugins/installed_plugins.json`,
+					JSON.stringify({ plugins: { "independent@harnessy": { keep: true } } }),
+				);
 				yield* fs.makeDirectory(`${globalRoot}/.config/opencode`, { recursive: true });
 				yield* fs.makeDirectory(`${globalRoot}/skills/qa-runtime`, { recursive: true });
+				yield* fs.writeFileString(
+					`${globalRoot}/skills/qa-runtime/.harnessy-install.json`,
+					JSON.stringify({ version: 1, owner: "harnessy", sourceId: "bundled:qa-runtime" }),
+				);
 				yield* fs.writeFileString(
 					`${globalRoot}/.config/opencode/opencode.json`,
 					JSON.stringify({ skills: { paths: [] } }),
@@ -267,6 +358,19 @@ describe("Harnessy runtime assets", () => {
 					installPathOverrides: { scriptsDir: "scripts/flow" },
 				});
 				expect(yield* fs.readFileString(knownMarketplacesPath)).toBe(knownMarketplaces);
+				expect(JSON.parse(knownMarketplaces).independent).toEqual({ source: "keep" });
+				for (const retained of [
+					".claude/skills/independent",
+					".codex/skills/harnessy/independent",
+					".claude/plugins/cache/harnessy/independent",
+				]) {
+					expect(yield* fs.readFileString(`${globalRoot}/${retained}/keep`)).toBe("independent");
+				}
+				expect(
+					JSON.parse(yield* fs.readFileString(`${globalRoot}/.claude/plugins/installed_plugins.json`)).plugins[
+						"independent@harnessy"
+					],
+				).toEqual({ keep: true });
 				expect(yield* fs.exists(`${globalRoot}/.codex/skills/harnessy/goal-agent/SKILL.md`)).toBe(true);
 				const openCodeConfig = yield* fs.readFileString(`${globalRoot}/.config/opencode/opencode.json`);
 				expect(openCodeConfig).toContain(`${globalRoot}/skills`);

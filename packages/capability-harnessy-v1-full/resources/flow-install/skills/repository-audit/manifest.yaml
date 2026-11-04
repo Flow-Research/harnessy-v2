@@ -1,0 +1,21 @@
+name: repository-audit
+type: opencode
+version: 0.1.0
+install_scope: global
+owner: julian
+status: experimental
+blast_radius: low
+description: "Audit repository architecture, documentation ownership, privacy boundaries and review coverage with pinned Git evidence."
+permissions: [read, write-report]
+data_categories: [pii]
+egress: []
+invoke: "/repository-audit"
+location: tools/flow-install/skills/repository-audit
+autoresearch:
+  enabled: true
+  metric_layer: 1
+  time_budget_seconds: 600
+  evaluation_window: 3
+  constraints:
+    max_regression_rate: 0.1
+    max_human_intervention: 0.5

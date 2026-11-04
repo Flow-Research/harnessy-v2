@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from .errors import PublicationConfigError, PublicationTransientError
+from .errors import PublicationConfigError, PublicationTransientError, PublicationUncertainError
 from .markdown import google_batch_requests, render_markdown
 from .models import MeetingNote, PublicationItem
 
@@ -55,6 +55,10 @@ class GoogleDocsPublisher:
     ):
         self.expected_owner_email = expected_owner_email.strip().lower()
         self.folder_path = folder_path.strip(" /")
+        if not self.expected_owner_email or not any(
+            part.strip() for part in self.folder_path.split("/")
+        ):
+            raise PublicationConfigError("Configure a Google owner email and Drive folder first")
         self._client = client or httpx.Client(timeout=30.0)
         self._owns_client = client is None
         self._access_token: str | None = None
@@ -105,9 +109,7 @@ class GoogleDocsPublisher:
 
         if not self._owner_verified:
             self.verify_owner()
-        folder_id = self._ensure_folder_path(
-            [*self.folder_path.split("/"), *folder_parts]
-        )
+        folder_id = self._ensure_folder_path([*self.folder_path.split("/"), *folder_parts])
         doc_id = existing_doc_id or self._find_by_property(property_key, item_id)
         if not doc_id:
             created = self._request(
@@ -126,7 +128,7 @@ class GoogleDocsPublisher:
             )
             doc_id = str(created.get("id") or "")
             if not doc_id:
-                raise PublicationTransientError("Google Drive did not return a document ID")
+                raise PublicationUncertainError("Google Drive did not return a document ID")
         else:
             self._request(
                 "PATCH",
@@ -175,7 +177,7 @@ class GoogleDocsPublisher:
                 )
                 folder_id = str(created.get("id") or "")
                 if not folder_id:
-                    raise PublicationTransientError("Google Drive did not return a folder ID")
+                    raise PublicationUncertainError("Google Drive did not return a folder ID")
             parent = folder_id
         return parent
 
@@ -227,6 +229,9 @@ class GoogleDocsPublisher:
         params: dict[str, str] | None = None,
         json_body: dict[str, object] | None = None,
     ) -> dict[str, Any]:
+        failure = (
+            PublicationTransientError if method.upper() == "GET" else PublicationUncertainError
+        )
         token = self._access_token or self._refresh_access_token()
         try:
             response = self._client.request(
@@ -237,20 +242,25 @@ class GoogleDocsPublisher:
                 headers={"Authorization": f"Bearer {token}"},
             )
         except httpx.HTTPError as exc:
-            raise PublicationTransientError("Google API network request failed") from exc
+            raise failure("Google API network request failed") from exc
         if response.status_code == 401 and self._access_token is not None:
             self._access_token = None
             token = self._refresh_access_token()
-            response = self._client.request(
-                method,
-                url,
-                params=params,
-                json=json_body,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            try:
+                response = self._client.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json_body,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            except httpx.HTTPError as exc:
+                raise failure("Google API network request failed") from exc
         if response.status_code in {401, 403}:
             raise PublicationConfigError("Google authentication or Drive permission was rejected")
-        if response.status_code == 429 or response.status_code >= 500:
+        if response.status_code >= 500:
+            raise failure("Google API is temporarily unavailable")
+        if response.status_code == 429:
             retry_after = _retry_after(response.headers.get("Retry-After"), default=60.0)
             raise PublicationTransientError(
                 "Google API is temporarily unavailable", retry_after_seconds=retry_after
@@ -265,7 +275,9 @@ class GoogleDocsPublisher:
         try:
             parsed = response.json()
         except ValueError as exc:
-            raise PublicationTransientError("Google API returned invalid JSON") from exc
+            raise failure("Google API returned invalid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise failure("Google API returned an invalid response")
         return parsed if isinstance(parsed, dict) else {}
 
     def _refresh_access_token(self) -> str:

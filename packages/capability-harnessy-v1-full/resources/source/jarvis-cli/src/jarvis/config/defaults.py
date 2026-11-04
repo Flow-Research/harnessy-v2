@@ -14,7 +14,7 @@ active_backend: anytype
 
 # Backend-specific configuration
 backends:
-  anytype:
+  anytype: {}
     # AnyType uses local gRPC connection (localhost:31009)
     # Optionally pre-select a space ID to skip interactive selection
     # default_space_id: "your-space-id"
@@ -51,7 +51,7 @@ analytics:
   metrics_file: "~/.jarvis/metrics.json"
 
 # Fathom meeting ingestion
-fathom:
+fathom: {}
   # Optional: choose a default named account for `jarvis meeting fathom ...`
   # default_account: work
 
@@ -68,7 +68,7 @@ fathom:
   #     webhook_secret_env_var: "FATHOM_WEBHOOK_SECRET_PERSONAL"
 
 # WhatsApp channel integration
-whatsapp:
+whatsapp: {}
   # Optional: choose a default named account for `jarvis whatsapp ...`
   # default_account: personal
 
@@ -94,22 +94,23 @@ meeting_publication:
   review_host: 127.0.0.1
   review_port: 8770
   reminder_hours: 4
-  google_owner_email: "julian.duru@flowresearch.tech"
-  google_drive_folder: "Flow Research/Meeting Notes"
+  # Set your account and Drive folder before enabling publication.
+  google_owner_email: ""
+  google_drive_folder: ""
   # Numeric Discord text-channel ID; configurable per installation.
   # discord_channel_id: "123456789012345678"
   discord_bot_token_env_var: "JARVIS_DISCORD_BOT_TOKEN"
 
 # Approval-gated Sunday community briefing. It remains disabled until a
-# dedicated Discord channel ID is configured explicitly.
+# Google account, Drive folder and dedicated Discord channel are configured.
 community_briefing:
   enabled: false
   timezone: "Africa/Lagos"
   review_host: 127.0.0.1
   review_port: 8770
   reminder_hours: 4
-  google_owner_email: "julian.duru@flowresearch.tech"
-  google_drive_folder: "Flow Research/Weekly Briefings"
+  google_owner_email: ""
+  google_drive_folder: ""
   # discord_channel_id: "123456789012345678"
   discord_bot_token_env_var: "JARVIS_DISCORD_BOT_TOKEN"
   ai_provider: auto

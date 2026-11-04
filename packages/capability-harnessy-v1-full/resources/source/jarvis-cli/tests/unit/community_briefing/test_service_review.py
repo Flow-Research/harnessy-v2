@@ -91,7 +91,7 @@ class FakeGoogle:
         )
 
     def verify_owner(self) -> str:
-        return "julian.duru@flowresearch.tech"
+        return "owner@example.org"
 
     def close(self) -> None:
         return
@@ -173,6 +173,8 @@ The community team tested a clearer update format and agreed to prepare the next
 def _config(tmp_path: Path, source: Path, *, port: int = 8770) -> CommunityBriefingConfig:
     return CommunityBriefingConfig(
         enabled=True,
+        google_owner_email="owner@example.org",
+        google_drive_folder="Team/Briefings",
         source_path=str(source),
         draft_path=str(tmp_path / "drafts"),
         state_path=str(tmp_path / "state"),

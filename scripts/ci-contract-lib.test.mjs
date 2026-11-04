@@ -36,6 +36,7 @@ jobs:
         with: { build-artifact: harnessy-build-run }
       - run: |
           npm run test:qa-scenarios
+          bash scripts/test-publication-config.sh
           npm run test:sdk-fixture
           npm run test:engine-fixture
           npm run test:executor-package-contract
@@ -196,6 +197,7 @@ test("CI contract requires npm to provide the packaged Executor gate's CLI path"
 
 test("CI contract rejects omission of the full package contracts or matrix launcher regressions", () => {
 	for (const command of [
+		"bash scripts/test-publication-config.sh",
 		"npm run verify:v1-compatibility",
 		"npm run test:executor-package-contract",
 		"node --test scripts/harnessy-executor-package-lib.test.mjs",
