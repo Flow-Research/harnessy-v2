@@ -778,8 +778,8 @@ export const gitDirOf = (gitFile: string): string | undefined => /^gitdir: (.+)$
  * line loads no user, project or local settings (`--restricted` and
  * `--setting-sources ""`; a probe confirmed the worktree's own
  * `.claude/settings*.json` are ignored), so nothing else can widen it.
- * Julian's user settings allow plain `Bash`, and `--allowedTools` only adds
- * to the loaded sources, which is how the first live run reached `npm test`.
+ * `--allowedTools` adds to loaded permissions. Exclude user settings so
+ * an unrestricted `Bash` grant cannot widen this policy.
  * Whenever commands are allowed, the sandbox block comes with them.
  */
 export const agentSettings = (extraAllowed: ReadonlyArray<string>, protectedRules: ReadonlyArray<string>) => ({
