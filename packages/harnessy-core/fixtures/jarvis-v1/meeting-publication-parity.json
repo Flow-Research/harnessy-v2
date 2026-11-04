@@ -4,43 +4,43 @@
     "kind": "normalized-domain-contract-with-observed-python-safety",
     "sources": [
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/models.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/models.py",
         "sha256": "0237b2235c22e7e00c66d016122381518eb8b388dff941528b0c15aab9f89e42"
       },
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notes.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/notes.py",
         "sha256": "3703fe92a31c46ecaf00538ec4f664336c63b6261f2c3680907009050f08cbbd"
       },
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/store.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/store.py",
         "sha256": "95cfa2b1cce34a75e3be9cde515862d58882f68c694765f28738d32be4030b1f"
       },
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/service.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/service.py",
         "sha256": "aacf52291d00576357b9e8414ea06b3f5d43496e294d870322fbda15297f4b86"
       },
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/review.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/review.py",
         "sha256": "f75bedc2cff58ae441ab82c22b02357a627e3bccab47aba6575c88a8adb48ed0"
       },
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/discord.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/discord.py",
         "sha256": "c5c91c37c8a87f685a9da1829d58654674c354425f6645b6ce568ab474590a27"
       },
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/google.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/google.py",
         "sha256": "d46577a43414573b065058a791c0228460edd90dcee8e9d79af85b4a2d63ef70"
       },
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notify.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/notify.py",
         "sha256": "4abab4714f368f90bd3068c02162024977a2021562c6366a2016643b180bc1ae"
       },
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/markdown.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/markdown.py",
         "sha256": "121482bceac9ac987e2c2fa84ae53f330e075b75094c47c977a87a43e1a9b9c6"
       },
       {
-        "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/errors.py",
+        "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/errors.py",
         "sha256": "3558e4afd33887055a4e6901cab34f3c07e0d84a408ca24546f17959759942dd"
       }
     ],

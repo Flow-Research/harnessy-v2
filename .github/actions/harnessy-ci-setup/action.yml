@@ -102,6 +102,6 @@ runs:
       run: |
         python -m pip install uv==0.6.10
         fixture_root=$(mktemp -d "$RUNNER_TEMP/harnessy-jarvis-consumer.XXXXXX")
-        cp -R packages/capability-harnessy-v1-full/resources/jarvis-cli "$fixture_root/source"
+        cp -R packages/capability-harnessy-v1-full/resources/source/jarvis-cli "$fixture_root/source"
         UV_PROJECT_ENVIRONMENT="$fixture_root/venv" uv sync --project "$fixture_root/source" --frozen --no-dev --no-editable --python 3.11 --no-python-downloads
         echo "HARNESSY_TEST_JARVIS_PYTHON=$fixture_root/venv/bin/python" >> "$GITHUB_ENV"

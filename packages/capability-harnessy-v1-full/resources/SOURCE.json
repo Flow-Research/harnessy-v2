@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "kind": "reconciled-v1-source",
   "source": {
     "repository": "https://github.com/Flow-Research/harnessy.git",
@@ -2542,55 +2542,5 @@
     "digest": "d9ea326fc66dc3bc6c7fb9cb59aacab14a0ec51388e68d72bd8d1e3ff16c022d",
     "fileCount": 724,
     "byteCount": 5076645
-  },
-  "projections": [
-    {
-      "id": "flow-install",
-      "source": "tools/flow-install",
-      "projection": "flow-install",
-      "digest": "5b2d0a56a295108d143d28830365edd8afe7770ee7e11ea2ed41ba4b5eee8433",
-      "fileCount": 347,
-      "byteCount": 1900695
-    },
-    {
-      "id": "context-vault",
-      "source": ".jarvis/context",
-      "projection": "context-vault",
-      "digest": "24f6d2a3934c8cadc4f70306a7fb543a27aeb09633ba89c4fcc71dd870e63fd5",
-      "fileCount": 44,
-      "byteCount": 167509
-    },
-    {
-      "id": "jarvis-cli",
-      "source": "jarvis-cli",
-      "projection": "jarvis-cli",
-      "digest": "a00ad6b1a35432b311cbf06f61deccdb12b9fedef610637e6cee55fbfa5a9d14",
-      "fileCount": 289,
-      "byteCount": 2810170
-    },
-    {
-      "id": "root-installer",
-      "source": "install.sh",
-      "projection": "install.sh",
-      "digest": "bd1d1af591cc94a3bb04ae3662abe728653b07ebd9ac1aaa3e8df0d674417954",
-      "fileCount": 1,
-      "byteCount": 7671
-    },
-    {
-      "id": "root-readme",
-      "source": "README.md",
-      "projection": "README.v1.md",
-      "digest": "42cf0af482f71d0204ffef9a51be80db8caa20a933b8cc2219f79fe10d643460",
-      "fileCount": 1,
-      "byteCount": 21053
-    },
-    {
-      "id": "root-agents",
-      "source": "AGENTS.md",
-      "projection": "AGENTS.v1.md",
-      "digest": "98f00ba91906fc6cc05e58b0636dddc4aa6309d3b9f57e1dad8077836a7fcd33",
-      "fileCount": 1,
-      "byteCount": 5349
-    }
-  ]
+  }
 }

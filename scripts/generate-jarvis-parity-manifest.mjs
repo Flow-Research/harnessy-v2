@@ -261,16 +261,16 @@ const entries = [...commandEntries, ...stateEntries, ...contextEntries, ...plann
 const manifest = { schemaVersion: 1, sourceVersion: commandManifest.source.version, entries };
 
 const meetingOraclePaths = [
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/models.py",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notes.py",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/store.py",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/service.py",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/review.py",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/discord.py",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/google.py",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notify.py",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/markdown.py",
-	"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/errors.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/models.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/notes.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/store.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/service.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/review.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/discord.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/google.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/notify.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/markdown.py",
+	"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/errors.py",
 ];
 const meetingOracleSources = await Promise.all(
 	meetingOraclePaths.map(async (path) => {
@@ -279,7 +279,7 @@ const meetingOracleSources = await Promise.all(
 	}),
 );
 for (const source of pythonPublicationOracle.sources) {
-	const path = resolve("packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis", source.path);
+	const path = resolve("packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis", source.path);
 	const digest = createHash("sha256").update(await readFile(path)).digest("hex");
 	if (digest !== source.sha256) throw new Error(`stale observed Python publication oracle: ${source.path}`);
 }

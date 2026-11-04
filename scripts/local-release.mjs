@@ -261,7 +261,7 @@ if (!options.skipInstall) {
 		join(outDir, "reused-source"),
 	);
 	jarvisPython = installLocalJarvisRuntime(
-		join(outDir, "reused-source/resources/jarvis-cli"),
+		join(outDir, "reused-source/resources/source/jarvis-cli"),
 		join(outDir, "jarvis-runtime"),
 	);
 	createPiShim(nodeInstallDirectory);

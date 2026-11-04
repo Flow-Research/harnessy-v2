@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { parseAllSpecs } from "../packages/capability-harnessy-v1-full/resources/flow-install/skills/qa-runtime/scripts/qa-runtime-lib.mjs";
+import { parseAllSpecs } from "../packages/capability-harnessy-v1-full/resources/source/tools/flow-install/skills/qa-runtime/scripts/qa-runtime-lib.mjs";
 import { buildFeatureCatalog, serializeFeatureCatalog } from "./qa-feature-catalog-lib.mjs";
 import { assertQaRuntimeIdentity } from "./qa-runtime-bridge.mjs";
 

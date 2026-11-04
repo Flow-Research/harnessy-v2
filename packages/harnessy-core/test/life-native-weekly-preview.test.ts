@@ -118,7 +118,7 @@ describe("signed weekly Life draft consumer", () => {
 		const path = root();
 		const scripts = fileURLToPath(
 			new URL(
-				"../../capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/",
+				"../../capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts/",
 				import.meta.url,
 			),
 		);
@@ -210,7 +210,7 @@ describe("signed weekly Life draft consumer", () => {
 		});
 		const builder = fileURLToPath(
 			new URL(
-				"../../capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/prepare-weekly-prompt",
+				"../../capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts/prepare-weekly-prompt",
 				import.meta.url,
 			),
 		);

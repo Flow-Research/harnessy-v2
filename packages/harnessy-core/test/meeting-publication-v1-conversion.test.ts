@@ -26,7 +26,7 @@ import {
 // The preserved Python source, not a hand-written V2 "legacy" table, is the oracle.
 const pythonStore = readFileSync(
 	new URL(
-		"../../capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/store.py",
+		"../../capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/store.py",
 		import.meta.url,
 	),
 	"utf8",

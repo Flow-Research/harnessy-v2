@@ -27,7 +27,7 @@ try {
 	assert.equal(run(["list", "--json"], join(after, "group/project/dev")).manifest.projects[0].path, "group/project/dev");
 	assert.equal(run(["doctor", "--workspace-root", after, "--json"]).healthy, true);
 	const core = dirname(dirname(cli));
-	const scripts = resolve(core, "../capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts");
+	const scripts = resolve(core, "../capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts");
 	const prompt = join(fixture, "prompt.txt");
 	const entry = join(fixture, "installed-workspace-consumer.mjs");
 	const command = { id: "packaged-workspace", label: "prompt only", executable: python, args: [join(scripts, "daily-brief"), "--date", "2026-09-24", "--prompt-output", prompt], cwd: after, env: { HOME: fixture, USER: "tester", FLOW_USER: "tester", AGENTS_LIFE_DIR: join(fixture, ".agents/life"), PYTHONDONTWRITEBYTECODE: "1" } };

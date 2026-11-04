@@ -47,7 +47,7 @@ const SOURCE_PACKAGES = Object.freeze([
 		requiredFiles: [
 			"harnessy.capability.json",
 			"resources/SOURCE.json",
-			"resources/jarvis-cli/uv.lock",
+			"resources/npm-transport.json",
 			"resources/source/jarvis-cli/uv.lock",
 		],
 		requiresHarnessyLicense: true,

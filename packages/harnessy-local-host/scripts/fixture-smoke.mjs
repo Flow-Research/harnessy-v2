@@ -438,7 +438,7 @@ try {
 	const importBackupPath = join(importBackupRoot, "queue.sqlite3");
 	const preservedV1StorePath = join(
 		repoRoot,
-		"packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/store.py",
+		"packages/capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/store.py",
 	);
 	const preservedV1Schema = /\n_SCHEMA = """\n([\s\S]*?)\n"""/u.exec(
 		readFileSync(preservedV1StorePath, "utf8"),

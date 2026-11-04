@@ -11,10 +11,10 @@ command -v uv >/dev/null 2>&1 || {
     exit 2
 }
 
-# Verify canonical source and shipped projection before testing the installed copy.
+# Verify canonical source provenance before testing the installed copy.
 node "$repository_root/scripts/verify-v1-compatibility.mjs"
 mkdir -p "$temporary_root/home" "$temporary_root/jarvis"
-cp -R "$capability_root/resources/jarvis-cli/." "$temporary_root/jarvis/"
+cp -R "$capability_root/resources/source/jarvis-cli/." "$temporary_root/jarvis/"
 
 # No inherited credentials, provider endpoints, user configuration or paid calls.
 env -i HOME="$temporary_root/home" PATH="$PATH" TMPDIR="$temporary_root" \

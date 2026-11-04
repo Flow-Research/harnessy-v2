@@ -159,7 +159,7 @@ try {
 	const dailyRoot = join(root, "daily");
 	const bin = join(dailyRoot, "bin");
 	mkdirSync(bin, { recursive: true, mode: 0o700 });
-	const pythonSource = join(realpathSync(process.argv[3]), "resources/jarvis-cli/src");
+	const pythonSource = join(realpathSync(process.argv[3]), "resources/source/jarvis-cli/src");
 	const python = process.argv[4];
 	assert(existsSync(python));
 	const hygieneModule = join(pythonSource, "jarvis/text_hygiene.py");
@@ -176,7 +176,7 @@ try {
 	const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Lagos", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 	delete process.env.HARNESSY_LIFE_V1_SCRIPTS;
 	const settings = resolveLifeOrchestratorSettings({ projectRoot: dailyRoot, homeRoot: dailyRoot, user: "fixture" });
-	const installedScripts = join(realpathSync(process.argv[3]), "resources/flow-install/skills/life-orchestrator/scripts");
+	const installedScripts = join(realpathSync(process.argv[3]), "resources/source/tools/flow-install/skills/life-orchestrator/scripts");
 	assert.equal(settings.paths.compatibilityScriptsDirectory, installedScripts);
 	assert.equal(realpathSync(installedScripts), installedScripts);
 	for (const name of ["daily-brief", "weekly-plan", "collect-state", "prepare-weekly-prompt", "learning-research"])

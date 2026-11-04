@@ -58,7 +58,7 @@ if "--preview-output" in args:
     raise SystemExit(0)
 if "--publish-preview" in args:
     sys.dont_write_bytecode = True
-    adapter = runpy.run_path(${JSON.stringify(fileURLToPath(new URL("../../capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/daily-brief", import.meta.url)))})
+    adapter = runpy.run_path(${JSON.stringify(fileURLToPath(new URL("../../capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts/daily-brief", import.meta.url)))})
     boundary = adapter["main"].__globals__
     def hygiene(path):
         raise AssertionError("Reviewed artifact must not be cleaned again")

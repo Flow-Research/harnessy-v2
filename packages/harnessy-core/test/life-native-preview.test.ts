@@ -258,7 +258,7 @@ describe("native Life preview consumer", () => {
 		const root = makeRoot();
 		const adapter = fileURLToPath(
 			new URL(
-				"../../capability-harnessy-v1-full/resources/flow-install/skills/life-orchestrator/scripts/daily-brief",
+				"../../capability-harnessy-v1-full/resources/source/tools/flow-install/skills/life-orchestrator/scripts/daily-brief",
 				import.meta.url,
 			),
 		);

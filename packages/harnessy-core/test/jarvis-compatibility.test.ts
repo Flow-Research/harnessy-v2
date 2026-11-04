@@ -76,7 +76,7 @@ describe("Jarvis compatibility kernel", () => {
 			expect(commandManifest.commands).toHaveLength(157);
 			expect(JSON.stringify(commandManifest)).not.toContain("Sentinel.UNSET");
 			expect(commandManifest.source.pythonSourceSha256).toMatch(/^[a-f0-9]{64}$/);
-			const sourceRoot = resolve("../capability-harnessy-v1-full/resources/jarvis-cli/src");
+			const sourceRoot = resolve("../capability-harnessy-v1-full/resources/source/jarvis-cli/src");
 			expect(commandManifest.source.pythonSourceSha256).toBe(pythonTreeSha256(sourceRoot));
 			expect(adapterOracle.source.pythonSourceSha256).toBe(pythonTreeSha256(resolve(sourceRoot, "jarvis/adapters")));
 			expect(stateFixtureOracle.pythonSourceSha256).toBe(pythonTreeSha256(resolve(sourceRoot, "jarvis")));

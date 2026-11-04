@@ -55,17 +55,12 @@ describe("Harnessy v1 full compatibility pack", () => {
 					expect(added.capability.id).toBe("npm:@harnessy/capability-harnessy-v1-full");
 					expect(added.capability.resolvedSource?.local?.root).toBe(v1FullPackRoot);
 					expect(added.capability.fingerprint?.kind).toBe("directory");
-					expect(added.capability.fingerprint?.fileCount).toBeGreaterThan(1000);
+					expect(added.capability.fingerprint?.fileCount).toBe(730);
 					expect(added.materialization?.issues).toEqual([]);
 					expect(added.materialization?.copied.map((resource) => resource.target)).toEqual([
 						"source",
 						"SOURCE.json",
-						"flow-install",
-						"context-vault",
-						"jarvis-cli",
-						"install.sh",
-						"README.v1.md",
-						"AGENTS.v1.md",
+						"npm-transport.json",
 					]);
 
 					const artifactRoot = `${targetDir}/${v1ArtifactResources}`;
@@ -85,11 +80,13 @@ describe("Harnessy v1 full compatibility pack", () => {
 					).toBe(true);
 					expect(yield* fs.exists(`${artifactRoot}/source/.github/workflows/harness-verify.yml`)).toBe(true);
 					expect(yield* fs.exists(`${artifactRoot}/source/tests/harness/run-flow-install-eval.sh`)).toBe(true);
-					expect(yield* fs.exists(`${artifactRoot}/flow-install/index.mjs`)).toBe(true);
-					expect(yield* fs.exists(`${artifactRoot}/flow-install/skills/goal-agent/SKILL.md`)).toBe(true);
-					expect(yield* fs.exists(`${artifactRoot}/context-vault/AGENTS.md`)).toBe(true);
-					expect(yield* fs.exists(`${artifactRoot}/jarvis-cli/pyproject.toml`)).toBe(true);
-					expect(yield* fs.exists(`${artifactRoot}/install.sh`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/tools/flow-install/index.mjs`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/tools/flow-install/skills/goal-agent/SKILL.md`)).toBe(
+						true,
+					);
+					expect(yield* fs.exists(`${artifactRoot}/source/.jarvis/context/AGENTS.md`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/jarvis-cli/pyproject.toml`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/install.sh`)).toBe(true);
 
 					const verify = yield* project.verify(targetDir);
 					expect(verify.issues).toEqual([]);
@@ -112,7 +109,7 @@ describe("Harnessy v1 full compatibility pack", () => {
 		{ timeout: 60_000 },
 	);
 
-	it("verifies provenance, privacy exclusions, and every compatibility projection in a real subprocess", () => {
+	it("verifies provenance, privacy exclusions, and the canonical compatibility source in a real subprocess", () => {
 		const result = spawnSync(
 			process.execPath,
 			[resolve(repositoryRoot, "scripts/verify-v1-compatibility.mjs"), v1FullPackRoot],
@@ -132,7 +129,7 @@ describe("Harnessy v1 full compatibility pack", () => {
 		expect(report.tree.digest).toMatch(/^[a-f0-9]{64}$/);
 	});
 
-	it("fails closed when the authoritative snapshot is tampered without updating provenance or projections", () => {
+	it("fails closed when the authoritative snapshot is tampered without updating provenance", () => {
 		const temporaryRoot = mkdtempSync(resolve(tmpdir(), "harnessy-v1-tamper-"));
 		const copyRoot = resolve(temporaryRoot, "capability-harnessy-v1-full");
 		try {
@@ -180,8 +177,8 @@ describe("Harnessy v1 full compatibility pack", () => {
 					const artifactRoot = `${targetDir}/${v1ArtifactResources}`;
 					expect(yield* fs.exists(`${artifactRoot}/source/package.json`)).toBe(true);
 					expect(yield* fs.exists(`${artifactRoot}/source/scripts/flow/verify-harness.mjs`)).toBe(true);
-					expect(yield* fs.exists(`${artifactRoot}/flow-install/index.mjs`)).toBe(true);
-					expect(yield* fs.exists(`${artifactRoot}/jarvis-cli/pyproject.toml`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/tools/flow-install/index.mjs`)).toBe(true);
+					expect(yield* fs.exists(`${artifactRoot}/source/jarvis-cli/pyproject.toml`)).toBe(true);
 
 					const logs = yield* TestConsole.logLines;
 					const verifyLog = logs.find(
@@ -191,7 +188,7 @@ describe("Harnessy v1 full compatibility pack", () => {
 					const verify = JSON.parse(verifyLog) as StructuredVerifyOutput;
 					expect(verify.ok).toBe(true);
 					expect(verify.lockfile.capabilities[0]?.resolvedSource?.local?.root).toBe(v1FullPackRoot);
-					expect(verify.lockfile.capabilities[0]?.fingerprint?.fileCount).toBeGreaterThan(1000);
+					expect(verify.lockfile.capabilities[0]?.fingerprint?.fileCount).toBe(730);
 					expect(verify.checks?.results.map((result) => [result.checkId, result.status])).toEqual(
 						expectedV1Checks,
 					);

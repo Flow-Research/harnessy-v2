@@ -5,7 +5,6 @@
 tools/flow-install/                       @Flow-Research/security
 /packages/capability-harnessy-v1-full/resources/source/tools/flow-install/ @Flow-Research/security
 /packages/capability-harnessy-v1-full/resources/source/scripts/flow/ @Flow-Research/security
-/packages/capability-harnessy-v1-full/resources/flow-install/ @Flow-Research/security
 /packages/harnessy-core/src/runtime/       @Flow-Research/security
 
 # Pre-commit configuration - require security review

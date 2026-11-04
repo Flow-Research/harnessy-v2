@@ -45,7 +45,7 @@ const assertJsonOk = (label, output) => {
 
 try {
 	if (runsPart("installed-product")) {
-		run(process.execPath, ["--test", join(repoRoot, "scripts/v1-npm-transport.test.mjs"), join(repoRoot, "scripts/install-local-jarvis-runtime.test.mjs"), join(repoRoot, "scripts/stage-local-service-runtime.test.mjs"), join(repoRoot, "scripts/install-release.test.mjs")]);
+		run(process.execPath, ["--test", join(repoRoot, "scripts/single-source-package.test.mjs"), join(repoRoot, "scripts/v1-npm-transport.test.mjs"), join(repoRoot, "scripts/install-local-jarvis-runtime.test.mjs"), join(repoRoot, "scripts/stage-local-service-runtime.test.mjs"), join(repoRoot, "scripts/install-release.test.mjs")]);
 	}
 	mkdirSync(artifactRoot, { recursive: true });
 	mkdirSync(projectRoot, { recursive: true });
@@ -206,7 +206,7 @@ for plan in plans:
 		});
 		if (process.platform === "darwin") {
 			run(process.execPath, [join(repoRoot, "scripts/test-installed-skills.mjs"), join(installedCoreRoot, "dist", "cli.js"),
-				join(consumerRoot, "reused-source/resources/flow-install/skills/qa-runtime/scripts/qa"), jarvisPython]);
+				join(consumerRoot, "reused-source/resources/source/tools/flow-install/skills/qa-runtime/scripts/qa"), jarvisPython]);
 			run(process.execPath, [
 				join(repoRoot, "packages/harnessy-core/test/local-life-cli-acceptance.mjs"),
 				join(installedCoreRoot, "dist", "cli.js"),

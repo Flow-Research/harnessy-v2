@@ -29,7 +29,7 @@ import {
 
 const pythonStore = readFileSync(
 	new URL(
-		"../../capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/store.py",
+		"../../capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/meetings/publication/store.py",
 		import.meta.url,
 	),
 	"utf8",

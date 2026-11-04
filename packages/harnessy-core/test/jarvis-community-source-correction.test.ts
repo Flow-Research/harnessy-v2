@@ -4,14 +4,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { correctJarvisCommunitySource } from "../src/runtime/jarvis-community-source-correction.ts";
 
-const resource = (root: "jarvis-cli" | "source/jarvis-cli") =>
-	readFileSync(
-		new URL(
-			`../../capability-harnessy-v1-full/resources/${root}/src/jarvis/community_briefing/collector.py`,
-			import.meta.url,
-		),
-		"utf8",
-	);
+const canonical = readFileSync(
+	new URL(
+		"../../capability-harnessy-v1-full/resources/source/jarvis-cli/src/jarvis/community_briefing/collector.py",
+		import.meta.url,
+	),
+	"utf8",
+);
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 const ORIGINAL_DIGEST = "2f69c284c3ac5bd47ccc657e76c2f344c1186c1b11fb33fa56e09e37a2ed3935";
 const PREVIOUS_DIGEST = "d8c93d4290f4a449aaff22f1aec95149ec3ae99688b7d7f72f98ab747631801d";
@@ -79,11 +78,9 @@ def iter_content_files(root: Path, *, source: bool = True):
 `;
 
 describe("V2 community collector installation correction", () => {
-	const canonical = resource("jarvis-cli");
 	const preserved = preservedFrom(canonical);
 
-	it("ships the same canonical corrected collector in the source tree and its projection", () => {
-		expect(resource("source/jarvis-cli")).toBe(canonical);
+	it("retains the original collector provenance in the canonical corrected source", () => {
 		expect(sha256(preserved)).toBe(ORIGINAL_DIGEST);
 	});
 

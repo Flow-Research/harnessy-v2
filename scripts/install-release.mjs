@@ -165,7 +165,7 @@ async function stageRelease(inspected, destination) {
 	const modules = join(target, "node_modules");
 	const service = stageLocalServiceRuntime(modules, join(target, "service"));
 	await stageV1Compatibility(join(modules, "@harnessy/capability-harnessy-v1-full"), join(target, "reused-source"));
-	const python = installLocalJarvisRuntime(join(target, "reused-source/resources/jarvis-cli"), join(target, "jarvis-runtime"));
+	const python = installLocalJarvisRuntime(join(target, "reused-source/resources/source/jarvis-cli"), join(target, "jarvis-runtime"));
 	const launchers = installReleaseLaunchers(target);
 	return { installation: target, ...launchers, service: service.root, python, activated: false };
 }

@@ -1,1 +1,0 @@
-"""Meeting publication unit tests."""

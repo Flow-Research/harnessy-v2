@@ -11,7 +11,7 @@ import { MEETING_PUBLICATION_STORE_SCHEMA_COLUMNS, MEETING_PUBLICATION_STORE_SCH
 import { readV1MeetingPublicationRows } from "../../../harnessy-core/src/jarvis/meeting-publication/v1-import-projection.ts";
 
 const support = dirname(fileURLToPath(import.meta.url));
-const oracleSource = resolve(support, "../../../capability-harnessy-v1-full/resources/jarvis-cli/src");
+const oracleSource = resolve(support, "../../../capability-harnessy-v1-full/resources/source/jarvis-cli/src");
 const python = process.argv[2];
 assert(python && python.startsWith("/") && process.argv.length === 3, "Provide one explicit isolated V1-compatible Python executable");
 assert(process.env.NODE_OPTIONS?.includes("fixture-network-guard.mjs"), "Rehearsal requires the external-network guard");

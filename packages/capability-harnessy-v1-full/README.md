@@ -7,10 +7,10 @@ It carries the full Harnessy V1 local capability surface into Harnessy V2 as a f
 It intentionally preserves the original v1 resources for compatibility:
 
 - `resources/source/` — reviewed v1 repository snapshot with the private/generated exclusions recorded in its provenance.
-- `resources/flow-install/` — v1 installer, skills, hooks, scripts, templates, and tests, exposed as a direct runtime resource.
-- `resources/context-vault/` — v1 `.jarvis/context` vault docs, profiles, scopes, templates, and catalog, exposed as a direct runtime resource.
-- `resources/jarvis-cli/` — v1 Jarvis CLI Python project and tests, exposed as a direct runtime resource.
-- `resources/install.sh`, `resources/README.v1.md`, `resources/AGENTS.v1.md` — root v1 bootstrap and docs.
+- `resources/source/tools/flow-install/` — v1 installer, skills, hooks, scripts, templates, and tests, exposed as a direct runtime resource.
+- `resources/source/.jarvis/context/` — v1 `.jarvis/context` vault docs, profiles, scopes, templates, and catalog, exposed as a direct runtime resource.
+- `resources/source/jarvis-cli/` — v1 Jarvis CLI Python project and tests, exposed as a direct runtime resource.
+- `resources/source/install.sh`, `resources/source/README.md`, `resources/source/AGENTS.md` — root v1 bootstrap and docs.
 
 ## Why this exists
 
@@ -29,6 +29,11 @@ When added as a local or npm capability source, Harnessy materializes the preser
 ```text
 .harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources/
 ```
+
+The source tree is stored once. Schema 3 provenance records that layout.
+Older schema 1 and 2 artifacts retain their original validation rules.
+The installer and QA tools use paths inside `resources/source/`; no duplicate
+resource trees are generated.
 
 The manifest checks assert that the key v1 entrypoints are present.
 
@@ -63,7 +68,7 @@ are carried in `resources/npm-transport.json`; the authoritative source digest
 is not changed to accommodate that omission. The repository's
 `stageV1Compatibility` helper in `scripts/v1-compatibility-lib.mjs` reconstructs
 them only in a fresh, disjoint staging directory and verifies the full source
-and projection provenance before reporting success. Existing files are never
+provenance before reporting success. Existing files are never
 overwritten. A failed stage may remain for inspection; do not activate or reuse it.
 
 `npm run release:local` uses that helper after its isolated npm installation,
