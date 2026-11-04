@@ -843,6 +843,15 @@ describe("runWork", () => {
 		await expect(runWork(options, fakeTools(root, { actors: ["actor-2"] }).deps)).rejects.toThrow("different actor");
 	});
 
+	it("refuses to start a claimed task when the WorkStream identity changes", async () => {
+		const fake = fakeTools(root, { actors: ["actor-1", "actor-1", "actor-2"] });
+		await expect(runWork(options, fake.deps)).rejects.toThrow("identity changed");
+		expect(has(fake.calls, "claim")).toBe(true);
+		expect(has(fake.calls, "start")).toBe(false);
+		expect(has(fake.calls, "prepare")).toBe(false);
+		expect(has(fake.calls, "submit")).toBe(false);
+	});
+
 	it("refuses to continue when the WorkStream identity changes mid-run", async () => {
 		const fake = fakeTools(root, { actors: ["actor-1", "actor-1", "actor-1", "actor-2"] });
 		await expect(runWork(options, fake.deps)).rejects.toThrow("identity changed");

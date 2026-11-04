@@ -791,6 +791,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	}
 	const assignment = state.assignmentId ?? "";
 	if (state.started !== true) {
+		await assertActor();
 		deps.log("Starting task");
 		await must(wsArgv.start(ws, options.task, state.keys.start), "WorkStream task start");
 		save({ started: true });
