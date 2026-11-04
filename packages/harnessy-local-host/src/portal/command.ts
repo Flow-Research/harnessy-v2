@@ -14,6 +14,7 @@ import * as Result from "effect/Result";
 import { isPortalServerProof, portalClientProofHeader } from "./auth.ts";
 import { createInstalledBriefGeneration } from "./brief-generation.ts";
 import { DeviceAccess } from "./device-access.ts";
+import { InboxState } from "./inbox-state.ts";
 import { renderPortalLaunchAgent } from "./launchd-plan.ts";
 import { ManagedTerminal } from "./managed-terminal.ts";
 import { createPortalServiceOpener } from "./open-service.ts";
@@ -33,6 +34,7 @@ import {
 	readOrCreatePortalInstallToken,
 	readPortalInstallToken,
 } from "./token-store.ts";
+import { createWeeklyDraftCloser, createWeeklyRunInspector } from "./weekly-close.ts";
 
 /** The app screens `open --route` can land on. */
 export const PORTAL_OPEN_ROUTES = [
@@ -236,10 +238,21 @@ export const runPortalCommand = async (
 				clock: () => new Date(),
 			});
 			const options: PortalServerOptions = {
+				inboxState: new InboxState(join(root, "inbox-archive.json")),
 				devices: io.env.HARNESSY_PORTAL_REMOTE_ORIGIN
 					? new DeviceAccess(root, io.env.HARNESSY_PORTAL_REMOTE_ORIGIN)
 					: undefined,
 				installToken,
+				closeWeeklyDraft: createWeeklyDraftCloser({
+					homeRoot: absolute(values["home-root"]) ?? io.homeDir,
+					workspaceRoot,
+					user: io.env.FLOW_USER ?? io.env.USER,
+				}),
+				inspectWeeklyRun: createWeeklyRunInspector({
+					homeRoot: absolute(values["home-root"]) ?? io.homeDir,
+					workspaceRoot,
+					user: io.env.FLOW_USER ?? io.env.USER,
+				}),
 				sources,
 				version: io.version,
 				port,

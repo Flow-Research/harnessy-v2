@@ -206,17 +206,20 @@ describe("installed portal service opener", () => {
 			nodePath: node,
 			cliPath: join(root, "portal-cli.js"),
 		});
-		for (const service of ["meeting-review", "community-review", "cockpit"] as const) {
+		for (const service of PORTAL_HANDOFF_SERVICES) {
 			await open(service);
 			const args = JSON.parse(readFileSync(record, "utf8")) as string[];
 			if (service === "cockpit") {
 				expect(args[0]).toMatch(/\/(?:harnessy-core|@harnessy\/core)\/dist\/cli\.js$/u);
 				expect(args.slice(1)).toEqual(["web"]);
 			} else {
-				expect(args[0]).toBe(join(root, `${service}-open-cli.js`));
+				expect(args[0]).toBe(
+					join(root, `${service === "meeting-google-reconnect" ? "meeting-review" : service}-open-cli.js`),
+				);
 				expect(args[1]).toBe("--state-path");
 				expect(args[2]).toContain(fixture.home);
-				expect(args).toHaveLength(3);
+				expect(args).toHaveLength(service === "meeting-google-reconnect" ? 4 : 3);
+				if (service === "meeting-google-reconnect") expect(args[3]).toBe("--reconnect-google");
 			}
 		}
 		const failing = createPortalServiceOpener({

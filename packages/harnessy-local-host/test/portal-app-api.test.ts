@@ -365,18 +365,18 @@ describe("inbox derivation", () => {
 			"action_required job:com.flow-harness.community-review-v2:failing",
 			"action_required life-weekly:2026-W37",
 			"action_required life-weekly:2026-W40",
-			"action_required life-weekly:2026-W41",
 			"attention connection:meeting.google",
 			"attention connection:codex",
 			"attention connection:gws.x",
 			"attention fathom:research:invalid",
 			"attention life-brief:2026-10-17:decisions",
 			"attention life-weekly:2026-W39",
+			"attention life-weekly:2026-W41:draft",
 			"attention life-weekly:2026-W42:draft",
 			"info fathom:inbox",
 		]);
 		// The standing fault covers its failed week: one item, not a second one per week.
-		expect(inbox.counts).toEqual({ action_required: 9, attention: 7, info: 1 });
+		expect(inbox.counts).toEqual({ action_required: 8, attention: 8, info: 1 });
 		expect(inbox.unreadable).toEqual(["connections.broken:database_busy"]);
 		const byKey = new Map(inbox.items.map((item) => [item.key, item]));
 		expect(byKey.get("community:pending")).toMatchObject({
@@ -392,11 +392,7 @@ describe("inbox derivation", () => {
 			"harnessy-meeting-review-open --state-path '/home/owner/meeting state'",
 		);
 		expect(byKey.get("life-weekly:2026-W42:draft")!.actions).toEqual([
-			{ kind: "handoff", label: "Read draft", target: `#/today/draft/${"c".repeat(64)}`, note: null },
-			expect.objectContaining({
-				kind: "copy",
-				target: `harnessy jarvis life weekly-reconcile --run ${"c".repeat(64)} --reason "…"`,
-			}),
+			{ kind: "handoff", label: "Review draft", target: `#/today/draft/${"c".repeat(64)}`, note: null },
 		]);
 		expect(byKey.get("fathom:research:stale")!.actions[0]!.target).toBe(
 			"harnessy jarvis meeting fathom poll --target /home/owner/Code --json",
@@ -1001,7 +997,7 @@ describe("app routes over a real server", () => {
 				"action_required community:pending",
 				"action_required meetings:pending",
 				"action_required fathom:research:stale",
-				"attention connection:meeting.google",
+				"action_required connection:meeting.google",
 				"attention life-brief:2026-10-17:decisions",
 				"attention life-weekly:2026-W42:draft",
 				"attention community-generation:2026-09-28",

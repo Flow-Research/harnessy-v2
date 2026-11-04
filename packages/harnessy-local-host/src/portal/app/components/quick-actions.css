@@ -1,13 +1,276 @@
-.quick-actions-fab { position: fixed; right: 24px; bottom: 24px; z-index: 35; display: flex; gap: 8px; align-items: center; min-height: 48px; padding: 12px 18px; border-radius: 28px; background: var(--surface); color: inherit; border: 1px solid currentColor; box-shadow: 0 4px 20px #0003; cursor: pointer; }
-.quick-actions-backdrop { position: fixed; inset: 0; z-index: 60; background: #0006; display: flex; justify-content: flex-end; }
-.quick-actions-panel { width: min(680px, 100%); background: var(--surface, #171a22); color: var(--text, inherit); padding: 24px; overflow: auto; box-shadow: -8px 0 32px #0003; }
-.quick-actions-panel header { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
-.quick-actions-panel button { cursor: pointer; min-height: 44px; padding: 10px 14px; }
-.quick-actions-panel label { display: grid; gap: 8px; margin-block: 16px; }
-.quick-actions-panel input, .quick-actions-panel textarea, .quick-actions-panel select { width: 100%; padding: 12px; color: inherit; background: var(--surface); border: 1px solid #888; border-radius: 8px; font: inherit; }
-.quick-actions-panel pre { white-space: pre-wrap; max-height: 200px; overflow: auto; font: inherit; }
-.quick-actions-menu { display: grid; gap: 12px; margin-block: 20px; }
-.quick-actions-menu button { display: flex; gap: 12px; align-items: center; }
-.quick-actions-panel .terminal-host { height: 60dvh; }
-.brief-section-action { margin-block: 8px 16px; min-height: 44px; cursor: pointer; }
-@media (max-width: 760px) { .quick-actions-fab { bottom: calc(80px + env(safe-area-inset-bottom)); right: 16px; } .quick-actions-panel { width: 100%; padding: 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom)); } }
+/*
+ * Quick Actions: the floating Actions button and its drawer (a bottom sheet at
+ * phone width). Every colour, size and layer comes from tokens.css, so both
+ * themes work. The page keeps --fab-clearance free under its content, so the
+ * button never covers the last row, a terminal control or a form.
+ */
+.quick-actions-fab {
+	position: fixed;
+	inset-inline-end: 24px;
+	inset-block-end: 24px;
+	z-index: var(--z-fab);
+	display: inline-flex;
+	align-items: center;
+	gap: var(--control-gap);
+	min-height: 44px;
+	padding-inline: 16px 18px;
+	border-radius: var(--radius-pill);
+	border: 1px solid var(--hairline);
+	background: var(--raised);
+	color: var(--text);
+	font-weight: 600;
+	box-shadow: var(--shadow-float);
+	transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.quick-actions-fab:hover {
+	border-color: var(--ok);
+}
+
+.quick-actions-fab > svg {
+	color: var(--ok-text);
+}
+
+.quick-actions-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: var(--z-overlay);
+	display: flex;
+	justify-content: flex-end;
+	background: var(--scrim);
+	animation: quick-actions-fade var(--motion-base) var(--ease-out);
+}
+
+.quick-actions-panel {
+	display: flex;
+	flex-direction: column;
+	width: min(560px, 100%);
+	height: 100%;
+	background: var(--panel);
+	color: var(--text);
+	border-inline-start: 1px solid var(--hairline);
+	box-shadow: var(--shadow-float);
+	animation: quick-actions-in var(--motion-base) var(--ease-out);
+}
+
+/* The terminal needs room; the composer and menu read better narrow. */
+.quick-actions-panel-terminal {
+	width: min(880px, 100%);
+}
+
+.quick-actions-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-4);
+	padding-block: var(--space-4);
+	padding-inline: var(--space-6) var(--space-4);
+	border-block-end: 1px solid var(--hairline);
+}
+
+.quick-actions-header h2 {
+	font: 600 18px/24px var(--font-title);
+}
+
+.quick-actions-body {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	overscroll-behavior: contain;
+	padding: var(--space-6);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.quick-actions-menu {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+/* A menu item: icon, label and a one-line description, all one target. */
+.quick-actions-item {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	align-items: center;
+	column-gap: var(--space-3);
+	min-height: 56px;
+	padding: var(--space-3) var(--space-4);
+	border-radius: var(--radius-control);
+	border: 1px solid var(--hairline);
+	background: var(--raised);
+	color: var(--text);
+	text-align: start;
+	font-weight: 600;
+}
+
+.quick-actions-item:hover {
+	border-color: var(--ok);
+}
+
+.quick-actions-item > svg {
+	grid-row: span 2;
+	color: var(--ok-text);
+}
+
+.quick-actions-item-hint {
+	font-weight: 400;
+	font-size: 13px;
+	color: var(--text-2);
+}
+
+.quick-actions-form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.quick-actions-row {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+	gap: var(--space-4);
+}
+
+/* The briefing snapshot the task carries. It scrolls inside a bounded box. */
+.quick-actions-context {
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius-control);
+	background: var(--bg);
+}
+
+.quick-actions-context summary {
+	padding: var(--space-2) var(--space-3);
+	min-height: var(--control-h);
+	display: flex;
+	align-items: center;
+	cursor: pointer;
+	font-weight: 500;
+	color: var(--text-2);
+}
+
+.quick-actions-context pre {
+	margin: 0;
+	padding: 0 var(--space-3) var(--space-3);
+	max-height: 200px;
+	overflow: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font: 400 13px/20px var(--font-ui);
+	unicode-bidi: plaintext;
+}
+
+.quick-actions-context p {
+	margin: 0;
+	padding: 0 var(--space-3) var(--space-3);
+}
+
+.quick-actions-footer {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: flex-end;
+	gap: var(--space-3);
+	padding-block-start: var(--space-2);
+}
+
+.quick-actions-panel .terminal-host {
+	height: 60dvh;
+}
+
+/* The device-pairing block inside the menu. */
+.pair-device {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding-block-start: var(--space-4);
+	border-block-start: 1px solid var(--hairline);
+}
+
+.pair-device h3 {
+	font: 600 15px/20px var(--font-title);
+}
+
+.pair-device p {
+	margin: 0;
+}
+
+.pair-device-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.pair-device-list li {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	min-width: 0;
+}
+
+/* "Work on this" under a brief section: secondary, at the start, never full width. */
+.brief-section-action {
+	align-self: flex-start;
+	margin-block-start: var(--space-2);
+}
+
+@keyframes quick-actions-fade {
+	from {
+		opacity: 0;
+	}
+}
+
+@keyframes quick-actions-in {
+	from {
+		transform: translateX(24px);
+		opacity: 0;
+	}
+}
+
+@media (max-width: 760px) {
+	/* Above the bottom navigation bar and the home indicator. */
+	.quick-actions-fab {
+		inset-inline-end: 16px;
+		inset-block-end: calc(72px + env(safe-area-inset-bottom));
+	}
+
+	.quick-actions-backdrop {
+		align-items: flex-end;
+	}
+
+	/* A bottom sheet. dvh follows the on-screen keyboard, so fields stay visible. */
+	.quick-actions-panel,
+	.quick-actions-panel-terminal {
+		width: 100%;
+		height: auto;
+		max-height: 92dvh;
+		border-inline-start: 0;
+		border-block-start: 1px solid var(--hairline);
+		border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+		animation-name: quick-actions-up;
+	}
+
+	.quick-actions-header {
+		padding-inline: var(--space-4);
+	}
+
+	.quick-actions-body {
+		padding: var(--space-4);
+		padding-block-end: calc(var(--space-4) + env(safe-area-inset-bottom));
+	}
+
+	.quick-actions-footer > .button {
+		flex: 1 1 auto;
+	}
+}
+
+@keyframes quick-actions-up {
+	from {
+		transform: translateY(24px);
+		opacity: 0;
+	}
+}

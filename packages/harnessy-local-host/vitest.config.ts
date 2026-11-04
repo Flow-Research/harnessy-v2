@@ -52,6 +52,8 @@ export default defineConfig({
 				// Build configuration and the browser entry point; the browser smoke covers the entry.
 				"src/portal/app/vite.config.ts",
 				"src/portal/app/main.tsx",
+				// The development-only showcase entry; test/app/showcase.test.tsx renders the page itself.
+				"src/portal/app/showcase/main.tsx",
 				// Types only.
 				"src/portal/app/lib/api-types.ts",
 			],
@@ -65,6 +67,13 @@ export default defineConfig({
 				// H-10 portal API: loopback server, sessions, sources and connection status.
 				// One entry per file: a glob threshold is an aggregate, so a weak file could hide behind strong ones.
 				"src/portal/auth.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
+				"src/portal/browser-signin.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/portal/device-access.ts": { statements: 95, branches: 85, functions: 100, lines: 95 },
+				"src/portal/inbox-revision.ts": { statements: 100, branches: 100, functions: 100, lines: 100 },
+				"src/portal/inbox-state.ts": { statements: 90, branches: 85, functions: 100, lines: 90 },
+				"src/portal/weekly-close.ts": { statements: 90, branches: 85, functions: 100, lines: 95 },
+				"src/portal/managed-terminal.ts": { statements: 80, branches: 70, functions: 80, lines: 85 },
+				"src/portal/tmux-sessions.ts": { statements: 95, branches: 85, functions: 100, lines: 95 },
 				"src/portal/command.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/connections.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/launchd-plan.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },
@@ -108,7 +117,14 @@ export default defineConfig({
 				"src/portal/app/screens/Today.tsx": { statements: 95, branches: 75, functions: 100, lines: 95 },
 				"src/portal/app/screens/Terminal.tsx": { statements: 95, branches: 90, functions: 95, lines: 95 },
 				"src/portal/app/components/GenerateBrief.tsx": { statements: 90, branches: 85, functions: 90, lines: 90 },
+				"src/portal/app/components/CloseWeeklyDraft.tsx": { statements: 85, branches: 75, functions: 85, lines: 85 },
+				"src/portal/app/components/InboxRowMenu.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
 				"src/portal/app/components/WorthReading.tsx": { statements: 90, branches: 80, functions: 100, lines: 95 },
+				// test/app/quick-actions.test.tsx covers the drawer, brief-to-agent launch and device pairing;
+				// test/app/browser-signin.test.ts covers the native-app sign-in button.
+				"src/portal/app/components/QuickActions.tsx": { statements: 95, branches: 85, functions: 90, lines: 95 },
+				"src/portal/app/components/PairDevice.tsx": { statements: 90, branches: 80, functions: 90, lines: 95 },
+				"src/portal/app/components/BrowserSignIn.tsx": { statements: 95, branches: 85, functions: 100, lines: 95 },
 				"src/portal/terminal.ts": { statements: 85, branches: 80, functions: 80, lines: 90 },
 				"src/portal/brief-generation.ts": { statements: 95, branches: 85, functions: 95, lines: 95 },
 				"src/portal/process.ts": { statements: 95, branches: 95, functions: 100, lines: 95 },

@@ -38,11 +38,51 @@
 	--space-6: 24px;
 	--radius-control: 6px;
 	--radius-panel: 10px;
+	--radius-pill: 999px;
 	--row: 40px;
 	/* List rows (spec §2.5): 40 px, or 32 px in compact density. Controls keep --row. */
 	--list-row: var(--row);
-	--motion: 120ms ease-out;
+
+	/*
+	 * Controls (docs/portal-design-system.md). One height for buttons, fields and
+	 * selects; touch screens raise it to 44 px. --control-h-sm is for dense rows
+	 * with a pointer only. A select keeps --select-arrow-space clear for its arrow.
+	 */
+	--control-h: 36px;
+	--control-h-sm: 30px;
+	--control-pad-x: 14px;
+	--control-gap: 8px;
+	--icon-size: 16px;
+	--select-arrow-space: 40px;
+
+	/* Layers, lowest first. Only floating layers cast a shadow. */
+	--z-bar: 10;
+	--z-fab: 20;
+	--z-sheet: 40;
+	--z-overlay: 50;
+	--z-palette: 60;
+	--z-skip: 70;
+	--scrim: rgb(0 0 0 / 0.45);
+	--shadow-float: 0 12px 32px rgb(0 0 0 / 0.28);
+	/* The terminal surface matches xterm and stays dark in both themes. */
+	--terminal-bg: #101218;
+	/* Space the page keeps clear under its content for the floating Actions button. */
+	--fab-clearance: 72px;
+
+	/* Motion explains a state change; prefers-reduced-motion turns it off. */
+	--motion-fast: 120ms;
+	--motion-base: 180ms;
+	--ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+	--motion: var(--motion-fast) ease-out;
 	color-scheme: dark;
+}
+
+/* Touch screens: every control reaches 44 × 44 CSS px (WCAG 2.5.5 target size). */
+@media (pointer: coarse) {
+	:root {
+		--control-h: 44px;
+		--control-h-sm: 44px;
+	}
 }
 
 @media (prefers-color-scheme: light) {

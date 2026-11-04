@@ -109,10 +109,20 @@ try {
 	// One Fathom account that has never polled: the poll checkpoint and Connections both report it. The
 	// checkpoint file exists without an entry for the account; without the file Fathom reads as not set up.
 	await mkdir(join(home, ".jarvis"), { recursive: true });
-	await writeFile(join(home, ".jarvis", "config.yaml"), "fathom:\n  default_account: aa\n  accounts:\n    aa: {}\n");
+	await writeFile(join(home, ".jarvis", "config.yaml"), "fathom:\n  default_account: aa\n  poll_accounts: [aa]\n  accounts:\n    aa: {}\n");
 	const fathomState = join(home, ".harnessy", "jarvis", "state", "fathom");
 	await mkdir(fathomState, { recursive: true, mode: 0o700 });
 	await writeFile(join(fathomState, "poll-state-v2.json"), '{"version":1,"accounts":{}}\n', { mode: 0o600 });
+	const weeklyDirectories = new Map();
+	const failedDirectory = join(home, ".harnessy/jarvis/life/reviews", `weekly-2026-W44-${"c".repeat(64)}`);
+	await mkdir(failedDirectory, {recursive:true});
+	await writeFile(join(failedDirectory,"outcome.json"),JSON.stringify({status:"failed",phase:"generation",errors:["Codex login could not be renewed safely."],rawDraftPreserved:false,recordedAt:"2026-10-25T17:49:52Z"}));
+	for (const [period, hash] of [["2026-W39", "a".repeat(64)], ["2026-W40", "b".repeat(64)]]) {
+		const directory = join(home, ".harnessy/jarvis/life/reviews", `weekly-${period}-${hash}`);
+		await mkdir(directory, {recursive:true});
+		await writeFile(join(directory, "draft.md"), `# ${period}\n\nSynthetic weekly plan.\n`);
+		weeklyDirectories.set(period, directory);
+	}
 
 	const server = spawn(process.execPath, [portalCli, "serve", "--port", "0", "--state-dir", stateDir, "--home-root", home], {
 		env: childEnv,
@@ -141,6 +151,7 @@ try {
 			"--remote-debugging-port=0",
 			`--user-data-dir=${profile}`,
 			"--no-first-run",
+			"--use-mock-keychain",
 			"--no-default-browser-check",
 			"--disable-gpu",
 			"--disable-extensions",
@@ -226,7 +237,7 @@ try {
 				for (let node = el.parentElement; node !== null; node = node.parentElement) if (clips(node)) return true;
 				return false;
 			};
-			for (const el of document.querySelectorAll('.app *')) {
+			for (const el of document.querySelectorAll('.app *, .quick-actions-panel, .quick-actions-panel *')) {
 				const style = getComputedStyle(el);
 				if (style.display === 'none' || style.display === 'inline' || style.display === 'contents') continue;
 				// The skip link waits off screen until it has the focus.
@@ -244,7 +255,7 @@ try {
 					.filter((el) => el.getBoundingClientRect().width < 200)
 					.map((el) => el.textContent.slice(0, 40)),
 				wrappedButtons: [...document.querySelectorAll('.command-row > .icon-button')]
-					.filter((el) => el.getBoundingClientRect().height > 40 || el.scrollWidth > el.clientWidth + 1)
+					.filter((el) => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)
 					.map((el) => el.textContent + ' ' + Math.round(el.getBoundingClientRect().width) + 'x' + Math.round(el.getBoundingClientRect().height)),
 			};
 		})()`);
@@ -260,8 +271,10 @@ try {
 		[390, 844, true],
 	]) {
 		await page("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+		await page("Emulation.setTouchEmulationEnabled", { enabled: mobile });
 		await page("Page.navigate", { url: width === 1280 ? signInUrl : `http://127.0.0.1:${port}/#/inbox` });
 		await until("the app shell", () => evaluate("document.querySelector('.app') !== null"));
+		if (mobile && !await evaluate("matchMedia('(pointer: coarse)').matches")) failures.push("phone emulation has no coarse pointer");
 		if (await evaluate("location.hash.includes('code=')")) failures.push("the sign-in code stayed in the address bar");
 		for (const screen of SCREENS) {
 			await evaluate(`location.hash = '#/${screen}'`);
@@ -297,10 +310,39 @@ try {
 		await wait(300);
 		await check(`inbox detail at ${width}px`);
 		if (mobile) await checkPhone(`inbox detail at ${width}px`);
+		await evaluate("[...document.querySelectorAll('.detail button')].find(el => el.textContent.trim() === 'Ask an agent').click()");
+		await until("Inbox agent context", () => evaluate("document.querySelector('.quick-actions-panel')?.textContent.includes('fathom:aa:stale')"));
+		if (!await evaluate("[...document.querySelectorAll('.quick-actions-panel select')].some(el => !el.required && el.selectedOptions[0]?.textContent.includes('Workspace task'))")) failures.push("workspace launch requires project");
+		await check(`Inbox agent drawer at ${width}px`);
+		if (mobile) {
+			await checkPhone("Inbox agent drawer");
+			const smallControls = await evaluate("[...document.querySelectorAll('.quick-actions-panel button, .quick-actions-panel input, .quick-actions-panel select, .quick-actions-panel textarea')].filter(el => { const r=el.getBoundingClientRect(); return r.width > 0 && (r.width < 44 || r.height < 44); }).map(el => el.outerHTML.slice(0,120))");
+			if (smallControls.length) failures.push(`drawer controls below 44px: ${JSON.stringify(smallControls)}`);
+		}
+		await evaluate("document.querySelector('.quick-actions-panel button[aria-label^=Close]').click()");
+		// Organise alerts through the browser. No source decisions or real provider writes.
+		await evaluate("location.hash = '#/inbox'");
+		await wait(100);
+		await evaluate("document.querySelector('.inbox-row-menu summary').click()");
+		await check(`Inbox row menu at ${width}px`);
+		if (mobile) await checkPhone("Inbox row menu");
+		if (!await evaluate("[...document.querySelectorAll('.inbox-row-menu[open] button')].every(el => { const r=el.getBoundingClientRect(); const x=r.x+r.width/2,y=r.y+r.height/2; return y>innerHeight || y<0 || document.elementFromPoint(x,y)?.closest('button')===el; })")) failures.push("Inbox menu control is covered by another view");
+		await evaluate("document.querySelector('.inbox-row-menu').open = false; document.querySelector('input[aria-label=\"Select all visible items\"]').click()");
+		await evaluate("[...document.querySelectorAll('.inbox-toolbar button')].find(el => el.textContent === 'Archive selected').click()");
+		await until("archive saved", () => evaluate("!document.querySelector('.inbox-list-item') && document.querySelector('.copy-notice')?.textContent.includes('archived')"));
+		await evaluate("[...document.querySelectorAll('.inbox-toolbar button')].find(el => el.textContent === 'Archived').click()");
+		await until("archived alerts", () => evaluate("document.querySelectorAll('.inbox-list-item').length > 0"));
+		await evaluate("document.querySelector('input[aria-label=\"Select all visible items\"]').click()");
+		await evaluate("[...document.querySelectorAll('.inbox-toolbar button')].find(el => el.textContent === 'Move selected to Inbox').click()");
+		await until("restore saved", () => evaluate("!document.querySelector('.inbox-list-item') && document.querySelector('.copy-notice')?.textContent.includes('moved to Inbox')"));
+		await evaluate("[...document.querySelectorAll('.inbox-toolbar button')].find(el => el.textContent === 'Inbox').click()");
+		await until("restored alerts", () => evaluate("document.querySelectorAll('.inbox-list-item').length > 0"));
+		await evaluate(`location.hash = '#/inbox/${encodeURIComponent("fathom:aa:stale")}'`);
+		await until("restored detail", () => evaluate("document.querySelector('.detail .command-row') !== null"));
 		const buttons = await evaluate(
 			"[...document.querySelectorAll('.detail .command-row > .icon-button')].map((el) => [el.textContent, Math.round(el.getBoundingClientRect().height)])",
 		);
-		if (buttons.length === 0 || buttons.some(([, height]) => height > 40))
+		if (buttons.length === 0 || buttons.some(([, height]) => mobile ? height < 44 : height > 40))
 			failures.push(`inbox detail at ${width}px: copy buttons ${JSON.stringify(buttons)}`);
 		await evaluate("location.hash = '#/tasks/mine'");
 		await until(`tasks at ${width}px`, () => evaluate("document.body.innerText.includes('Team lead deep dive')"));
@@ -318,6 +360,48 @@ try {
 		}
 	}
 	const fonts = await evaluate("document.fonts.ready.then(() => [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family))");
+	await evaluate(`location.hash = '#/today/draft/${"c".repeat(64)}'`);
+	await until("failed run actions", () => evaluate("document.body.textContent.includes('Close failed attempt')"));
+	await until("failure explanation", () => evaluate("document.body.textContent.includes('could not renew its sign-in')"));
+	await evaluate("[...document.querySelectorAll('button')].find(el=>el.textContent==='Investigate with an agent').click()");
+	await until("agent context", () => evaluate("document.querySelector('[role=dialog]')?.textContent.includes('Codex login could not be renewed safely.')"));
+	await evaluate("document.querySelector('[role=dialog] button[aria-label^=Close]').click()");
+	await evaluate("[...document.querySelectorAll('button')].find(el=>el.textContent==='Close failed attempt').click()");
+	await until("failure close reason", () => evaluate("document.activeElement?.id === 'weekly-close-reason'"));
+	await page("Input.insertText", {text:"Past week; no longer needed."});
+	await checkPhone("failed weekly actions");
+	await evaluate("document.querySelector('.weekly-review button[type=submit]').click()");
+	await until("failed attempt closed", () => evaluate("document.querySelector('.weekly-review output') !== null"));
+	const closedFailure=JSON.parse(await readFile(join(failedDirectory,"reconciliation.json"),"utf8"));
+	if(closedFailure.decision!=="abandoned") failures.push("failed run was not abandoned");
+	if(!existsSync(join(failedDirectory,"outcome.json"))) failures.push("failure evidence deleted");
+	// Real browser actions: Inbox -> draft -> cancel -> reason -> confirmation -> cleared Inbox.
+	for (const [width, period] of [[1280, "2026-W39"], [390, "2026-W40"]]) {
+		await page("Emulation.setDeviceMetricsOverride", {width, height:844, deviceScaleFactor:1, mobile:width===390});
+		await page("Emulation.setTouchEmulationEnabled", {enabled:width===390});
+		await evaluate(`location.hash = '#/inbox/${encodeURIComponent(`life-weekly:${period}:draft`)}'`);
+		await until("weekly review action", () => evaluate("[...document.querySelectorAll('.detail button, .detail a')].some(el => el.textContent.trim()==='Review draft')"));
+		await evaluate("[...document.querySelectorAll('.detail button, .detail a')].find(el => el.textContent.trim()==='Review draft').click()");
+		await until("weekly draft", () => evaluate("document.querySelector('.weekly-review button:not(:disabled)') !== null"));
+		await evaluate("document.querySelector('.weekly-review button').click()");
+		await until("close form", () => evaluate("document.querySelector('#weekly-close-reason') !== null"));
+		if (!await evaluate("document.querySelector('.weekly-review button[type=submit]').disabled")) failures.push("empty reason enabled close");
+		await evaluate("[...document.querySelectorAll('.weekly-review button')].find(el=>el.textContent==='Cancel').click()");
+		if (existsSync(join(weeklyDirectories.get(period), "reconciliation.json"))) failures.push("Cancel wrote a decision");
+		await evaluate("document.querySelector('.weekly-review button').click()");
+		await until("reason focus", () => evaluate("document.activeElement?.id === 'weekly-close-reason'"));
+		await page("Input.insertText", {text:"The week has passed."});
+		await check(`weekly close at ${width}px`);
+		if(width===390) await checkPhone("weekly close phone");
+		await evaluate("document.querySelector('.weekly-review button[type=submit]').click()");
+		await until("draft closed", () => evaluate("document.querySelector('.weekly-review output')?.textContent.includes('draft is closed')"));
+		const record = JSON.parse(await readFile(join(weeklyDirectories.get(period), "reconciliation.json"), "utf8"));
+		if(record.decision!=="superseded" || record.reason!=="The week has passed.") failures.push("wrong weekly decision");
+		if(!existsSync(join(weeklyDirectories.get(period), "draft.md"))) failures.push("draft deleted");
+		await evaluate("document.querySelector('.weekly-review .back-link').click()");
+		await until("return to Inbox", () => evaluate("location.hash === '#/inbox'"));
+		await until("closed draft removed from Inbox", () => evaluate(`document.querySelector('.list') !== null && !document.querySelector('.list').textContent.includes(${JSON.stringify(period)})`));
+	}
 	if (!fonts.some((family) => family.includes("IBM Plex Sans"))) failures.push(`self-hosted fonts did not load: ${JSON.stringify(fonts)}`);
 	// The hostile brief text renders on Today, as text.
 	await evaluate("location.hash = '#/today'");

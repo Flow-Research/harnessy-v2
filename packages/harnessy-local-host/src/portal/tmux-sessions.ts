@@ -21,24 +21,17 @@ export class TmuxSessions {
 		try {
 			const output = execFileSync(
 				"tmux",
-				[...this.args(), "list-sessions", "-F", "#{pid}\t#{session_created}\t#{session_id}\t#{session_name}"],
+				// tmux replaces literal control-character separators in the C locale.
+				[...this.args(), "list-sessions", "-F", "#{pid}|#{session_created}|#{session_id}|#{session_name}"],
 				{ env: this.env, encoding: "utf8", timeout: 2000, maxBuffer: 65536, stdio: ["ignore", "pipe", "pipe"] },
 			);
 			return output
 				.trim()
 				.split("\n")
 				.flatMap((line) => {
-					const [pid, created, id, name, ...extra] = line.split("\t");
-					return pid &&
-						/^\d+$/u.test(pid) &&
-						created &&
-						/^\d+$/u.test(created) &&
-						id &&
-						/^\$\d+$/u.test(id) &&
-						name &&
-						!extra.length
-						? [{ key: `${pid}:${created}:${id}`, id, name }]
-						: [];
+					// The name is the remainder, so it may contain the delimiter too.
+					const match = /^(\d+)\|(\d+)\|(\$\d+)\|(.+)$/u.exec(line);
+					return match ? [{ key: `${match[1]}:${match[2]}:${match[3]}`, id: match[3]!, name: match[4]! }] : [];
 				});
 		} catch {
 			return [];

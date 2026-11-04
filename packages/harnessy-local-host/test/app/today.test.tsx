@@ -2,9 +2,13 @@
  * The Today screen over hand-made API answers: every brief, side-card and draft
  * field present, missing, null or empty, and what the owner sees in each case.
  */
+
+import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { QuickActions } from "../../src/portal/app/components/QuickActions.tsx";
 
 import { DataProvider, DataStore } from "../../src/portal/app/lib/data.tsx";
 import type { ApiResult } from "../../src/portal/app/lib/session.ts";
@@ -71,7 +75,11 @@ const job = (id: string, fields: Record<string, unknown> = {}) => ({
 });
 
 /** Render the screen over a portal that answers each path from `answers`; other paths never answer. */
-const renderToday = async (rest: ReadonlyArray<string>, answers: Readonly<Record<string, ApiResult>>) => {
+const renderToday = async (
+	rest: ReadonlyArray<string>,
+	answers: Readonly<Record<string, ApiResult>>,
+	wrap: (screen: ReactNode) => ReactNode = (screen) => screen,
+) => {
 	const reads: string[] = [];
 	const store = new DataStore(
 		{
@@ -84,17 +92,24 @@ const renderToday = async (rest: ReadonlyArray<string>, answers: Readonly<Record
 	);
 	await act(async () => {
 		root = createRoot(container);
-		root.render(
-			<DataProvider store={store}>
-				<TodayScreen rest={rest} now={NOW} />
-			</DataProvider>,
-		);
+		root.render(<DataProvider store={store}>{wrap(<TodayScreen rest={rest} now={NOW} />)}</DataProvider>);
 	});
 	return reads;
 };
 
 const ok = (body: unknown): ApiResult => ({ kind: "ok", body });
 const refused: ApiResult = { kind: "error", message: "the portal refused" };
+
+/**
+ * A brief that cannot be shown names the reason and offers Generate today's brief
+ * directly under it, inside the article, not in a side card further down.
+ */
+const expectRecoveryBesideState = (state: string) => {
+	const recovery = container.querySelector("article.column-main .brief-recovery");
+	expect(recovery?.firstElementChild?.textContent).toBe(state);
+	expect(recovery?.querySelector("button")?.textContent).toBe("Generate today’s brief");
+	expect(container.querySelectorAll(".column-side button")).toHaveLength(0);
+};
 
 const cardText = (title: string) =>
 	[...container.querySelectorAll(".card")].find((card) => card.textContent?.startsWith(title))?.textContent ?? "";
@@ -120,7 +135,7 @@ describe("the Today screen", () => {
 			expect(link.relList.contains("noreferrer")).toBe(true);
 			expect(link.href.endsWith(".")).toBe(false);
 		}
-		expect(container.querySelector(".card-raised a")?.getAttribute("href")).toBe(
+		expect(container.querySelector(".brief-pinned a")?.getAttribute("href")).toBe(
 			"https://docs.google.com/presentation/d/example/edit",
 		);
 	});
@@ -184,7 +199,7 @@ describe("the Today screen", () => {
 		expect(text()).not.toContain("not journaled");
 		expect(text()).toContain("first 64 KiB");
 		// The pinned section comes first, raised; the missing one leaves no empty card.
-		const raised = [...container.querySelectorAll(".card-raised")];
+		const raised = [...container.querySelectorAll(".brief-pinned")];
 		expect(raised).toHaveLength(1);
 		expect(raised[0]!.textContent).toContain("Decisions and Actions for You");
 		expect(raised[0]!.textContent).toContain("Decide the venue");
@@ -204,14 +219,16 @@ describe("the Today screen", () => {
 		expect(reading).toContain("7in queue");
 		expect(reading).toContain("3sent in a brief");
 		expect(reading).toContain("2reserved");
-		// Four runs at most; only a drafted run links to its draft.
+		// The bounded run history remains navigable after a draft is closed.
 		const weekly = cardText("Weekly plans");
 		expect(weekly).toContain("2026-W41");
-		expect(weekly).not.toContain("2026-W38");
+		expect(weekly).toContain("2026-W38");
 		expect([...container.querySelectorAll('a[href^="#/today/draft/"]')].map((link) => link.textContent)).toEqual([
 			"2026-W42",
+			"2026-W41",
+			"2026-W38",
 		]);
-		expect(weekly).toContain("drafted");
+		expect(weekly).toContain("ready to review");
 		expect(weekly).toContain("failed");
 		const setup = cardText("Setup");
 		expect(setup).toContain("Learning steeringready");
@@ -256,7 +273,7 @@ describe("the Today screen", () => {
 		).toEqual([null, "page"]);
 		expect(text()).toContain("not journaled");
 		expect(text()).not.toContain("first 64 KiB");
-		const raised = [...container.querySelectorAll(".card-raised")];
+		const raised = [...container.querySelectorAll(".brief-pinned")];
 		expect(raised.map((card) => card.textContent?.startsWith("Delegated or Waiting"))).toEqual([true]);
 		expect(container.querySelectorAll("h2.md-section")).toHaveLength(0);
 		const overnight = cardText("Overnight");
@@ -312,7 +329,7 @@ describe("the Today screen", () => {
 		await waitFor(() => expect(text()).toContain("Brief read "));
 		// "draft" without a run hash is today's brief, not a draft.
 		expect(text()).not.toContain("Back to today");
-		expect(container.querySelector("article.column-main")?.textContent).toBe("No data");
+		expectRecoveryBesideState("No data");
 		expect(container.querySelector('nav[aria-label="Recent briefs"]')).toBeNull();
 		expect(cardText("Overnight")).toContain("No job data");
 		await act(async () => root?.unmount());
@@ -336,7 +353,7 @@ describe("the Today screen", () => {
 		expect(text()).not.toContain("Brief read");
 		await act(async () => root?.unmount());
 		await renderToday([], { "/v1/life/brief": refused, "/v1/today": refused, "/v1/jobs": refused });
-		await waitFor(() => expect(container.querySelector("article.column-main")?.textContent).toBe("No data"));
+		await waitFor(() => expectRecoveryBesideState("No data"));
 		expect(text()).not.toContain("Brief read");
 		expect(text()).toContain("No job data");
 	});
@@ -375,11 +392,59 @@ describe("the weekly draft reader", () => {
 		await renderToday(["draft", DRAFT_HASH], {
 			[path]: ok(envelope({ draft: tile("missing", undefined, "run_missing") })),
 		});
-		await waitFor(() => expect(text()).toContain("Not written yet (run_missing)"));
+		await waitFor(() => expect(text()).toContain("No reviewed draft is available for this attempt."));
 		await act(async () => root?.unmount());
 		await renderToday(["draft", DRAFT_HASH], { [path]: refused });
 		await waitFor(() => expect(text()).not.toContain("Loading"));
 		expect(text()).toContain("No data");
 		expect(text()).not.toContain("Weekly plan draft");
+	});
+});
+
+describe("working on a brief section", () => {
+	it("opens the agent composer with that section's text and its date and title as the source", async () => {
+		const client = {
+			get: async () =>
+				({ kind: "ok", body: { runners: [{ id: "hsy", available: true }], projects: [] } }) as ApiResult,
+			terminalAction: async () => ({ kind: "ok", body: { id: "t" } }) as ApiResult,
+		};
+		await renderToday(
+			["2026-10-17"],
+			{
+				"/v1/life/brief/2026-10-17": ok(
+					envelope({
+						brief: tile("ok", {
+							date: "2026-10-17",
+							journaled: false,
+							truncated: false,
+							text: [
+								"## Decisions and Actions for You",
+								"",
+								"- Decide the venue",
+								"",
+								"## Notes",
+								"",
+								"Ìbàdàn plan.",
+							].join("\n"),
+						}),
+					}),
+				),
+			},
+			(screen) => <QuickActions client={client as never}>{screen}</QuickActions>,
+		);
+		await waitFor(() => expect(text()).toContain("Decide the venue"));
+		const actions = [...container.querySelectorAll("button")].filter((b) => b.textContent === "Work on this");
+		expect(actions).toHaveLength(2);
+		await act(async () => actions[1]!.click());
+		expect(document.querySelector(".quick-actions-context summary")?.textContent).toBe(
+			"Briefing context · 2026-10-17 · Notes",
+		);
+		expect(document.querySelector<HTMLInputElement>(".quick-actions-form input")?.value).toBe("Notes");
+		// Unicode in the snapshot is kept exactly, tone marks included.
+		expect(document.querySelector(".quick-actions-context pre")?.textContent).toBe("Ìbàdàn plan.");
+		await act(async () => actions[0]!.click());
+		expect(document.querySelector(".quick-actions-context summary")?.textContent).toBe(
+			"Briefing context · 2026-10-17 · Decisions and Actions for You",
+		);
 	});
 });

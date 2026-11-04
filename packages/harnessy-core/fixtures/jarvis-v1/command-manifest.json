@@ -4,7 +4,7 @@
     "kind": "jarvis-click",
     "version": "0.1.0",
     "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli",
-    "pythonSourceSha256": "9ada79f8d188546f9f1b4e18dc392c7695b18c6bb292016532156ba9e4e234ba"
+    "pythonSourceSha256": "4197404bb7f2c4e7c1d0779bed18a94c774c774a06eca59abde368296bcca8ca"
   },
   "generatedBy": "scripts/export-jarvis-command-manifest.py",
   "normalization": {
@@ -25,7 +25,7 @@
       "kind": "group",
       "semanticName": "cli",
       "alias": false,
-      "help": "Jarvis - AI-powered personal assistant for AnyType.\n\n    Features:\n    - Task scheduling: Analyze and optimize your schedule\n    - Journaling: AI-powered freeform journaling\n\n    Use 'jarvis <command> --help' for more information.\n    ",
+      "help": "Jarvis, AI-powered personal assistant.\n\n    Use 'jarvis <command> --help' for more information.\n    ",
       "arguments": [],
       "options": [
         {
@@ -728,7 +728,7 @@
       "kind": "group",
       "semanticName": "config",
       "alias": false,
-      "help": "Manage Jarvis configuration.\n\n    Configuration is stored in ~/.jarvis/config.yaml and controls:\n    - Which backend to use (anytype, notion)\n    - Backend-specific settings\n    - Analytics preferences\n    ",
+      "help": "Manage Jarvis configuration.\n\n    Configuration is stored in ~/.jarvis/config.yaml and controls:\n    - Which registered knowledge-tool adapter to use\n    - Backend-specific settings\n    - Analytics preferences\n    ",
       "arguments": [],
       "options": []
     },
@@ -741,7 +741,7 @@
       "kind": "command",
       "semanticName": "backend",
       "alias": false,
-      "help": "Show or set the active backend.\n\n    Without arguments, shows the current backend.\n    With NAME argument, switches to that backend.\n\n    Examples:\n        jarvis config backend           # Show current\n        jarvis config backend anytype   # Switch to AnyType\n        jarvis config backend notion    # Switch to Notion\n    ",
+      "help": "Show or set the active backend.\n\n    Without arguments, shows the current backend.\n    With NAME argument, switches to that backend.\n\n    Examples:\n        jarvis config backend           # Show current\n        jarvis config backend notion    # Switch to Notion\n    ",
       "arguments": [
         {
           "name": "name",
@@ -940,7 +940,7 @@
       "kind": "command",
       "semanticName": "approve",
       "alias": false,
-      "help": "Approve content and push to AnyType.\n\n    PATH is the piece folder (e.g., drafts/2026/Apr/02-flow-thesis-thread).\n    Use --all to approve all pieces currently in 'review' status.\n    ",
+      "help": "Approve content and push to the legacy destination.\n\n    PATH is the piece folder (e.g., drafts/2026/Apr/02-flow-thesis-thread).\n    Use --all to approve all pieces currently in 'review' status.\n    ",
       "arguments": [
         {
           "name": "path",
@@ -974,7 +974,7 @@
       "kind": "command",
       "semanticName": "audit-anytype",
       "alias": false,
-      "help": "Audit Anytype Collection links for duplicates for one content piece.",
+      "help": "Audit destination collection links for duplicates for one content piece.",
       "arguments": [
         {
           "name": "path",
@@ -1255,7 +1255,7 @@
       "kind": "command",
       "semanticName": "push",
       "alias": false,
-      "help": "Push all approved pieces to AnyType.",
+      "help": "Push all approved pieces to the legacy destination.",
       "arguments": [],
       "options": [
         {
@@ -1292,7 +1292,7 @@
       "kind": "command",
       "semanticName": "strategy",
       "alias": false,
-      "help": "Push the content strategy document to AnyType.",
+      "help": "Push the content strategy document to the legacy destination.",
       "arguments": [],
       "options": []
     },
@@ -1588,7 +1588,7 @@
       "kind": "group",
       "semanticName": "journal",
       "alias": false,
-      "help": "AI-powered journaling for AnyType.\n\n    Write, search, and analyze your journal entries with AI assistance.\n    ",
+      "help": "AI-powered journaling.\n\n    Write, search, and analyze your journal entries with AI assistance.\n    This command currently uses the legacy journal destination.\n    See the knowledge-tool support guide for adapter limits.\n    ",
       "arguments": [],
       "options": []
     },
@@ -3167,7 +3167,7 @@
       "kind": "command",
       "semanticName": "ingest",
       "alias": false,
-      "help": "Ingest a meeting transcript-like source into one or more destinations.\n\n    SOURCE may be a file path, URL, AnyType/Notion object, or '-' for stdin.\n    ",
+      "help": "Ingest a meeting transcript-like source into one or more destinations.\n\n    SOURCE may be a file path, URL, supported knowledge-tool object, or '-' for stdin.\n    ",
       "arguments": [
         {
           "name": "source",
@@ -3946,7 +3946,7 @@
       "kind": "group",
       "semanticName": "object",
       "alias": false,
-      "help": "Inspect and update any object by ID.\n\n    Paste an object ID, AnyType link, or Notion URL to fetch\n    and inspect any object from your knowledge base.\n    ",
+      "help": "Inspect and update any object by ID.\n\n    Paste an object ID or a supported knowledge-tool URL to fetch\n    and inspect any object from your knowledge base.\n    ",
       "arguments": [],
       "options": []
     },
@@ -4035,7 +4035,7 @@
       "kind": "command",
       "semanticName": "get",
       "alias": false,
-      "help": "Fetch and display an object by ID or URL.\n\n    Accepts raw IDs, AnyType deeplinks, or Notion page URLs.\n\n    Examples:\n        jarvis object get bafyreig...\n        jarvis object get https://notion.so/My-Page-abc123def456...\n        jarvis o bafyreig...\n    ",
+      "help": "Fetch and display an object by ID or URL.\n\n    Accepts raw IDs and URLs supported by the selected adapter.\n\n    Examples:\n        jarvis object get bafyreig...\n        jarvis object get https://notion.so/My-Page-abc123def456...\n        jarvis o bafyreig...\n    ",
       "arguments": [
         {
           "name": "object_id_or_url",
@@ -4451,7 +4451,7 @@
       "kind": "command",
       "semanticName": "write-back",
       "alias": false,
-      "help": "Write agent-formatted markdown back to a reading list source.\n\n    Accepts markdown from --file or --stdin and writes it to the target\n    object (AnyType/Notion). Use after the agent has scored and formatted\n    items independently.\n    ",
+      "help": "Write agent-formatted markdown back to a reading list source.\n\n    Accepts markdown from --file or --stdin and writes it to the target\n    object through its adapter. Use after the agent has scored and formatted\n    items independently.\n    ",
       "arguments": [
         {
           "name": "target",
@@ -4859,7 +4859,7 @@
       "kind": "group",
       "semanticName": "sync",
       "alias": false,
-      "help": "Sync local folders/files to an Anytype Collection.",
+      "help": "Sync local folders/files to a knowledge-tool collection.\n\n    Writes currently support only the legacy destination. See the knowledge-tool\n    support guide for adapter limits.",
       "arguments": [],
       "options": []
     },

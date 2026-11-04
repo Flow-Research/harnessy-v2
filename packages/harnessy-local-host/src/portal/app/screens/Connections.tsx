@@ -37,7 +37,10 @@ const ConnectionCard = ({ connection }: { connection: Connection }) => (
 			<HandoffButton
 				action={{
 					kind: "handoff",
-					label: "Open the owner",
+					label:
+						connection.action.value === handoffTarget("meeting-google-reconnect")
+							? "Reconnect Google"
+							: "Open the owner",
 					target: connection.action.value,
 					note: connection.action.note,
 				}}

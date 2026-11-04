@@ -289,6 +289,7 @@ npm run hsy:fresh
 | File | Purpose |
 |------|---------|
 | [`docs/product-surfaces.md`](docs/product-surfaces.md) | Full surface map: agent tools, CLI, cockpit, MCP, SDK |
+| [`docs/portal-design-system.md`](docs/portal-design-system.md) | App design system: tokens, buttons, fields, overlays, accessibility and the component showcase |
 | `PORT_MAP.md` | v1 to v2 migration map |
 | `HARNESSY_V1_FEATURES.md` | Preserved v1 feature inventory |
 | `AGENTS.md` | Repo instructions for agent sessions |

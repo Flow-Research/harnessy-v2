@@ -65,6 +65,20 @@ runs:
         tar -xpzf "$archive"
         git diff --exit-code
 
+    - name: Install persistent terminal test backends
+      if: ${{ inputs.test-runtime == 'true' }}
+      shell: bash
+      run: |
+        sudo apt-get install -y tmux
+        backend_bin="$RUNNER_TEMP/harnessy-backends"
+        install -d -m 700 "$backend_bin"
+        curl --fail --location --retry 3 https://github.com/herdrdev/herdr/releases/download/v0.9.5/herdr-linux-x86_64 -o "$backend_bin/herdr"
+        echo "14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d  $backend_bin/herdr" | sha256sum --check
+        chmod 700 "$backend_bin/herdr"
+        "$backend_bin/herdr" --version
+        tmux -V
+        echo "$backend_bin" >> "$GITHUB_PATH"
+
     - name: Prepare private Node runtime for security-bound QA
       if: ${{ inputs.test-runtime == 'true' }}
       shell: bash

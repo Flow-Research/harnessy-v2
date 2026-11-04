@@ -255,6 +255,9 @@ describe("MeetingPublicationReviewServer dispatch attention", () => {
 			)?.[0];
 			expect(failedDisclosure).toBeDefined();
 			expect(failedDisclosure).toMatch(/\sopen(?:\s|>)/u);
+			expect(result.inbox.body.indexOf('id="provider-health-title"')).toBeLessThan(
+				result.inbox.body.indexOf('class="card empty-card"'),
+			);
 			const healthyDisclosure = /<details\b[^>]*class="[^"]*connection-details[^"]*"[^>]*>/u.exec(
 				result.healthy.body,
 			)?.[0];
@@ -262,6 +265,11 @@ describe("MeetingPublicationReviewServer dispatch attention", () => {
 			expect(healthyDisclosure).toBeDefined();
 			expect(healthyDisclosure).not.toMatch(/\sopen(?:\s|>)/u);
 			expect(result.healthy.body).toContain("Last check passed");
+			expect(result.healthy.body).toContain("Connected at last check");
+			expect(result.inbox.body).toContain("Sign-in required");
+			expect(result.healthy.body.indexOf('id="google-connection-title"')).toBeLessThan(
+				result.healthy.body.indexOf('class="card empty-card"'),
+			);
 			expect(result.afterHealthy.equals(result.beforeHealthy)).toBe(true);
 			expect(result.inbox.body).toContain("Credentials rejected");
 			expect(result.inbox.body).toContain("owner@example.test");

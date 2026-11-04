@@ -109,6 +109,27 @@ const sectionText = (title: string) =>
 const cockpit = () => cardOf("The cockpit (Tools engine)")!;
 
 describe("the Connections cards", () => {
+	it("labels the direct Google recovery action clearly", async () => {
+		await renderConnections([], {
+			"/v1/connections": ok({
+				meeting: list([
+					connection("meeting.google", {
+						status: "attention",
+						action: {
+							kind: "link",
+							value: "harnessy:open:meeting-google-reconnect",
+							note: "Finish verification.",
+						},
+					}),
+				]),
+			}),
+		});
+		await waitFor(() =>
+			expect(cardOf("Connection meeting.google")?.querySelector("button")?.textContent).toContain(
+				"Reconnect Google",
+			),
+		);
+	});
 	it("names every connection status and shows only the owner for a connection with no detail or action", async () => {
 		await renderConnections([], {
 			"/v1/connections": ok({

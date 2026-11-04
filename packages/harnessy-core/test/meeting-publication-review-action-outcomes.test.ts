@@ -1,8 +1,10 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -99,6 +101,7 @@ const fixtureLayers = (
 	calls: Harness["calls"],
 	denied: ReadonlySet<MeetingPublicationWriteOperation>,
 	override: Partial<ServiceShape>,
+	googleGate?: () => Promise<void>,
 ) => {
 	const authority = meetingPublicationTestWriteAuthorityLayer(config, {
 		allows: (operation) => !denied.has(operation),
@@ -119,8 +122,9 @@ const fixtureLayers = (
 			MeetingPublicationGoogle.of({
 				preflight: Effect.succeed(true),
 				upsert: (input) =>
-					Effect.sync(() => {
+					Effect.promise(async () => {
 						calls.google += 1;
+						await googleGate?.();
 						return new MeetingPublicationGoogleCheckpoint({
 							docId: `doc-${input.itemId}`,
 							docUrl: `https://docs.example.test/${input.itemId}`,
@@ -217,6 +221,7 @@ const withReview = <A>(
 	options: {
 		readonly denied?: ReadonlyArray<MeetingPublicationWriteOperation>;
 		readonly override?: Partial<ServiceShape>;
+		readonly googleGate?: () => Promise<void>;
 	} = {},
 ) => {
 	const root = mkdtempSync(join(realpathSync(tmpdir()), "harnessy-review-outcome-"));
@@ -252,7 +257,16 @@ const withReview = <A>(
 				writes.length = 0;
 				return yield* Effect.promise(() => run({ origin, session, csrf, items, store, service, writes, calls }));
 			}).pipe(
-				Effect.provide(fixtureLayers(config, writes, calls, new Set(options.denied ?? []), options.override ?? {})),
+				Effect.provide(
+					fixtureLayers(
+						config,
+						writes,
+						calls,
+						new Set(options.denied ?? []),
+						options.override ?? {},
+						options.googleGate,
+					),
+				),
 			),
 		),
 	);
@@ -295,6 +309,69 @@ const captureLog = () => {
 };
 
 describe("meeting review action outcomes", () => {
+	for (const action of ["approve", "reject", "archive"] as const) {
+		it.runIf(process.env.HARNESSY_RECONNECT_BROWSER === "1")(
+			`browser ${action} persists while another provider call is pending`,
+			async () => {
+				let release!: () => void, entered!: () => void;
+				const gate = new Promise<void>((resolve) => {
+					release = resolve;
+				});
+				const started = new Promise<void>((resolve) => {
+					entered = resolve;
+				});
+				await withReview(
+					{ a: note("a"), b: note("b") },
+					async (harness) => {
+						const [a, b] = [required(harness.items, "a"), required(harness.items, "b")];
+						await Effect.runPromise(harness.service.approve(a.itemId, a.sourceHash));
+						const publishing = Effect.runPromise(harness.service.publishOne(a.itemId, a.sourceHash));
+						try {
+							await started;
+							const before = await current(harness, a);
+							const code = "b".repeat(43);
+							writeFileSync(
+								join(
+									dirname(harness.store.dbPath),
+									`meeting-review-exchange-${createHash("sha256").update(code).digest("hex")}`,
+								),
+								"",
+								{ mode: 0o600 },
+							);
+							await promisify(execFile)(
+								process.execPath,
+								[
+									join(import.meta.dirname, "../../../scripts/check-meeting-review-concurrency-browser.mjs"),
+									`${harness.origin}/exchange?code=${code}`,
+									b.itemId,
+									action,
+								],
+								{ timeout: 30000 },
+							);
+							expect((await current(harness, b)).status).toBe(
+								{ approve: "approved", reject: "rejected", archive: "archived" }[action],
+							);
+							expect(await current(harness, a)).toEqual(before);
+							expect(harness.calls).toEqual({ google: 1, discord: 0 });
+						} finally {
+							release();
+							await publishing;
+						}
+						expect((await current(harness, a)).status).toBe("published");
+						expect(harness.calls).toEqual({ google: 1, discord: 1 });
+					},
+					{
+						googleGate: async () => {
+							entered();
+							await gate;
+						},
+					},
+				);
+			},
+			40000,
+		);
+	}
+
 	it("answers a repeated decision with its current status and performs no second write", async () => {
 		const result = await withReview({ a: note("a"), r: note("r"), x: note("x") }, async (harness) => {
 			const [a, r, x] = [required(harness.items, "a"), required(harness.items, "r"), required(harness.items, "x")];
@@ -452,22 +529,115 @@ describe("meeting review action outcomes", () => {
 		expect(log).toEqual(["meeting-review action=reject outcome=paused code=authority:revoked"]);
 	});
 
-	it("reports an in-progress or uncertain delivery as paused publication", async () => {
-		const log = captureLog();
-		const result = await withReview({ a: note("a"), b: note("b") }, async (harness) => {
+	for (const action of ["approve", "reject", "archive", "update-note"] as const) {
+		it(`accepts ${action} on another meeting while preserving the active claim`, async () => {
+			const result = await withReview({ a: note("a"), b: note("b") }, async (harness) => {
+				const [a, b] = [required(harness.items, "a"), required(harness.items, "b")];
+				await submit(harness, "approve", a);
+				const now = "2026-09-04T12:00:00.000Z";
+				const claim = await Effect.runPromise(
+					harness.store.claimExact(a.itemId, a.sourceHash, now, "2026-09-04T12:01:00.000Z"),
+				);
+				if (claim === null) throw new Error("claim failed");
+				const response = await submit(
+					harness,
+					action,
+					b,
+					action === "update-note"
+						? { meeting_markdown: note("b", "Updated while another meeting publishes.") }
+						: {},
+				);
+				const active = await current(harness, a);
+				const blockedClaim = await Effect.runPromise(
+					harness.store.claim(now, "2026-09-04T12:01:00.000Z").pipe(Effect.result),
+				);
+				const blockedBatch = await Effect.runPromise(
+					harness.store.archivePaths([a.notePath, b.notePath], now).pipe(Effect.result),
+				);
+				await Effect.runPromise(harness.store.recordGoogle(claim, "doc-a", "https://docs.example.test/a", now));
+				await Effect.runPromise(harness.store.recordDiscord(claim, "channel-id", "message-a", now));
+				await Effect.runPromise(harness.store.markPublished(claim, now));
+				return {
+					response,
+					claim,
+					active,
+					blockedClaim,
+					blockedBatch,
+					after: await current(harness, b),
+					published: await current(harness, a),
+					calls: harness.calls,
+				};
+			});
+			expect(result.response.status).toBe(303);
+			expect(result.active).toEqual(result.claim);
+			expect(result.after.status).toBe(
+				{ approve: "approved", reject: "rejected", archive: "archived", "update-note": "pending_review" }[action],
+			);
+			expect(result.published).toMatchObject({
+				status: "published",
+				googleDocId: "doc-a",
+				discordMessageId: "message-a",
+			});
+			expect(result.blockedClaim._tag).toBe("Failure");
+			expect(result.blockedBatch._tag).toBe("Failure");
+			expect(result.calls).toEqual({ google: 0, discord: 0 });
+		});
+	}
+
+	it("keeps expired claims and the publishing item protected", async () => {
+		await withReview({ a: note("a"), b: note("b") }, async (harness) => {
 			const [a, b] = [required(harness.items, "a"), required(harness.items, "b")];
 			await submit(harness, "approve", a);
-			const now = "2026-09-04T12:00:00.000Z";
-			const claimed = await Effect.runPromise(harness.store.claim(now, "2026-09-04T12:01:00.000Z"));
-			if (claimed === null) throw new Error("claim failed");
-			return { response: await submit(harness, "reject", b), after: await current(harness, b) };
+			const claim = await Effect.runPromise(
+				harness.store.claimExact(a.itemId, a.sourceHash, "2026-09-04T12:00:00.000Z", "2026-09-04T12:01:00.000Z"),
+			);
+			const sameItem = await submit(harness, "archive", a);
+			expect(sameItem.status).toBe(503);
+			const expired = await Effect.runPromise(
+				harness.store.archive(b.itemId, b.sourceHash, "2026-09-04T12:02:00.000Z").pipe(Effect.result),
+			);
+			expect(expired._tag).toBe("Failure");
+			expect(await current(harness, a)).toEqual(claim);
+			expect(await current(harness, b)).toEqual(b);
 		});
-		expect(result.response.status).toBe(503);
-		expect(result.response.body).toContain("<h1>Publication is paused</h1>");
-		expect(result.response.body).toContain("A publication is in progress or its delivery outcome is uncertain");
-		expect(result.after.status).toBe("pending_review");
-		expect(log).toEqual(["meeting-review action=reject outcome=paused code=store:write_failed"]);
 	});
+
+	for (const uncertain of [false, true]) {
+		it(`does not bypass ${uncertain ? "uncertain delivery" : "a claim owned by another store instance"} for another meeting`, async () => {
+			captureLog();
+			await withReview({ a: note("a"), b: note("b") }, async (harness) => {
+				const [a, b] = [required(harness.items, "a"), required(harness.items, "b")];
+				await submit(harness, "approve", a);
+				const now = "2026-09-04T12:00:00.000Z";
+				const claim = await Effect.runPromise(
+					harness.store.claimExact(a.itemId, a.sourceHash, now, "2026-09-04T12:01:00.000Z"),
+				);
+				if (!claim) throw Error("missing claim");
+				if (uncertain) {
+					await Effect.runPromise(harness.store.markFailure(claim, "google", "delivery_uncertain", null, now));
+					const before = await current(harness, a);
+					expect((await submit(harness, "archive", b)).status).toBe(503);
+					expect(await current(harness, a)).toEqual(before);
+				} else {
+					const config = makeConfig(dirname(dirname(harness.store.dbPath)));
+					const fresh = MeetingPublicationStore.layer(config).pipe(
+						Layer.provide(meetingPublicationTestWriteAuthorityLayer(config)),
+					);
+					const result = await Effect.runPromise(
+						Effect.scoped(
+							Effect.gen(function* () {
+								const store = yield* MeetingPublicationStore;
+								return yield* store.archive(b.itemId, b.sourceHash, now).pipe(Effect.result);
+							}).pipe(Effect.provide(fresh)),
+						),
+					);
+					expect(result._tag).toBe("Failure");
+					expect(await current(harness, a)).toEqual(claim);
+				}
+				expect(await current(harness, b)).toEqual(b);
+			});
+		});
+	}
 
 	it("reports a provider reconnect requirement as paused publication without echoing provider text", async () => {
 		const log = captureLog();

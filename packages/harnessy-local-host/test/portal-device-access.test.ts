@@ -60,6 +60,19 @@ it("requires exact HTTPS origin, paired cookie and page token; refuses native si
 	});
 	try {
 		const headers = { Host: "fixture.example", Origin: devices.origin, "Content-Type": "application/json" };
+		expect(
+			(await rawRequest(server.port, { path: "/v1/session/browser/start", method: "POST", headers, body: "{}" }))
+				.status,
+		).toBe(403);
+		expect((await rawRequest(server.port, { path: "/v1/session/pair", headers })).status).toBe(403);
+		for (const body of ["{}", '{"code":"invalid"}']) {
+			expect(
+				(await rawRequest(server.port, { path: "/v1/session/pair", method: "POST", headers, body })).status,
+			).toBe(401);
+		}
+		expect(
+			(await rawRequest(server.port, { path: "/v1/session/device", method: "POST", headers, body: "{}" })).status,
+		).toBe(401);
 		const code = devices.pair("Phone").url.split("#pair=")[1]!;
 		const pair = await rawRequest(server.port, {
 			path: "/v1/session/pair",
@@ -70,6 +83,26 @@ it("requires exact HTTPS origin, paired cookie and page token; refuses native si
 		expect(pair.status).toBe(200);
 		const cookie = String(pair.headers["set-cookie"]).split(";")[0]!;
 		const auth = { ...headers, Cookie: cookie, Authorization: `Bearer ${(pair.json as { token: string }).token}` };
+		const renewed = await rawRequest(server.port, {
+			path: "/v1/session/device",
+			method: "POST",
+			headers: { ...headers, Cookie: cookie },
+			body: "{}",
+		});
+		expect(renewed.status).toBe(200);
+		expect(renewed.headers["set-cookie"]).toBeUndefined();
+		expect(
+			(
+				await rawRequest(server.port, {
+					path: "/v1/terminal/sessions",
+					headers: {
+						...headers,
+						Cookie: cookie,
+						Authorization: `Bearer ${(renewed.json as { token: string }).token}`,
+					},
+				})
+			).status,
+		).toBe(200);
 		expect((await rawRequest(server.port, { path: "/v1/terminal/sessions", headers: auth })).status).toBe(200);
 		expect(
 			(await rawRequest(server.port, { path: "/v1/terminal/sessions", headers: { ...auth, Cookie: "" } })).status,

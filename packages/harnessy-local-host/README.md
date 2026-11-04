@@ -734,3 +734,34 @@ same-UID/root replacement or attest ACL/network-filesystem behavior.
 No SDK, source edits, live-state access, credentials, tokens, providers,
 notifications, schedules, or activation are part of this command. Live use of
 the retained final directory still needs the separate cutover and rollback gates.
+
+
+## macOS portal launcher
+
+The local-host package includes the AppleScript source and its installer. After
+you install the release command launchers, create a new app bundle with:
+
+```sh
+node /absolute/install/service/node_modules/@harnessy/local-host/resources/macos/install-launcher.mjs \
+  --target /absolute/Applications/Harnessy.app \
+  --portal /absolute/install/bin/harnessy-portal \
+  --state-dir /absolute/portal-state
+```
+
+Use the same state directory and port as the running portal. The default port
+is 8790; use `--port` to change it. The parent directory must exist, and the app
+bundle must not exist. The installer refuses to replace an existing app. It
+does not restart the portal, open a browser or register a URL handler. Open the
+app in Finder to register its `harnessy` URL scheme. Keep the previous app until
+you verify sign-in. To roll back, remove the new app and open the previous app.
+
+The app stores fixed command paths, not credentials. A sign-in link passes only
+an expiring request ID to `harnessy-portal signin`. The CLI reads the installation
+proof from the configured state directory. Sign-in completes in the waiting
+browser tab. macOS compilation and helper argument tests run in CI.
+
+Persistent terminal tests require Herdr 0.9.5 and tmux on `PATH`. The Linux CI
+setup downloads Herdr from its versioned release and verifies its SHA-256. It
+installs tmux from the runner distribution. `./test.sh` uses a short private
+home under `/tmp` so that Herdr sockets fit the macOS Unix socket path limit.
+Tests use distinct session names and stop only their own backend sessions.

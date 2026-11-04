@@ -314,8 +314,10 @@ export class ManagedTerminal implements TerminalBackend {
 			if (runner !== "shell" && !RUNNERS.includes(runner)) throw new TerminalError("invalid_runner");
 			const executable = runner === "shell" ? (this.env.SHELL ?? "/bin/zsh") : this.available(runner);
 			if (!executable) throw new TerminalError("runner_unavailable");
-			const project = runner === "shell" ? undefined : this.projects().find((p) => p.id === body.project);
-			if (runner !== "shell" && !project) throw new TerminalError("project_required");
+			const projectId = runner === "shell" ? "" : text(body.project ?? "", 500, true);
+			const project = projectId ? this.projects().find((p) => p.id === projectId) : undefined;
+			if (projectId && !project) throw new TerminalError("project_not_found");
+			if (!project && body.isolation === "worktree") throw new TerminalError("worktree_requires_project");
 			let cwd = project ? realpathSync(project.path) : this.cwd;
 			const row: RecordEntry = {
 				tmux,

@@ -107,7 +107,11 @@ describe("portal sources", () => {
 						status: "attention",
 						detail: "authentication",
 						checkedAt: FIXTURE_NOW.toISOString(),
-						action: { kind: "link", value: "harnessy:open:meeting-review", note: MEETING_RECONNECT_NOTE },
+						action: {
+							kind: "link",
+							value: "harnessy:open:meeting-google-reconnect",
+							note: MEETING_RECONNECT_NOTE,
+						},
 					},
 					expect.objectContaining({ id: "meeting.discord", status: "unknown", detail: "not_checked" }),
 				],
@@ -274,7 +278,7 @@ describe("portal sources", () => {
 		const fixture = await buildPortalHome("profiles");
 		writeFileSync(
 			fixture.configPath,
-			"fathom:\n  default_account: personal\n  accounts:\n    personal: {}\n    fresh: {}\n",
+			"fathom:\n  default_account: personal\n  poll_accounts: [personal, fresh]\n  accounts:\n    personal: {}\n    fresh: {}\n",
 		);
 		for (let index = 0; index < MAX_GWS_PROFILES + 3; index += 1)
 			mkdirSync(join(fixture.home, ".config", `gws-extra-${String(index).padStart(2, "0")}`));

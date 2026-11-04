@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -89,6 +92,7 @@ const fixture = (mode: MeetingPublicationReviewMode = "full", supported = true) 
 		completions: [] as Array<string>,
 		cancels: 0,
 		healthy: false,
+		healthCheckFails: false,
 		checks: 0,
 		failure: false,
 		authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -117,7 +121,7 @@ const fixture = (mode: MeetingPublicationReviewMode = "full", supported = true) 
 		Layer.succeed(MeetingPublicationGoogle, {
 			preflight: Effect.sync(() => {
 				state.checks += 1;
-				return state.healthy;
+				return state.healthy && !state.healthCheckFails;
 			}),
 			upsert: () => Effect.die("reconnect must not publish"),
 			close: Effect.void,
@@ -210,6 +214,82 @@ const login = async (origin: string, statePath: string) => {
 };
 
 describe("same-owner Google reconnect review", () => {
+	for (const restarting of [false, true])
+		it.runIf(process.env.HARNESSY_RECONNECT_BROWSER === "1")(
+			`submits real browser forms through consent and verification without publishing (restart=${restarting})`,
+			async () => {
+				const f = fixture();
+				await f.run(async (origin, service, store) => {
+					const [item] = await Effect.runPromise(store.list());
+					if (!item) throw new Error("missing fixture item");
+					await Effect.runPromise(service.approve(item.itemId, item.sourceHash));
+					const before = await Effect.runPromise(store.list());
+					if (restarting) {
+						const previous = await login(origin, f.config.statePath as string);
+						await call(origin, "/google-reconnect/start", previous.cookie, { csrf: previous.csrf });
+						await call(origin, "/google-reconnect/callback?state=fixture_reconnect_state_1&code=DISCARDED_CODE");
+					}
+					const code = "b".repeat(43);
+					writeFileSync(
+						join(
+							f.config.statePath as string,
+							`meeting-review-exchange-${createHash("sha256").update(code).digest("hex")}`,
+						),
+						"",
+						{ mode: 0o600 },
+					);
+					const { stdout } = await promisify(execFile)(
+						process.execPath,
+						[
+							join(import.meta.dirname, "../../../scripts/check-meeting-reconnect-browser.mjs"),
+							`${origin}/exchange?code=${code}&next=google-reconnect`,
+							restarting ? "restart" : "start",
+							item.itemId,
+						],
+						{ timeout: 45000 },
+					);
+					expect(stdout).toContain("Browser reconnect passed");
+					expect(f.state.starts).toBe(restarting ? 2 : 1);
+					expect(f.state.cancels).toBe(restarting ? 1 : 0);
+					expect(f.state.completions).toEqual(["BROWSER_FIXTURE_CODE"]);
+					expect(await Effect.runPromise(store.list())).toEqual(before);
+				});
+			},
+			50000,
+		);
+
+	it("accepts only the fixed reconnect destination and lands on a mutation-free authenticated page", async () => {
+		const f = fixture();
+		await f.run(async (origin, _service, store) => {
+			const before = await Effect.runPromise(store.list());
+			const code = "a".repeat(43);
+			writeFileSync(
+				join(
+					f.config.statePath as string,
+					`meeting-review-exchange-${createHash("sha256").update(code).digest("hex")}`,
+				),
+				"",
+				{ mode: 0o600 },
+			);
+			for (const next of ["https://evil.example", "google-reconnect&next=google-reconnect", "/google-reconnect"])
+				expect((await call(origin, `/exchange?code=${code}&next=${next}`)).status).toBe(400);
+			const exchange = await call(origin, `/exchange?code=${code}&next=google-reconnect`);
+			expect(exchange.status).toBe(200);
+			expect(exchange.body).toContain("0;url=/google-reconnect");
+			const cookie = exchange.headers.get("set-cookie")?.split(";", 1)[0];
+			expect(cookie).toBeDefined();
+			const page = await call(origin, "/google-reconnect", cookie);
+			expect(page.status).toBe(200);
+			expect(page.headers.get("referrer-policy")).toBe("same-origin");
+			expect(page.body).toContain('action="/google-reconnect/start"');
+			expect(page.body).toContain("owner@example.test");
+			expect((await call(origin, "/", cookie)).body).toContain("Not checked");
+			expect(f.state.starts).toBe(0);
+			expect(await Effect.runPromise(store.list())).toEqual(before);
+			expect((await call(origin, `/exchange?code=${code}&next=google-reconnect`)).status).toBe(401);
+			expect((await call(origin, "/google-reconnect")).status).toBe(401);
+		});
+	});
 	it("keeps callback inert and completes only from the original authenticated CSRF session without publishing or reapproving", async () => {
 		const f = fixture();
 		await f.run(async (origin, service, store) => {
@@ -225,6 +305,7 @@ describe("same-owner Google reconnect review", () => {
 			const session = await login(origin, f.config.statePath as string);
 			const started = await call(origin, "/google-reconnect/start", session.cookie, { csrf: session.csrf });
 			expect(started.status).toBe(200);
+			expect(started.body).toContain("0;url=https://accounts.google.com/");
 			expect(started.headers.get("content-security-policy")).toContain("form-action 'self'");
 			expect(started.body).toContain('href="https://accounts.google.com/');
 			expect(started.headers.get("location")).toBeNull();
@@ -233,6 +314,7 @@ describe("same-owner Google reconnect review", () => {
 				"/google-reconnect/callback?state=fixture_reconnect_state_1&code=SECRET_CODE",
 			);
 			expect(callback.status).toBe(200);
+			expect(callback.body).toContain("0;url=/google-reconnect/confirm");
 			expect(callback.body).not.toContain("SECRET_CODE");
 			expect(callback.body).not.toContain(session.csrf);
 			expect(callback.headers.get("referrer-policy")).toBe("no-referrer");
@@ -259,9 +341,10 @@ describe("same-owner Google reconnect review", () => {
 			expect(confirm.status).toBe(200);
 			expect(confirm.body).not.toContain("SECRET_CODE");
 			expect(confirm.headers.get("referrer-policy")).toBe("same-origin");
-			expect((await call(origin, "/google-reconnect/complete", session.cookie, { csrf: session.csrf })).status).toBe(
-				200,
-			);
+			const completed = await call(origin, "/google-reconnect/complete", session.cookie, { csrf: session.csrf });
+			expect(completed.status).toBe(200);
+			expect(completed.body).toContain("Google connected");
+			expect(completed.body).toContain("passed its connection check");
 			expect(f.state.completions).toEqual(["SECRET_CODE"]);
 			expect(await Effect.runPromise(store.list())).toEqual(before);
 			expect(
@@ -270,6 +353,32 @@ describe("same-owner Google reconnect review", () => {
 			expect((await call(origin, "/google-reconnect/complete", session.cookie, { csrf: session.csrf })).status).toBe(
 				409,
 			);
+		});
+	});
+
+	it("requires authentication, exact Origin and CSRF to restart; rejects the abandoned callback", async () => {
+		const f = fixture();
+		await f.run(async (origin, _service, store) => {
+			const before = await Effect.runPromise(store.list());
+			const old = await login(origin, f.config.statePath as string);
+			await call(origin, "/google-reconnect/start", old.cookie, { csrf: old.csrf });
+			const fresh = await login(origin, f.config.statePath as string);
+			expect((await call(origin, "/google-reconnect/restart", undefined, { csrf: fresh.csrf })).status).toBe(401);
+			for (const requestOrigin of ["null", "https://example.test"])
+				expect(
+					(await call(origin, "/google-reconnect/restart", fresh.cookie, { csrf: fresh.csrf }, requestOrigin))
+						.status,
+				).toBe(403);
+			expect((await call(origin, "/google-reconnect/restart", fresh.cookie, { csrf: old.csrf })).status).toBe(403);
+			expect(f.state.cancels).toBe(0);
+			expect((await call(origin, "/google-reconnect/restart", fresh.cookie, { csrf: fresh.csrf })).status).toBe(200);
+			expect(f.state.cancels).toBe(1);
+			expect(f.state.starts).toBe(2);
+			expect(
+				(await call(origin, "/google-reconnect/callback?state=fixture_reconnect_state_1&code=old")).status,
+			).toBe(409);
+			expect(f.state.completions).toEqual([]);
+			expect(await Effect.runPromise(store.list())).toEqual(before);
 		});
 	});
 	it("rejects malformed, wrong-state, replayed and oversized callbacks without provider exchange", async () => {
@@ -334,9 +443,24 @@ describe("same-owner Google reconnect review", () => {
 				const s = await login(origin, f.config.statePath as string);
 				expect((await call(origin, "/", s.cookie)).body).not.toContain('action="/google-reconnect/start"');
 				expect((await call(origin, "/google-reconnect/start", s.cookie, { csrf: s.csrf })).status).toBe(404);
+				expect((await call(origin, "/google-reconnect", s.cookie)).status).toBe(404);
 				expect(f.state.starts).toBe(0);
 			});
 		});
+	it("does not call Google connected when consent succeeds but the health check fails", async () => {
+		const f = fixture();
+		f.state.healthCheckFails = true;
+		await f.run(async (origin) => {
+			const s = await login(origin, f.config.statePath as string);
+			await call(origin, "/google-reconnect/start", s.cookie, { csrf: s.csrf });
+			await call(origin, "/google-reconnect/callback?state=fixture_reconnect_state_1&code=valid");
+			const result = await call(origin, "/google-reconnect/complete", s.cookie, { csrf: s.csrf });
+			expect(result.status).toBe(200);
+			expect(result.body).toContain("Google connection could not be verified");
+			expect(result.body).not.toContain("Google connected");
+			expect((await call(origin, "/", s.cookie)).body).toContain("Could not verify");
+		});
+	});
 	it("rejects unsafe authorization URLs without rendering them", async () => {
 		const f = fixture();
 		f.state.authorizationUrl = "https://evil.example/steal";

@@ -166,6 +166,66 @@ const retryError = (stage: "google" | "discord") =>
 	new MeetingPublicationProviderError({ stage, code: "timeout", retryable: true, retryAfterSeconds: 30 });
 
 describe("MeetingPublicationService worker failure reminders", () => {
+	it("retains four approvals through failed authentication and publishes each once after recovery", async () => {
+		const { notePath, state, run } = fixture();
+		for (let index = 1; index < 4; index += 1)
+			writeFileSync(`${notePath}-${index}.md`, markdown.replace("weekly-sync", `sync-${index}`));
+		let googleWrites = 0;
+		let discordWrites = 0;
+		state.google = Effect.sync(() => {
+			googleWrites += 1;
+		});
+		state.discord = Effect.sync(() => {
+			discordWrites += 1;
+		});
+		const approved = await run(
+			Effect.gen(function* () {
+				const service = yield* MeetingPublicationService;
+				const store = yield* MeetingPublicationStore;
+				const scan = yield* service.scan();
+				for (const id of scan.itemIds) {
+					const item = yield* store.get(id);
+					if (item === null) return yield* Effect.die("missing item");
+					yield* service.approve(id, item.sourceHash);
+				}
+				return yield* store.list();
+			}),
+		);
+		expect(approved).toHaveLength(4);
+		state.preflight = Effect.fail(
+			new MeetingPublicationProviderError({
+				stage: "google",
+				code: "authentication_failed",
+				retryable: false,
+				retryAfterSeconds: null,
+			}),
+		);
+		const tick = Effect.gen(function* () {
+			const result = yield* (yield* MeetingPublicationService).worker();
+			return { result, items: yield* (yield* MeetingPublicationStore).list() };
+		});
+		expect((await run(tick)).items).toEqual(approved);
+		state.now += 60_000;
+		expect((await run(tick)).items).toEqual(approved);
+		expect([googleWrites, discordWrites]).toEqual([0, 0]);
+		state.preflight = Effect.succeed(true);
+		state.now += 60_000;
+		const recovered = await run(tick);
+		expect(recovered.result.published).toBe(4);
+		for (const item of recovered.items) {
+			const original = approved.find((entry) => entry.itemId === item.itemId)!;
+			expect(item).toMatchObject({
+				status: "published",
+				approvedAt: original.approvedAt,
+				approvedHash: original.approvedHash,
+				googleDocId: "doc-id",
+				discordMessageId: "message-id",
+			});
+		}
+		expect((await run(tick)).result.published).toBe(0);
+		expect([googleWrites, discordWrites]).toEqual([4, 4]);
+	});
+
 	it("coalesces only safe unique failure stages without forwarding stored error details", async () => {
 		const { notePath, state, run } = fixture();
 		writeFileSync(`${notePath}-other.md`, markdown.replace("weekly-sync", "other-sync"));

@@ -247,6 +247,7 @@ describe("harnessy-portal client errors", () => {
 		const stateDir = preparePortalStateDir(join(tempDir("state"), "portal"), { create: true });
 		readOrCreatePortalInstallToken(stateDir);
 		const responders: ReadonlyArray<[Parameters<typeof createServer>[1], string]> = [
+			[(_request, response) => response.writeHead(401).end('{"error":"unauthorized"}'), "portal_unauthorized"],
 			[(_request, response) => response.writeHead(500).end('{"error":"internal_error"}'), "portal_request_failed"],
 			[(_request, response) => response.writeHead(200).end("<html>"), "portal_response_invalid"],
 			[

@@ -12,6 +12,7 @@
  */
 
 import type { PortalHandoffService } from "../../handoff.ts";
+import type { InboxSelection } from "../../inbox-revision.ts";
 import { SCREENS } from "./router.ts";
 
 export const TOKEN_KEY = "harnessy.portal.session";
@@ -206,6 +207,13 @@ export class SessionClient {
 	async generateBrief(): Promise<ApiResult> {
 		return this.#request("/v1/life/brief/generate", "POST");
 	}
+	async closeWeeklyDraft(runHash: string, reason: string): Promise<ApiResult> {
+		return this.#request(`/v1/life/weekly/${runHash}/close`, "POST", JSON.stringify({ reason }));
+	}
+
+	async inboxAction(action: "archive" | "restore", items: InboxSelection[]): Promise<ApiResult> {
+		return this.#request("/v1/inbox/action", "POST", JSON.stringify({ action, items }));
+	}
 
 	async terminalAction(body: Record<string, unknown>): Promise<ApiResult> {
 		return this.#request("/v1/terminal/action", "POST", JSON.stringify(body));
@@ -231,6 +239,20 @@ export class SessionClient {
 				return { kind: "signed_out" };
 			}
 			if (response.status !== 200) {
+				if (path === "/v1/inbox/action")
+					return {
+						kind: "error",
+						message:
+							"Could not update the Inbox. Refresh and try again; an item may have changed. Your selection is retained.",
+					};
+				if (path.startsWith("/v1/life/weekly/") && method === "POST")
+					return {
+						kind: "error",
+						message:
+							response.status === 409
+								? "This draft changed or could not be closed. Refresh its status before trying again."
+								: "Could not close this draft. Your reason is retained; check the connection and try again.",
+					};
 				if (path.startsWith("/v1/terminal/")) {
 					const failure = (await response.json()) as { error?: string };
 					const messages: Record<string, string> = {

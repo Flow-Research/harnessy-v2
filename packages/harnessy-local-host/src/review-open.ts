@@ -176,9 +176,10 @@ export const runReviewOpen = async (
 		process.exit(1);
 	};
 	const statePath = argv[0] === "--state-path" ? argv[1] : undefined;
+	const reconnect = profile === meetingReviewOpenProfile && argv.length === 3 && argv[2] === "--reconnect-google";
 	if (
 		statePath === undefined ||
-		argv.length !== 2 ||
+		(argv.length !== 2 && !reconnect) ||
 		!isAbsolute(statePath) ||
 		resolve(statePath) !== statePath ||
 		parse(statePath).root === statePath
@@ -310,7 +311,7 @@ export const runReviewOpen = async (
 				"<!doctype html>",
 				'<meta charset="utf-8">',
 				'<meta name="referrer" content="no-referrer">',
-				`<meta http-equiv="refresh" content="0;url=${origin}${profile.codeRoute}${code}">`,
+				`<meta http-equiv="refresh" content="0;url=${origin}${profile.codeRoute}${code}${reconnect ? "&amp;next=google-reconnect" : ""}">`,
 				`<title>${profile.title}</title>`,
 				"",
 			].join("\n"),

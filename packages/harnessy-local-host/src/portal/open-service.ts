@@ -25,7 +25,7 @@ export const createPortalServiceOpener =
 			args = [join(dirname(fileURLToPath(import.meta.resolve("@harnessy/core"))), "cli.js"), "web"];
 		} else {
 			const config =
-				service === "meeting-review"
+				service === "meeting-review" || service === "meeting-google-reconnect"
 					? readMeetingPublicationConfig({
 							homeRoot: options.homeRoot,
 							configPath,
@@ -41,9 +41,13 @@ export const createPortalServiceOpener =
 						: null;
 			if (statePath === null) throw new Error("service_not_configured");
 			args = [
-				join(dirname(options.cliPath), `${service}-open-cli${options.cliPath.endsWith(".ts") ? ".ts" : ".js"}`),
+				join(
+					dirname(options.cliPath),
+					`${service === "meeting-google-reconnect" ? "meeting-review" : service}-open-cli${options.cliPath.endsWith(".ts") ? ".ts" : ".js"}`,
+				),
 				"--state-path",
 				statePath,
+				...(service === "meeting-google-reconnect" ? ["--reconnect-google"] : []),
 			];
 		}
 		await new Promise<void>((resolveOpen, rejectOpen) => {

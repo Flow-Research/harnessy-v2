@@ -207,7 +207,7 @@ export const TopBar = ({
 }) => (
 	<header className="top-bar">
 		<nav className="crumbs" aria-label="Breadcrumb">
-			Harnessy /{" "}
+			<span className="crumb-root">Harnessy / </span>
 			{subPageTitle(screen, sub) === undefined ? (
 				<span className="crumb-current" aria-current="page">
 					{SCREEN_TITLES[screen]}
@@ -231,7 +231,13 @@ export const TopBar = ({
 				Signed in until {clockTime(sessionExpiresAt)}
 			</span>
 		)}
-		<button type="button" className="search-button" onClick={onOpenPalette} aria-keyshortcuts="Meta+K Control+K">
+		<button
+			type="button"
+			className="search-button"
+			onClick={onOpenPalette}
+			aria-label="Search or copy"
+			aria-keyshortcuts="Meta+K Control+K"
+		>
 			<Search size={14} strokeWidth={1.5} aria-hidden="true" />
 			<span>Search or copy…</span>
 			<kbd>⌘K</kbd>

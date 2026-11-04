@@ -13,10 +13,12 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 
 import {
+	type InboxListData,
 	PORTAL_SCHEMA_VERSION,
 	PortalApiSchemas,
 	portalResponseSchemaId,
 	repairPortalTiles,
+	type TileResult,
 } from "@harnessy/core/read-model";
 
 import { bearerSecret, PortalSessions } from "./auth.ts";
@@ -24,6 +26,8 @@ import type { createBriefGeneration } from "./brief-generation.ts";
 import { BrowserSignIn } from "./browser-signin.ts";
 import type { DeviceAccess } from "./device-access.ts";
 import type { PortalHandoffService } from "./handoff.ts";
+import { type InboxSelection, inboxRevision } from "./inbox-revision.ts";
+import type { InboxState } from "./inbox-state.ts";
 import { buildPortalOpenApi } from "./openapi.ts";
 import type { PortalPageAssets } from "./page-assets.ts";
 import { matchPortalRoute, PORTAL_ROUTES, type PortalRoute, type PortalRouteParams } from "./routes.ts";
@@ -58,6 +62,7 @@ export type PortalLogEntry =
 	| { readonly kind: "shutdown" };
 
 export interface PortalServerOptions {
+	readonly inboxState?: InboxState;
 	readonly installToken: string;
 	readonly sources: PortalSources;
 	readonly version: string;
@@ -74,6 +79,8 @@ export interface PortalServerOptions {
 	readonly devices?: DeviceAccess;
 	readonly remote?: boolean;
 	readonly briefGeneration?: ReturnType<typeof createBriefGeneration>;
+	readonly closeWeeklyDraft?: (runHash: string, reason: string) => void;
+	readonly inspectWeeklyRun?: (runHash: string) => unknown;
 }
 
 export interface PortalServer {
@@ -185,7 +192,38 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		params: PortalRouteParams,
 		now: number,
 	): Promise<unknown> => {
-		const tiles = await options.sources[data.source](params);
+		let tiles = await options.sources[data.source](params);
+		if (data.source === "inbox" && options.inboxState) {
+			const validated = repairPortalTiles(PortalApiSchemas.Inbox, {
+				schema: portalResponseSchemaId("inbox"),
+				generatedAt: new Date(now).toISOString(),
+				tiles,
+			});
+			if (!validated) throw new RequestRefused(500, "response_invalid");
+			const source = (validated.value as { tiles: { inbox: TileResult<InboxListData> } }).tiles;
+			tiles = source;
+			if (source.inbox.state === "ok" && source.inbox.data) {
+				const archived = options.inboxState.read();
+				const items = source.inbox.data.items.filter(
+					(item) => (archived.get(item.key) === inboxRevision(item)) === (path === "/v1/inbox/archived"),
+				);
+				tiles = {
+					...source,
+					inbox: {
+						...source.inbox,
+						data: {
+							...source.inbox.data,
+							items,
+							counts: {
+								action_required: items.filter((item) => item.severity === "action_required").length,
+								attention: items.filter((item) => item.severity === "attention").length,
+								info: items.filter((item) => item.severity === "info").length,
+							},
+						},
+					},
+				};
+			}
+		}
 		// A tile that fails its own schema becomes an `error` tile; only a broken envelope is a 500.
 		const checked = repairPortalTiles(PortalApiSchemas[route.schema!], {
 			schema: portalResponseSchemaId(data.name),
@@ -219,6 +257,54 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		const authorization = request.headers.authorization;
 		const installProof = () => sessions.isInstallProof(authorization, origin, route.method, path);
 		switch (route.auth) {
+			case "inbox-action": {
+				if (!sessions.isPageToken(bearerSecret(authorization))) throw new RequestRefused(401, "unauthorized");
+				if (request.headers.origin !== origin) throw new RequestRefused(403, "origin_required");
+				requireJson(request);
+				let value: unknown;
+				try {
+					value = JSON.parse(body.toString("utf8"));
+				} catch {
+					throw new RequestRefused(400, "invalid_body");
+				}
+				if (!value || typeof value !== "object" || Array.isArray(value))
+					throw new RequestRefused(400, "invalid_body");
+				const fields = value as Record<string, unknown>;
+				if (
+					Object.keys(fields).length !== 2 ||
+					!["archive", "restore"].includes(String(fields.action)) ||
+					!Array.isArray(fields.items) ||
+					fields.items.length < 1 ||
+					fields.items.length > 100 ||
+					fields.items.some(
+						(item) =>
+							!item ||
+							typeof item !== "object" ||
+							Object.keys(item).length !== 2 ||
+							typeof item.key !== "string" ||
+							item.key.length > 500 ||
+							typeof item.revision !== "string" ||
+							item.revision.length > 16000,
+					)
+				)
+					throw new RequestRefused(400, "invalid_body");
+				if (!options.inboxState) throw new RequestRefused(503, "inbox_state_unavailable");
+				const source = (await options.sources.inbox({})) as { inbox: TileResult<InboxListData> };
+				if (source.inbox.state !== "ok" || !source.inbox.data) throw new RequestRefused(503, "inbox_unavailable");
+				try {
+					options.inboxState.update(
+						fields.action as "archive" | "restore",
+						fields.items as InboxSelection[],
+						source.inbox.data.items,
+					);
+				} catch {
+					throw new RequestRefused(409, "inbox_change_failed");
+				}
+				// Drain reads started before this write before invalidating their cache.
+				await Promise.allSettled(inFlight.values());
+				cache.clear();
+				return { ok: true };
+			}
 			case "none":
 				return route.schema === null
 					? openApi
@@ -286,6 +372,45 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 					if (error instanceof TerminalError) throw new RequestRefused(400, error.message);
 					throw error;
 				}
+			}
+			case "weekly": {
+				if (!sessions.isPageToken(bearerSecret(authorization))) throw new RequestRefused(401, "unauthorized");
+				if (route.method === "GET") {
+					if (!options.inspectWeeklyRun) throw new RequestRefused(503, "weekly_inspection_unavailable");
+					try {
+						return options.inspectWeeklyRun(params.runId!);
+					} catch {
+						throw new RequestRefused(404, "weekly_run_missing");
+					}
+				}
+				if (request.headers.origin !== origin) throw new RequestRefused(403, "origin_required");
+				requireJson(request);
+				let value: unknown;
+				try {
+					value = JSON.parse(body.toString("utf8"));
+				} catch {
+					throw new RequestRefused(400, "invalid_body");
+				}
+				if (!value || typeof value !== "object" || Array.isArray(value))
+					throw new RequestRefused(400, "invalid_body");
+				const fields = value as Record<string, unknown>;
+				if (
+					Object.keys(fields).length !== 1 ||
+					typeof fields.reason !== "string" ||
+					!fields.reason.trim() ||
+					fields.reason.length > 200
+				)
+					throw new RequestRefused(400, "invalid_reason");
+				if (!options.closeWeeklyDraft) throw new RequestRefused(503, "weekly_close_unavailable");
+				try {
+					options.closeWeeklyDraft(params.runId!, fields.reason.trim());
+				} catch {
+					throw new RequestRefused(409, "weekly_draft_changed");
+				}
+				// An older read must finish before the client refreshes the closed run.
+				await Promise.allSettled(inFlight.values());
+				cache.clear();
+				return { closed: true };
 			}
 			case "brief": {
 				if (!sessions.isPageToken(bearerSecret(authorization))) throw new RequestRefused(401, "unauthorized");
@@ -425,7 +550,10 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 			respond(response, 405, { error: "method_not_allowed" }, { Allow: route.method });
 			return;
 		}
-		const body = await readBody(request, route.auth === "terminal" ? 128 * 1024 : PORTAL_MAX_BODY_BYTES);
+		const body = await readBody(
+			request,
+			route.auth === "inbox-action" ? 1024 * 1024 : route.auth === "terminal" ? 128 * 1024 : PORTAL_MAX_BODY_BYTES,
+		);
 		respond(response, 200, await authorize(route, request, body, path, params));
 	};
 

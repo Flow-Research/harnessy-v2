@@ -59,4 +59,27 @@ describe("Worth Reading", () => {
 			"Local-first — “private” & safe",
 		);
 	});
+	it("keeps a title-only article clickable without an empty description and preserves prose links", async () => {
+		const container = document.createElement("div");
+		const root = createRoot(container);
+		try {
+			await act(async () =>
+				root.render(
+					<WorthReading
+						blocks={parseMarkdown(
+							"Reading context.\n\n- [Title only](https://example.com/title)\n- Explore https://example.com/context",
+						)}
+					/>,
+				),
+			);
+			expect(container.textContent).toContain("Reading context.");
+			expect(container.querySelectorAll(".reading-description")).toHaveLength(0);
+			expect([...container.querySelectorAll("a")].map((a) => a.href)).toEqual([
+				"https://example.com/title",
+				"https://example.com/context",
+			]);
+		} finally {
+			await act(async () => root.unmount());
+		}
+	});
 });

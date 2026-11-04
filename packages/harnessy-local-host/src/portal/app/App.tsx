@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { CommandChip, HandoffProvider } from "./components/actions.tsx";
 import { BrowserSignIn } from "./components/BrowserSignIn.tsx";
+import { WeeklyDraftProvider } from "./components/CloseWeeklyDraft.tsx";
 import { ErrorBoundary, ScreenFailed } from "./components/ErrorBoundary.tsx";
 import { BriefGenerationProvider } from "./components/GenerateBrief.tsx";
 import { Palette, type PaletteEntry, screenEntries } from "./components/Palette.tsx";
@@ -122,7 +123,7 @@ const ScreenView = ({
 		case "terminal":
 			return <TerminalScreen client={client} initialSelected={rest[0]} />;
 		case "inbox":
-			return <InboxScreen selectedKey={rest[0]} now={now} />;
+			return <InboxScreen selectedKey={rest[0]} now={now} client={client} />;
 		case "today":
 			return <TodayScreen rest={rest} now={now} />;
 		case "tasks":
@@ -298,9 +299,11 @@ export const App = ({
 	) : (
 		<HandoffProvider open={(service) => client.open(service)}>
 			<BriefGenerationProvider generate={() => client.generateBrief()}>
-				<QuickActions client={client}>
-					<SignedIn location={location} client={client} />
-				</QuickActions>
+				<WeeklyDraftProvider close={(run, reason) => client.closeWeeklyDraft(run, reason)}>
+					<QuickActions client={client}>
+						<SignedIn location={location} client={client} />
+					</QuickActions>
+				</WeeklyDraftProvider>
 			</BriefGenerationProvider>
 		</HandoffProvider>
 	);

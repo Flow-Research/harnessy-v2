@@ -9,7 +9,17 @@ import type { PortalSources } from "./sources.ts";
  * is never sent). `code`: a one-time code and the exact portal Origin.
  * `read`: a page token or a client proof.
  */
-export type PortalRouteAuth = "none" | "challenge" | "install" | "code" | "read" | "open" | "brief" | "terminal";
+export type PortalRouteAuth =
+	| "none"
+	| "challenge"
+	| "install"
+	| "code"
+	| "read"
+	| "open"
+	| "brief"
+	| "terminal"
+	| "weekly"
+	| "inbox-action";
 
 /** One path parameter: the pattern its value must match whole, and an example for the OpenAPI document. */
 export interface PortalRouteParam {
@@ -244,6 +254,41 @@ export const matchPortalRoute = (
 
 /** Every portal route. The server, the OpenAPI document and the non-writer test all use this table. */
 export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [
+	{
+		method: "GET",
+		path: "/v1/inbox/archived",
+		operationId: "archivedInbox",
+		summary: "Current alerts archived by the owner",
+		auth: "read",
+		schema: "Inbox",
+		data: { name: "inbox", source: "inbox" },
+	},
+	{
+		method: "POST",
+		path: "/v1/inbox/action",
+		operationId: "inboxAction",
+		summary: "Archive or restore selected alert versions without changing their sources",
+		auth: "inbox-action",
+		schema: null,
+	},
+	{
+		method: "GET",
+		path: "/v1/life/weekly/{runId}/status",
+		params: { runId: { pattern: "^[a-f0-9]{64}$", description: "Weekly run hash", example: "a".repeat(64) } },
+		operationId: "weeklyRunStatus",
+		summary: "Read bounded weekly failure evidence",
+		auth: "weekly",
+		schema: null,
+	},
+	{
+		method: "POST",
+		path: "/v1/life/weekly/{runId}/close",
+		params: { runId: { pattern: "^[a-f0-9]{64}$", description: "Weekly run hash", example: "a".repeat(64) } },
+		operationId: "closeWeeklyDraft",
+		summary: "Mark a completed weekly draft superseded, retaining its history",
+		auth: "weekly",
+		schema: null,
+	},
 	{
 		method: "GET",
 		path: "/v1/terminal/sessions",

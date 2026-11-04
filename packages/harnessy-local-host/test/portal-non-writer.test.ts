@@ -193,14 +193,18 @@ describe("portal non-writer regression", () => {
 			const pageOnly =
 				path.startsWith("/v1/terminal/") ||
 				path.startsWith("/v1/open/") ||
-				path.startsWith("/v1/life/brief/generat");
+				path.startsWith("/v1/life/brief/generat") ||
+				/^\/v1\/life\/weekly\/[^/]+\/(status|close)$/u.test(path) ||
+				path === "/v1/inbox/action";
 			expect([method, path, response.status]).toEqual([method, path, pageOnly ? 401 : 200]);
 			expect(response.text).not.toContain(CANARY);
 			expect(response.headers["content-security-policy"]).toBe(PORTAL_CSP);
 			if (path === "/v1/session/code") code = (response.json as { code: string }).code;
 			called.push(`${method} ${path}`);
 		}
-		expect(called).toHaveLength(26);
+		expect(called).toHaveLength(operations.length);
+		expect(called).toContain("POST /v1/inbox/action");
+		expect(called.some((operation) => /^POST \/v1\/life\/weekly\/.+\/close$/u.test(operation))).toBe(true);
 		// The page files are served from memory: they spawn nothing and open nothing per request.
 		for (const path of PORTAL_PAGE_PATHS) {
 			const response = await rawRequest(port, { path });
@@ -230,9 +234,9 @@ describe("portal non-writer regression", () => {
 		const canaries = fixture.canaries.map((path) => realpathSync(path));
 		expect(() => assertNonWriterRecords(records, canaries)).not.toThrow();
 		const spawns = records.filter((entry) => entry.kind === "spawn");
-		// The health, inbox and jobs routes each probe every fixed label once (answered by the recorder,
+		// Health, active inbox, archived inbox and jobs each probe every fixed label once (answered by the recorder,
 		// never run); elsewhere launchd does not exist and nothing spawns.
-		expect(spawns).toHaveLength(process.platform === "darwin" ? PORTAL_SERVICE_LABELS.length * 3 : 0);
+		expect(spawns).toHaveLength(process.platform === "darwin" ? PORTAL_SERVICE_LABELS.length * 4 : 0);
 		// Liveness probes reached only the loopback service ports, and each was refused by the recorder.
 		const connects = records.filter((entry) => entry.kind === "connect");
 		expect(connects.length).toBeGreaterThan(0);

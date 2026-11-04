@@ -167,7 +167,10 @@ export const fathomAccountsTile = (summary: FathomSummary, now: Date): TileResul
 					invalid: counts?.invalid ?? null,
 					updatedAt: account.updatedAt,
 					ageSeconds: account.ageSeconds,
-					stale: account.stale,
+					stale:
+						summary.config.state === "ok" &&
+						summary.config.data!.pollAccounts.includes(account.account) &&
+						account.stale,
 				};
 			}),
 		},

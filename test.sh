@@ -2,8 +2,15 @@
 set -euo pipefail
 
 repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-temporary_base=${TMPDIR:-/tmp}
-test_home=$(mktemp -d "${temporary_base%/}/harnessy-test-home.XXXXXX")
+# Search integration tests use the real binary. Do not let isolated test homes
+# trigger concurrent tool downloads whose network timing changes test results.
+if ! command -v fd >/dev/null 2>&1 && ! command -v fdfind >/dev/null 2>&1; then
+    echo "Workspace tests require fd (or fdfind) on PATH. Install it before running ./test.sh." >&2
+    exit 1
+fi
+# Unix socket paths must fit macOS sun_path even when TMPDIR is long.
+# Keep the home private and isolated, but use a short physical path.
+test_home=$(mktemp -d /tmp/hsy-test.XXXXXX)
 
 cleanup() {
     rm -rf -- "$test_home"

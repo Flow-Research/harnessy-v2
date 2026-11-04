@@ -5,6 +5,7 @@
  * ledger has no read state, so the app never says "unread".
  */
 
+import { CloseWeeklyDraft } from "../components/CloseWeeklyDraft.tsx";
 import { ErrorBoundary, PlainTextFallback } from "../components/ErrorBoundary.tsx";
 import { GenerateBrief } from "../components/GenerateBrief.tsx";
 import { Card, StatusDot, TileState, type Tone, WithTile } from "../components/primitives.tsx";
@@ -33,10 +34,11 @@ const Brief = ({ text, date }: { text: string; date: string }) => {
 	const sectionAction = (title: string) => (
 		<button
 			type="button"
-			className="brief-section-action"
+			className="button button-sm brief-section-action"
 			onClick={(event) => {
-				const content =
-					event.currentTarget.parentElement?.querySelector<HTMLElement>(".brief-section-content")?.innerText ?? "";
+				// innerText keeps the rendered line breaks; textContent covers environments without layout.
+				const section = event.currentTarget.parentElement?.querySelector<HTMLElement>(".brief-section-content");
+				const content = section?.innerText || section?.textContent || "";
 				workOn({ text: content, source: `${date} · ${title}`, title });
 			}}
 		>
@@ -52,7 +54,7 @@ const Brief = ({ text, date }: { text: string; date: string }) => {
 		<div className="markdown" data-brief-source={date}>
 			{pinned.map((section, index) =>
 				section === undefined ? null : (
-					<Card key={PINNED_SECTIONS[index]} title={PINNED_SECTIONS[index]} className="card-raised">
+					<Card key={PINNED_SECTIONS[index]} title={PINNED_SECTIONS[index]} className="brief-pinned">
 						<div className="brief-section-content">
 							<MarkdownBlocks blocks={section.blocks} />
 						</div>
@@ -90,19 +92,20 @@ const WeeklyDraft = ({ runHash }: { runHash: string }) => {
 			<a className="back-link" href={routeHref("today")}>
 				← Back to today
 			</a>
-			<WithTile tile={draft.data?.tiles.draft}>
-				{(data) => (
-					<>
-						<h1 className="screen-title">Weekly plan draft · {data.periodId}</h1>
-						<p className="muted">
-							Read-only. Reconcile it with{" "}
-							<code className="inline-code">harnessy jarvis life weekly-reconcile</code> when you are done.
-						</p>
-						{data.truncated ? <p className="tone-attention">Only the first 64 KiB are shown.</p> : null}
-						<SafeMarkdown text={data.text} />
-					</>
-				)}
-			</WithTile>
+			{/^[a-f0-9]{64}$/u.test(runHash) ? <CloseWeeklyDraft key={runHash} runHash={runHash} /> : null}
+			{draft.data?.tiles.draft.state === "missing" ? (
+				<p className="muted">No reviewed draft is available for this attempt.</p>
+			) : (
+				<WithTile tile={draft.data?.tiles.draft}>
+					{(data) => (
+						<>
+							<h1 className="screen-title">Weekly plan draft · {data.periodId}</h1>
+							{data.truncated ? <p className="tone-attention">Only the first 64 KiB are shown.</p> : null}
+							<SafeMarkdown text={data.text} />
+						</>
+					)}
+				</WithTile>
+			)}
 			{draft.status === "loading" ? <p className="muted">Loading</p> : null}
 		</article>
 	);
@@ -180,12 +183,16 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 					) : brief.status === "loading" ? (
 						<p className="muted">Loading</p>
 					) : briefTile?.reason === "file_missing" ? (
-						<>
+						<div className="brief-recovery">
 							<p>Today’s briefing hasn’t been generated yet. Use Generate today’s brief to create it.</p>
 							<GenerateBrief missing />
-						</>
+						</div>
 					) : (
-						<TileState tile={briefTile} />
+						// Any other failure: the recovery action sits beside the problem it fixes.
+						<div className="brief-recovery">
+							<TileState tile={briefTile} />
+							<GenerateBrief missing />
+						</div>
 					)}
 				</article>
 				<div className="column-side">
@@ -235,9 +242,9 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 									<p className="muted">No weekly runs yet.</p>
 								) : (
 									<ul className="plain-list">
-										{weekly.runs.slice(0, 4).map((run) => (
+										{weekly.runs.map((run) => (
 											<li key={run.runHash} className="split-line">
-												{run.state === "drafted" ? (
+												{run.state === "drafted" || run.state === "reconciled" ? (
 													<a href={routeHref("today", "draft", run.runHash)}>{run.periodId}</a>
 												) : (
 													<span>{run.periodId}</span>
@@ -250,7 +257,13 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 																? "attention"
 																: "danger"
 													}
-													label={run.state}
+													label={
+														run.state === "reconciled"
+															? "closed"
+															: run.state === "drafted"
+																? "ready to review"
+																: run.state
+													}
 												/>
 											</li>
 										))}
@@ -281,9 +294,10 @@ const TodayBrief = ({ date, now }: { date: string | undefined; now: number }) =>
 							)}
 						</WithTile>
 					</Card>
-					{briefTile?.reason === "file_missing" ? null : (
+					{/* Regenerate lives here only while a brief is shown; otherwise it sits beside the problem. */}
+					{briefTile?.state !== "ok" || briefTile.data === undefined ? null : (
 						<Card title="Daily brief">
-							<GenerateBrief missing={briefTile?.state !== "ok"} />
+							<GenerateBrief missing={false} />
 						</Card>
 					)}
 					{brief.fetchedAt === undefined ? null : (

@@ -209,11 +209,10 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 			});
 	}
 
-	// Life weekly runs: the newest draft is ready to read; every other open run needs a decision.
+	// Completed drafts are review items, not failed jobs. Each has a route to its document and close action.
 	note("life.weeklyRuns", inputs.weeklyRuns);
 	if (inputs.weeklyRuns.state === "ok") {
 		const runs = inputs.weeklyRuns.data!.runs;
-		const newestDraft = runs.find((run) => run.state === "drafted");
 		for (const run of runs) {
 			if (run.state === "reconciled") continue;
 			const reconcile = copy(
@@ -222,18 +221,18 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 				"Irreversible. Replace … with your reason.",
 			);
 			const lifeOwner = { service: "life-orchestrator", port: null, label: "Life orchestrator" };
-			if (run === newestDraft && !run.incompleteReconciliation) {
+			if (run.state === "drafted" && !run.incompleteReconciliation) {
 				add({
 					key: `life-weekly:${run.periodId}:draft`,
 					severity: "attention",
 					source: "life",
-					title: `${run.periodId.slice(5)} weekly plan draft ready`,
-					context: "Read the draft before the next plan",
+					title: `Review weekly plan · ${run.periodId}`,
+					context: "Draft ready · review it or close it if no longer needed",
 					detail:
-						"A drafted weekly plan is waiting. Read it here; reconcile it with the command when you are done.",
+						"Your weekly plan was generated successfully and is saved. Open it to read the plan or close it with a reason. Only another run for this same week is held; other weeks, daily briefs and meeting publication can continue.",
 					since: null,
 					owner: lifeOwner,
-					actions: [handoff("Read draft", `#/today/draft/${run.runHash}`), reconcile],
+					actions: [handoff("Review draft", `#/today/draft/${run.runHash}`)],
 				});
 				continue;
 			}
@@ -241,17 +240,21 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 				key: `life-weekly:${run.periodId}`,
 				severity: run.state === "unrecorded" ? "attention" : "action_required",
 				source: "life",
-				title: `Reconcile weekly run ${run.periodId.slice(5)}`,
+				title: `Check weekly plan · ${run.periodId}`,
 				context: run.incompleteReconciliation
 					? "Its reconciliation record is incomplete"
 					: run.state === "unrecorded"
 						? "Reserved without an outcome: still running, or it crashed"
 						: `The run is ${run.state} and still blocks its period`,
 				detail:
-					"An unreconciled weekly run blocks a new run for its period. Inspect it, then record a decision with a short reason.",
+					"This attempt needs inspection before you retry the same week. Other weeks, daily briefs and meeting publication can continue. Check the weekly job, then record a decision with a reason.",
 				since: null,
 				owner: lifeOwner,
-				actions: [reconcile],
+				actions: [
+					handoff("Inspect failure", `#/today/draft/${run.runHash}`),
+					handoff("Check weekly job", "#/jobs/weekly-plan"),
+					reconcile,
+				],
 			});
 		}
 	}
@@ -397,10 +400,11 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 		for (const connection of tile.data!.connections) {
 			if (connection.status !== "attention") continue;
 			const action = connection.action;
+			const reconnectGoogle = action?.value === handoffTarget("meeting-google-reconnect");
 			add(
 				{
 					key: `connection:${connection.id}`,
-					severity: "attention",
+					severity: reconnectGoogle ? "action_required" : "attention",
 					source: "connections",
 					title: `${connection.label} needs attention`,
 					context:
@@ -414,7 +418,7 @@ export const deriveInbox = (inputs: InboxInputs): InboxListData => {
 						action === null
 							? [handoff("Open Connections", "#/connections")]
 							: action.kind === "link"
-								? [handoff("Open owner", action.value)]
+								? [handoff(reconnectGoogle ? "Reconnect Google" : "Open owner", action.value)]
 								: // A command with hidden characters would not copy what it shows.
 									HIDDEN_CHARACTERS.test(action.value)
 									? [handoff("Open Connections", "#/connections")]

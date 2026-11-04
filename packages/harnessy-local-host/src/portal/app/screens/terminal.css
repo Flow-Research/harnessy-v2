@@ -1,9 +1,72 @@
-.terminal-screen { min-width: 0; }
-.terminal-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 20px 0; }
-.terminal-controls button, .terminal-controls select { padding: 8px 12px; border: 1px solid #777; border-radius: 6px; background: var(--surface); color: inherit; cursor: pointer; }
-.terminal-controls button:disabled { opacity: 0.5; cursor: default; }
-.terminal-session-picker { position: relative; max-width: 100%; }
-.terminal-session-picker select { appearance: none; min-height: 40px; padding: 10px 44px 10px 16px; max-width: 100%; }
-.terminal-session-picker::after { content: ""; position: absolute; right: 16px; top: 50%; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-70%) rotate(45deg); pointer-events: none; }
-.terminal-host { height: min(65vh, 800px); min-height: 300px; background: #101218; padding: 12px; border-radius: 8px; overflow: hidden; }
-.terminal-host .xterm { height: 100%; }
+/*
+ * Terminal. Controls use the shared button and select classes (app.css); this
+ * file only lays them out. The terminal surface stays dark in both themes to
+ * match xterm's palette, so it has its own token.
+ */
+.terminal-screen {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.terminal-screen > p {
+	margin: 0;
+}
+
+.terminal-controls {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--space-2) var(--space-3);
+	min-width: 0;
+}
+
+.terminal-inline-field {
+	display: inline-flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+	min-width: 0;
+	font-weight: 500;
+}
+
+.terminal-attach-hint {
+	flex-basis: 100%;
+}
+
+/* The session picker grows with long names but never pushes the page wider. */
+.terminal-session-picker {
+	flex: 0 1 280px;
+}
+
+.terminal-session-picker select {
+	width: 100%;
+}
+
+.terminal-status {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--space-2) var(--space-4);
+}
+
+.terminal-keys .button {
+	min-width: 56px;
+}
+
+.terminal-host {
+	height: min(65vh, 800px);
+	min-height: 300px;
+	background: var(--terminal-bg);
+	padding: var(--space-3);
+	border-radius: var(--radius-panel);
+	border: 1px solid var(--hairline);
+	overflow: hidden;
+	/* Terminal bytes keep their own direction; the page's dir never mirrors them. */
+	direction: ltr;
+}
+
+.terminal-host .xterm {
+	height: 100%;
+}

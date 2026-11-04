@@ -271,3 +271,183 @@ it("handles list failure, unavailable storage and the four-session limit", async
 	expect(container.querySelector("button")?.disabled).toBe(true);
 	expect(current().options.disableStdin).toBe(false);
 });
+
+/** A persistent (Herdr-backed) terminal list with one session in `state`. */
+const persistentSessions = (state: string, title = "Garden task") =>
+	get.mockImplementation(async (path) =>
+		path.endsWith("/sessions")
+			? { kind: "ok", body: { cwd: "/workspace", persistent: true, sessions: [{ id: "agent", title, state }] } }
+			: (replies.shift() ?? output("", 0, 0, false, state)),
+	);
+
+it("shows session state as a word and who controls input, then hands control over on request", async () => {
+	persistentSessions("running");
+	terminalAction.mockImplementation(async (body) => ({
+		kind: "ok",
+		body: { controlling: body.action === "takeover" },
+	}));
+	await render();
+	const status = () => container.querySelector(".terminal-status")!.textContent;
+	expect(status()).toBe("runningViewing only. Another view controls input.");
+	// A viewer cannot type or press the touch keys until it takes control.
+	expect(
+		[...container.querySelectorAll('[aria-label="Terminal keys"] button')].every(
+			(key) => (key as HTMLButtonElement).disabled,
+		),
+	).toBe(true);
+	await click("Take control");
+	expect(status()).toBe("runningThis view controls input.");
+	expect(container.querySelector("button")?.textContent).toBe("New terminal");
+	terminalAction.mockClear();
+	await click("Ctrl-C");
+	await act(async () => vi.advanceTimersByTimeAsync(0));
+	expect(terminalAction).toHaveBeenCalledWith(
+		expect.objectContaining({ action: "input", id: "agent", data: "\u0003" }),
+	);
+});
+
+it("ends its own session only after confirmation, which is the one danger action", async () => {
+	persistentSessions("running");
+	terminalAction.mockImplementation(async () => ({ kind: "ok", body: { controlling: true } }));
+	const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+	await render();
+	const end = () => [...container.querySelectorAll("button")].find((b) => b.textContent === "End session")!;
+	expect(end().className).toBe("button button-danger");
+	await click("End session");
+	expect(terminalAction.mock.calls.some(([body]) => body.action === "close")).toBe(false);
+	await click("End session");
+	expect(confirm).toHaveBeenCalledWith("End this session and stop its running processes?");
+	expect(terminalAction).toHaveBeenCalledWith({ action: "close", id: "agent" });
+	expect(container.textContent).toContain("Start a terminal");
+});
+
+it("offers Resume saved conversation after an interruption, and reports a failed resume", async () => {
+	persistentSessions("interrupted");
+	terminalAction.mockImplementation(async (body) =>
+		body.action === "resume"
+			? { kind: "error", message: "No saved conversation reference" }
+			: { kind: "ok", body: { controlling: true } },
+	);
+	await render();
+	await act(async () => vi.advanceTimersByTimeAsync(0));
+	expect(container.querySelector(".terminal-status")!.textContent).toContain("interrupted");
+	await click("Resume saved conversation");
+	expect(terminalAction).toHaveBeenCalledWith({ action: "resume", id: "agent" });
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("No saved conversation reference");
+	terminalAction.mockImplementation(async (body) =>
+		body.action === "resume" ? { kind: "signed_out" } : { kind: "ok", body: { controlling: true } },
+	);
+	await click("Resume saved conversation");
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("Sign in again.");
+	terminalAction.mockImplementation(async () => ({ kind: "ok", body: { controlling: true } }));
+	await click("Resume saved conversation");
+	await act(async () => vi.advanceTimersByTimeAsync(10));
+	// The view re-attaches to the same session instead of starting a new one.
+	expect(terminalAction.mock.calls.filter(([body]) => body.action === "create")).toEqual([]);
+	expect(container.querySelector<HTMLSelectElement>('[aria-label="Terminal session"]')?.value).toBe("agent");
+});
+
+it("renames a session through the prompt and keeps the name when the prompt is cancelled", async () => {
+	persistentSessions("running", "Garden task");
+	terminalAction.mockImplementation(async () => ({ kind: "ok", body: { controlling: true } }));
+	const prompt = vi.spyOn(window, "prompt").mockReturnValueOnce(null).mockReturnValueOnce("Decide install fix");
+	await render();
+	const option = () => container.querySelector('[aria-label="Terminal session"] option')?.textContent;
+	await click("Rename");
+	expect(prompt).toHaveBeenCalledWith("Session name", "Garden task");
+	expect(terminalAction.mock.calls.some(([body]) => body.action === "rename")).toBe(false);
+	await click("Rename");
+	expect(terminalAction).toHaveBeenCalledWith({ action: "rename", id: "agent", title: "Decide install fix" });
+	expect(option()).toBe("Decide install fix");
+});
+
+it("reports rename failures without changing the title and clears the error after a retry", async () => {
+	persistentSessions("running", "Original task");
+	terminalAction.mockImplementation(async (body) =>
+		body.action === "rename"
+			? { kind: "error", message: "Session store unavailable" }
+			: { kind: "ok", body: { controlling: true } },
+	);
+	vi.spyOn(window, "prompt").mockReturnValue("Updated task");
+	await render();
+	const option = () => container.querySelector('[aria-label="Terminal session"] option')?.textContent;
+	await click("Rename");
+	expect(option()).toBe("Original task");
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("Session store unavailable");
+	terminalAction.mockResolvedValueOnce({ kind: "signed_out" });
+	await click("Rename");
+	expect(option()).toBe("Original task");
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("Sign in again.");
+	terminalAction.mockResolvedValueOnce({ kind: "ok", body: {} });
+	await click("Rename");
+	expect(option()).toBe("Updated task");
+	expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("reports a failed tmux attach without changing the session list", async () => {
+	get.mockImplementation(async (path) =>
+		path.endsWith("/sessions")
+			? {
+					kind: "ok",
+					body: { cwd: "/workspace", persistent: true, sessions: [], tmuxSessions: [{ key: "k", name: "work" }] },
+				}
+			: output(),
+	);
+	terminalAction.mockResolvedValueOnce({ kind: "error", message: "tmux socket is not reachable" });
+	await render();
+	const select = container.querySelector<HTMLSelectElement>('[aria-label="Existing tmux session"]')!;
+	await act(async () => {
+		select.value = "k";
+		select.dispatchEvent(new Event("change", { bubbles: true }));
+	});
+	await click("Attach existing session");
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("tmux socket is not reachable");
+	expect(container.querySelector('[aria-label="Terminal session"]')).toBeNull();
+	terminalAction.mockResolvedValueOnce({ kind: "signed_out" });
+	await click("Attach existing session");
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("Sign in again.");
+});
+
+it("detaches a persistent session when the view closes, without ending it, and re-attaches on return", async () => {
+	persistentSessions("running");
+	terminalAction.mockImplementation(async () => ({ kind: "ok", body: { controlling: true } }));
+	await render();
+	const attach = terminalAction.mock.calls.find(([body]) => body.action === "attach")![0];
+	await act(async () => root.render(null));
+	await act(async () => vi.advanceTimersByTimeAsync(0));
+	const actions = terminalAction.mock.calls.map(([body]) => body.action);
+	expect(actions).toContain("detach");
+	expect(actions).not.toContain("close");
+	expect(terminalAction).toHaveBeenCalledWith({ action: "detach", id: "agent", viewer: attach.viewer });
+	terminalAction.mockClear();
+	await render();
+	const again = terminalAction.mock.calls.map(([body]) => body.action);
+	expect(again[0]).toBe("attach");
+	expect(again).not.toContain("create");
+	expect(again).not.toContain("close");
+});
+
+it("explains a refused attachment instead of showing a blank terminal", async () => {
+	persistentSessions("running");
+	terminalAction.mockResolvedValueOnce({ kind: "error", message: "Session is owned by another host" });
+	await render();
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("Session is owned by another host");
+	await act(async () => root.render(null));
+	persistentSessions("running");
+	terminalAction.mockResolvedValueOnce({ kind: "signed_out" });
+	await render();
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("Sign in again.");
+});
+
+it("reports a lost output stream, retries, and resumes the same session when it reconnects", async () => {
+	sessions = [{ id: "one", state: "running" }];
+	replies = [{ kind: "signed_out" }, { kind: "error", message: "portal restarting" }, output("back", 4, 4)];
+	await render();
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("Sign-in expired. Open Harnessy again.");
+	await act(async () => vi.advanceTimersByTimeAsync(2000));
+	expect(container.querySelector('[role="alert"]')?.textContent).toBe("portal restarting");
+	await act(async () => vi.advanceTimersByTimeAsync(2000));
+	expect(current().writes).toEqual(["back"]);
+	expect(get).toHaveBeenLastCalledWith("/v1/terminal/output/one/0");
+	expect(emulator.Terminal.instances).toHaveLength(1);
+});

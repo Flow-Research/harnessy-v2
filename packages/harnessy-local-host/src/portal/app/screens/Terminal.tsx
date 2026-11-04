@@ -1,6 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
+import { StatusDot, type Tone } from "../components/primitives.tsx";
 import type { SessionClient } from "../lib/session.ts";
 import "@xterm/xterm/css/xterm.css";
 import "./terminal.css";
@@ -11,6 +12,15 @@ interface SessionItem {
 	title?: string;
 	external?: boolean;
 }
+
+/** The tone of each session state the backend reports: a dot plus the word, never colour alone. */
+const SESSION_TONE: Readonly<Record<string, Tone>> = {
+	running: "ok",
+	starting: "attention",
+	interrupted: "attention",
+	failed: "danger",
+	exited: "idle",
+};
 
 export const TerminalScreen = ({
 	client,
@@ -228,6 +238,7 @@ export const TerminalScreen = ({
 			setBusy(false);
 		}
 	};
+	const current = sessions.find((s) => s.id === selected);
 	return (
 		<section className="terminal-screen">
 			<h1 className="screen-title">Terminal</h1>
@@ -238,24 +249,27 @@ export const TerminalScreen = ({
 					: "Sessions stay open when you switch views. A portal restart ends them."}
 			</p>
 			{tmuxSessions.length ? (
-				<div className="terminal-controls">
-					<label>
-						Existing tmux session{" "}
-						<select
-							aria-label="Existing tmux session"
-							value={tmuxKey}
-							onChange={(e) => setTmuxKey(e.target.value)}
-						>
-							<option value="">Choose a session</option>
-							{tmuxSessions.map((s) => (
-								<option key={s.key} value={s.key}>
-									{s.name}
-								</option>
-							))}
-						</select>
+				<div className="terminal-controls terminal-attach">
+					<label className="terminal-inline-field">
+						<span>Existing tmux session</span>
+						<span className="select">
+							<select
+								aria-label="Existing tmux session"
+								value={tmuxKey}
+								onChange={(e) => setTmuxKey(e.target.value)}
+							>
+								<option value="">Choose a session</option>
+								{tmuxSessions.map((s) => (
+									<option key={s.key} value={s.key}>
+										{s.name}
+									</option>
+								))}
+							</select>
+						</span>
 					</label>
 					<button
 						type="button"
+						className="button"
 						disabled={!tmuxKey || busy}
 						onClick={() => {
 							setBusy(true);
@@ -275,7 +289,7 @@ export const TerminalScreen = ({
 					>
 						Attach existing session
 					</button>
-					<p>
+					<p className="field-hint terminal-attach-hint">
 						Uses its existing permissions. Removing it here disconnects Harnessy; the tmux process keeps running.
 					</p>
 				</div>
@@ -283,6 +297,8 @@ export const TerminalScreen = ({
 			<div className="terminal-controls">
 				<button
 					type="button"
+					className="button button-primary"
+					aria-busy={busy}
 					disabled={busy || sessions.length >= (persistent ? 16 : 4)}
 					onClick={() => void action(false)}
 				>
@@ -290,7 +306,7 @@ export const TerminalScreen = ({
 				</button>
 				{sessions.length > 0 ? (
 					<>
-						<div className="terminal-session-picker">
+						<div className="select terminal-session-picker">
 							<select
 								aria-label="Terminal session"
 								value={selected}
@@ -303,17 +319,19 @@ export const TerminalScreen = ({
 								))}
 							</select>
 						</div>
-						<button type="button" disabled={busy} onClick={() => void action(true)}>
-							{sessions.find((s) => s.id === selected)?.external
-								? "Remove attachment"
-								: persistent
-									? "End session"
-									: "Close terminal"}
+						{/* Detaching keeps the process; ending a session stops it, so only that is a danger action. */}
+						<button
+							type="button"
+							className={current?.external ? "button" : "button button-danger"}
+							disabled={busy}
+							onClick={() => void action(true)}
+						>
+							{current?.external ? "Remove attachment" : persistent ? "End session" : "Close terminal"}
 						</button>
-						<output>{state}</output>
 						{persistent && (state === "interrupted" || state === "failed") ? (
 							<button
 								type="button"
+								className="button button-primary"
 								onClick={() => {
 									void client.terminalAction({ action: "resume", id: selected }).then((result) => {
 										if (result.kind !== "ok") {
@@ -331,6 +349,7 @@ export const TerminalScreen = ({
 						{persistent ? (
 							<button
 								type="button"
+								className="button button-quiet"
 								onClick={() => {
 									const title = window.prompt(
 										"Session name",
@@ -338,8 +357,10 @@ export const TerminalScreen = ({
 									);
 									if (title?.trim())
 										void client.terminalAction({ action: "rename", id: selected, title }).then((result) => {
-											if (result.kind === "ok")
+											if (result.kind === "ok") {
 												setSessions((items) => items.map((s) => (s.id === selected ? { ...s, title } : s)));
+												setError("");
+											} else setError(result.kind === "error" ? result.message : "Sign in again.");
 										});
 								}}
 							>
@@ -349,6 +370,7 @@ export const TerminalScreen = ({
 						{persistent && !controlling ? (
 							<button
 								type="button"
+								className="button"
 								onClick={() => {
 									takeover.current = true;
 									setAttachment((value) => value + 1);
@@ -360,9 +382,23 @@ export const TerminalScreen = ({
 					</>
 				) : null}
 			</div>
-			{error ? <p role="alert">{error}</p> : null}
 			{selected ? (
-				<div className="terminal-controls" role="toolbar" aria-label="Terminal keys">
+				<p className="terminal-status" aria-live="polite">
+					<StatusDot tone={SESSION_TONE[state] ?? "idle"} label={state || "connecting"} />
+					{persistent ? (
+						<span className="muted">
+							{controlling ? "This view controls input." : "Viewing only. Another view controls input."}
+						</span>
+					) : null}
+				</p>
+			) : null}
+			{error ? (
+				<p className="form-error" role="alert">
+					{error}
+				</p>
+			) : null}
+			{selected ? (
+				<div className="terminal-controls terminal-keys" role="toolbar" aria-label="Terminal keys">
 					{[
 						["Esc", "\u001b"],
 						["Tab", "\t"],
@@ -372,6 +408,7 @@ export const TerminalScreen = ({
 					].map(([label, data]) => (
 						<button
 							type="button"
+							className="button button-sm mono"
 							key={label}
 							disabled={persistent && !controlling}
 							onClick={() => sendKey.current(data!)}
@@ -384,7 +421,7 @@ export const TerminalScreen = ({
 			{selected ? (
 				<div ref={host} className="terminal-host" />
 			) : (
-				<p>Start a terminal to run shell commands and interactive programs.</p>
+				<p className="muted">Start a terminal to run shell commands and interactive programs.</p>
 			)}
 		</section>
 	);

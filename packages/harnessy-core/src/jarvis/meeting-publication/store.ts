@@ -388,6 +388,9 @@ export class MeetingPublicationStore extends Context.Service<
 				return { authority, binding, database, dbPath: prepared.dbPath };
 			}).pipe(
 				Effect.map(({ authority, binding, database, dbPath }) => {
+					// Process-local ownership is not restored from SQLite after a crash.
+					// It permits unrelated review work, never another publication claim.
+					const activeClaims = new Map<string, MeetingPublicationItem>();
 					const bindItem = (itemId: string, sourceHash: string) =>
 						Object.freeze(
 							new MeetingPublicationWriteBinding({
@@ -417,6 +420,7 @@ export class MeetingPublicationStore extends Context.Service<
 						writeOperation: MeetingPublicationWriteOperation,
 						operation: () => A,
 						operationBinding: MeetingPublicationWriteBinding = binding,
+						reviewNow?: string,
 					): Effect.Effect<A, MeetingPublicationStoreFailure> =>
 						authorize(writeOperation, operationBinding).pipe(
 							Effect.flatMap(() =>
@@ -433,18 +437,30 @@ export class MeetingPublicationStore extends Context.Service<
 											) {
 												throw new MeetingPublicationStoreError({ code: "write_failed" });
 											}
-											// Publishing is also crash evidence when a receipt/failure write fails.
-											// Only the still-valid exact claimant may finish recording its outcome;
-											// elapsed time, review and scan cannot establish remote non-delivery.
+											// Preserve crash evidence and serial dispatch. An item-bound review
+											// may proceed only beside exact, unexpired claims owned by this instance.
 											if (
 												writeOperation !== "store_checkpoint" &&
 												writeOperation !== "store_failure" &&
-												writeOperation !== "store_publish" &&
-												database
-													.prepare("SELECT 1 FROM publication_items WHERE status='publishing' LIMIT 1")
-													.get() !== undefined
+												writeOperation !== "store_publish"
 											) {
-												throw new MeetingPublicationStoreError({ code: "write_failed" });
+												const publishing = database
+													.prepare("SELECT item_id FROM publication_items WHERE status='publishing'")
+													.all();
+												for (const row of publishing) {
+													const claim = activeClaims.get(String(row.item_id));
+													if (
+														reviewNow === undefined ||
+														operationBinding.item === undefined ||
+														operationBinding.item.itemId === row.item_id ||
+														!["store_upsert", "store_approve", "store_reject", "store_archive"].includes(
+															writeOperation,
+														) ||
+														claim === undefined ||
+														Result.isFailure(Result.try(() => requireClaim(claim, reviewNow)))
+													)
+														throw new MeetingPublicationStoreError({ code: "write_failed" });
+												}
 											}
 											return operation();
 										}),
@@ -538,6 +554,14 @@ export class MeetingPublicationStore extends Context.Service<
 								return requireRow(item.itemId);
 							},
 							target === null ? binding : bindItem(target.itemId, target.sourceHash),
+						).pipe(
+							Effect.map((claimed) => {
+								if (claimed !== null) {
+									activeClaims.clear();
+									activeClaims.set(claimed.itemId, Object.freeze(new MeetingPublicationItem({ ...claimed })));
+								}
+								return claimed;
+							}),
 						);
 					return MeetingPublicationStore.of({
 						dbPath,
@@ -748,6 +772,7 @@ export class MeetingPublicationStore extends Context.Service<
 									return { item: requireRow(item.itemId), created: false, changed };
 								},
 								bindItem(note.itemId, note.sourceHash),
+								now,
 							),
 						approve: (itemId, hash, discordPurposeOverride, now) =>
 							transact(
@@ -764,6 +789,7 @@ export class MeetingPublicationStore extends Context.Service<
 									return requireRow(itemId);
 								},
 								bindItem(itemId, hash),
+								now,
 							),
 						reject: (itemId, hash, now) =>
 							transact(
@@ -780,6 +806,7 @@ export class MeetingPublicationStore extends Context.Service<
 									return requireRow(itemId);
 								},
 								bindItem(itemId, hash),
+								now,
 							),
 						archive: (itemId, hash, now) =>
 							transact(
@@ -796,6 +823,7 @@ export class MeetingPublicationStore extends Context.Service<
 									return requireRow(itemId);
 								},
 								bindItem(itemId, hash),
+								now,
 							),
 						restore: (itemId, now) =>
 							transact("store_restore", () => {

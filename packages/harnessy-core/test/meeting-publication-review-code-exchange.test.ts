@@ -292,7 +292,8 @@ describe("meeting review single-use code exchange", () => {
 			expect(exchanged.status).toBe(200);
 			expect(exchanged.headers.location).toBeUndefined();
 			expect(exchanged.body).toContain('<meta http-equiv="refresh" content="0;url=/">');
-			expect(exchanged.body).toContain('<a href="/">Continue to review</a>');
+			expect(exchanged.body).toContain("<h1>Opening meeting review</h1>");
+			expect(exchanged.body).toContain('<a href="/">Continue</a>');
 			expect(exchanged.body).not.toContain(value);
 			expect(exchanged.headers["cache-control"]).toBe("no-store");
 			expect(exchanged.headers["content-security-policy"]).toContain("default-src 'none'");

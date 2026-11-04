@@ -64,7 +64,11 @@ export const BrowserSignIn = ({ client, onSignedIn }: { client: SessionClient; o
 				{pending ? "Waiting for Harnessy…" : "Sign in with Harnessy app"}
 			</button>
 			{pending ? <output>Allow Harnessy to open. Sign-in will finish in this tab.</output> : null}
-			{error ? <p role="alert">{error}</p> : null}
+			{error ? (
+				<p className="form-error" role="alert">
+					{error}
+				</p>
+			) : null}
 		</>
 	);
 };

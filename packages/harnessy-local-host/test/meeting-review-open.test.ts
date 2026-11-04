@@ -40,6 +40,14 @@ const waitFor = async (condition: () => boolean) => {
 };
 
 describe("harnessy-meeting-review-open", () => {
+	it("opens the fixed Google reconnect destination with a single-use code", async () => {
+		const f = fixture(await listen());
+		const result = await f.run(["--state-path", f.state, "--reconnect-google"]);
+		expect(result.status, result.stderr).toBe(0);
+		expect(f.record().body).toContain("&amp;next=google-reconnect");
+		expect(f.record().body).not.toContain(token);
+		expect(f.leftovers()).toEqual([]);
+	});
 	it("acknowledges a browser launch to the portal without sending any credential or URL", async () => {
 		const f = fixture(await listen());
 		const { done, messages } = f.start(undefined, { ipc: true });

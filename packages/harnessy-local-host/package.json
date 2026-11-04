@@ -43,6 +43,7 @@
 	},
 	"files": [
 		"dist",
+		"resources/macos",
 		"README.md",
 		"LICENSE"
 	],

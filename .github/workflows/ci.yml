@@ -102,6 +102,12 @@ jobs:
       - name: Smoke the Harnessy app in headless Chrome (fails on any CSP violation)
         run: node scripts/check-portal-app-browser.mjs
 
+      - name: Verify meeting reconnect and concurrent review with real browser forms
+        working-directory: packages/harnessy-core
+        env:
+          HARNESSY_RECONNECT_BROWSER: "1"
+        run: node ../../node_modules/vitest/dist/cli.js --run test/meeting-publication-review-reconnect.test.ts test/meeting-publication-review-action-outcomes.test.ts
+
       - name: Check the Executor cockpit CSP, sign-in redirect and code exchange in headless Chrome
         run: node scripts/check-executor-cockpit-browser.mjs
 
@@ -452,6 +458,9 @@ jobs:
 
       - name: Build package inputs
         run: npm run build
+
+      - name: Test packaged native portal launcher
+        run: node --test scripts/portal-launcher-package.test.mjs
 
       - name: Test native notification callback parsing
         working-directory: packages/harnessy-sdk

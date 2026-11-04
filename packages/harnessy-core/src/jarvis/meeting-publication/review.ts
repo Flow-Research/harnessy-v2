@@ -279,46 +279,58 @@ const escapeHtml = (value: string) =>
 const safeReviewText = (value: string) => escapeHtml(redactMeetingPublicationReviewText(value));
 
 const reviewStyles = `
-:root { color-scheme: light; --canvas: #f3f6f4; --surface: #fff; --ink: #15201a;
---muted: #647068; --line: #dce4df; --accent: #167449; --accent-dark: #105b39;
---danger: #a33b3b; --discord: #313338; }
+:root { color-scheme: dark; --canvas: #12151a; --surface: #1b1f26; --raised: #222731;
+--ink: #edefec; --muted: #a7adb5; --line: #2a2f38; --accent: #2fc7b0; --accent-dark: #2fc7b0;
+--on-accent: #0c1a17; --danger: #ec6a54; --discord: #313338; --control-h: 36px; }
+@media (prefers-color-scheme: light) { :root { color-scheme: light; --canvas: #edefec;
+--surface: #f7f8f6; --raised: #ffffff; --ink: #12151a; --muted: #4a515b; --line: #d6dad4;
+--accent: #0f7464; --accent-dark: #0f7464; --on-accent: #ffffff; --danger: #b83a26; } }
+@media (pointer: coarse) { :root { --control-h: 44px; } }
 * { box-sizing: border-box; }
-body { background: var(--canvas); color: var(--ink); font: 15px/1.65 -apple-system,
-BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; }
-body::before { background: linear-gradient(90deg, #126b43, #45a66f); content: "";
-display: block; height: 5px; }
-.back-link { align-items: center; color: #456052; display: flex; font-weight: 650; gap: .45rem;
+body { background: var(--canvas); color: var(--ink); font: 15px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; }
+body { overflow-wrap: anywhere; }
+a { color: var(--accent); text-underline-offset: 3px; }
+.review-brand { border-bottom: 1px solid var(--line); padding: 12px 24px; font-weight: 650; }
+.review-brand a { color: var(--ink); text-decoration: none; min-height: var(--control-h); display: inline-flex; align-items: center; }
+.connection-card h2 { font-size: 1rem; margin: 0 0 8px; }
+.connection-card p { margin: 4px 0; }
+.connection-card .connection-help { color: var(--muted); font-size: .85rem; }
+.connection-card .button { margin-top: 12px; }
+.connection-card time { white-space: normal; }
+summary { min-height: var(--control-h); align-content: center; }
+summary:hover, a:hover { color: var(--accent); }
+
+.back-link { align-items: center; color: var(--muted); display: flex; font-weight: 650; gap: .45rem;
 margin: 2rem auto 0; max-width: 1220px; padding: 0 1.5rem; text-decoration: none; width: 100%; }
 .back-link:hover { color: var(--accent); }
-.page-intro, .meeting-header { margin: 0 auto; max-width: 1220px; padding: 3rem 1.5rem 2rem;
+.page-intro, .meeting-header { margin: 0 auto; max-width: 1220px; padding: 24px 24px;
 width: 100%; }
 .page-intro { max-width: 920px; }
 .intro-row { align-items: flex-end; display: flex; gap: 2rem; justify-content: space-between; }
 .eyebrow, .section-label { color: var(--accent); font-size: .73rem; font-weight: 800;
 letter-spacing: .1em; margin: 0 0 .45rem; text-transform: uppercase; }
 h1, h2, h3, h4 { color: var(--ink); line-height: 1.22; }
-h1 { font-size: clamp(2rem, 5vw, 3.35rem); letter-spacing: -.035em; margin: .15rem 0 .8rem;
+h1 { font-size: clamp(1.6rem, 3vw, 2.1rem); letter-spacing: -.035em; margin: .15rem 0 .8rem;
 max-width: 980px; }
 h2 { letter-spacing: -.018em; }
-.lede { color: var(--muted); font-size: 1.05rem; margin: 0; }
+.lede { color: var(--muted); font-size: .95rem; margin: 0; }
 .count-badge, .local-badge, .summary-badge { border-radius: 999px; display: inline-flex;
 font-size: .72rem; font-weight: 750; padding: .35rem .7rem; white-space: nowrap; }
 .count-badge { background: #dff3e7; color: #115d3a; }
-.local-badge { background: #eef2ef; color: #55645b; }
+.local-badge { background: var(--raised); color: var(--muted); }
 .summary-badge { background: #e9eaff; color: #4c51a5; }
 .meta-row { align-items: center; display: flex; flex-wrap: wrap; gap: .55rem; margin-top: 1rem; }
-.meta-pill, .status-pill { border: 1px solid var(--line); border-radius: 999px; color: #536158;
+.meta-pill, .status-pill { border: 1px solid var(--line); border-radius: 999px; color: var(--muted);
 font-size: .78rem; font-weight: 700; padding: .27rem .65rem; }
 .status-pill { border: 0; }
 .status-pending_review { background: #fff1cf; color: #76520b; }
 .status-approved, .status-published { background: #dff3e7; color: #115d3a; }
 .status-publishing { background: #e9eaff; color: #4c51a5; }
 .status-rejected, .status-blocked { background: #fde6e4; color: #8c3030; }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
-box-shadow: 0 12px 36px rgba(27, 48, 36, .055); }
-.queue-card, .empty-card, .attention-card, .queue-status, .message-card { margin: 0 auto 1.25rem; max-width: 920px;
-padding: 1.6rem; width: calc(100% - 3rem); }
-.queue-card h2, .empty-card h2 { font-size: 1.45rem; margin: .2rem 0 .6rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.connection-card, .queue-card, .empty-card, .attention-card, .queue-status, .message-card { margin: 0 auto 16px; max-width: 920px;
+padding: 24px; width: calc(100% - 3rem); }
+.queue-card h2, .empty-card h2 { font-size: 1.25rem; margin: .2rem 0 .6rem; }
 .queue-card .button { margin-top: 1.35rem; }
 .empty-card { padding: 3rem; text-align: center; }
 .empty-icon { align-items: center; background: #dff3e7; border-radius: 999px; color: #167449;
@@ -328,18 +340,18 @@ display: inline-flex; font-size: 1.2rem; height: 2.6rem; justify-content: center
 .attention-card span { color: var(--muted); }
 .queue-status summary { cursor: pointer; font-weight: 750; }
 .status-grid { display: grid; gap: .7rem; grid-template-columns: repeat(3, 1fr); margin-top: 1rem; }
-.status-grid div { background: #f6f8f7; border-radius: 10px; padding: .7rem; }
+.status-grid div { background: var(--raised); border-radius: 10px; padding: .7rem; }
 .status-grid span { color: var(--muted); display: block; font-size: .72rem; }
 .status-grid strong { font-size: 1.15rem; }
 .review-grid { display: grid; gap: 1.4rem; grid-template-columns: minmax(0, 1fr) 360px;
 margin: 0 auto; max-width: 1220px; padding: 0 1.5rem 4rem; width: 100%; }
-.note-card { min-width: 0; padding: clamp(1.25rem, 3vw, 2.3rem); }
-.review-sidebar { align-self: start; display: grid; gap: 1.2rem; position: sticky; top: 1.2rem; }
+.note-card { min-width: 0; padding: 24px; }
+.review-sidebar { min-width: 0; align-self: start; display: grid; gap: 1.2rem; position: sticky; top: 1.2rem; }
 .preview-card, .action-card { padding: 1.15rem; }
 .section-heading { align-items: center; border-bottom: 1px solid var(--line); display: flex;
 justify-content: space-between; margin-bottom: 1.3rem; padding-bottom: 1rem; }
 .section-heading h2, .action-card h2 { font-size: 1.25rem; margin: 0; }
-.markdown-body { color: #2c3831; overflow-wrap: anywhere; }
+.markdown-body { color: var(--ink); overflow-wrap: anywhere; }
 .markdown-body > :first-child { margin-top: 0; }
 .markdown-body > :last-child { margin-bottom: 0; }
 .markdown-body h2 { border-top: 1px solid var(--line); font-size: 1.55rem;
@@ -350,21 +362,21 @@ margin: 2.6rem 0 1rem; padding-top: 2rem; }
 .markdown-body p { margin: .6rem 0 1rem; }
 .markdown-body ul, .markdown-body ol { margin: .65rem 0 1.25rem; padding-left: 1.45rem; }
 .markdown-body li { margin: .42rem 0; padding-left: .18rem; }
-.markdown-body li::marker { color: #4c8d68; }
-.markdown-body li > ul, .markdown-body li > ol { border-left: 2px solid #dce9e1;
+.markdown-body li::marker { color: var(--accent); }
+.markdown-body li > ul, .markdown-body li > ol { border-left: 2px solid var(--line);
 margin: .5rem 0; padding-left: 1.25rem; }
-.markdown-body pre { background: #f6f8f7; border-radius: 8px; overflow-x: auto; padding: 1rem; }
+.markdown-body pre { background: var(--raised); border-radius: 8px; overflow-x: auto; padding: 1rem; }
 .markdown-body code { font: .9em/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.markdown-body blockquote { border-left: 4px solid #8dc4a4; color: #526159; margin: 1rem 0;
+.markdown-body blockquote { border-left: 4px solid var(--line); color: var(--muted); margin: 1rem 0;
 padding: .15rem 1rem; }
 .markdown-body a { color: var(--accent-dark); font-weight: 600;
-text-decoration-color: #9ac7ae; text-underline-offset: 3px; }
+text-decoration-color: var(--accent); text-underline-offset: 3px; }
 .metadata-body ul { font-size: .83rem; }
-.operations > .card { box-shadow: none; margin: 1rem 0 0; width: 100%; }
+.operations > .card { background: transparent; border: 0; border-radius: 0; border-top: 1px solid var(--line); margin: 16px 0 0; padding: 16px 0 0; width: 100%; }
 .other-meetings a { color: var(--accent-dark); }
 .connection-details dl { color: var(--muted); font-size: .85rem; }
 .connection-details dd { margin: 0 0 .65rem; overflow-wrap: anywhere; }
-.metadata-card { background: #f6f8f7; border: 1px solid var(--line); border-radius: 12px;
+.metadata-card { background: var(--raised); border: 1px solid var(--line); border-radius: 12px;
 margin-bottom: 2rem; padding: .8rem 1rem; }
 .metadata-card summary { cursor: pointer; font-weight: 750; }
 .metadata-body { margin-top: 1rem; }
@@ -380,7 +392,7 @@ padding: .1rem .25rem; vertical-align: 2px; }
 .discord-date { color: #949ba4; font-size: .78rem; margin: .08rem 0 .65rem; }
 .discord-summary { background: #383a40; border: 1px solid #4e5058; border-radius: 6px;
 color: #dbdee1; display: block; font: inherit; line-height: 1.45; margin-top: .3rem;
-min-height: 11rem; padding: .65rem; resize: vertical; width: 100%; }
+min-height: 7rem; padding: .65rem; resize: vertical; width: 100%; }
 .discord-summary:focus { border-color: #80848e; outline: 2px solid #5865f2; outline-offset: 1px; }
 .discord-editor-label { color: #b5bac1; display: block; font-size: .72rem; font-weight: 700;
 margin-top: .65rem; }
@@ -389,35 +401,40 @@ margin-top: .65rem; }
 .discord-doc-link { color: #00a8fc; font-weight: 600; margin-top: .7rem; }
 .meeting-editor { border-top: 1px solid var(--line); margin-top: 2rem; padding-top: 1.5rem; }
 .meeting-editor label { display: block; font-size: .82rem; font-weight: 750; }
-.meeting-note-editor { background: #fbfcfb; border: 1px solid var(--line); border-radius: 9px;
+.meeting-note-editor { background: var(--raised); border: 1px solid var(--line); border-radius: 6px;
 color: var(--ink); display: block; font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo,
 monospace; margin-top: .5rem; min-height: 32rem; padding: 1rem; resize: vertical; width: 100%; }
-.meeting-note-editor:focus { border-color: var(--accent); outline: 2px solid #6db88d;
+.meeting-note-editor:focus { border-color: var(--accent); outline: 2px solid var(--accent);
 outline-offset: 1px; }
 .editor-help, .privacy-note { color: var(--muted); font-size: .76rem; }
 .actions { display: grid; gap: .6rem; margin-top: 1.1rem; }
 .actions form { margin: 0; }
-button, .button { border: 0; border-radius: 9px; cursor: pointer; display: inline-flex;
-font: inherit; font-weight: 750; justify-content: center; padding: .72rem 1rem;
-text-decoration: none; transition: .15s ease; }
-.primary-button, .approve { background: var(--accent); color: white; width: 100%; }
-.primary-button:hover, .approve:hover { background: var(--accent-dark); transform: translateY(-1px); }
-.save-note { background: #e8f2ec; color: var(--accent-dark); margin-top: .6rem; width: 100%; }
-.reject, .archive { background: #fff; border: 1px solid #e3c0bd; color: var(--danger); width: 100%; }
-.reject:hover, .archive:hover { background: #fff4f3; }
-button:focus-visible, .button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid #6db88d;
+button, .button { background: var(--raised); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; display: inline-flex;
+font: inherit; font-weight: 600; align-items: center; min-height: var(--control-h); min-width: 44px; justify-content: center; padding: 8px 14px;
+text-decoration: none; transition: background-color 120ms ease, border-color 120ms ease; }
+.primary-button, .approve { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.actions button { width: 100%; }
+.primary-button:hover, .approve:hover { color: var(--on-accent); filter: brightness(1.08); }
+.save-note { background: var(--raised); color: var(--accent-dark); margin-top: .6rem; width: 100%; }
+.reject, .archive { background: var(--surface); border: 1px solid var(--line); color: var(--danger); width: 100%; }
+.reject:hover, .archive:hover { background: var(--raised); border-color: var(--danger); }
+button:focus-visible, .button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid var(--accent);
 outline-offset: 3px; }
 .privacy-note { border-top: 1px solid var(--line); margin: 1rem 0 0; padding-top: .9rem; }
 .logout { margin: 1.5rem auto 3rem; max-width: 920px; text-align: right; width: calc(100% - 3rem); }
-.logout button { background: transparent; color: #456052; padding-right: 0; }
-.message-card { margin-top: 4rem; }
+.logout button { background: transparent; color: var(--muted); padding-right: 0; }
+.message-card { margin-top: 24px; }
+.message-card form { margin-block: 16px; }
+.message-card > a { display: inline-flex; margin-block: 8px; }
 @media (max-width: 880px) { .review-grid { grid-template-columns: 1fr; }
 .review-sidebar { position: static; } }
-@media (max-width: 600px) { .page-intro, .meeting-header { padding: 2rem 1rem 1.5rem; }
+@media (max-width: 600px) { .page-intro, .meeting-header { padding: 24px 16px; }
 .back-link { padding: 0 1rem; } .review-grid { padding: 0 1rem 2rem; }
-.queue-card, .empty-card, .attention-card, .queue-status, .message-card, .logout { width: calc(100% - 2rem); }
+.connection-card, .queue-card, .empty-card, .attention-card, .queue-status, .message-card, .logout { width: calc(100% - 2rem); }
 .intro-row { align-items: flex-start; flex-direction: column; gap: 1rem; }
-.status-grid { grid-template-columns: repeat(2, 1fr); } .note-card { padding: 1.15rem; } }
+.status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.card { padding: 16px; } .section-heading { flex-wrap: wrap; gap: 8px; }
+button, .button, summary { min-height: 44px; } .note-card { padding: 1.15rem; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important;
 transition: none !important; } }
 `;
@@ -426,7 +443,7 @@ const reviewStyleDigest = createHash("sha256").update(reviewStyles).digest("base
 
 const page = (title: string, body: string) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>${escapeHtml(title)}</title><style>${reviewStyles}</style></head><body>${body}</body></html>`;
+<title>${escapeHtml(title)}</title><style>${reviewStyles}</style></head><body><nav class="review-brand" aria-label="Meeting review"><a href="/">Harnessy / Meetings</a></nav>${body}</body></html>`;
 
 const messagePage = (status: number, override?: ReviewMessage) => {
 	const [title, message] =
@@ -689,6 +706,16 @@ const renderInbox = (
 	const header = `<header class="page-intro"><div class="intro-row"><div><p class="eyebrow">${safeReviewText(statusLabel(project))} · Publication queue</p>
 <h1>Meeting review</h1><p class="lede">Review one meeting at a time before anything is published.</p></div>
 ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} waiting</span>` : ""}</div></header>`;
+	const google = health.find((entry) => entry.provider === "google");
+	const googleLabel =
+		google === undefined
+			? "Not checked"
+			: google.failure === null
+				? "Connected at last check"
+				: google.failure === "authentication"
+					? "Sign-in required"
+					: "Could not verify";
+	const googleStatus = `<section class="card connection-card${google?.failure ? " attention-card" : ""}" aria-labelledby="google-connection-title"><h2 id="google-connection-title">Google account</h2><p><strong>${googleLabel}</strong>${google ? ` · ${safeReviewText(google.account.slice(0, 320))}` : ""}</p><p class="connection-help">Last checked: ${google ? `<time datetime="${escapeHtml(google.checkedAt)}">${safeReviewText(google.checkedAt.replace("T", " ").replace(/\.\d{3}Z$/u, " UTC"))}</time>` : "Never"}</p><p class="connection-help">${google?.failure === null ? "Google access passed its last check. Publication also requires Discord access and an approved, unchanged note." : "Google access is not confirmed. Approved notes remain queued."}</p>${reconnectAvailable && google?.failure === "authentication" ? '<a class="button primary-button" href="/google-reconnect">Reconnect Google</a>' : ""}</section>`;
 	const connectionFailure = health.some((entry) => entry.failure !== null);
 	const providerStatus = `<details class="card queue-status connection-details${connectionFailure ? " attention-card" : ""}"${connectionFailure ? " open" : ""}><summary>${connectionFailure ? "Connections need attention" : health.length === 0 ? "Connection status" : "Connections · Last checks passed"}</summary><h2 id="provider-health-title">Publication connection health</h2>${
 		health.length === 0
@@ -796,7 +823,7 @@ ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} wait
 		.join("")}</div></details>`;
 	return page(
 		"Meeting publication review",
-		`${header}${queue}${otherMeetings}${attention}${recoveryGuidance}${providerStatus}${counts}${mode === "full" ? `<details class="card queue-status operations"><summary>Publication controls</summary>${preflightForm(csrf, mode)}${dispatchForm(csrf, dispatch)}</details>` : ""}${logoutForm(csrf)}`,
+		`${header}${googleStatus}${connectionFailure ? providerStatus : ""}${queue}${otherMeetings}${attention}${recoveryGuidance}${connectionFailure ? "" : providerStatus}${counts}${mode === "full" ? `<details class="card queue-status operations"><summary>Publication controls</summary>${preflightForm(csrf, mode)}${dispatchForm(csrf, dispatch)}</details>` : ""}${logoutForm(csrf)}`,
 	);
 };
 
@@ -1141,7 +1168,9 @@ export class MeetingPublicationReviewServer extends Context.Service<
 							200,
 							page(
 								"Google reconnect",
-								'<section class="card message-card"><h1>Return to your review session</h1><p>Complete reconnection from the same browser session that started it.</p><a href="/google-reconnect/confirm">Continue in local review</a></section>',
+								url.searchParams.has("error")
+									? '<section class="card message-card"><h1>Google sign-in was not completed</h1><p>Your meeting approvals are retained.</p><a href="/google-reconnect">Try again</a></section>'
+									: '<meta http-equiv="refresh" content="0;url=/google-reconnect/confirm"><section class="card message-card"><h1>Finishing Google sign-in</h1><p>Returning to your secure verification step.</p><a href="/google-reconnect/confirm">Continue to verification</a></section>',
 							),
 						);
 						return;
@@ -1170,9 +1199,11 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						// `?token=` stays for direct owner use and existing consumers; the
 						// launcher sends only a single-use `?code=`.
 						const kind = url.searchParams.has("code") ? "code" : "token";
+						const next = url.searchParams.getAll("next");
 						if (
 							!validPercentEncoding(url.search) ||
-							[...new Set(url.searchParams.keys())].some((key) => key !== kind)
+							[...new Set(url.searchParams.keys())].some((key) => key !== kind && key !== "next") ||
+							(next.length > 0 && (kind !== "code" || next.length !== 1 || next[0] !== "google-reconnect"))
 						) {
 							throw new ReviewHttpError(400, "query");
 						}
@@ -1222,6 +1253,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						// redirect from the launcher's file: page withholds SameSite=Strict
 						// cookies on the redirected request, even after a successful exchange.
 						if (kind === "code") {
+							const destination = next.length === 1 ? "/google-reconnect" : "/";
 							response.setHeader(
 								"Set-Cookie",
 								`${cookieName}=${sessionId}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${config.reviewSessionSeconds}`,
@@ -1231,7 +1263,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 								200,
 								page(
 									"Opening meeting review",
-									'<meta http-equiv="refresh" content="0;url=/"><section class="card message-card"><h1>Opening meeting review</h1><a href="/">Continue to review</a></section>',
+									`<meta http-equiv="refresh" content="0;url=${destination}"><section class="card message-card"><h1>${next.length === 1 ? "Reconnect Google" : "Opening meeting review"}</h1><a href="${destination}">Continue</a></section>`,
 								),
 							);
 							return;
@@ -1252,6 +1284,25 @@ export class MeetingPublicationReviewServer extends Context.Service<
 
 					if (request.method === "GET" || request.method === "HEAD") {
 						if (url.search.length > 0) throw new ReviewHttpError(400, "query");
+						if (url.pathname === "/google-reconnect") {
+							if (!reconnectAvailable) throw new ReviewHttpError(404, "reconnect");
+							const pending = pendingReconnect;
+							if (pending !== undefined && pending.sessionId === authenticated.id) {
+								redirect(response, "/google-reconnect/confirm");
+								return;
+							}
+							send(
+								response,
+								200,
+								page(
+									"Reconnect Google",
+									`<section class="card message-card"><h1>Reconnect Google</h1><p>Sign in with ${safeReviewText(config.googleOwnerEmail ?? "the configured account")}. Then return here to finish verification.</p><p>Your approvals are retained. Unchanged approved notes can publish after the connection recovers.</p>${pending === undefined ? `<form method="post" action="/google-reconnect/start"><input type="hidden" name="csrf" value="${escapeHtml(authenticated.session.csrf)}"><button class="button primary-button" type="submit">Continue to Google</button></form>` : `<p>An unfinished sign-in belongs to an earlier review session. Starting again discards that attempt; its Google response cannot connect your account.</p><form method="post" action="/google-reconnect/restart"><input type="hidden" name="csrf" value="${escapeHtml(authenticated.session.csrf)}"><button class="button primary-button" type="submit">Start again in this tab</button></form>`}<a href="/">Back to meetings</a></section>`,
+								),
+								head,
+								"same-origin",
+							);
+							return;
+						}
 						if (url.pathname === "/google-reconnect/confirm") {
 							const pending = pendingReconnect;
 							if (!reconnectAvailable || pending === undefined || pending.sessionId !== authenticated.id)
@@ -1333,7 +1384,13 @@ export class MeetingPublicationReviewServer extends Context.Service<
 							const current = await now();
 							await purgeSessions(current);
 							if (!sessions.has(authenticated.id)) throw new ReviewHttpError(401, "session");
-							if (url.pathname === "/google-reconnect/start") {
+							if (url.pathname === "/google-reconnect/start" || url.pathname === "/google-reconnect/restart") {
+								if (url.pathname === "/google-reconnect/restart" && pendingReconnect !== undefined) {
+									// A fresh authenticated owner may discard an abandoned flow, but cannot complete it.
+									// Fail closed if the provider cannot cancel; never reuse its state or captured code.
+									await runRequestEffect(pendingReconnect.flow.cancel());
+									pendingReconnect = undefined;
+								}
 								if (pendingReconnect !== undefined || publication.reconnectGoogle === undefined)
 									throw new ReviewHttpError(409, "reconnect");
 								const flow = await runRequestEffect(
@@ -1368,7 +1425,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 									200,
 									page(
 										"Reconnect Google",
-										`<section class="card message-card"><h1>Reconnect configured Google account</h1><p>Sign in with ${safeReviewText(config.googleOwnerEmail ?? "the configured account")}. This does not approve or publish meetings.</p><a rel="noreferrer" href="${escapeHtml(flow.authorizationUrl)}">Continue to Google</a><p><a href="/google-reconnect/confirm">Return to local reconnect</a></p></section>`,
+										`<meta http-equiv="refresh" content="0;url=${escapeHtml(flow.authorizationUrl)}"><section class="card message-card"><h1>Opening Google sign-in</h1><p>Sign in with ${safeReviewText(config.googleOwnerEmail ?? "the configured account")}. You will return here to finish verification.</p><a rel="noreferrer" href="${escapeHtml(flow.authorizationUrl)}">Continue to Google</a><p><a href="/google-reconnect/confirm">Return to verification</a></p></section>`,
 									),
 								);
 								return;
@@ -1387,12 +1444,21 @@ export class MeetingPublicationReviewServer extends Context.Service<
 										.pipe(Effect.timeout(Math.max(1, pending.expiresAt - current))),
 								);
 							} else throw new ReviewHttpError(404, "reconnect");
+							const cancelled = url.pathname === "/google-reconnect/cancel";
+							const health = await runRequestEffect(store.providerHealth());
+							const google = health.find((entry) => entry.provider === "google");
+							const connected = !cancelled && google?.failure === null;
+							const title = cancelled
+								? "Reconnect cancelled"
+								: connected
+									? "Google connected"
+									: "Google connection could not be verified";
 							send(
 								response,
 								200,
 								page(
 									"Google reconnect finished",
-									'<section class="card message-card"><h1>Reconnect finished</h1><p>No meeting was approved or published. Check connection health in the review inbox.</p><a href="/">Return to review</a></section>',
+									`<section class="card message-card"><h1>${title}</h1><p>${connected ? "The configured Google account passed its connection check." : cancelled ? "Your existing approvals are retained." : "Sign-in finished, but the connection check did not pass. Approved notes remain queued."}</p>${google ? `<p>Last checked: ${safeReviewText(google.checkedAt)}</p>` : ""}<p>No additional meetings were approved. ${connected ? "Unchanged approved notes can resume on the next worker run if all publication checks pass." : "Return to meetings for connection details."}</p><a class="button primary-button" href="/">Return to meetings</a></section>`,
 								),
 							);
 						});

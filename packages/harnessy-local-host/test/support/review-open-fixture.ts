@@ -93,7 +93,7 @@ let exchange;
 try {
 	const page = argv[0];
 	record.body = fs.readFileSync(page, "utf8");
-	record.code = /\\?code=([A-Za-z0-9_-]{43})"/.exec(record.body)[1];
+	record.code = /\\?code=([A-Za-z0-9_-]{43})(?=["&])/.exec(record.body)[1];
 	exchange = path.join(path.dirname(page), ${JSON.stringify(profile.exchangePrefix)} + crypto.createHash("sha256").update(record.code).digest("hex"));
 	const exchangeStat = fs.lstatSync(exchange);
 	record.pageMode = fs.lstatSync(page).mode & 0o7777;

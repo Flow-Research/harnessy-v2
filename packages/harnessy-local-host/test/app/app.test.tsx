@@ -178,6 +178,28 @@ const render = async (env: SessionEnvironment) => {
 };
 
 describe("the app against a real portal", () => {
+	it("renders the signed-in app after native approval in the existing tab and refreshes data on request", async () => {
+		const { code, env } = await startPortal();
+		const { client, store } = await render(env);
+		await waitFor(() => expect(text()).toContain("Sign in to Harnessy"));
+		vi.spyOn(client, "beginBrowserSignIn").mockResolvedValue({ id: "native-request", claim: "test-claim" });
+		vi.spyOn(client, "claimBrowserSignIn").mockImplementation(async () => {
+			window.history.replaceState(null, "", `/#code=${code}&route=inbox`);
+			await client.signInFromHash();
+			return true;
+		});
+		await act(async () => container.querySelector<HTMLButtonElement>(".signed-out button")!.click());
+		await waitFor(() => expect(text()).toContain("2 meeting notes waiting"));
+		expect(container.querySelector(".signed-out")).toBeNull();
+		expect(window.location.hash).toBe("#/inbox");
+		expect(opened).toEqual([]);
+		const refresh = vi.spyOn(store, "refreshAll");
+		await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Read again"]')!.click());
+		expect(refresh).toHaveBeenCalledOnce();
+		expect(container.querySelector(".app")).not.toBeNull();
+		expect(client.claimBrowserSignIn).toHaveBeenCalledOnce();
+	});
+
 	it("signs in from the link, renders every screen from fixture data and never shows a secret", async () => {
 		const { code, env } = await startPortal();
 		window.location.hash = `#code=${code}&route=inbox`;

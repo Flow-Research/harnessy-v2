@@ -17,7 +17,11 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 		const security =
 			route.auth === "install"
 				? [{ installProof: [] }]
-				: route.auth === "open" || route.auth === "brief" || route.auth === "terminal"
+				: route.auth === "open" ||
+						route.auth === "brief" ||
+						route.auth === "terminal" ||
+						route.auth === "weekly" ||
+						route.auth === "inbox-action"
 					? [{ bearer: [] }]
 					: route.auth === "read"
 						? [{ bearer: [] }, { installProof: [] }]
@@ -49,6 +53,56 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 			[route.method.toLowerCase()]: {
 				operationId: route.operationId,
 				summary: route.summary,
+				...(route.auth === "inbox-action"
+					? {
+							requestBody: {
+								required: true,
+								content: {
+									"application/json": {
+										schema: {
+											type: "object",
+											additionalProperties: false,
+											required: ["action", "items"],
+											properties: {
+												action: { enum: ["archive", "restore"] },
+												items: {
+													type: "array",
+													minItems: 1,
+													maxItems: 100,
+													items: {
+														type: "object",
+														additionalProperties: false,
+														required: ["key", "revision"],
+														properties: {
+															key: { type: "string", maxLength: 500 },
+															revision: { type: "string", maxLength: 16000 },
+														},
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						}
+					: {}),
+				...(route.auth === "weekly" && route.method === "POST"
+					? {
+							requestBody: {
+								required: true,
+								content: {
+									"application/json": {
+										schema: {
+											type: "object",
+											properties: { reason: { type: "string", minLength: 1, maxLength: 200 } },
+											required: ["reason"],
+											additionalProperties: false,
+										},
+									},
+								},
+							},
+						}
+					: {}),
 				...(route.auth === "terminal" && route.method === "POST"
 					? {
 							requestBody: {

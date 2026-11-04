@@ -28,7 +28,8 @@ export const MAX_CONNECTIONS = 64;
 const GWS_PROFILE = /^gws-([A-Za-z0-9][A-Za-z0-9._-]{0,47})$/u;
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["127.0.0.1", "localhost"]);
 
-export const MEETING_RECONNECT_NOTE = "Open meeting review, then select Reconnect Google under Provider health.";
+export const MEETING_RECONNECT_NOTE =
+	"Sign in to the configured Google account, then finish verification. Your meeting approvals are retained.";
 
 type ConnectionTile = TileResult<ConnectionListData>;
 
@@ -76,7 +77,11 @@ export const meetingConnections = (summary: MeetingSummary, now: Date): Connecti
 						? null
 						: {
 								kind: "link",
-								value: handoffTarget("meeting-review"),
+								value: handoffTarget(
+									provider === "google" && health?.failure === "authentication"
+										? "meeting-google-reconnect"
+										: "meeting-review",
+								),
 								note:
 									provider === "google" ? MEETING_RECONNECT_NOTE : "Open Provider health on the review page.",
 							},
@@ -90,15 +95,23 @@ export const meetingConnections = (summary: MeetingSummary, now: Date): Connecti
 export const fathomConnectionId = (account: string): string => `fathom.${account}`.slice(0, 96);
 
 export const fathomConnections = (summary: FathomSummary, now: Date): ConnectionTile => {
+	if (summary.config.state !== "ok") return passState(summary.config, now);
 	if (summary.checkpoint.state !== "ok") return passState(summary.checkpoint, now);
+	const scheduled = new Set(summary.config.data!.pollAccounts);
 	const accounts = summary.checkpoint.data!.accounts;
 	return list(
 		accounts.slice(0, MAX_CONNECTIONS).map((account) => ({
 			id: fathomConnectionId(account.account),
 			label: `Fathom: ${account.account}`.slice(0, 96),
 			owner: "fathom-poll",
-			status: account.stale ? "attention" : "connected",
-			detail: account.updatedAt === null ? "never_polled" : account.stale ? "checkpoint_stale" : null,
+			status: !scheduled.has(account.account) ? "not_tracked" : account.stale ? "attention" : "connected",
+			detail: !scheduled.has(account.account)
+				? "Automatic polling disabled"
+				: account.updatedAt === null
+					? "never_polled"
+					: account.stale
+						? "checkpoint_stale"
+						: null,
 			checkedAt: checkedAtOf(account.updatedAt),
 			action: { kind: "command", value: "harnessy jarvis meeting fathom status", note: null },
 		})),
