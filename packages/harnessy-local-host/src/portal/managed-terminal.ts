@@ -1,4 +1,4 @@
-import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
@@ -72,6 +72,12 @@ export class ManagedTerminal implements TerminalBackend {
 			if (!Array.isArray(saved)) throw new TerminalError("invalid_session_store");
 			for (const row of saved) {
 				if (!ID.test(row.id) || !isAbsolute(row.cwd)) throw new TerminalError("invalid_session_store");
+				// Only restored launches are interrupted. An active launch in this manager
+				// keeps its starting state until its synchronous backend work completes.
+				if (row.state === "starting") {
+					row.state = "interrupted";
+					row.error = "launch_interrupted_inspect_before_retry";
+				}
 				this.records.set(row.id, row);
 			}
 		}
@@ -101,6 +107,21 @@ export class ManagedTerminal implements TerminalBackend {
 		const file = join(this.root, "sessions.json");
 		writeFileSync(`${file}.tmp`, JSON.stringify([...this.records.values()], null, 2), { mode: 0o600 });
 		renameSync(`${file}.tmp`, file);
+	}
+	/** Check the recorded process independently of Herdr's pane registry. */
+	private savedProcessAlive(row: RecordEntry) {
+		const saved = /^([1-9][0-9]*):(.+)$/u.exec(row.processStamp ?? "");
+		if (!saved) throw new TerminalError("terminal_identity_unverified");
+		const result = spawnSync("/bin/ps", ["-p", saved[1]!, "-o", "lstart="], {
+			env: this.env,
+			encoding: "utf8",
+			timeout: 10000,
+			maxBuffer: 65536,
+		});
+		if (result.error || result.signal) throw new TerminalError("terminal_identity_unverified");
+		if (result.status === 1 && !result.stdout.trim() && !result.stderr.trim()) return false;
+		if (result.status !== 0 || !result.stdout.trim()) throw new TerminalError("terminal_identity_unverified");
+		return result.stdout.trim() === saved[2];
 	}
 	private run(exe: string, args: string[]) {
 		try {
@@ -147,6 +168,7 @@ export class ManagedTerminal implements TerminalBackend {
 					try {
 						const stamp = this.processStamp(row);
 						row.state = stamp && stamp === row.processStamp ? "running" : "interrupted";
+						if (row.state === "running") delete row.error;
 					} catch {
 						row.state = "interrupted";
 					}
@@ -464,9 +486,40 @@ export class ManagedTerminal implements TerminalBackend {
 			return { ok: true };
 		}
 		if (body.action === "close") {
-			if (row.pane && row.state === "running") this.herdr(["pane", "close", row.pane]);
+			if (row.state !== "ended") {
+				try {
+					if (!row.pane || !row.terminal) throw new TerminalError("terminal_identity_unverified");
+					const panes = JSON.parse(this.herdr(["pane", "list"])) as {
+						result: { panes: { pane_id: string; terminal_id: string }[] };
+					};
+					const pane = panes.result.panes.find((p) => p.pane_id === row.pane);
+					if (pane) {
+						if (
+							pane.terminal_id !== row.terminal ||
+							!row.processStamp ||
+							this.processStamp(row) !== row.processStamp
+						)
+							throw new TerminalError("terminal_identity_unverified");
+						// For imported tmux this closes only our attachment process, not its session.
+						this.herdr(["pane", "close", row.pane]);
+						const after = JSON.parse(this.herdr(["pane", "list"])) as typeof panes;
+						if (after.result.panes.some((p) => p.pane_id === row.pane && p.terminal_id === row.terminal))
+							throw new TerminalError("terminal_end_unverified");
+					}
+					// Registry removal alone does not prove the process stopped. A still-live
+					// process stays visible; a later explicit retry can confirm its exit.
+					if (this.savedProcessAlive(row)) throw new TerminalError("terminal_end_unverified");
+				} catch {
+					row.error = "terminal_end_unverified";
+					this.save();
+					throw new TerminalError("terminal_end_unverified");
+				}
+			}
 			row.state = "ended";
+			delete row.error;
 			this.streams.get(row.id)?.child.kill();
+			this.streams.delete(row.id);
+			this.owners.delete(row.id);
 			this.save();
 			return { closed: true };
 		}

@@ -6,6 +6,18 @@ import { correctJarvisPlanningSource } from "../packages/harnessy-core/src/runti
 import { correctJarvisAnytypeSource } from "../packages/harnessy-core/src/runtime/jarvis-anytype-correction.ts";
 import { correctJarvisCommunitySource } from "../packages/harnessy-core/src/runtime/jarvis-community-source-correction.ts";
 
+/** Correct the reviewed knowledge-neutral CLI source; reject all other bytes. */
+export function correctJarvisSyncSource(syncSource) {
+	if (createHash("sha256").update(syncSource).digest("hex") !== "d3e6d0a5335f90e56b20a4a2704ff260dcbc9b9289756f4b9fc5cf0b3454a065") {
+		throw new Error("Unknown Jarvis sync source; refusing installation correction");
+	}
+	return syncSource
+		.replace("        if adapter is None:\n            return", "        if adapter is None:\n            raise SystemExit(1)")
+		.replace("            adapter, destination\n        ):\n            return", "            adapter, destination\n        ):\n            raise SystemExit(1)")
+		.replace("if not dry_run and result.state is not None and not result.errors:", "if not dry_run and result.state is not None:")
+		.replace("State was not written because the sync had errors.", "Partial state saved; errors require reconciliation before retry.");
+}
+
 /** Install verified V2-owned reuse into the candidate, never into the user's global tools. */
 export const installLocalJarvisRuntime = (sourceRoot, environmentRoot) => {
 	if (!isAbsolute(sourceRoot) || !isAbsolute(environmentRoot)) throw new Error("Jarvis installation paths must be absolute");
@@ -22,14 +34,7 @@ export const installLocalJarvisRuntime = (sourceRoot, environmentRoot) => {
 		writeFileSync(collector, correctJarvisCommunitySource(readFileSync(collector, "utf8")));
 		const syncCli = join(buildRoot, "src/jarvis/sync/cli.py");
 		const syncSource = readFileSync(syncCli, "utf8");
-		if (createHash("sha256").update(syncSource).digest("hex") !== "17fe246f2af1869a473ae3244c57a2f5b58ee4d4ef623bec7b67cf5c937fe0a5") {
-			throw new Error("Unknown Jarvis sync source; refusing installation correction");
-		}
-		writeFileSync(syncCli, syncSource
-			.replace("        if adapter is None:\n            return", "        if adapter is None:\n            raise SystemExit(1)")
-			.replace("            adapter, destination\n        ):\n            return", "            adapter, destination\n        ):\n            raise SystemExit(1)")
-			.replace("if not dry_run and result.state is not None and not result.errors:", "if not dry_run and result.state is not None:")
-			.replace("State was not written because the sync had errors.", "Partial state saved; errors require reconciliation before retry."));
+		writeFileSync(syncCli, correctJarvisSyncSource(syncSource));
 		const result = spawnSync("uv", ["sync", "--project", buildRoot, "--frozen", "--no-dev", "--no-editable", "--python", "3.11", "--no-python-downloads"], {
 			shell: false,
 			stdio: "inherit",

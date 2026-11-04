@@ -265,6 +265,8 @@ export class SessionClient {
 						runner_unavailable: "This agent is not installed on the host.",
 						session_directory_missing: "The saved working directory is missing. Restore it before resuming.",
 						terminal_backend_unavailable: "Herdr did not start. Check its installation and try again.",
+						terminal_end_unverified:
+							"Could not verify that the process ended. The session is retained. Refresh its status and check the host before trying again.",
 					};
 					return {
 						kind: "error",

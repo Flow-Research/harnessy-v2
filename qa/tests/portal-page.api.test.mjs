@@ -33,9 +33,9 @@ test("PRTP-001 the app files are manifest-pinned and carry the strict CSP", () =
 	run("harnessy-local-host", "test/portal-assets.test.ts", "manifest's files|script-free page|tampered, resized|malformed, escapes|inline script, style|real build|unchanged CSP", 7);
 });
 
-test("PRTP-002 the app renders API data as text and links only to loopback services", () => {
+test("PRTP-002 the app renders API data as text, permits safe document links and restricts service hand-offs", () => {
 	run("harnessy-local-host", "test/app/lib.test.ts", "loopback http links|raw HTML, script|bounds the number|parses headings", 4);
-	run("harnessy-local-host", "test/app/app.test.tsx", "Markdown as text|unsafe hand-off|hostile brief|hidden format characters", 4);
+	run("harnessy-local-host", "test/app/app.test.tsx", "renders HTML as text and permits safe HTTP/HTTPS document links|unsafe hand-off|hostile brief|hidden format characters", 4);
 	run("harnessy-local-host", "test/app/lib.test.ts", "block-quote nesting", 1);
 	run("harnessy-local-host", "test/app/tokens.test.ts", ".", 5);
 });
