@@ -1,6 +1,7 @@
 /**
  * Portal sessions: one install token on disk, short-lived one-time codes and
- * in-memory page tokens. Page tokens grant read access only. Nothing here is
+ * in-memory page tokens. Page tokens permit reads and authenticated owner actions,
+ * including terminal control. Nothing here is
  * persisted, so a restart signs every page out.
  *
  * The install token never crosses the wire. A CLI first asks for a one-time
@@ -133,7 +134,7 @@ export class PortalSessions {
 		return this.#issue(this.#pageTokens, PORTAL_PAGE_TOKEN_TTL_MS, MAX_PAGE_TOKENS);
 	}
 
-	/** A live page token (read scope). */
+	/** A live owner page token; each route applies its additional request checks. */
 	isPageToken(candidate: string | undefined): boolean {
 		if (candidate === undefined) return false;
 		const key = digest(candidate).toString("hex");

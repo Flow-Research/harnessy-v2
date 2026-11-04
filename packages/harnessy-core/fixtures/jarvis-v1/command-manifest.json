@@ -4,7 +4,7 @@
     "kind": "jarvis-click",
     "version": "0.1.0",
     "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli",
-    "pythonSourceSha256": "4197404bb7f2c4e7c1d0779bed18a94c774c774a06eca59abde368296bcca8ca"
+    "pythonSourceSha256": "c7a2cd0b14b043b5fb1d45253d75b44f01483f531a70759dcefbd286f51e5975"
   },
   "generatedBy": "scripts/export-jarvis-command-manifest.py",
   "normalization": {
@@ -620,6 +620,26 @@
         {
           "names": [
             "--discord-channel-id"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--google-owner-email"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--google-drive-folder"
           ],
           "type": "text",
           "required": false,
@@ -3621,6 +3641,16 @@
         {
           "names": [
             "--google-owner-email"
+          ],
+          "type": "text",
+          "required": false,
+          "multiple": false,
+          "count": false,
+          "default": null
+        },
+        {
+          "names": [
+            "--google-drive-folder"
           ],
           "type": "text",
           "required": false,

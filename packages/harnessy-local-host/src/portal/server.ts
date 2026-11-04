@@ -327,6 +327,7 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 				const code = parseField(body, "code");
 				const grant = code === undefined ? undefined : sessions.exchange(code);
 				if (grant === undefined) throw new RequestRefused(401, "invalid_code");
+				// Preserve the v1 compatibility label; this owner token also permits authenticated actions.
 				return { token: grant.secret, scope: "read", expiresAt: grant.expiresAt.toISOString() };
 			}
 			case "read":

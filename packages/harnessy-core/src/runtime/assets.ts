@@ -991,7 +991,15 @@ exec uv run --project "\${JARVIS_CLI_ROOT}" jarvis "$@"
 								reason,
 							}),
 						);
-						// Skipping a legacy directory does not prove ownership of its commands.
+						// A version match alone does not prove ownership. Reuse the
+						// installer's read-only check before repairing missing commands.
+						const owned = yield* Effect.tryPromise(() =>
+							installOwnedSkill(skill.sourceDir, targetDir, `bundled:${skill.name}`, { dryRun: true }),
+						).pipe(
+							Effect.as(true),
+							Effect.orElseSucceed(() => false),
+						);
+						if (owned) yield* installSkillExecutableShims(targetDir, globals, options, actions, written);
 						continue;
 					}
 

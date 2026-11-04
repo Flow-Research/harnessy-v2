@@ -205,6 +205,22 @@ export const validateCiContract = ({ ciSource, securitySource, releaseSource, pr
 	requireCommand(issues, "Security Gates", security, "executor-dependencies", "node scripts/audit-executor.mjs --json");
 
 	if (!release.jobs["release-preflight"]) issues.push("Build Binaries must define release-preflight");
+	for (const [jobId, firstTest] of [["release-preflight", "npm run release:preflight"], ["publish-npm", "./test.sh"]]) {
+		const steps = release.jobs[jobId]?.steps ?? [];
+		const setupIndex = steps.findIndex((step) =>
+			step.uses === "./.github/actions/harnessy-ci-setup" &&
+			String(step.with?.["test-runtime"]) === "true" &&
+			step.if === undefined &&
+			String(step["continue-on-error"] ?? "false") === "false",
+		);
+		const testIndex = steps.findIndex((step) => commandLinesFor({ steps: [step] }).includes(firstTest));
+		if (setupIndex < 0 || testIndex <= setupIndex) {
+			issues.push(`Build Binaries:${jobId} must prepare the isolated test runtime before ${firstTest}`);
+		}
+		if (setupIndex >= 0 && steps.slice(setupIndex + 1).some((step) => String(step.uses ?? "").startsWith("actions/setup-node@"))) {
+			issues.push(`Build Binaries:${jobId} must configure Node before the private test runtime`);
+		}
+	}
 	requireCommand(issues, "Build Binaries", release, "release-preflight", "npm run release:preflight");
 	requireEvidenceUpload(issues, "Build Binaries", release, "release-preflight");
 	if (!normalizeNeeds(release.jobs["stage-github-release"]?.needs).includes("release-preflight")) {

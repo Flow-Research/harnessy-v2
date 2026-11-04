@@ -20,6 +20,7 @@ const { values } = parseArgs({
 
 const commandManifest = JSON.parse(await readFile(resolve(values.commands), "utf8"));
 const stateManifest = JSON.parse(await readFile(resolve(values.state), "utf8"));
+const pythonPublicationOracle = JSON.parse(await readFile(resolve("packages/harnessy-core/fixtures/jarvis-v1/publication-observations.json"), "utf8"));
 
 const nativeMeetingFoundationCommands = new Set([
 	"jarvis meeting publish",
@@ -277,6 +278,11 @@ const meetingOracleSources = await Promise.all(
 		return { path, sha256: createHash("sha256").update(content).digest("hex") };
 	}),
 );
+for (const source of pythonPublicationOracle.sources) {
+	const path = resolve("packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis", source.path);
+	const digest = createHash("sha256").update(await readFile(path)).digest("hex");
+	if (digest !== source.sha256) throw new Error(`stale observed Python publication oracle: ${source.path}`);
+}
 const meetingStatuses = [
 	"pending_review",
 	"approved",
@@ -299,7 +305,6 @@ const meetingTransitionCases = [
 	["approve-blocked", "blocked", "approve", "approved"],
 	["restore-archived", "archived", "restore", "pending_review"],
 	["change-approved", "approved", "source_changed", "pending_review"],
-	["change-publishing", "publishing", "source_changed", "pending_review"],
 	["change-rejected", "rejected", "source_changed", "pending_review"],
 	["change-blocked", "blocked", "source_changed", "pending_review"],
 ].map(([id, from, event, expected]) => ({ id, from, event, v1: expected, v2: expected }));
@@ -312,9 +317,19 @@ const meetingInvalidTransitionCases = [
 const meetingFixture = {
 	schemaVersion: 1,
 	oracle: {
-		kind: "preserved-v1-explicit-contract",
+		kind: "normalized-domain-contract-with-observed-python-safety",
 		sources: meetingOracleSources,
+		observations: "publication-observations.json",
 	},
+	contractScope: "Transition cases are normalized domain expectations, not a claim that all Python store operations implement the same state machine. Recovery and safety cases use executed installed-Python observations.",
+	pythonObservations: pythonPublicationOracle.observations,
+	knownDifferences: [
+		{ boundary: "HTTP 408 read response", python: "PublicationConfigError without retry", native: "request_timeout with bounded retry", evidence: "Installed Python request observations and meeting-publication-providers.test.ts GET /about case." },
+		{ boundary: "Expired publishing claim", python: "No candidate returned; row retained", native: "Writer admission rejects; row retained", evidence: "Real restartable SQLite parity case, not a simulated fresh claim." },
+	],
+	nativeDomainOnlyTransitionCases: [
+		{ id: "pre-delivery-change-publishing", from: "publishing", event: "source_changed", expected: "pending_review", scope: "Pre-delivery domain invalidation only; ordinary scans must not clear an uncertain publishing row." },
+	],
 	statuses: { v1: meetingStatuses, v2: meetingStatuses },
 	transitionCases: meetingTransitionCases,
 	invalidTransitionCases: meetingInvalidTransitionCases,
@@ -322,17 +337,18 @@ const meetingFixture = {
 		{
 			id: "expired-lease-google-checkpoint",
 			input: { status: "publishing", lease: "expired", googleDocId: "doc-1" },
-			v1Expected: { status: "publishing", attemptsDelta: 1, existingGoogleDocId: "doc-1" },
+			admissionDifference: "Python returns no candidate; native writer admission rejects the uncertain queue. Both retain the exact row and do not claim again.",
+			v1Expected: pythonPublicationOracle.observations.expiredLease,
 		},
 		{
 			id: "discord-retry-after",
 			input: { status: "publishing", retryAfterSeconds: 10, googleDocId: "doc-1" },
-			v1Expected: { status: "approved", retryScheduled: true, existingGoogleDocId: "doc-1" },
+			v1Expected: pythonPublicationOracle.observations.explicitRetry,
 		},
 		{
 			id: "terminal-provider-failure",
 			input: { status: "publishing", retryAfterSeconds: null },
-			v1Expected: { status: "blocked", retryScheduled: false },
+			v1Expected: pythonPublicationOracle.observations.terminalFailure,
 		},
 	],
 	reviewCases: [
@@ -376,6 +392,7 @@ const meetingFixture = {
 		providerResponseBody: "never",
 	},
 	providerContract: {
+		scope: "Native provider contract. Python request-helper outcomes are recorded separately in pythonObservations.providerRequests; equivalent names or HTTP statuses do not establish parity.",
 		order: ["google", "discord"],
 		google: {
 			identity: "exact-owner-before-every-write",
@@ -394,6 +411,7 @@ const meetingFixture = {
 			content: "approved-purpose-and-stable-google-url-only",
 		},
 		failures: {
+			mutationUncertainty: "Potentially delivered mutations are non-retryable and retain publishing state; transient classifications below apply only to safe reads or explicit rejection.",
 			terminal: [
 				"authentication_failed",
 				"permission_denied",
@@ -418,6 +436,7 @@ const meetingFixture = {
 		persistence: "provider-bodies-and-credentials-never-in-workflow-state",
 	},
 	providerCases: {
+		scope: "Native read-request classifications; not Python outcomes and not permission to replay publication mutations.",
 		httpFailures: [
 			{ id: "authentication", status: 401, code: "authentication_failed", retryable: false, retryAfterSeconds: null },
 			{ id: "permission", status: 403, code: "permission_denied", retryable: false, retryAfterSeconds: null },
@@ -439,6 +458,7 @@ const meetingFixture = {
 		],
 		discordContent: { maxCodePoints: 2000, maxBytes: 8000, escapesMarkupBeforeMeasuring: true },
 		lostResponseRecovery: {
+			policy: "retain-publishing-until-owning-service-reconciles; identity hints alone do not authorize retry",
 			googleDocumentIdentity: "harnessyMeetingItemId",
 			discordCreateIdentity: "enforced-item-id-nonce",
 		},

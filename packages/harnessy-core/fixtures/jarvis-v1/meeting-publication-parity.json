@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "oracle": {
-    "kind": "preserved-v1-explicit-contract",
+    "kind": "normalized-domain-contract-with-observed-python-safety",
     "sources": [
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/models.py",
@@ -13,23 +13,23 @@
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/store.py",
-        "sha256": "b0fe832c5d1aa8ddec181cb597959320b0eba208cb045d05ef256784647db59d"
+        "sha256": "95cfa2b1cce34a75e3be9cde515862d58882f68c694765f28738d32be4030b1f"
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/service.py",
-        "sha256": "1c7b0b8f889a3c404defa229b9414311d25efb8bda8074cafdf95cd8f36923f0"
+        "sha256": "aacf52291d00576357b9e8414ea06b3f5d43496e294d870322fbda15297f4b86"
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/review.py",
-        "sha256": "f33f7601eea82fe28be0aa3df64acefbdeea9d082db9d595e65ed17b9c962655"
+        "sha256": "f75bedc2cff58ae441ab82c22b02357a627e3bccab47aba6575c88a8adb48ed0"
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/discord.py",
-        "sha256": "84153d3324030b3b60ee4ce268c8030b0384979090af010208b211d6a5fd8fb1"
+        "sha256": "c5c91c37c8a87f685a9da1829d58654674c354425f6645b6ce568ab474590a27"
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/google.py",
-        "sha256": "4fe2ccaea2500859ea9c35fa6a501e9e1752abd6c48669464d3d315bc4564637"
+        "sha256": "d46577a43414573b065058a791c0228460edd90dcee8e9d79af85b4a2d63ef70"
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/notify.py",
@@ -41,10 +41,259 @@
       },
       {
         "path": "packages/capability-harnessy-v1-full/resources/jarvis-cli/src/jarvis/meetings/publication/errors.py",
-        "sha256": "987ed2430ca12e7430c7892315aca959069457e689b2842fc4c089c7933def58"
+        "sha256": "3558e4afd33887055a4e6901cab34f3c07e0d84a408ca24546f17959759942dd"
+      }
+    ],
+    "observations": "publication-observations.json"
+  },
+  "contractScope": "Transition cases are normalized domain expectations, not a claim that all Python store operations implement the same state machine. Recovery and safety cases use executed installed-Python observations.",
+  "pythonObservations": {
+    "expiredLease": {
+      "status": "publishing",
+      "attemptsDelta": 0,
+      "existingGoogleDocId": "doc-1",
+      "claimed": false
+    },
+    "publishingScan": {
+      "status": "publishing",
+      "sourceHashRetained": true
+    },
+    "publishingDecisions": {
+      "approve": "rejected",
+      "reject": "rejected"
+    },
+    "uncertainDelivery": {
+      "status": "publishing",
+      "retryScheduled": false,
+      "existingGoogleDocId": "doc-1"
+    },
+    "explicitRetry": {
+      "status": "approved",
+      "retryScheduled": true,
+      "existingGoogleDocId": "doc-1"
+    },
+    "terminalFailure": {
+      "status": "blocked",
+      "retryScheduled": false
+    },
+    "providerRequests": [
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": "lost-response",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": "invalid-json",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "GET",
+        "response": 503,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": "lost-response",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": "invalid-json",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "google",
+        "method": "POST",
+        "response": 503,
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": "lost-response",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": "invalid-json",
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "GET",
+        "response": 503,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": "lost-response",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": "invalid-json",
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": "empty-object",
+        "outcome": "accepted-response",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": 408,
+        "outcome": "PublicationConfigError",
+        "retryable": false,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": 429,
+        "outcome": "PublicationTransientError",
+        "retryable": true,
+        "uncertain": false
+      },
+      {
+        "provider": "discord",
+        "method": "POST",
+        "response": 503,
+        "outcome": "PublicationUncertainError",
+        "retryable": false,
+        "uncertain": true
       }
     ]
   },
+  "knownDifferences": [
+    {
+      "boundary": "HTTP 408 read response",
+      "python": "PublicationConfigError without retry",
+      "native": "request_timeout with bounded retry",
+      "evidence": "Installed Python request observations and meeting-publication-providers.test.ts GET /about case."
+    },
+    {
+      "boundary": "Expired publishing claim",
+      "python": "No candidate returned; row retained",
+      "native": "Writer admission rejects; row retained",
+      "evidence": "Real restartable SQLite parity case, not a simulated fresh claim."
+    }
+  ],
+  "nativeDomainOnlyTransitionCases": [
+    {
+      "id": "pre-delivery-change-publishing",
+      "from": "publishing",
+      "event": "source_changed",
+      "expected": "pending_review",
+      "scope": "Pre-delivery domain invalidation only; ordinary scans must not clear an uncertain publishing row."
+    }
+  ],
   "statuses": {
     "v1": [
       "pending_review",
@@ -151,13 +400,6 @@
       "v2": "pending_review"
     },
     {
-      "id": "change-publishing",
-      "from": "publishing",
-      "event": "source_changed",
-      "v1": "pending_review",
-      "v2": "pending_review"
-    },
-    {
       "id": "change-rejected",
       "from": "rejected",
       "event": "source_changed",
@@ -210,10 +452,12 @@
         "lease": "expired",
         "googleDocId": "doc-1"
       },
+      "admissionDifference": "Python returns no candidate; native writer admission rejects the uncertain queue. Both retain the exact row and do not claim again.",
       "v1Expected": {
         "status": "publishing",
-        "attemptsDelta": 1,
-        "existingGoogleDocId": "doc-1"
+        "attemptsDelta": 0,
+        "existingGoogleDocId": "doc-1",
+        "claimed": false
       }
     },
     {
@@ -295,6 +539,7 @@
     "providerResponseBody": "never"
   },
   "providerContract": {
+    "scope": "Native provider contract. Python request-helper outcomes are recorded separately in pythonObservations.providerRequests; equivalent names or HTTP statuses do not establish parity.",
     "order": [
       "google",
       "discord"
@@ -316,6 +561,7 @@
       "content": "approved-purpose-and-stable-google-url-only"
     },
     "failures": {
+      "mutationUncertainty": "Potentially delivered mutations are non-retryable and retain publishing state; transient classifications below apply only to safe reads or explicit rejection.",
       "terminal": [
         "authentication_failed",
         "permission_denied",
@@ -340,6 +586,7 @@
     "persistence": "provider-bodies-and-credentials-never-in-workflow-state"
   },
   "providerCases": {
+    "scope": "Native read-request classifications; not Python outcomes and not permission to replay publication mutations.",
     "httpFailures": [
       {
         "id": "authentication",
@@ -411,6 +658,7 @@
       "escapesMarkupBeforeMeasuring": true
     },
     "lostResponseRecovery": {
+      "policy": "retain-publishing-until-owning-service-reconciles; identity hints alone do not authorize retry",
       "googleDocumentIdentity": "harnessyMeetingItemId",
       "discordCreateIdentity": "enforced-item-id-nonce"
     }

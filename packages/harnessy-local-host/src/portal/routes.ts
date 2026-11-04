@@ -80,7 +80,7 @@ const PORTAL_CORE_ROUTES: ReadonlyArray<PortalRoute> = [
 		method: "POST",
 		path: "/v1/session/exchange",
 		operationId: "exchangeSessionCode",
-		summary: "Exchange a one-time code for a read-only page token (8 h)",
+		summary: "Exchange a one-time code for an owner page token with read and action access (8 h)",
 		auth: "code",
 		schema: "SessionExchange",
 	},

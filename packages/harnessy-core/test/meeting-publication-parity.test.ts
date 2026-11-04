@@ -41,6 +41,12 @@ interface TransitionCase {
 interface MeetingParityFixture {
 	readonly statuses: { readonly v1: ReadonlyArray<string>; readonly v2: ReadonlyArray<string> };
 	readonly transitionCases: ReadonlyArray<TransitionCase>;
+	readonly nativeDomainOnlyTransitionCases: ReadonlyArray<{
+		readonly id: string;
+		readonly from: unknown;
+		readonly event: unknown;
+		readonly expected: string;
+	}>;
 	readonly invalidTransitionCases: ReadonlyArray<TransitionCase>;
 	readonly recoveryCases: ReadonlyArray<{
 		readonly id: string;
@@ -88,6 +94,86 @@ interface MeetingParityFixture {
 const loadFixture = () => JSON.parse(readFileSync(fixturePath, "utf8")) as MeetingParityFixture;
 
 describe("meeting-publication V1/V2 parity contract", () => {
+	it("re-executes the Python safety oracle from the exact isolated installed source", () => {
+		const python = process.env.HARNESSY_TEST_JARVIS_PYTHON;
+		if (!python) throw new Error("HARNESSY_TEST_JARVIS_PYTHON must identify the isolated installed Jarvis runtime");
+		const home = mkdtempSync(join(realpathSync(tmpdir()), "hsy-oracle-home-"));
+		try {
+			const result = spawnSync(
+				python,
+				[
+					"-I",
+					"-B",
+					"scripts/export-jarvis-publication-oracle.py",
+					"--jarvis-root",
+					"packages/capability-harnessy-v1-full/resources/jarvis-cli",
+					"--output",
+					"packages/harnessy-core/fixtures/jarvis-v1/publication-observations.json",
+					"--check",
+				],
+				{
+					cwd: repositoryRoot,
+					env: { HOME: home, PATH: "/usr/bin:/bin", PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
+					encoding: "utf8",
+					timeout: 30_000,
+				},
+			);
+			expect(result.status, result.stderr).toBe(0);
+			const stale = JSON.parse(
+				readFileSync(
+					resolve(repositoryRoot, "packages/harnessy-core/fixtures/jarvis-v1/publication-observations.json"),
+					"utf8",
+				),
+			);
+			const stalePath = join(home, "stale-expiry.json");
+			writeFileSync(stalePath, `${JSON.stringify(stale, null, 2)}\n`);
+			const unchanged = spawnSync(
+				python,
+				[
+					"-I",
+					"-B",
+					"scripts/export-jarvis-publication-oracle.py",
+					"--jarvis-root",
+					"packages/capability-harnessy-v1-full/resources/jarvis-cli",
+					"--output",
+					stalePath,
+					"--check",
+				],
+				{
+					cwd: repositoryRoot,
+					env: { HOME: home, PATH: "/usr/bin:/bin", PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
+					encoding: "utf8",
+					timeout: 30_000,
+				},
+			);
+			expect(unchanged.status, unchanged.stderr).toBe(0);
+			stale.observations.expiredLease.attemptsDelta = 1;
+			writeFileSync(stalePath, `${JSON.stringify(stale, null, 2)}\n`);
+			const rejected = spawnSync(
+				python,
+				[
+					"-I",
+					"-B",
+					"scripts/export-jarvis-publication-oracle.py",
+					"--jarvis-root",
+					"packages/capability-harnessy-v1-full/resources/jarvis-cli",
+					"--output",
+					stalePath,
+					"--check",
+				],
+				{
+					cwd: repositoryRoot,
+					env: { HOME: home, PATH: "/usr/bin:/bin", PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
+					encoding: "utf8",
+					timeout: 30_000,
+				},
+			);
+			expect(rejected.status).not.toBe(0);
+			expect(rejected.stderr).toContain("Stale observed Python publication oracle");
+		} finally {
+			rmSync(home, { recursive: true, force: true });
+		}
+	});
 	it.effect("keeps absent publication configuration disabled and tenant-neutral", () =>
 		Effect.gen(function* () {
 			const legacy = yield* Schema.decodeUnknownEffect(JarvisLegacyConfig)({});
@@ -195,14 +281,18 @@ describe("meeting-publication V1/V2 parity contract", () => {
 				).pipe(Effect.result);
 				expect(actual._tag, testCase.id).toBe("Failure");
 			}
+			for (const testCase of fixture.nativeDomainOnlyTransitionCases) {
+				const actual = yield* transitionMeetingPublication(
+					Schema.decodeUnknownSync(MeetingPublicationStatus)(testCase.from),
+					Schema.decodeUnknownSync(MeetingPublicationEvent)(testCase.event),
+				);
+				expect(actual, testCase.id).toBe(testCase.expected);
+			}
 			for (const recovery of fixture.recoveryCases) {
 				let actual: Record<string, unknown>;
 				if (recovery.id === "expired-lease-google-checkpoint") {
-					actual = {
-						status: yield* transitionMeetingPublication("approved", "claim"),
-						attemptsDelta: 1,
-						existingGoogleDocId: recovery.input.googleDocId,
-					};
+					// Executed against real SQLite below, not simulated by a fresh claim.
+					continue;
 				} else if (recovery.id === "discord-retry-after") {
 					actual = {
 						status: yield* transitionMeetingPublication("publishing", "retry"),
@@ -381,6 +471,44 @@ describe("meeting-publication V1/V2 parity contract", () => {
 			expect(afterRestart.published.discordPurposeOverride === null ? "cleared" : "retained").toBe(
 				fixture.reviewLifecycle.published,
 			);
+			const expiredNote = makeNote("d".repeat(24), "5".repeat(64), "expired");
+			const original = await runStore(
+				Effect.gen(function* () {
+					const store = yield* MeetingPublicationStore;
+					yield* store.upsert(expiredNote, "2026-09-04T13:00:00.000Z");
+					yield* store.approve(
+						expiredNote.itemId,
+						expiredNote.sourceHash,
+						"Approved.",
+						"2026-09-04T13:00:01.000Z",
+					);
+					const claim = yield* store.claim("2026-09-04T13:00:02.000Z", "2026-09-04T13:01:02.000Z");
+					if (claim === null) return yield* Effect.die("missing expiry fixture claim");
+					yield* store.recordGoogle(claim, "doc-1", "https://example.test/doc", "2026-09-04T13:00:03.000Z");
+					return yield* store.get(expiredNote.itemId);
+				}),
+			);
+			const expired = await runStore(
+				Effect.gen(function* () {
+					const store = yield* MeetingPublicationStore;
+					const claim = yield* store
+						.claim("2026-09-04T14:00:00.000Z", "2026-09-04T14:01:00.000Z")
+						.pipe(Effect.result);
+					const after = yield* store.get(expiredNote.itemId);
+					return { claim, after };
+				}),
+			);
+			expect(original).not.toBeNull();
+			expect(expired.after).toEqual(original);
+			expect(expired.claim._tag).toBe("Failure");
+			const recovery = fixture.recoveryCases.find((entry) => entry.id === "expired-lease-google-checkpoint");
+			expect(recovery).toBeDefined();
+			expect({
+				status: expired.after?.status,
+				attemptsDelta: (expired.after?.attempts ?? -1) - (original?.attempts ?? 0),
+				existingGoogleDocId: expired.after?.googleDocId,
+				claimed: expired.claim._tag === "Success" && expired.claim.success !== null,
+			}).toEqual(recovery?.v1Expected);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
