@@ -4,6 +4,14 @@
 - Date: 2026-10-18
 - Decided by: Julian, 2026-10-18 ("yes. proceed")
 
+## Partial supersession — 2026-11-04
+
+[ADR-0010](0010-portal-actions-and-session-ownership.md) records the current
+accepted implementation boundary. Decision items 3–6 and the device-session consequence
+are historical where they conflict with that decision. The original text below
+is retained to explain the earlier phase. It is not the current user guide.
+The API contract, credential ownership and publication safeguards remain.
+
 ## Context
 
 Julian had two front doors: the read-only portal page on `127.0.0.1:8790`

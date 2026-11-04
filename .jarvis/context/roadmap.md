@@ -1142,7 +1142,9 @@ SQLite, file, process, socket, or workerd boundaries.
 
 Meeting publication has the local source/store/review/provider foundation,
 pending-only note editing, exact-item publication, revision-bound grants,
-claim fencing, and reminder recovery evidence recorded in `status.md`.
+claim fencing, and reminder recovery evidence recorded at this historical checkpoint.
+The former shared status history is retained privately; current code and tests
+must verify these boundaries before operational use.
 Core's default authority still reports V1 ownership and denies mutations.
 The six local-host CLI commands remain inert planning/inspection operations;
 planning `verify` cannot authorize anything. ADR 0006 step 2's input and
@@ -1179,7 +1181,8 @@ while exact identity/hash/date/project/path/history validation and transcript
 exclusion remain; every non-archived state uses the unchanged source reader.
 Focused, packed, and saved-snapshot evidence now verifies the inert candidate
 without changing the captured inputs. The failure remains recorded as historical
-evidence in `status.md`; it was not repaired by dropping or reapproving a row.
+evidence in the retained private migration history; it was not repaired by
+dropping or reapproving a row. This paragraph is not a current runtime claim.
 The approved same-directory decision-only review amendment is now locally
 verified, including the installed CLI: exact directory equality, V2's fixed
 namespaced token, unchanged V1-owned files, and rejection of V1's bearer token.

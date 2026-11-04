@@ -3,6 +3,15 @@
 - Status: accepted for Phase 1
 - Date: 2026-10-17
 
+## Partial supersession — 2026-11-04
+
+[ADR-0010](0010-portal-actions-and-session-ownership.md) records the current
+accepted implementation boundary. Decision items 2–4; the terminal shutdown and session limit amendment;
+and the Phase 1 installation and loopback-link consequences
+are historical where they conflict with that decision. The original text below
+is retained to explain the earlier phase. It is not the current user guide.
+The API contract, credential ownership and publication safeguards remain.
+
 ## Context
 
 Julian wants one portal for his Harnessy work: today's Life brief, meetings,
