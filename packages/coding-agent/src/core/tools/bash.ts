@@ -93,6 +93,9 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 				throw new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`);
 			}
 
+			// The directory check yields; cancellation must still prevent execution.
+			if (signal?.aborted) throw new Error("aborted");
+
 			const commandFromStdin = shellConfig.commandTransport === "stdin";
 			const child = spawn(shellConfig.shell, commandFromStdin ? shellConfig.args : [...shellConfig.args, command], {
 				cwd,
