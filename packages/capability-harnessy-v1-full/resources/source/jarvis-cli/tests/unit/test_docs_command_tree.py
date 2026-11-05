@@ -28,7 +28,7 @@ def test_generated_docs_cover_live_click_tree() -> None:
     live = _live_nodes(cli, ("jarvis",))
 
     assert documented == [path for path, _ in live]
-    assert len(documented) == 157
+    assert len(documented) == 159
     assert len(set(documented)) == len(documented)
     assert ("jarvis", "wiki", "research") in documented
     assert ("jarvis", "whatsapp", "send-template") in documented
@@ -72,7 +72,7 @@ def test_docs_json_serializes_complete_tree() -> None:
 
     assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert len(payload["command_tree"]) == 157
+    assert len(payload["command_tree"]) == 159
     assert payload["description"] == "AI-powered personal assistant"
     assert "configured knowledge tool" in payload["commands"]["spaces"]["description"]
     assert "configured knowledge tool" in payload["commands"]["task"]["description"]

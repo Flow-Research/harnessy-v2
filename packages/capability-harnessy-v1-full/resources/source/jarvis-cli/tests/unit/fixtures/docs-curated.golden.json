@@ -184,6 +184,16 @@
             "jarvis config show"
           ]
         },
+        "startup-help": {
+          "description": "Show or set the command list printed in new terminals; JARVIS_STARTUP_HELP=0 or 1 overrides it",
+          "examples": [
+            "jarvis config startup-help",
+            "jarvis config startup-help off"
+          ],
+          "options": {
+            "STATE": "on, off or status (default)"
+          }
+        },
         "whatsapp-setup": {
           "description": "Interactively configure WhatsApp accounts, env vars, and shell activation",
           "examples": [
@@ -792,6 +802,16 @@
         "--tier": "Filter to a specific tier",
         "--topic": "Filter to a specific topic",
         "TARGET": "Supported knowledge-tool URL, file path, generic URL, or '-' for stdin"
+      }
+    },
+    "shell-init": {
+      "description": "Print shell setup: tab completion and the command list shown in new terminals (on by default)",
+      "examples": [
+        "eval \"$(jarvis shell-init zsh)\"",
+        "eval \"$(jarvis shell-init bash)\""
+      ],
+      "options": {
+        "SHELL": "zsh (default) or bash"
       }
     },
     "spaces": {

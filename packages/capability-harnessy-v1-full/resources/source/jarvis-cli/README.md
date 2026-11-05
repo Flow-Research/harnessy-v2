@@ -70,17 +70,34 @@ Add to your `~/.bashrc` or `~/.zshrc`:
 alias jarvis="uv run --directory /path/to/jarvis python -m jarvis"
 ```
 
-### Shell Completion (optional)
+### Shell Setup: Completion and Startup Help (recommended)
 
 For zsh, add to `~/.zshrc`:
 ```bash
-eval "$(_JARVIS_COMPLETE=zsh_source jarvis)"
+eval "$(jarvis shell-init zsh)"
 ```
 
-For bash, add to `~/.bashrc`:
+For bash (4.4 or newer), add to `~/.bashrc`:
 ```bash
-eval "$(_JARVIS_COMPLETE=bash_source jarvis)"
+eval "$(jarvis shell-init bash)"
 ```
+
+This line loads tab completion. By default it also prints the Jarvis command list
+(`jarvis --help`) when a new terminal opens. To change that:
+
+```bash
+jarvis config startup-help off     # save the setting (shell.startup_help in config.yaml)
+jarvis config startup-help on
+jarvis config startup-help         # show the current value and where it comes from
+JARVIS_STARTUP_HELP=0              # override for one shell or machine (1 turns it on)
+```
+
+The environment variable takes precedence over the saved setting. If the
+configuration file is missing or invalid, the shell setup still loads completion
+and uses the default (on).
+
+The older completion-only line, `eval "$(_JARVIS_COMPLETE=zsh_source jarvis)"`,
+still works but does not print the command list.
 
 ## Configuration
 

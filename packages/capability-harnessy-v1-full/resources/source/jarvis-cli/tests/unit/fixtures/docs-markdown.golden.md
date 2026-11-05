@@ -63,6 +63,17 @@ Examples:
   jarvis status
   jarvis status --diagnose
 
+### `jarvis shell-init`
+
+Print shell setup: tab completion and the command list shown in new terminals (on by default)
+
+Options:
+  SHELL: zsh (default) or bash
+
+Examples:
+  eval "$(jarvis shell-init zsh)"
+  eval "$(jarvis shell-init bash)"
+
 ### `jarvis config`
 
 Manage Jarvis configuration
@@ -113,6 +124,17 @@ Show path to configuration file
 
 Examples:
   jarvis config path
+
+#### `jarvis config startup-help`
+
+Show or set the command list printed in new terminals; JARVIS_STARTUP_HELP=0 or 1 overrides it
+
+Options:
+  STATE: on, off or status (default)
+
+Examples:
+  jarvis config startup-help
+  jarvis config startup-help off
 
 #### `jarvis config fathom-setup`
 

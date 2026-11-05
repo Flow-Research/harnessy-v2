@@ -61,6 +61,7 @@ Use `jarvis docs --json` as the source of truth, but these command families are 
 - `jarvis sync ...`: sync local folders into an AnyType Collection. Directories become Collections, Markdown/text files become Pages, and other files upload as native AnyType file objects by default. Use `jarvis sync run --source <path> --destination <object_id:space_id> --dry-run` first, then rerun without `--dry-run`; add `--yes` for non-interactive writes, `--prune` when deleted local files should be deleted from AnyType, and repeated `--include-extension` flags to add extra text file types. Handle non-text or non-UTF-8 files with `--unsupported-mode upload|warn|stub|error`; `upload` is the default, while `stub` creates metadata placeholder Pages without uploading the binary content. Use `jarvis sync dedupe --preset <name> --dry-run` then rerun with `--yes` to remove duplicate Collection links while keeping the object IDs recorded in sync state.
 - `jarvis object ...` / `jarvis o`: inspect or edit arbitrary backend objects.
 - `jarvis journal ...` / `jarvis j`: write, list, read, search, and summarize journal entries.
+- `jarvis shell-init zsh|bash`: print shell setup for `eval "$(jarvis shell-init zsh)"`: tab completion plus the command list shown in new terminals. `jarvis config startup-help on|off` saves the preference; `JARVIS_STARTUP_HELP=0|1` overrides it for one shell.
 
 ## User Request
 

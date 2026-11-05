@@ -326,6 +326,18 @@ class CommunityBriefingConfig(PublicationDestinationConfig):
         return cleaned
 
 
+class ShellConfig(BaseModel):
+    """Interactive shell integration (`jarvis shell-init`)."""
+
+    startup_help: bool = Field(
+        default=True,
+        description=(
+            "Show the Jarvis command list when a new interactive terminal opens. "
+            "JARVIS_STARTUP_HELP=0 or 1 overrides this value for one shell."
+        ),
+    )
+
+
 class JarvisConfig(BaseSettings):
     """Root configuration model for Jarvis.
 
@@ -354,6 +366,7 @@ class JarvisConfig(BaseSettings):
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     meeting_publication: MeetingPublicationConfig = Field(default_factory=MeetingPublicationConfig)
     community_briefing: CommunityBriefingConfig = Field(default_factory=CommunityBriefingConfig)
+    shell: ShellConfig = Field(default_factory=ShellConfig)
 
     @field_validator("active_backend")
     @classmethod

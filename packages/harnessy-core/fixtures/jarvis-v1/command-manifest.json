@@ -4,7 +4,7 @@
     "kind": "jarvis-click",
     "version": "0.1.0",
     "path": "packages/capability-harnessy-v1-full/resources/source/jarvis-cli",
-    "pythonSourceSha256": "c7a2cd0b14b043b5fb1d45253d75b44f01483f531a70759dcefbd286f51e5975"
+    "pythonSourceSha256": "48370f0cd17c3e3be7e30f66ffee2111e3b994e4c8b794809b95b6e98c126230"
   },
   "generatedBy": "scripts/export-jarvis-command-manifest.py",
   "normalization": {
@@ -893,6 +893,27 @@
       "alias": false,
       "help": "Show current configuration.",
       "arguments": [],
+      "options": []
+    },
+    {
+      "path": [
+        "jarvis",
+        "config",
+        "startup-help"
+      ],
+      "kind": "command",
+      "semanticName": "startup-help",
+      "alias": false,
+      "help": "Show or set the command list printed when a new terminal opens.\n\n    Needs 'eval \"$(jarvis shell-init zsh)\"' in your shell profile.\n    JARVIS_STARTUP_HELP=0 or 1 overrides the saved setting.\n    ",
+      "arguments": [
+        {
+          "name": "state",
+          "type": "choice",
+          "required": false,
+          "nargs": 1,
+          "default": "status"
+        }
+      ],
       "options": []
     },
     {
@@ -4791,6 +4812,26 @@
           "default": false
         }
       ]
+    },
+    {
+      "path": [
+        "jarvis",
+        "shell-init"
+      ],
+      "kind": "command",
+      "semanticName": "shell-init",
+      "alias": false,
+      "help": "Print shell setup: tab completion and the startup command list.\n\n    Add one line to your shell profile, for example in ~/.zshrc:\n\n        eval \"$(jarvis shell-init zsh)\"\n\n    New terminals then show the Jarvis command list. Turn it off with\n    'jarvis config startup-help off', or JARVIS_STARTUP_HELP=0 for one shell.\n    ",
+      "arguments": [
+        {
+          "name": "shell",
+          "type": "choice",
+          "required": false,
+          "nargs": 1,
+          "default": "zsh"
+        }
+      ],
+      "options": []
     },
     {
       "path": [
