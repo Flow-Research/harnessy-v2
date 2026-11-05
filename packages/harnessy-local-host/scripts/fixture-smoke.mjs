@@ -253,6 +253,8 @@ const exactHostInventory = [
 	"dist/portal/launchd-plan.js",
 	"dist/portal/learning.d.ts",
 	"dist/portal/learning.js",
+	"dist/portal/links-state.d.ts",
+	"dist/portal/links-state.js",
 	"dist/portal/liveness.d.ts",
 	"dist/portal/liveness.js",
 	"dist/portal/open-service.d.ts",
