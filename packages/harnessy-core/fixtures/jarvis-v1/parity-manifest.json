@@ -207,6 +207,12 @@
       "status": "missing"
     },
     {
+      "id": "command:jarvis:config:startup-help",
+      "surface": "command",
+      "legacyReference": "jarvis config startup-help",
+      "status": "missing"
+    },
+    {
       "id": "command:jarvis:config:whatsapp-setup",
       "surface": "command",
       "legacyReference": "jarvis config whatsapp-setup",
@@ -657,6 +663,12 @@
       "status": "intentionally-retired",
       "replacement": "Canonical hsy domain tool, slash command, skill, or CLI surface",
       "rationale": "Aliases are compatibility conveniences, not independent native protocol nodes."
+    },
+    {
+      "id": "command:jarvis:shell-init",
+      "surface": "command",
+      "legacyReference": "jarvis shell-init",
+      "status": "missing"
     },
     {
       "id": "command:jarvis:spaces",
