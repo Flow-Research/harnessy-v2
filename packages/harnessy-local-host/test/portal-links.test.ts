@@ -108,6 +108,18 @@ describe("saved links state", () => {
 		expect(new LinksState(join(dir, "links.json")).read()).toHaveLength(4);
 	});
 
+	it("derives a usable name when none is given, so every saved entry stays readable", () => {
+		const dir = tempDir("links-default-names");
+		writeFileSync(join(dir, " report.pdf"), "pdf");
+		const state = new LinksState(join(dir, "links.json"));
+		expect(state.add("", join(dir, " report.pdf")).title).toBe("report.pdf");
+		expect(state.add("", "mailto:").title).toBe("mailto:");
+		expect(state.add(" ", "/").title).toBe("file:///");
+		expect(state.add("", "file:///tmp/a%01b").title).toBe("file:///tmp/a%01b");
+		expect(state.add("", `mailto:${"a".repeat(200)}@example.com`).title).toHaveLength(120);
+		expect(new LinksState(join(dir, "links.json")).read()).toHaveLength(5);
+	});
+
 	it("marks files that could start a program, so the portal only reveals them", () => {
 		const dir = tempDir("links-runnable");
 		const make = (name: string, mode = 0o644) => {

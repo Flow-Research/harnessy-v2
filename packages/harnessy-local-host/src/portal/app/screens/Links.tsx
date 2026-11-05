@@ -59,9 +59,6 @@ export const moveId = (ids: readonly string[], id: string, index: number): strin
 	return [...rest.slice(0, at), id, ...rest.slice(at)];
 };
 
-const sameOrder = (a: readonly string[], b: readonly string[]) =>
-	a.length === b.length && a.every((id, index) => id === b[index]);
-
 interface Handle {
 	readonly dragging: boolean;
 	readonly onPointerDown: (event: PointerEvent<HTMLButtonElement>) => void;
@@ -201,42 +198,63 @@ export const LinksScreen = ({ client }: { client: SessionClient }) => {
 	const list = links.data?.links ?? [];
 	const serverIds = list.map((link) => link.id);
 	const serverKey = serverIds.join(",");
-	// The order shown while dragging, or after a move until the portal's list changes.
-	// `base` is the portal order the draft started from: once the portal answers with
-	// another order (the saved one, or another view's), the portal order is shown again.
+	// The order shown while dragging, while reorder saves are in flight, and after them
+	// until the portal's list changes. `base` is the portal order the draft is measured
+	// against: once the portal answers with another order (the saved one, or another
+	// view's) and nothing is in flight, the portal order is shown again.
 	const [draft, setDraft] = useState<{ ids: string[]; base: string } | null>(null);
 	const draftRef = useRef<{ ids: string[]; base: string } | null>(null);
 	const [dragging, setDragging] = useState<string | null>(null);
 	const [orderError, setOrderError] = useState("");
 	const [announcement, setAnnouncement] = useState("");
-	const live = draft !== null && (dragging !== null || draft.base === serverKey) ? draft.ids : null;
+	// Reorder saves run one at a time, in order. `lastSent` is the order the portal holds
+	// once they finish, so a move back to the first order is still sent.
+	const pending = useRef(0);
+	const lastSent = useRef("");
+	const queue = useRef<Promise<unknown>>(Promise.resolve());
+	const serverKeyRef = useRef(serverKey);
+	serverKeyRef.current = serverKey;
+	const holds = (held: { ids: string[]; base: string } | null): held is { ids: string[]; base: string } =>
+		held !== null && (dragging !== null || pending.current > 0 || held.base === serverKey);
+	const live = holds(draft) ? draft.ids : null;
 	const currentIds = () => {
 		const held = draftRef.current;
-		return held !== null && (dragging !== null || held.base === serverKey) ? held.ids : serverIds;
+		return holds(held) ? held.ids : serverIds;
 	};
-	const updateDraft = (ids: string[] | null) => {
-		const next = ids === null ? null : { ids, base: draftRef.current?.base ?? serverKey };
+	const setDraftTo = (next: { ids: string[]; base: string } | null) => {
 		draftRef.current = next;
 		setDraft(next);
 	};
+	const updateDraft = (ids: string[] | null) =>
+		setDraftTo(ids === null ? null : { ids, base: draftRef.current?.base ?? serverKey });
 	const byId = new Map(list.map((link) => [link.id, link]));
 	const shown = (live ?? serverIds).map((id) => byId.get(id)).filter((link) => link !== undefined);
 
 	const saveOrder = (ids: string[], moved: string) => {
-		if (sameOrder(ids, serverIds)) {
-			updateDraft(null);
+		const key = ids.join(",");
+		if (key === (pending.current > 0 ? lastSent.current : serverKey)) {
+			if (pending.current === 0) updateDraft(null);
 			return;
 		}
 		const position = ids.indexOf(moved) + 1;
 		setAnnouncement(`${byId.get(moved)?.title ?? "Link"} moved to position ${position} of ${ids.length}.`);
-		void client.reorderLinks(ids).then((result) => {
-			if (result.kind === "ok") setOrderError("");
-			else {
-				updateDraft(null);
-				setOrderError(result.kind === "error" ? result.message : "Sign in again to reorder links.");
-			}
-			links.refresh();
-		});
+		pending.current += 1;
+		lastSent.current = key;
+		queue.current = queue.current
+			.then(() => client.reorderLinks(ids))
+			.then((result) => {
+				pending.current -= 1;
+				if (result.kind === "ok") {
+					setOrderError("");
+					// Keep showing the saved order until the refreshed list replaces this one.
+					const held = draftRef.current;
+					if (pending.current === 0 && held !== null) setDraftTo({ ids: held.ids, base: serverKeyRef.current });
+				} else {
+					updateDraft(null);
+					setOrderError(result.kind === "error" ? result.message : "Sign in again to reorder links.");
+				}
+				links.refresh();
+			});
 	};
 
 	const handleFor = (id: string): Handle => ({

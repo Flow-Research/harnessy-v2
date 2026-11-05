@@ -94,11 +94,19 @@ export const fileRunsCode = (path: string): boolean => {
 	return stat.isFile() && (stat.mode & 0o111) !== 0;
 };
 
+/**
+ * The name used when none is given: a file's name, a site's host name, or the rest of
+ * the address. It is trimmed like a typed name; when that leaves nothing usable (such as
+ * `mailto:` alone), the address itself is the name.
+ */
 const defaultTitle = (url: string): string => {
 	const file = linkFilePath(url);
-	if (file !== undefined) return basename(file) || file;
 	const parsed = new URL(url);
-	return (parsed.hostname || parsed.href.slice(parsed.protocol.length)).slice(0, LINK_TITLE_MAX);
+	const name = (file !== undefined ? basename(file) : parsed.hostname || parsed.href.slice(parsed.protocol.length))
+		.trim()
+		.slice(0, LINK_TITLE_MAX)
+		.trim();
+	return name && !/[\p{Cc}\p{Cf}]/u.test(name) ? name : url.slice(0, LINK_TITLE_MAX);
 };
 
 const normalizeTitle = (value: string, url: string): string | undefined => {
@@ -164,6 +172,8 @@ export class LinksState {
 		const links = this.read();
 		if (links.length >= LINKS_MAX) throw new LinkRefused("links_full");
 		const link: SavedLink = { id: randomUUID(), title: name, url: href, addedAt: this.#clock().toISOString() };
+		// Never write an entry that a later read would refuse: one bad entry makes the whole file unreadable.
+		if (!isSavedLink(link)) throw new LinkRefused("invalid_title");
 		this.#write([...links, link]);
 		return link;
 	}

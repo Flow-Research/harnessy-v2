@@ -49,9 +49,17 @@ const setInput = (input: HTMLInputElement, value: string) => {
 
 const fakeClient = (
 	initial: SavedLink[],
-	fail: { get?: boolean; add?: ApiResult; remove?: boolean; reorder?: boolean | "signed_out"; open?: ApiResult } = {},
+	fail: {
+		get?: boolean;
+		add?: ApiResult;
+		remove?: boolean;
+		reorder?: boolean | "signed_out";
+		open?: ApiResult;
+		hold?: boolean;
+	} = {},
 ) => {
 	let links = [...initial];
+	const held: Array<() => void> = [];
 	const calls: string[] = [];
 	const client = {
 		get: async (): Promise<ApiResult> =>
@@ -70,6 +78,7 @@ const fakeClient = (
 		},
 		reorderLinks: async (ids: string[]): Promise<ApiResult> => {
 			calls.push(`reorder ${ids.join(",")}`);
+			if (fail.hold) await new Promise<void>((resolve) => held.push(resolve));
 			if (fail.reorder === "signed_out") return { kind: "signed_out" };
 			if (fail.reorder)
 				return { kind: "error", message: "Your links changed in another view. The list was refreshed; try again." };
@@ -87,7 +96,7 @@ const fakeClient = (
 			return { kind: "ok", body: { ok: true } };
 		},
 	};
-	return { client: client as unknown as SessionClient, store: new DataStore(client), calls };
+	return { client: client as unknown as SessionClient, store: new DataStore(client), calls, held };
 };
 
 const render = async (client: SessionClient, store: DataStore) => {
@@ -434,4 +443,38 @@ it("says when the portal only revealed a file that could run a program", async (
 		expect(container.querySelector("output.link-notice")?.textContent).toContain("Shown in Finder, not opened"),
 	);
 	expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("still saves a move back to the first order made while an earlier save is in flight", async () => {
+	const { client, store, calls, held } = fakeClient(three(), { hold: true });
+	await render(client, store);
+	await waitFor(() => expect(titles()).toEqual(["One", "Two", "Three"]));
+	await key(handle("One"), "ArrowDown");
+	await waitFor(() => expect(titles()).toEqual(["Two", "One", "Three"]));
+	await key(handle("One"), "ArrowUp");
+	await waitFor(() => expect(titles()).toEqual(["One", "Two", "Three"]));
+	// The second save waits for the first, then restores the first order.
+	expect(calls).toEqual([
+		"reorder 00000000-0000-4000-8000-000000000002,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000003",
+	]);
+	await act(async () => held.shift()!());
+	await waitFor(() => expect(calls).toHaveLength(2));
+	expect(calls[1]).toBe(
+		"reorder 00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002,00000000-0000-4000-8000-000000000003",
+	);
+	// While the second save runs, the refreshed middle order does not replace the shown one.
+	await act(async () => {
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	});
+	expect(titles()).toEqual(["One", "Two", "Three"]);
+	await act(async () => held.shift()!());
+	await waitFor(() => expect(titles()).toEqual(["One", "Two", "Three"]));
+	// A move and its undo made during a save are both sent, in order.
+	await key(handle("Two"), "ArrowDown");
+	await key(handle("Two"), "ArrowUp");
+	await waitFor(() => expect(calls).toHaveLength(3));
+	await act(async () => held.shift()!());
+	await waitFor(() => expect(calls).toHaveLength(4));
+	await act(async () => held.shift()!());
+	await waitFor(() => expect(titles()).toEqual(["One", "Two", "Three"]));
 });
