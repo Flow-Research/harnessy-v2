@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { createLaunchdProbe } from "@harnessy/core/read-model";
 
 import { PORTAL_USAGE, runPortalCommand } from "./portal/command.ts";
-import { launchOpener, stopOnSignals, systemOpener } from "./portal/process.ts";
+import { fileOpenerArgs, launchOpener, startOpener, stopOnSignals, systemOpener } from "./portal/process.ts";
 import { PortalStateError } from "./portal/token-store.ts";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
@@ -29,6 +29,8 @@ if (args.length === 0 || args.includes("--help")) {
 		cliPath: fileURLToPath(import.meta.url),
 		nodePath: process.execPath,
 		probe: createLaunchdProbe(),
+		openFile: (path, reveal) =>
+			startOpener(systemOpener(process.platform), fileOpenerArgs(process.platform, path, reveal)),
 		openUrl: (url) => {
 			launchOpener(systemOpener(process.platform), url, () => {
 				process.stderr.write(

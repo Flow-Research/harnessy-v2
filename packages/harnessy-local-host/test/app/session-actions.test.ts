@@ -108,6 +108,41 @@ describe("session action requests", () => {
 		expect(client.session()?.token).toBe(token);
 	});
 
+	it("sends link actions and explains each refusal without exposing server text", async () => {
+		const { client, fetch } = setup();
+		await client.addLink("Tracker", "https://example.com/");
+		await client.removeLink("id-1");
+		await client.reorderLinks(["id-2", "id-1"]);
+		await client.openLinkFile("id-3");
+		expect(fetch.mock.calls.map(([path, init]) => [path, init.method, JSON.parse(init.body!)])).toEqual([
+			["/v1/links/action", "POST", { action: "add", title: "Tracker", url: "https://example.com/" }],
+			["/v1/links/action", "POST", { action: "remove", id: "id-1" }],
+			["/v1/links/action", "POST", { action: "reorder", ids: ["id-2", "id-1"] }],
+			["/v1/links/action", "POST", { action: "open", id: "id-3" }],
+		]);
+		for (const [error, message] of [
+			["invalid_url", "a file path that starts with / or ~/"],
+			["file_missing", "no longer at its saved path"],
+			["not_a_file", "not a file"],
+			["local_only", "computer that runs it"],
+			["file_open_unavailable", "cannot open files"],
+			["file_open_failed", "Could not open the file"],
+			["invalid_title", "up to 120 characters"],
+			["links_full", "You have 200 links"],
+			["link_missing", "already removed"],
+			["links_changed", "changed in another view"],
+			["private internal detail", "Could not save the link"],
+		] as const) {
+			fetch.mockResolvedValueOnce({ status: 400, json: async () => ({ error }) });
+			expect(await client.reorderLinks([])).toEqual({ kind: "error", message: expect.stringContaining(message) });
+		}
+		fetch.mockResolvedValueOnce({ status: 503, json: async () => Promise.reject(new Error("not json")) });
+		expect(await client.addLink("", "https://example.com/")).toEqual({
+			kind: "error",
+			message: "Could not save the link. Your entry is kept; try again.",
+		});
+	});
+
 	it("forgets refused credentials and never sends a later write until signed in again", async () => {
 		const { client, fetch, storage } = setup(true);
 		fetch.mockResolvedValue({ status: 401, json: async () => ({}) });

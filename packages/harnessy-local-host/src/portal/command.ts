@@ -16,6 +16,7 @@ import { createInstalledBriefGeneration } from "./brief-generation.ts";
 import { DeviceAccess } from "./device-access.ts";
 import { InboxState } from "./inbox-state.ts";
 import { renderPortalLaunchAgent } from "./launchd-plan.ts";
+import { LinksState } from "./links-state.ts";
 import { ManagedTerminal } from "./managed-terminal.ts";
 import { createPortalServiceOpener } from "./open-service.ts";
 import { loadPortalPageAssets } from "./page-assets.ts";
@@ -45,6 +46,7 @@ export const PORTAL_OPEN_ROUTES = [
 	"reviews",
 	"learning",
 	"connections",
+	"links",
 	"terminal",
 ] as const;
 export type PortalOpenRoute = (typeof PORTAL_OPEN_ROUTES)[number];
@@ -76,6 +78,8 @@ export interface PortalCommandIo {
 	readonly probe: LaunchdProbe;
 	/** Open a URL in the browser (`open` without `--print`). */
 	readonly openUrl: (url: string) => void;
+	/** Open (or with `reveal`, only show) a saved file link's path; rejects when the opener cannot start. */
+	readonly openFile?: (path: string, reveal: boolean) => Promise<void>;
 	/** Time limit for one request to the portal (default 5 s). */
 	readonly requestTimeoutMs?: number;
 }
@@ -239,6 +243,8 @@ export const runPortalCommand = async (
 			});
 			const options: PortalServerOptions = {
 				inboxState: new InboxState(join(root, "inbox-archive.json")),
+				links: new LinksState(join(root, "links.json"), undefined, io.homeDir),
+				openFile: io.openFile,
 				devices: io.env.HARNESSY_PORTAL_REMOTE_ORIGIN
 					? new DeviceAccess(root, io.env.HARNESSY_PORTAL_REMOTE_ORIGIN)
 					: undefined,

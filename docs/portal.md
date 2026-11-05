@@ -7,7 +7,7 @@ Harnessy is an app on your own computer, served by the portal at
 harnessy open
 ```
 
-It has eight screens. Use `g` and a letter to move between them, and `⌘K` (or
+It has nine screens. Use `g` and a letter to move between them, and `⌘K` (or
 `Ctrl+K`) to search screens, jobs, tasks and commands.
 
 - **Inbox** (`g i`, the home screen): everything that needs you, across every
@@ -41,6 +41,29 @@ It has eight screens. Use `g` and a letter to move between them, and `⌘K` (or
 - **Learning** (`g l`): the learning library and the reading queue.
 - **Connections** (`g c`): each connection's status and owner, and **Tools &
   integrations**, which is the cockpit (`harnessy web`).
+- **Links** (`g n`): links and files that you save yourself, such as a Claude
+  artifact, a Google Doc, a `mailto:` or `vscode://` link, or a file path. Add
+  an address or a full file path (`/…` or `~/…`) and an optional name.
+  - A web or app link opens in a new tab.
+  - A file link opens in its default app on the computer that runs the portal.
+    Browsers do not open `file:` links from the portal page, so the portal opens
+    the saved path. The portal does this only for a saved link, only when the
+    file exists, and never from a remote device.
+  - A file that could start a program is shown in Finder, not opened. This
+    covers app bundles, scripts, installers, shortcut files (such as
+    `.command`, `.app`, `.sh`, `.pkg` and `.webloc`) and any file with an
+    executable bit. The portal checks both the saved path and the file it
+    points to. Open such a file from Finder if you trust it.
+  - A remote device can add web and app links, but not file links.
+  - To reorder, drag a link by its handle, or focus the handle and use the up
+    and down arrow keys.
+  - Remove asks once more before it deletes.
+
+  Links are kept in `links.json` in the portal's state folder
+  (`~/.harnessy/portal`), up to 200 of them. The portal accepts any URL with a
+  scheme, except `javascript:`, `data:`, `vbscript:` and `blob:`, which run code
+  in the page. It refuses a user name or password in a URL, and refuses `..` in a
+  file path.
 - **Terminal** (`g x`): start a shell, open an agent task or attach a discovered
   tmux session. Programs run as your OS user. Select a session to inspect its
   output; select **Take control** to type when another view owns input.

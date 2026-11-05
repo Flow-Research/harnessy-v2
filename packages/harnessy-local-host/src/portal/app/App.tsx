@@ -30,6 +30,7 @@ import { ConnectionsScreen } from "./screens/Connections.tsx";
 import { InboxScreen } from "./screens/Inbox.tsx";
 import { JobsScreen } from "./screens/Jobs.tsx";
 import { LearningScreen } from "./screens/Learning.tsx";
+import { LinksScreen } from "./screens/Links.tsx";
 import { ReviewsScreen } from "./screens/Reviews.tsx";
 import { TasksScreen } from "./screens/Tasks.tsx";
 import { TerminalScreen } from "./screens/Terminal.tsx";
@@ -136,6 +137,8 @@ const ScreenView = ({
 			return <LearningScreen now={now} />;
 		case "connections":
 			return <ConnectionsScreen rest={rest} />;
+		case "links":
+			return <LinksScreen client={client} />;
 	}
 };
 

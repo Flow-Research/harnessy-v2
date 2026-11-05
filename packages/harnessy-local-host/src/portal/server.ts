@@ -28,6 +28,7 @@ import type { DeviceAccess } from "./device-access.ts";
 import type { PortalHandoffService } from "./handoff.ts";
 import { type InboxSelection, inboxRevision } from "./inbox-revision.ts";
 import type { InboxState } from "./inbox-state.ts";
+import { isFileEntry, LinkRefused, type LinksState } from "./links-state.ts";
 import { buildPortalOpenApi } from "./openapi.ts";
 import type { PortalPageAssets } from "./page-assets.ts";
 import { matchPortalRoute, PORTAL_ROUTES, type PortalRoute, type PortalRouteParams } from "./routes.ts";
@@ -63,6 +64,8 @@ export type PortalLogEntry =
 
 export interface PortalServerOptions {
 	readonly inboxState?: InboxState;
+	/** The owner's saved links; page-token actions only. */
+	readonly links?: LinksState;
 	readonly installToken: string;
 	readonly sources: PortalSources;
 	readonly version: string;
@@ -75,6 +78,11 @@ export interface PortalServerOptions {
 	readonly page?: PortalPageAssets;
 	/** Fixed local sign-in helpers. No publication, review decision or arbitrary command is accepted. */
 	readonly openService?: (service: PortalHandoffService) => Promise<void>;
+	/**
+	 * Open a saved file link's local path with the system opener, or with `reveal` only show
+	 * it in the file manager. Only paths from `links` are passed.
+	 */
+	readonly openFile?: (path: string, reveal: boolean) => Promise<void>;
 	readonly terminal?: TerminalBackend;
 	readonly devices?: DeviceAccess;
 	readonly remote?: boolean;
@@ -304,6 +312,74 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 				await Promise.allSettled(inFlight.values());
 				cache.clear();
 				return { ok: true };
+			}
+			case "links": {
+				if (!sessions.isPageToken(bearerSecret(authorization))) throw new RequestRefused(401, "unauthorized");
+				if (!options.links) throw new RequestRefused(503, "links_unavailable");
+				if (route.method === "GET") {
+					try {
+						return { links: options.links.read() };
+					} catch {
+						throw new RequestRefused(503, "links_unreadable");
+					}
+				}
+				if (request.headers.origin !== origin) throw new RequestRefused(403, "origin_required");
+				requireJson(request);
+				let value: unknown;
+				try {
+					value = JSON.parse(body.toString("utf8"));
+				} catch {
+					throw new RequestRefused(400, "invalid_body");
+				}
+				if (!value || typeof value !== "object" || Array.isArray(value))
+					throw new RequestRefused(400, "invalid_body");
+				const fields = value as Record<string, unknown>;
+				const keys = Object.keys(fields).sort().join(",");
+				try {
+					if (
+						fields.action === "add" &&
+						keys === "action,title,url" &&
+						typeof fields.title === "string" &&
+						typeof fields.url === "string"
+					) {
+						// A remote device may not plant a file for the computer that runs the portal to open.
+						if (options.remote && isFileEntry(fields.url)) throw new RequestRefused(403, "local_only");
+						return { link: options.links.add(fields.title, fields.url) };
+					}
+					if (fields.action === "remove" && keys === "action,id" && typeof fields.id === "string") {
+						options.links.remove(fields.id);
+						return { ok: true };
+					}
+					if (fields.action === "open" && keys === "action,id" && typeof fields.id === "string") {
+						// The file opens on the computer that runs the portal, so a remote page may not ask.
+						if (options.remote) throw new RequestRefused(403, "local_only");
+						if (options.openFile === undefined) throw new RequestRefused(503, "file_open_unavailable");
+						// A file that could start a program is only revealed, never opened.
+						const target = options.links.fileTarget(fields.id);
+						return options.openFile(target.path, target.reveal).then(
+							() => ({ opened: true, revealed: target.reveal }),
+							() => {
+								throw new RequestRefused(503, "file_open_failed");
+							},
+						);
+					}
+					if (
+						fields.action === "reorder" &&
+						keys === "action,ids" &&
+						Array.isArray(fields.ids) &&
+						fields.ids.length <= 200 &&
+						fields.ids.every((id) => typeof id === "string" && id.length <= 64)
+					) {
+						options.links.reorder(fields.ids as string[]);
+						return { ok: true };
+					}
+				} catch (error) {
+					if (error instanceof RequestRefused) throw error;
+					if (error instanceof LinkRefused)
+						throw new RequestRefused(error.message === "file_missing" ? 404 : 400, error.message);
+					throw new RequestRefused(503, "links_unwritable");
+				}
+				throw new RequestRefused(400, "invalid_body");
 			}
 			case "none":
 				return route.schema === null
@@ -553,7 +629,13 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 		}
 		const body = await readBody(
 			request,
-			route.auth === "inbox-action" ? 1024 * 1024 : route.auth === "terminal" ? 128 * 1024 : PORTAL_MAX_BODY_BYTES,
+			route.auth === "inbox-action"
+				? 1024 * 1024
+				: route.auth === "terminal"
+					? 128 * 1024
+					: route.auth === "links"
+						? 16 * 1024
+						: PORTAL_MAX_BODY_BYTES,
 		);
 		respond(response, 200, await authorize(route, request, body, path, params));
 	};

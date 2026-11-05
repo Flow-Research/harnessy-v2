@@ -5,7 +5,17 @@
  */
 import { useEffect, useState } from "react";
 
-export const SCREENS = ["inbox", "today", "tasks", "jobs", "reviews", "learning", "connections", "terminal"] as const;
+export const SCREENS = [
+	"inbox",
+	"today",
+	"tasks",
+	"jobs",
+	"reviews",
+	"learning",
+	"connections",
+	"links",
+	"terminal",
+] as const;
 export type Screen = (typeof SCREENS)[number];
 
 export interface Route {
@@ -22,6 +32,7 @@ export const SCREEN_TITLES: Readonly<Record<Screen, string>> = {
 	reviews: "Reviews",
 	learning: "Learning",
 	connections: "Connections",
+	links: "Links",
 	terminal: "Terminal",
 };
 

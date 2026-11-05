@@ -889,7 +889,7 @@ describe("app pieces", () => {
 	it("filters palette entries by every word and builds them from held data", () => {
 		const entries = paletteEntries(undefined, undefined, undefined);
 		expect(entries).toEqual(screenEntries());
-		expect(filterEntries(entries, "  ").length).toBe(8);
+		expect(filterEntries(entries, "  ").length).toBe(9);
 		expect(filterEntries(entries, "screens jobs").map((entry) => entry.title)).toEqual(["Jobs"]);
 		expect(filterEntries(entries, "nothing-matches")).toEqual([]);
 	});
@@ -928,6 +928,8 @@ describe("app pieces", () => {
 			["#/reviews", "Not set up yet"],
 			["#/learning", "Not started yet (database_missing)"],
 			["#/connections", "Tools & integrations"],
+			// No links store: the screen says so instead of showing an empty list.
+			["#/links", "Links could not be loaded"],
 		] as const) {
 			await navigate(hash);
 			await waitFor(() => expect(`${hash} ${text()}`).toContain(expected));
