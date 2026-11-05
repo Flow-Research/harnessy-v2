@@ -1,6 +1,6 @@
 name: jarvis
 type: opencode
-version: 0.2.12
+version: 0.2.13
 owner: julian
 status: experimental
 blast_radius: medium

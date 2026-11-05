@@ -932,6 +932,31 @@ def config_path_cmd() -> None:
     console.print(get_config_path())
 
 
+@config.command(name="startup-help")
+@click.argument("state", type=click.Choice(["on", "off", "status"]), default="status")
+def config_startup_help(state: str) -> None:
+    """Show or set the command list printed when a new terminal opens.
+
+    Needs 'eval "$(jarvis shell-init zsh)"' in your shell profile.
+    JARVIS_STARTUP_HELP=0 or 1 overrides the saved setting.
+    """
+    from jarvis.config import get_config_path
+    from jarvis.shell_init import ENV_VAR, save_startup_help, startup_help_setting
+
+    path = get_config_path()
+    if state != "status":
+        save_startup_help(state == "on", path)
+    enabled, source = startup_help_setting(path)
+    label = {"environment": f"{ENV_VAR}", "config": str(path), "default": "default"}[source]
+    click.echo(f"Startup help: {'on' if enabled else 'off'} (from {label})")
+    if state != "status" and source == "environment" and enabled != (state == "on"):
+        click.secho(
+            f"{ENV_VAR} is set in this shell and overrides the saved setting.",
+            fg="yellow",
+            err=True,
+        )
+
+
 @config.command(name="fathom-setup")
 @click.option("--env-file", default=None, help="Managed env file path to write")
 @click.option("--shell-profile", default=None, help="Shell profile to source the env file from")
@@ -1398,6 +1423,30 @@ def _run_diagnostics(backend: str, cfg) -> None:
 
 
 # ============================================================================
+# Shell Integration
+# ============================================================================
+
+
+@cli.command(name="shell-init")
+@click.argument("shell", type=click.Choice(["zsh", "bash"]), default="zsh")
+def shell_init(shell: str) -> None:
+    """Print shell setup: tab completion and the startup command list.
+
+    Add one line to your shell profile, for example in ~/.zshrc:
+
+        eval "$(jarvis shell-init zsh)"
+
+    New terminals then show the Jarvis command list. Turn it off with
+    'jarvis config startup-help off', or JARVIS_STARTUP_HELP=0 for one shell.
+    """
+    from jarvis.config import get_config_path
+    from jarvis.shell_init import render_shell_init, startup_help_setting
+
+    enabled, _ = startup_help_setting(get_config_path())
+    click.echo(render_shell_init(cli, shell, enabled), nl=False)
+
+
+# ============================================================================
 # Documentation Command (for AI agents)
 # ============================================================================
 
@@ -1555,6 +1604,19 @@ def _generate_docs() -> dict:
                     "jarvis status --diagnose",
                 ],
             },
+            "shell-init": {
+                "description": (
+                    "Print shell setup: tab completion and the command list shown in new "
+                    "terminals (on by default)"
+                ),
+                "options": {
+                    "SHELL": "zsh (default) or bash",
+                },
+                "examples": [
+                    'eval "$(jarvis shell-init zsh)"',
+                    'eval "$(jarvis shell-init bash)"',
+                ],
+            },
             "config": {
                 "description": "Manage Jarvis configuration",
                 "subcommands": {
@@ -1592,6 +1654,19 @@ def _generate_docs() -> dict:
                     "path": {
                         "description": "Show path to configuration file",
                         "examples": ["jarvis config path"],
+                    },
+                    "startup-help": {
+                        "description": (
+                            "Show or set the command list printed in new terminals; "
+                            "JARVIS_STARTUP_HELP=0 or 1 overrides it"
+                        ),
+                        "options": {
+                            "STATE": "on, off or status (default)",
+                        },
+                        "examples": [
+                            "jarvis config startup-help",
+                            "jarvis config startup-help off",
+                        ],
                     },
                     "fathom-setup": {
                         "description": (

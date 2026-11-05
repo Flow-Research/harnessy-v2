@@ -115,6 +115,8 @@ uv run python -m jarvis <command>
 | `jarvis status` | Show connection status and backend capabilities |
 | `jarvis config show` | Display current configuration |
 | `jarvis config capabilities` | Show backend capabilities |
+| `jarvis shell-init zsh` | Print shell setup (completion and the startup command list); use `eval "$(jarvis shell-init zsh)"` in `~/.zshrc` |
+| `jarvis config startup-help [on\|off]` | Show or set the command list printed in new terminals (default on; `JARVIS_STARTUP_HELP=0` overrides) |
 | `jarvis config fathom-setup` | Interactively configure Fathom accounts, env files, and shell activation |
 
 ### Task Commands
