@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { launchOpener, stopOnSignals, systemOpener } from "../src/portal/process.ts";
+import { launchOpener, startOpener, stopOnSignals, systemOpener } from "../src/portal/process.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -51,6 +51,22 @@ describe("portal browser opener", () => {
 		await new Promise((wait) => setTimeout(wait, 50));
 		expect(readFileSync(out, "utf8")).toBe("http://127.0.0.1:8790/#code=a b|");
 		expect(failures).toBe(0);
+	});
+});
+
+describe("portal file opener", () => {
+	it("resolves once a working opener starts with the path as one argument, and rejects one that cannot start", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "portal-opener-"));
+		dirs.push(dir);
+		const opener = join(dir, "opener.sh");
+		const out = join(dir, "args.txt");
+		writeFileSync(opener, `#!/bin/sh\nprintf '%s|' "$@" > '${out}'\n`, { mode: 0o755 });
+		await startOpener(opener, "/Users/me/Mustard Bio/plan.pdf");
+		// Under a full parallel run the shell can take a few seconds to write.
+		for (let i = 0; i < 250 && !existsSync(out); i++) await new Promise((wait) => setTimeout(wait, 20));
+		await new Promise((wait) => setTimeout(wait, 50));
+		expect(readFileSync(out, "utf8")).toBe("/Users/me/Mustard Bio/plan.pdf|");
+		await expect(startOpener(join(dir, "no-such-opener"), "/x")).rejects.toThrow();
 	});
 });
 

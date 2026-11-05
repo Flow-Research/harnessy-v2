@@ -1,0 +1,142 @@
+/* Links: an add form and the saved list. Colours come from tokens.css only. */
+.link-form {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.link-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius-panel);
+	overflow: hidden;
+}
+
+.link-row {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	min-height: var(--list-row);
+	padding-block: var(--space-2);
+	padding-inline: var(--space-4);
+	border-bottom: 1px solid var(--hairline);
+}
+
+.link-row:last-child {
+	border-bottom: 0;
+}
+
+.link-row:hover,
+.link-dragging {
+	background: var(--raised);
+}
+
+.link-dragging {
+	box-shadow: var(--shadow-float);
+	position: relative;
+}
+
+.link-handle {
+	flex: 0 0 auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	min-height: var(--control-h-sm);
+	margin-inline-start: calc(-1 * var(--space-2));
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius-control);
+	background: transparent;
+	color: var(--muted);
+	cursor: grab;
+	touch-action: none;
+}
+
+.link-dragging .link-handle {
+	cursor: grabbing;
+}
+
+.link-handle:hover {
+	color: var(--text);
+}
+
+.link-handle:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+}
+
+.link-main {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.link-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	font-weight: 500;
+	color: var(--text);
+	overflow-wrap: anywhere;
+}
+
+button.link-file {
+	padding: 0;
+	border: 0;
+	background: transparent;
+	font: inherit;
+	font-weight: 500;
+	text-align: start;
+	cursor: pointer;
+}
+
+a.link-title,
+button.link-file {
+	text-decoration: underline;
+	text-decoration-color: var(--hairline);
+	text-underline-offset: 3px;
+}
+
+a.link-title:hover,
+button.link-file:hover {
+	text-decoration-color: var(--text);
+}
+
+a.link-title:focus-visible,
+button.link-file:focus-visible {
+	outline: 2px solid var(--focus);
+	outline-offset: 2px;
+	border-radius: 2px;
+}
+
+.link-title > svg {
+	flex: 0 0 auto;
+	color: var(--muted);
+}
+
+.link-host {
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.link-actions {
+	flex: 0 0 auto;
+	display: inline-flex;
+	gap: var(--space-2);
+}
+
+.link-error {
+	margin: 0;
+	font-size: 13px;
+	color: var(--danger-text);
+}

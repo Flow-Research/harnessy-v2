@@ -216,6 +216,23 @@ export class SessionClient {
 		return this.#request("/v1/inbox/action", "POST", JSON.stringify({ action, items }));
 	}
 
+	async addLink(title: string, url: string): Promise<ApiResult> {
+		return this.#request("/v1/links/action", "POST", JSON.stringify({ action: "add", title, url }));
+	}
+
+	async removeLink(id: string): Promise<ApiResult> {
+		return this.#request("/v1/links/action", "POST", JSON.stringify({ action: "remove", id }));
+	}
+
+	async reorderLinks(ids: string[]): Promise<ApiResult> {
+		return this.#request("/v1/links/action", "POST", JSON.stringify({ action: "reorder", ids }));
+	}
+
+	/** Ask the portal to open saved file link `id` on its own computer. */
+	openLinkFile(id: string): Promise<ApiResult> {
+		return this.#request("/v1/links/action", "POST", JSON.stringify({ action: "open", id }));
+	}
+
 	async terminalAction(body: Record<string, unknown>): Promise<ApiResult> {
 		return this.#request("/v1/terminal/action", "POST", JSON.stringify(body));
 	}
@@ -246,6 +263,26 @@ export class SessionClient {
 						message:
 							"Could not update the Inbox. Refresh and try again; an item may have changed. Your selection is retained.",
 					};
+				if (path === "/v1/links/action") {
+					const failure = (await response.json().catch(() => ({}))) as { error?: string };
+					const messages: Record<string, string> = {
+						invalid_url:
+							"Enter a full address, such as https://…, mailto:… or vscode://…, or a file path that starts with / or ~/. Addresses that run code (javascript:, data:) are refused.",
+						invalid_title: "Use a name of up to 120 characters.",
+						links_full: "You have 200 links. Remove one before adding another.",
+						link_missing: "That link was already removed. Refresh the list.",
+						links_changed: "Your links changed in another view. The list was refreshed; try again.",
+						file_missing: "That file is no longer at its saved path. Check the path, then add the link again.",
+						not_a_file: "That link is not a file. Refresh the list.",
+						local_only: "Files open only from the portal on the computer that runs it.",
+						file_open_unavailable: "This portal cannot open files. Open the path yourself.",
+						file_open_failed: "Could not open the file. Check it on the computer that runs the portal.",
+					};
+					return {
+						kind: "error",
+						message: messages[failure.error ?? ""] ?? "Could not save the link. Your entry is kept; try again.",
+					};
+				}
 				if (path.startsWith("/v1/life/weekly/") && method === "POST")
 					return {
 						kind: "error",

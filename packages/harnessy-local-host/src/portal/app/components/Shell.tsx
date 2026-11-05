@@ -8,6 +8,7 @@ import {
 	Cpu,
 	Ellipsis,
 	Inbox,
+	Link,
 	Megaphone,
 	Moon,
 	Plug,
@@ -33,6 +34,7 @@ const ICONS: Readonly<Record<Screen, typeof Inbox>> = {
 	reviews: Megaphone,
 	learning: BookOpen,
 	connections: Plug,
+	links: Link,
 	terminal: SquareTerminal,
 };
 
@@ -45,6 +47,7 @@ export const NAV: ReadonlyArray<{ readonly screen: Screen; readonly key: string 
 	{ screen: "reviews", key: "r" },
 	{ screen: "learning", key: "l" },
 	{ screen: "connections", key: "c" },
+	{ screen: "links", key: "n" },
 	{ screen: "terminal", key: "x" },
 ];
 

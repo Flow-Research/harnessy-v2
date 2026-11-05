@@ -20,6 +20,17 @@ export const launchOpener = (opener: string, url: string, onFailure: () => void)
 	child.unref();
 };
 
+/** Start `opener target` detached; resolves once it started, rejects when it could not start. */
+export const startOpener = (opener: string, target: string): Promise<void> =>
+	new Promise((resolve, reject) => {
+		const child = spawn(opener, [target], { shell: false, stdio: "ignore", detached: true });
+		child.once("spawn", () => {
+			child.unref();
+			resolve();
+		});
+		child.once("error", reject);
+	});
+
 export interface SignalIo {
 	readonly once: (signal: "SIGTERM" | "SIGINT", listener: () => void) => void;
 	readonly exit: (code: number) => void;

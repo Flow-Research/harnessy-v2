@@ -19,7 +19,8 @@ export type PortalRouteAuth =
 	| "brief"
 	| "terminal"
 	| "weekly"
-	| "inbox-action";
+	| "inbox-action"
+	| "links";
 
 /** One path parameter: the pattern its value must match whole, and an example for the OpenAPI document. */
 export interface PortalRouteParam {
@@ -269,6 +270,22 @@ export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [
 		operationId: "inboxAction",
 		summary: "Archive or restore selected alert versions without changing their sources",
 		auth: "inbox-action",
+		schema: null,
+	},
+	{
+		method: "GET",
+		path: "/v1/links",
+		operationId: "listLinks",
+		summary: "The owner's saved links",
+		auth: "links",
+		schema: null,
+	},
+	{
+		method: "POST",
+		path: "/v1/links/action",
+		operationId: "linksAction",
+		summary: "Add, remove or reorder saved HTTP or HTTPS links",
+		auth: "links",
 		schema: null,
 	},
 	{
