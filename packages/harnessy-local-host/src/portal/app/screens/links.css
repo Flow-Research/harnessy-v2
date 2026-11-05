@@ -135,6 +135,11 @@ button.link-file:focus-visible {
 	gap: var(--space-2);
 }
 
+.link-notice {
+	display: block;
+	margin: 0;
+}
+
 .link-error {
 	margin: 0;
 	font-size: 13px;

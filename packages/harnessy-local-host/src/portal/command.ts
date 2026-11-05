@@ -78,8 +78,8 @@ export interface PortalCommandIo {
 	readonly probe: LaunchdProbe;
 	/** Open a URL in the browser (`open` without `--print`). */
 	readonly openUrl: (url: string) => void;
-	/** Open a saved file link's path with the system opener; rejects when the opener cannot start. */
-	readonly openFile?: (path: string) => Promise<void>;
+	/** Open (or with `reveal`, only show) a saved file link's path; rejects when the opener cannot start. */
+	readonly openFile?: (path: string, reveal: boolean) => Promise<void>;
 	/** Time limit for one request to the portal (default 5 s). */
 	readonly requestTimeoutMs?: number;
 }

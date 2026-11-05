@@ -414,3 +414,24 @@ it("clears an earlier error once a file opens", async () => {
 	await waitFor(() => expect(calls).toEqual(["open 00000000-0000-4000-8000-000000000001"]));
 	expect(container.querySelector('[role="alert"]')).toBeNull();
 });
+
+it("says when the portal only revealed a file that could run a program", async () => {
+	const { client, store } = fakeClient(
+		[
+			{
+				id: "00000000-0000-4000-8000-000000000001",
+				title: "Script",
+				url: "file:///Users/me/run.command",
+				addedAt: "2026-11-05T10:00:00Z",
+			},
+		],
+		{ open: { kind: "ok", body: { opened: true, revealed: true } } },
+	);
+	await render(client, store);
+	await waitFor(() => expect(container.querySelector("button.link-file")).not.toBeNull());
+	await act(async () => container.querySelector<HTMLButtonElement>("button.link-file")!.click());
+	await waitFor(() =>
+		expect(container.querySelector("output.link-notice")?.textContent).toContain("Shown in Finder, not opened"),
+	);
+	expect(container.querySelector('[role="alert"]')).toBeNull();
+});

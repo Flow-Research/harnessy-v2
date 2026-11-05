@@ -28,7 +28,7 @@ import type { DeviceAccess } from "./device-access.ts";
 import type { PortalHandoffService } from "./handoff.ts";
 import { type InboxSelection, inboxRevision } from "./inbox-revision.ts";
 import type { InboxState } from "./inbox-state.ts";
-import { LinkRefused, type LinksState } from "./links-state.ts";
+import { isFileEntry, LinkRefused, type LinksState } from "./links-state.ts";
 import { buildPortalOpenApi } from "./openapi.ts";
 import type { PortalPageAssets } from "./page-assets.ts";
 import { matchPortalRoute, PORTAL_ROUTES, type PortalRoute, type PortalRouteParams } from "./routes.ts";
@@ -78,8 +78,11 @@ export interface PortalServerOptions {
 	readonly page?: PortalPageAssets;
 	/** Fixed local sign-in helpers. No publication, review decision or arbitrary command is accepted. */
 	readonly openService?: (service: PortalHandoffService) => Promise<void>;
-	/** Open a saved file link's local path with the system opener. Only paths from `links` are passed. */
-	readonly openFile?: (path: string) => Promise<void>;
+	/**
+	 * Open a saved file link's local path with the system opener, or with `reveal` only show
+	 * it in the file manager. Only paths from `links` are passed.
+	 */
+	readonly openFile?: (path: string, reveal: boolean) => Promise<void>;
 	readonly terminal?: TerminalBackend;
 	readonly devices?: DeviceAccess;
 	readonly remote?: boolean;
@@ -338,8 +341,11 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 						keys === "action,title,url" &&
 						typeof fields.title === "string" &&
 						typeof fields.url === "string"
-					)
+					) {
+						// A remote device may not plant a file for the computer that runs the portal to open.
+						if (options.remote && isFileEntry(fields.url)) throw new RequestRefused(403, "local_only");
 						return { link: options.links.add(fields.title, fields.url) };
+					}
 					if (fields.action === "remove" && keys === "action,id" && typeof fields.id === "string") {
 						options.links.remove(fields.id);
 						return { ok: true };
@@ -348,9 +354,10 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 						// The file opens on the computer that runs the portal, so a remote page may not ask.
 						if (options.remote) throw new RequestRefused(403, "local_only");
 						if (options.openFile === undefined) throw new RequestRefused(503, "file_open_unavailable");
-						const path = options.links.filePath(fields.id);
-						return options.openFile(path).then(
-							() => ({ opened: true }),
+						// A file that could start a program is only revealed, never opened.
+						const target = options.links.fileTarget(fields.id);
+						return options.openFile(target.path, target.reveal).then(
+							() => ({ opened: true, revealed: target.reveal }),
 							() => {
 								throw new RequestRefused(503, "file_open_failed");
 							},

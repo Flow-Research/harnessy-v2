@@ -49,6 +49,12 @@ It has nine screens. Use `g` and a letter to move between them, and `⌘K` (or
     Browsers do not open `file:` links from the portal page, so the portal opens
     the saved path. The portal does this only for a saved link, only when the
     file exists, and never from a remote device.
+  - A file that could start a program is shown in Finder, not opened. This
+    covers app bundles, scripts, installers, shortcut files (such as
+    `.command`, `.app`, `.sh`, `.pkg` and `.webloc`) and any file with an
+    executable bit. The portal checks both the saved path and the file it
+    points to. Open such a file from Finder if you trust it.
+  - A remote device can add web and app links, but not file links.
   - To reorder, drag a link by its handle, or focus the handle and use the up
     and down arrow keys.
   - Remove asks once more before it deletes.

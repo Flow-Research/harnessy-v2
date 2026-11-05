@@ -1,7 +1,15 @@
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { LINKS_MAX, LinkRefused, LinksState, normalizeLinkUrl } from "../src/portal/links-state.ts";
+import { DeviceAccess } from "../src/portal/device-access.ts";
+import {
+	fileRunsCode,
+	isFileEntry,
+	LINKS_MAX,
+	LinkRefused,
+	LinksState,
+	normalizeLinkUrl,
+} from "../src/portal/links-state.ts";
 import { startPortalServer } from "../src/portal/server.ts";
 import { createPortalSources } from "../src/portal/sources.ts";
 import { cleanupPortalFixtures, tempDir } from "./support/portal-fixture.ts";
@@ -93,11 +101,33 @@ describe("saved links state", () => {
 		expect(state.add("", "mailto:team@example.com").title).toBe("team@example.com");
 		const web = state.add("", " https://example.com/ ");
 		const gone = state.add("", join(dir, "gone.pdf"));
-		expect(state.filePath(file.id)).toBe(join(dir, "plan.pdf"));
-		expect(() => state.filePath(web.id)).toThrow("not_a_file");
-		expect(() => state.filePath(gone.id)).toThrow("file_missing");
-		expect(() => state.filePath("00000000-0000-4000-8000-000000000000")).toThrow("link_missing");
+		expect(state.fileTarget(file.id)).toEqual({ path: join(dir, "plan.pdf"), reveal: false });
+		expect(() => state.fileTarget(web.id)).toThrow("not_a_file");
+		expect(() => state.fileTarget(gone.id)).toThrow("file_missing");
+		expect(() => state.fileTarget("00000000-0000-4000-8000-000000000000")).toThrow("link_missing");
 		expect(new LinksState(join(dir, "links.json")).read()).toHaveLength(4);
+	});
+
+	it("marks files that could start a program, so the portal only reveals them", () => {
+		const dir = tempDir("links-runnable");
+		const make = (name: string, mode = 0o644) => {
+			writeFileSync(join(dir, name), "x", { mode });
+			chmodSync(join(dir, name), mode);
+			return join(dir, name);
+		};
+		expect(fileRunsCode(make("plan.pdf"))).toBe(false);
+		mkdirSync(join(dir, "Folder"));
+		expect(fileRunsCode(join(dir, "Folder"))).toBe(false);
+		for (const name of ["run.command", "Setup.PKG", "notes.webloc", "deploy.sh", "Tool.terminal"])
+			expect([name, fileRunsCode(make(name))]).toEqual([name, true]);
+		mkdirSync(join(dir, "Calculator.app"));
+		expect(fileRunsCode(`${join(dir, "Calculator.app")}/`)).toBe(true);
+		expect(fileRunsCode(make("tool", 0o755))).toBe(true);
+		// A harmless-looking name that points at a script is judged by its target.
+		symlinkSync(join(dir, "deploy.sh"), join(dir, "report.pdf"));
+		expect(fileRunsCode(join(dir, "report.pdf"))).toBe(true);
+		expect(["/x", "~/x", " file:///x", "FILE:///x"].every(isFileEntry)).toBe(true);
+		expect(["https://example.com/", "mailto:a@example.com"].some(isFileEntry)).toBe(false);
 	});
 
 	it("caps the list and rejects a tampered file", () => {
@@ -255,9 +285,9 @@ describe("links routes", () => {
 			port: 0,
 			version: "test",
 			links,
-			openFile: async (path) => {
+			openFile: async (path, reveal) => {
 				if (fail) throw new Error("no opener");
-				opened.push(path);
+				opened.push(`${reveal ? "reveal" : "open"} ${path}`);
 			},
 			sources: createPortalSources({
 				homeRoot: root,
@@ -290,8 +320,11 @@ describe("links routes", () => {
 			const file = links.add("Plan", join(root, "plan.pdf"));
 			const web = links.add("Web", "https://example.com/");
 			const gone = links.add("Gone", join(root, "gone.pdf"));
-			expect((await post({ action: "open", id: file.id })).json).toEqual({ opened: true });
-			expect(opened).toEqual([join(root, "plan.pdf")]);
+			expect((await post({ action: "open", id: file.id })).json).toEqual({ opened: true, revealed: false });
+			writeFileSync(join(root, "run.command"), "x");
+			const script = links.add("Script", join(root, "run.command"));
+			expect((await post({ action: "open", id: script.id })).json).toEqual({ opened: true, revealed: true });
+			expect(opened).toEqual([`open ${join(root, "plan.pdf")}`, `reveal ${join(root, "run.command")}`]);
 			expect((await post({ action: "open", id: web.id })).json).toEqual({ error: "not_a_file" });
 			const missing = await post({ action: "open", id: gone.id });
 			expect([missing.status, missing.json]).toEqual([404, { error: "file_missing" }]);
@@ -300,7 +333,68 @@ describe("links routes", () => {
 			fail = true;
 			const failed = await post({ action: "open", id: file.id });
 			expect([failed.status, failed.json]).toEqual([503, { error: "file_open_failed" }]);
-			expect(opened).toHaveLength(1);
+			expect(opened).toHaveLength(2);
+		} finally {
+			await server.close();
+		}
+	});
+
+	it("lets a paired remote device add web links but never add or open a file", async () => {
+		const root = tempDir("links-remote");
+		writeFileSync(join(root, "plan.pdf"), "pdf");
+		const devices = new DeviceAccess(root, "https://fixture.example");
+		const links = new LinksState(join(root, "links.json"), undefined, root);
+		const local = links.add("Plan", join(root, "plan.pdf"));
+		const opened: string[] = [];
+		const server = await startPortalServer({
+			installToken: "f".repeat(43),
+			port: 0,
+			version: "test",
+			remote: true,
+			devices,
+			links,
+			openFile: async (path) => {
+				opened.push(path);
+			},
+			sources: createPortalSources({
+				homeRoot: root,
+				env: {},
+				probe: () => "unsupported",
+				probePort: async () => false,
+				timeoutMs: 250,
+				clock: () => new Date(),
+			}),
+		});
+		try {
+			const headers = { Host: "fixture.example", Origin: devices.origin, "Content-Type": "application/json" };
+			const code = devices.pair("Phone").url.split("#pair=")[1]!;
+			const pair = await rawRequest(server.port, {
+				path: "/v1/session/pair",
+				method: "POST",
+				headers,
+				body: JSON.stringify({ code }),
+			});
+			const auth = {
+				...headers,
+				Cookie: String(pair.headers["set-cookie"]).split(";")[0]!,
+				Authorization: `Bearer ${(pair.json as { token: string }).token}`,
+			};
+			const post = (body: unknown) =>
+				rawRequest(server.port, {
+					method: "POST",
+					path: "/v1/links/action",
+					headers: auth,
+					body: JSON.stringify(body),
+				});
+			expect((await post({ action: "add", title: "Web", url: "https://example.com/" })).status).toBe(200);
+			for (const url of [join(root, "plan.pdf"), "~/plan.pdf", "file:///etc/hosts", " FILE:///etc/hosts"]) {
+				const refused = await post({ action: "add", title: "", url });
+				expect([url, refused.status, refused.json]).toEqual([url, 403, { error: "local_only" }]);
+			}
+			const open = await post({ action: "open", id: local.id });
+			expect([open.status, open.json]).toEqual([403, { error: "local_only" }]);
+			expect(opened).toEqual([]);
+			expect(links.read().map((link) => link.title)).toEqual(["Plan", "Web"]);
 		} finally {
 			await server.close();
 		}

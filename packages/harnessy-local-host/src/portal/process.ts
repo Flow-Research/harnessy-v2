@@ -4,6 +4,7 @@
  * signalling the test runner.
  */
 import { spawn } from "node:child_process";
+import { dirname } from "node:path";
 
 /** The system command that opens a URL in the default browser. */
 export const systemOpener = (platform: NodeJS.Platform): string =>
@@ -20,16 +21,23 @@ export const launchOpener = (opener: string, url: string, onFailure: () => void)
 	child.unref();
 };
 
-/** Start `opener target` detached; resolves once it started, rejects when it could not start. */
-export const startOpener = (opener: string, target: string): Promise<void> =>
+/** Start `opener ...args` detached; resolves once it started, rejects when it could not start. */
+export const startOpener = (opener: string, args: readonly string[]): Promise<void> =>
 	new Promise((resolve, reject) => {
-		const child = spawn(opener, [target], { shell: false, stdio: "ignore", detached: true });
+		const child = spawn(opener, [...args], { shell: false, stdio: "ignore", detached: true });
 		child.once("spawn", () => {
 			child.unref();
 			resolve();
 		});
 		child.once("error", reject);
 	});
+
+/**
+ * The opener arguments for a saved file link. `reveal` shows the file in the file manager
+ * without opening it: `open -R` on macOS; elsewhere the folder that holds it is opened.
+ */
+export const fileOpenerArgs = (platform: NodeJS.Platform, path: string, reveal: boolean): string[] =>
+	!reveal ? [path] : platform === "darwin" ? ["-R", path] : [dirname(path)];
 
 export interface SignalIo {
 	readonly once: (signal: "SIGTERM" | "SIGINT", listener: () => void) => void;

@@ -6,7 +6,9 @@ import {
 	fstatSync,
 	openSync,
 	readFileSync,
+	realpathSync,
 	renameSync,
+	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -67,6 +69,30 @@ export const normalizeLinkUrl = (value: string, home?: string): string | undefin
 /** The local path of a `file:` link, or `undefined` for any other link. */
 export const linkFilePath = (url: string): string | undefined =>
 	url.startsWith("file:") ? fileURLToPath(url) : undefined;
+
+/** Whether `value`, as typed, names a local file: a path or a `file:` URL. */
+export const isFileEntry = (value: string): boolean => {
+	const entry = value.trim();
+	return entry.startsWith("/") || entry.startsWith("~") || /^file:/iu.test(entry);
+};
+
+/**
+ * Bundles, scripts, installers and shortcut files that the system opener would run
+ * or follow rather than show. Matched on the saved path and on its resolved target.
+ */
+const RUNNABLE =
+	/\.(?:app|command|terminal|tool|sh|bash|zsh|csh|ksh|fish|py|pl|rb|js|mjs|scpt|scptd|applescript|workflow|action|shortcut|pkg|mpkg|dmg|jar|webloc|inetloc|fileloc|url|prefpane|bundle|plugin|kext|osax|systemextension)$/iu;
+
+/**
+ * Whether opening `path` could start a program: a runnable type (above) or a file with
+ * an executable bit. The portal reveals such a file in the file manager instead.
+ */
+export const fileRunsCode = (path: string): boolean => {
+	const real = realpathSync(path);
+	if ([path, real].some((candidate) => RUNNABLE.test(candidate.replace(/\/+$/u, "")))) return true;
+	const stat = statSync(real);
+	return stat.isFile() && (stat.mode & 0o111) !== 0;
+};
 
 const defaultTitle = (url: string): string => {
 	const file = linkFilePath(url);
@@ -158,14 +184,17 @@ export class LinksState {
 		this.#write(ids.map((id) => byId.get(id)!));
 	}
 
-	/** The path of saved file link `id`, checked to exist now. */
-	filePath(id: string): string {
+	/**
+	 * The path of saved file link `id`, checked to exist now, and whether the portal must
+	 * only reveal it (see `fileRunsCode`) instead of opening it.
+	 */
+	fileTarget(id: string): { readonly path: string; readonly reveal: boolean } {
 		const link = this.read().find((entry) => entry.id === id);
 		if (link === undefined) throw new LinkRefused("link_missing");
 		const path = linkFilePath(link.url);
 		if (path === undefined) throw new LinkRefused("not_a_file");
 		if (!existsSync(path)) throw new LinkRefused("file_missing");
-		return path;
+		return { path, reveal: fileRunsCode(path) };
 	}
 
 	#write(links: readonly SavedLink[]): void {

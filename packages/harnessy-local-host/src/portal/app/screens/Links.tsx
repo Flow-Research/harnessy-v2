@@ -85,6 +85,7 @@ const LinkRow = ({
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 	const [opening, setOpening] = useState(false);
+	const [notice, setNotice] = useState("");
 	const target = linkTarget(link.url);
 	return (
 		<li className={handle.dragging ? "link-row link-dragging" : "link-row"} data-link-id={link.id}>
@@ -114,6 +115,13 @@ const LinkRow = ({
 							setOpening(true);
 							void client.openLinkFile(link.id).then((result) => {
 								setOpening(false);
+								const revealed =
+									result.kind === "ok" && (result.body as { revealed?: unknown }).revealed === true;
+								setNotice(
+									revealed
+										? "Shown in Finder, not opened: this file can run a program. Open it from there if you trust it."
+										: "",
+								);
 								setError(
 									result.kind === "ok"
 										? ""
@@ -143,6 +151,7 @@ const LinkRow = ({
 						{error}
 					</p>
 				) : null}
+				{notice ? <output className="fine-print link-notice">{notice}</output> : null}
 			</div>
 			<div className="link-actions">
 				{confirming ? (
