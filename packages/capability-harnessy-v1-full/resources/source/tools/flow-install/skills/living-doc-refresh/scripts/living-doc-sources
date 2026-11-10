@@ -5,14 +5,20 @@ A living doc is a Claude Doc that a refresh keeps in step with code, meeting
 notes and workspace context. This script holds no intelligence: it records what
 each watched source looked like at the last refresh and reports what changed.
 
-Config:  ~/.harnessy/living-docs/<name>.json        (see templates/config.example.json)
-State:   ~/.harnessy/living-docs/<name>.state.json  (written only by `record`)
+Config:  ~/.harnessy/living-docs/<name>.json          (see templates/config.example.json)
+State:   ~/.harnessy/living-docs/<name>.state.json    (written only by `record`)
+Pending: ~/.harnessy/living-docs/<name>.pending.json  (the snapshot `check` reported; `record` stores
+                                                       exactly this snapshot, never a newer one)
+
+The config names the knowledge adapter that holds the doc ("adapter"). `check` refuses an
+adapter that is unknown or lacks a capability the refresh needs, before anything is written.
 
 Commands:
   living-doc-sources check <name>                      JSON report of changes since the last record
   living-doc-sources record <name> [--doc-rev BODY=REV ...]
-                                                       mark the current sources as seen; each --doc-rev
-                                                       stores one doc tab body's revision after the refresh
+                                                       mark the snapshot from the last `check` as seen; each
+                                                       --doc-rev stores one doc tab body's revision
+  living-doc-sources record <name> --baseline         mark the current sources as seen (first setup only)
   living-doc-sources show-config <name>                print the resolved config
   living-doc-sources log <name> <label> <from> <to>    commits in from..to (subjects and file stats)
   living-doc-sources diff <name> <label> <from> <to> [path ...]
@@ -46,6 +52,14 @@ MAX_COMMITS = 200
 MAX_FILES = 300
 
 
+# Knowledge adapters a living doc can use, and what each supports. A refresh needs
+# every capability in REQUIRED_CAPABILITIES; an adapter without one is refused.
+ADAPTERS = {
+    "claude-docs": {"read", "read-since-revision", "update-block", "comment"},
+}
+REQUIRED_CAPABILITIES = {"read", "read-since-revision", "update-block", "comment"}
+
+
 class Refused(Exception):
     def __init__(self, code: int, message: str):
         super().__init__(message)
@@ -68,6 +82,12 @@ def load_config(name: str) -> dict:
             raise Refused(2, f"config {path} is missing {key!r}")
     if not isinstance(config["doc"], dict) or not config["doc"].get("id"):
         raise Refused(2, f"config {path} needs doc.id")
+    adapter = config.get("adapter")
+    if adapter not in ADAPTERS:
+        raise Refused(2, f"config {path} names knowledge adapter {adapter!r}; supported: {sorted(ADAPTERS)}")
+    missing = REQUIRED_CAPABILITIES - ADAPTERS[adapter]
+    if missing:
+        raise Refused(2, f"knowledge adapter {adapter!r} does not support: {sorted(missing)}")
     root = Path(config["workspaceRoot"]).expanduser()
     if not root.is_dir():
         raise Refused(2, f"workspaceRoot {root} is not a folder")
@@ -85,14 +105,21 @@ def load_state(name: str) -> dict:
     return json.loads(path.read_text(encoding="utf8"))
 
 
-def save_state(name: str, state: dict) -> Path:
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def write_private(path: Path, value: dict) -> Path:
     HOME_DIR.mkdir(parents=True, exist_ok=True)
-    path = HOME_DIR / f"{name}.state.json"
     temp = path.with_suffix(f".{os.getpid()}.tmp")
-    temp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf8")
+    temp.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf8")
     os.chmod(temp, 0o600)
     temp.replace(path)
     return path
+
+
+def save_state(name: str, state: dict) -> Path:
+    return write_private(HOME_DIR / f"{name}.state.json", state)
 
 
 def git(repo: Path, *args: str) -> str:
@@ -167,10 +194,12 @@ def meeting_files(config: dict) -> dict:
             relative = path.relative_to(root).as_posix()
             if since and dated_before(relative, since):
                 continue
-            text = path.read_text(encoding="utf8", errors="replace").lower()
+            raw = path.read_bytes()
+            text = raw.decode("utf8", errors="replace").lower()
             if keywords and not any(word in text for word in keywords):
                 continue
-            found[relative] = hashlib.sha256(text.encode("utf8")).hexdigest()
+            # Match keywords case-insensitively, but hash the original bytes: a change of case is a change.
+            found[relative] = hashlib.sha256(raw).hexdigest()
     return found
 
 
@@ -226,6 +255,7 @@ def check(name: str) -> dict:
     seen = state.get("seen", {})
     report = {
         "name": name,
+        "adapter": config["adapter"],
         "doc": config["doc"],
         "workspaceRoot": config["workspaceRoot"],
         "lastRecorded": state.get("recordedAt"),
@@ -236,6 +266,9 @@ def check(name: str) -> dict:
         "context": diff_maps(seen.get("context", {}), now["context"]),
     }
     report["changed"] = bool(report["code"] or report["meetings"] or report["context"])
+    # Keep the exact snapshot this report describes. `record` stores it, so a source that
+    # changes after this check is still reported by the next check.
+    write_private(HOME_DIR / f"{name}.pending.json", {"checkedAt": now_iso(), "seen": now})
     return report
 
 
@@ -249,16 +282,24 @@ def parse_doc_revs(values: list[str]) -> dict:
     return revs
 
 
-def record(name: str, doc_revs: dict) -> dict:
+def record(name: str, doc_revs: dict, baseline: bool) -> dict:
     config = load_config(name)
     state = load_state(name)
+    pending_path = HOME_DIR / f"{name}.pending.json"
+    if baseline:
+        seen = snapshot(config)
+    elif pending_path.is_file():
+        seen = json.loads(pending_path.read_text(encoding="utf8"))["seen"]
+    else:
+        raise Refused(2, f"no pending snapshot for {name}; run `check` before `record`, or `record --baseline` at setup")
     state = {
-        "recordedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "recordedAt": now_iso(),
         # Revisions count per tab body; a body not named keeps its earlier value.
         "docRevs": {**state.get("docRevs", {}), **doc_revs},
-        "seen": snapshot(config),
+        "seen": seen,
     }
     path = save_state(name, state)
+    pending_path.unlink(missing_ok=True)
     return {"name": name, "recorded": str(path), "recordedAt": state["recordedAt"], "docRevs": state["docRevs"],
             "code": {label: head["sha"][:12] for label, head in state["seen"]["code"].items()},
             "meetings": len(state["seen"]["meetings"]), "contextFiles": len(state["seen"]["context"])}
@@ -322,6 +363,8 @@ def main(argv: list[str]) -> int:
     recorder.add_argument("name")
     recorder.add_argument("--doc-rev", action="append", default=[], metavar="BODY=REV",
                           help="a doc tab body id and its revision after the refresh (repeat per tab)")
+    recorder.add_argument("--baseline", action="store_true",
+                          help="record the current sources instead of the last check (first setup only)")
     for command, revs in (("log", ["from", "to"]), ("diff", ["from", "to"]), ("show", ["rev"])):
         viewer = commands.add_parser(command)
         viewer.add_argument("name")
@@ -342,7 +385,7 @@ def main(argv: list[str]) -> int:
         if args.command == "check":
             result = check(args.name)
         elif args.command == "record":
-            result = record(args.name, parse_doc_revs(args.doc_rev))
+            result = record(args.name, parse_doc_revs(args.doc_rev), args.baseline)
         else:
             result = load_config(args.name)
     except Refused as error:

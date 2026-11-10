@@ -36,7 +36,27 @@ if [[ -z "$claude_bin" ]]; then
 	exit 1
 fi
 
-workspace="$(printf '%s' "$report" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["workspaceRoot"])')"
+field() { printf '%s' "$report" | /usr/bin/python3 -c "import json,sys; print(json.load(sys.stdin)[\"$1\"])"; }
+workspace="$(field workspaceRoot)"
+adapter="$(field adapter)"
+# Tools of the selected knowledge adapter. `check` already refused unknown adapters; this
+# second guard keeps the run from starting with tools for a different destination.
+case "$adapter" in
+	claude-docs)
+		adapter_tools=(
+			"mcp__claude_ai_Claude_Docs__read"
+			"mcp__claude_ai_Claude_Docs__update"
+			"mcp__claude_ai_Claude_Docs__batch"
+			"mcp__claude_ai_Claude_Docs__create"
+			"mcp__claude_ai_Claude_Docs__query"
+			"mcp__claude_ai_Claude_Docs__guide"
+		)
+		;;
+	*)
+		echo "$(stamp) $name: unsupported knowledge adapter '$adapter'; nothing refreshed" >>"$log"
+		exit 1
+		;;
+esac
 # Sources are untrusted text (meeting notes, commit messages), so the run gets no
 # general shell or git access: git output comes only from living-doc-sources' fixed,
 # read-only log, diff and show commands, and file reads stay inside the workspace.
@@ -45,12 +65,7 @@ allowed=(
 	"Read(/$workspace/**)"
 	"Bash($sources check:*)" "Bash($sources record:*)"
 	"Bash($sources log:*)" "Bash($sources diff:*)" "Bash($sources show:*)"
-	"mcp__claude_ai_Claude_Docs__read"
-	"mcp__claude_ai_Claude_Docs__update"
-	"mcp__claude_ai_Claude_Docs__batch"
-	"mcp__claude_ai_Claude_Docs__create"
-	"mcp__claude_ai_Claude_Docs__query"
-	"mcp__claude_ai_Claude_Docs__guide"
+	"${adapter_tools[@]}"
 )
 {
 	echo "$(stamp) $name: sources changed; starting refresh"

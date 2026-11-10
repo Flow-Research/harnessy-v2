@@ -1,6 +1,7 @@
 {
 	"name": "example-product",
 	"title": "Example product documentation",
+	"adapter": "claude-docs",
 	"doc": {
 		"id": "00000000-0000-0000-0000-000000000000",
 		"url": "https://claude.ai/artifact/<artifact id>"

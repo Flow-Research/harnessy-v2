@@ -941,12 +941,12 @@ install_scope: global
 status: experimental
 owner: julian
 blast_radius: medium
-description: "Keep a living Claude Doc in step with its watched sources: detect code, meeting-note and workspace-context changes, update only the affected sections, comment on decisions, and log each refresh. Runs on demand or as a daily launchd job."
+description: "Keep a living doc in the selected knowledge tool in step with its watched sources: detect code, meeting-note and workspace-context changes, update only the affected sections, comment on decisions, and log each refresh. Runs on demand or as a daily launchd job."
 location: tools/flow-install/skills/living-doc-refresh
 invoke: "/living-doc-refresh"
 permissions: [read, shell, claude-docs-write]
 data_categories: [none]
-egress: [claude.ai (Claude Docs connector)]
+egress: [selected knowledge adapter (claude-docs: claude.ai)]
 phase: P0
 tags: [docs, living-doc, refresh, claude-docs]
 depends_on: []
