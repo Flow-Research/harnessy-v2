@@ -4,7 +4,7 @@
 |---|---|---|---|---|---|
 | V2D-001 | resolved | process | V1 reconciliation | Reviewed dirty-path disposition and verified the reconciled pack | Resolved locally 2026-09-04 |
 | V2D-002 | open | release/legal | Harnessy packages | Complete third-party notices, corresponding-source materials, and release evidence after the approved license alignment | Before publication |
-| V2D-003 | in progress | dependency | SDK declarations | Coordinated Effect 4.1.3 migration; strict packed SDK gate passes locally | Hosted/package/install gates pending |
+| V2D-003 | resolved in source | dependency | SDK/Cloudflare declarations | Coordinated Effect 4.1.3 cohort and strict packed SDK/Engine consumers | Normal CI and release gates apply |
 | V2D-004 | open | implementation | Native workflows | Promote preserved V1 workflow families as vertical slices | Phase 5 |
 | V2D-005 | open | CI | hosted evidence | Run Linux/macOS/Windows matrices and configure exact protected-branch checks | Phase 6 |
 | V2D-006 | open | supply chain | release evidence | Complete canonical SBOM/license evidence for the seven publishable Executor targets; Windows ARM64 publication is explicitly deferred | Before publication |
@@ -75,7 +75,7 @@
   as separately scoped cleanup.
 - **Links:** `docs/sdk-consumer-contract.md`
 
-### 2026-11-10 migration candidate
+### 2026-11-10 implementation
 
 Julian approved the coordinated migration after Dependabot #183 updated Effect
 alone. The candidate moves the root and isolated Executor runtime/platform
@@ -101,8 +101,10 @@ licenses and source/output hashes. Worker globals and Node module types have one
 owner each; structural browser input types do not add browser constructors.
 Generated output is checked for valid syntax. Unsafe paths, user edits and
 unowned files are refused. Four generator tests and the clean packed Engine's
-full declaration check and dry-run pass locally. Runtime conformance and final
-hosted/installed checks remain required before this item is resolved.
+full declaration check and dry-run pass locally. The packed fixture also passes
+real Worker runtime conformance for its host profile. Hosted and installed checks
+remain mandatory for an operational release; passing source checks alone does
+not establish live activation.
 
 ## V2D-004 — Native workflows
 

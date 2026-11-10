@@ -397,11 +397,12 @@ leaves this client-navigation fixture at its initial URL. The regression now
 checks that navigation reached `/acme` before checking inherited parameters.
 It does not patch the router implementation or weaken the expected URL.
 
-### Coordinated Effect migration candidate — 2026-11-10
+### Coordinated Effect migration overlay — 2026-11-10
 
 Julian explicitly authorized the coordinated migration after Dependabot #183
-updated Effect alone and failed the existing gates. This overlay is under
-qualification. The working installation is not changed by this source candidate.
+updated Effect alone and failed the existing gates. This overlay records the
+coordinated source change. Building it does not activate installed services;
+operational releases require their separate hosted and installed gates.
 
 - Move the root and isolated Executor Effect runtime/platform cohorts to 4.1.3.
   Replace promoted `effect/unstable/*` imports with the current package exports.

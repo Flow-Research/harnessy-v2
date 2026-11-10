@@ -1,6 +1,6 @@
 # Harnessy SDK consumer contract
 
-**Status:** coordinated Effect 4.1.3 migration candidate; integration pending
+**Status:** implementation baseline with Effect 4.1.3
 
 **Decision:** [ADR-0005](adr/0005-promote-harnessy-sdk-as-a-narrow-programmatic-boundary.md)
 
@@ -80,8 +80,10 @@ Current Effect tests use Vitest 5. Cloudflare's supported Vitest 4 pool uses
 the test-only Effect bridge in `executor/scripts/effect-worker-test.ts`, with
 test-clock, scoped-cleanup and cancellation checks. No older Effect runtime
 or incompatible test-adapter peer is installed to satisfy that pool.
-The migration is not complete until its remaining package, hosted and installed
-gates pass. Removing every repository-wide `skipLibCheck` is separate work.
+SDK and Engine packed consumers must pass full declaration checks. The Engine
+uses the documented Cloudflare host profile. Operational releases also require
+the hosted and installed gates; source checks alone do not activate software.
+Removing every repository-wide `skipLibCheck` is separate work.
 
 ## Publication gates
 
