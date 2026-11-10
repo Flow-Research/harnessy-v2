@@ -399,7 +399,7 @@ try {
 		await submitLinkDialog();
 		await until("renamed folder", () => evaluate(`document.body.innerText.includes(${JSON.stringify(renamed)}) && !document.querySelector('.link-dialog')`));
 		await page("Page.reload");
-		await until("Links survives reload", () => evaluate(`document.body.innerText.includes(${JSON.stringify(renamed)}) && document.body.innerText.includes(${JSON.stringify(title)})`));
+		await until("Links survives reload", () => evaluate(`[...document.querySelectorAll('.link-folder-name')].some(el => el.textContent === ${JSON.stringify(renamed)}) && [...document.querySelectorAll('a.link-title')].some(el => el.textContent.includes(${JSON.stringify(title)}))`));
 		await check(`Links saved tree at ${width}px`);
 		if (width === 390) await checkPhone("Links saved tree");
 		const saved = JSON.parse(await readFile(join(stateDir,"links.json"),"utf8"));
