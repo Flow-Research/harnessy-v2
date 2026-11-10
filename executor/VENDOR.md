@@ -384,9 +384,11 @@ property does not exist, the gate never detects a not-found page, and the
 type check fails. No Harnessy host mounts `OrgSlugGate` (it serves the
 excluded org-scoped hosts), so no Harnessy runtime behaviour changes.
 
-The committed `routeTree.gen.ts` files were not regenerated. The new
-generator sorts the same routes in a different order; the routes do not
-change. Remove this overlay on an upstream sync that ships these versions.
+`packages/app/src/routeTree.gen.ts` and `packages/react/src/routes/routeTree.gen.ts`
+are regenerated, because the build regenerates them and fails on a
+difference. The new generator sorts the same routes in a different order;
+the routes do not change. Remove this overlay on an upstream sync that ships
+these versions.
 
 ## Self-hosted app world (`hsy web`)
 
