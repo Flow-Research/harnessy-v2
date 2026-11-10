@@ -77,7 +77,10 @@ export interface PortalServerOptions {
 	/** The app's static files, pinned by its asset manifest. Without them only the API is served. */
 	readonly page?: PortalPageAssets;
 	/** Fixed local sign-in helpers. No publication, review decision or arbitrary command is accepted. */
-	readonly openService?: (service: PortalHandoffService) => Promise<void>;
+	readonly openService?: (
+		service: PortalHandoffService,
+		portalOrigin: string,
+	) => Promise<void> | Promise<string | undefined>;
 	/**
 	 * Open a saved file link's local path with the system opener, or with `reveal` only show
 	 * it in the file manager. Only paths from `links` are passed.
@@ -509,8 +512,8 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 				if (opening) throw new RequestRefused(409, "service_open_in_progress");
 				opening = true;
 				return options
-					.openService(route.service!)
-					.then(() => ({ opened: true }))
+					.openService(route.service!, origin)
+					.then((url) => ({ opened: true, ...(url === undefined ? {} : { url }) }))
 					.catch(() => {
 						throw new RequestRefused(503, "service_open_failed");
 					})
@@ -534,7 +537,12 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 			throw new RequestRefused(403, "invalid_origin");
 		// Another loopback port is `same-site`, not `same-origin`: only this origin or a direct visit is served.
 		const fetchSite = request.headers["sec-fetch-site"];
-		if (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none")
+		const returningDocument =
+			request.method === "GET" &&
+			url === "/" &&
+			request.headers["sec-fetch-mode"] === "navigate" &&
+			request.headers["sec-fetch-dest"] === "document";
+		if (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none" && !returningDocument)
 			throw new RequestRefused(403, "cross_site");
 		// No CORS: a preflight is refused, so a cross-origin page can never be allowed in.
 		if (request.method === "OPTIONS") throw new RequestRefused(405, "method_not_allowed");

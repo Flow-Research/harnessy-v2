@@ -10,7 +10,7 @@ import { handoffService, type PortalHandoffService } from "../../handoff.ts";
 import type { AppAction } from "../lib/api-types.ts";
 import { copyText, followHandoff } from "../lib/browser.ts";
 import { hasFormatControls, visibleText } from "../lib/format.ts";
-import { safeAppRoute, safeHref } from "../lib/safe-href.ts";
+import { safeAppRoute, safeHref, safeReviewHandoffHref } from "../lib/safe-href.ts";
 import type { ApiResult } from "../lib/session.ts";
 
 const HandoffContext = createContext<(service: PortalHandoffService) => Promise<ApiResult>>(async () => ({
@@ -30,17 +30,39 @@ export const useHandoff = () => {
 	const open = useContext(HandoffContext);
 	const [notice, setNotice] = useState("");
 	const [opening, setOpening] = useState(false);
+	useEffect(() => {
+		const returned = () => {
+			setOpening(false);
+			setNotice("");
+		};
+		window.addEventListener("pageshow", returned);
+		return () => window.removeEventListener("pageshow", returned);
+	}, []);
 	const follow = async (target: string) => {
 		const service = handoffService(target);
 		if (service === undefined) return void followHandoff(target);
 		if (opening) return;
 		setOpening(true);
-		setNotice("Opening in your browser…");
+		setNotice("Opening view…");
+		let navigating = false;
 		try {
 			const result = await open(service);
+			if (
+				result.kind === "ok" &&
+				typeof result.body === "object" &&
+				result.body !== null &&
+				"url" in result.body &&
+				typeof result.body.url === "string"
+			) {
+				const href = safeReviewHandoffHref(result.body.url);
+				if (href === undefined) throw new Error("invalid_service_destination");
+				window.location.assign(href);
+				navigating = true;
+				return;
+			}
 			setNotice(
 				result.kind === "ok"
-					? "Opened in your browser."
+					? "Opened view."
 					: result.kind === "signed_out"
 						? "Your Harnessy session ended. Run harnessy open, then try again."
 						: result.message,
@@ -48,7 +70,7 @@ export const useHandoff = () => {
 		} catch {
 			setNotice("The view could not open. Check its service on the Jobs screen, then try again.");
 		} finally {
-			setOpening(false);
+			if (!navigating) setOpening(false);
 		}
 	};
 	return { follow, notice, opening };
@@ -125,7 +147,11 @@ export const HandoffButton = ({ action, primary = false }: { action: AppAction; 
 						{" "}
 						<ExternalLink size={14} strokeWidth={1.5} aria-hidden="true" />
 						<span className="sr-only">
-							{service === undefined ? " (opens a new tab)" : " (opens in your browser)"}
+							{service === undefined
+								? " (opens a new tab)"
+								: service === "cockpit"
+									? " (opens in your browser)"
+									: " (opens in this tab)"}
 						</span>
 					</>
 				) : null}

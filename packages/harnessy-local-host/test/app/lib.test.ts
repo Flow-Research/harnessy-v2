@@ -26,7 +26,7 @@ import {
 	sectionsOf,
 } from "../../src/portal/app/lib/markdown.ts";
 import { parseRoute, routeHref } from "../../src/portal/app/lib/router.ts";
-import { safeAppRoute, safeHref } from "../../src/portal/app/lib/safe-href.ts";
+import { safeAppRoute, safeHref, safeReviewHandoffHref } from "../../src/portal/app/lib/safe-href.ts";
 import {
 	type FetchInit,
 	type FetchResponse,
@@ -458,4 +458,28 @@ describe("data store", () => {
 		store.reset();
 		expect(store.get("/v1/inbox")).toEqual({ status: "loading" });
 	});
+});
+
+it("accepts only fixed one-time local review handoffs", () => {
+	const base = `http://127.0.0.1:8770/exchange?code=${"a".repeat(43)}&portal=http%3A%2F%2F127.0.0.1%3A8790`;
+	expect(safeReviewHandoffHref(base)).toBe(base);
+	expect(safeReviewHandoffHref(`${base}&next=google-reconnect`)).toBe(`${base}&next=google-reconnect`);
+	expect(safeReviewHandoffHref(base.replace("/exchange?", "/?"))).toBe(base.replace("/exchange?", "/?"));
+	for (const value of [
+		null,
+		"x".repeat(2048),
+		"invalid",
+		base.replace("http:", "https:"),
+		base.replace("127.0.0.1:8770", "evil.example:8770"),
+		base.replace("/exchange", "/other"),
+		`${base}#x`,
+		`${base}&code=b`,
+		`${base}&arbitrary=1`,
+		base.replace("a".repeat(43), "short"),
+		base.replace("127.0.0.1%3A8790", "evil.example%3A8790"),
+		`${base}&next=other`,
+		base.replace("&portal=", "&other="),
+		`${base}&portal=x`,
+	])
+		expect(safeReviewHandoffHref(value)).toBeUndefined();
 });

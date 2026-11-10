@@ -46,6 +46,7 @@ import {
 	meetingPublicationModeOf,
 } from "./store-file-safety.ts";
 import {
+	MEETING_GOOGLE_DRAFT_TABLE_SQL,
 	MEETING_PUBLICATION_HEALTH_TABLE_SQL,
 	MEETING_PUBLICATION_STORE_SCHEMA_COLUMNS,
 	MEETING_PUBLICATION_STORE_SCHEMA_SQL,
@@ -124,10 +125,15 @@ INSERT INTO publication_items (${legacyColumns.join(",")}) SELECT ${legacyColumn
 DROP TABLE publication_items_legacy;
 ${MEETING_PUBLICATION_STORE_STATUS_INDEX_SQL};
 ${MEETING_PUBLICATION_HEALTH_TABLE_SQL};
+${MEETING_GOOGLE_DRAFT_TABLE_SQL};
 PRAGMA user_version = ${MEETING_PUBLICATION_STORE_SCHEMA_VERSION};
 COMMIT;`);
 	} else if (version === 3) {
-		database.exec(`BEGIN IMMEDIATE; ${MEETING_PUBLICATION_HEALTH_TABLE_SQL}; PRAGMA user_version = 4; COMMIT;`);
+		database.exec(
+			`BEGIN IMMEDIATE; ${MEETING_PUBLICATION_HEALTH_TABLE_SQL}; ${MEETING_GOOGLE_DRAFT_TABLE_SQL}; PRAGMA user_version = 5; COMMIT;`,
+		);
+	} else if (version === 4) {
+		database.exec(`BEGIN IMMEDIATE; ${MEETING_GOOGLE_DRAFT_TABLE_SQL}; PRAGMA user_version = 5; COMMIT;`);
 	}
 	validateMeetingPublicationStoreSchema(database);
 };
@@ -169,11 +175,29 @@ export type MeetingPublicationStoreFailure =
 	| MeetingPublicationTransitionError
 	| MeetingPublicationWriteAuthorityError;
 
+export interface MeetingGoogleDraft {
+	readonly sourceHash: string;
+	readonly docId: string | null;
+	readonly docUrl: string | null;
+	readonly state: "generating" | "ready" | "failed" | "uncertain";
+}
+
 /** Real owner-only SQLite repository for metadata and idempotency checkpoints. */
 export class MeetingPublicationStore extends Context.Service<
 	MeetingPublicationStore,
 	{
 		readonly dbPath: string;
+		readonly googleDraft: (
+			itemId: string,
+		) => Effect.Effect<MeetingGoogleDraft | null, MeetingPublicationStoreFailure>;
+		readonly beginGoogleDraft: (
+			itemId: string,
+			sourceHash: string,
+		) => Effect.Effect<void, MeetingPublicationStoreFailure>;
+		readonly finishGoogleDraft: (
+			itemId: string,
+			draft: MeetingGoogleDraft,
+		) => Effect.Effect<void, MeetingPublicationStoreFailure>;
 		readonly providerHealth: () => Effect.Effect<
 			ReadonlyArray<MeetingProviderHealth>,
 			MeetingPublicationStoreFailure
@@ -391,6 +415,7 @@ export class MeetingPublicationStore extends Context.Service<
 					// Process-local ownership is not restored from SQLite after a crash.
 					// It permits unrelated review work, never another publication claim.
 					const activeClaims = new Map<string, MeetingPublicationItem>();
+					const activeDrafts = new Map<string, string>();
 					const bindItem = (itemId: string, sourceHash: string) =>
 						Object.freeze(
 							new MeetingPublicationWriteBinding({
@@ -428,6 +453,12 @@ export class MeetingPublicationStore extends Context.Service<
 									run("write", () => database.exec("BEGIN IMMEDIATE")),
 									() =>
 										run("write", () => {
+											if (
+												writeOperation !== "store_google_draft" &&
+												operationBinding.item !== undefined &&
+												activeDrafts.has(operationBinding.item.itemId)
+											)
+												throw new MeetingPublicationStoreError({ code: "write_failed" });
 											// Neither ordinary approval, source refresh nor another worker may erase
 											// uncertain external delivery. Only explicit receipt reconciliation can.
 											if (
@@ -564,6 +595,65 @@ export class MeetingPublicationStore extends Context.Service<
 							}),
 						);
 					return MeetingPublicationStore.of({
+						googleDraft: (itemId) =>
+							run("read", () => {
+								const row = database.prepare("SELECT * FROM google_doc_drafts WHERE item_id=?").get(itemId) as
+									| Row
+									| undefined;
+								return row === undefined
+									? null
+									: {
+											sourceHash: text(row, "source_hash"),
+											docId: nullable(row, "doc_id"),
+											docUrl: nullable(row, "doc_url"),
+											state: text(row, "state") as MeetingGoogleDraft["state"],
+										};
+							}),
+						beginGoogleDraft: (itemId, sourceHash) =>
+							transact(
+								"store_google_draft",
+								() => {
+									const item = requireRow(itemId);
+									const prior = database
+										.prepare("SELECT state FROM google_doc_drafts WHERE item_id=?")
+										.get(itemId);
+									if (
+										item.status !== "pending_review" ||
+										item.approvedHash !== null ||
+										item.sourceHash !== sourceHash ||
+										prior?.state === "generating" ||
+										prior?.state === "uncertain"
+									)
+										throw new MeetingPublicationStoreError({ code: "write_failed" });
+									database
+										.prepare(
+											"INSERT INTO google_doc_drafts(item_id,source_hash,state) VALUES (?,?,'generating') ON CONFLICT(item_id) DO UPDATE SET source_hash=excluded.source_hash,state='generating'",
+										)
+										.run(itemId, sourceHash);
+									activeDrafts.set(itemId, sourceHash);
+								},
+								bindItem(itemId, sourceHash),
+							),
+						finishGoogleDraft: (itemId, draft) =>
+							transact(
+								"store_google_draft",
+								() => {
+									const row = database
+										.prepare("SELECT state,source_hash FROM google_doc_drafts WHERE item_id=?")
+										.get(itemId);
+									if (
+										activeDrafts.get(itemId) !== draft.sourceHash ||
+										row?.state !== "generating" ||
+										row.source_hash !== draft.sourceHash ||
+										draft.state === "generating"
+									)
+										throw new MeetingPublicationStoreError({ code: "write_failed" });
+									database
+										.prepare("UPDATE google_doc_drafts SET state=?,doc_id=?,doc_url=? WHERE item_id=?")
+										.run(draft.state, draft.docId, draft.docUrl, itemId);
+								},
+								bindItem(itemId, draft.sourceHash),
+							).pipe(Effect.ensuring(Effect.sync(() => activeDrafts.delete(itemId)))),
 						dbPath,
 						providerHealth: () =>
 							run("read", () =>
@@ -839,6 +929,10 @@ export class MeetingPublicationStore extends Context.Service<
 							transact("store_archive", () => {
 								let changed = 0;
 								for (const path of [...new Set(paths)].sort()) {
+									const item = database
+										.prepare("SELECT item_id FROM publication_items WHERE note_path=?")
+										.get(path);
+									if (item && activeDrafts.has(String(item.item_id))) continue;
 									const result = database
 										.prepare(
 											"UPDATE publication_items SET status='archived',approved_hash=NULL,discord_purpose_override=NULL,failure_stage=NULL,failure_code=NULL,next_attempt_at=NULL,lease_until=NULL,updated_at=? WHERE note_path=? AND status NOT IN ('published','archived')",

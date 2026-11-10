@@ -22,6 +22,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createServer } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -67,6 +68,7 @@ const stateDir = join(root, "state");
 const profile = join(root, "chrome-profile");
 const children = [];
 const failures = [];
+let reviewFixture;
 
 const childEnv = {
 	HOME: home,
@@ -411,6 +413,69 @@ try {
 	);
 	if (!hostile) failures.push("hostile brief text was not shown as text");
 
+	// Exercise the real app's handoff button and browser history. Only the opener
+	// response and review service are fixtures; no installed service or provider runs.
+	const portalOrigin = `http://127.0.0.1:${port}`;
+	let redeemed = false;
+	let exchangeCount = 0;
+	reviewFixture = createServer((request, response) => {
+		if (request.url === "/favicon.ico") { response.writeHead(204).end(); return; }
+		if (request.url.startsWith("/exchange?")) {
+			exchangeCount++;
+			if (redeemed) { response.writeHead(403).end("Code already consumed"); return; }
+			redeemed = true;
+			response.writeHead(200, {"Content-Type":"text/html", "Cache-Control":"no-store"});
+			response.end('<!doctype html><meta http-equiv="refresh" content="0;url=/"><title>Signing in</title>');
+			return;
+		}
+		response.writeHead(redeemed ? 200 : 401, {"Content-Type":"text/html"});
+		response.end(`<!doctype html><title>Meeting review fixture</title><main><h1>Meeting review fixture</h1><a id="cockpit-breadcrumb" href="${portalOrigin}/#/reviews/meetings">Harnessy cockpit</a></main>`);
+	});
+	await new Promise(resolve => reviewFixture.listen(0, "127.0.0.1", resolve));
+	const reviewOrigin = `http://127.0.0.1:${reviewFixture.address().port}`;
+	const intercept = async (message) => {
+		const event = JSON.parse(String(message.data));
+		if (event.method !== "Fetch.requestPaused" || event.sessionId !== sessionId) return;
+		try {
+			const {requestId, request} = event.params;
+			const opener = request.url.endsWith("/v1/open/meeting-review");
+			if (opener && (request.method !== "POST" || request.headers.Origin !== portalOrigin))
+				failures.push("meeting handoff did not use a same-origin browser POST");
+			const body = opener ? {opened:true, url:`${reviewOrigin}/exchange?code=${"a".repeat(43)}&portal=${encodeURIComponent(portalOrigin)}`} :
+				{tiles:{config:{state:"ok",data:{reviewHost:"127.0.0.1",reviewPort:reviewFixture.address().port}}}};
+			await page("Fetch.fulfillRequest", {requestId,responseCode:200,responseHeaders:[{name:"Content-Type",value:"application/json"}],body:Buffer.from(JSON.stringify(body)).toString("base64")});
+		} catch (error) { failures.push(`meeting handoff fixture: ${error.message}`); }
+	};
+	socket.addEventListener("message", intercept);
+	await page("Fetch.enable", {patterns:[{urlPattern:`${portalOrigin}/v1/open/meeting-review`},{urlPattern:`${portalOrigin}/v1/meetings/summary`}]});
+	for (const width of [1280, 390]) {
+		redeemed = false;
+		const exchangesBefore = exchangeCount;
+		await page("Emulation.setDeviceMetricsOverride", {width,height:844,deviceScaleFactor:1,mobile:width===390});
+		await page("Page.navigate", {url:`${portalOrigin}/#/reviews/meetings`});
+		await until("meeting handoff button", () => evaluate("[...document.querySelectorAll('button')].some(el=>el.textContent.startsWith('Open meeting review'))"));
+		const targetsBefore = (await send("Target.getTargets")).targetInfos.filter(target=>target.type==='page').length;
+		const point = await evaluate("(() => {const el=[...document.querySelectorAll('button')].find(el=>el.textContent.startsWith('Open meeting review'));el.scrollIntoView();const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()");
+		await page("Input.dispatchMouseEvent", {type:"mousePressed",...point,button:"left",clickCount:1});
+		await page("Input.dispatchMouseEvent", {type:"mouseReleased",...point,button:"left",clickCount:1});
+		await until("same-tab review", () => evaluate(`location.origin===${JSON.stringify(reviewOrigin)} && location.pathname==='/' && !!document.querySelector('#cockpit-breadcrumb')`));
+		await evaluate("history.back()");
+		await until("Back from review to cockpit", () => evaluate(`location.origin===${JSON.stringify(portalOrigin)} && location.hash==='#/reviews/meetings' && !!document.querySelector('.app')`));
+		await evaluate("history.forward()");
+		await until("Forward to review without code replay", () => evaluate(`location.origin===${JSON.stringify(reviewOrigin)} && location.pathname==='/' && !!document.querySelector('#cockpit-breadcrumb')`));
+		await evaluate("document.querySelector('#cockpit-breadcrumb').click()");
+		await until("cockpit breadcrumb return", () => evaluate(`location.origin===${JSON.stringify(portalOrigin)} && location.hash==='#/reviews/meetings' && !!document.querySelector('.app')`));
+		await evaluate("history.back()");
+		await until("Back to review", () => evaluate(`location.origin===${JSON.stringify(reviewOrigin)} && location.pathname==='/' && !!document.querySelector('#cockpit-breadcrumb')`));
+		await evaluate("history.forward()");
+		await until("Forward to cockpit", () => evaluate(`location.origin===${JSON.stringify(portalOrigin)} && !!document.querySelector('.app')`));
+		const targetsAfter = (await send("Target.getTargets")).targetInfos.filter(target=>target.type==='page').length;
+		if(targetsAfter!==targetsBefore) failures.push(`meeting handoff at ${width}px opened a new tab`);
+		if(exchangeCount!==exchangesBefore+1) failures.push(`meeting handoff at ${width}px replayed a consumed code`);
+	}
+	await page("Fetch.disable");
+	socket.removeEventListener("message", intercept);
+
 	// A saved task can be read even when its process can no longer be attached.
 	// Replace only the terminal HTTP boundary; never start a real shell or agent.
 	await evaluate(`(() => {
@@ -457,6 +522,8 @@ try {
 	}
 	socket.close();
 } finally {
+	reviewFixture?.closeAllConnections();
+	reviewFixture?.close();
 	for (const child of children) child.kill("SIGKILL");
 	await wait(200);
 	await rm(root, { recursive: true, force: true });
@@ -467,5 +534,5 @@ if (failures.length > 0) {
 	process.exit(1);
 }
 process.stdout.write(
-	"Harnessy app browser smoke passed: no CSP violation, console error or failed request, no <style> element, no overflow at 390 px.\n",
+	"Harnessy app browser smoke passed: no CSP violation, console error or failed request, no <style> element, no overflow at 390 px, same-tab meeting review and browser history passed.\n",
 );

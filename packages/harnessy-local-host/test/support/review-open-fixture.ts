@@ -50,17 +50,23 @@ export const reviewOpenHarness = (profile: ReviewOpenProfile, profileName: "meet
 	};
 
 	/** A listener that answers the identity challenge the way the review server does. */
-	const listen = async (options: { proofToken?: string; portShift?: number; answer?: string } = {}) => {
+	const listen = async (
+		options: { proofToken?: string; portShift?: number; answer?: string; delayMs?: number } = {},
+	) => {
 		const server = createServer((request, response) => {
 			const url = new URL(request.url ?? "/", "http://127.0.0.1");
 			const port = (server.address() as AddressInfo).port + (options.portShift ?? 0);
 			if (url.pathname !== "/identity") return void response.writeHead(404).end();
-			response.end(
-				options.answer ??
-					createHmac("sha256", options.proofToken ?? reviewOpenToken)
-						.update(`${profile.identityDomain}:${port}:${url.searchParams.get("nonce")}`)
-						.digest("hex"),
-			);
+			const answer = () => {
+				response.end(
+					options.answer ??
+						createHmac("sha256", options.proofToken ?? reviewOpenToken)
+							.update(`${profile.identityDomain}:${port}:${url.searchParams.get("nonce")}`)
+							.digest("hex"),
+				);
+			};
+			if (options.delayMs === undefined) answer();
+			else setTimeout(answer, options.delayMs);
 		});
 		servers.push(server);
 		await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));

@@ -29,7 +29,8 @@ import {
 // token in any argv, output or log. The launcher first proves that the listener
 // named by the owner-only rendezvous holds the token, then hands the platform
 // opener only the path of an owner-only redirect page that carries a
-// single-use, 60-second code.
+// single-use, 60-second code. Portal IPC mode returns only that one-time URL
+// to the authenticated portal, so its existing tab can navigate directly.
 
 /** What differs between the review servers this launcher can open. */
 export interface ReviewOpenProfile {
@@ -175,6 +176,19 @@ export const runReviewOpen = async (
 		);
 		process.exit(1);
 	};
+	const portalFlag = argv.indexOf("--portal-origin");
+	const portalOrigin = portalFlag >= 0 ? argv[portalFlag + 1] : undefined;
+	if (portalFlag >= 0) {
+		if (
+			portalFlag !== argv.length - 2 ||
+			process.send === undefined ||
+			portalOrigin === undefined ||
+			!/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]{0,4}$/u.test(portalOrigin) ||
+			Number(portalOrigin.slice(portalOrigin.lastIndexOf(":") + 1)) > 65535
+		)
+			return fail();
+		argv = argv.slice(0, portalFlag);
+	}
 	const statePath = argv[0] === "--state-path" ? argv[1] : undefined;
 	const reconnect = profile === meetingReviewOpenProfile && argv.length === 3 && argv[2] === "--reconnect-google";
 	if (
@@ -186,13 +200,14 @@ export const runReviewOpen = async (
 	)
 		return fail();
 	let opener = options.opener;
-	if (opener === undefined) {
+	if (opener === undefined && portalOrigin === undefined) {
 		const resolved = resolvePlatformOpener();
 		if ("reason" in resolved) return fail(resolved.reason);
 		opener = resolved.path;
 	}
 	const uid = process.geteuid?.();
-	if (!isAbsolute(opener) || uid === undefined) return fail();
+	if ((portalOrigin === undefined && (opener === undefined || !isAbsolute(opener))) || uid === undefined)
+		return fail();
 	const ownerUid = BigInt(uid);
 
 	const readOwnerFile = (path: string) => {
@@ -262,7 +277,7 @@ export const runReviewOpen = async (
 	try {
 		const response = await fetch(`${origin}/identity?nonce=${nonce}`, {
 			redirect: "error",
-			signal: AbortSignal.timeout(3_000),
+			signal: AbortSignal.timeout(15_000),
 		});
 		proof = response.ok ? (await response.text()).slice(0, 128) : "";
 	} catch {
@@ -320,14 +335,19 @@ export const runReviewOpen = async (
 		return fail();
 	}
 	// Spawned asynchronously so the signal handlers above can run while it is open.
-	const status = await new Promise<number | null>((done) => {
-		const child = spawn(opener, [pagePath], { shell: false, stdio: "ignore", windowsHide: true });
-		child.once("error", () => done(null));
-		child.once("exit", (exitCode) => done(exitCode));
-	});
+	const navigationUrl = `${origin}${profile.codeRoute}${code}${reconnect ? "&next=google-reconnect" : ""}${portalOrigin === undefined ? "" : `&portal=${encodeURIComponent(portalOrigin)}`}`;
+	const status =
+		portalOrigin === undefined
+			? await new Promise<number | null>((done) => {
+					const child = spawn(opener!, [pagePath], { shell: false, stdio: "ignore", windowsHide: true });
+					child.once("error", () => done(null));
+					child.once("exit", (exitCode) => done(exitCode));
+				})
+			: 0;
 	if (status !== 0) return fail();
-	// The portal can confirm the browser launch without receiving a URL, token or code.
-	process.send?.({ kind: "review_opened" });
+	// Only the authenticated parent IPC receives the short-lived single-use URL.
+	// The long-lived owner token never leaves this helper.
+	process.send?.({ kind: "review_opened", ...(portalOrigin === undefined ? {} : { url: navigationUrl }) });
 	// The server deletes the exchange file when the browser redeems the code. Remove
 	// the page then, or after a bounded wait.
 	const deadline = Date.now() + (options.redeemWaitMs ?? defaultRedeemWaitMs);
