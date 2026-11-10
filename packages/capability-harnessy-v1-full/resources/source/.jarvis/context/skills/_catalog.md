@@ -934,6 +934,25 @@ depends_on: []
 created: 2026-10-09
 updated: 2026-10-09
 ---
+name: living-doc-refresh
+type: opencode
+version: 0.1.0
+install_scope: global
+status: experimental
+owner: julian
+blast_radius: medium
+description: "Keep a living doc in the selected knowledge tool in step with its watched sources: detect code, meeting-note and workspace-context changes, update only the affected sections, comment on decisions, and log each refresh. Runs on demand or as a daily launchd job."
+location: tools/flow-install/skills/living-doc-refresh
+invoke: "/living-doc-refresh"
+permissions: [read, shell, claude-docs-write]
+data_categories: [none]
+egress: [selected knowledge adapter (claude-docs: claude.ai)]
+phase: P0
+tags: [docs, living-doc, refresh, claude-docs]
+depends_on: []
+created: 2026-11-05
+updated: 2026-11-05
+---
 
 ## Notes
 

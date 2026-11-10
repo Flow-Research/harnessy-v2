@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+"""Change detection for a living doc's watched sources.
+
+A living doc is a Claude Doc that a refresh keeps in step with code, meeting
+notes and workspace context. This script holds no intelligence: it records what
+each watched source looked like at the last refresh and reports what changed.
+
+Config:  ~/.harnessy/living-docs/<name>.json          (see templates/config.example.json)
+State:   ~/.harnessy/living-docs/<name>.state.json    (written only by `record`)
+Pending: ~/.harnessy/living-docs/<name>.pending.json  (the snapshot `check` reported; `record` stores
+                                                       exactly this snapshot, never a newer one)
+
+The config names the knowledge adapter that holds the doc ("adapter"). `check` refuses an
+adapter that is unknown or lacks a capability the refresh needs, before anything is written.
+
+Commands:
+  living-doc-sources check <name>                      JSON report of changes since the last record
+  living-doc-sources record <name> [--doc-rev BODY=REV ...]
+                                                       mark the snapshot from the last `check` as seen; each
+                                                       --doc-rev stores one doc tab body's revision
+  living-doc-sources record <name> --baseline         mark the current sources as seen (first setup only)
+  living-doc-sources show-config <name>                print the resolved config
+  living-doc-sources log <name> <label> <from> <to>    commits in from..to (subjects and file stats)
+  living-doc-sources diff <name> <label> <from> <to> [path ...]
+                                                       the diff of from..to, limited to the paths given
+  living-doc-sources show <name> <label> <rev> <path>  one file as it is at rev
+
+The log, diff and show commands run fixed, read-only git arguments with no pager,
+external diff or text conversion, and ignore the system and global git config, so a
+scheduled refresh does not need general git access.
+
+Exit codes: 0 ok, 2 bad config or arguments, 3 a source could not be read.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+HOME_DIR = Path(os.environ.get("LIVING_DOCS_HOME", Path.home() / ".harnessy" / "living-docs"))
+NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_COMMITS = 200
+MAX_FILES = 300
+
+
+# Knowledge adapters a living doc can use, and what each supports. A refresh needs
+# every capability in REQUIRED_CAPABILITIES; an adapter without one is refused.
+ADAPTERS = {
+    "claude-docs": {"read", "read-since-revision", "update-block", "comment"},
+}
+REQUIRED_CAPABILITIES = {"read", "read-since-revision", "update-block", "comment"}
+
+
+class Refused(Exception):
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def config_path(name: str) -> Path:
+    if not NAME.match(name):
+        raise Refused(2, f"invalid living-doc name: {name!r} (lowercase letters, digits, hyphens)")
+    return HOME_DIR / f"{name}.json"
+
+
+def load_config(name: str) -> dict:
+    path = config_path(name)
+    if not path.is_file():
+        raise Refused(2, f"no config at {path}; copy templates/config.example.json there")
+    config = json.loads(path.read_text(encoding="utf8"))
+    for key in ("doc", "workspaceRoot"):
+        if key not in config:
+            raise Refused(2, f"config {path} is missing {key!r}")
+    if not isinstance(config["doc"], dict) or not config["doc"].get("id"):
+        raise Refused(2, f"config {path} needs doc.id")
+    adapter = config.get("adapter")
+    if adapter not in ADAPTERS:
+        raise Refused(2, f"config {path} names knowledge adapter {adapter!r}; supported: {sorted(ADAPTERS)}")
+    missing = REQUIRED_CAPABILITIES - ADAPTERS[adapter]
+    if missing:
+        raise Refused(2, f"knowledge adapter {adapter!r} does not support: {sorted(missing)}")
+    root = Path(config["workspaceRoot"]).expanduser()
+    if not root.is_dir():
+        raise Refused(2, f"workspaceRoot {root} is not a folder")
+    config["workspaceRoot"] = str(root)
+    config.setdefault("code", [])
+    config.setdefault("meetings", {})
+    config.setdefault("context", [])
+    return config
+
+
+def load_state(name: str) -> dict:
+    path = HOME_DIR / f"{name}.state.json"
+    if not path.is_file():
+        return {}
+    return json.loads(path.read_text(encoding="utf8"))
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def write_private(path: Path, value: dict) -> Path:
+    HOME_DIR.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(f".{os.getpid()}.tmp")
+    temp.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf8")
+    os.chmod(temp, 0o600)
+    temp.replace(path)
+    return path
+
+
+def save_state(name: str, state: dict) -> Path:
+    return write_private(HOME_DIR / f"{name}.state.json", state)
+
+
+def git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo), *args], capture_output=True, text=True, check=False, timeout=60
+    )
+    if result.returncode != 0:
+        raise Refused(3, f"git {' '.join(args)} failed in {repo}: {result.stderr.strip()[:300]}")
+    return result.stdout
+
+
+def code_heads(config: dict) -> dict:
+    """Current commit of each watched repository ref."""
+    heads = {}
+    root = Path(config["workspaceRoot"])
+    for entry in config["code"]:
+        repo = (root / entry["path"]).resolve()
+        ref = entry.get("ref", "HEAD")
+        label = entry.get("label", entry["path"])
+        if entry.get("fetch"):
+            # Follow the shared branch, not only what was pulled locally. Fetch changes no branch or file.
+            git(repo, "fetch", "--quiet", entry.get("remote", "origin"))
+        heads[label] = {"path": entry["path"], "ref": ref, "sha": git(repo, "rev-parse", ref).strip()}
+    return heads
+
+
+def code_changes(config: dict, seen: dict, heads: dict) -> list:
+    changes = []
+    root = Path(config["workspaceRoot"])
+    for label, head in heads.items():
+        before = (seen.get(label) or {}).get("sha")
+        if before == head["sha"]:
+            continue
+        repo = (root / head["path"]).resolve()
+        change = {"label": label, "path": head["path"], "ref": head["ref"], "from": before, "to": head["sha"]}
+        if before is not None:
+            span = f"{before}..{head['sha']}"
+            log = git(repo, "log", "--no-merges", f"--max-count={MAX_COMMITS}", "--format=%h %ad %s", "--date=short", span)
+            names = git(repo, "diff", "--name-status", span).splitlines()
+            change["commits"] = [line for line in log.splitlines() if line]
+            change["files"] = names[:MAX_FILES]
+            change["filesTruncated"] = len(names) > MAX_FILES
+        else:
+            change["note"] = "first record: no earlier commit to compare with"
+        changes.append(change)
+    return changes
+
+
+def file_digest(path: Path) -> str | None:
+    try:
+        if path.stat().st_size > MAX_FILE_BYTES:
+            return f"size:{path.stat().st_size}:mtime:{int(path.stat().st_mtime)}"
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def meeting_files(config: dict) -> dict:
+    """Meeting notes under the meetings root whose text mentions a keyword."""
+    meetings = config["meetings"]
+    if not meetings:
+        return {}
+    root = (Path(config["workspaceRoot"]) / meetings.get("root", ".")).resolve()
+    globs = meetings.get("globs", ["**/meetings/**/*.md"])
+    keywords = [word.lower() for word in meetings.get("keywords", [])]
+    since = meetings.get("since")
+    found = {}
+    for pattern in globs:
+        for path in root.glob(pattern):
+            if not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
+                continue
+            relative = path.relative_to(root).as_posix()
+            if since and dated_before(relative, since):
+                continue
+            raw = path.read_bytes()
+            text = raw.decode("utf8", errors="replace").lower()
+            if keywords and not any(word in text for word in keywords):
+                continue
+            # Match keywords case-insensitively, but hash the original bytes: a change of case is a change.
+            found[relative] = hashlib.sha256(raw).hexdigest()
+    return found
+
+
+MONTHS = {m: i for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+DATED = re.compile(r"(\d{4})/([A-Z][a-z]{2})/(\d{2})-")
+
+
+def dated_before(relative: str, since: str) -> bool:
+    match = DATED.search(relative)
+    if not match or match.group(2) not in MONTHS:
+        return False
+    stamp = f"{match.group(1)}-{MONTHS[match.group(2)]:02d}-{match.group(3)}"
+    return stamp < since
+
+
+def context_files(config: dict) -> dict:
+    """Every file under the watched context paths (a path may be a file or a folder)."""
+    root = Path(config["workspaceRoot"])
+    ignore = config.get("contextIgnore", [])
+    found = {}
+    for entry in config["context"]:
+        base = (root / entry).resolve()
+        paths = [base] if base.is_file() else sorted(p for p in base.rglob("*") if p.is_file()) if base.is_dir() else []
+        if not paths:
+            found[entry] = None
+        for path in paths:
+            relative = path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
+            if any(fnmatch.fnmatch(relative, pattern) for pattern in ignore):
+                continue
+            found[relative] = file_digest(path)
+    return found
+
+
+def diff_maps(before: dict, now: dict) -> list:
+    changes = []
+    for path in sorted(set(before) | set(now)):
+        old, new = before.get(path), now.get(path)
+        if old == new:
+            continue
+        status = "added" if old is None else "removed" if new is None else "changed"
+        changes.append({"path": path, "status": status})
+    return changes
+
+
+def snapshot(config: dict) -> dict:
+    return {"code": code_heads(config), "meetings": meeting_files(config), "context": context_files(config)}
+
+
+def check(name: str) -> dict:
+    config = load_config(name)
+    state = load_state(name)
+    now = snapshot(config)
+    seen = state.get("seen", {})
+    report = {
+        "name": name,
+        "adapter": config["adapter"],
+        "doc": config["doc"],
+        "workspaceRoot": config["workspaceRoot"],
+        "lastRecorded": state.get("recordedAt"),
+        "lastDocRevs": state.get("docRevs", {}),
+        "firstRun": not state,
+        "code": code_changes(config, seen.get("code", {}), now["code"]),
+        "meetings": diff_maps(seen.get("meetings", {}), now["meetings"]),
+        "context": diff_maps(seen.get("context", {}), now["context"]),
+    }
+    report["changed"] = bool(report["code"] or report["meetings"] or report["context"])
+    # Keep the exact snapshot this report describes. `record` stores it, so a source that
+    # changes after this check is still reported by the next check.
+    write_private(HOME_DIR / f"{name}.pending.json", {"checkedAt": now_iso(), "seen": now})
+    return report
+
+
+def parse_doc_revs(values: list[str]) -> dict:
+    revs = {}
+    for value in values:
+        body, _, rev = value.partition("=")
+        if not body or not rev.isdigit():
+            raise Refused(2, f"--doc-rev must be BODY=REV with a whole-number REV, not {value!r}")
+        revs[body] = int(rev)
+    return revs
+
+
+def record(name: str, doc_revs: dict, baseline: bool) -> dict:
+    config = load_config(name)
+    state = load_state(name)
+    pending_path = HOME_DIR / f"{name}.pending.json"
+    if baseline:
+        seen = snapshot(config)
+    elif pending_path.is_file():
+        seen = json.loads(pending_path.read_text(encoding="utf8"))["seen"]
+    else:
+        raise Refused(2, f"no pending snapshot for {name}; run `check` before `record`, or `record --baseline` at setup")
+    state = {
+        "recordedAt": now_iso(),
+        # Revisions count per tab body; a body not named keeps its earlier value.
+        "docRevs": {**state.get("docRevs", {}), **doc_revs},
+        "seen": seen,
+    }
+    path = save_state(name, state)
+    pending_path.unlink(missing_ok=True)
+    return {"name": name, "recorded": str(path), "recordedAt": state["recordedAt"], "docRevs": state["docRevs"],
+            "code": {label: head["sha"][:12] for label, head in state["seen"]["code"].items()},
+            "meetings": len(state["seen"]["meetings"]), "contextFiles": len(state["seen"]["context"])}
+
+
+REV = re.compile(r"^[0-9a-f]{7,40}$")
+SAFE_GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_PAGER": "cat",
+                "GIT_EXTERNAL_DIFF": "", "GIT_TERMINAL_PROMPT": "0"}
+
+
+def code_repo(config: dict, label: str) -> tuple[Path, dict]:
+    for entry in config["code"]:
+        if entry.get("label", entry["path"]) == label:
+            return (Path(config["workspaceRoot"]) / entry["path"]).resolve(), entry
+    raise Refused(2, f"no code source labelled {label!r} in the config")
+
+
+def check_rev(rev: str, entry: dict) -> str:
+    if REV.match(rev) or rev == entry.get("ref", "HEAD"):
+        return rev
+    raise Refused(2, f"revision must be a commit id (7-40 hex) or the configured ref, not {rev!r}")
+
+
+def check_path(path: str) -> str:
+    if not path or path.startswith(("-", "/", ":")) or ".." in Path(path).parts:
+        raise Refused(2, f"path must be relative to the repository, not {path!r}")
+    return path
+
+
+def safe_git(repo: Path, *args: str) -> str:
+    """Run a fixed, read-only git command; only revisions and paths come from the caller."""
+    result = subprocess.run(
+        ["git", "--no-pager", "-C", str(repo), *args], capture_output=True, text=True, check=False,
+        timeout=60, env={**os.environ, **SAFE_GIT_ENV},
+    )
+    if result.returncode != 0:
+        raise Refused(3, f"git {args[0]} failed in {repo}: {result.stderr.strip()[:300]}")
+    return result.stdout
+
+
+def git_view(config: dict, command: str, label: str, revs: list[str], paths: list[str]) -> str:
+    repo, entry = code_repo(config, label)
+    revs = [check_rev(rev, entry) for rev in revs]
+    paths = [check_path(path) for path in paths]
+    if command == "log":
+        span = f"{revs[0]}..{revs[1]}"
+        return safe_git(repo, "log", "--no-merges", f"--max-count={MAX_COMMITS}", "--stat", "--no-ext-diff",
+                        "--no-textconv", "--format=commit %h %ad%n%s%n", "--date=short", span, "--")
+    if command == "diff":
+        span = f"{revs[0]}..{revs[1]}"
+        return safe_git(repo, "diff", "--no-ext-diff", "--no-textconv", "--no-color", span, "--", *paths)
+    return safe_git(repo, "show", "--no-textconv", f"{revs[0]}:{paths[0]}")
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="living-doc-sources", description=__doc__.split("\n\n")[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    for command in ("check", "show-config"):
+        commands.add_parser(command).add_argument("name")
+    recorder = commands.add_parser("record")
+    recorder.add_argument("name")
+    recorder.add_argument("--doc-rev", action="append", default=[], metavar="BODY=REV",
+                          help="a doc tab body id and its revision after the refresh (repeat per tab)")
+    recorder.add_argument("--baseline", action="store_true",
+                          help="record the current sources instead of the last check (first setup only)")
+    for command, revs in (("log", ["from", "to"]), ("diff", ["from", "to"]), ("show", ["rev"])):
+        viewer = commands.add_parser(command)
+        viewer.add_argument("name")
+        viewer.add_argument("label")
+        for rev in revs:
+            viewer.add_argument(rev)
+        if command == "diff":
+            viewer.add_argument("paths", nargs="*")
+        elif command == "show":
+            viewer.add_argument("paths", nargs=1, metavar="path")
+    args = parser.parse_args(argv)
+    try:
+        if args.command in ("log", "diff", "show"):
+            revs = [args.rev] if args.command == "show" else [getattr(args, "from"), args.to]
+            sys.stdout.write(git_view(load_config(args.name), args.command, args.label, revs,
+                                      getattr(args, "paths", [])))
+            return 0
+        if args.command == "check":
+            result = check(args.name)
+        elif args.command == "record":
+            result = record(args.name, parse_doc_revs(args.doc_rev), args.baseline)
+        else:
+            result = load_config(args.name)
+    except Refused as error:
+        print(json.dumps({"error": str(error)}), file=sys.stderr)
+        return error.code
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

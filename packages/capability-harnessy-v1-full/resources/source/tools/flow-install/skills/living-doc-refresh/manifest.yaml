@@ -1,0 +1,34 @@
+name: living-doc-refresh
+type: opencode
+version: 0.1.0
+install_scope: global
+owner: julian
+status: experimental
+blast_radius: medium
+description: "Keep a living doc in the selected knowledge tool in step with its watched sources: detect code, meeting-note and workspace-context changes, update only the affected sections, comment on decisions, and log each refresh. Runs on demand or as a daily launchd job."
+permissions: [read, shell, claude-docs-write]
+data_categories: [none]
+egress: [selected knowledge adapter (claude-docs: claude.ai)]
+invoke: "/living-doc-refresh"
+location: tools/flow-install/skills/living-doc-refresh
+dependencies:
+  - tool: git
+    description: "Reads commits and diffs of the watched repositories"
+    check: "command -v git"
+    required: true
+  - tool: python3
+    description: "Runs living-doc-sources (standard library only, Python 3.9 or later)"
+    check: "command -v python3"
+    required: true
+  - tool: claude
+    description: "Claude Code with the selected adapter's tools (claude-docs: the Claude Docs connector), for scheduled runs"
+    check: "command -v claude"
+    required: false
+autoresearch:
+  enabled: true
+  metric_layer: 1
+  time_budget_seconds: 1200
+  evaluation_window: 3
+  constraints:
+    max_regression_rate: 0.1
+    max_human_intervention: 0.5

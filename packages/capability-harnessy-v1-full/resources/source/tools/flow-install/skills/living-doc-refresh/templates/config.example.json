@@ -1,0 +1,39 @@
+{
+	"name": "example-product",
+	"title": "Example product documentation",
+	"adapter": "claude-docs",
+	"doc": {
+		"id": "00000000-0000-0000-0000-000000000000",
+		"url": "https://claude.ai/artifact/<artifact id>"
+	},
+	"workspaceRoot": "~/Code",
+	"code": [
+		{
+			"label": "example-repo",
+			"path": "example-repo/dev",
+			"ref": "origin/develop",
+			"fetch": true,
+			"remote": "origin"
+		}
+	],
+	"meetings": {
+		"root": ".jarvis/context/private/<user>",
+		"globs": [
+			"**/meetings/**/*.md"
+		],
+		"keywords": [
+			"example product"
+		],
+		"since": "2026-01-01"
+	},
+	"context": [
+		".jarvis/context/private/<user>/<project>/docs"
+	],
+	"contextIgnore": [
+		"**/intake/sources/raw/**"
+	],
+	"schedule": {
+		"hour": 6,
+		"minute": 30
+	}
+}

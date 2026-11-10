@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Scheduled entry for a living-doc refresh (used by the launchd job; also safe by hand).
+#
+#   living-doc-refresh-run <name>
+#
+# 1. Runs `living-doc-sources check <name>` (no AI, no network).
+# 2. No source changed: logs one line and exits 0. Nothing else runs.
+# 3. A source changed: runs Claude Code headless with the living-doc-refresh skill
+#    and only the tools the refresh needs. The skill updates the doc and records the
+#    new state; a failed run records nothing, so the next run sees the same changes.
+#
+# Logs: ~/.harnessy/living-docs/logs/<name>.log (one block per run).
+set -euo pipefail
+
+name="${1:?usage: living-doc-refresh-run <name>}"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+sources="$here/living-doc-sources"
+home_dir="${LIVING_DOCS_HOME:-$HOME/.harnessy/living-docs}"
+log_dir="$home_dir/logs"
+mkdir -p "$log_dir"
+log="$log_dir/$name.log"
+stamp() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+report="$("$sources" check "$name" 2>>"$log")" || {
+	echo "$(stamp) $name: source check failed (exit $?); see the lines above" >>"$log"
+	exit 1
+}
+if [[ "$(printf '%s' "$report" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["changed"])')" != "True" ]]; then
+	echo "$(stamp) $name: no source changes" >>"$log"
+	exit 0
+fi
+
+claude_bin="${LIVING_DOCS_CLAUDE:-$(command -v claude || true)}"
+if [[ -z "$claude_bin" ]]; then
+	echo "$(stamp) $name: sources changed but no claude command was found; nothing refreshed" >>"$log"
+	exit 1
+fi
+
+field() { printf '%s' "$report" | /usr/bin/python3 -c "import json,sys; print(json.load(sys.stdin)[\"$1\"])"; }
+workspace="$(field workspaceRoot)"
+adapter="$(field adapter)"
+# Tools of the selected knowledge adapter. `check` already refused unknown adapters; this
+# second guard keeps the run from starting with tools for a different destination.
+case "$adapter" in
+	claude-docs)
+		adapter_tools=(
+			"mcp__claude_ai_Claude_Docs__read"
+			"mcp__claude_ai_Claude_Docs__update"
+			"mcp__claude_ai_Claude_Docs__batch"
+			"mcp__claude_ai_Claude_Docs__create"
+			"mcp__claude_ai_Claude_Docs__query"
+			"mcp__claude_ai_Claude_Docs__guide"
+		)
+		;;
+	*)
+		echo "$(stamp) $name: unsupported knowledge adapter '$adapter'; nothing refreshed" >>"$log"
+		exit 1
+		;;
+esac
+# Sources are untrusted text (meeting notes, commit messages), so the run gets no
+# general shell or git access: git output comes only from living-doc-sources' fixed,
+# read-only log, diff and show commands, and file reads stay inside the workspace.
+allowed=(
+	"Skill(living-doc-refresh)"
+	"Read(/$workspace/**)"
+	"Bash($sources check:*)" "Bash($sources record:*)"
+	"Bash($sources log:*)" "Bash($sources diff:*)" "Bash($sources show:*)"
+	"${adapter_tools[@]}"
+)
+{
+	echo "$(stamp) $name: sources changed; starting refresh"
+	cd "$workspace"
+	status=0
+	"$claude_bin" -p "/living-doc-refresh $name" \
+		--allowedTools "${allowed[@]}" \
+		--output-format text || status=$?
+	echo "$(stamp) $name: refresh finished (exit $status)"
+	exit "$status"
+} >>"$log" 2>&1
