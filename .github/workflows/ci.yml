@@ -111,6 +111,13 @@ jobs:
       - name: Check the Executor cockpit CSP, sign-in redirect and code exchange in headless Chrome
         run: node scripts/check-executor-cockpit-browser.mjs
 
+      - name: Check meeting notification sign-in in a fresh browser
+        working-directory: packages/harnessy-core
+        run: |
+          export CHROME_PATH="$(command -v google-chrome)"
+          test -x "$CHROME_PATH"
+          node ../../node_modules/vitest/dist/cli.js --run test/meeting-publication-review-code-exchange.test.ts
+
       - name: Check
         run: npm run check
 
