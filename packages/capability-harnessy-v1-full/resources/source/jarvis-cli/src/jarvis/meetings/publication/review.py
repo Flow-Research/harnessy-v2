@@ -7,6 +7,7 @@ import hmac
 import html
 import os
 import re
+import socketserver
 import stat
 import sys
 import time
@@ -44,6 +45,15 @@ _IDENTITY_NONCE = re.compile(r"^[a-f0-9]{64}$")
 
 class _ReviewServer(ThreadingHTTPServer):
     """Report handler failures without tracebacks that could carry request data."""
+
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind resolves socket.getfqdn(host), a reverse DNS
+        # lookup that can stall startup for seconds (seen on macOS CI runners).
+        # This server is loopback-only and never uses the name, so skip it.
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = port
 
     def handle_error(self, request: object, client_address: object) -> None:
         # The default handler prints a traceback; exception text may include the
