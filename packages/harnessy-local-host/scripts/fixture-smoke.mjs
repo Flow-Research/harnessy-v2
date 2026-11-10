@@ -237,6 +237,8 @@ const exactHostInventory = [
 	"dist/portal/weekly-close.js",
 	"dist/portal/auth.d.ts",
 	"dist/portal/auth.js",
+	"dist/portal/app/lib/safe-href.d.ts",
+	"dist/portal/app/lib/safe-href.js",
 	"dist/portal/brief-generation.d.ts",
 	"dist/portal/brief-generation.js",
 	"dist/portal/command.d.ts",

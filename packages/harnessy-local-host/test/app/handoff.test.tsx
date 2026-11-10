@@ -17,9 +17,50 @@ beforeEach(() => {
 afterEach(async () => {
 	await act(async () => root.unmount());
 	vi.restoreAllMocks();
+	vi.unstubAllGlobals();
 });
 
 describe("portal sign-in handoff button", () => {
+	it.each([true, false])("validates same-tab destinations and recovers on return: valid=%s", async (valid) => {
+		const originalWindow = window;
+		const assign = vi.fn();
+		vi.stubGlobal(
+			"window",
+			new Proxy(originalWindow, {
+				get(target, key) {
+					if (key === "location") return { assign };
+					if (key === "addEventListener" || key === "removeEventListener") return target[key].bind(target);
+					return Reflect.get(target, key);
+				},
+			}),
+		);
+		const url = valid
+			? `http://127.0.0.1:8765/exchange?code=${"a".repeat(43)}&portal=http%3A%2F%2F127.0.0.1%3A8766`
+			: "https://attacker.example/exchange?code=private";
+		const open = vi.fn(async () => ({ kind: "ok", body: { url } }) as const);
+		await act(async () =>
+			root.render(
+				<HandoffProvider open={open}>
+					<HandoffButton
+						action={{ kind: "handoff", label: "Review", target: "harnessy:open:meeting-review", note: null }}
+					/>
+				</HandoffProvider>,
+			),
+		);
+		const button = container.querySelector("button")!;
+		await act(async () => button.click());
+		if (valid) {
+			expect(assign).toHaveBeenCalledWith(url);
+			expect(button.disabled).toBe(true);
+			await act(async () => originalWindow.dispatchEvent(new Event("pageshow")));
+			expect(button.disabled).toBe(false);
+			expect(container.querySelector("output")).toBeNull();
+		} else {
+			expect(assign).not.toHaveBeenCalled();
+			expect(button.disabled).toBe(false);
+			expect(container.textContent).toContain("Check its service on the Jobs screen");
+		}
+	});
 	it("requires a provider for service actions", async () => {
 		await act(async () =>
 			root.render(
