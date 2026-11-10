@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 
 /** Structured failure for Harnessy CLI/core operations. */
-export class HarnessError extends Schema.TaggedErrorClass<HarnessError>()("HarnessError", {
+export class HarnessError extends Schema.TaggedError<HarnessError>()("HarnessError", {
 	/** User-facing error message. */
 	message: Schema.String,
 	/** Optional original failure retained for debugging and Effect causes. */

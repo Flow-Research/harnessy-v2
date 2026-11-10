@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { Effect } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeWorkCommand } from "../src/cli/work.ts";
 import { registerSecret } from "../src/notifications/sanitize.ts";

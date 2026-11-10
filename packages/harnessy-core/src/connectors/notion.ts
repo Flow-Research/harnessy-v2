@@ -2,9 +2,9 @@ import { Schema } from "effect";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
-import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/unstable/http";
 
 import {
 	ConnectorAuthError,

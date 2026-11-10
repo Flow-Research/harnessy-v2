@@ -14,8 +14,8 @@
 
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { FetchHttpClient, HttpServerRequest } from "effect/unstable/http";
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { FetchHttpClient, HttpServerRequest } from "effect/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 
 import {
   createExecutor,

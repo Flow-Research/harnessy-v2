@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { ToolAddress, effectivePolicyFromSorted } from "@executor-js/sdk/shared";
 
 import { policiesOptimisticAtom, toolsAllAtom } from "../api/atoms";

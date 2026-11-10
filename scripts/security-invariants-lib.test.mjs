@@ -177,6 +177,23 @@ describe("dependency resolution security contract", () => {
 		assert.deepEqual(checkDependencyResolutionContract(dependencyContractFiles()), []);
 	});
 
+	it("accepts a removed CLI parser but rejects its vulnerable reintroduction", () => {
+		const files = dependencyContractFiles();
+		const rootLock = JSON.parse(files.get("package-lock.json"));
+		delete rootLock.packages["node_modules/toml"];
+		files.set("package-lock.json", JSON.stringify(rootLock));
+		files.set("executor/bun.lock", files.get("executor/bun.lock").replace(/^.*\["toml@.*\n/m, ""));
+		assert.deepEqual(checkDependencyResolutionContract(files), []);
+
+		rootLock.packages["node_modules/new-owner/node_modules/toml"] = { version: "4.1.1" };
+		files.set("package-lock.json", JSON.stringify(rootLock));
+		files.set("executor/bun.lock", `${files.get("executor/bun.lock")}\n    "new-owner/toml": ["toml@4.1.1", "", {}],`);
+		assert.deepEqual(
+			new Set(checkDependencyResolutionContract(files).map((finding) => finding.rule)),
+			new Set(["unsafe-root-lock-resolution", "unsafe-executor-lock-resolution"]),
+		);
+	});
+
 	it("rejects a vulnerable root resolution and a widened Cloudflare owner", () => {
 		const files = dependencyContractFiles();
 		const rootLock = JSON.parse(files.get("package-lock.json"));

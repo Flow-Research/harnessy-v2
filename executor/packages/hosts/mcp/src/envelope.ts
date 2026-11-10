@@ -1,5 +1,5 @@
 import { Effect, Match, Predicate } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import {
   defaultMcpResource,
@@ -32,7 +32,7 @@ import {
 // semantics, and the entire session lifecycle (create + forward + ownership) —
 // comes from the two seams.
 //
-// Runtime-agnostic: built on `effect/unstable/http` (HttpRouter), NO
+// Runtime-agnostic: built on `effect/http` (HttpRouter), NO
 // platform-bun. The `/mcp` flow is fully Effect; the streamable-HTTP transport
 // works on web `Request`/`Response`, so the envelope reconstructs the inbound
 // web request once, hands it to the store, and wraps the store's `Response`

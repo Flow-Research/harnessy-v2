@@ -1,5 +1,5 @@
 import { Effect, Layer, Option } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { GraphqlInvocationError } from "./errors";
 import { type OperationBinding, InvocationResult } from "./types";

@@ -134,7 +134,7 @@ export const MeetingPublicationSmokeRuntimeErrorCode = Schema.Literals([
 ]);
 export type MeetingPublicationSmokeRuntimeErrorCode = typeof MeetingPublicationSmokeRuntimeErrorCode.Type;
 
-export class MeetingPublicationSmokeRuntimeError extends Schema.TaggedErrorClass<MeetingPublicationSmokeRuntimeError>()(
+export class MeetingPublicationSmokeRuntimeError extends Schema.TaggedError<MeetingPublicationSmokeRuntimeError>()(
 	"MeetingPublicationSmokeRuntimeError",
 	{ code: MeetingPublicationSmokeRuntimeErrorCode },
 ) {}

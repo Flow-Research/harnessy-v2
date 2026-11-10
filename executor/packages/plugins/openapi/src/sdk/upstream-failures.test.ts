@@ -12,14 +12,8 @@
 
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
-import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  OpenApi,
-} from "effect/unstable/httpapi";
+import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
 // The socket-drop and slow-response cases exercise Node transport behavior
 // that Effect's in-memory HTTP test server intentionally abstracts away.
 import { createServer } from "node:http";

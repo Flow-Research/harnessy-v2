@@ -34,7 +34,7 @@ export interface GitRefsSnapshot {
 }
 
 const textDecoder = new TextDecoder();
-const decodeExecutorJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+const decodeExecutorJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const parseGitSourceUrl = (
   input: string,

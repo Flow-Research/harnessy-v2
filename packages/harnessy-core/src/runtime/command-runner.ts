@@ -2,8 +2,8 @@ import { Schema } from "effect";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { causeMessage, type HarnessError } from "../errors.ts";
 

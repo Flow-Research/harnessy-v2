@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue, useAtomSet, useAtomRefresh } from "@effect/atom-react";
 import * as Exit from "effect/Exit";
 import { trackEvent } from "../api/analytics";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import {
   AuthTemplateSlug,
   IntegrationSlug,

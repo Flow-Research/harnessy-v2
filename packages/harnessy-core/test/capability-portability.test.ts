@@ -1,10 +1,9 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import { TestConsole } from "effect/testing";
-import { Command } from "effect/unstable/cli";
-
 import { CAPABILITY_MANIFEST_NAME } from "../src/capabilities/manifest.ts";
 import { CapabilityRegistry } from "../src/capabilities/registry.ts";
 import { CapabilityEntry, CapabilitySource } from "../src/capabilities/source.ts";
@@ -15,9 +14,14 @@ import { formatLockfile, HarnessLockfile, parseLockfile } from "../src/runtime/l
 import { LockfileStore } from "../src/runtime/lockfile-store.ts";
 import { HarnessProfile } from "../src/runtime/profile.ts";
 import { ProfileStore } from "../src/runtime/profile-store.ts";
+import { unselectedCliServices } from "./lib/unselected-cli-services.ts";
 
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
+	effect.pipe(
+		Effect.provide(HarnessProject.layer),
+		Effect.provide(unselectedCliServices),
+		Effect.provide(NodeServices.layer),
+	);
 
 const writeManifest = (fs: FileSystem.FileSystem, directory: string, manifest: Readonly<Record<string, unknown>>) =>
 	fs.writeFileString(`${directory}/${CAPABILITY_MANIFEST_NAME}`, `${JSON.stringify(manifest, null, "\t")}\n`);
@@ -160,6 +164,7 @@ describe("capability portability lifecycle", () => {
 			}),
 		).pipe(
 			Effect.provide(HarnessProject.layer),
+			Effect.provide(unselectedCliServices),
 			Effect.provide(NodeServices.layer),
 			Effect.provide(TestConsole.layer),
 		),

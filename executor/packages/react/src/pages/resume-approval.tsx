@@ -1,7 +1,7 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Option, Schema } from "effect";
 import * as Exit from "effect/Exit";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { Check, ExternalLink, Loader2, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
@@ -54,8 +54,8 @@ type PausedInteractionView = {
   readonly toolId: string | null;
 };
 
-const encodeJsonPreview = Schema.encodeUnknownOption(Schema.UnknownFromJsonString);
-const decodeJsonPreview = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+const encodeJsonPreview = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonPreview = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const PausedInteractionInfo = Schema.Struct({
   kind: Schema.optional(Schema.String),
   message: Schema.optional(Schema.String),

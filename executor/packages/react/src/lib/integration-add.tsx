@@ -12,7 +12,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 
 import { integrationsOptimisticAtom } from "../api/atoms";
 

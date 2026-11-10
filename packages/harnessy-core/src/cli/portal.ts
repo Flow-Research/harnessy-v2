@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { Command, Flag } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { Command, Flag } from "effect/unstable/cli";
 
 /** Where `harnessy portal` finds the host, and which process signals it forwards. Tests pass their own. */
 export interface PortalHostRuntime {
@@ -56,13 +56,15 @@ const invoke = (args: string[]) =>
 		Effect.flatMap((code) => (code === 0 ? Effect.void : Effect.fail(new Error(`Portal host exited ${code}`)))),
 	);
 
-const port = Flag.string("port").pipe(Flag.optional);
-const stateDir = Flag.string("state-dir").pipe(Flag.optional);
-const route = Flag.string("route").pipe(
+const port = Flag.String("port").pipe(Flag.optional);
+const stateDir = Flag.String("state-dir").pipe(Flag.optional);
+const route = Flag.String("route").pipe(
 	Flag.withDescription("Screen to open: inbox, today, tasks, jobs, reviews, learning or connections"),
 	Flag.optional,
 );
-const print = Flag.boolean("print").pipe(Flag.withDescription("Print the sign-in link instead of opening it"));
+const print = Flag.Boolean("print")
+	.pipe(Flag.withDefault(false))
+	.pipe(Flag.withDescription("Print the sign-in link instead of opening it"));
 
 const openHandler = (value: {
 	readonly port: Option.Option<string>;
@@ -91,8 +93,8 @@ export const portalCommand = Command.make("portal").pipe(
 			{
 				port,
 				stateDir,
-				homeRoot: Flag.string("home-root").pipe(Flag.optional),
-				workspaceRoot: Flag.string("workspace-root").pipe(Flag.optional),
+				homeRoot: Flag.String("home-root").pipe(Flag.optional),
+				workspaceRoot: Flag.String("workspace-root").pipe(Flag.optional),
 			},
 			(value) =>
 				invoke(

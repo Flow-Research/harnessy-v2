@@ -1,7 +1,7 @@
 import { expect, layer } from "@effect/vitest";
 import { Effect, Layer, Schema } from "effect";
 import { OAuthTestServer } from "@executor-js/sdk/testing";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { OpenApiEchoTestServer } from "./testing";
 

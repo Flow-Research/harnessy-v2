@@ -1,7 +1,7 @@
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import type { Integration } from "@executor-js/sdk/shared";
 import {
   integrationsAtom,

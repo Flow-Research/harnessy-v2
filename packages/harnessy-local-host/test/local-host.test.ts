@@ -327,7 +327,7 @@ it("keeps the private planning surface separate from the guarded runtime export"
 	expect(manifest.dependencies).toEqual({
 		"@harnessy/core": "0.0.3",
 		"@harnessy/sdk": "0.0.3",
-		effect: "4.0.0-beta.85",
+		effect: "4.1.3",
 	});
 	expect(manifest.bin).toEqual({
 		"harnessy-community-publication": "dist/community-publication-cli.js",

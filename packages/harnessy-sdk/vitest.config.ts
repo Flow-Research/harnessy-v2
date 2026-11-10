@@ -9,7 +9,7 @@ const harnessyCoreSource = (path: string): string =>
 export default defineConfig({
 	resolve: {
 		// /executor/node_modules belongs only to the self-contained cockpit. Tests
-		// must dedupe every Effect entry point onto the root beta.85 runtime.
+		// must dedupe every Effect entry point onto the root 4.1.3 runtime.
 		dedupe: [
 			"effect",
 			"@effect/atom-react",

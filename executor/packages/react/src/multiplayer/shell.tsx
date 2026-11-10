@@ -1,7 +1,7 @@
 import { Link, Outlet, useLocation, useParams } from "@tanstack/react-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { BookOpen, Command, ExternalLink } from "lucide-react";
 import type { Integration } from "@executor-js/sdk/shared";
 import { integrationsOptimisticAtom } from "../api/atoms";

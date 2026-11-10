@@ -1,7 +1,7 @@
 import { Console } from "effect";
+import { Argument as Args, Command, Flag as Options } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Argument as Args, Command, Flag as Options } from "effect/unstable/cli";
 
 import { HarnessError } from "../errors.ts";
 import { HarnessProject } from "../operations.ts";
@@ -22,23 +22,23 @@ import {
 	targetOption,
 } from "./shared.ts";
 
-const capabilityIdOption = Options.string("id").pipe(Options.withDescription("Stable capability id."));
-const capabilityNameOption = Options.string("name").pipe(Options.withDescription("Human-readable capability name."));
-const capabilityDescriptionOption = Options.string("description").pipe(
+const capabilityIdOption = Options.String("id").pipe(Options.withDescription("Stable capability id."));
+const capabilityNameOption = Options.String("name").pipe(Options.withDescription("Human-readable capability name."));
+const capabilityDescriptionOption = Options.String("description").pipe(
 	Options.optional,
 	Options.withDescription("Optional capability description."),
 );
-const capabilityVersionOption = Options.string("version").pipe(
+const capabilityVersionOption = Options.String("version").pipe(
 	Options.optional,
 	Options.withDescription("Optional capability version."),
 );
-const outOption = Options.string("out").pipe(Options.withDescription("Target-relative export directory."));
+const outOption = Options.String("out").pipe(Options.withDescription("Target-relative export directory."));
 
 /** Scaffold a manifest-only local capability pack. */
 export const capabilityCreateCommand = Command.make(
 	"create",
 	{
-		directory: Args.string("directory"),
+		directory: Args.String("directory"),
 		id: capabilityIdOption,
 		name: capabilityNameOption,
 		description: capabilityDescriptionOption,
@@ -93,7 +93,7 @@ export const capabilityListCommand = Command.make(
 export const capabilityInspectCommand = Command.make(
 	"inspect",
 	{
-		id: Args.string("id"),
+		id: Args.String("id"),
 		target: targetOption,
 		json: jsonOption,
 	},
@@ -137,7 +137,7 @@ export const capabilityInspectCommand = Command.make(
 export const capabilityAddCommand = Command.make(
 	"add",
 	{
-		source: Args.string("source"),
+		source: Args.String("source"),
 		id: idOption,
 		target: targetOption,
 	},
@@ -161,7 +161,7 @@ export const capabilityAddCommand = Command.make(
 export const capabilityMaterializeCommand = Command.make(
 	"materialize",
 	{
-		id: Args.string("id").pipe(Args.optional),
+		id: Args.String("id").pipe(Args.optional),
 		target: targetOption,
 		dryRun: dryRunOption,
 		refresh: refreshOption,
@@ -194,7 +194,7 @@ export const capabilityMaterializeCommand = Command.make(
 const activationCommand = (name: "activate" | "deactivate", active: boolean) =>
 	Command.make(
 		name,
-		{ id: Args.string("id"), target: targetOption, dryRun: dryRunOption, json: jsonOption },
+		{ id: Args.String("id"), target: targetOption, dryRun: dryRunOption, json: jsonOption },
 		({ id, target, dryRun, json }) =>
 			Effect.gen(function* () {
 				const project = yield* HarnessProject;
@@ -224,7 +224,7 @@ export const capabilityDeactivateCommand = activationCommand("deactivate", false
 export const capabilityExportCommand = Command.make(
 	"export",
 	{
-		id: Args.string("id"),
+		id: Args.String("id"),
 		out: outOption,
 		target: targetOption,
 		force: forceOption,

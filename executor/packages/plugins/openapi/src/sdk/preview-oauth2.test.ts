@@ -9,8 +9,8 @@
 
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
+import { FetchHttpClient } from "effect/http";
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
 
 import { previewSpec as previewSpecRaw } from "./preview";
 

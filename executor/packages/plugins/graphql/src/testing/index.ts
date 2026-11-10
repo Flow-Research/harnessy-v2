@@ -9,7 +9,7 @@ import {
   Schema as EffectSchema,
   Scope,
 } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import type { GraphQLSchema } from "graphql";
 import {
   createSchema,
@@ -74,7 +74,7 @@ export const waitForRecordedRequests = (
       (all) => predicate(all),
       () => new GraphqlTestRecorderTimeoutError({ message }),
     ),
-    Effect.retry(Schedule.both(Schedule.spaced("50 millis"), Schedule.recurs(100))),
+    Effect.retry(Schedule.max([Schedule.spaced("50 millis"), Schedule.recurs(100)])),
   );
 
 class GraphqlTestServerAddressError extends Data.TaggedError("GraphqlTestServerAddressError")<{

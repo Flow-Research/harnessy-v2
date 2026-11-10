@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Exit } from "effect";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { toast } from "sonner";
 import { apiKeyWriteKeys } from "../api/reactivity-keys";

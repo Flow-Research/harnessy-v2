@@ -1,5 +1,5 @@
 import { Effect, Inspectable, Layer, Option, Predicate, Schema } from "effect";
-import { FetchHttpClient, type HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, type HttpClient } from "effect/http";
 import { fumadb } from "@executor-js/fumadb";
 import { memoryAdapter } from "@executor-js/fumadb/adapters/memory";
 import { withQueryContext, type Condition, type ConditionBuilder } from "@executor-js/fumadb/query";
@@ -511,7 +511,7 @@ const createDefaultMemoryDb = (tables: FumaTables): ExecutorDb => {
 // JSON helpers + row → public projection conversions
 // ---------------------------------------------------------------------------
 
-const decodeJsonFromString = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+const decodeJsonFromString = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const decodeJsonColumn = (value: unknown): unknown => {
   if (value === null || value === undefined) return undefined;
@@ -1288,7 +1288,10 @@ const staticToolSchemaRoot = (
   side: StandardJsonSchemaSide,
 ): unknown | undefined => {
   if (!schema) return undefined;
-  const standard = isReadonlyRecord(schema) ? schema["~standard"] : undefined;
+  const standard =
+    (typeof schema === "function" || isReadonlyRecord(schema)) && "~standard" in schema
+      ? schema["~standard"]
+      : undefined;
   if (!isReadonlyRecord(standard)) return schema;
   const jsonSchema = standard["jsonSchema"];
   if (!isReadonlyRecord(jsonSchema)) return schema;

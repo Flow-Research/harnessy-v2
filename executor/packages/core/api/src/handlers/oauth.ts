@@ -6,8 +6,8 @@
 // the handlers are wired to call them so the surface is complete.
 // ---------------------------------------------------------------------------
 
-import { HttpApiBuilder } from "effect/unstable/httpapi";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpApiBuilder } from "effect/http-api";
+import { HttpServerResponse } from "effect/http";
 import { Effect, Option, Schema } from "effect";
 
 import { runOAuthCallback, type PopupErrorMessage } from "../oauth-popup";

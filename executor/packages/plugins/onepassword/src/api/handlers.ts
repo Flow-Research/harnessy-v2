@@ -1,4 +1,4 @@
-import { HttpApiBuilder } from "effect/unstable/httpapi";
+import { HttpApiBuilder } from "effect/http-api";
 import { Context, Effect } from "effect";
 
 import { addGroup, capture } from "@executor-js/api";

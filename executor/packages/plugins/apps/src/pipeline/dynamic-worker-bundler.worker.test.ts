@@ -1,5 +1,7 @@
+import { effectWorkerTest } from "../../../../../scripts/effect-worker-test";
 /* oxlint-disable executor/no-unknown-error-message -- test boundary: asserting the typed AppExecutorError message */
-import { describe, expect, it } from "@effect/vitest";
+// oxlint-disable-next-line executor/no-vitest-import -- Cloudflare pool requires Vitest 4; Effect adapter requires Vitest 5.
+import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 import { env } from "cloudflare:workers";
 
@@ -102,15 +104,17 @@ describe("dynamic Worker worker-bundler spike", () => {
 describe("dynamic Worker bundler backend", () => {
   const loader = getOnly((env as { readonly LOADER: WorkerLoader }).LOADER);
 
-  it.effect("bundles a tool importing zod through the Worker Loader backend", () =>
-    Effect.gen(function* () {
-      const bundled = yield* bundleEntry(
-        {
-          entry: "tools/greet.ts",
-          files: files([
-            [
-              "tools/greet.ts",
-              `
+  it(
+    "bundles a tool importing zod through the Worker Loader backend",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const bundled = yield* bundleEntry(
+          {
+            entry: "tools/greet.ts",
+            files: files([
+              [
+                "tools/greet.ts",
+                `
                 import { z } from "zod";
                 import { defineTool } from "executor:app";
 
@@ -124,28 +128,31 @@ describe("dynamic Worker bundler backend", () => {
                   },
                 });
               `,
-            ],
-            ["package.json", JSON.stringify({ dependencies: { zod: "4.3.6" } })],
-            ["bun.lock", ""],
-          ]),
-        },
-        makeDynamicWorkerBundlerBackend({ loader, artifact }),
-      );
+              ],
+              ["package.json", JSON.stringify({ dependencies: { zod: "4.3.6" } })],
+              ["bun.lock", ""],
+            ]),
+          },
+          makeDynamicWorkerBundlerBackend({ loader, artifact }),
+        );
 
-      expect(bundled.code).toContain("Greet");
-      expect(bundled.code).toContain("hello ");
-    }),
+        expect(bundled.code).toContain("Greet");
+        expect(bundled.code).toContain("hello ");
+      }),
+    ),
   );
 
-  it.effect("surfaces install failures as bundle AppExecutorError failures", () =>
-    Effect.gen(function* () {
-      const error = yield* bundleEntry(
-        {
-          entry: "tools/greet.ts",
-          files: files([
-            [
-              "tools/greet.ts",
-              `
+  it(
+    "surfaces install failures as bundle AppExecutorError failures",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const error = yield* bundleEntry(
+          {
+            entry: "tools/greet.ts",
+            files: files([
+              [
+                "tools/greet.ts",
+                `
                 import missing from "executor-worker-bundler-missing-package";
                 import { defineTool } from "executor:app";
 
@@ -156,22 +163,23 @@ describe("dynamic Worker bundler backend", () => {
                   },
                 });
               `,
-            ],
-            [
-              "package.json",
-              JSON.stringify({
-                dependencies: { "executor-worker-bundler-missing-package": "999.999.999" },
-              }),
-            ],
-            ["bun.lock", ""],
-          ]),
-        },
-        makeDynamicWorkerBundlerBackend({ loader, artifact }),
-      ).pipe(Effect.flip);
+              ],
+              [
+                "package.json",
+                JSON.stringify({
+                  dependencies: { "executor-worker-bundler-missing-package": "999.999.999" },
+                }),
+              ],
+              ["bun.lock", ""],
+            ]),
+          },
+          makeDynamicWorkerBundlerBackend({ loader, artifact }),
+        ).pipe(Effect.flip);
 
-      expect(error).toBeInstanceOf(AppExecutorError);
-      expect(error.kind).toBe("bundle");
-      expect(error.message).toMatch(/failed to install|No matching version|notarget/i);
-    }),
+        expect(error).toBeInstanceOf(AppExecutorError);
+        expect(error.kind).toBe("bundle");
+        expect(error.message).toMatch(/failed to install|No matching version|notarget/i);
+      }),
+    ),
   );
 });

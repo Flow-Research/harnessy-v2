@@ -1,8 +1,8 @@
-import * as Atom from "effect/unstable/reactivity/Atom";
-import * as AtomHttpApi from "effect/unstable/reactivity/AtomHttpApi";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import { OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
+import * as Atom from "effect/reactivity/Atom";
+import * as AtomHttpApi from "effect/reactivity/AtomHttpApi";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import * as HttpClientError from "effect/http/HttpClientError";
+import { OtlpSerialization, OtlpTracer } from "effect/observability";
 import { ExecutorApi } from "@executor-js/api/client";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";

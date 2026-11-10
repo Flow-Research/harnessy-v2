@@ -1,5 +1,5 @@
 import { Console, Effect, Option } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { causeMessage, HarnessError } from "../errors.ts";
 import { NOTIFY_MODES, type NotifyMode } from "../notifications/config.ts";
 import { redactSecrets } from "../notifications/sanitize.ts";
@@ -28,79 +28,83 @@ export const makeWorkCommand = (deps: (notify: NotifyMode | undefined) => WorkDe
 	Command.make(
 		"work",
 		{
-			task: Flag.string("task").pipe(Flag.withDescription("WorkStream task UUID.")),
-			repo: Flag.string("repo").pipe(Flag.withDefault("."), Flag.withDescription("Target repository checkout.")),
-			base: Flag.string("base").pipe(
+			task: Flag.String("task").pipe(Flag.withDescription("WorkStream task UUID.")),
+			repo: Flag.String("repo").pipe(Flag.withDefault("."), Flag.withDescription("Target repository checkout.")),
+			base: Flag.String("base").pipe(
 				Flag.withDefault("dev"),
 				Flag.withDescription("Base branch for the work branch and PR."),
 			),
-			budgetUsd: Flag.float("budget-usd").pipe(
+			budgetUsd: Flag.Finite("budget-usd").pipe(
 				Flag.withDefault(5),
 				Flag.withDescription("Agent spend limit in USD."),
 			),
-			maxMinutes: Flag.integer("max-minutes").pipe(
+			maxMinutes: Flag.Int("max-minutes").pipe(
 				Flag.withDefault(45),
 				Flag.withDescription("Wall-clock limit for the agent run, in minutes."),
 			),
-			mergeWaitHours: Flag.float("merge-wait-hours").pipe(
+			mergeWaitHours: Flag.Finite("merge-wait-hours").pipe(
 				Flag.withDefault(24),
 				Flag.withDescription("How long to wait for the PR to be merged, in hours."),
 			),
-			outcomeWaitHours: Flag.float("outcome-wait-hours").pipe(
+			outcomeWaitHours: Flag.Finite("outcome-wait-hours").pipe(
 				Flag.withDefault(1),
 				Flag.withDescription(
 					"After submitting, how long to wait for WorkStream to accept, reject or return the submission, in hours. 0 checks once; a re-run checks again.",
 				),
 			),
-			notify: Flag.choice("notify", NOTIFY_MODES).pipe(
+			notify: Flag.Literals("notify", NOTIFY_MODES).pipe(
 				Flag.optional,
 				Flag.withDescription(
 					"auto (default): a desktop notification where a display exists, else one line on stderr; desktop: always try the desktop first; terminal: the line only; off: nothing. Overrides HSY_NOTIFY, NO_NOTIFY and the settings file; auto is off when CI is set.",
 				),
 			),
-			workstreamCli: Flag.string("workstream-cli").pipe(
+			workstreamCli: Flag.String("workstream-cli").pipe(
 				Flag.withDefault("workstream"),
 				Flag.withDescription(
 					"WorkStream CLI argv prefix, split on whitespace (e.g. 'workstream-local --as agent').",
 				),
 			),
-			taskUrl: Flag.string("task-url").pipe(
+			taskUrl: Flag.String("task-url").pipe(
 				Flag.optional,
 				Flag.withDescription("WorkStream task link for the PR body."),
 			),
-			agentAllow: Flag.string("agent-allow").pipe(
+			agentAllow: Flag.String("agent-allow").pipe(
 				Flag.optional,
 				Flag.withDescription(
 					"Extra Claude Code tool rules for tests and formatting, e.g. 'Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *),Bash(node_modules/.bin/biome format --write *)'. npx is not allowed; name the installed binary. The commands run in Claude Code's OS sandbox (macOS, or Linux with bubblewrap and socat): writes only in the worktree, no network; elsewhere the run is refused. Warning: sandboxed commands can still write Claude Code's shared /tmp/claude-<uid>; do not use on repositories with untrusted contributors.",
 				),
 			),
-			agentDeps: Flag.choice("agent-deps", ["clone"]).pipe(
+			agentDeps: Flag.Literals("agent-deps", ["clone"]).pipe(
 				Flag.optional,
 				Flag.withDescription(
 					"'clone' gives the agent's worktree a private copy-on-write copy of --repo's ignored node_modules and dist directories, so --agent-allow test and format commands can run. Off by default.",
 				),
 			),
-			revise: Flag.string("revise").pipe(
+			revise: Flag.String("revise").pipe(
 				Flag.optional,
 				Flag.withDescription(
 					"Send the unpushed commit back to the agent with these review notes. Spend counts against --budget-usd.",
 				),
 			),
-			approvePush: Flag.boolean("approve-push").pipe(
-				Flag.withDescription(
-					"Push the locally reviewed commit and open a draft PR. Without it the run stops for review.",
+			approvePush: Flag.Boolean("approve-push")
+				.pipe(Flag.withDefault(false))
+				.pipe(
+					Flag.withDescription(
+						"Push the locally reviewed commit and open a draft PR. Without it the run stops for review.",
+					),
 				),
-			),
-			githubApp: Flag.string("github-app").pipe(
+			githubApp: Flag.String("github-app").pipe(
 				Flag.optional,
 				Flag.withDescription(
 					"Push and call gh as this GitHub App (its slug, e.g. flow-research-agents) instead of your own account. The app id comes from github.app.id in the Harnessy settings file; the key from the macOS keychain or HSY_GITHUB_APP_KEY_FILE. Overrides github.app.slug.",
 				),
 			),
-			dryRun: Flag.boolean("dry-run").pipe(
-				Flag.withDescription("Run preflight and print the plan without side effects."),
-			),
-			json: Flag.boolean("json").pipe(Flag.withDescription("Print the final report as one JSON line.")),
+			dryRun: Flag.Boolean("dry-run")
+				.pipe(Flag.withDefault(false))
+				.pipe(Flag.withDescription("Run preflight and print the plan without side effects.")),
+			json: Flag.Boolean("json")
+				.pipe(Flag.withDefault(false))
+				.pipe(Flag.withDescription("Print the final report as one JSON line.")),
 		},
 		(flags) =>
 			Effect.gen(function* () {

@@ -4,7 +4,7 @@
  * which needs Node built-ins such as `node:sqlite`. Vitest's own `jsdom`
  * environment resolves modules for the browser and cannot load them.
  */
-import { builtinEnvironments, type Environment } from "vitest/environments";
+import { builtinEnvironments, type Environment } from "vitest/runtime";
 
 const environment: Environment = { ...builtinEnvironments.jsdom, name: "jsdom-ssr", viteEnvironment: "ssr" };
 

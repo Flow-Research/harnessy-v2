@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Ref } from "effect";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
 import { serveTestHttpApp } from "@executor-js/sdk/testing";
 
 import { probeMcpEndpointShape } from "./probe-shape";

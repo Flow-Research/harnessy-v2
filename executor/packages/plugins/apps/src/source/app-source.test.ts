@@ -1,3 +1,4 @@
+import { effectWorkerTest } from "../../../../../scripts/effect-worker-test";
 /* oxlint-disable executor/no-try-catch-or-throw, executor/no-error-constructor -- boundary: tests use fixture server cleanup and hard-fail setup errors */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
@@ -5,7 +6,8 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 
-import { describe, expect, it } from "@effect/vitest";
+// oxlint-disable-next-line executor/no-vitest-import -- Cloudflare pool requires Vitest 4; Effect adapter requires Vitest 5.
+import { describe, expect, it } from "vitest";
 import { Effect, Exit } from "effect";
 
 import { FLUSH, parseInfoRefs, pktLine, resolveWant } from "../git-client/pktline";
@@ -224,29 +226,32 @@ describe("git app sources", () => {
     ).rejects.toThrow(/truncated upload-pack response/);
   });
 
-  it.effect("rejects private git hosts under cloud posture", () =>
-    Effect.gen(function* () {
-      for (const url of [
-        "http://localhost/repo.git",
-        "https://localhost/repo.git",
-        "https://127.0.0.1/repo.git",
-        "https://[::ffff:127.0.0.1]/repo.git",
-        "https://2130706433/repo.git",
-        "https://0177.0.0.1/repo.git",
-        "https://0x7f.0.0.1/repo.git",
-        "https://10.1.2.3/repo.git",
-        "https://169.254.1.1/repo.git",
-      ]) {
-        const exit = yield* Effect.exit(parseGitSourceUrl(url));
-        expect(Exit.isFailure(exit)).toBe(true);
-      }
-      expect(
-        yield* parseGitSourceUrl("http://127.0.0.1:9999/repo.git", {
-          allowPrivateHosts: true,
-        }),
-      ).toBeInstanceOf(URL);
-      expect(yield* parseGitSourceUrl("https://gitlab.com/acme/tools.git")).toBeInstanceOf(URL);
-    }),
+  it(
+    "rejects private git hosts under cloud posture",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        for (const url of [
+          "http://localhost/repo.git",
+          "https://localhost/repo.git",
+          "https://127.0.0.1/repo.git",
+          "https://[::ffff:127.0.0.1]/repo.git",
+          "https://2130706433/repo.git",
+          "https://0177.0.0.1/repo.git",
+          "https://0x7f.0.0.1/repo.git",
+          "https://10.1.2.3/repo.git",
+          "https://169.254.1.1/repo.git",
+        ]) {
+          const exit = yield* Effect.exit(parseGitSourceUrl(url));
+          expect(Exit.isFailure(exit)).toBe(true);
+        }
+        expect(
+          yield* parseGitSourceUrl("http://127.0.0.1:9999/repo.git", {
+            allowPrivateHosts: true,
+          }),
+        ).toBeInstanceOf(URL);
+        expect(yield* parseGitSourceUrl("https://gitlab.com/acme/tools.git")).toBeInstanceOf(URL);
+      }),
+    ),
   );
 
   it("rejects redirects to private or non-https git hosts", async () => {

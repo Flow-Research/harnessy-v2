@@ -99,7 +99,7 @@ const isPublishError = Predicate.isTagged("PublishError") as (
   value: unknown,
 ) => value is PublishError;
 
-const decodeJson = Schema.decodeUnknownSync(Schema.UnknownFromJsonString);
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const toPublishError = (
   stage: PublishError["stage"],

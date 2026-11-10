@@ -35,7 +35,7 @@
 // ---------------------------------------------------------------------------
 
 import { Data, Duration, Effect, Layer, Option, Schema } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 /** MCP initialize request body used as the shape probe. Any real MCP
  *  server either answers it (unauth-OK server) or returns the spec-

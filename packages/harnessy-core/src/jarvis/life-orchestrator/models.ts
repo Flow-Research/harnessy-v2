@@ -81,7 +81,7 @@ export const LifeOrchestratorErrorCode = Schema.Literals([
 ]);
 export type LifeOrchestratorErrorCode = typeof LifeOrchestratorErrorCode.Type;
 
-export class LifeOrchestratorError extends Schema.TaggedErrorClass<LifeOrchestratorError>()("LifeOrchestratorError", {
+export class LifeOrchestratorError extends Schema.TaggedError<LifeOrchestratorError>()("LifeOrchestratorError", {
 	code: LifeOrchestratorErrorCode,
 	message: Schema.String,
 	cause: Schema.optional(Schema.Unknown),

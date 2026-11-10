@@ -34,7 +34,7 @@
 // request-scoped middleware into it (cloud folds its per-request DB layer).
 // ---------------------------------------------------------------------------
 
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Context, Effect, Layer } from "effect";
 
 import type { AnyPlugin } from "@executor-js/sdk";

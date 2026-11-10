@@ -1,8 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import { HttpClient } from "effect/http";
 import * as Layer from "effect/Layer";
-import { HttpClient } from "effect/unstable/http";
 
 import { AnytypeConfig, anytypeKnowledgeLayer } from "../src/connectors/anytype.ts";
 import {

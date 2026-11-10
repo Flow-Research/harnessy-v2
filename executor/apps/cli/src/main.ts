@@ -63,15 +63,10 @@ if (sentryDsn) {
   });
 }
 
-import { Argument as Args, Command, Flag as Options } from "effect/unstable/cli";
+import { Argument as Args, Command, Flag as Options } from "effect/cli";
 import { BunRuntime, BunServices } from "@effect/platform-bun";
-import { HttpApiClient } from "effect/unstable/httpapi";
-import {
-  FetchHttpClient,
-  HttpClient,
-  HttpClientError,
-  HttpClientRequest,
-} from "effect/unstable/http";
+import { HttpApiClient } from "effect/http-api";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import { FileSystem, Path as PlatformPath } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import * as Effect from "effect/Effect";
@@ -1593,24 +1588,24 @@ const runStdioMcpSession = (input: { readonly elicitationMode: "browser" | "mode
     );
   });
 
-const scope = Options.string("scope").pipe(
+const scope = Options.String("scope").pipe(
   Options.optional,
   Options.withDescription("Path to workspace directory containing executor.jsonc"),
 );
 
-const serverBaseUrl = Options.string("base-url").pipe(
+const serverBaseUrl = Options.String("base-url").pipe(
   Options.optional,
   Options.withDescription(
     "Executor server origin. Overrides the default profile; local URLs auto-start the daemon.",
   ),
 );
 
-const serverProfile = Options.string("server").pipe(
+const serverProfile = Options.String("server").pipe(
   Options.optional,
   Options.withDescription("Named Executor server profile."),
 );
 
-const daemonBaseUrlOption = Options.string("base-url").pipe(
+const daemonBaseUrlOption = Options.String("base-url").pipe(
   Options.withDefault(DEFAULT_BASE_URL),
   Options.withDescription("Local daemon origin."),
 );
@@ -2092,7 +2087,7 @@ const runCallHelp = (
 const callCommand = Command.make(
   "call",
   {
-    pathParts: Args.string("tool-path-segment").pipe(Args.variadic({})),
+    pathParts: Args.String("tool-path-segment").pipe(Args.variadic({})),
     baseUrl: serverBaseUrl,
     server: serverProfile,
     scope,
@@ -2126,14 +2121,14 @@ const callCommand = Command.make(
 const resumeCommand = Command.make(
   "resume",
   {
-    executionId: Options.string("execution-id").pipe(
+    executionId: Options.String("execution-id").pipe(
       Options.withDescription("Execution ID returned by a paused call"),
     ),
-    action: Options.choice("action", ["accept", "decline", "cancel"] as const).pipe(
+    action: Options.Literals("action", ["accept", "decline", "cancel"] as const).pipe(
       Options.withDefault("accept"),
       Options.withDescription("Interaction response action"),
     ),
-    content: Options.string("content").pipe(
+    content: Options.String("content").pipe(
       Options.optional,
       Options.withDescription("JSON object to send when action=accept"),
     ),
@@ -2188,9 +2183,9 @@ const resumeCommand = Command.make(
 const toolsSearchCommand = Command.make(
   "search",
   {
-    query: Args.string("query"),
-    namespace: Options.string("namespace").pipe(Options.optional),
-    limit: Options.integer("limit").pipe(Options.withDefault(12)),
+    query: Args.String("query"),
+    namespace: Options.String("namespace").pipe(Options.optional),
+    limit: Options.Int("limit").pipe(Options.withDefault(12)),
     baseUrl: serverBaseUrl,
     server: serverProfile,
     scope,
@@ -2217,8 +2212,8 @@ const toolsSearchCommand = Command.make(
 const toolsIntegrationsCommand = Command.make(
   "integrations",
   {
-    query: Options.string("query").pipe(Options.optional),
-    limit: Options.integer("limit").pipe(Options.withDefault(50)),
+    query: Options.String("query").pipe(Options.optional),
+    limit: Options.Int("limit").pipe(Options.withDefault(50)),
     baseUrl: serverBaseUrl,
     server: serverProfile,
     scope,
@@ -2244,7 +2239,7 @@ const toolsIntegrationsCommand = Command.make(
 const toolsDescribeCommand = Command.make(
   "describe",
   {
-    path: Args.string("path"),
+    path: Args.String("path"),
     baseUrl: serverBaseUrl,
     server: serverProfile,
     scope,
@@ -2316,17 +2311,17 @@ const printServerProfiles = () =>
 const serverAddCommand = Command.make(
   "add",
   {
-    name: Args.string("name"),
-    origin: Args.string("origin"),
-    displayName: Options.string("display-name").pipe(
+    name: Args.String("name"),
+    origin: Args.String("origin"),
+    displayName: Options.String("display-name").pipe(
       Options.optional,
       Options.withDescription("Display label for this server profile."),
     ),
-    kind: Options.choice("kind", ["http", "desktop-sidecar"] as const).pipe(
+    kind: Options.Literals("kind", ["http", "desktop-sidecar"] as const).pipe(
       Options.optional,
       Options.withDescription("Server kind. Defaults to http."),
     ),
-    makeDefault: Options.boolean("default").pipe(
+    makeDefault: Options.Boolean("default").pipe(
       Options.withDefault(false),
       Options.withDescription("Make this profile the default server."),
     ),
@@ -2355,7 +2350,7 @@ const serverListCommand = Command.make("list", {}, () => printServerProfiles()).
 const serverUseCommand = Command.make(
   "use",
   {
-    name: Args.string("name"),
+    name: Args.String("name"),
   },
   ({ name }) =>
     Effect.gen(function* () {
@@ -2369,7 +2364,7 @@ const serverUseCommand = Command.make(
 const serverRemoveCommand = Command.make(
   "remove",
   {
-    name: Args.string("name"),
+    name: Args.String("name"),
   },
   ({ name }) =>
     Effect.gen(function* () {
@@ -2509,12 +2504,12 @@ const resolveLoginOrigin = (input: {
     return { origin: DEFAULT_LOGIN_ORIGIN, profile: null };
   });
 
-const loginNameOption = Options.string("name").pipe(
+const loginNameOption = Options.String("name").pipe(
   Options.optional,
   Options.withDescription("Profile name to save the login under (defaults to your account)."),
 );
 
-const noBrowserOption = Options.boolean("no-browser").pipe(
+const noBrowserOption = Options.Boolean("no-browser").pipe(
   Options.withDefault(false),
   Options.withDescription("Print the verification URL instead of opening a browser."),
 );
@@ -2689,31 +2684,31 @@ const whoamiCommand = Command.make(
 const webCommand = Command.make(
   "web",
   {
-    foreground: Options.boolean("foreground")
+    foreground: Options.Boolean("foreground")
       .pipe(Options.withDefault(false))
       .pipe(
         Options.withDescription(
           "Run a temporary web server in this terminal. By default, web opens the installed background service.",
         ),
       ),
-    port: Options.integer("port")
+    port: Options.Int("port")
       .pipe(Options.withDefault(DEFAULT_PORT))
       .pipe(Options.withDescription("Port for the temporary --foreground server.")),
-    hostname: Options.string("hostname")
+    hostname: Options.String("hostname")
       .pipe(Options.withDefault("127.0.0.1"))
       .pipe(
         Options.withDescription(
           "Bind address for the temporary --foreground server: an IP address or localhost (DNS names are refused; use --allowed-host). Use 0.0.0.0 to listen on all interfaces.",
         ),
       ),
-    allowedHost: Options.string("allowed-host")
+    allowedHost: Options.String("allowed-host")
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
           "For --foreground, grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there, and lets the server answer requests whose Host is that name: a DNS name other than localhost or the bind name is refused (DNS-rebinding defense), so reaching the server under a tailnet or LAN name needs it; IP addresses need nothing. The server's own localhost origins are always allowed.",
         ),
       ),
-    authToken: Options.string("auth-token")
+    authToken: Options.String("auth-token")
       .pipe(Options.optional)
       .pipe(
         Options.withDescription(
@@ -2754,29 +2749,29 @@ const webCommand = Command.make(
 const daemonRunCommand = Command.make(
   "run",
   {
-    port: Options.integer("port").pipe(Options.withDefault(DEFAULT_PORT)),
-    hostname: Options.string("hostname")
+    port: Options.Int("port").pipe(Options.withDefault(DEFAULT_PORT)),
+    hostname: Options.String("hostname")
       .pipe(Options.withDefault("127.0.0.1"))
       .pipe(
         Options.withDescription(
           "Bind address: an IP address or localhost (DNS names are refused; use --allowed-host). Keep this local unless you trust the network.",
         ),
       ),
-    allowedHost: Options.string("allowed-host")
+    allowedHost: Options.String("allowed-host")
       .pipe(Options.atLeast(0))
       .pipe(
         Options.withDescription(
           "Grant an extra origin cross-origin (CORS) access (repeatable). Accepts host (any port), host:port or [ipv6]:port; a loopback host needs a port. Also lets the web UI connect there, and lets the server answer requests whose Host is that name: a DNS name other than localhost or the bind name is refused (DNS-rebinding defense), so reaching the server under a tailnet or LAN name needs it; IP addresses need nothing. The server's own localhost origins are always allowed.",
         ),
       ),
-    authToken: Options.string("auth-token")
+    authToken: Options.String("auth-token")
       .pipe(Options.optional)
       .pipe(
         Options.withDescription(
           "Override the bearer token. Defaults to the stable token in auth.json.",
         ),
       ),
-    foreground: Options.boolean("foreground")
+    foreground: Options.Boolean("foreground")
       .pipe(Options.withDefault(false))
       .pipe(
         Options.withDescription(
@@ -2894,7 +2889,7 @@ const mcpCommand = Command.make(
   "mcp",
   {
     scope,
-    elicitationMode: Options.choice("elicitation-mode", ["browser", "model"] as const)
+    elicitationMode: Options.Literals("elicitation-mode", ["browser", "model"] as const)
       .pipe(Options.withDefault("model"))
       .pipe(
         Options.withDescription(
@@ -2989,12 +2984,12 @@ const portFromOrigin = (origin: string): number | null => {
 };
 
 const servicePortOption = () =>
-  Options.integer("port")
+  Options.Int("port")
     .pipe(Options.withDefault(DEFAULT_SERVICE_PORT))
     .pipe(Options.withDescription("Port the supervised daemon binds (loopback only)."));
 
 const serviceBootOption = () =>
-  Options.boolean("boot")
+  Options.Boolean("boot")
     .pipe(Options.withDefault(false))
     .pipe(
       Options.withDescription(

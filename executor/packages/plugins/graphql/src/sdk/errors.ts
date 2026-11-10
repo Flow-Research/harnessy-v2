@@ -2,14 +2,14 @@ import { Data, Schema } from "effect";
 import type { Option } from "effect";
 import type { AuthToolFailureCode } from "@executor-js/sdk/core";
 
-export class GraphqlIntrospectionError extends Schema.TaggedErrorClass<GraphqlIntrospectionError>()(
+export class GraphqlIntrospectionError extends Schema.TaggedError<GraphqlIntrospectionError>()(
   "GraphqlIntrospectionError",
   {
     message: Schema.String,
   },
 ) {}
 
-export class GraphqlExtractionError extends Schema.TaggedErrorClass<GraphqlExtractionError>()(
+export class GraphqlExtractionError extends Schema.TaggedError<GraphqlExtractionError>()(
   "GraphqlExtractionError",
   {
     message: Schema.String,

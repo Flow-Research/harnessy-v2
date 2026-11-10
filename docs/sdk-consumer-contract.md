@@ -1,6 +1,7 @@
 # Harnessy SDK consumer contract
 
-**Status:** implementation baseline  
+**Status:** coordinated Effect 4.1.3 migration candidate; integration pending
+
 **Decision:** [ADR-0005](adr/0005-promote-harnessy-sdk-as-a-narrow-programmatic-boundary.md)
 
 ## Supported surfaces
@@ -40,7 +41,9 @@ elicitation, and final-write authority.
   usage plus invalid owner/config/credential shapes, rejects an unexported SDK
   subpath, and audits the exact npm pack file list.
 - SDK, Core, and the vendored Node composition resolve one physical Effect
-  beta.85 runtime; beta.59 and nested Effect installs are rejected.
+  4.1.3 runtime. Older beta runtimes and nested Effect installs are rejected.
+- The packed SDK consumer checks transitive declarations with
+  `skipLibCheck:false`. It does not allow the former beta declaration exception.
 - The package remains `private: true` during the consumer-validation phase.
 
 ## First real-consumer gate
@@ -62,26 +65,23 @@ request is a GET, credential state stays under the temporary consumer, and the
 directory is removed after the engine scope exits. This does not make Garden a
 supported SDK consumer or authorize a broad migration.
 
-Full transitive declaration checking is not yet clean because the exact pinned
-`effect@4.0.0-beta.85` artifact references an omitted `SchemaErrorTypeId` and a
-second missing HTTP export in published declarations. The fixture verifies the
-named schema defect before passing `--skipLibCheck`; that is an explicit packed-
-consumer exception, not an isolated repository exception, because the root
-TypeScript baseline and the Engine fixture also enable `skipLibCheck`. Positive
-public usage, used `@ts-expect-error` negative shape checks, a separate expected
-failure for a private subpath, the SDK source typecheck, and the read-only AST
-audit remain compensating evidence rather than proof that all transitive
-declarations are sound.
+Before V2D-003, Effect beta.85 published an omitted `SchemaErrorTypeId` and a
+missing HTTP export in its declarations. The SDK fixture used an asserted
+`skipLibCheck` exception. The migration removes that exception. A clean npm
+consumer now passes full declaration checking with Effect 4.1.3, positive and
+negative public typing checks, private-subpath rejection, the read-only AST
+audit and the loopback authentication controls. This does not prove that the
+separate Cloudflare host declaration graph is clean.
 
-V2D-003 must move the exact root cohort (`effect`, `@effect/platform-node`,
-`@effect/platform-node-shared`, and `@effect/vitest`) together and revalidate the
-vendored Executor composition. Beta.107 still has a dangling
-`SchemaAST.Sentinel` declaration. RC.112 clears the two observed Effect defects,
-but it removes `Schema.TaggedErrorClass` used broadly by Harnessy and the
-verbatim Executor source and changes platform-node's Redis peer. It is therefore
-an evaluation candidate, not an approved one-package upgrade. The cohort/vendor
-change remains outside this ADR and must use a declaration-clean packed-consumer
-gate with `skipLibCheck:false`.
+V2D-003 moves the exact root cohort (`effect`, `@effect/platform-node`,
+`@effect/platform-node-shared`, and `@effect/vitest`) together to 4.1.3 and
+updates the vendored Executor composition under its documented overlay.
+Current Effect tests use Vitest 5. Cloudflare's supported Vitest 4 pool uses
+the test-only Effect bridge in `executor/scripts/effect-worker-test.ts`, with
+test-clock, scoped-cleanup and cancellation checks. No older Effect runtime
+or incompatible test-adapter peer is installed to satisfy that pool.
+The migration is not complete until its remaining package, hosted and installed
+gates pass. Removing every repository-wide `skipLibCheck` is separate work.
 
 ## Publication gates
 

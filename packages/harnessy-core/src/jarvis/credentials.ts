@@ -41,7 +41,7 @@ export class JarvisCredentialPresence extends Schema.Class<JarvisCredentialPrese
 	envVar: Schema.NullOr(Schema.String),
 }) {}
 
-export class JarvisCredentialError extends Schema.TaggedErrorClass<JarvisCredentialError>()("JarvisCredentialError", {
+export class JarvisCredentialError extends Schema.TaggedError<JarvisCredentialError>()("JarvisCredentialError", {
 	backend: Schema.String,
 	credential: Schema.String,
 	account: Schema.NullOr(Schema.String),

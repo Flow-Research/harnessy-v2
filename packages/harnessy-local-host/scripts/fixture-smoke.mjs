@@ -402,7 +402,7 @@ try {
 	);
 	assert(
 		JSON.stringify(manifest.dependencies) ===
-			JSON.stringify({ "@harnessy/core": "0.0.3", "@harnessy/sdk": "0.0.3", effect: "4.0.0-beta.85" }),
+			JSON.stringify({ "@harnessy/core": "0.0.3", "@harnessy/sdk": "0.0.3", effect: "4.1.3" }),
 		"Packed local-host runtime dependencies are not the Core/SDK/Effect cohort",
 	);
 	assert(
@@ -416,7 +416,7 @@ try {
 	const cliPath = join(installedHostRoot, manifest.bin["harnessy-local-host"]);
 	assert((statSync(cliPath).mode & 0o111) !== 0, "Extracted CLI is not executable");
 	const effectManifest = JSON.parse(readFileSync(join(consumerRoot, "node_modules", "effect", "package.json"), "utf8"));
-	assert(effectManifest.version === "4.0.0-beta.85", "Extracted fixture Effect cohort drifted");
+	assert(effectManifest.version === "4.1.3", "Extracted fixture Effect cohort drifted");
 
 	// Prepare one isolated backup from the preserved Python V1 schema, then exercise the actual packed
 	// importer before the SDK or any provider composition is installed.

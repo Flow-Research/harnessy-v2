@@ -1,28 +1,28 @@
 import process from "node:process";
 import { Console } from "effect";
+import { Command, Flag } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { Command, Flag } from "effect/unstable/cli";
 import { HarnessError } from "../errors.ts";
 import { resolveExecutorBuiltin, runExecutorBuiltin } from "../executor-builtin.ts";
 
-const agentFlag = Flag.string("agent").pipe(
+const agentFlag = Flag.String("agent").pipe(
 	Flag.atLeast(0),
 	Flag.withDescription(
 		"Agent client to register with (repeatable, e.g. claude-code, codex, cursor); omit to be prompted",
 	),
 );
 
-const globalFlag = Flag.boolean("global").pipe(
+const globalFlag = Flag.Boolean("global").pipe(
 	Flag.withDefault(false),
 	Flag.withDescription("Register at the user level instead of the current project"),
 );
 
-const printFlag = Flag.boolean("print").pipe(
+const printFlag = Flag.Boolean("print").pipe(
 	Flag.withDefault(false),
 	Flag.withDescription("Print the registration command instead of running it"),
 );
 
-const yesFlag = Flag.boolean("yes").pipe(
+const yesFlag = Flag.Boolean("yes").pipe(
 	Flag.withDefault(false),
 	Flag.withDescription("Skip npx and add-mcp interactive confirmations"),
 );

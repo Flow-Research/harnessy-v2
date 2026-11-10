@@ -1,4 +1,5 @@
-import { describe, it } from "@effect/vitest";
+// oxlint-disable-next-line executor/no-vitest-import -- Cloudflare pool requires Vitest 4; Effect adapter requires Vitest 5.
+import { describe, it } from "vitest";
 
 import { makeInProcessAppToolExecutor } from "./app-tool-executor";
 import { isWorkerdAvailable, makeWorkerdAppToolExecutor } from "./workerd-app-tool-executor";

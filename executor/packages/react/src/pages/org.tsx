@@ -1,7 +1,7 @@
 import { useReducer, useState } from "react";
 import { Exit, Match } from "effect";
 import { useAtomRefresh, useAtomValue, useAtomSet } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { toast } from "sonner";
 import { trackEvent } from "../api/analytics";
 import { orgMemberWriteKeys, orgInfoWriteKeys } from "../api/reactivity-keys";

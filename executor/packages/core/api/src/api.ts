@@ -1,5 +1,5 @@
-import { HttpApi, OpenApi } from "effect/unstable/httpapi";
-import type { HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpApi, OpenApi } from "effect/http-api";
+import type { HttpApiGroup } from "effect/http-api";
 
 import { ToolsApi } from "./tools/api";
 import { IntegrationsApi } from "./integrations/api";
@@ -27,7 +27,7 @@ export const CoreExecutorApi = HttpApi.make("executor")
 /**
  * Compose the core API with a plugin group.
  */
-export const addGroup = <G extends HttpApiGroup.Any>(group: G) => CoreExecutorApi.add(group);
+export const addGroup = <G extends HttpApiGroup.Constraint>(group: G) => CoreExecutorApi.add(group);
 
 /** Default API with no plugin groups */
 export const ExecutorApi = CoreExecutorApi;

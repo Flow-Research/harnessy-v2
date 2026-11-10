@@ -5,7 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { Effect, Layer, Predicate, Stream } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 // NOTE: `StdioClientTransport` is NOT imported eagerly. The upstream module
 // (`@modelcontextprotocol/sdk/client/stdio.js`) touches `node:child_process`

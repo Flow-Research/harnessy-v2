@@ -1,8 +1,8 @@
 import { useId, useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import * as Atom from "effect/unstable/reactivity/Atom";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as Atom from "effect/reactivity/Atom";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { ArrowLeftIcon, BoxIcon, PlugIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react";
 import {
   createPluginAtomClient,

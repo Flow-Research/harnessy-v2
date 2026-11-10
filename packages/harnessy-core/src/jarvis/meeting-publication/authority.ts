@@ -58,7 +58,7 @@ export const MeetingPublicationWriteAuthorityCode = Schema.Literals([
 ]);
 export type MeetingPublicationWriteAuthorityCode = typeof MeetingPublicationWriteAuthorityCode.Type;
 
-export class MeetingPublicationWriteAuthorityError extends Schema.TaggedErrorClass<MeetingPublicationWriteAuthorityError>()(
+export class MeetingPublicationWriteAuthorityError extends Schema.TaggedError<MeetingPublicationWriteAuthorityError>()(
 	"MeetingPublicationWriteAuthorityError",
 	{
 		operation: MeetingPublicationWriteOperation,

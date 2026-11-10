@@ -1,7 +1,7 @@
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 import * as Cause from "effect/Cause";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { Command } from "effect/unstable/cli";
 
 import { rootCommand } from "./commands.ts";
 import { HARNESSY_VERSION } from "./constants.ts";

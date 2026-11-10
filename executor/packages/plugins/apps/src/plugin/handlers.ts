@@ -1,6 +1,6 @@
 /* oxlint-disable executor/no-effect-escape-hatch -- boundary: HttpApi handler adapter maps plugin extension failures into InternalError */
 import { Context, Effect } from "effect";
-import { HttpApiBuilder } from "effect/unstable/httpapi";
+import { HttpApiBuilder } from "effect/http-api";
 
 import { addGroup, capture } from "@executor-js/api";
 import { InternalError } from "@executor-js/sdk/shared";

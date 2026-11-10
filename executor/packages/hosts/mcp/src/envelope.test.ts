@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Layer, Ref } from "effect";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpRouter, HttpServer } from "effect/http";
 
 import {
   authenticated,

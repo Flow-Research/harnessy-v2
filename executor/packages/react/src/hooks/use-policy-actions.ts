@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import {
   PolicyId,
   positionForNewPattern,

@@ -32,13 +32,13 @@ export const isUserActionableError = (value: unknown): value is UserActionableEr
 // ---------------------------------------------------------------------------
 
 /* Tagged errors without an explicit `message` field define a `message` getter:
- * `Schema.TaggedErrorClass` instances are real Errors with `message: ""`, and
+ * `Schema.TaggedError` instances are real Errors with `message: ""`, and
  * an empty message propagates everywhere errors are rendered — span
  * status.message in the tracer, Cause.pretty output, log lines — leaving the
  * failure unlabeled in telemetry. The getter is derived from the schema fields
  * (not an own property), so encoding/serialization is unaffected. */
 
-export class ToolNotFoundError extends Schema.TaggedErrorClass<ToolNotFoundError>()(
+export class ToolNotFoundError extends Schema.TaggedError<ToolNotFoundError>()(
   "ToolNotFoundError",
   {
     address: ToolAddress,
@@ -50,7 +50,7 @@ export class ToolNotFoundError extends Schema.TaggedErrorClass<ToolNotFoundError
   }
 }
 
-export class ToolInvocationError extends Schema.TaggedErrorClass<ToolInvocationError>()(
+export class ToolInvocationError extends Schema.TaggedError<ToolInvocationError>()(
   "ToolInvocationError",
   {
     address: ToolAddress,
@@ -61,20 +61,17 @@ export class ToolInvocationError extends Schema.TaggedErrorClass<ToolInvocationE
 
 /** Tool invocation was rejected because a workspace `tool_policy` rule with
  *  `action: "block"` matched. `pattern` is the matched policy pattern. */
-export class ToolBlockedError extends Schema.TaggedErrorClass<ToolBlockedError>()(
-  "ToolBlockedError",
-  {
-    address: ToolAddress,
-    pattern: Schema.String,
-  },
-) {
+export class ToolBlockedError extends Schema.TaggedError<ToolBlockedError>()("ToolBlockedError", {
+  address: ToolAddress,
+  pattern: Schema.String,
+}) {
   override get message(): string {
     return `Tool blocked by policy "${this.pattern}": ${this.address}`;
   }
 }
 
 /** Tool row exists but its owning plugin isn't loaded in this executor config. */
-export class PluginNotLoadedError extends Schema.TaggedErrorClass<PluginNotLoadedError>()(
+export class PluginNotLoadedError extends Schema.TaggedError<PluginNotLoadedError>()(
   "PluginNotLoadedError",
   {
     address: ToolAddress,
@@ -87,7 +84,7 @@ export class PluginNotLoadedError extends Schema.TaggedErrorClass<PluginNotLoade
 }
 
 /** Tool was found but its owning plugin has no `invokeTool` handler. */
-export class NoHandlerError extends Schema.TaggedErrorClass<NoHandlerError>()("NoHandlerError", {
+export class NoHandlerError extends Schema.TaggedError<NoHandlerError>()("NoHandlerError", {
   address: ToolAddress,
   pluginId: Schema.String,
 }) {
@@ -100,7 +97,7 @@ export class NoHandlerError extends Schema.TaggedErrorClass<NoHandlerError>()("N
 // Integration / connection lifecycle
 // ---------------------------------------------------------------------------
 
-export class IntegrationNotFoundError extends Schema.TaggedErrorClass<IntegrationNotFoundError>()(
+export class IntegrationNotFoundError extends Schema.TaggedError<IntegrationNotFoundError>()(
   "IntegrationNotFoundError",
   { slug: IntegrationSlug },
 ) {
@@ -114,7 +111,7 @@ export class IntegrationNotFoundError extends Schema.TaggedErrorClass<Integratio
  *  (for idempotent boot re-registration); add-operation layers gate on this to
  *  prevent silently clobbering an existing integration's tools, connections,
  *  and policies. */
-export class IntegrationAlreadyExistsError extends Schema.TaggedErrorClass<IntegrationAlreadyExistsError>()(
+export class IntegrationAlreadyExistsError extends Schema.TaggedError<IntegrationAlreadyExistsError>()(
   "IntegrationAlreadyExistsError",
   { slug: IntegrationSlug },
   { httpApiStatus: 409 },
@@ -126,7 +123,7 @@ export class IntegrationAlreadyExistsError extends Schema.TaggedErrorClass<Integ
 
 /** `integrations.remove` was called on an integration declared statically by a
  *  plugin at startup (`canRemove: false`). */
-export class IntegrationRemovalNotAllowedError extends Schema.TaggedErrorClass<IntegrationRemovalNotAllowedError>()(
+export class IntegrationRemovalNotAllowedError extends Schema.TaggedError<IntegrationRemovalNotAllowedError>()(
   "IntegrationRemovalNotAllowedError",
   { slug: IntegrationSlug },
 ) {
@@ -135,7 +132,7 @@ export class IntegrationRemovalNotAllowedError extends Schema.TaggedErrorClass<I
   }
 }
 
-export class ConnectionNotFoundError extends Schema.TaggedErrorClass<ConnectionNotFoundError>()(
+export class ConnectionNotFoundError extends Schema.TaggedError<ConnectionNotFoundError>()(
   "ConnectionNotFoundError",
   {
     owner: Owner,
@@ -153,14 +150,14 @@ export class ConnectionNotFoundError extends Schema.TaggedErrorClass<ConnectionN
  *  template, mixed pasted/external origins, …) or targets owner `user` in a
  *  context that has no user subject. The message says which — it is safe to
  *  show to the caller. */
-export class InvalidConnectionInputError extends Schema.TaggedErrorClass<InvalidConnectionInputError>()(
+export class InvalidConnectionInputError extends Schema.TaggedError<InvalidConnectionInputError>()(
   "InvalidConnectionInputError",
   { message: Schema.String },
 ) {}
 
 /** A connection references a credential provider key that isn't registered on
  *  the executor. */
-export class CredentialProviderNotRegisteredError extends Schema.TaggedErrorClass<CredentialProviderNotRegisteredError>()(
+export class CredentialProviderNotRegisteredError extends Schema.TaggedError<CredentialProviderNotRegisteredError>()(
   "CredentialProviderNotRegisteredError",
   { provider: ProviderKey },
 ) {
@@ -171,7 +168,7 @@ export class CredentialProviderNotRegisteredError extends Schema.TaggedErrorClas
 
 /** A connection's value could not be resolved — the provider returned nothing,
  *  or an OAuth token refresh failed and the user must re-auth. */
-export class CredentialResolutionError extends Schema.TaggedErrorClass<CredentialResolutionError>()(
+export class CredentialResolutionError extends Schema.TaggedError<CredentialResolutionError>()(
   "CredentialResolutionError",
   {
     owner: Owner,

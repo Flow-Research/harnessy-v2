@@ -13,8 +13,8 @@ import {
   type ProviderItemId,
   type ToolAddress,
 } from "@executor-js/sdk/shared";
-import * as Atom from "effect/unstable/reactivity/Atom";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as Atom from "effect/reactivity/Atom";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Effect from "effect/Effect";
 
 import { ExecutorApiClient } from "./client";

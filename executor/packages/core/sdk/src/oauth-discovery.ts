@@ -19,7 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { Data, Duration, Effect, Layer, Option, Predicate, Result, Schema } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import {
   OAUTH2_DEFAULT_TIMEOUT_MS,

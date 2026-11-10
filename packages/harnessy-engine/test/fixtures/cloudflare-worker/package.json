@@ -3,13 +3,17 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "types": "wrangler types --include-runtime && harnessy-engine-types --input worker-configuration.d.ts --output .harnessy-engine-types",
     "typecheck": "tsc --noEmit",
-    "dry-run": "wrangler deploy --dry-run --outdir .wrangler-output"
+    "dry-run": "wrangler deploy --dry-run --outdir .wrangler-output",
+    "runtime-check": "node check-host-profile.mjs"
   },
   "dependencies": {
     "@harnessy/engine": "file:HARNESSY_ENGINE_TARBALL"
   },
   "devDependencies": {
+    "@types/node": "22.19.19",
+    "miniflare": "5.20261006.0-alpha",
     "typescript": "5.9.3",
     "wrangler": "4.128.0"
   },

@@ -11,7 +11,7 @@
 // are wired to call them but will fail at runtime until the flow is implemented.
 // ---------------------------------------------------------------------------
 
-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
+import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { Schema } from "effect";
 
 import {

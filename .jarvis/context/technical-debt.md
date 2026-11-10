@@ -4,7 +4,7 @@
 |---|---|---|---|---|---|
 | V2D-001 | resolved | process | V1 reconciliation | Reviewed dirty-path disposition and verified the reconciled pack | Resolved locally 2026-09-04 |
 | V2D-002 | open | release/legal | Harnessy packages | Complete third-party notices, corresponding-source materials, and release evidence after the approved license alignment | Before publication |
-| V2D-003 | open | dependency | SDK declarations | Upgrade or otherwise resolve the Effect beta.85 declaration defect | Separate dependency-cohort change |
+| V2D-003 | in progress | dependency | SDK declarations | Coordinated Effect 4.1.3 migration; strict packed SDK gate passes locally | Hosted/package/install gates pending |
 | V2D-004 | open | implementation | Native workflows | Promote preserved V1 workflow families as vertical slices | Phase 5 |
 | V2D-005 | open | CI | hosted evidence | Run Linux/macOS/Windows matrices and configure exact protected-branch checks | Phase 6 |
 | V2D-006 | open | supply chain | release evidence | Complete canonical SBOM/license evidence for the seven publishable Executor targets; Windows ARM64 publication is explicitly deferred | Before publication |
@@ -56,28 +56,53 @@
 
 ## V2D-003 — Effect declaration defect
 
-- **Context:** The pinned published Effect beta.85 declarations reference an
-  omitted `SchemaErrorTypeId` and a second missing HTTP export. The SDK fixture
-  asserts the named schema defect before passing `--skipLibCheck`, while the root
-  TypeScript baseline and Engine fixture also enable `skipLibCheck`; the waiver
-  is therefore broader than the earlier consumer-only description. Executor is
-  authored against its separate beta.59 cohort but vendored SDK/Engine
-  composition runs that source on the root Effect runtime and maintains an
-  `asEffect` compatibility shim.
-- **Impact:** Full transitive declaration integrity is not proved. Beta.107
-  still publishes a dangling `SchemaAST.Sentinel` reference. RC.112 fixes the
-  two observed defects but removes `Schema.TaggedErrorClass` across 66 current
-  uses in 26 Harnessy/Executor files and changes platform-node's Redis peer, so
-  a root-only bump would break the current verbatim-vendor boundary.
-- **Proposed resolution:** After the meeting workflow stabilizes, evaluate a
-  reviewed Executor vendor revision and move the exact four-package root cohort
+- **Historical context:** Effect beta.85 published an omitted
+  `SchemaErrorTypeId` and a missing HTTP export. The SDK fixture asserted the
+  named defect before using `skipLibCheck`; the root and Engine also used that
+  setting. Executor's separate beta.59 source ran on the root runtime with a
+  private `asEffect` adapter.
+- **Prior evaluation:** Beta.107 retained a dangling `SchemaAST.Sentinel`.
+  RC.112 fixed those declarations but removed schema constructors used in
+  Harnessy and Executor and changed platform-node's Redis peer. A one-package
+  bump could not resolve the complete boundary.
+- **Approved resolution, 2026-11-10:** Move both runtime cohorts to 4.1.3 under
+  the documented vendor overlay. Move the four-package root cohort
   (`effect`, `@effect/platform-node`, `@effect/platform-node-shared`, and
-  `@effect/vitest`) together in an isolated dependency change. Require a
-  packed-consumer `skipLibCheck:false` gate, revalidate/remove the compatibility
+  `@effect/vitest`) together in this isolated dependency change. Require SDK and
+  Engine packed-consumer `skipLibCheck:false` gates, remove the obsolete compatibility
   shim, prove one physical Effect runtime, rerun Core/SDK/Engine/Executor package
   fixtures and audits, and keep removal of every repository-wide `skipLibCheck`
   as separately scoped cleanup.
 - **Links:** `docs/sdk-consumer-contract.md`
+
+### 2026-11-10 migration candidate
+
+Julian approved the coordinated migration after Dependabot #183 updated Effect
+alone. The candidate moves the root and isolated Executor runtime/platform
+cohorts to 4.1.3 and uses current schema, CLI, service and HTTP APIs. The SDK
+consumer passes full declaration checking with `skipLibCheck:false`, one physical
+Effect runtime and its loopback authentication controls. Root build/check,
+Executor lint/typecheck/tests and the real Worker suites pass locally. A broad
+workspace run had one subprocess startup timeout; all 11 tests in that file
+passed in an isolated replay. The complete isolated replay passes 5,298 tests
+with existing skips. New type-generator tests require final hosted confirmation.
+
+Cloudflare's supported test pool requires Vitest 4. Its tests use the current
+Effect runtime through the small `executor/scripts/effect-worker-test.ts` bridge.
+The bridge preserves test-clock/console services, scoped cleanup and runner
+cancellation. Its lifecycle tests and real Worker suites are included in the
+Executor workflow. Other Effect suites use the published 4.1.3 adapter and
+Vitest 5. No rc.112 adapter or older Effect runtime is retained.
+
+Julian explicitly included the complete Engine Cloudflare declaration boundary.
+The package-owned `harnessy-engine-types` build command creates a project-local
+profile from Wrangler output and exact Node/Undici type sources. It preserves
+licenses and source/output hashes. Worker globals and Node module types have one
+owner each; structural browser input types do not add browser constructors.
+Generated output is checked for valid syntax. Unsafe paths, user edits and
+unowned files are refused. Four generator tests and the clean packed Engine's
+full declaration check and dry-run pass locally. Runtime conformance and final
+hosted/installed checks remain required before this item is resolved.
 
 ## V2D-004 — Native workflows
 

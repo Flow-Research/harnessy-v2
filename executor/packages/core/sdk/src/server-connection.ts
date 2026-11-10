@@ -189,7 +189,7 @@ const ExecutorLocalServerManifestJson = Schema.Struct({
   }),
 });
 
-const decodeUnknownJsonOption = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+const decodeUnknownJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const decodeExecutorLocalServerManifestJson = Schema.decodeUnknownOption(
   ExecutorLocalServerManifestJson,
 );

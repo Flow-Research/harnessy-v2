@@ -13,7 +13,7 @@ export {
   HttpApiGroup,
   HttpApiMiddleware,
   HttpApiSchema,
-} from "effect/unstable/httpapi";
+} from "effect/http-api";
 
 // FumaDB integration.
 export { fumadb } from "@executor-js/fumadb";

@@ -8,8 +8,8 @@ import {
 	ToolName,
 } from "@executor-js/sdk/core";
 import { Effect, Schema } from "effect";
+import type { HttpClient } from "effect/http";
 import type { Layer } from "effect/Layer";
-import type { HttpClient } from "effect/unstable/http";
 
 import { revalidateMeetingPublicationMutation } from "../meeting-publication/mutation-guard.ts";
 import {

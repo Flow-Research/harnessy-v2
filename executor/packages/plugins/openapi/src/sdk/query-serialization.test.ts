@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Option } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { createServer, type Server } from "node:http";
 
 import { invokeWithLayer } from "./invoke";

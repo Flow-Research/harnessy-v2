@@ -109,10 +109,10 @@ export const makeExecutionStack = <
       organizationName,
       { plugins: { mcpResource: options?.mcpResource } },
     ).pipe(Effect.withSpan("executor.stack.scoped_executor"));
-    const codeExecutor = yield* CodeExecutorProvider.asEffect().pipe(
+    const codeExecutor = yield* Effect.service(CodeExecutorProvider).pipe(
       Effect.withSpan("executor.stack.code_executor"),
     );
-    const { decorate } = yield* EngineDecorator.asEffect().pipe(
+    const { decorate } = yield* Effect.service(EngineDecorator).pipe(
       Effect.withSpan("executor.stack.decorator"),
     );
     const engine = yield* Effect.sync(() =>

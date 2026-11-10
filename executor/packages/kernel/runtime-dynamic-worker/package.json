@@ -19,7 +19,6 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "0.21.0",
     "@cloudflare/workers-types": "^4.20250620.0",
-    "@effect/vitest": "catalog:",
     "@electric-sql/pglite": "^0.4.4",
     "@electric-sql/pglite-socket": "^0.1.4",
     "@executor-js/execution": "workspace:*",
@@ -29,7 +28,7 @@
     "@types/node": "catalog:",
     "drizzle-orm": "catalog:",
     "postgres": "^3.4.9",
-    "vitest": "catalog:",
+    "vitest": "4.1.12",
     "wrangler": "4.120.1"
   }
 }

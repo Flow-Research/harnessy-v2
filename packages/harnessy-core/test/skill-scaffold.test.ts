@@ -1,15 +1,19 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { Command } from "effect/unstable/cli";
-
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
 import { HarnessProject } from "../src/operations.ts";
+import { unselectedCliServices } from "./lib/unselected-cli-services.ts";
 
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
+	effect.pipe(
+		Effect.provide(HarnessProject.layer),
+		Effect.provide(unselectedCliServices),
+		Effect.provide(NodeServices.layer),
+	);
 
 describe("SkillScaffolder", () => {
 	it.effect("scaffolds a skill that then passes validation (round-trip)", () =>

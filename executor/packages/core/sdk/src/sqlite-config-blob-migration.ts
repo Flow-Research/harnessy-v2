@@ -36,7 +36,7 @@ export interface SqliteConfigBlobMigrationOptions {
   readonly blobKeyPrefix: string;
 }
 
-const decodeJsonOption = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

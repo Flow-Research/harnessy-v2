@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAtomValue, useAtomSet } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Exit from "effect/Exit";
 import {
   rankResponseSample,

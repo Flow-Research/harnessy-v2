@@ -88,6 +88,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.12.4",
+		"@vitest/coverage-v8": "4.1.12",
 		"canvas": "3.2.3",
 		"vitest": "4.1.12"
 	}

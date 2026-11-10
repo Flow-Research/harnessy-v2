@@ -6,7 +6,7 @@
 // most restrictive matched action across owners wins.
 // ---------------------------------------------------------------------------
 
-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { Schema } from "effect";
 import { InternalError, Owner, PolicyId, ToolPolicyActionSchema } from "@executor-js/sdk/shared";
 

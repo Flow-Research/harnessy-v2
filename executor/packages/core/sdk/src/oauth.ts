@@ -12,7 +12,8 @@
 // row and core owns the flow (D14).
 // ---------------------------------------------------------------------------
 
-import { Encoding, Option, Result, Schema } from "effect";
+import { Option, Result, Schema } from "effect";
+import { Base64Url } from "effect/encoding";
 
 export {
   type OAuthGrant,
@@ -62,7 +63,7 @@ export const encodeOAuthCallbackState = (input: {
 }): string => {
   const orgSlug = input.orgSlug?.trim();
   if (!orgSlug) return input.state;
-  return Encoding.encodeBase64Url(encodeOAuthCallbackStateJson({ state: input.state, orgSlug }));
+  return Base64Url.encode(encodeOAuthCallbackStateJson({ state: input.state, orgSlug }));
 };
 
 /** Decode a callback state value minted by `encodeOAuthCallbackState`.
@@ -74,7 +75,7 @@ export const decodeOAuthCallbackState = (
   value: string | null | undefined,
 ): OAuthCallbackState | null => {
   if (!value) return null;
-  const json = Result.getOrNull(Encoding.decodeBase64UrlString(value));
+  const json = Result.getOrNull(Base64Url.decodeString(value));
   if (json === null) return null;
   const decoded = Option.getOrNull(decodeOAuthCallbackStateJson(json));
   if (decoded === null) return null;

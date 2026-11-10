@@ -19,8 +19,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { FetchHttpClient } from "effect/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { Schema } from "effect";
 
 import { collectTables } from "@executor-js/api/server";

@@ -1,4 +1,4 @@
-import { HttpApiSwagger } from "effect/unstable/httpapi";
+import { HttpApiSwagger } from "effect/http-api";
 import { Layer } from "effect";
 
 import {

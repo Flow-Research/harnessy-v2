@@ -15,6 +15,9 @@
 
 ### Changed
 
+- Moved the coordinated Effect runtime and test cohort to 4.1.3. The packed SDK
+  consumer now checks all declarations with `skipLibCheck:false` and verifies
+  one physical Effect runtime.
 - Narrowed the stable SDK to Harnessy-owned semantic contracts and moved
   in-process engine construction to the Node-specific export.
 - Kept the SDK private while making its bundle and declaration audits strictly
@@ -33,5 +36,3 @@
   retains credentials, connection lifecycle, approvals, policies, and audit;
   loopback/provider failure, restart/idempotency, redaction, and bounded process
   behavior are covered without live credentials.
-- Documented the pinned Effect beta.85 declaration defect that requires a
-  narrowly asserted `skipLibCheck` exception in the packed-consumer fixture.

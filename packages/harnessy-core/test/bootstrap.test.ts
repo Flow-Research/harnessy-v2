@@ -1,29 +1,38 @@
 import { spawnSync } from "node:child_process";
 import process from "node:process";
-
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import { TestConsole } from "effect/testing";
-import { Command } from "effect/unstable/cli";
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
 import { HarnessProject } from "../src/operations.ts";
 import { HarnessBootstrap } from "../src/runtime/bootstrap.ts";
 import { correctJarvisCommunitySource } from "../src/runtime/jarvis-community-source-correction.ts";
 import { type FakeSpawner, makeFakeSpawner } from "./lib/fake-spawner.ts";
+import { unselectedCliServices } from "./lib/unselected-cli-services.ts";
 
 /** Provide the live Harnessy project service plus Node platform services. */
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
+	effect.pipe(
+		Effect.provide(HarnessProject.layer),
+		Effect.provide(unselectedCliServices),
+		Effect.provide(NodeServices.layer),
+	);
 
 /**
  * Like {@link provideLive}, but the recording fake spawner satisfies
  * ChildProcessSpawner before NodeServices, so no external binary is ever run.
  */
 const provideWithFake = <A, E, R>(fake: FakeSpawner, effect: Effect.Effect<A, E, R>) =>
-	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(fake.layer), Effect.provide(NodeServices.layer));
+	effect.pipe(
+		Effect.provide(HarnessProject.layer),
+		Effect.provide(fake.layer),
+		Effect.provide(unselectedCliServices),
+		Effect.provide(NodeServices.layer),
+	);
 
 describe("Harnessy bootstrap", () => {
 	it.effect("plans v1 install.sh bootstrap without mutating target or cache by default", () =>

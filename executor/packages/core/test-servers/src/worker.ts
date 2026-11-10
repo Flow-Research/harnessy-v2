@@ -1,4 +1,4 @@
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
 import { Schema } from "effect";
 import { createSchema, createYoga } from "graphql-yoga";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -245,7 +245,7 @@ const openApiSpec = (request: Request) => {
   const url = new URL(request.url);
   const apiBaseUrl = `${url.origin}/openapi`;
   const spec = OpenApi.fromApi(
-    (OpenApiEchoApi as HttpApi.AnyWithProps).annotateMerge(
+    OpenApiEchoApi.annotateMerge(
       OpenApi.annotations({
         servers: [{ url: apiBaseUrl }],
         transform: (source) => ({

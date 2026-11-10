@@ -1,8 +1,8 @@
 import { Schema } from "effect";
-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { InternalError, Owner, ToolPolicyActionSchema } from "@executor-js/sdk/shared";
 
-export class ToolkitError extends Schema.TaggedErrorClass<ToolkitError>()(
+export class ToolkitError extends Schema.TaggedError<ToolkitError>()(
   "ToolkitError",
   { message: Schema.String },
   { httpApiStatus: 400 },

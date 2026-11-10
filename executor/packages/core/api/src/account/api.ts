@@ -1,4 +1,4 @@
-import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { Schema } from "effect";
 
 // ---------------------------------------------------------------------------
@@ -22,25 +22,25 @@ import { Schema } from "effect";
 // storage faults) onto these at the handler boundary, so the UI handles one
 // neutral shape.
 
-export class AccountError extends Schema.TaggedErrorClass<AccountError>()(
+export class AccountError extends Schema.TaggedError<AccountError>()(
   "AccountError",
   { message: Schema.String },
   { httpApiStatus: 500 },
 ) {}
 
-export class AccountForbidden extends Schema.TaggedErrorClass<AccountForbidden>()(
+export class AccountForbidden extends Schema.TaggedError<AccountForbidden>()(
   "AccountForbidden",
   { message: Schema.optional(Schema.String) },
   { httpApiStatus: 403 },
 ) {}
 
-export class AccountNoOrganization extends Schema.TaggedErrorClass<AccountNoOrganization>()(
+export class AccountNoOrganization extends Schema.TaggedError<AccountNoOrganization>()(
   "AccountNoOrganization",
   {},
   { httpApiStatus: 403 },
 ) {}
 
-export class AccountUnauthorized extends Schema.TaggedErrorClass<AccountUnauthorized>()(
+export class AccountUnauthorized extends Schema.TaggedError<AccountUnauthorized>()(
   "AccountUnauthorized",
   {},
   { httpApiStatus: 401 },

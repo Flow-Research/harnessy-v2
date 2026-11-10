@@ -3,7 +3,7 @@
 // pipeline; this adapter emits the shape Executor parses while preserving
 // Executor-specific tool ids and query semantics.
 import { Effect, Option, Predicate, Schema, SchemaGetter } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { OpenApiParseError } from "../../sdk/errors";
 import type { Authentication } from "../../sdk/types";

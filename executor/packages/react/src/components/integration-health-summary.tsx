@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import type { Connection, IntegrationSlug } from "@executor-js/sdk/shared";
 
 import { connectionsForIntegrationAtom } from "../api/atoms";

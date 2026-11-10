@@ -13,7 +13,7 @@ import {
 
 // Mirror the panel's decode boundary so the round-trip assertions use the exact
 // same path the production code uses (no raw JSON.parse).
-const decodeArgsJson = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+const decodeArgsJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const SCHEMA = {
   type: "object",

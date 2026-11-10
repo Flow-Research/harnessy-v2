@@ -1,4 +1,4 @@
-import * as Atom from "effect/unstable/reactivity/Atom";
+import * as Atom from "effect/reactivity/Atom";
 
 import { AccountApiClient } from "./account-client";
 import { ReactivityKey } from "./reactivity-keys";

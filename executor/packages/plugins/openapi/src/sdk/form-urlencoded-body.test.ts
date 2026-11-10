@@ -9,14 +9,14 @@
 
 import { expect, layer } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   HttpApi,
   HttpApiBuilder,
   HttpApiEndpoint,
   HttpApiGroup,
   HttpApiSchema,
-} from "effect/unstable/httpapi";
+} from "effect/http-api";
 
 import { createExecutor } from "@executor-js/sdk";
 import {

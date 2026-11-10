@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { PlusIcon } from "lucide-react";
 import { trackEvent } from "../api/analytics";
 import type { Integration } from "@executor-js/sdk/shared";

@@ -1,5 +1,5 @@
 import { Effect, Layer, Option } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 export const OAUTH_CLIENT_ID_METADATA_DOCUMENT_BASE_PATH = "/oauth/client-id-metadata" as const;
 export const OAUTH_CLIENT_ID_METADATA_DOCUMENT_PATH =

@@ -1,7 +1,7 @@
 import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Console, Effect } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { causeMessage, HarnessError } from "../errors.ts";
 import {
 	executeWorkspaceRelocation,
@@ -32,9 +32,9 @@ const operation = (run: () => unknown) =>
 const plan = Command.make(
 	"plan",
 	{
-		root: Flag.string("root"),
-		moves: Flag.string("moves"),
-		output: Flag.string("output"),
+		root: Flag.String("root"),
+		moves: Flag.String("moves"),
+		output: Flag.String("output"),
 	},
 	({ root, moves, output }) =>
 		operation(() => {
@@ -57,8 +57,8 @@ const plan = Command.make(
 const apply = Command.make(
 	"apply",
 	{
-		plan: Flag.string("plan"),
-		backups: Flag.string("backups"),
+		plan: Flag.String("plan"),
+		backups: Flag.String("backups"),
 	},
 	({ plan, backups }) =>
 		operation(() => {
@@ -79,17 +79,17 @@ const apply = Command.make(
 			};
 		}),
 );
-const rollback = Command.make("rollback", { plan: Flag.string("plan") }, ({ plan }) =>
+const rollback = Command.make("rollback", { plan: Flag.String("plan") }, ({ plan }) =>
 	operation(() => ({ journalPath: executeWorkspaceRelocation(readDocument(plan) as RelocationPlan, [], true) })),
 );
 const statePlan = Command.make(
 	"state-plan",
 	{
-		database: Flag.string("database"),
-		kind: Flag.choice("kind", ["meeting", "community"]),
-		from: Flag.string("from"),
-		to: Flag.string("to"),
-		output: Flag.string("output"),
+		database: Flag.String("database"),
+		kind: Flag.Literals("kind", ["meeting", "community"]),
+		from: Flag.String("from"),
+		to: Flag.String("to"),
+		output: Flag.String("output"),
 	},
 	({ database, kind, from, to, output }) =>
 		operation(() => {
@@ -100,9 +100,9 @@ const statePlan = Command.make(
 const stateApply = Command.make(
 	"state-apply",
 	{
-		plan: Flag.string("plan"),
-		backup: Flag.string("backup"),
-		rollback: Flag.boolean("rollback"),
+		plan: Flag.String("plan"),
+		backup: Flag.String("backup"),
+		rollback: Flag.Boolean("rollback").pipe(Flag.withDefault(false)),
 	},
 	({ plan, backup, rollback }) =>
 		operation(() => applyWorkspaceStateMigration(readDocument(plan) as WorkspaceStateMigration, backup, rollback)),

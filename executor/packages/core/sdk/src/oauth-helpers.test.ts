@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Ref } from "effect";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
 
 import {
   OAUTH2_DEFAULT_TIMEOUT_MS,

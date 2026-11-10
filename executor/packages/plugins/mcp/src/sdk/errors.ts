@@ -3,7 +3,7 @@
 
 import { Data, Schema } from "effect";
 
-export class McpConnectionError extends Schema.TaggedErrorClass<McpConnectionError>()(
+export class McpConnectionError extends Schema.TaggedError<McpConnectionError>()(
   "McpConnectionError",
   {
     transport: Schema.String,
@@ -20,7 +20,7 @@ export class McpConnectionError extends Schema.TaggedErrorClass<McpConnectionErr
   { httpApiStatus: 400 },
 ) {}
 
-export class McpToolDiscoveryError extends Schema.TaggedErrorClass<McpToolDiscoveryError>()(
+export class McpToolDiscoveryError extends Schema.TaggedError<McpToolDiscoveryError>()(
   "McpToolDiscoveryError",
   {
     stage: Schema.Literals(["connect", "list_tools"]),
@@ -64,7 +64,7 @@ export class McpInsufficientScopeError extends Data.TaggedError("McpInsufficient
   readonly message: string;
 }> {}
 
-export class McpOAuthError extends Schema.TaggedErrorClass<McpOAuthError>()(
+export class McpOAuthError extends Schema.TaggedError<McpOAuthError>()(
   "McpOAuthError",
   {
     message: Schema.String,

@@ -2,16 +2,20 @@ import { spawnSync } from "node:child_process";
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { Command } from "effect/unstable/cli";
-
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
 import { HarnessProject } from "../src/operations.ts";
+import { unselectedCliServices } from "./lib/unselected-cli-services.ts";
 
 /** Provide the live Harnessy project service plus Node platform services. */
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
+	effect.pipe(
+		Effect.provide(HarnessProject.layer),
+		Effect.provide(unselectedCliServices),
+		Effect.provide(NodeServices.layer),
+	);
 
 describe("Harnessy runtime assets", () => {
 	for (const owned of [true, false]) {

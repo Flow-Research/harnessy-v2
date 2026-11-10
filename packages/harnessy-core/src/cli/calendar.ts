@@ -1,6 +1,6 @@
 import { Console, Option } from "effect";
+import { Command, Flag } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { Command, Flag } from "effect/unstable/cli";
 import {
 	applyCalendarPlan,
 	inspectCalendarRecovery,
@@ -14,7 +14,7 @@ import { inspectCalendarPlan } from "../jarvis/calendar/plan.ts";
 
 export const jarvisCalendarCommand = Command.make("calendar").pipe(
 	Command.withSubcommands([
-		Command.make("inspect", { plan: Flag.string("plan") }, ({ plan }) =>
+		Command.make("inspect", { plan: Flag.String("plan") }, ({ plan }) =>
 			Effect.try(() => inspectCalendarPlan(plan)).pipe(
 				Effect.flatMap((result) => Console.log(JSON.stringify(result, null, 2))),
 			),
@@ -22,11 +22,11 @@ export const jarvisCalendarCommand = Command.make("calendar").pipe(
 		Command.make(
 			"recovery-inspect",
 			{
-				plan: Flag.string("plan"),
-				approvedSha256: Flag.string("approve-sha256"),
-				googleExecutable: Flag.string("google-executable"),
-				googleConfig: Flag.string("google-config"),
-				googleAccount: Flag.string("google-account"),
+				plan: Flag.String("plan"),
+				approvedSha256: Flag.String("approve-sha256"),
+				googleExecutable: Flag.String("google-executable"),
+				googleConfig: Flag.String("google-config"),
+				googleAccount: Flag.String("google-account"),
 			},
 			({ plan, approvedSha256, googleExecutable, googleConfig, googleAccount }) =>
 				Effect.tryPromise({
@@ -46,14 +46,14 @@ export const jarvisCalendarCommand = Command.make("calendar").pipe(
 		Command.make(
 			"recovery-resolve",
 			{
-				plan: Flag.string("plan"),
-				approvedSha256: Flag.string("approve-sha256"),
-				approvedRecoverySha256: Flag.string("approve-recovery-sha256"),
-				resolution: Flag.string("resolution"),
-				residualPlan: Flag.string("residual-plan").pipe(Flag.optional),
-				googleExecutable: Flag.string("google-executable"),
-				googleConfig: Flag.string("google-config"),
-				googleAccount: Flag.string("google-account"),
+				plan: Flag.String("plan"),
+				approvedSha256: Flag.String("approve-sha256"),
+				approvedRecoverySha256: Flag.String("approve-recovery-sha256"),
+				resolution: Flag.String("resolution"),
+				residualPlan: Flag.String("residual-plan").pipe(Flag.optional),
+				googleExecutable: Flag.String("google-executable"),
+				googleConfig: Flag.String("google-config"),
+				googleAccount: Flag.String("google-account"),
 			},
 			({
 				plan,
@@ -87,8 +87,8 @@ export const jarvisCalendarCommand = Command.make("calendar").pipe(
 		Command.make(
 			"legacy-recovery-inspect",
 			{
-				plan: Flag.string("plan"),
-				approvedSha256: Flag.string("approve-sha256"),
+				plan: Flag.String("plan"),
+				approvedSha256: Flag.String("approve-sha256"),
 			},
 			({ plan, approvedSha256 }) =>
 				Effect.try(() => inspectLegacyCalendarRecovery(plan, approvedSha256)).pipe(
@@ -98,9 +98,9 @@ export const jarvisCalendarCommand = Command.make("calendar").pipe(
 		Command.make(
 			"legacy-recovery-retire",
 			{
-				plan: Flag.string("plan"),
-				approvedSha256: Flag.string("approve-sha256"),
-				approvedRecoverySha256: Flag.string("approve-recovery-sha256"),
+				plan: Flag.String("plan"),
+				approvedSha256: Flag.String("approve-sha256"),
+				approvedRecoverySha256: Flag.String("approve-recovery-sha256"),
 			},
 			({ plan, approvedSha256, approvedRecoverySha256 }) =>
 				Effect.try(() => retireLegacyCalendarRecovery(plan, approvedSha256, approvedRecoverySha256)).pipe(
@@ -111,11 +111,11 @@ export const jarvisCalendarCommand = Command.make("calendar").pipe(
 			Command.make(
 				operation,
 				{
-					plan: Flag.string("plan"),
-					approvedSha256: Flag.string("approve-sha256"),
-					googleExecutable: Flag.string("google-executable"),
-					googleConfig: Flag.string("google-config"),
-					googleAccount: Flag.string("google-account"),
+					plan: Flag.String("plan"),
+					approvedSha256: Flag.String("approve-sha256"),
+					googleExecutable: Flag.String("google-executable"),
+					googleConfig: Flag.String("google-config"),
+					googleAccount: Flag.String("google-account"),
 				},
 				({ plan, approvedSha256, googleExecutable, googleConfig, googleAccount }) =>
 					Effect.tryPromise({

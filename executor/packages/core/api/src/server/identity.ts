@@ -85,14 +85,12 @@ const renderHints = {
 } as const;
 
 /** Authenticated but not authorized — no valid credential. Renders 401. */
-export class Unauthorized extends Schema.TaggedErrorClass<Unauthorized>()(
-  "Unauthorized",
-  renderHints,
-  { httpApiStatus: 401 },
-) {}
+export class Unauthorized extends Schema.TaggedError<Unauthorized>()("Unauthorized", renderHints, {
+  httpApiStatus: 401,
+}) {}
 
 /** Valid credential, but the principal belongs to no organization. Renders 403. */
-export class NoOrganization extends Schema.TaggedErrorClass<NoOrganization>()(
+export class NoOrganization extends Schema.TaggedError<NoOrganization>()(
   "NoOrganization",
   renderHints,
   { httpApiStatus: 403 },
@@ -104,11 +102,9 @@ export class NoOrganization extends Schema.TaggedErrorClass<NoOrganization>()(
  * never produces this; it is part of the shared set so cloud provides the SAME
  * neutral `IdentityProvider` tag without a wider error channel.
  */
-export class Unavailable extends Schema.TaggedErrorClass<Unavailable>()(
-  "Unavailable",
-  renderHints,
-  { httpApiStatus: 503 },
-) {}
+export class Unavailable extends Schema.TaggedError<Unavailable>()("Unavailable", renderHints, {
+  httpApiStatus: 503,
+}) {}
 
 /**
  * The swap seam. Resolves an incoming request to a `Principal`. WorkOS (cloud)

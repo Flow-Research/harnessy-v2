@@ -56,7 +56,7 @@ export interface InvokeOptions {
 }
 
 /** A tool was declined or cancelled during elicitation. */
-export class ElicitationDeclinedError extends Schema.TaggedErrorClass<ElicitationDeclinedError>()(
+export class ElicitationDeclinedError extends Schema.TaggedError<ElicitationDeclinedError>()(
   "ElicitationDeclinedError",
   {
     address: ToolAddress,

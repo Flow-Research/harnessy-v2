@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Ref, Schema } from "effect";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
 
 import {
   OAuthDiscoveryError,

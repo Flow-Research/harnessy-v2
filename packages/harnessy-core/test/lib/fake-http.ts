@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 /**
  * A recording, in-memory {@link HttpClient} for deterministic tests.

@@ -9,7 +9,7 @@ import {
 	type SessionMeta,
 } from "@harnessy/engine/cloudflare";
 
-interface Env {
+interface Env extends Cloudflare.Env {
 	readonly HARNESSY_ENGINE_BLOBS: HarnessyEngineR2Bucket;
 }
 

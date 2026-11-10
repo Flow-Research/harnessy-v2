@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Console, Effect, Option, Schema } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/cli";
 import { parseDocument } from "yaml";
 import { DEFAULT_CODEX_MODEL } from "../ai/codex-model.ts";
 import { CommunityDraftProcessError } from "../jarvis/community-briefing/draft-process.ts";
@@ -44,21 +44,21 @@ const Settings = Schema.Struct({
 
 /** Shared by generate and review serve; exported so tests can pin the defaults. */
 export const communityExecutionOptions = {
-	config: Flag.string("config").pipe(Flag.withDefault(join(homedir(), ".jarvis", "config.yaml"))),
-	pythonPath: Flag.string("python-path").pipe(
+	config: Flag.String("config").pipe(Flag.withDefault(join(homedir(), ".jarvis", "config.yaml"))),
+	pythonPath: Flag.String("python-path").pipe(
 		Flag.withDescription("Override community_briefing.python_path with a V2-installed Jarvis interpreter."),
 		Flag.optional,
 	),
-	authPath: Flag.string("auth-file").pipe(
+	authPath: Flag.String("auth-file").pipe(
 		Flag.withDefault(join(process.env.HSY_CODING_AGENT_DIR ?? join(homedir(), ".hsy", "agent"), "auth.json")),
 	),
-	model: Flag.string("model").pipe(Flag.withDefault(DEFAULT_CODEX_MODEL)),
-	timeoutSeconds: Flag.integer("timeout-seconds").pipe(
+	model: Flag.String("model").pipe(Flag.withDefault(DEFAULT_CODEX_MODEL)),
+	timeoutSeconds: Flag.Int("timeout-seconds").pipe(
 		Flag.withDefault(600),
 		Flag.withDescription("Per AI operation, 1–600 seconds; not the lifetime of the review window."),
 	),
-	maximumOutputBytes: Flag.integer("max-output-bytes").pipe(Flag.withDefault(65536)),
-	notifications: Flag.string("notifications").pipe(
+	maximumOutputBytes: Flag.Int("max-output-bytes").pipe(Flag.withDefault(65536)),
+	notifications: Flag.String("notifications").pipe(
 		Flag.withDefault("desktop"),
 		Flag.withDescription("desktop or off; unsupported desktops leave reminders pending."),
 	),
@@ -237,8 +237,8 @@ export const communityDraftCommand = Command.make(
 	"generate",
 	{
 		...communityExecutionOptions,
-		weekStart: Flag.string("week-start").pipe(Flag.withDescription("Monday in YYYY-MM-DD format.")),
-		runId: Flag.string("run-id").pipe(
+		weekStart: Flag.String("week-start").pipe(Flag.withDescription("Monday in YYYY-MM-DD format.")),
+		runId: Flag.String("run-id").pipe(
 			Flag.withDefault(""),
 			Flag.withDescription("Optional explicit run identity; consumed runs cannot replay."),
 		),
@@ -297,8 +297,8 @@ export const communityReviewServeCommand = Command.make(
 	"serve",
 	{
 		...communityExecutionOptions,
-		port: Flag.integer("port").pipe(Flag.withDefault(8872)),
-		weeklyGeneration: Flag.boolean("weekly-generation").pipe(
+		port: Flag.Int("port").pipe(Flag.withDefault(8872)),
+		weeklyGeneration: Flag.Boolean("weekly-generation").pipe(
 			Flag.withDefault(false),
 			Flag.withDescription(
 				"Also draft each due week. Set only by the LaunchAgent that `harnessy jarvis community schedule` installs.",

@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { useAtomValue, useAtomSet } from "@effect/atom-react";
 import * as Exit from "effect/Exit";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { IntegrationSlug } from "@executor-js/sdk/shared";
 import type { IntegrationAccountHandoff } from "@executor-js/sdk/client";
 

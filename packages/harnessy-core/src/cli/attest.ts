@@ -1,12 +1,14 @@
 import { Console, Effect, Option } from "effect";
+import { Argument, Command, Flag } from "effect/cli";
 import * as Result from "effect/Result";
-import { Argument, Command, Flag } from "effect/unstable/cli";
 import { type AttestDeps, initKey, liveAttestDeps, type Outcome, runAttest, verifyFile } from "../attest/run.ts";
 import { causeMessage, HarnessError } from "../errors.ts";
 import { splitCli } from "../work/logic.ts";
 import { execRun } from "../work/run.ts";
 
-const jsonFlag = Flag.boolean("json").pipe(Flag.withDescription("Print the result as one JSON line."));
+const jsonFlag = Flag.Boolean("json")
+	.pipe(Flag.withDefault(false))
+	.pipe(Flag.withDescription("Print the result as one JSON line."));
 
 const harnessError = (cause: unknown) => new HarnessError({ message: causeMessage(cause), cause });
 
@@ -56,12 +58,12 @@ export const makeAttestCommand = (deps: () => AttestDeps) => {
 	const run = Command.make(
 		"run",
 		{
-			project: Flag.string("project").pipe(Flag.withDescription("WorkStream project UUID.")),
-			workstreamCli: Flag.string("workstream-cli").pipe(
+			project: Flag.String("project").pipe(Flag.withDescription("WorkStream project UUID.")),
+			workstreamCli: Flag.String("workstream-cli").pipe(
 				Flag.withDefault("workstream"),
 				Flag.withDescription("WorkStream CLI argv prefix, split on whitespace (e.g. 'ws-agent')."),
 			),
-			out: Flag.string("out").pipe(
+			out: Flag.String("out").pipe(
 				Flag.optional,
 				Flag.withDescription("Certificate folder (default ~/.local/state/harnessy/attest/<project>)."),
 			),
@@ -89,8 +91,8 @@ export const makeAttestCommand = (deps: () => AttestDeps) => {
 	const verify = Command.make(
 		"verify",
 		{
-			file: Argument.string("file"),
-			attester: Flag.string("attester").pipe(
+			file: Argument.String("file"),
+			attester: Flag.String("attester").pipe(
 				Flag.optional,
 				Flag.withDescription("Expected signer address (default: the local TEST key's address)."),
 			),

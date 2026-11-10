@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join as pathJoin } from "node:path";
 import { Context, Duration, Effect, Layer, Option, Schedule, Schema } from "effect";
 import { FileSystem } from "effect";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { NodeFileSystem } from "@effect/platform-node";
 
 // ---------------------------------------------------------------------------

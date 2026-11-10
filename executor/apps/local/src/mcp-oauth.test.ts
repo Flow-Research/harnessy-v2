@@ -26,8 +26,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { HttpApi, HttpApiBuilder, HttpApiClient } from "effect/unstable/httpapi";
-import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpApi, HttpApiBuilder, HttpApiClient } from "effect/http-api";
+import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import { Effect, Layer } from "effect";
 
 import { addGroup, observabilityMiddleware } from "@executor-js/api";

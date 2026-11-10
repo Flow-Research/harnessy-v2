@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { createExecutor, IntegrationSlug } from "@executor-js/sdk";
 import { makeTestConfig, memoryCredentialsPlugin } from "@executor-js/sdk/testing";
 import { openApiPlugin, parse } from "@executor-js/plugin-openapi";

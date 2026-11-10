@@ -190,7 +190,7 @@ export interface RegisterDynamicClientInput {
 }
 
 export class OAuthStartError
-  extends Schema.TaggedErrorClass<OAuthStartError>()("OAuthStartError", {
+  extends Schema.TaggedError<OAuthStartError>()("OAuthStartError", {
     message: Schema.String,
   })
   implements UserActionableError
@@ -204,7 +204,7 @@ export class OAuthStartError
 }
 
 export class OAuthCompleteError
-  extends Schema.TaggedErrorClass<OAuthCompleteError>()("OAuthCompleteError", {
+  extends Schema.TaggedError<OAuthCompleteError>()("OAuthCompleteError", {
     message: Schema.String,
     /** True when the auth-code exchange failed in a way the user must restart. */
     restartRequired: Schema.optional(Schema.Boolean),
@@ -220,7 +220,7 @@ export class OAuthCompleteError
 }
 
 export class OAuthProbeError
-  extends Schema.TaggedErrorClass<OAuthProbeError>()("OAuthProbeError", {
+  extends Schema.TaggedError<OAuthProbeError>()("OAuthProbeError", {
     message: Schema.String,
   })
   implements UserActionableError
@@ -234,7 +234,7 @@ export class OAuthProbeError
 }
 
 export class OAuthRegisterDynamicError
-  extends Schema.TaggedErrorClass<OAuthRegisterDynamicError>()("OAuthRegisterDynamicError", {
+  extends Schema.TaggedError<OAuthRegisterDynamicError>()("OAuthRegisterDynamicError", {
     message: Schema.String,
   })
   implements UserActionableError
@@ -247,7 +247,7 @@ export class OAuthRegisterDynamicError
   }
 }
 
-export class OAuthSessionNotFoundError extends Schema.TaggedErrorClass<OAuthSessionNotFoundError>()(
+export class OAuthSessionNotFoundError extends Schema.TaggedError<OAuthSessionNotFoundError>()(
   "OAuthSessionNotFoundError",
   { state: OAuthState },
 ) {}

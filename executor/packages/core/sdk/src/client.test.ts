@@ -22,8 +22,8 @@
 
 import { describe, expect, it } from "@effect/vitest";
 import { Schema } from "effect";
-import { HttpClientRequest } from "effect/unstable/http";
-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpClientRequest } from "effect/http";
+import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 
 import { applyPluginAtomClientRequestTransform, createPluginAtomClient } from "./client";
 

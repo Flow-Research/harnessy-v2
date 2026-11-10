@@ -1,4 +1,4 @@
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Option from "effect/Option";
 
 export function isAsyncResultLoading<A, E>(result: AsyncResult.AsyncResult<A, E>): boolean {

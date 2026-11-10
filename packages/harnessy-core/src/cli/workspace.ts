@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { Console, Effect, Option } from "effect";
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/cli";
 import { causeMessage, HarnessError } from "../errors.ts";
 import { initializeWorkspace, inspectWorkspace, registerWorkspaceProject, resolveWorkspace } from "../workspace.ts";
 import { workspaceMigrationCommand } from "./workspace-migration.ts";
@@ -21,8 +21,8 @@ const canonicalPath = (input: string): string => {
 const workspaceEffect = <A>(run: () => A) =>
 	Effect.try({ try: run, catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }) });
 
-const rootFlag = Flag.string("workspace-root").pipe(Flag.optional);
-const jsonFlag = Flag.boolean("json");
+const rootFlag = Flag.String("workspace-root").pipe(Flag.optional);
+const jsonFlag = Flag.Boolean("json").pipe(Flag.withDefault(false));
 
 const requireWorkspace = (root: Option.Option<string>) => {
 	const workspace = resolveWorkspace({ workspaceRoot: Option.getOrUndefined(root) });
@@ -30,7 +30,7 @@ const requireWorkspace = (root: Option.Option<string>) => {
 	return workspace;
 };
 
-const init = Command.make("init", { root: Argument.string("root"), json: jsonFlag }, ({ root }) =>
+const init = Command.make("init", { root: Argument.String("root"), json: jsonFlag }, ({ root }) =>
 	workspaceEffect(() => initializeWorkspace(resolve(root))).pipe(
 		Effect.flatMap((value) => Console.log(JSON.stringify(value, null, 2))),
 	),
@@ -39,12 +39,12 @@ const init = Command.make("init", { root: Argument.string("root"), json: jsonFla
 const add = Command.make(
 	"add",
 	{
-		path: Argument.string("path"),
-		id: Flag.string("id"),
+		path: Argument.String("path"),
+		id: Flag.String("id"),
 		root: rootFlag,
-		contextDir: Flag.string("context-dir").pipe(Flag.withDefault(".jarvis/context")),
-		worktreesDir: Flag.string("worktrees-dir").pipe(Flag.optional),
-		branch: Flag.string("integration-branch").pipe(Flag.optional),
+		contextDir: Flag.String("context-dir").pipe(Flag.withDefault(".jarvis/context")),
+		worktreesDir: Flag.String("worktrees-dir").pipe(Flag.optional),
+		branch: Flag.String("integration-branch").pipe(Flag.optional),
 		json: jsonFlag,
 	},
 	({ path, id, root, contextDir, worktreesDir, branch }) =>

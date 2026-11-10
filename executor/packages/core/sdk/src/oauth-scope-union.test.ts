@@ -1,7 +1,7 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { describe, expect, it } from "@effect/vitest";
 import { Context, Effect, Exit, Layer, Predicate, type Scope } from "effect";
-import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import {
   AuthTemplateSlug,
@@ -569,8 +569,8 @@ const serveScopelessTokenServer = (): Effect.Effect<
   Effect.gen(function* () {
     const context = yield* Layer.build(
       Layer.fresh(
-        HttpServer.serve(
-          HttpServerRequest.HttpServerRequest.asEffect().pipe(
+        HttpServer.serve()(
+          Effect.service(HttpServerRequest.HttpServerRequest).pipe(
             Effect.map((request: HttpServerRequest.HttpServerRequest) => {
               if (request.url.startsWith("/token") && request.method === "POST") {
                 // A Bearer access token WITHOUT a `scope` field — the AS omits
@@ -592,7 +592,10 @@ const serveScopelessTokenServer = (): Effect.Effect<
     );
     const server = Context.get(context, HttpServer.HttpServer);
     const address = server.address;
-    if (!Predicate.isTagged(address, "TcpAddress")) {
+    if (
+      !Predicate.isTagged(address, "InetAddressV4") &&
+      !Predicate.isTagged(address, "InetAddressV6")
+    ) {
       return yield* Effect.die(`Expected a TcpAddress, got ${JSON.stringify(address)}`);
     }
     return { tokenEndpoint: `http://127.0.0.1:${address.port}/token` };

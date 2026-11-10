@@ -1,9 +1,9 @@
 import process from "node:process";
 
 import { Console } from "effect";
+import { Argument as Args, Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Argument as Args, Command } from "effect/unstable/cli";
 
 import { HarnessError } from "../errors.ts";
 import { HarnessProject } from "../operations.ts";
@@ -69,7 +69,7 @@ import {
 export const skillCreateCommand = Command.make(
 	"create",
 	{
-		name: Args.string("name"),
+		name: Args.String("name"),
 		target: targetOption,
 		force: forceOption,
 		owner: skillOwnerOption,
@@ -158,7 +158,7 @@ export const skillListCommand = Command.make(
 export const skillPromoteCommand = Command.make(
 	"promote",
 	{
-		skill: Args.string("skill").pipe(Args.optional),
+		skill: Args.String("skill").pipe(Args.optional),
 		sourceRoot: sourceRootOption,
 		installedRoot: installedRootOption,
 		tracesRoot: tracesRootOption,
@@ -213,7 +213,7 @@ export const skillPromoteCommand = Command.make(
 export const skillFeedbackCommand = Command.make(
 	"feedback",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		text: feedbackTextOption,
 		category: feedbackCategoryOption,
 		installedRoot: installedRootOption,
@@ -255,7 +255,7 @@ export const skillFeedbackCommand = Command.make(
 export const skillTracesCommand = Command.make(
 	"traces",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		tracesRoot: tracesRootOption,
 		json: jsonOption,
 	},
@@ -288,7 +288,7 @@ export const skillTracesCommand = Command.make(
 export const metricsComputeCommand = Command.make(
 	"compute",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		last: lastOption,
 		since: sinceOption,
 		tracesRoot: tracesRootOption,
@@ -328,7 +328,7 @@ export const metricsComputeCommand = Command.make(
 export const ratchetScoreCommand = Command.make(
 	"score",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		layer: ratchetLayerOption,
 		runsFile: runsFileOption,
 		tracesRoot: tracesRootOption,
@@ -360,7 +360,7 @@ export const ratchetScoreCommand = Command.make(
 export const ratchetGatesCommand = Command.make(
 	"gates",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		runsFile: runsFileOption,
 		tracesRoot: tracesRootOption,
 		json: jsonOption,
@@ -398,7 +398,7 @@ export const ratchetGatesCommand = Command.make(
 export const ratchetSnapshotCommand = Command.make(
 	"snapshot",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		installedRoot: installedRootOption,
 		runsFile: runsFileOption,
 		tracesRoot: tracesRootOption,
@@ -433,7 +433,7 @@ export const ratchetSnapshotCommand = Command.make(
 export const ratchetEvaluateCommand = Command.make(
 	"evaluate",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		window: windowOption,
 		runsFile: runsFileOption,
 		tracesRoot: tracesRootOption,
@@ -472,7 +472,7 @@ export const ratchetEvaluateCommand = Command.make(
 export const ratchetDecideCommand = Command.make(
 	"decide",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		installedRoot: installedRootOption,
 		tracesRoot: tracesRootOption,
 		stateDir: stateDirOption,
@@ -508,7 +508,7 @@ export const ratchetDecideCommand = Command.make(
 export const ratchetStatusCommand = Command.make(
 	"status",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		tracesRoot: tracesRootOption,
 		stateDir: stateDirOption,
 		json: jsonOption,
@@ -554,7 +554,7 @@ export const ratchetCommand = Command.make("ratchet").pipe(
 export const attributeComputeCommand = Command.make(
 	"compute",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		improvementId: improvementIdOption,
 		runsFile: runsFileOption,
 		tracesRoot: tracesRootOption,
@@ -587,7 +587,7 @@ export const attributeComputeCommand = Command.make(
 export const attributeBackfillCommand = Command.make(
 	"backfill",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		limit: attributeLimitOption,
 		runsFile: runsFileOption,
 		tracesRoot: tracesRootOption,
@@ -620,7 +620,7 @@ export const attributeBackfillCommand = Command.make(
 export const attributeIndexCommand = Command.make(
 	"index",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		runsFile: runsFileOption,
 		tracesRoot: tracesRootOption,
 		stateDir: stateDirOption,
@@ -656,7 +656,7 @@ export const attributeCommand = Command.make("attribute").pipe(
 /** List attributions still needing replay review. */
 export const attributeValidateQueueCommand = Command.make(
 	"queue",
-	{ skill: Args.string("skill"), tracesRoot: tracesRootOption, json: jsonOption },
+	{ skill: Args.String("skill"), tracesRoot: tracesRootOption, json: jsonOption },
 	({ skill, tracesRoot, json }) =>
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
@@ -679,7 +679,7 @@ export const attributeValidateQueueCommand = Command.make(
 export const attributeValidateReviewCommand = Command.make(
 	"review",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		attributionId: attributionIdOption,
 		legibility: scoreOption("legibility", "legibility"),
 		plausibility: scoreOption("plausibility", "plausibility"),
@@ -730,7 +730,7 @@ export const attributeValidateReviewCommand = Command.make(
 export const attributeValidatePacketCommand = Command.make(
 	"packet",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		limit: attributeLimitOption,
 		tracesRoot: tracesRootOption,
 		json: jsonOption,
@@ -753,7 +753,7 @@ export const attributeValidatePacketCommand = Command.make(
 /** Derive and persist the Phase-1 readiness summary. */
 export const attributeValidateSummaryCommand = Command.make(
 	"summary",
-	{ skill: Args.string("skill"), tracesRoot: tracesRootOption, json: jsonOption },
+	{ skill: Args.String("skill"), tracesRoot: tracesRootOption, json: jsonOption },
 	({ skill, tracesRoot, json }) =>
 		Effect.gen(function* () {
 			const project = yield* HarnessProject;
@@ -787,7 +787,7 @@ export const attributeValidateCommand = Command.make("attribute-validate").pipe(
 export const metricsCompareCommand = Command.make(
 	"compare",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		before: beforeOption,
 		after: afterOption,
 		tracesRoot: tracesRootOption,
@@ -823,7 +823,7 @@ export const metricsCompareCommand = Command.make(
 export const metricsTrendCommand = Command.make(
 	"trend",
 	{
-		skill: Args.string("skill"),
+		skill: Args.String("skill"),
 		gate: gateOption,
 		last: lastOption,
 		tracesRoot: tracesRootOption,

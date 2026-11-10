@@ -1,5 +1,5 @@
 import type { IntegrationSlug } from "@executor-js/sdk/shared";
-import * as Atom from "effect/unstable/reactivity/Atom";
+import * as Atom from "effect/reactivity/Atom";
 import { ReactivityKey } from "@executor-js/react/api/reactivity-keys";
 import { OpenApiClient } from "./client";
 

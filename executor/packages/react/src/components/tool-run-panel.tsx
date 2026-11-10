@@ -3,7 +3,7 @@ import { useAtomValue, useAtomSet } from "@effect/atom-react";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { toast } from "sonner";
 import {
   ToolAddress,
@@ -77,7 +77,7 @@ const isFailedEnvelope = (structured: unknown): boolean =>
 /** Decode the args Textarea as JSON. Effect Schema is used at the JSON boundary
  *  (the codebase forbids raw `JSON.parse`); a malformed string yields `None`,
  *  which we surface as an inline validation error. */
-const decodeArgsJson = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+const decodeArgsJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const prettyJson = (value: unknown): string => {
   try {
