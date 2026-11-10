@@ -10,6 +10,7 @@ import {
 
 type RouteMatch = { readonly routeId: string; readonly params: Record<string, string> };
 type SpikeRouter = {
+  readonly state: { readonly location: { readonly pathname: string } };
   matchRoutes(pathname: string): ReadonlyArray<RouteMatch>;
   buildLocation(options: unknown): { readonly href: string };
   navigate(options: unknown): Promise<void>;
@@ -38,6 +39,10 @@ const make = (): SpikeRouter => {
   // oxlint-disable-next-line executor/no-double-cast -- boundary: a test-local route tree must escape the package-global router Register types
   return createRouter({
     routeTree,
+    // Navigation is a client operation. In this Node fixture, the router would
+    // otherwise use server mode, where navigate deliberately leaves history alone.
+    isServer: false,
+    origin: "http://localhost",
     history: createMemoryHistory({ initialEntries: ["/"] }),
   }) as unknown as SpikeRouter;
 };
@@ -87,6 +92,7 @@ describe("optional org-slug segment", () => {
     const router = make();
     await router.navigate({ to: "/{-$orgSlug}", params: { orgSlug: "acme" } });
     await router.load();
+    expect(router.state.location.pathname).toBe("/acme");
     // A link that only supplies its own params keeps the current orgSlug.
     const href = router.buildLocation({
       to: "/{-$orgSlug}/integrations/$namespace",

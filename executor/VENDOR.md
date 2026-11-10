@@ -390,6 +390,13 @@ difference. The new generator sorts the same routes in a different order;
 the routes do not change. Remove this overlay on an upstream sync that ships
 these versions.
 
+`packages/react/src/org-slug-routing.test.ts` explicitly selects client mode
+and a fixed local origin for its memory router. The upgraded router makes
+`navigate` a no-op in server mode; Node's default server detection otherwise
+leaves this client-navigation fixture at its initial URL. The regression now
+checks that navigation reached `/acme` before checking inherited parameters.
+It does not patch the router implementation or weaken the expected URL.
+
 ## Self-hosted app world (`hsy web`)
 
 To run the vendored local web app (`apps/local`) as Harnessy's local test
