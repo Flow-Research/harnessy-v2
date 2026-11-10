@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Daily living-doc refresh. Replace each {{...}} value:
+    {{NAME}}     living-doc name, for example example-product
+    {{RUNNER}}   absolute path of living-doc-refresh-run
+    {{HOME}}     the user's home folder
+    {{PATH}}     a PATH that finds git, python3 and claude
+    {{HOUR}} {{MINUTE}}  from the config "schedule"
+  Save as ~/Library/LaunchAgents/com.flow-harness.living-doc-refresh.{{NAME}}.plist
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.flow-harness.living-doc-refresh.{{NAME}}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>{{RUNNER}}</string>
+		<string>{{NAME}}</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>{{HOME}}</string>
+		<key>PATH</key>
+		<string>{{PATH}}</string>
+	</dict>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>{{HOUR}}</integer>
+		<key>Minute</key>
+		<integer>{{MINUTE}}</integer>
+	</dict>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardOutPath</key>
+	<string>{{HOME}}/.harnessy/living-docs/logs/launchd-{{NAME}}.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{HOME}}/.harnessy/living-docs/logs/launchd-{{NAME}}.log</string>
+</dict>
+</plist>
