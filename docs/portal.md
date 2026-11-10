@@ -37,7 +37,8 @@ It has nine screens. Use `g` and a letter to move between them, and `⌘K` (or
   the environment left out and values that may be secrets redacted.
 - **Reviews** (`g r`): meeting and community review queues (`#/reviews/meetings`
   and `#/reviews/community`). Each Open button starts the service's sign-in
-  helper and opens its review page with a fresh session.
+  helper and opens its review page in the same tab with a fresh session.
+  Use the Harnessy breadcrumb or browser Back and Forward to return.
 - **Learning** (`g l`): the learning library and the reading queue.
 - **Connections** (`g c`): each connection's status and owner, and **Tools &
   integrations**, which is the cockpit (`harnessy web`).
@@ -143,9 +144,46 @@ token. Select Open cockpit on the Connections screen to start or open it with
 its own sign-in. The terminal command is still available.
 
 Review buttons on Inbox, Jobs, Reviews and Connections use the same sign-in
-helpers. They open the default browser. If a review service is stopped, the
+helpers. Local meeting and community review actions use the current tab.
+The Tools cockpit launcher keeps its separate browser behavior. If a review service is stopped, the
 portal shows an error and directs you to Jobs. It does not start a publisher.
 If the portal session expires, sign in again in the existing tab and retry.
+
+## Generate a meeting document without publishing
+
+The **Next meeting** card shows up to 600 characters of the saved executive
+summary. Select **Generate Google Doc** on the card, or expand **Reject meeting…**
+and confirm rejection. Expand **Accept & publish…** to approve the saved full
+note directly from the card. Its confirmation shows the Discord purpose and
+explains that publication can send the note to Google Docs and Discord.
+These actions use the saved note revision. If the note
+changed or cannot be read, open the meeting to check it first. Use **Review meeting** to read or edit the full note before deciding.
+
+Open a pending meeting in the full meeting review view. Select **Generate Google
+Doc** to copy the complete saved note into a draft document. If you edited the
+note, select **Update meeting note** first. Generation uses the configured Google
+account and a `Drafts` subfolder. Existing folder permissions apply; this action
+does not add public access.
+
+The result includes an **Open Google Doc** link. Document links open in a new
+tab. Repeated generation of the same saved revision returns the existing draft.
+A later saved revision updates that draft. Generation does not approve the
+meeting, change publication receipts, or send a Discord message. **Approve &
+publish** remains a separate action and uses the publication document.
+
+If Google reports an uncertain result, automatic retries stop to prevent duplicate
+documents. Inspect the configured Drive `Drafts` folder and request recovery.
+The review view does not yet provide a draft reconciliation action. A stale note
+or an unavailable Google connection must be resolved before generation can proceed.
+
+Draft receipts use the separate `google_doc_drafts` table in queue schema 5.
+Existing queue rows are preserved by the additive migration. Installation requires
+a clean service stop, a consistent backup, migration and renewed signed enrollment.
+Refresh the configured Google connection tool catalog before enrollment so an
+existing connection includes `draft_upsert`. This local catalog update does not
+require Google consent or write a document.
+Older schema-4 runtimes cannot open this queue. Do not restore an old database
+snapshot after new activity; retain draft receipts and use a compatible repair.
 
 When a portal service must use a specific workspace, set `--workspace-root DIR`
 on `serve`. The cockpit launcher uses that directory as its workspace scope.
@@ -193,7 +231,8 @@ names the owner of the credential and how to reconnect it:
   or `harnessy web`.
   The browser cannot supply a command, file path or destination URL. Each
   opener owns the destination's credentials. These handoffs cannot approve
-  or publish. Only one browser launch can run at a time.
+  or publish. Only one service handoff can run at a time. Review pages keep their
+  own origin and framing restrictions; they are not embedded frames.
 - A same-origin `POST /v1/life/brief/generate` with a valid page session runs
   the fixed Jarvis daily command with `--force`. Jarvis owns the brief, journal
   and reading-ledger updates. The request cannot select a command, path or date.

@@ -147,13 +147,20 @@ try {
 	await page("Page.navigate", { url: target.href });
 	await until("inbox", () => evaluate(`!!document.querySelector('h1') && location.pathname === '/'`));
 	const itemId = process.argv[3], action = process.argv[4];
-	if (!/^[a-f0-9]{24}$/.test(itemId ?? "") || !["approve", "reject", "archive"].includes(action)) throw Error("Invalid fixture action");
-	await page("Page.navigate", { url: `${origin}/item/${itemId}` });
+	if (!/^[a-f0-9]{24}$/.test(itemId ?? "") || !["approve", "reject", "archive", "generate-google-doc"].includes(action)) throw Error("Invalid fixture action");
+	if (process.argv[5] !== "inbox") await page("Page.navigate", { url: `${origin}/item/${itemId}` });
+	else {
+		if (!(await evaluate(`!!document.querySelector('details.quick-accept:not([open]) form[action="/approve/${itemId}"]')`))) throw Error("Inbox approval must require expanded confirmation");
+		if (action === "approve") await evaluate(`document.querySelector('details.quick-accept summary').click()`);
+		if (action === "reject") await evaluate(`document.querySelector('details.quick-reject summary').click()`);
+	}
 	await until("review form", () => evaluate(`!!document.querySelector('form[action="/${action}/${itemId}"]')`));
 	await evaluate(`document.querySelector('form[action="/${action}/${itemId}"] button').click()`);
 	await until("decision recorded", async () => {
 		if (failures.length) throw Error(failures.join(", "));
-		return evaluate(`location.pathname === '/' && !!document.querySelector('#google-connection-title')`);
+		return action === "generate-google-doc"
+			? evaluate(`document.querySelector('h1')?.textContent === 'Google Doc ready' && !!document.querySelector('a[target="_blank"][rel="noopener noreferrer"]')`)
+			: evaluate(`location.pathname === '/' && !!document.querySelector('#google-connection-title')`);
 	});
 	if (posts.length !== 1 || posts[0].origin !== origin || failures.length) throw Error("Native review submission failed");
 	console.log("Browser concurrent review passed");

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, constants, existsSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { arch, hostname } from "node:os";
+import { isAbsolute, relative, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -652,10 +653,36 @@ const assertCurrentFullReviewItem = (
 		const schema = validateMeetingPublicationStoreSchema(database);
 		if (schema.version !== MEETING_PUBLICATION_STORE_SCHEMA_VERSION) fail("state_drift");
 		const row = database
-			.prepare("SELECT item_id,source_hash,status FROM publication_items WHERE item_id=?")
+			.prepare("SELECT item_id,source_hash,status,approved_hash,note_path FROM publication_items WHERE item_id=?")
 			.get(item.itemId);
 		const current = row ?? fail("state_drift");
 		if (current.item_id !== item.itemId || current.source_hash !== item.sourceHash) fail("state_drift");
+		if (operation === "provider_google_draft" || operation === "store_google_draft") {
+			if (
+				current.status !== "pending_review" ||
+				current.approved_hash !== null ||
+				typeof current.note_path !== "string" ||
+				verified.config.sourcePath === null
+			)
+				fail("state_drift");
+			if (operation === "provider_google_draft") {
+				const draft = database
+					.prepare("SELECT source_hash,state FROM google_doc_drafts WHERE item_id=?")
+					.get(item.itemId);
+				if (draft?.source_hash !== item.sourceHash || draft.state !== "generating") fail("state_drift");
+			}
+			const notePath = current.note_path as string;
+			const inside = relative(verified.config.sourcePath as string, notePath);
+			if (inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside))
+				fail("state_drift");
+			const note = readStableMeetingPublicationSmokeFile(
+				notePath,
+				BigInt(verified.authorization.runtime.uid),
+				"artifact",
+				verified.config.maxFileBytes,
+			);
+			if (sha256MeetingPublicationSmokeBytes(note.bytes) !== item.sourceHash) fail("state_drift");
+		}
 		if ((operation === "source_update" || operation === "store_reject") && current.status !== "pending_review")
 			fail("state_drift");
 		if (operation === "store_approve" && current.status !== "pending_review" && current.status !== "blocked") {
@@ -1265,6 +1292,8 @@ export class MeetingRuntimeSession {
 								if (
 									this.verified.kind === "full_review" &&
 									(operation === "source_update" ||
+										operation === "provider_google_draft" ||
+										operation === "store_google_draft" ||
 										operation === "store_approve" ||
 										operation === "store_reject" ||
 										(operation === "store_archive" && binding.item !== undefined))

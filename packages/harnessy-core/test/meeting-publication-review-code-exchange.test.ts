@@ -247,6 +247,40 @@ describe("meeting review identity challenge", () => {
 });
 
 describe("meeting review single-use code exchange", () => {
+	it("keeps a validated portal breadcrumb without weakening frame restrictions", async () => {
+		await withReview(async ({ origin, state }) => {
+			const value = code("portal-return");
+			issue(state, value);
+			const signedIn = await call(
+				origin,
+				`/exchange?code=${value}&portal=${encodeURIComponent("http://127.0.0.1:8790")}`,
+			);
+			expect(signedIn.status).toBe(200);
+			const review = await call(origin, "/", { Cookie: sessionCookie(signedIn) });
+			expect(review.status).toBe(200);
+			expect(review.body).toContain('href="http://127.0.0.1:8790/#/reviews/meetings">Harnessy</a>');
+			expect(review.headers["x-frame-options"]).toBe("DENY");
+			expect(review.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
+		});
+	});
+	it("rejects arbitrary portal destinations before consuming the code", async () => {
+		await withReview(async ({ origin, state }) => {
+			const value = code("invalid-return");
+			issue(state, value);
+			for (const destination of [
+				"https://evil.example",
+				"http://127.0.0.1:8790/redirect",
+				"http://127.0.0.1:99999",
+				"javascript:alert(1)",
+			]) {
+				expect(
+					(await call(origin, `/exchange?code=${value}&portal=${encodeURIComponent(destination)}`)).status,
+				).toBe(400);
+			}
+			expect((await call(origin, `/exchange?code=${value}`)).status).toBe(200);
+		});
+	});
+
 	it.skipIf(process.env.CHROME_PATH === undefined)(
 		"opens from a notification file in a fresh browser with strict cookies",
 		async () => {

@@ -2,7 +2,14 @@ import type { DatabaseSync } from "node:sqlite";
 
 import * as Result from "effect/Result";
 
-export const MEETING_PUBLICATION_STORE_SCHEMA_VERSION = 4;
+export const MEETING_PUBLICATION_STORE_SCHEMA_VERSION = 5;
+export const MEETING_GOOGLE_DRAFT_TABLE_SQL = `CREATE TABLE google_doc_drafts (
+item_id TEXT PRIMARY KEY,
+source_hash TEXT NOT NULL,
+doc_id TEXT,
+doc_url TEXT,
+state TEXT NOT NULL CHECK(state IN ('generating','ready','failed','uncertain'))
+) STRICT`;
 export const MEETING_PUBLICATION_HEALTH_TABLE_SQL = `CREATE TABLE provider_health (
 provider TEXT PRIMARY KEY CHECK(provider IN ('google','discord')),
 account TEXT NOT NULL,
@@ -63,7 +70,8 @@ export const MEETING_PUBLICATION_STORE_STATUS_INDEX_SQL =
 export const MEETING_PUBLICATION_STORE_SCHEMA_SQL = `${MEETING_PUBLICATION_STORE_TABLE_SQL};
 ${MEETING_PUBLICATION_STORE_STATUS_INDEX_SQL};
 ${MEETING_PUBLICATION_HEALTH_TABLE_SQL};
-PRAGMA user_version = 4;
+${MEETING_GOOGLE_DRAFT_TABLE_SQL};
+PRAGMA user_version = 5;
 `;
 
 export class MeetingPublicationStoreSchemaContractError extends Error {
@@ -158,7 +166,24 @@ export const validateMeetingPublicationStoreSchema = (
 					throw new MeetingPublicationStoreSchemaContractError("schema_invalid");
 				}
 			}
-			const objects = version >= 4 ? allObjects.filter((row) => row.tbl_name !== "provider_health") : allObjects;
+			if (version >= 5) {
+				const drafts = allObjects.filter((row) => row.tbl_name === "google_doc_drafts");
+				if (
+					drafts.length !== 2 ||
+					compactSql(String(drafts.find((row) => row.name === "google_doc_drafts")?.sql ?? "")) !==
+						compactSql(MEETING_GOOGLE_DRAFT_TABLE_SQL) ||
+					!drafts.some(
+						(row) =>
+							row.name === "sqlite_autoindex_google_doc_drafts_1" && row.type === "index" && row.sql === null,
+					)
+				)
+					throw new MeetingPublicationStoreSchemaContractError("schema_invalid");
+			}
+			const objects = allObjects.filter(
+				(row) =>
+					!(version >= 4 && row.tbl_name === "provider_health") &&
+					!(version >= 5 && row.tbl_name === "google_doc_drafts"),
+			);
 			if (version === 0) {
 				if (!options.allowUninitialized || objects.length !== 0) {
 					throw new MeetingPublicationStoreSchemaContractError("schema_invalid");

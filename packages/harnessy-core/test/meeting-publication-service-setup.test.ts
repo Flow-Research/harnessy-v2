@@ -66,7 +66,7 @@ it("creates only an empty queue and pinned service trust using the existing publ
 				for (const table of ["consumed_authorizations", "active_lease", "revocations"])
 					expect(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()?.count).toBe(0);
 			} else {
-				expect(validateMeetingPublicationStoreSchema(db).version).toBe(4);
+				expect(validateMeetingPublicationStoreSchema(db).version).toBe(5);
 				expect(db.prepare("SELECT COUNT(*) AS count FROM publication_items").get()?.count).toBe(0);
 			}
 		} finally {

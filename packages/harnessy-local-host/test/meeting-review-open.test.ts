@@ -54,6 +54,43 @@ describe("harnessy-meeting-review-open", () => {
 		expect((await done).status).toBe(0);
 		expect(messages).toEqual([{ kind: "review_opened" }]);
 	});
+	it("returns a one-time URL only over IPC for same-tab navigation and never opens a browser", async () => {
+		const port = await listen();
+		const f = fixture(port);
+		const { done, messages } = f.start(["--state-path", f.state, "--portal-origin", "http://127.0.0.1:8790"], {
+			ipc: true,
+			waitMs: 20,
+		});
+		const result = await done;
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout).toBe("");
+		expect(messages).toHaveLength(1);
+		const message = messages[0] as { kind: string; url: string };
+		expect(message.kind).toBe("review_opened");
+		const url = new URL(message.url);
+		expect(url.origin).toBe(`http://127.0.0.1:${port}`);
+		expect(url.pathname).toBe("/exchange");
+		expect(url.searchParams.get("code")).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+		expect(url.searchParams.get("portal")).toBe("http://127.0.0.1:8790");
+		expect(message.url).not.toContain(token);
+		expect(existsSync(join(f.state, "../opened.json"))).toBe(false);
+		expect(f.leftovers()).toEqual([]);
+	});
+	it.each([
+		"https://evil.example",
+		"http://127.0.0.1:8790/",
+		"http://127.0.0.1:8790@evil.example",
+		"http://127.0.0.1:99999",
+	])("refuses an unsafe portal return origin %s", async (portal) => {
+		const f = fixture(await listen());
+		const { done, messages } = f.start(["--state-path", f.state, "--portal-origin", portal], {
+			ipc: true,
+			waitMs: 20,
+		});
+		expect((await done).status).not.toBe(0);
+		expect(messages).toEqual([]);
+	});
+
 	it("gives the opener only an owner-only page path that carries a single-use code", async () => {
 		const port = await listen();
 		const f = fixture(port);
@@ -102,6 +139,28 @@ describe("harnessy-meeting-review-open", () => {
 		expect(
 			isCommunityCompatibilityWriterCommand("/opt/jarvis/bin/jarvis community briefing review open --port 8872"),
 		).toBe(true);
+	});
+
+	it("waits for a genuine identity proof delayed beyond three seconds before preparing navigation", async () => {
+		const port = await listen({ delayMs: 3_200 });
+		const f = fixture(port);
+		const { done, messages } = f.start(["--state-path", f.state, "--portal-origin", "http://127.0.0.1:8790"], {
+			ipc: true,
+			waitMs: 20,
+		});
+		const result = await done;
+		expect(result.status, result.stderr).toBe(0);
+		expect(messages).toHaveLength(1);
+		expect((messages[0] as { url: string }).url).toContain(`http://127.0.0.1:${port}/exchange?code=`);
+		expect(result.stdout).toBe("");
+		expect(existsSync(f.opened)).toBe(false);
+		expect(f.leftovers()).toEqual([]);
+	});
+
+	it("still rejects a delayed identity response with the wrong proof", async () => {
+		await fixture(
+			await listen({ delayMs: 3_200, proofToken: "someone-else-entirely-0123456789-abcdefghij" }),
+		).expectRefused();
 	});
 
 	it("refuses a listener that cannot prove it holds the review token", async () => {

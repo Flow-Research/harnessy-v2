@@ -9,6 +9,7 @@ import {
 	MeetingPublicationDiscordCheckpoint,
 	MeetingPublicationGoogle,
 	MeetingPublicationGoogleCheckpoint,
+	type MeetingPublicationGoogleRequest,
 	MeetingPublicationProviderError,
 	type MeetingPublicationWriteGrant,
 	validateMeetingPublicationWriteGrant,
@@ -29,6 +30,7 @@ import {
 } from "../plugins/discord-meeting-publication.ts";
 import {
 	GOOGLE_COMMUNITY_UPSERT_TOOL,
+	GOOGLE_MEETING_DRAFT_UPSERT_TOOL,
 	GOOGLE_MEETING_INTEGRATION,
 	GOOGLE_MEETING_PREFLIGHT_TOOL,
 	GOOGLE_MEETING_UPSERT_TOOL,
@@ -48,7 +50,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const requireProviderGrant = (
 	grant: MeetingPublicationWriteGrant,
-	operation: "provider_google" | "provider_discord",
+	operation: "provider_google" | "provider_google_draft" | "provider_discord",
 	stage: "google" | "discord",
 	expectedItem: { readonly itemId: string; readonly sourceHash: string },
 ) =>
@@ -232,6 +234,33 @@ export const engineMeetingPublicationGoogleLayer = (
 			connection: binding.connection,
 			tool,
 		});
+	const upsert = (
+		request: MeetingPublicationGoogleRequest,
+		grant: MeetingPublicationWriteGrant,
+		operation: "provider_google" | "provider_google_draft",
+	) => {
+		const guard = requireProviderGrant(grant, operation, "google", request);
+		return guard.pipe(
+			Effect.flatMap(() =>
+				withMeetingPublicationMutationGuard(
+					executeApproved(
+						binding.handle,
+						"google",
+						address(
+							operation === "provider_google_draft"
+								? GOOGLE_MEETING_DRAFT_UPSERT_TOOL
+								: GOOGLE_MEETING_UPSERT_TOOL,
+						),
+						{ ...request, expectedOwnerEmail: binding.expectedOwnerEmail, folderPath: binding.folderPath },
+						{ itemId: request.itemId, sourceHash: request.sourceHash },
+						GoogleCheckpoint,
+					),
+					guard,
+				),
+			),
+			Effect.map((checkpoint) => new MeetingPublicationGoogleCheckpoint(checkpoint)),
+		);
+	};
 	return Layer.succeed(
 		MeetingPublicationGoogle,
 		MeetingPublicationGoogle.of({
@@ -287,33 +316,8 @@ export const engineMeetingPublicationGoogleLayer = (
 					),
 				),
 			),
-			upsert: (request, grant) => {
-				const guard = requireProviderGrant(grant, "provider_google", "google", {
-					itemId: request.itemId,
-					sourceHash: request.sourceHash,
-				});
-				const args = {
-					...request,
-					expectedOwnerEmail: binding.expectedOwnerEmail,
-					folderPath: binding.folderPath,
-				};
-				return guard.pipe(
-					Effect.flatMap(() =>
-						withMeetingPublicationMutationGuard(
-							executeApproved(
-								binding.handle,
-								"google",
-								address(GOOGLE_MEETING_UPSERT_TOOL),
-								args,
-								{ itemId: request.itemId, sourceHash: request.sourceHash },
-								GoogleCheckpoint,
-							),
-							guard,
-						),
-					),
-					Effect.map((checkpoint) => new MeetingPublicationGoogleCheckpoint(checkpoint)),
-				);
-			},
+			upsert: (request, grant) => upsert(request, grant, "provider_google"),
+			upsertDraft: (request, grant) => upsert(request, grant, "provider_google_draft"),
 			close: Effect.void,
 		}),
 	);

@@ -121,6 +121,17 @@ def _handler_class(
             if parsed.path == "/identity":
                 self._write_identity(query.get("nonce", [""])[0])
                 return
+            portal_values = query.get("portal", [])
+            if portal_values and (
+                len(portal_values) != 1
+                or not _valid_portal_origin(portal_values[0])
+                or not query.get("code")
+            ):
+                self._write(
+                    HTTPStatus.BAD_REQUEST,
+                    _message_page("Bad request", "Invalid portal return location."),
+                )
+                return
             supplied = query.get("token", [""])[0]
             code = query.get("code", [""])[0]
             # Redeem a supplied code first, so it is single-use even when a valid
@@ -356,8 +367,33 @@ def _handler_class(
             headers: dict[str, str] | None = None,
             referrer: str = "no-referrer",
         ) -> None:
+            portal = None
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            if self._cookie_token_valid():
+                cookies = SimpleCookie()
+                try:
+                    cookies.load(self.headers.get("Cookie", ""))
+                    saved = cookies.get("hsy_community_portal")
+                    portal = saved.value if saved else None
+                except CookieError:
+                    pass
+            if headers and "Set-Cookie" in headers and query.get("portal"):
+                portal = query["portal"][0]
+            if portal and _valid_portal_origin(portal):
+                body = body.replace(
+                    "<body>",
+                    '<body><nav class="back-link" aria-label="Breadcrumb"><a href="'
+                    + html.escape(portal, quote=True)
+                    + '/#/reviews/community">Harnessy</a> / <a href="/">Community review</a></nav>',
+                    1,
+                )
             encoded = body.encode("utf-8")
             self.send_response(status)
+            if portal and _valid_portal_origin(portal) and headers and "Set-Cookie" in headers:
+                self.send_header(
+                    "Set-Cookie",
+                    f"hsy_community_portal={portal}; HttpOnly; SameSite=Strict; Path=/",
+                )
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(encoded)))
             self.send_header("Cache-Control", "no-store")
@@ -917,6 +953,16 @@ def _message_page(title: str, message: str) -> str:
         <h1>{html.escape(title)}</h1><p>{message}</p>
         <a class="button primary-button" href="/">Return to inbox</a></section>""",
     )
+
+
+def _valid_portal_origin(value: str) -> bool:
+    if not re.fullmatch(r"http://(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]{0,4}", value):
+        return False
+    try:
+        port = urllib.parse.urlsplit(value).port
+        return port is not None and 1 <= port <= 65535
+    except ValueError:
+        return False
 
 
 def _page(title: str, body: str, *, refresh: int | None = None) -> str:

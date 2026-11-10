@@ -84,7 +84,7 @@ it("refreshes legacy saved catalogs without replacing connections, credentials, 
 			);
 			// Recreate the installed catalog before this source addition. These are
 			// fixture-only SQL writes; no production database is opened by this test.
-			await sql.execute("DELETE FROM tool WHERE name = 'community_upsert'");
+			await sql.execute("DELETE FROM tool WHERE name IN ('community_upsert', 'draft_upsert')");
 			await sql.execute("UPDATE connection SET tools_synced_at = CAST('1700000000000' AS BLOB)");
 			const beforeConnections = (await sql.execute("SELECT * FROM connection ORDER BY name")).rows;
 			const beforeTools = (
@@ -145,6 +145,13 @@ it("refreshes legacy saved catalogs without replacing connections, credentials, 
 									integration,
 									connection: name,
 								});
+								if (integration === GOOGLE_MEETING_INTEGRATION)
+									expect(tools.find((tool) => tool.name === "draft_upsert")).toMatchObject({
+										address: `tools.${integration}.user.${name}.draft_upsert`,
+										owner: "user",
+										integration,
+										connection: name,
+									});
 							}
 						}
 					}),
@@ -162,11 +169,12 @@ it("refreshes legacy saved catalogs without replacing connections, credentials, 
 			expect(
 				(
 					await sql.execute(
-						"SELECT integration, connection, name, input_schema, output_schema, annotations FROM tool WHERE name != 'community_upsert' ORDER BY integration, name",
+						"SELECT integration, connection, name, input_schema, output_schema, annotations FROM tool WHERE name NOT IN ('community_upsert', 'draft_upsert') ORDER BY integration, name",
 					)
 				).rows,
 			).toEqual(beforeTools);
 			expect((await sql.execute("SELECT * FROM tool WHERE name = 'community_upsert'")).rows).toHaveLength(2);
+			expect((await sql.execute("SELECT * FROM tool WHERE name = 'draft_upsert'")).rows).toHaveLength(1);
 			expect((await sql.execute("SELECT * FROM tool_policy ORDER BY row_id")).rows).toEqual(beforePolicies);
 			expect(credentialBytes()).toEqual(beforeCredentials);
 			expect(requests).toBe(0);

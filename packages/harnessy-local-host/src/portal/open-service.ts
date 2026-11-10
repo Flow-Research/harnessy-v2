@@ -1,9 +1,11 @@
-/** Launch the installed sign-in helpers without reading or relaying their credentials. */
+/** Prepare one-time review navigation; owner tokens remain inside installed helpers. */
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readCommunityStateRoot, readMeetingPublicationConfig } from "@harnessy/core/read-model";
+
+import { safeReviewHandoffHref } from "./app/lib/safe-href.ts";
 
 import type { PortalHandoffService } from "./handoff.ts";
 
@@ -18,7 +20,7 @@ export interface PortalServiceOpenerOptions {
 /** Configured paths are read on each click. The browser cannot choose paths, arguments or executables. */
 export const createPortalServiceOpener =
 	(options: PortalServiceOpenerOptions) =>
-	async (service: PortalHandoffService): Promise<void> => {
+	async (service: PortalHandoffService, portalOrigin?: string): Promise<string | undefined> => {
 		const configPath = join(options.homeRoot, ".jarvis", "config.yaml");
 		let args: string[];
 		if (service === "cockpit") {
@@ -48,9 +50,10 @@ export const createPortalServiceOpener =
 				"--state-path",
 				statePath,
 				...(service === "meeting-google-reconnect" ? ["--reconnect-google"] : []),
+				...(portalOrigin === undefined ? [] : ["--portal-origin", portalOrigin]),
 			];
 		}
-		await new Promise<void>((resolveOpen, rejectOpen) => {
+		return await new Promise<string | undefined>((resolveOpen, rejectOpen) => {
 			const child = spawn(options.nodePath, args, {
 				cwd: options.workspaceRoot ?? options.homeRoot,
 				env: options.env,
@@ -63,7 +66,7 @@ export const createPortalServiceOpener =
 					child.kill("SIGTERM");
 					rejectOpen(new Error("service_open_timeout"));
 				},
-				service === "cockpit" ? 45_000 : 10_000,
+				service === "cockpit" ? 45_000 : 20_000,
 			);
 			child.once("error", () => {
 				clearTimeout(timer);
@@ -71,7 +74,7 @@ export const createPortalServiceOpener =
 			});
 			child.once("exit", (code) => {
 				clearTimeout(timer);
-				if (service === "cockpit" && code === 0) resolveOpen();
+				if (service === "cockpit" && code === 0) resolveOpen(undefined);
 				else rejectOpen(new Error("service_open_failed"));
 			});
 			child.once("message", (message: unknown) => {
@@ -85,7 +88,16 @@ export const createPortalServiceOpener =
 				clearTimeout(timer);
 				// The helper keeps its exchange file alive until redemption or its bounded cleanup deadline.
 				child.disconnect();
-				resolveOpen();
+				if ("url" in message && typeof message.url === "string") {
+					if (
+						safeReviewHandoffHref(message.url) === undefined ||
+						new URL(message.url).searchParams.get("portal") !== portalOrigin
+					) {
+						rejectOpen(new Error("service_open_failed"));
+						return;
+					}
+					resolveOpen(message.url);
+				} else resolveOpen(undefined);
 			});
 		});
 	};

@@ -97,6 +97,7 @@ const publishRendezvous = (stateRoot: string, origin: string, port: number) => {
 };
 
 interface ReviewSession {
+	readonly portalOrigin?: string;
 	readonly csrf: string;
 	readonly createdAt: number;
 	readonly expiresAt: number;
@@ -487,6 +488,14 @@ const setSecurityHeaders = (response: ServerResponse, referrerPolicy: ReviewRefe
 	response.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 };
 
+const portalReturnOrigins = new WeakMap<ServerResponse, string>();
+const validPortalOrigin = (value: string) => {
+	return (
+		/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[1-9][0-9]{0,4}$/u.test(value) &&
+		URL.canParse(value) &&
+		new URL(value).port !== ""
+	);
+};
 const send = (
 	response: ServerResponse,
 	status: number,
@@ -495,7 +504,15 @@ const send = (
 	referrerPolicy: ReviewReferrerPolicy = "no-referrer",
 ) => {
 	if (response.headersSent || response.destroyed) return;
-	const encoded = Buffer.from(body, "utf8");
+	const portalOrigin = portalReturnOrigins.get(response);
+	const rendered =
+		portalOrigin === undefined
+			? body
+			: body.replace(
+					'<a href="/">Harnessy / Meetings</a>',
+					`<a href="${escapeHtml(portalOrigin)}/#/reviews/meetings">Harnessy</a> / <a href="/">Meetings</a>`,
+				);
+	const encoded = Buffer.from(rendered, "utf8");
 	setSecurityHeaders(response, referrerPolicy);
 	response.statusCode = status;
 	response.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -691,13 +708,19 @@ const renderDispatchResult = (result: {
 const renderInbox = (
 	items: ReadonlyArray<MeetingPublicationItem>,
 	csrf: string,
-	nextMeeting: { readonly itemId: string; readonly title: string | null } | null,
+	nextMeeting: {
+		readonly itemId: string;
+		readonly title: string | null;
+		readonly summary: string | null;
+		readonly purpose: string | null;
+	} | null,
 	mode: MeetingPublicationReviewMode,
 	dispatch: MeetingPublicationReviewDispatch | undefined,
 	health: ReadonlyArray<MeetingProviderHealth>,
 	now: number,
 	reconnectAvailable = false,
 	project = "",
+	generateGoogleDocAvailable = false,
 ) => {
 	const reviewItems = items.filter((item) => item.status === "pending_review");
 	const attentionItems = items.filter(
@@ -785,7 +808,24 @@ ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} wait
 <h2>${nextMeeting?.itemId === item.itemId ? (nextMeeting.title === null ? "Meeting title unavailable" : safeReviewText(nextMeeting.title)) : `Meeting · ${escapeHtml(item.meetingDate)}`}</h2><div class="meta-row">
 <span class="meta-pill">${escapeHtml(reviewDate(item.meetingDate))}</span><span class="meta-pill">${safeReviewText(statusLabel(project))}</span>
 <span class="status-pill status-${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></div>
-<a class="button primary-button" href="/item/${item.itemId}">Review meeting</a></section>`,
+${
+	nextMeeting?.itemId === item.itemId && nextMeeting.summary !== null
+		? (
+				() => {
+					const text = nextMeeting.summary.replace(/\s+/gu, " ").trim();
+					const points = Array.from(text);
+					const preview = points.slice(0, 600).join("");
+					const fields = `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="item_id" value="${item.itemId}"><input type="hidden" name="source_hash" value="${item.sourceHash}">`;
+					return `<div class="meeting-preview"><h3>Executive summary preview</h3><p>${preview.length === 0 ? "No executive summary is available. Open the full note to review it." : safeReviewText(preview) + (points.length > 600 ? "…" : "")}</p>${points.length > 600 ? '<p class="editor-help">Showing the first 600 characters of the saved summary.</p>' : ""}</div>
+<div class="actions"><a class="button primary-button" href="/item/${item.itemId}">Review meeting</a>${mode === "full" && generateGoogleDocAvailable ? `<form method="post" action="/generate-google-doc/${item.itemId}">${fields}<button type="submit">Generate Google Doc</button></form>` : ""}</div>
+${mode === "full" && generateGoogleDocAvailable ? '<p class="editor-help">The Google Doc contains the full saved meeting note, not just this preview. Generating it does not approve the meeting or send anything to Discord.</p>' : ""}
+<details class="quick-accept"><summary>Accept &amp; publish…</summary><p>Accept the full saved meeting note for publication? The summary above is only a preview. This approves the exact saved version for the publication worker to send to Google Docs and Discord.</p><p><strong>Discord purpose:</strong> ${safeReviewText(nextMeeting.purpose ?? "")}</p><form method="post" action="/approve/${item.itemId}">${fields}<input type="hidden" name="purpose" value="${escapeHtml(nextMeeting.purpose ?? "")}"><button class="approve" type="submit">Confirm acceptance &amp; publish</button></form></details>
+<details class="quick-reject"><summary>Reject meeting…</summary><p>Reject this saved version of the meeting note? It will leave the review queue without approval or publication.</p><form method="post" action="/reject/${item.itemId}">${fields}<button class="reject" type="submit">Confirm rejection</button></form></details>
+<p class="editor-help">Use Review meeting if you need to read or edit the full note before deciding.</p>`;
+				}
+			)()
+		: `<p class="editor-help">The saved note changed or could not be read. Open the meeting to check it before taking action.</p><a class="button primary-button" href="/item/${item.itemId}">Review meeting</a>`
+}</section>`,
 					)
 					.join("");
 	const otherMeetings =
@@ -827,17 +867,31 @@ ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} wait
 	);
 };
 
+const safeGoogleDocUrl = (value: string | null): string | null =>
+	value !== null && /^https:\/\/docs\.google\.com\/document\/d\/[A-Za-z0-9_-]+(?:\/(?:edit|view))?$/u.test(value)
+		? value
+		: null;
+
 const renderItem = (
-	item: { readonly itemId: string; readonly sourceHash: string; readonly status: string },
+	item: MeetingPublicationItem,
 	note: { readonly title: string; readonly meetingDate: string; readonly summary: string; readonly markdown: string },
 	purpose: string,
 	csrf: string,
 	mode: MeetingPublicationReviewMode,
 	project: string,
+	generateGoogleDocAvailable = false,
 ) => {
 	const hidden = `<input type="hidden" name="csrf" value="${csrf}">
 <input type="hidden" name="item_id" value="${item.itemId}">
 <input type="hidden" name="source_hash" value="${item.sourceHash}">`;
+	const documentAction =
+		mode === "full" && item.status === "pending_review" && generateGoogleDocAvailable
+			? `<section class="card action-card"><p class="section-label">Google Docs</p><h2>Create a document</h2>
+<p class="lede">Generate a Google Doc from the full saved meeting note. This does not approve the meeting or send anything to Discord.</p>
+<p class="editor-help">If you edit the note below, use Update meeting note before generating the document. The document uses the configured Google account and folder permissions.</p>
+<p class="editor-help">Generating the same saved version again returns its existing document. This action does not add public access.</p>
+<form class="actions" method="post" action="/generate-google-doc/${item.itemId}">${hidden}<button type="submit">Generate Google Doc</button></form></section>`
+			: "";
 	const noteEditor =
 		mode === "full" && item.status === "pending_review"
 			? `<div class="meeting-editor"><label for="meeting-markdown">Edit meeting note Markdown</label>
@@ -870,7 +924,7 @@ ${item.status === "pending_review" ? `<form method="post" action="/reject/${item
 <div class="review-grid"><main class="card note-card"><div class="section-heading">
 <div><p class="section-label">Canonical source</p><h2>Meeting note</h2></div><span class="local-badge">Local Markdown</span></div>
 <article class="canonical-markdown markdown-body">${renderMeetingPublicationReviewNote(note.markdown)}</article>${noteEditor}</main>
-<aside class="review-sidebar"><section class="card preview-card"><div class="section-heading">
+<aside class="review-sidebar">${documentAction}<section class="card preview-card"><div class="section-heading">
 <div><p class="section-label">Destination preview</p><h2>Discord</h2></div><span class="summary-badge">Purpose only</span></div>
 <div class="discord-shell"><div class="discord-avatar" aria-hidden="true">M</div><div class="discord-message">
 <div class="discord-author">Meeting publication <span>PREVIEW</span></div>
@@ -1200,10 +1254,14 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						// launcher sends only a single-use `?code=`.
 						const kind = url.searchParams.has("code") ? "code" : "token";
 						const next = url.searchParams.getAll("next");
+						const portal = url.searchParams.getAll("portal");
 						if (
 							!validPercentEncoding(url.search) ||
-							[...new Set(url.searchParams.keys())].some((key) => key !== kind && key !== "next") ||
-							(next.length > 0 && (kind !== "code" || next.length !== 1 || next[0] !== "google-reconnect"))
+							[...new Set(url.searchParams.keys())].some(
+								(key) => key !== kind && key !== "next" && key !== "portal",
+							) ||
+							(next.length > 0 && (kind !== "code" || next.length !== 1 || next[0] !== "google-reconnect")) ||
+							(portal.length > 0 && (kind !== "code" || portal.length !== 1 || !validPortalOrigin(portal[0]!)))
 						) {
 							throw new ReviewHttpError(400, "query");
 						}
@@ -1245,6 +1303,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						}
 						if (csrf.length === 0) throw new ReviewHttpError(500, "random");
 						sessions.set(sessionId, {
+							...(portal[0] === undefined ? {} : { portalOrigin: portal[0] }),
 							csrf,
 							createdAt: current,
 							expiresAt: current + config.reviewSessionSeconds * 1_000,
@@ -1281,6 +1340,8 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					}
 					const authenticated = await sessionFor(request);
 					if (authenticated === null) throw new ReviewHttpError(401, "session");
+					if (authenticated.session.portalOrigin !== undefined)
+						portalReturnOrigins.set(response, authenticated.session.portalOrigin);
 
 					if (request.method === "GET" || request.method === "HEAD") {
 						if (url.search.length > 0) throw new ReviewHttpError(400, "query");
@@ -1331,6 +1392,14 @@ export class MeetingPublicationReviewServer extends Context.Service<
 									? null
 									: {
 											itemId: next.itemId,
+											summary:
+												note !== null && note.itemId === next.itemId && note.sourceHash === next.sourceHash
+													? note.summary
+													: null,
+											purpose:
+												note !== null && note.itemId === next.itemId && note.sourceHash === next.sourceHash
+													? (next.discordPurposeOverride ?? meetingPublicationDefaultPurpose(note))
+													: null,
 											title:
 												note !== null && note.itemId === next.itemId && note.sourceHash === next.sourceHash
 													? note.title
@@ -1349,6 +1418,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 									await now(),
 									reconnectAvailable,
 									config.project ?? "Local",
+									publication.generateGoogleDoc !== undefined,
 								),
 								head,
 								"same-origin",
@@ -1365,7 +1435,15 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						send(
 							response,
 							200,
-							renderItem(item, note, purpose, authenticated.session.csrf, mode, config.project ?? "Local"),
+							renderItem(
+								item,
+								note,
+								purpose,
+								authenticated.session.csrf,
+								mode,
+								config.project ?? "Local",
+								publication.generateGoogleDoc !== undefined,
+							),
 							head,
 							"same-origin",
 						);
@@ -1375,6 +1453,65 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					if (exactHeader(request, "origin") !== origin) throw new ReviewHttpError(403, "origin");
 					const contentType = exactHeader(request, "content-type")?.split(";", 1)[0]?.trim().toLowerCase();
 					if (contentType !== formContentType) throw new ReviewHttpError(415, "content-type");
+					const documentAction = /^\/generate-google-doc\/([a-f0-9]{24})$/u.exec(url.pathname);
+					if (documentAction !== null) {
+						const generate = publication.generateGoogleDoc;
+						if (mode !== "full" || generate === undefined || url.search.length > 0)
+							throw new ReviewHttpError(404, "route");
+						const itemId = documentAction[1]!;
+						const result = await runMutation(async () => {
+							const form = parseForm(await readBody(request, config.reviewMaxBodyBytes), [
+								"csrf",
+								"item_id",
+								"source_hash",
+							]);
+							if (!secureEqual(form.csrf ?? "", authenticated.session.csrf))
+								throw new ReviewHttpError(403, "csrf");
+							if (form.item_id !== itemId || !hashPattern.test(form.source_hash ?? ""))
+								throw new ReviewHttpError(409, "item");
+							const item = await runRequestEffect(store.get(itemId));
+							if (item === null) throw new ReviewHttpError(404, "item");
+							const note = await runRequestEffect(source.read(item.notePath)).catch(() => null);
+							if (
+								item.status !== "pending_review" ||
+								item.sourceHash !== form.source_hash ||
+								note?.itemId !== itemId ||
+								note?.sourceHash !== form.source_hash
+							)
+								throw new ReviewHttpError(409, "changed");
+							return runRequestEffect(generate(itemId, form.source_hash)).catch((cause: unknown) => {
+								if (
+									cause instanceof MeetingPublicationTransitionError ||
+									cause instanceof MeetingPublicationSourceError
+								)
+									throw new ReviewHttpError(409, "changed");
+								console.error(
+									`meeting-review action=generate-google-doc outcome=unavailable code=${actionFailureLogCode(cause)}`,
+								);
+								throw new ReviewHttpError(503, "document_unavailable", {
+									heading: "Google Doc could not be confirmed",
+									detail:
+										"The meeting was not approved and nothing was sent to Discord. Check the Google connection. If delivery is uncertain, automatic retries are paused: check the configured Google Drive Drafts folder and request recovery before trying again.",
+								});
+							});
+						});
+						const docUrl = safeGoogleDocUrl(result.docUrl);
+						if (docUrl === null)
+							throw new ReviewHttpError(503, "document_link", {
+								heading: "Google Doc link unavailable",
+								detail:
+									"A document result was returned, but its link could not be verified. The meeting was not approved and nothing was sent to Discord. Return to the meeting to check its saved document status.",
+							});
+						send(
+							response,
+							200,
+							page(
+								"Google Doc ready",
+								`<section class="card message-card"><h1>Google Doc ready</h1><p>The document contains the full saved meeting note. The meeting remains unapproved. Nothing was sent to Discord.</p><p><a class="button primary-button" href="${escapeHtml(docUrl)}" target="_blank" rel="noopener noreferrer">Open Google Doc</a></p><a href="/item/${itemId}">Back to this meeting</a></section>`,
+							),
+						);
+						return;
+					}
 					if (url.pathname.startsWith("/google-reconnect/")) {
 						if (!reconnectAvailable || url.search.length > 0) throw new ReviewHttpError(404, "reconnect");
 						await runMutation(async () => {

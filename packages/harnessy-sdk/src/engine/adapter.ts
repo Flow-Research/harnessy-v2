@@ -37,7 +37,7 @@ const isMeetingMutationAddress = (address: string): boolean => {
 		(parts[1] === "google-meeting-publication" || parts[1] === "discord-meeting-publication") &&
 		(parts[2] === "org" || parts[2] === "user") &&
 		parts[3] !== "" &&
-		parts[4] === "upsert"
+		(parts[4] === "upsert" || (parts[1] === "google-meeting-publication" && parts[4] === "draft_upsert"))
 	);
 };
 

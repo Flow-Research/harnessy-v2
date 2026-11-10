@@ -18,7 +18,9 @@ afterEach(async () => {
 	cleanupPortalFixtures();
 });
 
-const start = async (openService?: (service: (typeof PORTAL_HANDOFF_SERVICES)[number]) => Promise<void>) => {
+const start = async (
+	openService?: (service: (typeof PORTAL_HANDOFF_SERVICES)[number]) => Promise<void> | Promise<string | undefined>,
+) => {
 	const token = newPortalSecret();
 	let now = Date.now();
 	const server = await startPortalServer({
@@ -81,6 +83,27 @@ describe("authenticated portal handoffs", () => {
 		}
 		expect(opened).toEqual(PORTAL_HANDOFF_SERVICES);
 		expect(handoffService("harnessy:open:sh")).toBeUndefined();
+	});
+
+	it("returns the prepared single-use URL only to the authenticated page", async () => {
+		const url = `http://127.0.0.1:8770/exchange?code=${"a".repeat(43)}&portal=http%3A%2F%2F127.0.0.1%3A8790`;
+		const h = await start(async () => url);
+		const response = await rawRequest(h.server.port, {
+			method: "POST",
+			path: "/v1/open/meeting-review",
+			headers: h.headers,
+			body: "{}",
+		});
+		expect(response.json).toEqual({ opened: true, url });
+		expect(response.headers["cache-control"]).toBe("no-store");
+	});
+	it("allows a top-level return from an owner page but keeps cross-origin API requests blocked", async () => {
+		const h = await start(async () => undefined);
+		const headers = { "Sec-Fetch-Site": "same-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" };
+		const returned = await rawRequest(h.server.port, { path: "/", headers });
+		// No page assets in this fixture: routing reaches 404, rather than the cross-site 403 gate.
+		expect(returned.status).toBe(404);
+		expect((await rawRequest(h.server.port, { path: "/v1/inbox", headers })).status).toBe(403);
 	});
 
 	it("refuses absent, invalid, expired, cookie and install-proof credentials before launching", async () => {
