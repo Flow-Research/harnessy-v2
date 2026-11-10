@@ -83,17 +83,22 @@ def service(tmp_path: Path) -> Iterator[CommunityBriefingService]:
 
 
 def wait_finished(service: CommunityBriefingService) -> None:
-    """Wait for the actual background worker's terminal status, not just its AI call."""
+    """Wait for the actual background worker to exit, not just its AI call."""
 
+    # The worker marks the job completed inside the artifact commit and then
+    # appends the revision log, and revision_status() reports "failed" while a
+    # commit is in progress. Polling either can return early on a slow runner,
+    # so join the worker thread itself.
+    deadline = time.monotonic() + 5
+    for thread in threading.enumerate():
+        if thread.name.startswith(("briefing-revision-", "briefing-regeneration-")):
+            thread.join(max(0.0, deadline - time.monotonic()))
+            if thread.is_alive():
+                pytest.fail("background operation did not finish")
     item = service.store.for_week(date(2026, 8, 24))
     assert item is not None
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        status = service.revision_status(item)
-        if status is None or status["state"] != "running":
-            return
-        time.sleep(0.01)
-    pytest.fail("background operation did not finish")
+    job = service._read_job(item)
+    assert not job or job["state"] != "running"
 
 
 @pytest.mark.parametrize("operation", ["revise", "regenerate"])
