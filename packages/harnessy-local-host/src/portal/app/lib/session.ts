@@ -216,21 +216,42 @@ export class SessionClient {
 		return this.#request("/v1/inbox/action", "POST", JSON.stringify({ action, items }));
 	}
 
-	async addLink(title: string, url: string): Promise<ApiResult> {
-		return this.#request("/v1/links/action", "POST", JSON.stringify({ action: "add", title, url }));
+	/** Save a link at the end of folder `parentId` (`null`: the top level). */
+	async addLink(title: string, url: string, parentId: string | null = null): Promise<ApiResult> {
+		return this.#links({ action: "add", title, url, parentId });
 	}
 
+	async addLinkFolder(name: string, parentId: string | null): Promise<ApiResult> {
+		return this.#links({ action: "addFolder", name, parentId });
+	}
+
+	/** Rename a saved link or folder. */
+	async renameLinkItem(id: string, name: string): Promise<ApiResult> {
+		return this.#links({ action: "rename", id, name });
+	}
+
+	/** Move a saved link or folder into `parentId` at sibling `index`. */
+	async moveLinkItem(id: string, parentId: string | null, index: number): Promise<ApiResult> {
+		return this.#links({ action: "move", id, parentId, index });
+	}
+
+	/** Remove a saved link, or a folder with everything inside it. */
 	async removeLink(id: string): Promise<ApiResult> {
-		return this.#request("/v1/links/action", "POST", JSON.stringify({ action: "remove", id }));
+		return this.#links({ action: "remove", id });
 	}
 
-	async reorderLinks(ids: string[]): Promise<ApiResult> {
-		return this.#request("/v1/links/action", "POST", JSON.stringify({ action: "reorder", ids }));
+	/** Put the `kind` children of `parentId` in `ids` order. */
+	async reorderLinks(kind: "links" | "folders", parentId: string | null, ids: string[]): Promise<ApiResult> {
+		return this.#links({ action: "reorder", kind, parentId, ids });
 	}
 
 	/** Ask the portal to open saved file link `id` on its own computer. */
 	openLinkFile(id: string): Promise<ApiResult> {
-		return this.#request("/v1/links/action", "POST", JSON.stringify({ action: "open", id }));
+		return this.#links({ action: "open", id });
+	}
+
+	#links(body: Record<string, unknown>): Promise<ApiResult> {
+		return this.#request("/v1/links/action", "POST", JSON.stringify(body));
 	}
 
 	async terminalAction(body: Record<string, unknown>): Promise<ApiResult> {
@@ -270,7 +291,12 @@ export class SessionClient {
 							"Enter a full address, such as https://…, mailto:… or vscode://…, or a file path that starts with / or ~/. Addresses that run code (javascript:, data:) are refused.",
 						invalid_title: "Use a name of up to 120 characters.",
 						links_full: "You have 200 links. Remove one before adding another.",
-						link_missing: "That link was already removed. Refresh the list.",
+						link_missing: "That link or folder was already removed. Refresh the list.",
+						invalid_name: "Use a folder name of 1 to 80 characters.",
+						folders_full: "You have 100 folders. Remove one before adding another.",
+						folder_missing: "That folder was removed. Choose another folder.",
+						folder_too_deep: "Folders can be at most 6 levels deep. Choose a folder nearer the top.",
+						invalid_move: "A folder cannot move into itself or a folder inside it.",
 						links_changed: "Your links changed in another view. The list was refreshed; try again.",
 						file_missing: "That file is no longer at its saved path. Check the path, then add the link again.",
 						not_a_file: "That link is not a file. Refresh the list.",

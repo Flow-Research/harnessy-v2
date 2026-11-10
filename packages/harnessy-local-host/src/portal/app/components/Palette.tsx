@@ -15,7 +15,7 @@ import { COPY_GLYPH, HANDOFF_GLYPH } from "./actions.tsx";
 export interface PaletteEntry {
 	readonly id: string;
 	readonly title: string;
-	readonly group: "Screens" | "Inbox" | "Jobs" | "Tasks" | "Commands";
+	readonly group: "Screens" | "Actions" | "Inbox" | "Jobs" | "Tasks" | "Commands";
 	/** In-app route or loopback URL to follow. */
 	readonly target?: string;
 	/** Command to copy. */

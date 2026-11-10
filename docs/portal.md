@@ -43,8 +43,34 @@ It has nine screens. Use `g` and a letter to move between them, and `⌘K` (or
 - **Connections** (`g c`): each connection's status and owner, and **Tools &
   integrations**, which is the cockpit (`harnessy web`).
 - **Links** (`g n`): links and files that you save yourself, such as a Claude
-  artifact, a Google Doc, a `mailto:` or `vscode://` link, or a file path. Add
-  an address or a full file path (`/…` or `~/…`) and an optional name.
+  artifact, a Google Doc, a `mailto:` or `vscode://` link, or a file path. The
+  screen shows them as a tree, like the file explorer of a code editor: folders
+  first, then links. You can save links at the top level or in folders, and put
+  folders in folders.
+  - **New** (top right) opens a menu with **Link…** and **Folder…**. Each opens a
+    small dialog. A link needs an address or a full file path (`/…` or `~/…`)
+    and has an optional name. A folder needs a name. **Save in** selects the
+    folder; its default is the selected folder. The palette (⌘K) has **New
+    link** and **New link folder**. On the Links screen, `n` opens **New link**;
+    the key is set in `LINKS_KEYS` in `screens/Links.tsx`.
+  - Select a folder to open or close it and to make it the default for new
+    items. The chevron only opens or closes it. **Top level** selects the top
+    level. Each browser remembers which folders are open (in `localStorage`); if
+    the browser refuses storage, all folders start closed.
+  - Each row has a **⋯** menu (also on right-click or the context-menu key). A
+    folder menu has **New link here**, **New folder here**, **Rename**, **Move
+    to…** and **Remove**. A link menu has **Rename**, **Move to…** and
+    **Remove**. **Move to…** lists the top level and every folder. It disables a
+    folder that cannot take the item: the folder itself, a folder inside it, or
+    a folder where the result would be more than six levels deep.
+  - **Remove** asks once more ("Keep" / "Remove"). For a folder, the question
+    states how many folders and links inside it are also removed.
+  - To reorder, drag a row by its handle among the rows of the same folder, or
+    focus the handle and use the up and down arrow keys. Drop a row on a folder
+    to move it into that folder, or on **Top level** to move it out. On a
+    sibling folder, the middle of the row means "into" and its edges mean
+    "reorder". Keyboard users move items with **Move to…**. Screen readers hear
+    each move.
   - A web or app link opens in a new tab.
   - A file link opens in its default app on the computer that runs the portal.
     Browsers do not open `file:` links from the portal page, so the portal opens
@@ -55,16 +81,38 @@ It has nine screens. Use `g` and a letter to move between them, and `⌘K` (or
     `.command`, `.app`, `.sh`, `.pkg` and `.webloc`) and any file with an
     executable bit. The portal checks both the saved path and the file it
     points to. Open such a file from Finder if you trust it.
-  - A remote device can add web and app links, but not file links.
-  - To reorder, drag a link by its handle, or focus the handle and use the up
-    and down arrow keys.
-  - Remove asks once more before it deletes.
+  - A remote device can add web and app links and manage folders, but cannot
+    add file links.
 
   Links are kept in `links.json` in the portal's state folder
-  (`~/.harnessy/portal`), up to 200 of them. The portal accepts any URL with a
-  scheme, except `javascript:`, `data:`, `vbscript:` and `blob:`, which run code
-  in the page. It refuses a user name or password in a URL, and refuses `..` in a
-  file path.
+  (`~/.harnessy/portal`, mode `0600`, replaced atomically). The file is
+  version 2:
+
+  ```json
+  {"version":2,
+   "folders":[{"id":"<uuid>","name":"Work","parentId":null,"addedAt":"<ISO time>"}],
+   "links":[{"id":"<uuid>","title":"Tracker","url":"https://…","addedAt":"<ISO time>","parentId":"<folder uuid>"}]}
+  ```
+
+  `parentId` is a folder ID, or `null` for the top level. The order of the rows
+  in a folder is the order in each array. The limits are 200 links, 100
+  folders, folders at most six levels deep, link names of up to 120 characters
+  and folder names of 1 to 80 characters. Names must not hold control or format
+  characters. The portal still reads a version 1 file (a plain array of links)
+  and treats every link as top level; the next change saves version 2. The
+  portal refuses a file with an unknown shape, a duplicate ID, a missing
+  parent folder, a folder cycle or a folder that is too deep
+  (`invalid_links_state`). It accepts any URL with a scheme, except
+  `javascript:`, `data:`, `vbscript:` and `blob:`, which run code in the page.
+  It refuses a user name or password in a URL, and refuses `..` in a file path.
+
+  `POST /v1/links/action` takes one action per request, with a page token, the
+  exact portal Origin and a JSON body: `add {title, url, parentId?}`,
+  `addFolder {name, parentId}`, `rename {id, name}`,
+  `move {id, parentId, index}`, `remove {id}` (a folder with everything inside
+  it), `reorder {kind: "links" | "folders", parentId, ids}` and `open {id}`. A
+  reorder must name every child of that kind in that folder exactly once, or it
+  is refused with `links_changed`. `GET /v1/links` returns the version 2 tree.
 - **Terminal** (`g x`): start a shell, open an agent task or attach a discovered
   tmux session. Programs run as your OS user. Select a session to inspect its
   output; select **Take control** to type when another view owns input.

@@ -111,13 +111,27 @@ describe("session action requests", () => {
 	it("sends link actions and explains each refusal without exposing server text", async () => {
 		const { client, fetch } = setup();
 		await client.addLink("Tracker", "https://example.com/");
+		await client.addLink("Inside", "https://example.com/in", "folder-1");
+		await client.addLinkFolder("Work", null);
+		await client.renameLinkItem("folder-1", "Bio");
+		await client.moveLinkItem("id-1", "folder-1", 2);
 		await client.removeLink("id-1");
-		await client.reorderLinks(["id-2", "id-1"]);
+		await client.reorderLinks("links", null, ["id-2", "id-1"]);
+		await client.reorderLinks("folders", "folder-1", ["folder-2"]);
 		await client.openLinkFile("id-3");
 		expect(fetch.mock.calls.map(([path, init]) => [path, init.method, JSON.parse(init.body!)])).toEqual([
-			["/v1/links/action", "POST", { action: "add", title: "Tracker", url: "https://example.com/" }],
+			["/v1/links/action", "POST", { action: "add", title: "Tracker", url: "https://example.com/", parentId: null }],
+			[
+				"/v1/links/action",
+				"POST",
+				{ action: "add", title: "Inside", url: "https://example.com/in", parentId: "folder-1" },
+			],
+			["/v1/links/action", "POST", { action: "addFolder", name: "Work", parentId: null }],
+			["/v1/links/action", "POST", { action: "rename", id: "folder-1", name: "Bio" }],
+			["/v1/links/action", "POST", { action: "move", id: "id-1", parentId: "folder-1", index: 2 }],
 			["/v1/links/action", "POST", { action: "remove", id: "id-1" }],
-			["/v1/links/action", "POST", { action: "reorder", ids: ["id-2", "id-1"] }],
+			["/v1/links/action", "POST", { action: "reorder", kind: "links", parentId: null, ids: ["id-2", "id-1"] }],
+			["/v1/links/action", "POST", { action: "reorder", kind: "folders", parentId: "folder-1", ids: ["folder-2"] }],
 			["/v1/links/action", "POST", { action: "open", id: "id-3" }],
 		]);
 		for (const [error, message] of [
@@ -131,10 +145,18 @@ describe("session action requests", () => {
 			["links_full", "You have 200 links"],
 			["link_missing", "already removed"],
 			["links_changed", "changed in another view"],
+			["invalid_name", "folder name of 1 to 80"],
+			["folders_full", "You have 100 folders"],
+			["folder_missing", "That folder was removed"],
+			["folder_too_deep", "at most 6 levels deep"],
+			["invalid_move", "cannot move into itself"],
 			["private internal detail", "Could not save the link"],
 		] as const) {
 			fetch.mockResolvedValueOnce({ status: 400, json: async () => ({ error }) });
-			expect(await client.reorderLinks([])).toEqual({ kind: "error", message: expect.stringContaining(message) });
+			expect(await client.reorderLinks("links", null, [])).toEqual({
+				kind: "error",
+				message: expect.stringContaining(message),
+			});
 		}
 		fetch.mockResolvedValueOnce({ status: 503, json: async () => Promise.reject(new Error("not json")) });
 		expect(await client.addLink("", "https://example.com/")).toEqual({

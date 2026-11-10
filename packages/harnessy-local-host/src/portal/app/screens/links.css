@@ -1,8 +1,184 @@
-/* Links: an add form and the saved list. Colours come from tokens.css only. */
+/* Links: a folder tree with a New menu, row menus and small dialogs. Colours come from tokens.css only. */
+.links-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--space-3);
+}
+
+.links-card {
+	gap: var(--space-2);
+}
+
+/* Menus: the New button and each row's "⋯" button. */
+.link-menu {
+	position: relative;
+	display: inline-flex;
+}
+
+.link-menu > .button {
+	gap: 6px;
+}
+
+.link-more {
+	min-height: var(--control-h-sm);
+	min-width: var(--control-h-sm);
+	padding: 0;
+	border-color: transparent;
+	background: transparent;
+	color: var(--muted);
+}
+
+.link-more:hover,
+.link-more[aria-expanded="true"] {
+	color: var(--text);
+	background: var(--raised);
+}
+
+.link-menu-items {
+	position: absolute;
+	inset-inline-end: 0;
+	top: calc(100% + 4px);
+	z-index: var(--z-sheet);
+	min-width: 180px;
+	max-width: calc(100vw - 32px);
+	padding: var(--space-1);
+	display: flex;
+	flex-direction: column;
+	background: var(--panel);
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius-panel);
+	box-shadow: var(--shadow-float);
+}
+
+.link-menu-item {
+	min-height: var(--control-h-sm);
+	padding: 0 var(--space-3);
+	border: 0;
+	border-radius: var(--radius-control);
+	background: transparent;
+	color: var(--text);
+	font: inherit;
+	font-size: 13px;
+	text-align: start;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.link-menu-item:hover,
+.link-menu-item:focus-visible {
+	background: var(--raised);
+	outline: none;
+}
+
+/* Dialogs. */
+.link-dialog-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: var(--z-overlay);
+	display: flex;
+	justify-content: center;
+	align-items: flex-start;
+	padding: 12vh 16px 16px;
+	background: var(--scrim);
+}
+
+.link-dialog {
+	width: min(440px, 100%);
+	max-height: 76vh;
+	overflow-y: auto;
+	padding: var(--space-4);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	background: var(--panel);
+	border: 1px solid var(--hairline);
+	border-radius: var(--radius-panel);
+	box-shadow: var(--shadow-float);
+	animation: enter var(--motion);
+}
+
+.link-dialog-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+
+.link-dialog-head h2 {
+	margin: 0;
+	font: 600 16px/22px var(--font-title);
+	overflow-wrap: anywhere;
+}
+
 .link-form {
 	display: flex;
 	flex-direction: column;
 	gap: var(--space-3);
+}
+
+.link-form .button-row {
+	justify-content: flex-end;
+}
+
+.link-picker {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 40vh;
+	overflow-y: auto;
+}
+
+.link-picker legend {
+	padding: 0;
+	margin-bottom: var(--space-2);
+	font-weight: 500;
+}
+
+.link-picker-option {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-height: var(--control-h-sm);
+	padding-inline-start: calc(var(--depth, 0) * 14px);
+	border-radius: var(--radius-control);
+	cursor: pointer;
+	overflow-wrap: anywhere;
+}
+
+.link-picker-option:has(input:disabled) {
+	color: var(--muted);
+	cursor: not-allowed;
+}
+
+.link-picker-option > svg {
+	flex: 0 0 auto;
+	color: var(--muted);
+}
+
+/* The tree. */
+.link-root {
+	display: inline-flex;
+	align-items: center;
+	align-self: flex-start;
+	gap: 6px;
+	min-height: var(--control-h-sm);
+	padding: 0 var(--space-2);
+	border: 1px dashed transparent;
+	border-radius: var(--radius-control);
+	background: transparent;
+	color: var(--text-2);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.link-root[aria-current="true"] {
+	color: var(--text);
+	background: var(--raised);
 }
 
 .link-list {
@@ -11,16 +187,16 @@
 	padding: 0;
 	border: 1px solid var(--hairline);
 	border-radius: var(--radius-panel);
-	overflow: hidden;
+	overflow: visible;
 }
 
 .link-row {
 	display: flex;
 	align-items: center;
-	gap: var(--space-3);
+	gap: var(--space-2);
 	min-height: var(--list-row);
-	padding-block: var(--space-2);
-	padding-inline: var(--space-4);
+	padding-block: var(--space-1);
+	padding-inline: calc(var(--space-2) + min(var(--depth, 0), 6) * var(--tree-indent)) var(--space-2);
 	border-bottom: 1px solid var(--hairline);
 }
 
@@ -38,19 +214,39 @@
 	position: relative;
 }
 
-.link-handle {
+.link-selected {
+	background: var(--raised);
+}
+
+.link-drop-target,
+.link-root.link-drop-target {
+	outline: 2px dashed var(--focus);
+	outline-offset: -2px;
+	background: var(--raised);
+}
+
+.link-empty {
+	min-height: var(--control-h-sm);
+	padding-inline-start: calc(var(--space-2) + min(var(--depth, 0), 6) * var(--tree-indent) + 60px);
+	font-size: 13px;
+}
+
+.link-handle,
+.link-chevron {
 	flex: 0 0 auto;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 28px;
+	width: 24px;
 	min-height: var(--control-h-sm);
-	margin-inline-start: calc(-1 * var(--space-2));
 	padding: 0;
 	border: 0;
 	border-radius: var(--radius-control);
 	background: transparent;
 	color: var(--muted);
+}
+
+.link-handle {
 	cursor: grab;
 	touch-action: none;
 }
@@ -59,11 +255,26 @@
 	cursor: grabbing;
 }
 
-.link-handle:hover {
+button.link-chevron {
+	cursor: pointer;
+}
+
+button.link-chevron > svg {
+	transition: transform var(--motion);
+}
+
+button.link-chevron[aria-expanded="true"] > svg {
+	transform: rotate(90deg);
+}
+
+.link-handle:hover,
+button.link-chevron:hover {
 	color: var(--text);
 }
 
-.link-handle:focus-visible {
+.link-handle:focus-visible,
+button.link-chevron:focus-visible,
+.link-root:focus-visible {
 	outline: 2px solid var(--focus);
 	outline-offset: 2px;
 }
@@ -86,7 +297,8 @@
 	overflow-wrap: anywhere;
 }
 
-button.link-file {
+button.link-file,
+button.link-folder {
 	padding: 0;
 	border: 0;
 	background: transparent;
@@ -109,7 +321,8 @@ button.link-file:hover {
 }
 
 a.link-title:focus-visible,
-button.link-file:focus-visible {
+button.link-file:focus-visible,
+button.link-folder:focus-visible {
 	outline: 2px solid var(--focus);
 	outline-offset: 2px;
 	border-radius: 2px;
@@ -118,6 +331,17 @@ button.link-file:focus-visible {
 .link-title > svg {
 	flex: 0 0 auto;
 	color: var(--muted);
+}
+
+button.link-folder > svg {
+	color: var(--text-2);
+}
+
+.link-count {
+	font-size: 12px;
+	font-weight: 400;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
 }
 
 .link-host {
@@ -132,7 +356,13 @@ button.link-file:focus-visible {
 .link-actions {
 	flex: 0 0 auto;
 	display: inline-flex;
+	align-items: center;
 	gap: var(--space-2);
+}
+
+.link-confirm-text {
+	font-size: 12px;
+	color: var(--text-2);
 }
 
 .link-notice {
@@ -144,4 +374,40 @@ button.link-file:focus-visible {
 	margin: 0;
 	font-size: 13px;
 	color: var(--danger-text);
+}
+
+/* Phone width and touch: shallower indentation, and actions that wrap under the title. */
+@media (max-width: 760px) {
+	.link-row {
+		--tree-indent: 10px;
+		flex-wrap: wrap;
+		padding-inline: calc(var(--space-1) + min(var(--depth, 0), 3) * var(--tree-indent)) var(--space-1);
+	}
+
+	.link-empty {
+		padding-inline-start: calc(var(--space-1) + min(var(--depth, 0), 3) * var(--tree-indent) + 52px);
+	}
+
+	.link-main {
+		flex-basis: 0;
+	}
+
+	.link-actions {
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+}
+
+@media (max-width: 760px), (pointer: coarse) {
+	.link-handle,
+	.link-chevron,
+	.link-more,
+	.link-menu-item {
+		min-height: 44px;
+		min-width: 44px;
+	}
+
+	.link-menu-item {
+		min-width: 0;
+	}
 }
