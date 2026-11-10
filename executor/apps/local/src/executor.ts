@@ -257,7 +257,7 @@ const createLocalExecutorLayer = (options: LocalExecutorOptions = {}) => {
 export const createExecutorHandle = async (options: LocalExecutorOptions = {}) => {
   const layer = createLocalExecutorLayer(options);
   const runtime = ManagedRuntime.make(layer);
-  const bundle = await runtime.runPromise(LocalExecutorTag.asEffect());
+  const bundle = await runtime.runPromise(Effect.service(LocalExecutorTag));
 
   return {
     executor: bundle.executor,

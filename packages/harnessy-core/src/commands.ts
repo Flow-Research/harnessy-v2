@@ -1,4 +1,4 @@
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { aiCommand } from "./cli/ai.ts";
 import { attestCommand } from "./cli/attest.ts";
 import { capabilityCommand } from "./cli/capability.ts";

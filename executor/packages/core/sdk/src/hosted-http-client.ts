@@ -1,7 +1,7 @@
 import { Effect, Layer, Schema } from "effect";
-import { FetchHttpClient, HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient } from "effect/http";
 
-export class HostedOutboundRequestBlocked extends Schema.TaggedErrorClass<HostedOutboundRequestBlocked>()(
+export class HostedOutboundRequestBlocked extends Schema.TaggedError<HostedOutboundRequestBlocked>()(
   "HostedOutboundRequestBlocked",
   {
     url: Schema.String,

@@ -9,8 +9,8 @@
 // the test exercises the HTTP edge + handler wiring (not a live server).
 // ---------------------------------------------------------------------------
 
-import { HttpApiBuilder } from "effect/unstable/httpapi";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpApiBuilder } from "effect/http-api";
+import { HttpRouter, HttpServer } from "effect/http";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 

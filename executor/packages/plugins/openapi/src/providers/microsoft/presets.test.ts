@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { parseEntry, structuralSplit, type KeepPathItem } from "@executor-js/plugin-openapi";
 
 import { microsoftGraphAdapter } from "./spec-format-adapter";

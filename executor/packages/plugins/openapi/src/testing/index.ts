@@ -1,17 +1,6 @@
 import { Context, Data, Effect, Layer, Predicate, Ref, Schema, Scope } from "effect";
-import {
-  HttpClient,
-  HttpRouter,
-  HttpServerRequest,
-  HttpServerResponse,
-} from "effect/unstable/http";
-import {
-  HttpApi,
-  HttpApiBuilder,
-  HttpApiEndpoint,
-  HttpApiGroup,
-  OpenApi,
-} from "effect/unstable/httpapi";
+import { HttpClient, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
 import { OAuthTestServer, serveTestHttpServerLayer } from "@executor-js/sdk/testing";
 import {
   AuthTemplateSlug,
@@ -45,7 +34,7 @@ export interface OpenApiTestServerShape {
 }
 
 export interface OpenApiHttpApiTestServerOptions {
-  readonly api: HttpApi.Any;
+  readonly api: HttpApi.Constraint;
   readonly handlersLayer: Layer.Layer<any, any, any>;
   readonly specPath?: `/${string}`;
   readonly transformSpec?: (spec: Record<string, unknown>) => Record<string, unknown>;
@@ -63,7 +52,7 @@ export interface OpenApiHttpApiTestServerShape extends OpenApiTestServerShape {
 
 export interface MutableOpenApiSpecTestServerShape extends OpenApiTestServerShape {
   readonly specUrl: string;
-  readonly setApi: (api: HttpApi.Any) => Effect.Effect<void, OpenApiTestServerSpecError>;
+  readonly setApi: (api: HttpApi.Constraint) => Effect.Effect<void, OpenApiTestServerSpecError>;
   readonly requestCount: Effect.Effect<number>;
 }
 
@@ -198,14 +187,14 @@ export interface OpenApiTestSpecOptions {
 }
 
 export const makeOpenApiTestSpecJson = (
-  api: HttpApi.Any,
+  api: HttpApi.Constraint,
   options: OpenApiTestSpecOptions = {},
 ): string => {
   const annotations = OpenApi.annotations({
     ...(options.baseUrl !== undefined ? { servers: [{ url: options.baseUrl }] } : {}),
     transform: options.transformSpec,
   });
-  const annotated = (api as HttpApi.AnyWithProps).annotateMerge(annotations);
+  const annotated = (api as HttpApi.Top).annotateMerge(annotations);
   return JSON.stringify(OpenApi.fromApi(annotated));
 };
 
@@ -229,7 +218,7 @@ export const addOpenApiTestIntegration = (
 ) => executor.openapi.addSpec(makeOpenApiTestIntegrationConfig(server, options));
 
 export const makeOpenApiHttpApiTestIntegrationConfig = (
-  api: HttpApi.Any,
+  api: HttpApi.Constraint,
   options: OpenApiHttpApiTestIntegrationOptions,
 ): OpenApiSpecConfig => {
   const { baseUrl, specBaseUrl, transformSpec, slug, ...config } = options;
@@ -246,12 +235,12 @@ export const makeOpenApiHttpApiTestIntegrationConfig = (
 
 export const addOpenApiHttpApiTestIntegration = (
   executor: OpenApiTestIntegrationExecutor,
-  api: HttpApi.Any,
+  api: HttpApi.Constraint,
   options: OpenApiHttpApiTestIntegrationOptions,
 ) => executor.openapi.addSpec(makeOpenApiHttpApiTestIntegrationConfig(api, options));
 
 export const makeOpenApiHttpApiTestAddSpecPayload = (
-  api: HttpApi.Any,
+  api: HttpApi.Constraint,
   options: OpenApiHttpApiTestAddSpecPayloadOptions,
 ) => {
   const { headers, queryParams, ...integrationOptions } = options;
@@ -269,7 +258,7 @@ export const makeOpenApiHttpApiTestAddSpecPayload = (
 };
 
 export const makeOpenApiHttpApiTestSpecPayload = (
-  api: HttpApi.Any,
+  api: HttpApi.Constraint,
   options: OpenApiTestSpecOptions = {},
 ) => ({
   spec: makeOpenApiTestSpecJson(api, options),
@@ -325,7 +314,7 @@ const OpenApiEchoApi = HttpApi.make("executorOpenApiTest")
   );
 
 const openApiSpecJsonFromHttpApi = (
-  api: HttpApi.Any,
+  api: HttpApi.Constraint,
   baseUrl: string,
   transformSpec?: (spec: Record<string, unknown>) => Record<string, unknown>,
 ): Effect.Effect<string, OpenApiTestServerSpecError> =>
@@ -364,7 +353,7 @@ export const serveOpenApiHttpApiTestServer = (
         }),
       ),
     ]);
-    const ApiLive = HttpApiBuilder.layer(options.api as HttpApi.AnyWithProps).pipe(
+    const ApiLive = HttpApiBuilder.layer(options.api as HttpApi.Top).pipe(
       Layer.provide(options.handlersLayer),
     );
     const ServerLayer = HttpRouter.serve(Layer.mergeAll(ApiLive, SpecRoute), {
@@ -401,7 +390,7 @@ export class OpenApiHttpApiTestServer extends Context.Service<
 }
 
 export const serveMutableOpenApiSpecTestServer = (options: {
-  readonly initialApi: HttpApi.Any;
+  readonly initialApi: HttpApi.Constraint;
   readonly specPath?: `/${string}`;
   readonly transformSpec?: (spec: Record<string, unknown>) => Record<string, unknown>;
 }): Effect.Effect<
@@ -439,7 +428,7 @@ export const serveMutableOpenApiSpecTestServer = (options: {
           : new OpenApiTestServerSpecError({ cause: error.cause }),
       ),
     );
-    const renderSpec = (api: HttpApi.Any) =>
+    const renderSpec = (api: HttpApi.Constraint) =>
       openApiSpecJsonFromHttpApi(api, server.baseUrl, options.transformSpec);
     yield* Ref.set(specJson, yield* renderSpec(options.initialApi));
 

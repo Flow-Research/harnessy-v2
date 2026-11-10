@@ -6,11 +6,6 @@ const fromPackage = (relativePath: string): string =>
 const executorSource = (relativePath: string): string =>
   fromPackage(`../../../executor/${relativePath}`);
 
-export const effectRoot = fromPackage("../../../node_modules/effect/dist/index.js");
-export const effectDist = fromPackage("../../../node_modules/effect/dist");
-export const effectCompat = fromPackage("effect-compat.ts");
-export const effectContextCompat = fromPackage("effect-context-compat.ts");
-
 export const executorSourceAliases = {
   "@executor-js/api/server": executorSource("packages/core/api/src/server.ts"),
   "@executor-js/api": executorSource("packages/core/api/src/index.ts"),
@@ -49,9 +44,4 @@ export const executorSourceAliases = {
   "@executor-js/integrations-registry": executorSource(
     "packages/core/integrations-registry/src/index.ts",
   ),
-} as const;
-
-export const sourceAliases = {
-  ...executorSourceAliases,
-  effect: effectCompat,
 } as const;

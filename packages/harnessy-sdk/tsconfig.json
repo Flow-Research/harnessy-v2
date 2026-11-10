@@ -41,8 +41,8 @@
 			"@executor-js/sdk/http-auth": ["../../executor/packages/core/sdk/src/http-auth/index.ts"],
 			"@executor-js/sdk/host-internal": ["../../executor/packages/core/sdk/src/host-internal.ts"],
 			"@executor-js/sdk/shared": ["../../executor/packages/core/sdk/src/shared.ts"],
-			// /executor has a self-contained beta.59 runtime for hsy web. Source
-			// composition must always bind to Harnessy's beta.85 instance.
+			// /executor has a self-contained 4.1.3 runtime for hsy web. Source
+			// composition must always bind to Harnessy's 4.1.3 instance.
 			"effect": ["../../node_modules/effect/dist/index.d.ts"],
 			"effect/*": [
 				"../../node_modules/effect/dist/*.d.ts",

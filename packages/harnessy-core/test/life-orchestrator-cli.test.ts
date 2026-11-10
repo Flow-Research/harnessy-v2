@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { Command } from "effect/unstable/cli";
 
 import {
 	jarvisLifeDailyCommand,

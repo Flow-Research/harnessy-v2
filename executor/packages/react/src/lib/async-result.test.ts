@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 
 import { isAsyncResultLoading } from "./async-result";
 

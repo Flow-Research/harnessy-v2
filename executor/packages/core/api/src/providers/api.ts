@@ -8,7 +8,7 @@
 // reference when creating a `{ from: { provider, id } }` connection.
 // ---------------------------------------------------------------------------
 
-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { Schema } from "effect";
 
 import { InternalError, ProviderItemId, ProviderKey } from "@executor-js/sdk/shared";

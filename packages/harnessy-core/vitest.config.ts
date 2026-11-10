@@ -7,7 +7,7 @@ const executorSource = (path: string): string =>
 export default defineConfig({
 	resolve: {
 		// /executor has its own node_modules (bun-installed, effect
-		// beta.59) for running the local web app self-contained. Test code must
+		// 4.1.3) for running the local web app self-contained. Test code must
 		// never split runtimes: force the whole module graph onto the root
 		// copies so vendored source composes with harnessy's effect instance.
 		dedupe: ["effect", "@effect/platform-node", "@effect/vitest"],

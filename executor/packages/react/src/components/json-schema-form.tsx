@@ -50,7 +50,7 @@ type JsonSchema = {
 
 /** Decode a JSON string at the boundary. Effect Schema is used because the repo
  *  forbids raw `JSON.parse`; a malformed string yields `None`. */
-const decodeJson = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 /** Sentinel a field emits to ask its object parent to delete its key. */
 const REMOVE = Symbol("json-schema-form/remove");

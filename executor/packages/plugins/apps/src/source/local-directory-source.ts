@@ -179,7 +179,7 @@ const sourceRefFor = (files: readonly PublishFile[]): string => {
   return sha256(manifest);
 };
 
-const decodeExecutorJson = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+const decodeExecutorJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 const descriptionFor = (
   files: readonly PublishFile[],

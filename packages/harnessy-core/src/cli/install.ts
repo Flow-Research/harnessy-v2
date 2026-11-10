@@ -1,7 +1,7 @@
 import { Console } from "effect";
+import { Argument as Args, Command, Flag as Options } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Argument as Args, Command, Flag as Options } from "effect/unstable/cli";
 
 import { HarnessError } from "../errors.ts";
 import { HarnessProject, type InstallStep } from "../operations.ts";
@@ -60,7 +60,7 @@ export const parseInstallStep = (raw: string | undefined): Effect.Effect<Install
 export const bootstrapCommand = Command.make(
 	"bootstrap",
 	{
-		target: Options.string("target").pipe(Options.optional),
+		target: Options.String("target").pipe(Options.optional),
 		here: hereOption,
 		inPlace: inPlaceOption,
 		force: forceOption,
@@ -183,7 +183,7 @@ export const bootstrapCommand = Command.make(
 export const installCommand = Command.make(
 	"install",
 	{
-		source: Args.string("source").pipe(Args.optional),
+		source: Args.String("source").pipe(Args.optional),
 		target: targetOption,
 		force: forceOption,
 		dryRun: dryRunOption,

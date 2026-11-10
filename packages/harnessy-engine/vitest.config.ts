@@ -1,13 +1,19 @@
+import { createRequire } from "node:module";
 import { defineConfig } from "vitest/config";
 
-import {
-  effectCompat,
-  effectContextCompat,
-  effectDist,
-  executorSourceAliases,
-} from "./build/source-aliases";
+import { executorSourceAliases } from "./build/source-aliases.ts";
+
+const require = createRequire(import.meta.url);
 
 export default defineConfig({
+  plugins: [{
+    name: "harnessy-test-effect-exports",
+    enforce: "pre",
+    resolveId(specifier) {
+      if (specifier === "effect" || specifier.startsWith("effect/")) return require.resolve(specifier);
+      return undefined;
+    },
+  }],
   resolve: {
     dedupe: [
       "effect",
@@ -20,13 +26,6 @@ export default defineConfig({
         find: new RegExp(`^${find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
         replacement,
       })),
-      { find: /^effect$/, replacement: effectCompat },
-      { find: /^effect\/Context$/, replacement: effectContextCompat },
-      {
-        find: /^effect\/unstable\/(.+)$/,
-        replacement: `${effectDist}/unstable/$1/index.js`,
-      },
-      { find: /^effect\/(.+)$/, replacement: `${effectDist}/$1.js` },
     ],
   },
   test: {

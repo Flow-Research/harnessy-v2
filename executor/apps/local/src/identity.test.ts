@@ -8,7 +8,7 @@ import { LOCAL_PRINCIPAL, makeLocalIdentityLayer } from "./identity";
 const TOKEN = "boot-token";
 
 const authenticate = (path: string, headers: Record<string, string> = {}) =>
-  Effect.flatMap(IdentityProvider.asEffect(), (provider) =>
+  Effect.flatMap(Effect.service(IdentityProvider), (provider) =>
     provider.authenticate(new Request(`http://127.0.0.1${path}`, { headers })),
   ).pipe(Effect.provide(makeLocalIdentityLayer(TOKEN)), Effect.exit, Effect.runPromise);
 

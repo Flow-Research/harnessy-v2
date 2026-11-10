@@ -24,14 +24,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Effect, Layer, Schema } from "effect";
-import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
+import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import {
   HttpApi,
   HttpApiBuilder,
   HttpApiClient,
   HttpApiEndpoint,
   HttpApiGroup,
-} from "effect/unstable/httpapi";
+} from "effect/http-api";
 
 import { addGroup, observabilityMiddleware } from "@executor-js/api";
 import {
@@ -182,8 +182,7 @@ const run = <A, E>(body: (client: TestApiShape) => Effect.Effect<A, E>): Effect.
     ),
   ) as Effect.Effect<A, E>;
 
-type EffectSuccess<T> = T extends Effect.Effect<infer A, unknown, unknown> ? A : never;
-type ExecuteResult = EffectSuccess<ReturnType<TestApiShape["executions"]["execute"]>>;
+type ExecuteResult = (typeof TestApi.groups.executions.endpoints.execute)["~Success"]["Type"];
 
 const expectModelVisibleAuthFailure = (execution: ExecuteResult) => {
   expect(execution.status).toBe("completed");

@@ -1,7 +1,7 @@
 import { Effect, type Schema as EffectSchema } from "effect";
 import type { Context, Layer } from "effect";
-import type { HttpClient } from "effect/unstable/http";
-import type { HttpApiGroup } from "effect/unstable/httpapi";
+import type { HttpClient } from "effect/http";
+import type { HttpApiGroup } from "effect/http-api";
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from "@standard-schema/spec";
 import type { StorageFailure } from "./fuma-runtime";
 
@@ -615,7 +615,7 @@ export interface PluginSpec<
   TExtensionService extends Context.Service<any, any> | undefined = any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   THandlersLayer extends Layer.Layer<any, any, any> = any,
-  TGroup extends HttpApiGroup.Any = HttpApiGroup.Any,
+  TGroup extends HttpApiGroup.Constraint = HttpApiGroup.Constraint,
 > {
   readonly id: TId;
   /** npm package name. The Vite plugin uses this to derive the `./client`
@@ -774,7 +774,7 @@ export interface Plugin<
   TExtensionService extends Context.Service<any, any> | undefined = any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   THandlersLayer extends Layer.Layer<any, any, any> = any,
-  TGroup extends HttpApiGroup.Any = HttpApiGroup.Any,
+  TGroup extends HttpApiGroup.Constraint = HttpApiGroup.Constraint,
 > extends PluginSpec<TId, TExtension, TStore, TExtensionService, THandlersLayer, TGroup> {}
 
 // ---------------------------------------------------------------------------
@@ -790,7 +790,7 @@ export type ConfiguredPlugin<
   TExtensionService extends Context.Service<any, any> | undefined = undefined,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   THandlersLayer extends Layer.Layer<any, any, any> = Layer.Layer<unknown, never, never>,
-  TGroup extends HttpApiGroup.Any = HttpApiGroup.Any,
+  TGroup extends HttpApiGroup.Constraint = HttpApiGroup.Constraint,
 > = (
   options?: TOptions & {
     readonly storage?: (deps: StorageDeps) => TStore;
@@ -807,7 +807,7 @@ export function definePlugin<
   TExtensionService extends Context.Service<any, any> | undefined = undefined,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   THandlersLayer extends Layer.Layer<any, any, any> = Layer.Layer<unknown, never, never>,
-  TGroup extends HttpApiGroup.Any = HttpApiGroup.Any,
+  TGroup extends HttpApiGroup.Constraint = HttpApiGroup.Constraint,
 >(
   authorFactory: (
     options?: TOptions,

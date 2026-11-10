@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Exit from "effect/Exit";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { Button } from "@executor-js/react/components/button";
 import { Input } from "@executor-js/react/components/input";
 import { Label } from "@executor-js/react/components/label";

@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Data, Effect, Option, Schema } from "effect";
-import * as Atom from "effect/unstable/reactivity/Atom";
+import * as Atom from "effect/reactivity/Atom";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { ResumeApprovalPage, ResumeApprovalPageView } from "../pages/resume-approval";

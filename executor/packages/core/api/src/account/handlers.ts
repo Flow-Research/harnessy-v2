@@ -1,5 +1,5 @@
-import { HttpApiBuilder } from "effect/unstable/httpapi";
-import { HttpServerRequest } from "effect/unstable/http";
+import { HttpApiBuilder } from "effect/http-api";
+import { HttpServerRequest } from "effect/http";
 import { Effect } from "effect";
 
 import { AccountHttpApi } from "./api";
@@ -14,7 +14,7 @@ import { AccountProvider, type AccountHeaders } from "./service";
 // ---------------------------------------------------------------------------
 
 const requestHeaders = Effect.map(
-  HttpServerRequest.HttpServerRequest.asEffect(),
+  Effect.service(HttpServerRequest.HttpServerRequest),
   (req): AccountHeaders => ({ ...req.headers }),
 );
 

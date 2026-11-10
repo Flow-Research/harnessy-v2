@@ -31,8 +31,8 @@
 // Workers test runtime and from every host.
 // ---------------------------------------------------------------------------
 
-import { HttpApiBuilder } from "effect/unstable/httpapi";
-import { HttpRouter, HttpServer } from "effect/unstable/http";
+import { HttpApiBuilder } from "effect/http-api";
+import { HttpRouter, HttpServer } from "effect/http";
 import { Layer } from "effect";
 import type { AnyPlugin } from "@executor-js/sdk";
 

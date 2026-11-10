@@ -1,4 +1,5 @@
-import { describe, expect, it } from "@effect/vitest";
+// oxlint-disable-next-line executor/no-vitest-import -- Cloudflare pool requires Vitest 4; Effect adapter requires Vitest 5.
+import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 
 import appsClientPlugin, {

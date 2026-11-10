@@ -4,13 +4,10 @@ import type { PlatformError } from "effect/PlatformError";
 import * as jsonc from "jsonc-parser";
 import { ExecutorFileConfig } from "./schema";
 
-export class ConfigParseError extends Schema.TaggedErrorClass<ConfigParseError>()(
-  "ConfigParseError",
-  {
-    path: Schema.String,
-    message: Schema.String,
-  },
-) {}
+export class ConfigParseError extends Schema.TaggedError<ConfigParseError>()("ConfigParseError", {
+  path: Schema.String,
+  message: Schema.String,
+}) {}
 
 /**
  * Load and validate an executor config file.

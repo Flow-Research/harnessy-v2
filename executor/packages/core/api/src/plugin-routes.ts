@@ -20,7 +20,7 @@
 
 import { Effect, Layer } from "effect";
 import type { Context } from "effect";
-import type { HttpApi, HttpApiGroup } from "effect/unstable/httpapi";
+import type { HttpApi, HttpApiGroup } from "effect/http-api";
 import type { AnyPlugin, PluginExtensions } from "@executor-js/sdk";
 
 import { CoreExecutorApi } from "./api";
@@ -46,9 +46,9 @@ export type PluginExtensionServices<TPlugins extends readonly AnyPlugin[]> = Ext
 
 /** Extract the precise `HttpApiGroup` type carried by a plugin's
  *  `routes()` field. Plugins without a `routes()` field contribute
- *  nothing to the union (filtered out by `Extract<..., HttpApiGroup.Any>`). */
+ *  nothing to the union (filtered out by `Extract<..., HttpApiGroup.Constraint>`). */
 type ExtractPluginGroup<P> = P extends { readonly routes?: () => infer G }
-  ? Extract<G, HttpApiGroup.Any>
+  ? Extract<G, HttpApiGroup.Constraint>
   : never;
 
 /** Union of every plugin's contributed group — combined with the core

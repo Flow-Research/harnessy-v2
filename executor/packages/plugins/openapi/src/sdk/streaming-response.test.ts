@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Schema, Stream } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
+import { FetchHttpClient } from "effect/http";
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
 import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 

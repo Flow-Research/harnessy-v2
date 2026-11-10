@@ -109,13 +109,13 @@ describe("executor oxlint plugin", () => {
     expect(result.stdout).toContain("executor(no-schema-class)");
   });
 
-  it("allows Schema.TaggedErrorClass (typed errors are exempt)", async () => {
+  it("allows Schema.TaggedError (typed errors are exempt)", async () => {
     const result = await runOxlintOn(
       "tagged-error.ts",
       `
         import { Schema } from "effect";
 
-        export class MyError extends Schema.TaggedErrorClass<MyError>()("MyError", {
+        export class MyError extends Schema.TaggedError<MyError>()("MyError", {
           message: Schema.String,
         }) {}
       `,
@@ -128,7 +128,7 @@ describe("executor oxlint plugin", () => {
     const result = await runOxlintOn(
       "struct-payload.ts",
       `
-        import { HttpApiEndpoint } from "effect/unstable/httpapi";
+        import { HttpApiEndpoint } from "effect/http-api";
         import { Schema } from "effect";
 
         const CreateThing = Schema.Struct({

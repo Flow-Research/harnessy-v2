@@ -14,8 +14,8 @@
 
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Predicate, Schema } from "effect";
-import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
-import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpApi, HttpApiBuilder, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
+import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import {
   createExecutor,
@@ -69,7 +69,7 @@ const EchoHeaders = Schema.Struct({
   "x-api-key": Schema.optional(Schema.String),
 });
 
-class QueryValidationError extends Schema.TaggedErrorClass<QueryValidationError>()(
+class QueryValidationError extends Schema.TaggedError<QueryValidationError>()(
   "QueryValidationError",
   {
     message: Schema.String,

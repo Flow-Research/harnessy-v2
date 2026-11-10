@@ -1,6 +1,6 @@
 import type { OpenAPI, OpenAPIV3, OpenAPIV3_1 } from "openapi-types";
 import { Duration, Effect, Schema } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { JSON_SCHEMA, load as parseYamlDocument } from "js-yaml";
 
 import { OpenApiExtractionError, OpenApiParseError } from "./errors";

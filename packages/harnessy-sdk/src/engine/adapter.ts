@@ -41,7 +41,7 @@ const isMeetingMutationAddress = (address: string): boolean => {
 	);
 };
 
-class EngineMeetingApprovalRejected extends Schema.TaggedErrorClass<EngineMeetingApprovalRejected>()(
+class EngineMeetingApprovalRejected extends Schema.TaggedError<EngineMeetingApprovalRejected>()(
 	"EngineMeetingApprovalRejected",
 	{},
 ) {

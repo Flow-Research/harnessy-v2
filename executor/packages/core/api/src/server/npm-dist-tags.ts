@@ -12,7 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { Effect, Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 
 import { resolveDistTags } from "../update-check";
 

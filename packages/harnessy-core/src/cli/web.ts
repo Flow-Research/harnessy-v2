@@ -7,9 +7,9 @@ import { join, resolve } from "node:path";
 import process from "node:process";
 
 import { Console, Schema } from "effect";
+import { Command, Flag } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Command, Flag } from "effect/unstable/cli";
 
 import { ANYTYPE_DEFAULT_BASE_URL, ANYTYPE_DEFAULT_VERSION } from "../connectors/anytype.ts";
 import { HarnessError } from "../errors.ts";
@@ -120,17 +120,17 @@ export async function registerBundledAnytype({
 	return "registered";
 }
 
-const portFlag = Flag.integer("port").pipe(
+const portFlag = Flag.Int("port").pipe(
 	Flag.withDescription("Preferred port for the packaged cockpit service (default 4788)"),
 	Flag.optional,
 );
 
-const dataDirFlag = Flag.string("data-dir").pipe(
+const dataDirFlag = Flag.String("data-dir").pipe(
 	Flag.withDescription("Executor data directory (default ~/.executor)"),
 	Flag.optional,
 );
 
-const scopeFlag = Flag.string("scope").pipe(
+const scopeFlag = Flag.String("scope").pipe(
 	Flag.withDescription("Executor workspace scope (default: current directory)"),
 	Flag.optional,
 );

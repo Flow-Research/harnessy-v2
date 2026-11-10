@@ -1,11 +1,11 @@
 import process from "node:process";
 
 import { Console } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
+import { FetchHttpClient } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { Command } from "effect/unstable/cli";
-import { FetchHttpClient } from "effect/unstable/http";
 
 import { ANYTYPE_DEFAULT_BASE_URL, AnytypeConfig, anytypeKnowledgeLayer } from "../connectors/anytype.ts";
 import { KnowledgeCapabilities, KnowledgeObjects, KnowledgeSpaces } from "../connectors/knowledge.ts";

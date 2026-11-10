@@ -56,7 +56,7 @@ export interface MeetingPublicationImportResult {
 	readonly sha256: string;
 	readonly operationalEvidence: false;
 }
-export class MeetingPublicationImportError extends Schema.TaggedErrorClass<MeetingPublicationImportError>()(
+export class MeetingPublicationImportError extends Schema.TaggedError<MeetingPublicationImportError>()(
 	"MeetingPublicationImportError",
 	{
 		code: Schema.Literals([

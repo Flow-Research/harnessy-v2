@@ -1,4 +1,6 @@
-import { describe, expect, it } from "@effect/vitest";
+import { effectWorkerTest } from "../../../../../scripts/effect-worker-test";
+// oxlint-disable-next-line executor/no-vitest-import -- Cloudflare pool requires Vitest 4; Effect adapter requires Vitest 5.
+import { describe, expect, it } from "vitest";
 import { Effect, Result } from "effect";
 
 import { AppPublishConflictError, type AppsStore } from "../plugin/store";
@@ -150,51 +152,61 @@ describe("discover", () => {
 });
 
 describe("publish", () => {
-  it.effect("publishes tools from an in-memory file set", () =>
-    Effect.gen(function* () {
-      const store = makeMemoryStore();
-      const result = yield* publish(
-        { store, executor: makeInProcessAppToolExecutor(), now: () => 10 },
-        {
-          app: "crm",
-          sourceRef: "sha-1",
-          files: [file("tools/sync.ts", tool()), file("workflows/later.ts", "")],
-        },
-      );
-      expect(result.publishedTools).toEqual(["sync"]);
-      expect(result.skipped).toEqual([{ path: "workflows/later.ts", reason: "not supported yet" }]);
-      expect(result.descriptor.toolchain.executor.name).toBe("in-process-data-url");
-      expect(store.blobs.size).toBe(2);
-    }),
+  it(
+    "publishes tools from an in-memory file set",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const store = makeMemoryStore();
+        const result = yield* publish(
+          { store, executor: makeInProcessAppToolExecutor(), now: () => 10 },
+          {
+            app: "crm",
+            sourceRef: "sha-1",
+            files: [file("tools/sync.ts", tool()), file("workflows/later.ts", "")],
+          },
+        );
+        expect(result.publishedTools).toEqual(["sync"]);
+        expect(result.skipped).toEqual([
+          { path: "workflows/later.ts", reason: "not supported yet" },
+        ]);
+        expect(result.descriptor.toolchain.executor.name).toBe("in-process-data-url");
+        expect(store.blobs.size).toBe(2);
+      }),
+    ),
   );
 
-  it.effect("treats identical sourceRef as a no-op", () =>
-    Effect.gen(function* () {
-      const store = makeMemoryStore();
-      const input = {
-        app: "crm",
-        sourceRef: "sha-1",
-        files: [file("tools/sync.ts", tool())],
-      };
-      yield* publish({ store, executor: makeInProcessAppToolExecutor() }, input);
-      const second = yield* publish({ store, executor: makeInProcessAppToolExecutor() }, input);
-      expect(second.noop).toBe(true);
-      expect(second.publishedTools).toEqual([]);
-    }),
-  );
-
-  it.effect("rejects nondeterministic factories", () =>
-    Effect.gen(function* () {
-      const store = makeMemoryStore();
-      yield* publish(
-        { store, executor: makeInProcessAppToolExecutor() },
-        {
+  it(
+    "treats identical sourceRef as a no-op",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const store = makeMemoryStore();
+        const input = {
           app: "crm",
           sourceRef: "sha-1",
-          files: [
-            file(
-              "tools/sync.ts",
-              `
+          files: [file("tools/sync.ts", tool())],
+        };
+        yield* publish({ store, executor: makeInProcessAppToolExecutor() }, input);
+        const second = yield* publish({ store, executor: makeInProcessAppToolExecutor() }, input);
+        expect(second.noop).toBe(true);
+        expect(second.publishedTools).toEqual([]);
+      }),
+    ),
+  );
+
+  it(
+    "rejects nondeterministic factories",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const store = makeMemoryStore();
+        yield* publish(
+          { store, executor: makeInProcessAppToolExecutor() },
+          {
+            app: "crm",
+            sourceRef: "sha-1",
+            files: [
+              file(
+                "tools/sync.ts",
+                `
                 import { z } from "zod";
                 import { defineTool } from "executor:app";
                 export default () => ({
@@ -205,27 +217,30 @@ describe("publish", () => {
                   }),
                 });
               `,
-            ),
-          ],
-        },
-      ).pipe(Effect.flip);
-      expect(store.rows.size).toBe(0);
-    }),
+              ),
+            ],
+          },
+        ).pipe(Effect.flip);
+        expect(store.rows.size).toBe(0);
+      }),
+    ),
   );
 
-  it.effect("leaves no rows or blobs when one tool fails collect", () =>
-    Effect.gen(function* () {
-      const store = makeMemoryStore();
-      yield* publish(
-        { store, executor: makeInProcessAppToolExecutor() },
-        {
-          app: "crm",
-          sourceRef: "sha-1",
-          files: [
-            file("tools/ok.ts", tool("OK")),
-            file(
-              "tools/bad.ts",
-              `
+  it(
+    "leaves no rows or blobs when one tool fails collect",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const store = makeMemoryStore();
+        yield* publish(
+          { store, executor: makeInProcessAppToolExecutor() },
+          {
+            app: "crm",
+            sourceRef: "sha-1",
+            files: [
+              file("tools/ok.ts", tool("OK")),
+              file(
+                "tools/bad.ts",
+                `
                 import { z } from "zod";
                 import { defineTool, integration } from "executor:app";
                 export default defineTool({
@@ -235,36 +250,40 @@ describe("publish", () => {
                   handler(input) { return input; },
                 });
               `,
-            ),
-          ],
-        },
-      ).pipe(Effect.flip);
-      expect(store.rows.size).toBe(0);
-      expect(store.blobs.size).toBe(0);
-    }),
+              ),
+            ],
+          },
+        ).pipe(Effect.flip);
+        expect(store.rows.size).toBe(0);
+        expect(store.blobs.size).toBe(0);
+      }),
+    ),
   );
 
-  it.effect("guards concurrent publishes for the same app", () =>
-    Effect.gen(function* () {
-      const store = makeBarrierStore();
-      const results = yield* Effect.all(
-        [
-          publish(
-            { store, executor: makeInProcessAppToolExecutor(), now: () => 1 },
-            { app: "crm", sourceRef: "sha-a", files: [file("tools/a.ts", tool("A"))] },
-          ).pipe(Effect.result),
-          publish(
-            { store, executor: makeInProcessAppToolExecutor(), now: () => 2 },
-            { app: "crm", sourceRef: "sha-b", files: [file("tools/b.ts", tool("B"))] },
-          ).pipe(Effect.result),
-        ],
-        { concurrency: "unbounded" },
-      );
-      const successes = results.filter(Result.isSuccess);
-      const failures = results.filter(Result.isFailure);
-      expect(successes).toHaveLength(1);
-      expect(failures).toHaveLength(1);
-      expect([...store.rows.keys()]).toHaveLength(1);
-    }),
+  it(
+    "guards concurrent publishes for the same app",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const store = makeBarrierStore();
+        const results = yield* Effect.all(
+          [
+            publish(
+              { store, executor: makeInProcessAppToolExecutor(), now: () => 1 },
+              { app: "crm", sourceRef: "sha-a", files: [file("tools/a.ts", tool("A"))] },
+            ).pipe(Effect.result),
+            publish(
+              { store, executor: makeInProcessAppToolExecutor(), now: () => 2 },
+              { app: "crm", sourceRef: "sha-b", files: [file("tools/b.ts", tool("B"))] },
+            ).pipe(Effect.result),
+          ],
+          { concurrency: "unbounded" },
+        );
+        const successes = results.filter(Result.isSuccess);
+        const failures = results.filter(Result.isFailure);
+        expect(successes).toHaveLength(1);
+        expect(failures).toHaveLength(1);
+        expect([...store.rows.keys()]).toHaveLength(1);
+      }),
+    ),
   );
 });

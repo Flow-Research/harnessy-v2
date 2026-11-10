@@ -7,7 +7,7 @@ import {
 	HttpClientRequest,
 	type HttpClientResponse,
 	type HttpClient as HttpClientService,
-} from "effect/unstable/http";
+} from "effect/http";
 
 const GOOGLE_DRIVE_BASE_URL = "https://www.googleapis.com/drive/v3";
 const GOOGLE_DOCS_BASE_URL = "https://docs.googleapis.com/v1";
@@ -38,7 +38,7 @@ export interface ResolvedMeetingProviderTransport {
 	readonly maxMarkdownBytes: number;
 }
 
-export class MeetingProviderSafeFailure extends Schema.TaggedErrorClass<MeetingProviderSafeFailure>()(
+export class MeetingProviderSafeFailure extends Schema.TaggedError<MeetingProviderSafeFailure>()(
 	"MeetingProviderSafeFailure",
 	{
 		code: Schema.String,

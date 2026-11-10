@@ -45,7 +45,7 @@ const complexTopLevelFields = new Set([
 ]);
 
 const decodeEnvironmentValue = (value: string, requireJson: boolean) => {
-	const decoded = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString)(value);
+	const decoded = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(value);
 	return requireJson ? decoded : decoded.pipe(Effect.catch(() => Effect.succeed(value)));
 };
 

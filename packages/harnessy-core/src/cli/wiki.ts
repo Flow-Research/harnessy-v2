@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { Console } from "effect";
+import { Argument, Command, Flag } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { Argument, Command, Flag } from "effect/unstable/cli";
 
 /** Host is optional and resolved only when this domain is invoked; Core never imports it. */
 export const runWikiHost = (args: readonly string[]): Promise<string> =>
@@ -45,10 +45,10 @@ export const runWikiHost = (args: readonly string[]): Promise<string> =>
 	});
 
 const common = {
-	json: Flag.boolean("json"),
-	home: Flag.string("home-root").pipe(Flag.optional),
-	vault: Flag.string("vault").pipe(Flag.optional),
-	target: Flag.string("target").pipe(Flag.optional),
+	json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
+	home: Flag.String("home-root").pipe(Flag.optional),
+	vault: Flag.String("vault").pipe(Flag.optional),
+	target: Flag.String("target").pipe(Flag.optional),
 };
 const baseArgs = (value: {
 	home: Option.Option<string>;
@@ -75,9 +75,9 @@ export const wikiCommand = Command.make("wiki").pipe(
 			"ingest",
 			{
 				...common,
-				source: Argument.string("source"),
-				topic: Flag.string("topic").pipe(Flag.between(0, 12)),
-				note: Flag.string("note").pipe(Flag.optional),
+				source: Argument.String("source"),
+				topic: Flag.String("topic").pipe(Flag.between(0, 12)),
+				note: Flag.String("note").pipe(Flag.optional),
 			},
 			(value) =>
 				invoke([
@@ -90,7 +90,11 @@ export const wikiCommand = Command.make("wiki").pipe(
 		),
 		Command.make(
 			"sync",
-			{ ...common, refresh: Flag.boolean("refresh"), captureOnly: Flag.boolean("capture-only") },
+			{
+				...common,
+				refresh: Flag.Boolean("refresh").pipe(Flag.withDefault(false)),
+				captureOnly: Flag.Boolean("capture-only").pipe(Flag.withDefault(false)),
+			},
 			(value) =>
 				invoke([
 					"sync",
@@ -99,12 +103,16 @@ export const wikiCommand = Command.make("wiki").pipe(
 					...(value.captureOnly ? ["--capture-only"] : []),
 				]),
 		),
-		Command.make("search", { ...common, query: Argument.string("query") }, (value) =>
+		Command.make("search", { ...common, query: Argument.String("query") }, (value) =>
 			invoke(["search", value.query, ...baseArgs(value)]),
 		),
 		Command.make(
 			"ask",
-			{ ...common, question: Argument.string("question"), context: Flag.boolean("context") },
+			{
+				...common,
+				question: Argument.String("question"),
+				context: Flag.Boolean("context").pipe(Flag.withDefault(false)),
+			},
 			(value) => invoke(["ask", value.question, ...baseArgs(value), ...(value.context ? ["--context"] : [])]),
 		),
 		Command.make("status", common, (value) => invoke(["status", ...baseArgs(value)])),
@@ -112,10 +120,10 @@ export const wikiCommand = Command.make("wiki").pipe(
 			"review",
 			{
 				...common,
-				week: Flag.string("week").pipe(Flag.optional),
-				lifeCompanion: Flag.boolean("life-companion").pipe(
-					Flag.withDescription("Also link the review from the weekly Life companion file"),
-				),
+				week: Flag.String("week").pipe(Flag.optional),
+				lifeCompanion: Flag.Boolean("life-companion")
+					.pipe(Flag.withDefault(false))
+					.pipe(Flag.withDescription("Also link the review from the weekly Life companion file")),
 			},
 			(value) =>
 				invoke([

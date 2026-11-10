@@ -65,6 +65,7 @@ try {
 	const pending = new Map();
 	const failures = [];
 	const posts = [];
+	let mainFrameNavigations = 0;
 	const send = (method, params = {}, sessionId) =>
 		new Promise((resolve, reject) => {
 			const key = ++id;
@@ -95,6 +96,8 @@ try {
 			const url = new URL(request.url);
 			const handle = async () => {
 				if (url.origin === origin) {
+					// Exercise submission over a slow connection, rather than accepting the old inbox.
+					if (request.method === "POST") await wait(250);
 					if (request.method === "POST")
 						posts.push({
 							path: url.pathname,
@@ -113,6 +116,8 @@ try {
 			};
 			void handle().catch((e) => failures.push(e.message));
 		}
+		if (event.method === "Page.frameNavigated" && !event.params.frame.parentId)
+			mainFrameNavigations++;
 		if (
 			event.method === "Network.responseReceived" &&
 			event.params.response.status >= 400 &&
@@ -155,9 +160,11 @@ try {
 		if (action === "reject") await evaluate(`document.querySelector('details.quick-reject summary').click()`);
 	}
 	await until("review form", () => evaluate(`!!document.querySelector('form[action="/${action}/${itemId}"]')`));
+	const beforeSubmission = mainFrameNavigations;
 	await evaluate(`document.querySelector('form[action="/${action}/${itemId}"] button').click()`);
 	await until("decision recorded", async () => {
 		if (failures.length) throw Error(failures.join(", "));
+		if (posts.length !== 1 || mainFrameNavigations <= beforeSubmission) return false;
 		return action === "generate-google-doc"
 			? evaluate(`document.querySelector('h1')?.textContent === 'Google Doc ready' && !!document.querySelector('a[target="_blank"][rel="noopener noreferrer"]')`)
 			: evaluate(`location.pathname === '/' && !!document.querySelector('#google-connection-title')`);

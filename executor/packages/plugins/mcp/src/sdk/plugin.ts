@@ -1,5 +1,5 @@
 import { Effect, Layer, Option, Result, Schema } from "effect";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 
 import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";

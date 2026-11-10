@@ -9,7 +9,7 @@ import type { AuthToolFailureCode } from "@executor-js/sdk/core";
 // whose status was not picked up — the error then slipped the typed
 // channel and was captured as a 500 by the observability middleware,
 // spamming Sentry on user misconfig.
-export class OpenApiParseError extends Schema.TaggedErrorClass<OpenApiParseError>()(
+export class OpenApiParseError extends Schema.TaggedError<OpenApiParseError>()(
   "OpenApiParseError",
   {
     message: Schema.String,
@@ -17,7 +17,7 @@ export class OpenApiParseError extends Schema.TaggedErrorClass<OpenApiParseError
   { httpApiStatus: 400 },
 ) {}
 
-export class OpenApiExtractionError extends Schema.TaggedErrorClass<OpenApiExtractionError>()(
+export class OpenApiExtractionError extends Schema.TaggedError<OpenApiExtractionError>()(
   "OpenApiExtractionError",
   {
     message: Schema.String,
@@ -32,7 +32,7 @@ export class OpenApiInvocationError extends Data.TaggedError("OpenApiInvocationE
   readonly cause?: unknown;
 }> {}
 
-export class OpenApiOAuthError extends Schema.TaggedErrorClass<OpenApiOAuthError>()(
+export class OpenApiOAuthError extends Schema.TaggedError<OpenApiOAuthError>()(
   "OpenApiOAuthError",
   {
     message: Schema.String,

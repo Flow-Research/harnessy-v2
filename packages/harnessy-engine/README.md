@@ -11,7 +11,7 @@ import {
 } from "@harnessy/engine/cloudflare";
 ```
 
-Both ESM entries bundle the vendored Executor source and Effect `4.0.0-beta.85`. Consumers declare no Executor, Effect, Agents, or MCP SDK dependencies. Declaration type-support packages are exact, package-owned transitive dependencies; runtime JavaScript remains self-contained apart from `node:*` and `cloudflare:*` platform modules.
+Both ESM entries bundle the vendored Executor source and Effect `4.1.3`. Consumers declare no Executor, Effect, Agents, or MCP SDK dependencies. Declaration type-support packages are exact, package-owned transitive dependencies; runtime JavaScript remains self-contained apart from `node:*` and `cloudflare:*` platform modules.
 
 ## Config-first Cloudflare Worker
 
@@ -104,7 +104,64 @@ cd /path/to/garden-worker
 pnpm add /tmp/harnessy-engine-0.0.3.tgz
 ```
 
-The package exports only built ESM and declarations. The fixture test freshly packs a tarball into a temporary directory, installs that artifact without declaring Effect, Agents, or the MCP SDK, typechecks with `strict`, `noEmit`, and `skipLibCheck`, and runs `wrangler deploy --dry-run`. `skipLibCheck` is limited to this external-consumer fixture: full checking of third-party beta and ambient library declarations is not part of the consumer API contract and is not possible with the pinned upstream dependency graph. The fixture still checks its own code and the exposed `@harnessy/engine` public surface under strict TypeScript settings. The bundle audit separately rejects bare declaration imports unless their packages are exact, package-owned dependencies.
+The package exports built ESM and declarations. The fixture packs a new tarball,
+installs it in a temporary project, generates its host type profile, checks all
+declarations with `strict`, `noEmit` and `skipLibCheck:false`, and runs
+`wrangler deploy --dry-run`. Positive and negative type controls remain required.
+The bundle audit also rejects undeclared type dependencies.
+
+### Cloudflare declaration profile
+
+Workers and Node declare different versions of web globals. Loading both global
+libraries causes duplicate declarations. Agents also references structural browser
+inputs through its AI types. The package supplies a Node-only build command to
+generate one host profile from the project's actual Wrangler runtime declarations:
+
+```sh
+pnpm exec wrangler types
+pnpm exec harnessy-engine-types --input worker-configuration.d.ts --output .harnessy-engine-types
+pnpm exec tsc --noEmit
+```
+
+Use the generated profile in the project's TypeScript configuration:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "typeRoots": ["./.harnessy-engine-types", "./node_modules/@types"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false
+  },
+  "include": ["src/**/*.ts", ".harnessy-engine-types/runtime.d.ts"]
+}
+```
+
+Keep `worker-configuration.d.ts` as the generator input. The TypeScript program
+includes the profile's runtime copy. Add `.harnessy-engine-types/` to the project's
+ignore file and regenerate it after Wrangler configuration changes.
+
+The profile keeps Workers' web globals and Node's module declarations. It uses
+exact Node 22.19.19 and Undici 6.21.0 type sources, preserves their licenses, and
+records source and output hashes plus each declaration change. It makes four
+actual Worker globals visible on `globalThis`, and uses concrete Node module
+types for supported performance constructors. `FileList` is a structural input
+type only. The profile supplies no `FileList` or `BroadcastChannel` constructor.
+
+The command leaves the input and installed dependencies unchanged. It refuses
+paths outside the project, output symlinks, unowned output and edits to generated
+files. It runs only when the developer invokes it. No installation lifecycle
+script runs it. Exact package-owned type-support dependencies include TypeScript,
+Node types, Undici types and the AI declaration dependency used by Agents.
+
+The fixture targets compatibility date `2026-07-01` with `nodejs_compat`.
+Node module declarations do not establish that every Node API runs in Workers.
+Use the host's documented runtime support and qualify other configurations.
 
 ## Integration limits
 
@@ -117,4 +174,8 @@ The package exports only built ESM and declarations. The fixture test freshly pa
 
 The root entry needs the provider-neutral MCP serving envelope, whose actual build graph includes `@modelcontextprotocol/sdk`; it does not include Cloudflare Agents or Durable Object code. The Cloudflare entry adds `agents/mcp`, which brings Agents and the MCP SDK into that bundle. Both are bundled so an external packed artifact remains runtime-self-contained. Only platform-scheme imports remain external.
 
-Vendored Executor source uses the removed `Context.Service.asEffect()` helper from its earlier Effect version. A package-local compatibility adapter implements that helper as the service tag itself—the beta.85 representation of the same effect—and all aliases resolve to the single bundled beta.85 runtime. No Executor source is modified and no second Effect runtime is included.
+The coordinated migration updates vendored service access to
+`Effect.service(ServiceTag)`. Build and test resolution use the pinned Effect
+package exports. The old beta adapter that added `asEffect` to the service
+prototype is removed. The source overlay is recorded in `executor/VENDOR.md`;
+the bundle uses one Effect runtime.

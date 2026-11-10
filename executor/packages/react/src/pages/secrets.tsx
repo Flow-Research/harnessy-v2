@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import type { ProviderKey } from "@executor-js/sdk/shared";
 import { useSecretProviderPlugins } from "@executor-js/sdk/client";
 

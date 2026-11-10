@@ -1,7 +1,7 @@
 import { expect, layer } from "@effect/vitest";
 import { Effect, Layer, Schema } from "effect";
 import { OAuthTestServer } from "@executor-js/sdk/testing";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { GraphqlTestServer, makeGreetingGraphqlSchema } from "./testing";
 

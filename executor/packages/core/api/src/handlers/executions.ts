@@ -1,4 +1,4 @@
-import { HttpApiBuilder } from "effect/unstable/httpapi";
+import { HttpApiBuilder } from "effect/http-api";
 import { Effect } from "effect";
 import { Schema } from "effect";
 
@@ -7,7 +7,7 @@ import { formatExecuteResult, formatPausedExecution } from "@executor-js/executi
 import { ExecutionEngineService } from "../services";
 import { capture, captureEngineError } from "@executor-js/api";
 
-class ExecutionNotFoundError extends Schema.TaggedErrorClass<ExecutionNotFoundError>()(
+class ExecutionNotFoundError extends Schema.TaggedError<ExecutionNotFoundError>()(
   "ExecutionNotFoundError",
   {
     executionId: Schema.String,

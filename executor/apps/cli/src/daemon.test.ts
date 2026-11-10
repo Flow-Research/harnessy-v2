@@ -130,7 +130,7 @@ describe("isExecutorServerReachable", () => {
               new Promise<void>((resolve) => {
                 server.close(() => resolve());
               }),
-          ),
+          ).pipe(Effect.orDie),
       );
 
       const reachable = yield* isExecutorServerReachable({

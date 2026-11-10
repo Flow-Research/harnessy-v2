@@ -152,7 +152,7 @@ const getServerHandlersRuntime = (
 };
 
 export const getServerHandlers = (token: string): Promise<ServerHandlers> =>
-  getServerHandlersRuntime(token).runPromise(ServerHandlersService.asEffect());
+  getServerHandlersRuntime(token).runPromise(Effect.service(ServerHandlersService));
 
 export const disposeServerHandlers = async (): Promise<void> => {
   const runtime = serverHandlersRuntime;

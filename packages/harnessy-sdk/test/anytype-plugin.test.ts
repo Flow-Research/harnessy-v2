@@ -11,8 +11,8 @@ import {
 	Tenant,
 	ToolAddress,
 } from "@executor-js/sdk/core";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { harnessyAnytypePlugin } from "../src/plugins/anytype.ts";
 

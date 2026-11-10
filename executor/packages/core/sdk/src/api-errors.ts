@@ -10,7 +10,7 @@
 import { Schema } from "effect";
 
 /** Public 500 surface. Opaque by schema — only `traceId` crosses the wire. */
-export class InternalError extends Schema.TaggedErrorClass<InternalError>()(
+export class InternalError extends Schema.TaggedError<InternalError>()(
   "InternalError",
   {
     /** Opaque correlation id for backend lookup (Sentry event id, log line, etc.). */

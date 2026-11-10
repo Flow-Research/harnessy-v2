@@ -1,7 +1,7 @@
 import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 import { NodeServices } from "@effect/platform-node";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 
 import {

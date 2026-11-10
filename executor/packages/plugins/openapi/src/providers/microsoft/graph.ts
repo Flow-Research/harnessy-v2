@@ -1,6 +1,6 @@
 import { Effect, Option, Schema } from "effect";
 import type { Layer } from "effect";
-import { HttpClient, HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { AuthTemplateSlug } from "@executor-js/sdk/core";
 import { AuthenticationSchema, type OpenApiIntegrationConfig } from "../../sdk/config";

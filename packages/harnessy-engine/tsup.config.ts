@@ -1,15 +1,9 @@
 import { builtinModules, createRequire } from "node:module";
 import { writeFileSync } from "node:fs";
-import { resolve } from "node:path";
 import type { Plugin } from "esbuild";
 import { defineConfig } from "tsup";
 
-import {
-  effectCompat,
-  effectContextCompat,
-  effectDist,
-  executorSourceAliases,
-} from "./build/source-aliases";
+import { executorSourceAliases } from "./build/source-aliases.ts";
 
 const require = createRequire(import.meta.url);
 const nodeBuiltins = new Set(builtinModules.map((name) => name.replace(/^node:/, "")));
@@ -19,11 +13,9 @@ const sourceAliasPlugin: Plugin = {
   name: "harnessy-engine-source-aliases",
   setup(build) {
     build.onResolve({ filter: /^effect(?:\/.+)?$/ }, (args) => {
-      if (args.path === "effect") return { path: effectCompat };
-      if (args.path === "effect/Context") return { path: effectContextCompat };
-      const subpath = args.path.slice("effect/".length);
-      const suffix = subpath.startsWith("unstable/") ? "/index.js" : ".js";
-      return { path: resolve(effectDist, `${subpath}${suffix}`) };
+      // Resolve the pinned package's exports. Stable Effect namespaces use
+      // directory entrypoints as well as individual module files.
+      return { path: require.resolve(args.path) };
     });
     build.onResolve({ filter: /^@executor-js\// }, (args) => {
       const replacement = executorSourceAliases[args.path as keyof typeof executorSourceAliases];

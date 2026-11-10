@@ -7,7 +7,7 @@
 // identity-override-by-scope — those v1 concepts are gone.
 // ---------------------------------------------------------------------------
 
-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { Predicate, Schema } from "effect";
 
 import {

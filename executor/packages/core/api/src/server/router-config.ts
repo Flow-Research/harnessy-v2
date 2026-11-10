@@ -1,4 +1,4 @@
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { Layer } from "effect";
 
 // ---------------------------------------------------------------------------

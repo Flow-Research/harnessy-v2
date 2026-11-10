@@ -210,13 +210,15 @@ export const makeScopedExecutor = <
   options?: { readonly plugins?: PluginsProviderContext },
 ): Effect.Effect<Executor<TPlugins>, StorageFailure, DbProvider | PluginsProvider | HostConfig> =>
   Effect.gen(function* () {
-    const { db, blobs } = yield* DbProvider.asEffect().pipe(
+    const { db, blobs } = yield* Effect.service(DbProvider).pipe(
       Effect.withSpan("executor.stack.db_provider"),
     );
-    const { plugins: pluginsFactory } = yield* PluginsProvider.asEffect().pipe(
+    const { plugins: pluginsFactory } = yield* Effect.service(PluginsProvider).pipe(
       Effect.withSpan("executor.stack.plugins_provider"),
     );
-    const config = yield* HostConfig.asEffect().pipe(Effect.withSpan("executor.stack.host_config"));
+    const config = yield* Effect.service(HostConfig).pipe(
+      Effect.withSpan("executor.stack.host_config"),
+    );
     // Explicit config wins; otherwise fall back to the request origin if a host
     // provided one (HTTP middleware / MCP session DO). Stays `undefined` for
     // non-request callers — `coreTools.webBaseUrl` is optional and only the

@@ -549,19 +549,16 @@ export const CommunityOperationSystemReference = Context.Reference<{
 	}),
 });
 
-export class CommunityOperationError extends Schema.TaggedErrorClass<CommunityOperationError>()(
-	"CommunityOperationError",
-	{
-		code: Schema.Literals([
-			"invalid_authorization",
-			"runtime_rejected",
-			"publication_uncertain",
-			"reconciliation_required",
-		]),
-		/** Diagnostic identifier of the runtime check that rejected the operation. */
-		reason: Schema.optional(Schema.String),
-	},
-) {}
+export class CommunityOperationError extends Schema.TaggedError<CommunityOperationError>()("CommunityOperationError", {
+	code: Schema.Literals([
+		"invalid_authorization",
+		"runtime_rejected",
+		"publication_uncertain",
+		"reconciliation_required",
+	]),
+	/** Diagnostic identifier of the runtime check that rejected the operation. */
+	reason: Schema.optional(Schema.String),
+}) {}
 
 /** Only fixed internal identifiers, never free-form error text, become diagnostics. */
 const rejectionReason = (cause: unknown): string | undefined =>

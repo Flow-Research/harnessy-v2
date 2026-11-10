@@ -1,9 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as Redacted from "effect/Redacted";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 /**
  * A recording, in-memory {@link ChildProcessSpawner} for deterministic tests.
@@ -60,9 +61,17 @@ export const makeFakeSpawner = (handler: (call: RecordedSpawn) => FakeResponse =
 		const standard = unwrap(command);
 		const recorded: RecordedSpawn = {
 			executable: standard?.command ?? "",
-			args: standard?.args ?? [],
+			args: (standard?.args ?? []).map((value) => (Redacted.isRedacted(value) ? Redacted.value(value) : value)),
 			cwd: standard?.options.cwd,
-			env: standard?.options.env,
+			env:
+				standard?.options.env === undefined
+					? undefined
+					: Object.fromEntries(
+							Object.entries(standard.options.env).map(([key, value]) => [
+								key,
+								Redacted.isRedacted(value) ? Redacted.value(value) : value,
+							]),
+						),
 		};
 		calls.push(recorded);
 

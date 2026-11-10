@@ -1,5 +1,5 @@
-import * as AtomHttpApi from "effect/unstable/reactivity/AtomHttpApi";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import * as AtomHttpApi from "effect/reactivity/AtomHttpApi";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import { AccountHttpApi } from "@executor-js/api/client";
 import * as Effect from "effect/Effect";
 

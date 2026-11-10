@@ -1,6 +1,6 @@
 import type { IntegrationSlug } from "@executor-js/sdk/shared";
-import * as Atom from "effect/unstable/reactivity/Atom";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as Atom from "effect/reactivity/Atom";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { integrationsOptimisticAtom } from "@executor-js/react/api/atoms";
 import { ReactivityKey } from "@executor-js/react/api/reactivity-keys";
 import { GraphqlClient } from "./client";

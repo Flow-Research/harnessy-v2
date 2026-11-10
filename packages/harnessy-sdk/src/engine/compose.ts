@@ -59,7 +59,7 @@ export interface EngineConnectionCreateInput extends EngineConnectionRef {
 	readonly description?: string | null;
 }
 
-export class EngineMeetingReconnectError extends Schema.TaggedErrorClass<EngineMeetingReconnectError>()(
+export class EngineMeetingReconnectError extends Schema.TaggedError<EngineMeetingReconnectError>()(
 	"EngineMeetingReconnectError",
 	{
 		code: Schema.Literals([

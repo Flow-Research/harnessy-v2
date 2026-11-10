@@ -7,7 +7,7 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 export {
   makeTestConfig,
@@ -82,7 +82,9 @@ export const serveTestHttpApp = (
   EffectScope.Scope
 > =>
   makeTestHttpServer(
-    HttpServer.serve(HttpServerRequest.HttpServerRequest.asEffect().pipe(Effect.flatMap(handler))),
+    HttpServer.serve()(
+      Effect.service(HttpServerRequest.HttpServerRequest).pipe(Effect.flatMap(handler)),
+    ),
   );
 
 export const serveTestHttpServerLayer = (
@@ -106,7 +108,10 @@ const makeTestHttpServer = (
     ).pipe(Effect.mapError((cause) => new TestHttpServerServeError({ cause })));
     const server = Context.get(context, HttpServer.HttpServer);
     const address = server.address;
-    if (!Predicate.isTagged(address, "TcpAddress")) {
+    if (
+      !Predicate.isTagged(address, "InetAddressV4") &&
+      !Predicate.isTagged(address, "InetAddressV6")
+    ) {
       return yield* new TestHttpServerAddressError({ address });
     }
     const client = Context.get(context, HttpClient.HttpClient);
@@ -119,7 +124,7 @@ const makeTestHttpServer = (
         resume(Effect.void);
       });
       socket.on("error", (cause) => resume(Effect.fail(new TestHttpServerServeError({ cause }))));
-    }).pipe(Effect.retry(Schedule.both(Schedule.spaced("10 millis"), Schedule.recurs(100))));
+    }).pipe(Effect.retry(Schedule.max([Schedule.spaced("10 millis"), Schedule.recurs(100)])));
     const baseUrl = `http://127.0.0.1:${address.port}`;
     return {
       baseUrl,

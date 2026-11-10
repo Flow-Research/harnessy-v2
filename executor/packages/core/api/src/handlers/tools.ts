@@ -1,4 +1,4 @@
-import { HttpApiBuilder } from "effect/unstable/httpapi";
+import { HttpApiBuilder } from "effect/http-api";
 import { Effect } from "effect";
 import { ToolNotFoundError, type Tool } from "@executor-js/sdk";
 

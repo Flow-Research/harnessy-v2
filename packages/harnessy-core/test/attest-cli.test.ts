@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
 import { Effect, Exit } from "effect";
-import { Command } from "effect/unstable/cli";
+import { Command } from "effect/cli";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { addressOf, keccak, toHex } from "../src/attest/eas.ts";
 import type { AttestDeps } from "../src/attest/run.ts";

@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 
-export class OnePasswordError extends Schema.TaggedErrorClass<OnePasswordError>()(
+export class OnePasswordError extends Schema.TaggedError<OnePasswordError>()(
   "OnePasswordError",
   {
     operation: Schema.String,

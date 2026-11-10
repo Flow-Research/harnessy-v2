@@ -1,10 +1,9 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import { TestConsole } from "effect/testing";
-import { Command } from "effect/unstable/cli";
-
 import { CAPABILITY_MANIFEST_NAME, CapabilityManifest, DependencyRequirement } from "../src/capabilities/manifest.ts";
 import { CapabilityEntry, CapabilitySource } from "../src/capabilities/source.ts";
 import { rootCommand } from "../src/commands.ts";
@@ -30,6 +29,7 @@ import {
 	type StructuredDoctorOutput,
 	type StructuredVerifyOutput,
 } from "../src/structured-output.ts";
+import { unselectedCliServices } from "./lib/unselected-cli-services.ts";
 
 const capability = new CapabilityEntry({
 	id: "local:tiny-capability",
@@ -292,6 +292,7 @@ describe("Harnessy CLI JSON output", () => {
 			}),
 		).pipe(
 			Effect.provide(HarnessProject.layer),
+			Effect.provide(unselectedCliServices),
 			Effect.provide(NodeServices.layer),
 			Effect.provide(TestConsole.layer),
 		),
@@ -322,6 +323,7 @@ describe("Harnessy CLI JSON output", () => {
 			}),
 		).pipe(
 			Effect.provide(HarnessProject.layer),
+			Effect.provide(unselectedCliServices),
 			Effect.provide(NodeServices.layer),
 			Effect.provide(TestConsole.layer),
 		),
@@ -375,6 +377,7 @@ describe("Harnessy CLI JSON output", () => {
 			}),
 		).pipe(
 			Effect.provide(HarnessProject.layer),
+			Effect.provide(unselectedCliServices),
 			Effect.provide(NodeServices.layer),
 			Effect.provide(TestConsole.layer),
 		),

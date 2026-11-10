@@ -189,8 +189,8 @@ export const validateGitSourceUrl = (url: string): string | null => {
   return parsed.ok ? null : parsed.message;
 };
 
-const decodeJsonText = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
-const encodeJsonText = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
+const decodeJsonText = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const encodeJsonText = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);

@@ -1,9 +1,9 @@
 import process from "node:process";
 
 import { Console } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { Command } from "effect/unstable/cli";
 
 import { HarnessProject } from "../operations.ts";
 import { renderAiResolutionJson } from "../structured-output.ts";

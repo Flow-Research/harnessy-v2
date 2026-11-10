@@ -5,10 +5,10 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { NodeServices } from "@effect/platform-node";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import { Command } from "effect/unstable/cli";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { afterEach, describe, expect, it } from "vitest";

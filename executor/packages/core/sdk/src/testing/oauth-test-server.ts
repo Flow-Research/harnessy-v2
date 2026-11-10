@@ -9,7 +9,7 @@ import {
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 export class OAuthTestServerAddressError extends Data.TaggedError("OAuthTestServerAddressError")<{
   readonly address: unknown;
@@ -259,14 +259,17 @@ const serveOAuthTestHttpApp = (
   Effect.gen(function* () {
     const context = yield* Layer.build(
       Layer.fresh(
-        HttpServer.serve(
-          HttpServerRequest.HttpServerRequest.asEffect().pipe(Effect.flatMap(handler)),
+        HttpServer.serve()(
+          Effect.service(HttpServerRequest.HttpServerRequest).pipe(Effect.flatMap(handler)),
         ).pipe(Layer.provideMerge(NodeHttpServer.layerTest)),
       ),
     ).pipe(Effect.mapError((address) => new OAuthTestServerAddressError({ address })));
     const server = Context.get(context, HttpServer.HttpServer);
     const address = server.address;
-    if (!Predicate.isTagged(address, "TcpAddress")) {
+    if (
+      !Predicate.isTagged(address, "InetAddressV4") &&
+      !Predicate.isTagged(address, "InetAddressV6")
+    ) {
       return yield* new OAuthTestServerAddressError({ address });
     }
     return { baseUrl: `http://127.0.0.1:${address.port}` };

@@ -240,16 +240,7 @@ void [address, program, invalidOwner, invalidValues, invalidConfig];
 	writeFileSync(join(installRoot, "consumer.ts"), consumerTypes);
 	const installedEffectRoot = join(installRoot, "node_modules", "effect");
 	const installedEffectManifest = JSON.parse(readFileSync(join(installedEffectRoot, "package.json"), "utf8"));
-	const effectSchemaDeclaration = readFileSync(
-		join(installedEffectRoot, "dist", "internal", "schema", "schema.d.ts"),
-		"utf8",
-	);
-	assert(installedEffectManifest.version === "4.0.0-beta.85", "Fixture dependency cohort no longer uses Effect beta.85");
-	assert(
-		effectSchemaDeclaration.includes("readonly [SchemaErrorTypeId]: typeof SchemaErrorTypeId") &&
-			!effectSchemaDeclaration.includes("declare const SchemaErrorTypeId"),
-		"Pinned Effect declaration defect was fixed; remove the fixture's skipLibCheck exception",
-	);
+	assert(installedEffectManifest.version === "4.1.3", "Fixture dependency cohort no longer uses Effect 4.1.3");
 	const consumerCompiler = join(
 		installRoot,
 		"node_modules",
@@ -264,6 +255,7 @@ void [address, program, invalidOwner, invalidValues, invalidConfig];
 		"--noEmit",
 		"--strict",
 		"--skipLibCheck",
+		"false",
 		"--target",
 		"ES2022",
 		"--module",
@@ -271,10 +263,8 @@ void [address, program, invalidOwner, invalidValues, invalidConfig];
 		"--moduleResolution",
 		"NodeNext",
 	];
-	// Effect beta.85's published schema declaration references an omitted
-	// SchemaErrorTypeId. The exact defect is asserted above; skipLibCheck is
-	// limited to this installed-consumer run while consumer contract errors are
-	// still proven by the used @ts-expect-error directives.
+	// Check the complete installed declaration graph. Keep the public-shape
+	// negative controls and private-subpath refusal as separate assertions.
 	run(
 		process.execPath,
 		[...typecheckArgs, join(installRoot, "consumer.ts")],
@@ -458,7 +448,7 @@ console.log(JSON.stringify({
 	assert(new Set(effectLocations).size === 1, `Expected one physical Effect install, got ${effectLocations.join(", ")}`);
 
 	const installedNodeBundle = readFileSync(join(installedSdkRoot, "dist", "node.js"), "utf8");
-	assert(!installedNodeBundle.includes("4.0.0-beta.59"), "Node bundle contains the vendored Executor Effect beta");
+	assert(!/4\.0\.0-beta\.(?:59|85)/u.test(installedNodeBundle), "Node bundle contains a retired Effect runtime");
 
 	console.log(
 		JSON.stringify(
@@ -475,7 +465,7 @@ console.log(JSON.stringify({
 					package: `@typescript/native-preview@${JSON.parse(readFileSync(join(installRoot, "node_modules", "@typescript", "native-preview", "package.json"), "utf8")).version}`,
 					binary: "node_modules/@typescript/native-preview/bin/tsgo.js",
 					version: compilerVersion,
-					skipLibCheckException: "effect@4.0.0-beta.85 omits SchemaErrorTypeId from dist/internal/schema/schema.d.ts",
+					skipLibCheck: false,
 					privateSubpathDiagnostic: privateImportDiagnostics.trim(),
 				},
 				privateCoreSubpaths,

@@ -15,7 +15,7 @@
 // ---------------------------------------------------------------------------
 
 import { Duration, Effect, Layer, Option, Schema } from "effect";
-import { FetchHttpClient, type HttpClient } from "effect/unstable/http";
+import { FetchHttpClient, type HttpClient } from "effect/http";
 
 import type { Connection } from "./connection";
 import type { IFumaClient, StorageFailure } from "./fuma-runtime";
@@ -250,7 +250,7 @@ export const missingGrantedOAuthScopes = (
   return out;
 };
 
-const decodeJsonPayload = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+const decodeJsonPayload = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 /** Extract the persisted `requestedScopes` from an `oauth_session.payload`. The
  *  jsonColumn may surface as a parsed object (in-memory backends) or a JSON

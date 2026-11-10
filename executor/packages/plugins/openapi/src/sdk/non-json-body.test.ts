@@ -15,14 +15,14 @@
 
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Schema } from "effect";
-import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   HttpApi,
   HttpApiBuilder,
   HttpApiEndpoint,
   HttpApiGroup,
   HttpApiSchema,
-} from "effect/unstable/httpapi";
+} from "effect/http-api";
 
 import { createExecutor } from "@executor-js/sdk";
 import { makeTestConfig, memoryCredentialsPlugin } from "@executor-js/sdk/testing";
@@ -51,7 +51,7 @@ type Captured = {
 const Ok = Schema.Struct({ ok: Schema.Boolean });
 
 const startEchoServer = (options: {
-  readonly name?: string;
+  readonly name?: "submit" | "upload";
   readonly path?: `/${string}`;
   readonly payload: Schema.Top | readonly Schema.Top[];
   readonly transformSpec?: (spec: Record<string, unknown>) => Record<string, unknown>;
@@ -405,6 +405,7 @@ describe("OpenAPI non-JSON request body dispatch", () => {
         });
         const group = HttpApiGroup.make("gmail").add(
           HttpApiEndpoint.get("getAttachment", "/attachments/:id", {
+            params: { id: Schema.String },
             success: MessagePartBody,
           }),
         );
@@ -489,6 +490,7 @@ describe("OpenAPI non-JSON request body dispatch", () => {
       });
       const group = HttpApiGroup.make("gmailText").add(
         HttpApiEndpoint.get("getAttachment", "/attachments/:id", {
+          params: { id: Schema.String },
           success: MessagePartBody,
         }),
       );
@@ -557,6 +559,7 @@ describe("OpenAPI non-JSON request body dispatch", () => {
       });
       const group = HttpApiGroup.make("zipAttachment").add(
         HttpApiEndpoint.get("getAttachment", "/attachments/:id", {
+          params: { id: Schema.String },
           success: MessagePartBody,
         }),
       );
@@ -642,12 +645,14 @@ describe("OpenAPI non-JSON request body dispatch", () => {
             "getAttachment",
             "/users/:userId/messages/:messageId/attachments/:id",
             {
+              params: { userId: Schema.String, messageId: Schema.String, id: Schema.String },
               success: MessagePartBody,
             },
           ),
         )
         .add(
           HttpApiEndpoint.get("getMessage", "/users/:userId/messages/:messageId", {
+            params: { userId: Schema.String, messageId: Schema.String },
             success: Message,
           }),
         );
@@ -741,6 +746,7 @@ describe("OpenAPI non-JSON request body dispatch", () => {
     Effect.gen(function* () {
       const group = HttpApiGroup.make("files").add(
         HttpApiEndpoint.get("download", "/files/:id", {
+          params: { id: Schema.String },
           success: Schema.String,
         }),
       );
@@ -795,6 +801,7 @@ describe("OpenAPI non-JSON request body dispatch", () => {
     Effect.gen(function* () {
       const group = HttpApiGroup.make("files").add(
         HttpApiEndpoint.get("download", "/files/:id", {
+          params: { id: Schema.String },
           success: Schema.String,
         }),
       );

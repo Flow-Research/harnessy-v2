@@ -1,5 +1,5 @@
 import { Effect, Layer, ManagedRuntime } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient } from "effect/http";
 import { BunFileSystem } from "@effect/platform-bun";
 
 import {
@@ -9,7 +9,7 @@ import {
 
 import { USER_AGENT } from "./installation";
 
-const refreshRegistry = IntegrationsRegistry.asEffect().pipe(
+const refreshRegistry = Effect.service(IntegrationsRegistry).pipe(
   Effect.flatMap((service) => service.refresh()),
   Effect.asVoid,
 );

@@ -1,4 +1,6 @@
-import { describe, expect, it } from "@effect/vitest";
+import { effectWorkerTest } from "../../../../../scripts/effect-worker-test";
+// oxlint-disable-next-line executor/no-vitest-import -- Cloudflare pool requires Vitest 4; Effect adapter requires Vitest 5.
+import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 import {
   makeInMemoryBlobStore,
@@ -162,60 +164,69 @@ const tool = (name: string): AppDescriptor["tools"][number] => ({
 });
 
 describe("apps store", () => {
-  it.effect("tombstones removed tools", () =>
-    Effect.gen(function* () {
-      const store = makeAppsStore({
-        blobs: pluginBlobStore(makeInMemoryBlobStore(), { org: "tenant", user: null }, "apps"),
-        pluginStorage: makeMemoryPluginStorage(),
-      });
-      yield* store.putPublished(
-        descriptor([tool("first"), tool("second")]),
-        "descriptor",
-        "org",
-        null,
-      );
-      yield* store.putPublished(descriptor([tool("first")]), "descriptor-2", "org", "sha-1");
-      const active = yield* store.listActiveTools();
-      expect(active.map((item) => item.name)).toEqual(["first"]);
-      expect(active.map((item) => item.app)).toEqual(["crm"]);
-    }),
+  it(
+    "tombstones removed tools",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const store = makeAppsStore({
+          blobs: pluginBlobStore(makeInMemoryBlobStore(), { org: "tenant", user: null }, "apps"),
+          pluginStorage: makeMemoryPluginStorage(),
+        });
+        yield* store.putPublished(
+          descriptor([tool("first"), tool("second")]),
+          "descriptor",
+          "org",
+          null,
+        );
+        yield* store.putPublished(descriptor([tool("first")]), "descriptor-2", "org", "sha-1");
+        const active = yield* store.listActiveTools();
+        expect(active.map((item) => item.name)).toEqual(["first"]);
+        expect(active.map((item) => item.app)).toEqual(["crm"]);
+      }),
+    ),
   );
 
-  it.effect("removes a published app catalog", () =>
-    Effect.gen(function* () {
-      const store = makeAppsStore({
-        blobs: pluginBlobStore(makeInMemoryBlobStore(), { org: "tenant", user: null }, "apps"),
-        pluginStorage: makeMemoryPluginStorage(),
-      });
-      yield* store.putPublished(
-        descriptor([tool("first"), tool("second")]),
-        "descriptor",
-        "org",
-        null,
-      );
-      yield* store.removePublished("crm", "org");
-      const active = yield* store.listActiveTools();
-      const descriptorRecord = yield* store.getDescriptorRecord("crm");
-      expect(active).toEqual([]);
-      expect(descriptorRecord).toBeNull();
-    }),
+  it(
+    "removes a published app catalog",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const store = makeAppsStore({
+          blobs: pluginBlobStore(makeInMemoryBlobStore(), { org: "tenant", user: null }, "apps"),
+          pluginStorage: makeMemoryPluginStorage(),
+        });
+        yield* store.putPublished(
+          descriptor([tool("first"), tool("second")]),
+          "descriptor",
+          "org",
+          null,
+        );
+        yield* store.removePublished("crm", "org");
+        const active = yield* store.listActiveTools();
+        const descriptorRecord = yield* store.getDescriptorRecord("crm");
+        expect(active).toEqual([]);
+        expect(descriptorRecord).toBeNull();
+      }),
+    ),
   );
 
-  it.effect("keeps owner blob partitions isolated", () =>
-    Effect.gen(function* () {
-      const blobStore = makeInMemoryBlobStore();
-      const orgStore = makeAppsStore({
-        blobs: pluginBlobStore(blobStore, { org: "tenant-a", user: null }, "apps"),
-        pluginStorage: makeMemoryPluginStorage(),
-      });
-      const otherStore = makeAppsStore({
-        blobs: pluginBlobStore(blobStore, { org: "tenant-b", user: null }, "apps"),
-        pluginStorage: makeMemoryPluginStorage(),
-      });
-      const key = yield* orgStore.putBlob("same app", "org");
-      expect(yield* orgStore.getBlob(key)).toBe("same app");
-      expect(yield* otherStore.getBlob(key)).toBeNull();
-    }),
+  it(
+    "keeps owner blob partitions isolated",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const blobStore = makeInMemoryBlobStore();
+        const orgStore = makeAppsStore({
+          blobs: pluginBlobStore(blobStore, { org: "tenant-a", user: null }, "apps"),
+          pluginStorage: makeMemoryPluginStorage(),
+        });
+        const otherStore = makeAppsStore({
+          blobs: pluginBlobStore(blobStore, { org: "tenant-b", user: null }, "apps"),
+          pluginStorage: makeMemoryPluginStorage(),
+        });
+        const key = yield* orgStore.putBlob("same app", "org");
+        expect(yield* orgStore.getBlob(key)).toBe("same app");
+        expect(yield* otherStore.getBlob(key)).toBeNull();
+      }),
+    ),
   );
 
   it("declares plugin storage collections", () => {

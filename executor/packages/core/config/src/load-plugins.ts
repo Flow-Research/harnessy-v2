@@ -39,13 +39,10 @@ type LooseConfiguredPlugin = (options?: Record<string, unknown>) => AnyPlugin;
 
 import { ExecutorFileConfig } from "./schema";
 
-export class LoadPluginsError extends Schema.TaggedErrorClass<LoadPluginsError>()(
-  "LoadPluginsError",
-  {
-    message: Schema.String,
-    cause: Schema.optional(Schema.Unknown),
-  },
-) {}
+export class LoadPluginsError extends Schema.TaggedError<LoadPluginsError>()("LoadPluginsError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Unknown),
+}) {}
 
 export interface LoadPluginsFromJsoncOptions {
   /** Absolute path to `executor.jsonc` (or compatible). */

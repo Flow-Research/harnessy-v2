@@ -58,7 +58,7 @@ export const unwrapOpenApiTransportEnvelope = (
   return { outputSchema };
 };
 
-const decodeJsonOption = Schema.decodeUnknownOption(Schema.UnknownFromJsonString);
+const decodeJsonOption = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 const execute = (
   client: SqliteDataMigrationClient,

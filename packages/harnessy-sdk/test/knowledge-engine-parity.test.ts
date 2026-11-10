@@ -9,8 +9,8 @@ import {
 } from "@executor-js/sdk/core";
 import { AnytypeConfig, anytypeKnowledgeLayer } from "@harnessy/core/connectors/anytype";
 import { KnowledgeObjects, KnowledgeSpaces } from "@harnessy/core/connectors/knowledge";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Layer from "effect/Layer";
-import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { harnessyEngineHandle } from "../src/engine/adapter.ts";
 import { engineKnowledgeLayer } from "../src/engine/knowledge.ts";
 import { harnessyAnytypePlugin } from "../src/plugins/anytype.ts";

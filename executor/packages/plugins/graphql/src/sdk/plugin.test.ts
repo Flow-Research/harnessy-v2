@@ -6,7 +6,7 @@ import {
   HttpClientResponse,
   HttpServerRequest,
   HttpServerResponse,
-} from "effect/unstable/http";
+} from "effect/http";
 
 import {
   AuthTemplateSlug,

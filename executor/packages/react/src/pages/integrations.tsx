@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Exit from "effect/Exit";
 import { PlusIcon } from "lucide-react";
 import type { Integration, IntegrationDetectionResult } from "@executor-js/sdk/shared";

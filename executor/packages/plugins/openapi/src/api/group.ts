@@ -1,4 +1,4 @@
-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { Schema } from "effect";
 import { ApiKeyAuthMethod, ApiKeyAuthTemplate } from "@executor-js/sdk/http-auth";
 import {

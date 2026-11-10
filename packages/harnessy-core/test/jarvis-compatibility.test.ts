@@ -1,15 +1,13 @@
 import { createHash } from "node:crypto";
 import { globSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem, Path, Redacted } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { TestConsole } from "effect/testing";
-import { Command } from "effect/unstable/cli";
-
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
 import { JarvisConfigReader } from "../src/jarvis/config.ts";
@@ -31,6 +29,7 @@ import {
 import { JarvisParityReporter } from "../src/jarvis/parity-report.ts";
 import { JarvisPathResolver, JarvisRuntimeRoots } from "../src/jarvis/paths.ts";
 import { HarnessProject } from "../src/operations.ts";
+import { unselectedCliServices } from "./lib/unselected-cli-services.ts";
 
 const contextLayer = Layer.mergeAll(JarvisPathResolver.layer, JarvisContextLoader.layer);
 
@@ -187,7 +186,7 @@ describe("Jarvis compatibility kernel", () => {
 					if (store.malformedFixture.endsWith(".json")) expect(() => JSON.parse(malformed)).toThrow();
 				}
 			}
-		}).pipe(Effect.provide(NodeServices.layer)),
+		}).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 
 	it.effect("resolves canonical and legacy stores without creating them", () =>
@@ -213,7 +212,7 @@ describe("Jarvis compatibility kernel", () => {
 				expect(yield* fs.exists(result.paths.canonicalGlobalRoot)).toBe(false);
 				expect(yield* fs.exists(result.paths.legacyGlobalRoot)).toBe(false);
 			}),
-		).pipe(Effect.provide(NodeServices.layer)),
+		).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 
 	it.effect("loads the twelve-file legacy context with project override and global expansion", () =>
@@ -249,7 +248,7 @@ describe("Jarvis compatibility kernel", () => {
 					content: "global goal\nproject goal",
 				});
 			}),
-		).pipe(Effect.provide(NodeServices.layer)),
+		).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 
 	it.effect("preserves legacy YAML defaults and rejects invalid nested shapes", () =>
@@ -322,7 +321,7 @@ describe("Jarvis compatibility kernel", () => {
 				}
 				expect(yield* fs.exists(path.join(home, ".harnessy"))).toBe(false);
 			}),
-		).pipe(Effect.provide(NodeServices.layer)),
+		).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 
 	it.effect("resolves full config defaults and nested environment precedence", () =>
@@ -404,7 +403,7 @@ describe("Jarvis compatibility kernel", () => {
 					apiVersion: "v24.0",
 				});
 			}),
-		).pipe(Effect.provide(NodeServices.layer)),
+		).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 
 	it.effect("rejects malformed and non-object JSON for complex Pydantic environment fields", () =>
@@ -553,7 +552,7 @@ describe("Jarvis compatibility kernel", () => {
 				expect(JSON.stringify(result.presence)).not.toContain("managed fathom secret");
 				expect(JSON.stringify(result.presence)).not.toContain("environment-wa-secret");
 			}),
-		).pipe(Effect.provide(NodeServices.layer)),
+		).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 
 	it.live("reports redacted config metadata through the read-only CLI", () =>
@@ -602,7 +601,11 @@ describe("Jarvis compatibility kernel", () => {
 				expect(output.config).toMatchObject({ status: "valid", activeBackend: "notion" });
 				expect(jsonLog).not.toContain("should-not-appear");
 			}),
-		).pipe(Effect.provide(NodeServices.layer), Effect.provide(TestConsole.layer)),
+		).pipe(
+			Effect.provide(unselectedCliServices),
+			Effect.provide(NodeServices.layer),
+			Effect.provide(TestConsole.layer),
+		),
 	);
 
 	it.live("distinguishes the static parity ledger from operational readiness in JSON and text", () =>
@@ -641,7 +644,11 @@ describe("Jarvis compatibility kernel", () => {
 			expect(yield* TestConsole.logLines).toContain(
 				"Static compatibility ledger only; operational readiness is not assessed.",
 			);
-		}).pipe(Effect.provide(NodeServices.layer), Effect.provide(TestConsole.layer)),
+		}).pipe(
+			Effect.provide(unselectedCliServices),
+			Effect.provide(NodeServices.layer),
+			Effect.provide(TestConsole.layer),
+		),
 	);
 
 	it.live("never exposes malformed YAML source lines in JSON or text diagnostics", () =>
@@ -671,7 +678,11 @@ describe("Jarvis compatibility kernel", () => {
 				expect(output).toContain("Invalid YAML syntax in legacy Jarvis configuration.");
 				expect(output).not.toContain("should-not-appear");
 			}),
-		).pipe(Effect.provide(NodeServices.layer), Effect.provide(TestConsole.layer)),
+		).pipe(
+			Effect.provide(unselectedCliServices),
+			Effect.provide(NodeServices.layer),
+			Effect.provide(TestConsole.layer),
+		),
 	);
 
 	it.effect("rejects incomplete or duplicate parity ledgers", () =>
@@ -706,7 +717,7 @@ describe("Jarvis compatibility kernel", () => {
 			expect(error.issues).toContain(`Duplicate ${first.surface} parity reference: ${first.legacyReference}`);
 			expect(error.issues).toContain(`Parity id ${duplicateReference.id} must be ${first.id}`);
 			expect(error.issues).toContain("Missing state parity entry: legacy-config-yaml-v1");
-		}).pipe(Effect.provide(NodeServices.layer)),
+		}).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 
 	it.effect("validates the parity manifest contract", () =>

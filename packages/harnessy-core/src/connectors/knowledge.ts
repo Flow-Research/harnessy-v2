@@ -111,53 +111,55 @@ const ConnectorErrorFields = {
 };
 
 /** The backend could not be reached, timed out, or returned an unexpected status. */
-export class ConnectorTransportError extends Schema.TaggedErrorClass<ConnectorTransportError>()(
-	"ConnectorTransportError",
-	{ ...ConnectorErrorFields, retryable: Schema.Boolean, cause: Schema.optional(Schema.Defect()) },
-) {}
+export class ConnectorTransportError extends Schema.TaggedError<ConnectorTransportError>()("ConnectorTransportError", {
+	...ConnectorErrorFields,
+	retryable: Schema.Boolean,
+	cause: Schema.optional(Schema.Defect()),
+}) {}
 
 /** Credentials are missing, invalid, or expired. */
-export class ConnectorAuthError extends Schema.TaggedErrorClass<ConnectorAuthError>()("ConnectorAuthError", {
+export class ConnectorAuthError extends Schema.TaggedError<ConnectorAuthError>()("ConnectorAuthError", {
 	...ConnectorErrorFields,
 	status: Schema.optional(Schema.Int),
 }) {}
 
 /** Credentials are valid but do not authorize the requested resource or operation. */
-export class ConnectorAuthorizationError extends Schema.TaggedErrorClass<ConnectorAuthorizationError>()(
+export class ConnectorAuthorizationError extends Schema.TaggedError<ConnectorAuthorizationError>()(
 	"ConnectorAuthorizationError",
 	{ ...ConnectorErrorFields, status: Schema.optional(Schema.Int) },
 ) {}
 
 /** Caller input or backend configuration is invalid. */
-export class ConnectorValidationError extends Schema.TaggedErrorClass<ConnectorValidationError>()(
+export class ConnectorValidationError extends Schema.TaggedError<ConnectorValidationError>()(
 	"ConnectorValidationError",
 	{ ...ConnectorErrorFields, field: Schema.optional(Schema.String), status: Schema.optional(Schema.Int) },
 ) {}
 
 /** The backend response did not satisfy the semantic data contract. */
-export class ConnectorDataError extends Schema.TaggedErrorClass<ConnectorDataError>()("ConnectorDataError", {
+export class ConnectorDataError extends Schema.TaggedError<ConnectorDataError>()("ConnectorDataError", {
 	...ConnectorErrorFields,
 	cause: Schema.optional(Schema.Defect()),
 }) {}
 
-export class ConnectorRateLimitError extends Schema.TaggedErrorClass<ConnectorRateLimitError>()(
-	"ConnectorRateLimitError",
-	{ ...ConnectorErrorFields, retryAfterSeconds: Schema.optional(Schema.Number) },
-) {}
+export class ConnectorRateLimitError extends Schema.TaggedError<ConnectorRateLimitError>()("ConnectorRateLimitError", {
+	...ConnectorErrorFields,
+	retryAfterSeconds: Schema.optional(Schema.Number),
+}) {}
 
-export class ConnectorNotFoundError extends Schema.TaggedErrorClass<ConnectorNotFoundError>()(
-	"ConnectorNotFoundError",
-	{ ...ConnectorErrorFields, resourceType: Schema.String, resourceId: Schema.String },
-) {}
+export class ConnectorNotFoundError extends Schema.TaggedError<ConnectorNotFoundError>()("ConnectorNotFoundError", {
+	...ConnectorErrorFields,
+	resourceType: Schema.String,
+	resourceId: Schema.String,
+}) {}
 
 /** Unsupported reads always carry the same capability evidence returned by discovery. */
-export class ConnectorUnsupportedCapabilityError extends Schema.TaggedErrorClass<ConnectorUnsupportedCapabilityError>()(
+export class ConnectorUnsupportedCapabilityError extends Schema.TaggedError<ConnectorUnsupportedCapabilityError>()(
 	"ConnectorUnsupportedCapabilityError",
 	{ ...ConnectorErrorFields, evidence: KnowledgeCapabilityEvidence },
 ) {}
 
 /** Mutation calls are structurally present, but cannot reach a transport until policy issue #48 lands. */
-export class ConnectorMutationDisabledError extends Schema.TaggedErrorClass<ConnectorMutationDisabledError>()(
+export class ConnectorMutationDisabledError extends Schema.TaggedError<ConnectorMutationDisabledError>()(
 	"ConnectorMutationDisabledError",
 	{ ...ConnectorErrorFields, blockedByIssue: Schema.Literal(48) },
 ) {}

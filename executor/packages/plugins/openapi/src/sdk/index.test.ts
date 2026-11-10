@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/unstable/httpapi";
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
 import { Effect, Option, Schema } from "effect";
 
 import { parse } from "./parse";
@@ -22,7 +22,7 @@ const CreatePetInput = Schema.Struct({
   tag: Schema.optional(Schema.String),
 });
 
-class PetNotFound extends Schema.TaggedErrorClass<PetNotFound>()("PetNotFound", {
+class PetNotFound extends Schema.TaggedError<PetNotFound>()("PetNotFound", {
   message: Schema.String,
 }) {}
 
@@ -31,6 +31,7 @@ const PetstoreGroup = HttpApiGroup.make("pets")
   .add(HttpApiEndpoint.post("createPet", "/pets", { payload: CreatePetInput, success: Pet }))
   .add(
     HttpApiEndpoint.get("getPet", "/pets/:petId", {
+      params: { petId: Schema.String },
       success: Pet,
       error: PetNotFound,
     }),

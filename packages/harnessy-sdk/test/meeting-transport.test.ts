@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 
 import { Effect, Layer, Result, Schema } from "effect";
-import { FetchHttpClient, HttpClient, type HttpClientResponse } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, type HttpClientResponse } from "effect/http";
 import { describe, expect, it } from "vitest";
 
 import { executeMeetingJson, resolveMeetingProviderTransport } from "../src/meeting-publication/transport.ts";

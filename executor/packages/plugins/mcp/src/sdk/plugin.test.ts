@@ -1,11 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Predicate, Schema } from "effect";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-  HttpServerResponse,
-} from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effect/http";
 
 import {
   AuthTemplateSlug,

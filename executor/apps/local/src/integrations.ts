@@ -1,5 +1,5 @@
-import { Layer, ManagedRuntime } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { Effect, Layer, ManagedRuntime } from "effect";
+import { FetchHttpClient } from "effect/http";
 import { NodeFileSystem } from "@effect/platform-node";
 
 import {
@@ -28,5 +28,5 @@ const integrationsRuntime = ManagedRuntime.make(
  * absorbed inside the forked fiber and the layer's catchCause handlers.
  */
 export const startIntegrationsRefresh = (): void => {
-  integrationsRuntime.runFork(IntegrationsRegistry.asEffect());
+  integrationsRuntime.runFork(Effect.service(IntegrationsRegistry));
 };

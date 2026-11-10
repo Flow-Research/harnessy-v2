@@ -1,4 +1,6 @@
-import { describe, expect, it } from "@effect/vitest";
+import { effectWorkerTest } from "../../../../../scripts/effect-worker-test";
+// oxlint-disable-next-line executor/no-vitest-import -- Cloudflare pool requires Vitest 4; Effect adapter requires Vitest 5.
+import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 
 import { buildBridge, resolveIntegrationBindings, type ClientResolver } from "./bindings";
@@ -21,40 +23,49 @@ const one = (slug: string) => ({ slug, mode: "one" as const });
 const many = (slug: string) => ({ slug, mode: "many" as const });
 
 describe("integration bindings", () => {
-  it.effect("resolves caller-supplied connection addresses", () =>
-    Effect.gen(function* () {
-      const result = yield* resolveIntegrationBindings(
-        { crm: one("dealcloud") },
-        { crm: "tools.dealcloud.org.main", updatedSince: "today" },
-        resolver,
-      );
-      expect(result).toEqual({
-        input: { updatedSince: "today" },
-        bindings: { crm: "tools.dealcloud.org.main" },
-      });
-    }),
+  it(
+    "resolves caller-supplied connection addresses",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const result = yield* resolveIntegrationBindings(
+          { crm: one("dealcloud") },
+          { crm: "tools.dealcloud.org.main", updatedSince: "today" },
+          resolver,
+        );
+        expect(result).toEqual({
+          input: { updatedSince: "today" },
+          bindings: { crm: "tools.dealcloud.org.main" },
+        });
+      }),
+    ),
   );
 
-  it.effect("fails unknown connection addresses as BindingError", () =>
-    Effect.gen(function* () {
-      const error = yield* resolveIntegrationBindings(
-        { crm: one("dealcloud") },
-        { crm: "tools.dealcloud.org.missing" },
-        resolver,
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "BindingError" });
-    }),
+  it(
+    "fails unknown connection addresses as BindingError",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const error = yield* resolveIntegrationBindings(
+          { crm: one("dealcloud") },
+          { crm: "tools.dealcloud.org.missing" },
+          resolver,
+        ).pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "BindingError" });
+      }),
+    ),
   );
 
-  it.effect("fails mismatched connection integrations as BindingError", () =>
-    Effect.gen(function* () {
-      const error = yield* resolveIntegrationBindings(
-        { crm: one("dealcloud") },
-        { crm: "tools.github.org.main" },
-        resolver,
-      ).pipe(Effect.flip);
-      expect(error).toMatchObject({ message: expect.stringContaining('not "dealcloud"') });
-    }),
+  it(
+    "fails mismatched connection integrations as BindingError",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const error = yield* resolveIntegrationBindings(
+          { crm: one("dealcloud") },
+          { crm: "tools.github.org.main" },
+          resolver,
+        ).pipe(Effect.flip);
+        expect(error).toMatchObject({ message: expect.stringContaining('not "dealcloud"') });
+      }),
+    ),
   );
 
   it("bridges method calls to the resolver", async () => {
@@ -107,25 +118,28 @@ describe("integration bindings", () => {
     ]);
   });
 
-  it.effect("resolves arrays of connection addresses for fan-out", () =>
-    Effect.gen(function* () {
-      const result = yield* resolveIntegrationBindings(
-        { inboxes: many("gmail") },
-        { inboxes: ["tools.gmail.org.work", "tools.gmail.user.personal"], q: "unread" },
-        {
-          ...resolver,
-          resolveConnection: ({ connection }) =>
-            Effect.succeed(
-              connection.startsWith("tools.gmail.")
-                ? { integration: "gmail", address: connection }
-                : null,
-            ),
-        },
-      );
-      expect(result).toEqual({
-        input: { q: "unread" },
-        bindings: { inboxes: ["tools.gmail.org.work", "tools.gmail.user.personal"] },
-      });
-    }),
+  it(
+    "resolves arrays of connection addresses for fan-out",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const result = yield* resolveIntegrationBindings(
+          { inboxes: many("gmail") },
+          { inboxes: ["tools.gmail.org.work", "tools.gmail.user.personal"], q: "unread" },
+          {
+            ...resolver,
+            resolveConnection: ({ connection }) =>
+              Effect.succeed(
+                connection.startsWith("tools.gmail.")
+                  ? { integration: "gmail", address: connection }
+                  : null,
+              ),
+          },
+        );
+        expect(result).toEqual({
+          input: { q: "unread" },
+          bindings: { inboxes: ["tools.gmail.org.work", "tools.gmail.user.personal"] },
+        });
+      }),
+    ),
   );
 });

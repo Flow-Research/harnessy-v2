@@ -3,10 +3,10 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { Console, Redacted } from "effect";
+import { Command, Flag as Options } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import { Command, Flag as Options } from "effect/unstable/cli";
 import { DEFAULT_CODEX_MODEL } from "../ai/codex-model.ts";
 import {
 	COMMUNITY_REVIEW_PORT,
@@ -54,89 +54,89 @@ import { communityDraftCommand, communityReviewServeCommand } from "./community-
 import { jsonOption, targetOption } from "./shared.ts";
 import { runWikiHost, wikiCommand } from "./wiki.ts";
 
-const homeRootOption = Options.string("home-root").pipe(
+const homeRootOption = Options.String("home-root").pipe(
 	Options.optional,
 	Options.withDescription("Override the home-like root containing Life state. Primarily for migration tests."),
 );
-const compatibilityRootOption = Options.string("compatibility-root").pipe(
+const compatibilityRootOption = Options.String("compatibility-root").pipe(
 	Options.optional,
 	Options.withDescription("Pinned directory containing the frozen Life compatibility scripts."),
 );
-const dateOption = Options.string("date").pipe(
+const dateOption = Options.String("date").pipe(
 	Options.optional,
 	Options.withDescription("Research date override in YYYY-MM-DD format."),
 );
-const previewOption = Options.boolean("preview").pipe(
+const previewOption = Options.Boolean("preview").pipe(
 	Options.withDefault(false),
 	Options.withDescription("Generate and validate a local Life preview without publishing it."),
 );
-const prepareNativePromptOption = Options.boolean("prepare-native-prompt").pipe(
+const prepareNativePromptOption = Options.Boolean("prepare-native-prompt").pipe(
 	Options.withDefault(false),
 	Options.withDescription("Prepare an exact private Life prompt for owner signing; does not call an AI provider."),
 );
-const draftModelOption = Options.string("draft-model").pipe(
+const draftModelOption = Options.String("draft-model").pipe(
 	Options.withDefault(DEFAULT_CODEX_MODEL),
 	Options.withDescription("Explicit Codex model for a prepared native Life draft."),
 );
-const nativeRequestOption = Options.string("native-request").pipe(
+const nativeRequestOption = Options.String("native-request").pipe(
 	Options.optional,
 	Options.withDescription("Owner-only Life request JSON produced by --prepare-native-prompt and bound by the grant."),
 );
-const nativeGrantOption = Options.string("native-grant").pipe(
+const nativeGrantOption = Options.String("native-grant").pipe(
 	Options.optional,
 	Options.withDescription("Owner-only signed Life grant JSON matching the native request."),
 );
-const nativeTrustOption = Options.string("native-trust").pipe(
+const nativeTrustOption = Options.String("native-trust").pipe(
 	Options.optional,
 	Options.withDescription("Owner-only trusted Ed25519 public-key PEM for the native Life issuer."),
 );
-const forceDailyOption = Options.boolean("force").pipe(
+const forceDailyOption = Options.Boolean("force").pipe(
 	Options.withDefault(false),
 	Options.withDescription("Regenerate today's brief and update its existing journal entry through V2."),
 );
-const dailyMaximumOutputBytesOption = Options.integer("max-output-bytes").pipe(
+const dailyMaximumOutputBytesOption = Options.Int("max-output-bytes").pipe(
 	Options.withDefault(1048576),
 	Options.withDescription("Maximum accepted generated daily brief, 1–1048576 UTF-8 bytes."),
 );
-const noAgentFallbackOption = Options.boolean("no-agent-fallback").pipe(
+const noAgentFallbackOption = Options.Boolean("no-agent-fallback").pipe(
 	Options.withDefault(false),
 	Options.withDescription("Run only deterministic RSS and Crossref discovery."),
 );
-const cliEntryOption = Options.string("cli-entry").pipe(
+const cliEntryOption = Options.String("cli-entry").pipe(
 	Options.withDescription("Absolute path to the built V2 dist/cli.js entrypoint."),
 );
-const nodePathOption = Options.string("node-path").pipe(
+const nodePathOption = Options.String("node-path").pipe(
 	Options.withDefault(process.execPath),
 	Options.withDescription("Absolute Node.js executable path to pin in LaunchAgents."),
 );
-const launchAgentsDirectoryOption = Options.string("launch-agents-directory").pipe(
+const launchAgentsDirectoryOption = Options.String("launch-agents-directory").pipe(
 	Options.optional,
 	Options.withDescription("LaunchAgents directory override. Defaults to ~/Library/LaunchAgents."),
 );
-const applyScheduleOption = Options.boolean("apply").pipe(
+const applyScheduleOption = Options.Boolean("apply").pipe(
 	Options.withDefault(false),
 	Options.withDescription("Backup and atomically replace only the three Life LaunchAgent plists."),
 );
 
-const communityConfigOption = Options.string("config").pipe(
+const communityConfigOption = Options.String("config").pipe(
 	Options.optional,
 	Options.withDescription("Jarvis configuration file to inspect without mutation."),
 );
-const communityStateRootOption = Options.string("state-root").pipe(
+const communityStateRootOption = Options.String("state-root").pipe(
 	Options.optional,
 	Options.withDescription("Briefing state directory override for read-only inspection."),
 );
-const fathomSourceRootOption = Options.string("source-root").pipe(
+const fathomSourceRootOption = Options.String("source-root").pipe(
 	Options.optional,
 	Options.withDescription(
 		"Project-private root containing meeting-inbox/fathom when community_briefing.source_path is unset.",
 	),
 );
-const communityLimitOption = Options.integer("limit").pipe(
+const communityLimitOption = Options.Int("limit").pipe(
 	Options.withDefault(20),
 	Options.withDescription("Maximum queue entries to list (1-100)."),
 );
-const fathomAccountOption = Options.string("account").pipe(
+const fathomAccountOption = Options.String("account").pipe(
 	Options.atLeast(0),
 	Options.withDescription("Fathom account label to poll (repeatable; defaults to the approved V2 scope)."),
 );
@@ -401,13 +401,13 @@ export const jarvisLifeWeeklyReconcileCommand = Command.make(
 	"weekly-reconcile",
 	{
 		...lifeOptions,
-		run: Options.string("run").pipe(
+		run: Options.String("run").pipe(
 			Options.withDescription("Reserved weekly run: its directory name, run hash, or weekly:<period>:<id> run ID."),
 		),
-		reason: Options.string("reason").pipe(
+		reason: Options.String("reason").pipe(
 			Options.withDescription("Why this run is abandoned or superseded; stored with the decision."),
 		),
-		confirmInactive: Options.boolean("confirm-inactive").pipe(
+		confirmInactive: Options.Boolean("confirm-inactive").pipe(
 			Options.withDefault(false),
 			Options.withDescription(
 				"Confirm that the process recorded for an unrecorded run is not that run (for example a PID reused after a reboot).",
@@ -447,20 +447,20 @@ export const jarvisLifeDraftCommand = Command.make(
 	"draft",
 	{
 		...lifeOptions,
-		kind: Options.string("kind").pipe(
+		kind: Options.String("kind").pipe(
 			Options.withDefault("daily"),
 			Options.withDescription("daily or weekly; defaults to daily."),
 		),
 		model: draftModelOption,
-		request: Options.string("native-request").pipe(
+		request: Options.String("native-request").pipe(
 			Options.optional,
 			Options.withDescription("Reuse an owner-only prepared request; consumed runs cannot be retried."),
 		),
-		timeoutSeconds: Options.integer("timeout-seconds").pipe(
+		timeoutSeconds: Options.Int("timeout-seconds").pipe(
 			Options.withDefault(600),
 			Options.withDescription("Execution timeout, 1–600 seconds; not a session requiring renewal."),
 		),
-		maximumOutputBytes: Options.integer("max-output-bytes").pipe(
+		maximumOutputBytes: Options.Int("max-output-bytes").pipe(
 			Options.withDefault(65536),
 			Options.withDescription("Maximum accepted output, 1–1048576 bytes; not a provider spending cap."),
 		),
@@ -641,26 +641,26 @@ export const jarvisCommunityScheduleCommand = Command.make(
 	"schedule",
 	{
 		target: targetOption,
-		config: Options.string("config").pipe(Options.withDefault(join(homedir(), ".jarvis", "config.yaml"))),
-		pythonPath: Options.string("python-path").pipe(
+		config: Options.String("config").pipe(Options.withDefault(join(homedir(), ".jarvis", "config.yaml"))),
+		pythonPath: Options.String("python-path").pipe(
 			Options.optional,
 			Options.withDescription("V2-installed Jarvis interpreter; omit to use community_briefing.python_path."),
 		),
-		port: Options.integer("port").pipe(Options.withDefault(COMMUNITY_REVIEW_PORT)),
+		port: Options.Int("port").pipe(Options.withDefault(COMMUNITY_REVIEW_PORT)),
 		cliEntry: cliEntryOption,
 		nodePath: nodePathOption,
 		launchAgentsDirectory: launchAgentsDirectoryOption,
-		apply: Options.boolean("apply").pipe(
+		apply: Options.Boolean("apply").pipe(
 			Options.withDefault(false),
 			Options.withDescription("Backup and atomically replace only the community review LaunchAgent plist."),
 		),
-		publicationPlist: Options.string("publication-plist").pipe(
+		publicationPlist: Options.String("publication-plist").pipe(
 			Options.optional,
 			Options.withDescription(
 				`The publication service plist whose release the reviewer must match. Defaults to the loaded ${PUBLICATION_LAUNCH_AGENT_LABEL} job.`,
 			),
 		),
-		withoutPublication: Options.boolean("without-publication").pipe(
+		withoutPublication: Options.Boolean("without-publication").pipe(
 			Options.withDefault(false),
 			Options.withDescription("Install without a publication service on this machine (no release match)."),
 		),
@@ -757,7 +757,7 @@ export const jarvisCommunityGenerationStatusCommand = Command.make(
 	{
 		config: communityConfigOption,
 		stateRoot: communityStateRootOption,
-		repair: Options.boolean("repair").pipe(
+		repair: Options.Boolean("repair").pipe(
 			Options.withDefault(false),
 			Options.withDescription(
 				"Move a damaged or unsafe record aside (never deleted); the review service rebuilds it from the queue at its next tick.",
@@ -877,7 +877,7 @@ export const jarvisCommunityGenerationRetryCommand = Command.make(
 	{
 		config: communityConfigOption,
 		stateRoot: communityStateRootOption,
-		weekStart: Options.string("week-start").pipe(Options.withDescription("Monday of the week, YYYY-MM-DD.")),
+		weekStart: Options.String("week-start").pipe(Options.withDescription("Monday of the week, YYYY-MM-DD.")),
 		json: jsonOption,
 	},
 	({ config, stateRoot, weekStart, json }) =>

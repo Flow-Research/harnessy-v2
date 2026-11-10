@@ -1,6 +1,6 @@
 import { Console } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { Command } from "effect/unstable/cli";
 
 import { HarnessError } from "../errors.ts";
 import { HarnessProject } from "../operations.ts";

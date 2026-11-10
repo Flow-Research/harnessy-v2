@@ -31,8 +31,8 @@
 // ---------------------------------------------------------------------------
 
 import { Cause, Context, Effect, Layer, Option, Result, Schema } from "effect";
-import { HttpServerResponse } from "effect/unstable/http";
-import { HttpApiMiddleware, type HttpApi, type HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpServerResponse } from "effect/http";
+import { HttpApiMiddleware, type HttpApi, type HttpApiGroup } from "effect/http-api";
 import type { StorageFailure } from "@executor-js/sdk/core";
 import { InternalError } from "@executor-js/sdk/core";
 
@@ -147,7 +147,7 @@ export class ObservabilityMiddleware extends HttpApiMiddleware.Service<Observabi
   { error: InternalError },
 ) {}
 
-export const observabilityMiddleware = <Id extends string, Groups extends HttpApiGroup.Any>(
+export const observabilityMiddleware = <Id extends string, Groups extends HttpApiGroup.Constraint>(
   _api: HttpApi.HttpApi<Id, Groups>,
 ): Layer.Layer<ObservabilityMiddleware> =>
   Layer.succeed(ObservabilityMiddleware, (httpApp) =>

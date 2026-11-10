@@ -1,3 +1,4 @@
+import { effectWorkerTest } from "../../../../scripts/effect-worker-test";
 // ---------------------------------------------------------------------------
 // Cross-layer integration tests: sandboxed user code → ToolDispatcher RPC →
 // makeExecutorToolInvoker → openApiPlugin → recording HttpClient.
@@ -14,13 +15,14 @@
 // that would have hit the wire.
 // ---------------------------------------------------------------------------
 
-import { describe, expect, it } from "@effect/vitest";
+// oxlint-disable-next-line executor/no-vitest-import -- Cloudflare pool requires Vitest 4; Effect adapter requires Vitest 5.
+import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/postgres-js";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Predicate from "effect/Predicate";
-import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/unstable/http";
+import { HttpClient, HttpClientResponse, type HttpClientRequest } from "effect/http";
 import { fumadb } from "@executor-js/fumadb";
 import {
   createDrizzleRuntimeSchemaFromTables,
@@ -269,107 +271,119 @@ const loader = (env as { LOADER: WorkerLoader }).LOADER;
 // ---------------------------------------------------------------------------
 
 describe("sandbox → openApiPlugin integration", () => {
-  it.effect("multipart with Blob: file part contains the original bytes", () =>
-    Effect.gen(function* () {
-      const { invoker, captured } = yield* buildSandboxBridge(
-        makeSpec("multipart/form-data"),
-        "mp",
-      );
-      const sandbox = makeDynamicWorkerExecutor({ loader });
+  it(
+    "multipart with Blob: file part contains the original bytes",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const { invoker, captured } = yield* buildSandboxBridge(
+          makeSpec("multipart/form-data"),
+          "mp",
+        );
+        const sandbox = makeDynamicWorkerExecutor({ loader });
 
-      const result = yield* sandbox.execute(
-        `async () => {
+        const result = yield* sandbox.execute(
+          `async () => {
           const file = new Blob(["hello multipart"], { type: "text/plain" });
           await tools.mp.org.main.body.submit({ body: { file, name: "Acme" } });
         }`,
-        invoker,
-      );
+          invoker,
+        );
 
-      expect(result.error).toBeUndefined();
-      expect(captured).toHaveLength(1);
-      const req = captured[0]!;
-      expect(req.contentType).toMatch(/^multipart\/form-data; boundary=/);
-      const wire = new TextDecoder().decode(req.body);
-      expect(wire).toMatch(/name="file"[\s\S]*?hello multipart/);
-      expect(wire).toContain('name="name"');
-      expect(wire).toContain("Acme");
-      // Regression guard for the JSON-stringify bug — the symptom was
-      // either an empty body part or `[object Object]` in place of bytes.
-      expect(wire).not.toContain("[object Object]");
-    }).pipe(Effect.scoped),
+        expect(result.error).toBeUndefined();
+        expect(captured).toHaveLength(1);
+        const req = captured[0]!;
+        expect(req.contentType).toMatch(/^multipart\/form-data; boundary=/);
+        const wire = new TextDecoder().decode(req.body);
+        expect(wire).toMatch(/name="file"[\s\S]*?hello multipart/);
+        expect(wire).toContain('name="name"');
+        expect(wire).toContain("Acme");
+        // Regression guard for the JSON-stringify bug — the symptom was
+        // either an empty body part or `[object Object]` in place of bytes.
+        expect(wire).not.toContain("[object Object]");
+      }).pipe(Effect.scoped),
+    ),
   );
 
-  it.effect("multipart with Uint8Array: bytes survive intact", () =>
-    Effect.gen(function* () {
-      const { invoker, captured } = yield* buildSandboxBridge(
-        makeSpec("multipart/form-data"),
-        "u8",
-      );
-      const sandbox = makeDynamicWorkerExecutor({ loader });
+  it(
+    "multipart with Uint8Array: bytes survive intact",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const { invoker, captured } = yield* buildSandboxBridge(
+          makeSpec("multipart/form-data"),
+          "u8",
+        );
+        const sandbox = makeDynamicWorkerExecutor({ loader });
 
-      const result = yield* sandbox.execute(
-        `async () => {
+        const result = yield* sandbox.execute(
+          `async () => {
           const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
           await tools.u8.org.main.body.submit({ body: { file: bytes } });
         }`,
-        invoker,
-      );
+          invoker,
+        );
 
-      expect(result.error).toBeUndefined();
-      const wire = captured[0]!.body;
-      // Find DEADBEEF anywhere in the multipart frame.
-      const needle = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
-      let found = false;
-      for (let i = 0; i <= wire.length - needle.length; i++) {
-        if (
-          wire[i] === needle[0] &&
-          wire[i + 1] === needle[1] &&
-          wire[i + 2] === needle[2] &&
-          wire[i + 3] === needle[3]
-        ) {
-          found = true;
-          break;
+        expect(result.error).toBeUndefined();
+        const wire = captured[0]!.body;
+        // Find DEADBEEF anywhere in the multipart frame.
+        const needle = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+        let found = false;
+        for (let i = 0; i <= wire.length - needle.length; i++) {
+          if (
+            wire[i] === needle[0] &&
+            wire[i + 1] === needle[1] &&
+            wire[i + 2] === needle[2] &&
+            wire[i + 3] === needle[3]
+          ) {
+            found = true;
+            break;
+          }
         }
-      }
-      expect(found).toBe(true);
-    }).pipe(Effect.scoped),
+        expect(found).toBe(true);
+      }).pipe(Effect.scoped),
+    ),
   );
 
-  it.effect("application/json: primitive object body round-trips unchanged", () =>
-    Effect.gen(function* () {
-      const { invoker, captured } = yield* buildSandboxBridge(makeSpec("application/json"), "j");
-      const sandbox = makeDynamicWorkerExecutor({ loader });
+  it(
+    "application/json: primitive object body round-trips unchanged",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const { invoker, captured } = yield* buildSandboxBridge(makeSpec("application/json"), "j");
+        const sandbox = makeDynamicWorkerExecutor({ loader });
 
-      const result = yield* sandbox.execute(
-        `async () => {
+        const result = yield* sandbox.execute(
+          `async () => {
           await tools.j.org.main.body.submit({ body: { name: "Acme", count: 7, ok: true } });
         }`,
-        invoker,
-      );
-      expect(result.error).toBeUndefined();
-      const json = JSON.parse(new TextDecoder().decode(captured[0]!.body));
-      expect(json).toEqual({ name: "Acme", count: 7, ok: true });
-    }).pipe(Effect.scoped),
+          invoker,
+        );
+        expect(result.error).toBeUndefined();
+        const json = JSON.parse(new TextDecoder().decode(captured[0]!.body));
+        expect(json).toEqual({ name: "Acme", count: 7, ok: true });
+      }).pipe(Effect.scoped),
+    ),
   );
 
-  it.effect("application/octet-stream: Uint8Array body matches byte-for-byte", () =>
-    Effect.gen(function* () {
-      const { invoker, captured } = yield* buildSandboxBridge(
-        makeSpec("application/octet-stream"),
-        "oct",
-      );
-      const sandbox = makeDynamicWorkerExecutor({ loader });
+  it(
+    "application/octet-stream: Uint8Array body matches byte-for-byte",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const { invoker, captured } = yield* buildSandboxBridge(
+          makeSpec("application/octet-stream"),
+          "oct",
+        );
+        const sandbox = makeDynamicWorkerExecutor({ loader });
 
-      const result = yield* sandbox.execute(
-        `async () => {
+        const result = yield* sandbox.execute(
+          `async () => {
           const payload = new Uint8Array([1, 2, 3, 4, 5, 0xff, 0x00, 0x7f]);
           await tools.oct.org.main.body.submit({ body: payload });
         }`,
-        invoker,
-      );
+          invoker,
+        );
 
-      expect(result.error).toBeUndefined();
-      expect(Array.from(captured[0]!.body)).toEqual([1, 2, 3, 4, 5, 0xff, 0x00, 0x7f]);
-    }).pipe(Effect.scoped),
+        expect(result.error).toBeUndefined();
+        expect(Array.from(captured[0]!.body)).toEqual([1, 2, 3, 4, 5, 0xff, 0x00, 0x7f]);
+      }).pipe(Effect.scoped),
+    ),
   );
 });

@@ -26,7 +26,7 @@
 // special case bolted onto the scoped path.
 // ---------------------------------------------------------------------------
 
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { Context, Effect } from "effect";
 import type * as Cause from "effect/Cause";
 
@@ -103,7 +103,7 @@ export const makeFixedExecutionMiddleware = <
   }>()(
     Effect.gen(function* () {
       const captured = yield* Effect.context<RCapture>();
-      const { executor, engine, extensions } = yield* FixedExecutionProvider.asEffect();
+      const { executor, engine, extensions } = yield* Effect.service(FixedExecutionProvider);
       return (httpEffect) =>
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;

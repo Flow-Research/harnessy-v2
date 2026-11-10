@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { Effect, Layer } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 
 /**
  * Build an `HttpRouter.middleware` that provides `layer`'s services to

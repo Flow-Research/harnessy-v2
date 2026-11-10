@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Schema } from "effect";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
 
 import {
   AuthTemplateSlug,

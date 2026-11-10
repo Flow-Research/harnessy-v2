@@ -36,7 +36,7 @@ import {
 	validateMeetingPublicationStoreSchema,
 } from "./store-schema.ts";
 
-export class MeetingPublicationInspectorError extends Schema.TaggedErrorClass<MeetingPublicationInspectorError>()(
+export class MeetingPublicationInspectorError extends Schema.TaggedError<MeetingPublicationInspectorError>()(
 	"MeetingPublicationInspectorError",
 	{
 		code: Schema.Literals(["unsafe_state", "schema_newer", "schema_invalid", "read_failed"]),

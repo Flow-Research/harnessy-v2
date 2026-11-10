@@ -35,7 +35,7 @@ export class JarvisParityManifest extends Schema.Class<JarvisParityManifest>("Ja
 	entries: Schema.Array(JarvisParityEntry),
 }) {}
 
-export class JarvisParityValidationError extends Schema.TaggedErrorClass<JarvisParityValidationError>()(
+export class JarvisParityValidationError extends Schema.TaggedError<JarvisParityValidationError>()(
 	"JarvisParityValidationError",
 	{
 		issues: Schema.Array(Schema.String),

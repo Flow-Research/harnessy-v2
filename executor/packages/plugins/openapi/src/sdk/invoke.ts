@@ -1,5 +1,5 @@
 import { Effect, Exit, Fiber, Layer, Option, Schema, Stream } from "effect";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import type { ToolFileValue } from "@executor-js/sdk/core";
 
 import { OpenApiInvocationError } from "./errors";

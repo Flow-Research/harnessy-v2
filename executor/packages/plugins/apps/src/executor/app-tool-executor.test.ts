@@ -1,4 +1,6 @@
-import { describe, expect, it } from "@effect/vitest";
+import { effectWorkerTest } from "../../../../../scripts/effect-worker-test";
+// oxlint-disable-next-line executor/no-vitest-import -- Cloudflare pool requires Vitest 4; Effect adapter requires Vitest 5.
+import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 
 import { bundleEntry } from "../pipeline/bundle";
@@ -13,9 +15,11 @@ const bundle = (source: string) =>
   });
 
 describe("in-process app tool executor", () => {
-  it.effect("detects integration declarations and merges projected input fields", () =>
-    Effect.gen(function* () {
-      const bundled = yield* bundle(`
+  it(
+    "detects integration declarations and merges projected input fields",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const bundled = yield* bundle(`
         import { z } from "zod";
         import { defineTool, integration } from "executor:app";
         export default defineTool({
@@ -28,23 +32,26 @@ describe("in-process app tool executor", () => {
           },
         });
       `);
-      const collected = yield* makeInProcessAppToolExecutor().collect(bundled.code, {
-        fileSlug: "sync-deals",
-        sourcePath: "tools/sync-deals.ts",
-      });
-      expect(collected.tools[0]?.integrations).toEqual({
-        crm: { slug: "dealcloud", mode: "one", description: "CRM account" },
-      });
-      expect(collected.tools[0]?.inputSchema).toMatchObject({
-        properties: { crm: { type: "string", description: "CRM account" } },
-        required: ["crm"],
-      });
-    }),
+        const collected = yield* makeInProcessAppToolExecutor().collect(bundled.code, {
+          fileSlug: "sync-deals",
+          sourcePath: "tools/sync-deals.ts",
+        });
+        expect(collected.tools[0]?.integrations).toEqual({
+          crm: { slug: "dealcloud", mode: "one", description: "CRM account" },
+        });
+        expect(collected.tools[0]?.inputSchema).toMatchObject({
+          properties: { crm: { type: "string", description: "CRM account" } },
+          required: ["crm"],
+        });
+      }),
+    ),
   );
 
-  it.effect("rejects integration keys that collide with input fields", () =>
-    Effect.gen(function* () {
-      const bundled = yield* bundle(`
+  it(
+    "rejects integration keys that collide with input fields",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const bundled = yield* bundle(`
         import { z } from "zod";
         import { defineTool, integration } from "executor:app";
         export default defineTool({
@@ -56,19 +63,22 @@ describe("in-process app tool executor", () => {
           },
         });
       `);
-      const error = yield* makeInProcessAppToolExecutor()
-        .collect(bundled.code, {
-          fileSlug: "sync-deals",
-          sourcePath: "tools/sync-deals.ts",
-        })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ message: expect.stringContaining("collides") });
-    }),
+        const error = yield* makeInProcessAppToolExecutor()
+          .collect(bundled.code, {
+            fileSlug: "sync-deals",
+            sourcePath: "tools/sync-deals.ts",
+          })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ message: expect.stringContaining("collides") });
+      }),
+    ),
   );
 
-  it.effect("collects record and factory exports with file-prefixed names", () =>
-    Effect.gen(function* () {
-      const bundled = yield* bundle(`
+  it(
+    "collects record and factory exports with file-prefixed names",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const bundled = yield* bundle(`
         import { z } from "zod";
         import { defineTool } from "executor:app";
         export default async () => ({
@@ -84,20 +94,23 @@ describe("in-process app tool executor", () => {
           }),
         });
       `);
-      const collected = yield* makeInProcessAppToolExecutor().collect(bundled.code, {
-        fileSlug: "sync-deals",
-        sourcePath: "tools/sync-deals.ts",
-      });
-      expect(collected.tools.map((tool) => tool.toolName)).toEqual([
-        "sync-deals__first",
-        "sync-deals__second",
-      ]);
-    }),
+        const collected = yield* makeInProcessAppToolExecutor().collect(bundled.code, {
+          fileSlug: "sync-deals",
+          sourcePath: "tools/sync-deals.ts",
+        });
+        expect(collected.tools.map((tool) => tool.toolName)).toEqual([
+          "sync-deals__first",
+          "sync-deals__second",
+        ]);
+      }),
+    ),
   );
 
-  it.effect("rejects record keys that collide with the single export slug", () =>
-    Effect.gen(function* () {
-      const bundled = yield* bundle(`
+  it(
+    "rejects record keys that collide with the single export slug",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const bundled = yield* bundle(`
         import { z } from "zod";
         import { defineTool } from "executor:app";
         export default {
@@ -108,19 +121,22 @@ describe("in-process app tool executor", () => {
           }),
         };
       `);
-      const error = yield* makeInProcessAppToolExecutor()
-        .collect(bundled.code, {
-          fileSlug: "sync-deals",
-          sourcePath: "tools/sync-deals.ts",
-        })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ message: expect.stringContaining("collides") });
-    }),
+        const error = yield* makeInProcessAppToolExecutor()
+          .collect(bundled.code, {
+            fileSlug: "sync-deals",
+            sourcePath: "tools/sync-deals.ts",
+          })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ message: expect.stringContaining("collides") });
+      }),
+    ),
   );
 
-  it.effect("routes integration method calls through the bridge", () =>
-    Effect.gen(function* () {
-      const bundled = yield* bundle(`
+  it(
+    "routes integration method calls through the bridge",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const bundled = yield* bundle(`
         import { z } from "zod";
         import { defineTool, integration } from "executor:app";
         export default defineTool({
@@ -134,29 +150,32 @@ describe("in-process app tool executor", () => {
           },
         });
       `);
-      const calls: unknown[] = [];
-      const result = yield* makeInProcessAppToolExecutor().invoke(
-        bundled.code,
-        { toolName: "sync-deals" },
-        { crm: "tools.dealcloud.org.main" },
-        {
-          call: async (toolPath, args) => {
-            calls.push({ toolPath, args });
-            return [{ id: 1 }, { id: 2 }];
+        const calls: unknown[] = [];
+        const result = yield* makeInProcessAppToolExecutor().invoke(
+          bundled.code,
+          { toolName: "sync-deals" },
+          { crm: "tools.dealcloud.org.main" },
+          {
+            call: async (toolPath, args) => {
+              calls.push({ toolPath, args });
+              return [{ id: 1 }, { id: 2 }];
+            },
           },
-        },
-        { timeoutMs: 1000 },
-      );
-      expect(result.output).toEqual({ synced: 2 });
-      expect(calls).toEqual([
-        { toolPath: "crm.deals.list", args: { limit: 2, updatedSince: undefined } },
-      ]);
-    }),
+          { timeoutMs: 1000 },
+        );
+        expect(result.output).toEqual({ synced: 2 });
+        expect(calls).toEqual([
+          { toolPath: "crm.deals.list", args: { limit: 2, updatedSince: undefined } },
+        ]);
+      }),
+    ),
   );
 
-  it.effect("passes fan-out integrations as arrays of proxies", () =>
-    Effect.gen(function* () {
-      const bundled = yield* bundle(`
+  it(
+    "passes fan-out integrations as arrays of proxies",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const bundled = yield* bundle(`
         import { z } from "zod";
         import { defineTool, integration } from "executor:app";
         export default defineTool({
@@ -170,33 +189,36 @@ describe("in-process app tool executor", () => {
           },
         });
       `);
-      const calls: unknown[] = [];
-      const result = yield* makeInProcessAppToolExecutor().invoke(
-        bundled.code,
-        { toolName: "sync-deals" },
-        {
-          q: "unread",
-          inboxes: ["tools.gmail.org.work", "tools.gmail.user.personal"],
-        },
-        {
-          call: async (toolPath, args) => {
-            calls.push({ toolPath, args });
-            return toolPath.startsWith("inboxes#0.") ? [{ id: 1 }] : [{ id: 2 }, { id: 3 }];
+        const calls: unknown[] = [];
+        const result = yield* makeInProcessAppToolExecutor().invoke(
+          bundled.code,
+          { toolName: "sync-deals" },
+          {
+            q: "unread",
+            inboxes: ["tools.gmail.org.work", "tools.gmail.user.personal"],
           },
-        },
-        { timeoutMs: 1000 },
-      );
-      expect(result.output).toEqual({ seen: 3 });
-      expect(calls).toEqual([
-        { toolPath: "inboxes#0.messages.list", args: { q: "unread" } },
-        { toolPath: "inboxes#1.messages.list", args: { q: "unread" } },
-      ]);
-    }),
+          {
+            call: async (toolPath, args) => {
+              calls.push({ toolPath, args });
+              return toolPath.startsWith("inboxes#0.") ? [{ id: 1 }] : [{ id: 2 }, { id: 3 }];
+            },
+          },
+          { timeoutMs: 1000 },
+        );
+        expect(result.output).toEqual({ seen: 3 });
+        expect(calls).toEqual([
+          { toolPath: "inboxes#0.messages.list", args: { q: "unread" } },
+          { toolPath: "inboxes#1.messages.list", args: { q: "unread" } },
+        ]);
+      }),
+    ),
   );
 
-  it.effect("classifies input validation failure", () =>
-    Effect.gen(function* () {
-      const bundled = yield* bundle(`
+  it(
+    "classifies input validation failure",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const bundled = yield* bundle(`
         import { z } from "zod";
         import { defineTool } from "executor:app";
         export default defineTool({
@@ -205,24 +227,27 @@ describe("in-process app tool executor", () => {
           handler(input) { return input; },
         });
       `);
-      const error = yield* makeInProcessAppToolExecutor()
-        .invoke(
-          bundled.code,
-          { toolName: "sync-deals" },
-          { value: 1 },
-          { call: async () => null },
-          {
-            timeoutMs: 1000,
-          },
-        )
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ message: expect.stringContaining("validation failed") });
-    }),
+        const error = yield* makeInProcessAppToolExecutor()
+          .invoke(
+            bundled.code,
+            { toolName: "sync-deals" },
+            { value: 1 },
+            { call: async () => null },
+            {
+              timeoutMs: 1000,
+            },
+          )
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ message: expect.stringContaining("validation failed") });
+      }),
+    ),
   );
 
-  it.effect("enforces timeout", () =>
-    Effect.gen(function* () {
-      const bundled = yield* bundle(`
+  it(
+    "enforces timeout",
+    effectWorkerTest(() =>
+      Effect.gen(function* () {
+        const bundled = yield* bundle(`
         import { z } from "zod";
         import { defineTool } from "executor:app";
         export default defineTool({
@@ -234,18 +259,19 @@ describe("in-process app tool executor", () => {
           },
         });
       `);
-      const error = yield* makeInProcessAppToolExecutor()
-        .invoke(
-          bundled.code,
-          { toolName: "sync-deals" },
-          {},
-          { call: async () => null },
-          {
-            timeoutMs: 1,
-          },
-        )
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({ message: expect.stringContaining("timed out") });
-    }),
+        const error = yield* makeInProcessAppToolExecutor()
+          .invoke(
+            bundled.code,
+            { toolName: "sync-deals" },
+            {},
+            { call: async () => null },
+            {
+              timeoutMs: 1,
+            },
+          )
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ message: expect.stringContaining("timed out") });
+      }),
+    ),
   );
 });

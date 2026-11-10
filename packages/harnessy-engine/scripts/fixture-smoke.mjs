@@ -58,8 +58,10 @@ try {
   if (installedPackageRoot.startsWith(packageRoot)) {
     throw new Error(`Fixture resolved @harnessy/engine to monorepo source: ${installedPackageRoot}`);
   }
+  await run(fixtureRoot, "npm", ["run", "types"]);
   await run(fixtureRoot, "npm", ["run", "typecheck"]);
   await run(fixtureRoot, "npm", ["run", "dry-run"]);
+  await run(fixtureRoot, "npm", ["run", "runtime-check"]);
 
   const outputRoot = join(fixtureRoot, ".wrangler-output");
   const outputFiles = await readdir(outputRoot, { recursive: true });

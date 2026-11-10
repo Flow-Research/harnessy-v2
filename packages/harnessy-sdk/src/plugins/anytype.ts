@@ -32,12 +32,12 @@ import {
 import { isLoopbackUrl } from "@harnessy/core/connectors/loopback";
 import type { Layer } from "effect";
 import { Clock, Effect, Schema } from "effect";
-import type { HttpClient } from "effect/unstable/http";
+import type { HttpClient } from "effect/http";
 
 const ANYTYPE_INTEGRATION = IntegrationSlug.make("anytype");
 const ANYTYPE_AUTH_TEMPLATE = "anytype";
 
-export class AnytypeConnectionConfigError extends Schema.TaggedErrorClass<AnytypeConnectionConfigError>()(
+export class AnytypeConnectionConfigError extends Schema.TaggedError<AnytypeConnectionConfigError>()(
 	"AnytypeConnectionConfigError",
 	{
 		message: Schema.String,

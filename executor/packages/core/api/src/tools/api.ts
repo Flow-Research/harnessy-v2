@@ -8,7 +8,7 @@
 // dotted string, so it is carried as a query param, not a path segment.
 // ---------------------------------------------------------------------------
 
-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 import { Schema } from "effect";
 import {
   ConnectionName,

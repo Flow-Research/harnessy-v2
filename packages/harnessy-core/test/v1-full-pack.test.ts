@@ -3,18 +3,17 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import { TestConsole } from "effect/testing";
-import { Command } from "effect/unstable/cli";
-
 import { rootCommand } from "../src/commands.ts";
 import { HARNESSY_VERSION } from "../src/constants.ts";
 import { HarnessProject } from "../src/operations.ts";
 import type { StructuredVerifyOutput } from "../src/structured-output.ts";
+import { unselectedCliServices } from "./lib/unselected-cli-services.ts";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(testDir, "../../..");
@@ -36,7 +35,11 @@ const expectedV1Checks = [
 
 /** Provide the live Harnessy project service plus Node platform services for filesystem-backed tests. */
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
+	effect.pipe(
+		Effect.provide(HarnessProject.layer),
+		Effect.provide(unselectedCliServices),
+		Effect.provide(NodeServices.layer),
+	);
 
 describe("Harnessy v1 full compatibility pack", () => {
 	it.effect(
@@ -195,6 +198,7 @@ describe("Harnessy v1 full compatibility pack", () => {
 				}),
 			).pipe(
 				Effect.provide(HarnessProject.layer),
+				Effect.provide(unselectedCliServices),
 				Effect.provide(NodeServices.layer),
 				Effect.provide(TestConsole.layer),
 			),

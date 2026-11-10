@@ -39,7 +39,7 @@ Upstream `catalog:` and `workspace:` references are intentionally preserved. Exe
 
 ## Integration
 
-Harnessy composes Executor at source level through root `tsconfig.json` path aliases. The aliases point `@executor-js/sdk`, its Effect subpaths, FumaDB, integrations-registry, plugin-openapi, and plugin-mcp at their vendored TypeScript entry points. All vendored imports resolve `effect` from Harnessy's root installation (`4.0.0-beta.85`), giving one Effect runtime without modifying upstream files.
+Harnessy composes Executor at source level through root `tsconfig.json` path aliases. The aliases point `@executor-js/sdk`, its Effect subpaths, FumaDB, integrations-registry, plugin-openapi, and plugin-mcp at their vendored TypeScript entry points. Vendored imports in this composition resolve Effect 4.1.3 from Harnessy's root installation. The coordinated migration overlay below records source changes; the pinned upstream commit remains the preservation baseline.
 
 Root composition dependency declarations and resolutions are owned by
 [`package.json`](../package.json) and [`package-lock.json`](../package-lock.json).
@@ -396,6 +396,40 @@ and a fixed local origin for its memory router. The upgraded router makes
 leaves this client-navigation fixture at its initial URL. The regression now
 checks that navigation reached `/acme` before checking inherited parameters.
 It does not patch the router implementation or weaken the expected URL.
+
+### Coordinated Effect migration overlay — 2026-11-10
+
+Julian explicitly authorized the coordinated migration after Dependabot #183
+updated Effect alone and failed the existing gates. This overlay records the
+coordinated source change. Building it does not activate installed services;
+operational releases require their separate hosted and installed gates.
+
+- Move the root and isolated Executor Effect runtime/platform cohorts to 4.1.3.
+  Replace promoted `effect/unstable/*` imports with the current package exports.
+- Use `Schema.TaggedError` and `Schema.Error`, the current CLI constructors,
+  service access, JSON schema, HTTP server and schedule APIs. Preserve error tags,
+  authority checks, provider bindings, timeout budgets and test assertions.
+- Use Vitest 5 for the stable Effect test adapter. Cloudflare's published worker
+  pool still requires Vitest 4. The apps and Dynamic Worker packages therefore
+  retain Vitest 4.1.12 and use `scripts/effect-worker-test.ts` with Effect 4.1.3.
+  The bridge provides the test clock/console, scoped cleanup and runner-signal
+  cancellation. The rc.112 adapter was rejected because it imports the removed
+  `effect/testing/FastCheck` module. No incompatible peer is forced. Four bridge
+  lifecycle checks, 81 apps checks, 72 Dynamic Worker checks and three real
+  Worker bundler checks pass locally. The root test command includes bridge
+  tests; the apps command includes its Worker pool. Hosted qualification remains
+  required. This is test tooling, not a new product runtime or plugin contract.
+- Require a clean packed SDK and Engine declaration check with
+  `skipLibCheck:false`, one physical Effect runtime, existing host/security
+  conformance and packed operational gates before integration or installation.
+- The Engine owns a project-local Cloudflare type-profile generator. It keeps
+  Worker web globals and Node module types separate, records declaration changes
+  and hashes, and preserves upstream licenses. It does not change vendored runtime
+  source or execute during package installation. Julian explicitly included this
+  full host type-boundary repair in the migration scope.
+
+On an upstream sync, inspect this overlay against upstream's current Effect
+cohort. Do not restore the older schema constructors or combine runtime versions.
 
 ## Self-hosted app world (`hsy web`)
 

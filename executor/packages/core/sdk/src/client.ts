@@ -18,10 +18,10 @@ import {
   type ComponentType,
   type ReactNode,
 } from "react";
-import { HttpApi } from "effect/unstable/httpapi";
-import type { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
-import * as AtomHttpApi from "effect/unstable/reactivity/AtomHttpApi";
+import { HttpApi } from "effect/http-api";
+import type { HttpApiGroup } from "effect/http-api";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import * as AtomHttpApi from "effect/reactivity/AtomHttpApi";
 import type { HealthCheckSpec } from "./health-check";
 
 // ---------------------------------------------------------------------------
@@ -30,11 +30,11 @@ import type { HealthCheckSpec } from "./health-check";
 // ---------------------------------------------------------------------------
 
 export { Schema } from "effect";
-export { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+export { HttpApi, HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
 
-export * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-export * as Atom from "effect/unstable/reactivity/Atom";
-export * as AtomHttpApi from "effect/unstable/reactivity/AtomHttpApi";
+export * as AsyncResult from "effect/reactivity/AsyncResult";
+export * as Atom from "effect/reactivity/Atom";
+export * as AtomHttpApi from "effect/reactivity/AtomHttpApi";
 
 export { useAtomValue, useAtomSet, useAtomMount, useAtomRefresh } from "@effect/atom-react";
 
@@ -341,9 +341,7 @@ export const applyPluginAtomClientRequestTransform = (
  * the group's `identifier`, so multiple plugins coexist in the same
  * React tree without colliding.
  */
-export const createPluginAtomClient = <
-  G extends HttpApiGroup.HttpApiGroup<string, HttpApiEndpoint.Any, boolean>,
->(
+export const createPluginAtomClient = <G extends HttpApiGroup.Constraint>(
   group: G,
   options: CreatePluginAtomClientOptions = {},
 ) => {

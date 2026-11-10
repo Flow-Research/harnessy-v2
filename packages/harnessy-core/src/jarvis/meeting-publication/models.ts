@@ -96,7 +96,7 @@ export class MeetingPublicationItem extends Schema.Class<MeetingPublicationItem>
 	rejectedAt: Schema.NullOr(Schema.String),
 }) {}
 
-export class MeetingPublicationTransitionError extends Schema.TaggedErrorClass<MeetingPublicationTransitionError>()(
+export class MeetingPublicationTransitionError extends Schema.TaggedError<MeetingPublicationTransitionError>()(
 	"MeetingPublicationTransitionError",
 	{
 		from: MeetingPublicationStatus,
@@ -104,21 +104,21 @@ export class MeetingPublicationTransitionError extends Schema.TaggedErrorClass<M
 	},
 ) {}
 
-export class MeetingPublicationSourceError extends Schema.TaggedErrorClass<MeetingPublicationSourceError>()(
+export class MeetingPublicationSourceError extends Schema.TaggedError<MeetingPublicationSourceError>()(
 	"MeetingPublicationSourceError",
 	{
 		code: MeetingPublicationExclusionCode,
 	},
 ) {}
 
-export class MeetingPublicationStoreError extends Schema.TaggedErrorClass<MeetingPublicationStoreError>()(
+export class MeetingPublicationStoreError extends Schema.TaggedError<MeetingPublicationStoreError>()(
 	"MeetingPublicationStoreError",
 	{
 		code: Schema.Literals(["open_failed", "schema_invalid", "schema_newer", "write_failed", "read_failed"]),
 	},
 ) {}
 
-export class MeetingPublicationConfigError extends Schema.TaggedErrorClass<MeetingPublicationConfigError>()(
+export class MeetingPublicationConfigError extends Schema.TaggedError<MeetingPublicationConfigError>()(
 	"MeetingPublicationConfigError",
 	{
 		code: Schema.Literals([
@@ -134,7 +134,7 @@ export class MeetingPublicationConfigError extends Schema.TaggedErrorClass<Meeti
 	},
 ) {}
 
-export class MeetingPublicationProviderError extends Schema.TaggedErrorClass<MeetingPublicationProviderError>()(
+export class MeetingPublicationProviderError extends Schema.TaggedError<MeetingPublicationProviderError>()(
 	"MeetingPublicationProviderError",
 	{
 		stage: Schema.Literals(["google", "discord", "notification"]),
@@ -144,7 +144,7 @@ export class MeetingPublicationProviderError extends Schema.TaggedErrorClass<Mee
 	},
 ) {}
 
-export class MeetingPublicationReviewError extends Schema.TaggedErrorClass<MeetingPublicationReviewError>()(
+export class MeetingPublicationReviewError extends Schema.TaggedError<MeetingPublicationReviewError>()(
 	"MeetingPublicationReviewError",
 	{
 		code: Schema.Literals(["invalid_config", "unsafe_token_state", "invalid_purpose", "server_failed"]),

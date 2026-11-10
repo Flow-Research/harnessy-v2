@@ -1,9 +1,8 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { FileSystem } from "effect";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { Command } from "effect/unstable/cli";
-
 import {
 	CAPABILITY_MANIFEST_NAME,
 	CapabilityManifest,
@@ -25,10 +24,15 @@ import { DependencyChecker } from "../src/runtime/dependency-checker.ts";
 import { RuntimeEnvironment } from "../src/runtime/environment.ts";
 import { formatLockfile, HarnessLockfile, parseLockfile } from "../src/runtime/lockfile.ts";
 import { parseGitRemote, parsePnpmWorkspaceGlobs } from "../src/runtime/project-detection.ts";
+import { unselectedCliServices } from "./lib/unselected-cli-services.ts";
 
 /** Provide the live Harnessy service plus Node platform services for filesystem-backed tests. */
 const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-	effect.pipe(Effect.provide(HarnessProject.layer), Effect.provide(NodeServices.layer));
+	effect.pipe(
+		Effect.provide(HarnessProject.layer),
+		Effect.provide(unselectedCliServices),
+		Effect.provide(NodeServices.layer),
+	);
 
 const writeCapabilityManifest = (fs: FileSystem.FileSystem, directory: string, id: string, name: string) =>
 	fs.writeFileString(`${directory}/${CAPABILITY_MANIFEST_NAME}`, `${JSON.stringify({ id, name }, null, "\t")}\n`);
@@ -46,7 +50,7 @@ describe("capability manifests", () => {
 			expect(manifest.dataCategories).toEqual(["project_context"]);
 			expect(manifest.egress).toEqual([]);
 			expect(manifest.dependencies?.[0]?.name).toBe("tiny-tool");
-		}).pipe(Effect.provide(NodeServices.layer)),
+		}).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 });
 
@@ -104,7 +108,7 @@ describe("dependencies", () => {
 				["missing-tool", "missing"],
 			]);
 			expect(report.missingRequired.map((result) => result.name)).toEqual(["missing-tool"]);
-		}).pipe(Effect.provide(NodeServices.layer)),
+		}).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 
 	it.effect("checks Windows tool dependencies through PATHEXT-style suffixes", () =>
@@ -151,7 +155,7 @@ describe("dependencies", () => {
 
 			expect(report.results.map((result) => [result.name, result.status])).toEqual([["pnpm", "available"]]);
 			expect(report.missingRequired).toEqual([]);
-		}).pipe(Effect.provide(NodeServices.layer)),
+		}).pipe(Effect.provide(unselectedCliServices), Effect.provide(NodeServices.layer)),
 	);
 });
 

@@ -207,10 +207,9 @@ export const checkDependencyResolutionContract = (files) => {
 		const resolutions = Object.entries(rootLock?.packages ?? {}).filter(([path]) =>
 			path.endsWith(`/node_modules/${packageName}`) || path === `node_modules/${packageName}`,
 		);
-		if (
-			resolutions.length === 0 ||
-			resolutions.some(([, resolution]) => !isExactSafeVersion(resolution?.version, vulnerableRange))
-		) {
+		// Effect's current CLI no longer installs toml. A removed transitive package
+		// is safe; retain the exact override and reject every vulnerable copy present.
+		if (resolutions.some(([, resolution]) => !isExactSafeVersion(resolution?.version, vulnerableRange))) {
 			findings.push({ rule: "unsafe-root-lock-resolution", path: "package-lock.json", line: 1 });
 		}
 	}
@@ -274,10 +273,7 @@ export const checkDependencyResolutionContract = (files) => {
 			const versions = [...executorLock.matchAll(new RegExp(`\\["${escapedName}@([^"\\]]+)"`, "g"))].map(
 				(match) => match[1],
 			);
-			if (
-				versions.length === 0 ||
-				versions.some((version) => valid(version) === null || satisfies(version, vulnerableRange))
-			) {
+			if (versions.some((version) => valid(version) === null || satisfies(version, vulnerableRange))) {
 				findings.push({ rule: "unsafe-executor-lock-resolution", path: executorLockPath, line: 1 });
 			}
 		}

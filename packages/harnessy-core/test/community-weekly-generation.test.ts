@@ -19,12 +19,12 @@ import { fileURLToPath } from "node:url";
 import { NodeServices } from "@effect/platform-node";
 import { it as effectIt } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 import { TestClock } from "effect/testing";
-import { Command } from "effect/unstable/cli";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jarvisCommunityGenerationRetryCommand, jarvisCommunityGenerationStatusCommand } from "../src/cli/jarvis.ts";
 import {

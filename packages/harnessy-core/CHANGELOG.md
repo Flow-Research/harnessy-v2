@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Moved the Effect runtime/platform cohort to 4.1.3 and updated schema, CLI,
+  HTTP and process interfaces. Existing Boolean flag defaults remain explicit.
 - `harnessy work --revise "<notes>"` sends the latest commit back to the agent
   with the reviewer's notes, before or after the push, until the PR is merged.
   An open PR returns to draft first. The agent revises in the same worktree,
@@ -136,11 +138,12 @@
   `--root <package dir>` or a test path. Without `--agent-allow`, the prompt
   says there is no shell. Run 3's agent had tried `pnpm exec vitest` and
   `npx vitest`, was denied, and never ran the allowed form.
-- Release installs and the workspace now resolve `toml@5.0.1`, the first
+- Release installs and the workspace retain the `toml@5.0.1` override, the first
   release that fixes three quadratic or unbounded parsing denial-of-service
   advisories (GHSA-4qx8-w7c3-pj3p, GHSA-9j65-hcg3-gc64, GHSA-9qmh-m7c6-f92p).
-  `effect@4.0.0-beta.85` still declares `toml@^4.1.1`, so `install.mjs` and the
-  local release installs pin it through their overrides. TOML integers beyond
+  Earlier Effect beta.85 declared `toml@^4.1.1`; Effect 4.1.3 no longer installs
+  that parser. `install.mjs` and local release installs retain the safe override
+  for any dependency that requests it. TOML integers beyond
   `Number.MAX_SAFE_INTEGER` now fail to parse instead of losing precision. The
   workspace also moves `ip-address` to 10.7.4 (GHSA-rxp7-6hxx-x8q5), and the
   Executor moves `dompurify` to 3.4.17 (GHSA-cg2g-xh64-v4q7,
