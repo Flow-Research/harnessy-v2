@@ -10,20 +10,37 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as DotDotDotDotDotDotReactSrcRoutesIndexRouteImport } from './../../react/src/routes/index'
-import { Route as DotDotDotDotDotDotReactSrcRoutesToolsRouteImport } from './../../react/src/routes/tools'
-import { Route as DotDotDotDotDotDotReactSrcRoutesToolkitsRouteImport } from './../../react/src/routes/toolkits'
-import { Route as SecretsRouteImport } from './routes/app/secrets'
 import { Route as DotDotDotDotDotDotReactSrcRoutesPoliciesRouteImport } from './../../react/src/routes/policies'
-import { Route as DotDotDotDotDotDotReactSrcRoutesToolkitsDottoolkitSlugRouteImport } from './../../react/src/routes/toolkits.$toolkitSlug'
-import { Route as DotDotDotDotDotDotReactSrcRoutesResumeDotexecutionIdRouteImport } from './../../react/src/routes/resume.$executionId'
+import { Route as SecretsRouteImport } from './routes/app/secrets'
+import { Route as DotDotDotDotDotDotReactSrcRoutesToolkitsRouteImport } from './../../react/src/routes/toolkits'
+import { Route as DotDotDotDotDotDotReactSrcRoutesToolsRouteImport } from './../../react/src/routes/tools'
 import { Route as DotDotDotDotDotDotReactSrcRoutesIntegrationsDotnamespaceRouteImport } from './../../react/src/routes/integrations.$namespace'
-import { Route as DotDotDotDotDotDotReactSrcRoutesPluginsDotpluginIdDotsplatRouteImport } from './../../react/src/routes/plugins.$pluginId.$'
+import { Route as DotDotDotDotDotDotReactSrcRoutesResumeDotexecutionIdRouteImport } from './../../react/src/routes/resume.$executionId'
+import { Route as DotDotDotDotDotDotReactSrcRoutesToolkitsDottoolkitSlugRouteImport } from './../../react/src/routes/toolkits.$toolkitSlug'
 import { Route as DotDotDotDotDotDotReactSrcRoutesIntegrationsDotaddDotpluginKeyRouteImport } from './../../react/src/routes/integrations.add.$pluginKey'
+import { Route as DotDotDotDotDotDotReactSrcRoutesPluginsDotpluginIdDotsplatRouteImport } from './../../react/src/routes/plugins.$pluginId.$'
 
 const DotDotDotDotDotDotReactSrcRoutesIndexRoute =
   DotDotDotDotDotDotReactSrcRoutesIndexRouteImport.update({
     id: '/{-$orgSlug}/',
     path: '/{-$orgSlug}/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const DotDotDotDotDotDotReactSrcRoutesPoliciesRoute =
+  DotDotDotDotDotDotReactSrcRoutesPoliciesRouteImport.update({
+    id: '/{-$orgSlug}/policies',
+    path: '/{-$orgSlug}/policies',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const SecretsRoute = SecretsRouteImport.update({
+  id: '/{-$orgSlug}/secrets',
+  path: '/{-$orgSlug}/secrets',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DotDotDotDotDotDotReactSrcRoutesToolkitsRoute =
+  DotDotDotDotDotDotReactSrcRoutesToolkitsRouteImport.update({
+    id: '/{-$orgSlug}/toolkits',
+    path: '/{-$orgSlug}/toolkits',
     getParentRoute: () => rootRouteImport,
   } as any)
 const DotDotDotDotDotDotReactSrcRoutesToolsRoute =
@@ -32,28 +49,11 @@ const DotDotDotDotDotDotReactSrcRoutesToolsRoute =
     path: '/{-$orgSlug}/tools',
     getParentRoute: () => rootRouteImport,
   } as any)
-const DotDotDotDotDotDotReactSrcRoutesToolkitsRoute =
-  DotDotDotDotDotDotReactSrcRoutesToolkitsRouteImport.update({
-    id: '/{-$orgSlug}/toolkits',
-    path: '/{-$orgSlug}/toolkits',
+const DotDotDotDotDotDotReactSrcRoutesIntegrationsDotnamespaceRoute =
+  DotDotDotDotDotDotReactSrcRoutesIntegrationsDotnamespaceRouteImport.update({
+    id: '/{-$orgSlug}/integrations/$namespace',
+    path: '/{-$orgSlug}/integrations/$namespace',
     getParentRoute: () => rootRouteImport,
-  } as any)
-const SecretsRoute = SecretsRouteImport.update({
-  id: '/{-$orgSlug}/secrets',
-  path: '/{-$orgSlug}/secrets',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DotDotDotDotDotDotReactSrcRoutesPoliciesRoute =
-  DotDotDotDotDotDotReactSrcRoutesPoliciesRouteImport.update({
-    id: '/{-$orgSlug}/policies',
-    path: '/{-$orgSlug}/policies',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const DotDotDotDotDotDotReactSrcRoutesToolkitsDottoolkitSlugRoute =
-  DotDotDotDotDotDotReactSrcRoutesToolkitsDottoolkitSlugRouteImport.update({
-    id: '/$toolkitSlug',
-    path: '/$toolkitSlug',
-    getParentRoute: () => DotDotDotDotDotDotReactSrcRoutesToolkitsRoute,
   } as any)
 const DotDotDotDotDotDotReactSrcRoutesResumeDotexecutionIdRoute =
   DotDotDotDotDotDotReactSrcRoutesResumeDotexecutionIdRouteImport.update({
@@ -61,17 +61,11 @@ const DotDotDotDotDotDotReactSrcRoutesResumeDotexecutionIdRoute =
     path: '/{-$orgSlug}/resume/$executionId',
     getParentRoute: () => rootRouteImport,
   } as any)
-const DotDotDotDotDotDotReactSrcRoutesIntegrationsDotnamespaceRoute =
-  DotDotDotDotDotDotReactSrcRoutesIntegrationsDotnamespaceRouteImport.update({
-    id: '/{-$orgSlug}/integrations/$namespace',
-    path: '/{-$orgSlug}/integrations/$namespace',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const DotDotDotDotDotDotReactSrcRoutesPluginsDotpluginIdDotsplatRoute =
-  DotDotDotDotDotDotReactSrcRoutesPluginsDotpluginIdDotsplatRouteImport.update({
-    id: '/{-$orgSlug}/plugins/$pluginId/$',
-    path: '/{-$orgSlug}/plugins/$pluginId/$',
-    getParentRoute: () => rootRouteImport,
+const DotDotDotDotDotDotReactSrcRoutesToolkitsDottoolkitSlugRoute =
+  DotDotDotDotDotDotReactSrcRoutesToolkitsDottoolkitSlugRouteImport.update({
+    id: '/$toolkitSlug',
+    path: '/$toolkitSlug',
+    getParentRoute: () => DotDotDotDotDotDotReactSrcRoutesToolkitsRoute,
   } as any)
 const DotDotDotDotDotDotReactSrcRoutesIntegrationsDotaddDotpluginKeyRoute =
   DotDotDotDotDotDotReactSrcRoutesIntegrationsDotaddDotpluginKeyRouteImport.update(
@@ -81,6 +75,12 @@ const DotDotDotDotDotDotReactSrcRoutesIntegrationsDotaddDotpluginKeyRoute =
       getParentRoute: () => rootRouteImport,
     } as any,
   )
+const DotDotDotDotDotDotReactSrcRoutesPluginsDotpluginIdDotsplatRoute =
+  DotDotDotDotDotDotReactSrcRoutesPluginsDotpluginIdDotsplatRouteImport.update({
+    id: '/{-$orgSlug}/plugins/$pluginId/$',
+    path: '/{-$orgSlug}/plugins/$pluginId/$',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/{-$orgSlug}/policies': typeof DotDotDotDotDotDotReactSrcRoutesPoliciesRoute
@@ -179,18 +179,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/{-$orgSlug}/tools': {
-      id: '/{-$orgSlug}/tools'
-      path: '/{-$orgSlug}/tools'
-      fullPath: '/{-$orgSlug}/tools'
-      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesToolsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/{-$orgSlug}/toolkits': {
-      id: '/{-$orgSlug}/toolkits'
-      path: '/{-$orgSlug}/toolkits'
-      fullPath: '/{-$orgSlug}/toolkits'
-      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesToolkitsRouteImport
+    '/{-$orgSlug}/policies': {
+      id: '/{-$orgSlug}/policies'
+      path: '/{-$orgSlug}/policies'
+      fullPath: '/{-$orgSlug}/policies'
+      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesPoliciesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/{-$orgSlug}/secrets': {
@@ -200,25 +193,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SecretsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/{-$orgSlug}/policies': {
-      id: '/{-$orgSlug}/policies'
-      path: '/{-$orgSlug}/policies'
-      fullPath: '/{-$orgSlug}/policies'
-      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesPoliciesRouteImport
+    '/{-$orgSlug}/toolkits': {
+      id: '/{-$orgSlug}/toolkits'
+      path: '/{-$orgSlug}/toolkits'
+      fullPath: '/{-$orgSlug}/toolkits'
+      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesToolkitsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/{-$orgSlug}/toolkits/$toolkitSlug': {
-      id: '/{-$orgSlug}/toolkits/$toolkitSlug'
-      path: '/$toolkitSlug'
-      fullPath: '/{-$orgSlug}/toolkits/$toolkitSlug'
-      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesToolkitsDottoolkitSlugRouteImport
-      parentRoute: typeof DotDotDotDotDotDotReactSrcRoutesToolkitsRoute
-    }
-    '/{-$orgSlug}/resume/$executionId': {
-      id: '/{-$orgSlug}/resume/$executionId'
-      path: '/{-$orgSlug}/resume/$executionId'
-      fullPath: '/{-$orgSlug}/resume/$executionId'
-      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesResumeDotexecutionIdRouteImport
+    '/{-$orgSlug}/tools': {
+      id: '/{-$orgSlug}/tools'
+      path: '/{-$orgSlug}/tools'
+      fullPath: '/{-$orgSlug}/tools'
+      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesToolsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/{-$orgSlug}/integrations/$namespace': {
@@ -228,18 +214,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesIntegrationsDotnamespaceRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/{-$orgSlug}/plugins/$pluginId/$': {
-      id: '/{-$orgSlug}/plugins/$pluginId/$'
-      path: '/{-$orgSlug}/plugins/$pluginId/$'
-      fullPath: '/{-$orgSlug}/plugins/$pluginId/$'
-      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesPluginsDotpluginIdDotsplatRouteImport
+    '/{-$orgSlug}/resume/$executionId': {
+      id: '/{-$orgSlug}/resume/$executionId'
+      path: '/{-$orgSlug}/resume/$executionId'
+      fullPath: '/{-$orgSlug}/resume/$executionId'
+      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesResumeDotexecutionIdRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/{-$orgSlug}/toolkits/$toolkitSlug': {
+      id: '/{-$orgSlug}/toolkits/$toolkitSlug'
+      path: '/$toolkitSlug'
+      fullPath: '/{-$orgSlug}/toolkits/$toolkitSlug'
+      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesToolkitsDottoolkitSlugRouteImport
+      parentRoute: typeof DotDotDotDotDotDotReactSrcRoutesToolkitsRoute
     }
     '/{-$orgSlug}/integrations/add/$pluginKey': {
       id: '/{-$orgSlug}/integrations/add/$pluginKey'
       path: '/{-$orgSlug}/integrations/add/$pluginKey'
       fullPath: '/{-$orgSlug}/integrations/add/$pluginKey'
       preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesIntegrationsDotaddDotpluginKeyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/{-$orgSlug}/plugins/$pluginId/$': {
+      id: '/{-$orgSlug}/plugins/$pluginId/$'
+      path: '/{-$orgSlug}/plugins/$pluginId/$'
+      fullPath: '/{-$orgSlug}/plugins/$pluginId/$'
+      preLoaderRoute: typeof DotDotDotDotDotDotReactSrcRoutesPluginsDotpluginIdDotsplatRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
