@@ -100,7 +100,7 @@ describe("portal sign-in handoff button", () => {
 		const button = container.querySelector("button")!;
 		await act(async () => button.click());
 		expect(button.disabled).toBe(true);
-		expect(container.textContent).toContain("Opening in your browser");
+		expect(container.textContent).toContain("Opening view");
 		await act(async () => button.click());
 		expect(calls).toEqual([
 			{
@@ -117,7 +117,7 @@ describe("portal sign-in handoff button", () => {
 		]);
 		await act(async () => finish!({ status: 200, json: async () => ({ opened: true }) }));
 		expect(button.disabled).toBe(false);
-		expect(container.querySelector("output")?.textContent).toBe("Opened in your browser.");
+		expect(container.querySelector("output")?.textContent).toBe("Opened view.");
 		expect(window.open).not.toHaveBeenCalled();
 	});
 

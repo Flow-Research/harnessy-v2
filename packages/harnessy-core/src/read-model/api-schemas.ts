@@ -145,7 +145,10 @@ export const SessionExchangeResponseSchema = Type.Object(
 	strict,
 );
 export const ErrorResponseSchema = Type.Object({ error: code }, strict);
-export const ServiceOpenResponseSchema = Type.Object({ opened: Type.Literal(true) }, strict);
+export const ServiceOpenResponseSchema = Type.Object(
+	{ opened: Type.Literal(true), url: Type.Optional(Type.String({ maxLength: 2048 })) },
+	strict,
+);
 export const BriefGenerationResponseSchema = Type.Object(
 	{
 		state: Type.Union([

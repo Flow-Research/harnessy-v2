@@ -131,7 +131,7 @@ describe("meeting publication read model", () => {
 		expect(summary.queue).toMatchObject({
 			state: "ok",
 			data: {
-				schemaVersion: 4,
+				schemaVersion: 5,
 				schemaState: "current",
 				totalItems: 4,
 				statusCounts: { pending_review: 3, approved: 1 },
@@ -188,7 +188,7 @@ describe("meeting publication read model", () => {
 		expect(inspection).toMatchObject({
 			exists: true,
 			schemaState: "current",
-			schemaVersion: 4,
+			schemaVersion: 5,
 			stateDirectoryMode: 0o700,
 			databaseMode: 0o600,
 			totalItems: 4,
@@ -293,7 +293,7 @@ describe("meeting publication read model", () => {
 
 		const { config, dbPath } = await setup("meetings-schema");
 		const downgrade = new DatabaseSync(dbPath);
-		downgrade.exec("DROP TABLE provider_health; PRAGMA user_version = 3;");
+		downgrade.exec("DROP TABLE google_doc_drafts; DROP TABLE provider_health; PRAGMA user_version = 3;");
 		downgrade.close();
 		const legacy = readMeetingSummary(config, { now: NOW });
 		expect(legacy.queue).toMatchObject({

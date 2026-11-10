@@ -70,6 +70,8 @@ export const MEETING_PUBLICATION_WORKER_OPERATIONS = [
 ] as const;
 export const MEETING_PUBLICATION_FULL_REVIEW_OPERATIONS = [
 	...MEETING_PUBLICATION_WORKER_OPERATIONS,
+	"provider_google_draft",
+	"store_google_draft",
 	"provider_google_reconnect",
 	"source_update",
 	"store_approve",

@@ -697,7 +697,7 @@ describe("MeetingPublicationStore", () => {
 			discordPurposeOverride: null,
 		});
 		const migrated = new DatabaseSync(dbPath);
-		expect(migrated.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+		expect(migrated.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
 		expect(() => validateMeetingPublicationStoreSchema(migrated)).not.toThrow();
 		expect(
 			migrated
@@ -788,7 +788,7 @@ describe("MeetingPublicationStore", () => {
 			});
 		}
 		const migrated = new DatabaseSync(dbPath);
-		expect(migrated.prepare("PRAGMA user_version").get()?.user_version).toBe(4);
+		expect(migrated.prepare("PRAGMA user_version").get()?.user_version).toBe(5);
 		expect(() => validateMeetingPublicationStoreSchema(migrated)).not.toThrow();
 		expect(
 			migrated
@@ -911,7 +911,7 @@ describe("MeetingPublicationStore", () => {
 			chmodSync(statePath, 0o700);
 			const dbPath = join(statePath, "meeting-publication.sqlite3");
 			const db = new DatabaseSync(dbPath);
-			if (variant === "newer") db.exec("PRAGMA user_version = 5");
+			if (variant === "newer") db.exec("PRAGMA user_version = 6");
 			else if (variant === "malformed") {
 				db.exec("CREATE TABLE publication_items (item_id TEXT PRIMARY KEY); PRAGMA user_version = 1");
 			} else {

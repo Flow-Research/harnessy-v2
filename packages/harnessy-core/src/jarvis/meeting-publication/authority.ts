@@ -32,6 +32,8 @@ export const MeetingPublicationWriteOperation = Schema.Literals([
 	"service_worker",
 	"review_serve",
 	"provider_google",
+	"provider_google_draft",
+	"store_google_draft",
 	"provider_google_reconnect",
 	"provider_discord",
 	"provider_notification",

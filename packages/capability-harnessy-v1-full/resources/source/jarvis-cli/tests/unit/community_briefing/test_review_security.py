@@ -202,6 +202,37 @@ class TestLauncherExchange:
         os.chmod(path, mode)
         return path
 
+    def test_portal_return_breadcrumb_preserves_frame_restrictions(
+        self, served: ReviewFixture
+    ) -> None:
+        code = secrets.token_urlsafe(32)
+        self._exchange(served, code)
+        portal = "http://127.0.0.1:8790"
+        status, _, page = served.request("GET", "/?" + urlencode({"code": code, "portal": portal}))
+        assert status == 200
+        assert f'href="{portal}/#/reviews/community"' in page
+        status, headers, page = served.request(
+            "GET", "/", headers={"Cookie": served.cookie + f"; hsy_community_portal={portal}"}
+        )
+        assert status == 200
+        assert f'href="{portal}/#/reviews/community"' in page
+        assert headers["X-Frame-Options"] == "DENY"
+        assert "frame-ancestors 'none'" in headers["Content-Security-Policy"]
+
+    @pytest.mark.parametrize(
+        "portal", ["https://evil.example", "http://127.0.0.1:8790/path", "http://127.0.0.1:99999"]
+    )
+    def test_unsafe_portal_return_is_refused(self, served: ReviewFixture, portal: str) -> None:
+        code = secrets.token_urlsafe(32)
+        path = self._exchange(served, code)
+        status, _, _ = served.request("GET", "/?" + urlencode({"code": code, "portal": portal}))
+        assert status == 400
+        assert path.exists()
+        _, _, page = served.request(
+            "GET", "/", headers={"Cookie": served.cookie + f"; hsy_community_portal={portal}"}
+        )
+        assert 'aria-label="Breadcrumb"' not in page
+
     def test_identity_proof_is_bound_to_token_and_port(self, served: ReviewFixture) -> None:
         """Only the listener holding the token answers, and only for its own port."""
 

@@ -119,6 +119,10 @@ export class MeetingPublicationGoogle extends Context.Service<
 			request: MeetingPublicationGoogleRequest,
 			grant: MeetingPublicationWriteGrant,
 		) => Effect.Effect<MeetingPublicationGoogleCheckpoint, MeetingPublicationProviderError>;
+		readonly upsertDraft?: (
+			request: MeetingPublicationGoogleRequest,
+			grant: MeetingPublicationWriteGrant,
+		) => Effect.Effect<MeetingPublicationGoogleCheckpoint, MeetingPublicationProviderError>;
 		readonly close: Effect.Effect<void>;
 	}
 >()("@harnessy/core/MeetingPublicationGoogle") {}
@@ -237,6 +241,13 @@ export class MeetingPublicationService extends Context.Service<
 	{
 		/** Fatal owner stop on uncertain delivery or a failed claimed-outcome write. */
 		readonly deliveryUncertain: Effect.Effect<never, MeetingPublicationProviderError>;
+		readonly generateGoogleDoc?: (
+			itemId: string,
+			reviewedHash: string,
+		) => Effect.Effect<
+			MeetingPublicationGoogleCheckpoint,
+			MeetingPublicationSourceError | MeetingPublicationStoreFailure | MeetingPublicationProviderError
+		>;
 		readonly reconnectGoogle?: (
 			redirectUri: string,
 		) => Effect.Effect<MeetingPublicationReconnect, MeetingPublicationProviderError | MeetingPublicationStoreFailure>;
@@ -305,6 +316,7 @@ export class MeetingPublicationService extends Context.Service<
 				const clock = yield* MeetingPublicationClock;
 				const notifier = yield* MeetingPublicationNotifier;
 				const google = yield* MeetingPublicationGoogle;
+				const upsertDraft = google.upsertDraft;
 				const startReconnect = google.startReconnect;
 				const discord = yield* MeetingPublicationDiscord;
 				const workerLock = yield* Semaphore.make(1);
@@ -635,6 +647,104 @@ export class MeetingPublicationService extends Context.Service<
 				);
 
 				return MeetingPublicationService.of({
+					...(upsertDraft === undefined
+						? {}
+						: {
+								generateGoogleDoc: Effect.fn("MeetingPublicationService.generateGoogleDoc")(function* (
+									itemId: string,
+									reviewedHash: string,
+								) {
+									const item = yield* store.get(itemId);
+									if (
+										item === null ||
+										item.status !== "pending_review" ||
+										item.approvedHash !== null ||
+										item.sourceHash !== reviewedHash
+									)
+										return yield* new MeetingPublicationTransitionError({
+											from: item?.status ?? "archived",
+											event: "update",
+										});
+									const note = yield* source.read(item.notePath);
+									if (note.itemId !== itemId || note.sourceHash !== reviewedHash)
+										return yield* new MeetingPublicationTransitionError({
+											from: item.status,
+											event: "update",
+										});
+									const prior = yield* store.googleDraft(itemId);
+									if (
+										prior?.state === "ready" &&
+										prior.sourceHash === reviewedHash &&
+										prior.docId !== null &&
+										prior.docUrl !== null
+									)
+										return new MeetingPublicationGoogleCheckpoint({
+											docId: prior.docId,
+											docUrl: prior.docUrl,
+										});
+									const uncertainDraft = new MeetingPublicationProviderError({
+										stage: "google",
+										code: "delivery_uncertain",
+										retryable: false,
+										retryAfterSeconds: null,
+									});
+									if (prior?.state === "generating" || prior?.state === "uncertain")
+										return yield* uncertainDraft;
+									if (!(yield* google.preflight))
+										return yield* new MeetingPublicationProviderError({
+											stage: "google",
+											code: "authentication_failed",
+											retryable: false,
+											retryAfterSeconds: null,
+										});
+									yield* store.beginGoogleDraft(itemId, reviewedHash);
+									return yield* Effect.gen(function* () {
+										const grant = yield* authorizeMeetingPublicationWrite(
+											authority,
+											"provider_google_draft",
+											new MeetingPublicationWriteBinding({
+												...binding,
+												item: { itemId, sourceHash: reviewedHash },
+											}),
+										);
+										const checkpoint = yield* upsertDraft(
+											{
+												itemId,
+												title: note.title,
+												meetingDate: note.meetingDate,
+												sourceHash: reviewedHash,
+												markdown: note.markdown,
+												existingDocId: prior?.docId ?? null,
+											},
+											grant,
+										);
+										if (
+											!/^[A-Za-z0-9_-]{1,200}$/.test(checkpoint.docId) ||
+											!new RegExp(
+												`^https://docs\\.google\\.com/document/d/${checkpoint.docId}/(?:view|edit)$`,
+											).test(checkpoint.docUrl)
+										)
+											return yield* uncertainDraft;
+										yield* store.finishGoogleDraft(itemId, {
+											sourceHash: reviewedHash,
+											...checkpoint,
+											state: "ready",
+										});
+										return checkpoint;
+									}).pipe(
+										Effect.onError(() =>
+											store
+												.finishGoogleDraft(itemId, {
+													sourceHash: reviewedHash,
+													docId: prior?.docId ?? null,
+													docUrl: prior?.docUrl ?? null,
+													state: "uncertain",
+												})
+												.pipe(Effect.ignore),
+										),
+									);
+								}, workerLock.withPermits(1)),
+							}),
 					deliveryUncertain: Deferred.await(uncertain).pipe(Effect.flatMap(Effect.fail)),
 					...(startReconnect === undefined
 						? {}
