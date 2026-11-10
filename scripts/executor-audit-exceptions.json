@@ -3,7 +3,7 @@
 		"package": "zod",
 		"url": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
 		"vulnerableVersions": "<4.6.6",
-		"reason": "Every Executor workspace pin and the hoisted zod resolve 4.6.7. Two development-tool owners pin older copies with no drop-in fix. @tanstack/router-plugin@1.167.22 needs zod 3; its first zod 4 release (1.168.7) and every later one require @tanstack/react-router >=1.170.5, while the Executor resolves 1.168.22, so the fix is a TanStack Router and Start upgrade, not a pin change. @cloudflare/vitest-pool-workers pins zod 4.4.3 exactly (newest 0.23.0 still does; changing the pool would split the coherent Cloudflare owner set). Both validate only build or test configuration written in this repository (Vite route-generator options and tsr.config.json; Workers pool options), never request input. scripts/security-invariants-lib.mjs fails if any other zod copy in executor/bun.lock is below 4.6.6. Renewed 2026-11-10 after the 2026-11-07 expiry; remove after the TanStack upgrade and a pool release that pins a fixed zod.",
+		"reason": "Every Executor workspace pin and the hoisted zod resolve 4.6.7. One development-tool owner pins an older copy with no drop-in fix: @cloudflare/vitest-pool-workers pins zod 4.4.3 exactly (newest 0.23.0 still does; changing the pool would split the coherent Cloudflare owner set). It validates only Workers pool options written in this repository, never request input. The TanStack router family was upgraded on 2026-11-10 through executor/package.json overrides (router-plugin 1.169.0 uses zod ^4.5.4), which removed the zod 3 copy. scripts/security-invariants-lib.mjs fails if any other zod copy in executor/bun.lock is below 4.6.6. Remove when a pool release pins a fixed zod.",
 		"expires": "2026-11-24"
 	}
 ]
