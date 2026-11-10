@@ -37,11 +37,14 @@ if [[ -z "$claude_bin" ]]; then
 fi
 
 workspace="$(printf '%s' "$report" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["workspaceRoot"])')"
+# Sources are untrusted text (meeting notes, commit messages), so the run gets no
+# general shell or git access: git output comes only from living-doc-sources' fixed,
+# read-only log, diff and show commands, and file reads stay inside the workspace.
 allowed=(
 	"Skill(living-doc-refresh)"
-	"Read" "Grep" "Glob"
-	"Bash($sources:*)" "Bash(living-doc-sources:*)"
-	"Bash(git -C:*)"
+	"Read(/$workspace/**)"
+	"Bash($sources check:*)" "Bash($sources record:*)"
+	"Bash($sources log:*)" "Bash($sources diff:*)" "Bash($sources show:*)"
 	"mcp__claude_ai_Claude_Docs__read"
 	"mcp__claude_ai_Claude_Docs__update"
 	"mcp__claude_ai_Claude_Docs__batch"
