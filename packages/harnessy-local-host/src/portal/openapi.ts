@@ -1,6 +1,7 @@
 /** The OpenAPI 3.1 document of the portal API, built from the route table and the Core schemas. */
 import { PORTAL_SCHEMA_VERSION, PortalApiSchemas } from "@harnessy/core/read-model";
 
+import { FOLDER_NAME_MAX, FOLDERS_MAX, LINK_TITLE_MAX, LINK_URL_MAX, LINKS_MAX } from "./links-state.ts";
 import type { PortalRoute } from "./routes.ts";
 
 /** TypeBox schemas are JSON Schema; a JSON round trip drops TypeBox's own symbol keys. */
@@ -10,6 +11,78 @@ const errorResponse = (description: string) => ({
 	description,
 	content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
 });
+
+const LINK_ID = { type: "string", maxLength: 64 };
+const LINK_PARENT = { oneOf: [LINK_ID, { type: "null" }], description: "A folder ID, or null for the top level" };
+
+/** `GET /v1/links`: the saved tree. Sibling order is array order. */
+const LINKS_TREE_SCHEMA = {
+	type: "object",
+	additionalProperties: false,
+	required: ["version", "folders", "links"],
+	properties: {
+		version: { const: 2 },
+		folders: {
+			type: "array",
+			maxItems: FOLDERS_MAX,
+			items: {
+				type: "object",
+				additionalProperties: false,
+				required: ["id", "name", "parentId", "addedAt"],
+				properties: {
+					id: LINK_ID,
+					name: { type: "string", minLength: 1, maxLength: FOLDER_NAME_MAX },
+					parentId: LINK_PARENT,
+					addedAt: { type: "string", format: "date-time" },
+				},
+			},
+		},
+		links: {
+			type: "array",
+			maxItems: LINKS_MAX,
+			items: {
+				type: "object",
+				additionalProperties: false,
+				required: ["id", "title", "url", "addedAt", "parentId"],
+				properties: {
+					id: LINK_ID,
+					title: { type: "string", minLength: 1, maxLength: LINK_TITLE_MAX },
+					url: { type: "string", maxLength: LINK_URL_MAX },
+					addedAt: { type: "string", format: "date-time" },
+					parentId: LINK_PARENT,
+				},
+			},
+		},
+	},
+};
+
+const linksAction = (action: string, properties: Record<string, unknown>, optional: string[] = []) => ({
+	type: "object",
+	additionalProperties: false,
+	required: ["action", ...Object.keys(properties).filter((name) => !optional.includes(name))],
+	properties: { action: { const: action }, ...properties },
+});
+
+/** `POST /v1/links/action`: one action per request. */
+const LINKS_ACTION_SCHEMA = {
+	oneOf: [
+		linksAction("add", { title: { type: "string" }, url: { type: "string" }, parentId: LINK_PARENT }, ["parentId"]),
+		linksAction("addFolder", { name: { type: "string" }, parentId: LINK_PARENT }),
+		linksAction("rename", { id: LINK_ID, name: { type: "string" } }),
+		linksAction("move", {
+			id: LINK_ID,
+			parentId: LINK_PARENT,
+			index: { type: "integer", minimum: 0, maximum: LINKS_MAX },
+		}),
+		linksAction("remove", { id: LINK_ID }),
+		linksAction("reorder", {
+			kind: { enum: ["links", "folders"] },
+			parentId: LINK_PARENT,
+			ids: { type: "array", maxItems: LINKS_MAX, items: LINK_ID },
+		}),
+		linksAction("open", { id: LINK_ID }),
+	],
+};
 
 export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: string): Record<string, unknown> => {
 	const paths: Record<string, Record<string, unknown>> = {};
@@ -21,7 +94,8 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 						route.auth === "brief" ||
 						route.auth === "terminal" ||
 						route.auth === "weekly" ||
-						route.auth === "inbox-action"
+						route.auth === "inbox-action" ||
+						route.auth === "links"
 					? [{ bearer: [] }]
 					: route.auth === "read"
 						? [{ bearer: [] }, { installProof: [] }]
@@ -32,7 +106,12 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 				description: route.summary,
 				content: {
 					"application/json": {
-						schema: route.schema === null ? { type: "object" } : { $ref: `#/components/schemas/${route.schema}` },
+						schema:
+							route.auth === "links" && route.method === "GET"
+								? LINKS_TREE_SCHEMA
+								: route.schema === null
+									? { type: "object" }
+									: { $ref: `#/components/schemas/${route.schema}` },
 					},
 				},
 			},
@@ -85,6 +164,9 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 								},
 							},
 						}
+					: {}),
+				...(route.auth === "links" && route.method === "POST"
+					? { requestBody: { required: true, content: { "application/json": { schema: LINKS_ACTION_SCHEMA } } } }
 					: {}),
 				...(route.auth === "weekly" && route.method === "POST"
 					? {

@@ -1,80 +1,97 @@
-# Harnessy Direction
+# Harnessy core and Garden CLI direction
 
-Status: accepted technical north-star. This V2 repository is canonical for all
-future Harnessy capability and runtime work. The original repository is a
-migration source and compatibility oracle, while Garden is a hosted consumer.
-The 2026-09-04 implementation is an uncommitted local checkpoint; see
-`.jarvis/context/status.md` before inferring remote, release, or operational
-readiness. See `docs/adr/0004-harnessy-v2-is-canonical.md`. Commercial, legal,
-and org-structure decisions remain out of scope here.
+Status: agreed direction with staged implementation. This document does not
+establish that a proposed capability is installed, deployed or accepted.
 
-Sources this is grounded in: the Pi monorepo (`README.md`, `packages/agent`, `packages/coding-agent`, `packages/ai`), the v1 snapshot under `packages/capability-harnessy-v1-full/resources/source/` and `harnessy-v1/`, the existing `PORT_MAP.md` / `HARNESSY_V1_FEATURES.md` / `HARNESSY_REMAINING_MIGRATION_POINTS.md`, `packages/capability-org-knowledge/context/garden-boundary.md`, and internal direction-setting meetings.
+This repository is the canonical source for Harnessy's core and local runtime.
+The intended user-facing destination is Garden CLI. Keep the current `harnessy`,
+`hsy` and `jarvis` commands during that transition. Command, package and state-path
+changes need a separate compatibility plan. Do not create a second CLI runtime.
+See [the canonical-source decision](docs/adr/0004-harnessy-v2-is-canonical.md)
+and the [technical roadmap](.jarvis/context/roadmap.md).
 
-## Why v2 exists
+The original V1 repository is recovery material. Reuse verified V1 behavior
+through the existing compatibility capability package. Do not restart V1 services.
 
-v1 (`harnessy-v1`) is a working but bespoke product: a Python `jarvis-cli` agentic engine (~28k LOC), a `flow-install` installer, and a large prompt-driven skill/workflow library (the autoflow/issue-flow ratchet). It works, but the agentic core is single-implementation, hard to extend, and locked to its own runtime.
+## Product and authority boundaries
 
-v2 is not a line-by-line port. It is a **re-platforming**: rebuild Harnessy as an **agent-first, open-source context engine on top of Pi**, retire the bespoke Python engine in favor of a Pi-based one, and keep v1 available as a compatibility capability pack during the transition.
+| Component | Responsibility |
+| --- | --- |
+| Harnessy core | Stable contracts, scoped authority, validated dispatch, installation lifecycle, state ownership and audit boundaries |
+| Capability package | Bounded domain operations, schemas, resources, dependencies, requested permissions and host-rendered UI declarations |
+| Host adapter | Storage, credentials, networking, notifications, process access and service lifecycle for a declared environment |
+| Garden | Workspace and member authority, installation controls, approvals, client experience and connected-host selection |
+| WorkStream | Canonical task, submission, evaluation, Review, acceptance and contribution records under project-owned policy |
+| Jarvis | Knowledge and personal workflows, plus an agreed export mapping for contribution evidence; export does not block payment |
+| Pi and Executor foundations | Agent/model execution and existing connector, credential, policy, approval and audit mechanisms behind explicit host boundaries |
 
-## The layers
+The core enforces the rules under which a capability operates. Permission
+declarations do not grant authority. Keep domain operations replaceable without
+letting a plugin replace host identity, permission or audit rules. Reuse current
+capability and Executor contracts before adding an abstraction. Ordinary
+in-process plugin loading does not provide isolation.
 
-| Layer | What it is | Open / closed | Where it lives |
-|-------|------------|---------------|----------------|
-| **Pi** (`pie-harness`) | The agent runtime/engine: self-aware (reads its own source), extensible (sub-agents, memory extensions, skills), provider-agnostic LLM. | Open source | `packages/agent`, `packages/coding-agent`, `packages/ai`, `packages/tui` |
-| **Harnessy** | The agent-first **universal context engine**: standardizes skills, memory, configs, and connectors so they are portable across agent platforms (Claude Code, Codex, …). Local-first. The open-source adoption wedge. Built on Pi. | Open source | `packages/harnessy-core`, capability packs |
-| **Jarvis** | The agentic/orchestrator layer (scheduling, journaling, wiki, knowledge ops). Its first **open-source implementation is built in this repo**, then consumed by closed products. Being **redone on Pi**, not ported from the v1 Python. | Open core | future native package(s) + capability packs |
-| **Garden** | Hosted enterprise SaaS — zero-effort, scalable workspace for enterprise agent workflows. The hosted enterprise surface. | Closed | separate product |
-| **Hinesi** | Open-source public-infrastructure core that can be forked and integrated with Pi; a source of shared capabilities (e.g. connectors). | Open source | separate / shared |
+Distinguish a reusable domain capability, an executable tool, an instruction or
+skill pack, a connector and a host integration in their owning contracts. Neither
+Harnessy export nor Garden capability discovery proves installation across hosts.
 
-Boundary rule: Harnessy owns portable metadata, agent context, workflow semantics, prompts/templates, deterministic checks, and local-first product surfaces. Executor owns connector mechanics, credentials, policy, approvals, and audit behind the engine boundary. Garden owns hosted tenancy, managed operations, storage, and UI while consuming Harnessy contracts. Agents may *prepare* artifacts; they must not claim a write occurred without explicit evidence.
+## First shared capability
 
-## The shift
+Use the contribution workflow as the first complete shared-plugin journey:
 
-Harnessy is moving **from a CLI tool → an agent-first context engine**:
+1. An authorized Garden member installs an exact package version and grants
+   explicit permissions.
+2. The member connects an authorized WorkStream account/project, selects an
+   enrolled host and registered repository, and reviews agent, budget and
+   permission choices.
+3. Garden launches the run directly. A copied command alone is insufficient.
+4. Harnessy validates scoped authority and creates one isolated worktree and one
+   agent run on the selected host.
+5. Garden shows status, failures, intervention, cancellation and proof.
+   WorkStream retains authoritative work and acceptance records.
 
-- **From** manual `harnessy <cmd>` installer/registration plumbing
-- **To** an agent runtime that *manages* capabilities, so skills/memory/configs/connectors are standardized and portable, and knowledge workflows run with minimal manual steps.
+Prove the same capability contract in standalone Harnessy and Garden. Other
+ecosystem applications can use it through suitable host adapters. Repository
+review/merge, contribution acceptance and payment retain their separate rules.
+An earned points award is not evidence of cash payment.
 
-The installer/skill plumbing already promoted to native Effect services (install, bootstrap, runtime assets, command execution, skill validate/create) is the foundation for that — but it is the small end. The direction's larger moves are below.
+The first release must support outside executable plugins with enforced
+isolation and permissions. A Flow-only catalogue is insufficient. Pin versions
+and digests, check compatibility, and isolate discovery, schema collection and
+invocation. Specify credential/network access, resource limits, audit attribution,
+revocation, update, rollback and uninstall. Keep shared contracts independent of
+React, Node services and Cloudflare bindings.
 
-## Direction priorities
+Initially, plugins can declare host-rendered forms, actions and status cards.
+Arbitrary third-party frontend code and custom plugin screens are later work.
 
-1. **Portable connectors.** Move the connector concept (Notion, AnyType, GitHub, meetings/Fathom, etc.) out of any single product and into Harnessy as **portable, open-source capabilities** any agent can use. Today these live as `jarvis-cli` Python adapters; re-home them as Harnessy capability packs with a clean, gated execution boundary.
-2. **Agent-first capability runtime.** An agent on Pi that resolves and runs capabilities (skills, memory, connectors) without hand-run CLI commands — the "universal context engine" experience.
-3. **Knowledge workflows as the proving ground.** GitHub-push → docs/Notion auto-update, daily briefings from meetings + knowledge bases, meeting-notes → tasks → calendar. (We already dogfooded meeting ingest from AnyType.)
-4. **Jarvis open implementation on Pi**, in this repo, replacing the v1 Python engine.
+## Clients and execution hosts
 
-## Stable execution model
+Garden's client roadmap covers desktop web, mobile web, iOS, Android and native
+desktop. The first mobile scope is chat, tasks, approvals, launch and run status.
+Evaluate macOS, Windows and Linux together for native desktop. Packaged web UI
+is acceptable with proper native sign-in, secure storage, notifications, deep
+links and lifecycle support. No framework is selected here. The targets need not
+ship at the same time.
 
-The point is to reach the above **without breaking what works**:
+Separate client surface, execution host, execution runtime and user choices.
+A native phone client is not automatically an on-device coding-agent host.
+Start offline support with private cached reads and drafts. Require reconnection
+and fresh authority before actions. Keep disconnection, terminal detachment,
+cancellation and exact conversation recovery separate.
 
-- **v1 stays available as a capability pack.** `packages/capability-harnessy-v1-full` preserves the entire v1 source so behavior is always reachable as a fallback while pieces are promoted. (See `PORT_MAP.md`.)
-- **Promote into native Effect services incrementally.** Each piece becomes a typed, tested Effect service behind the existing CLI, with the v1 pack as the compatibility net.
-- **Default flows never regress.** New execution (commands, global writes, clones) is **opt-in and gated** (e.g. `--apply-global`, `--apply-bootstrap`, `--run-external`); plan-only by default; argv-only, no shell injection.
-- **Deterministic and testable.** Services are pure Effect, tested with fakes (e.g. recording `ChildProcessSpawner`), no network/timing in unit tests, so the suite stays non-flaky.
-- **Dogfood.** Use the tooling to build the tooling (meeting ingest, briefings) to surface real gaps.
+## Delivery and evidence
 
-## Where we are vs. where we're going
+Close installed source gaps without downgrading state. Continue proof verification
+and first-payment work alongside core/plugin and client delivery. Use bounded
+ecosystem contributions as repository readiness, approvals and budgets permit.
 
-Done (native Effect services in `packages/harnessy-core`):
-- Installer parity (saved install paths, dry-run/step/force, managed AGENTS blocks, scoped memory).
-- Runtime-asset parity + opt-in global apply (hooks, runtime commands, skills, registration).
-- Native `bootstrap` mirroring v1 `install.sh` modes (plan-only by default).
-- `CommandRunner` (gated, argv-only external execution; git source refresh, clone, uv tool install).
-- Skill lifecycle start: `skill validate`, `skill list`, `skill create`.
-- Connector/runtime cleanup: AnyType list/search pagination, deterministic Claude marketplace registration, and safer manifest parsing for global skill installs.
-- Capability portability: local create/add/activate/deactivate/refresh/verify/
-  export/reinstall with integrity and path-safety enforcement.
-- A narrow private `@harnessy/sdk` programmatic boundary with packed-consumer
-  and loopback AnyType contract evidence; publication is still a separate
-  license/artifact decision.
+Distinguish implemented source, merged source, installed software, live acceptance
+and proposed work. Require host conformance, hostile-plugin isolation, tenant
+separation, revocation, upgrade/rollback, duplicate-launch and uncertain-delivery
+tests. Every claimed native target also needs physical-device and native lifecycle
+evidence. Browser emulation alone does not establish native support.
 
-Next (toward the direction, not more installer plumbing):
-- Re-home v1 connectors (AnyType/Notion/GitHub/meetings) as Harnessy connector capabilities with a reviewed execution boundary.
-- Agent-first capability resolution/runtime as a Pi extension, so Harnessy capabilities can be loaded by the agent instead of only run through standalone CLI commands.
-- Knowledge-workflow capabilities (ingest → brief → issues/tasks), building on `capability-org-knowledge`.
-- Native Jarvis layer on Pi.
-
-## Out of scope for this doc
-
-Commercial model, entity structure, funding, partners, and any personal/meeting data. Those are sensitive and tracked outside the repo.
+Preserve commands, repository mappings, credentials, services and user state during
+migration. Never claim an external write, merge, acceptance or payment without
+evidence from its owning authority.

@@ -28,7 +28,7 @@ import type { DeviceAccess } from "./device-access.ts";
 import type { PortalHandoffService } from "./handoff.ts";
 import { type InboxSelection, inboxRevision } from "./inbox-revision.ts";
 import type { InboxState } from "./inbox-state.ts";
-import { isFileEntry, LinkRefused, type LinksState } from "./links-state.ts";
+import { isFileEntry, LINKS_MAX, LinkRefused, type LinksState } from "./links-state.ts";
 import { buildPortalOpenApi } from "./openapi.ts";
 import type { PortalPageAssets } from "./page-assets.ts";
 import { matchPortalRoute, PORTAL_ROUTES, type PortalRoute, type PortalRouteParams } from "./routes.ts";
@@ -144,6 +144,11 @@ const parseField = (body: Buffer, name: "code" | "nonce"): string | undefined =>
 		return undefined;
 	}
 };
+
+/** A saved link or folder ID as a request may name it; the links store decides whether it exists. */
+const isLinkId = (value: unknown): value is string => typeof value === "string" && value.length <= 64;
+/** A folder ID, or `null` for the top level. */
+const isLinkParent = (value: unknown): value is string | null => value === null || isLinkId(value);
 
 /** Start the portal API on 127.0.0.1. Resolves once the port is bound. */
 export const startPortalServer = async (options: PortalServerOptions): Promise<PortalServer> => {
@@ -321,7 +326,7 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 				if (!options.links) throw new RequestRefused(503, "links_unavailable");
 				if (route.method === "GET") {
 					try {
-						return { links: options.links.read() };
+						return options.links.read();
 					} catch {
 						throw new RequestRefused(503, "links_unreadable");
 					}
@@ -338,27 +343,57 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 					throw new RequestRefused(400, "invalid_body");
 				const fields = value as Record<string, unknown>;
 				const keys = Object.keys(fields).sort().join(",");
+				const links = options.links;
 				try {
 					if (
 						fields.action === "add" &&
-						keys === "action,title,url" &&
+						(keys === "action,title,url" ||
+							(keys === "action,parentId,title,url" && isLinkParent(fields.parentId))) &&
 						typeof fields.title === "string" &&
 						typeof fields.url === "string"
 					) {
 						// A remote device may not plant a file for the computer that runs the portal to open.
 						if (options.remote && isFileEntry(fields.url)) throw new RequestRefused(403, "local_only");
-						return { link: options.links.add(fields.title, fields.url) };
+						return { link: links.add(fields.title, fields.url, (fields.parentId as string | null) ?? null) };
 					}
-					if (fields.action === "remove" && keys === "action,id" && typeof fields.id === "string") {
-						options.links.remove(fields.id);
+					if (
+						fields.action === "addFolder" &&
+						keys === "action,name,parentId" &&
+						typeof fields.name === "string" &&
+						isLinkParent(fields.parentId)
+					)
+						return { folder: links.addFolder(fields.name, fields.parentId) };
+					if (
+						fields.action === "rename" &&
+						keys === "action,id,name" &&
+						isLinkId(fields.id) &&
+						typeof fields.name === "string"
+					) {
+						links.rename(fields.id, fields.name);
 						return { ok: true };
 					}
-					if (fields.action === "open" && keys === "action,id" && typeof fields.id === "string") {
+					if (
+						fields.action === "move" &&
+						keys === "action,id,index,parentId" &&
+						isLinkId(fields.id) &&
+						isLinkParent(fields.parentId) &&
+						Number.isInteger(fields.index) &&
+						(fields.index as number) >= 0 &&
+						(fields.index as number) <= LINKS_MAX
+					) {
+						links.move(fields.id, fields.parentId, fields.index as number);
+						return { ok: true };
+					}
+					if (fields.action === "remove" && keys === "action,id" && isLinkId(fields.id)) {
+						links.remove(fields.id);
+						return { ok: true };
+					}
+					if (fields.action === "open" && keys === "action,id" && isLinkId(fields.id)) {
 						// The file opens on the computer that runs the portal, so a remote page may not ask.
 						if (options.remote) throw new RequestRefused(403, "local_only");
 						if (options.openFile === undefined) throw new RequestRefused(503, "file_open_unavailable");
 						// A file that could start a program is only revealed, never opened.
-						const target = options.links.fileTarget(fields.id);
+						const target = links.fileTarget(fields.id);
 						return options.openFile(target.path, target.reveal).then(
 							() => ({ opened: true, revealed: target.reveal }),
 							() => {
@@ -368,12 +403,14 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 					}
 					if (
 						fields.action === "reorder" &&
-						keys === "action,ids" &&
+						keys === "action,ids,kind,parentId" &&
+						(fields.kind === "links" || fields.kind === "folders") &&
+						isLinkParent(fields.parentId) &&
 						Array.isArray(fields.ids) &&
-						fields.ids.length <= 200 &&
-						fields.ids.every((id) => typeof id === "string" && id.length <= 64)
+						fields.ids.length <= LINKS_MAX &&
+						fields.ids.every(isLinkId)
 					) {
-						options.links.reorder(fields.ids as string[]);
+						links.reorder(fields.kind, fields.parentId, fields.ids as string[]);
 						return { ok: true };
 					}
 				} catch (error) {

@@ -31,7 +31,7 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const portalCli = join(repoRoot, "packages/harnessy-local-host/dist/portal-cli.js");
-const SCREENS = ["inbox", "today", "tasks", "jobs", "reviews", "learning", "connections"];
+const SCREENS = ["inbox", "today", "tasks", "jobs", "reviews", "learning", "connections", "links"];
 const TIMEOUT_MS = 20_000;
 
 if (process.env.CI !== "true" && process.env.HARNESSY_BROWSER_SMOKE !== "1") {
@@ -360,6 +360,55 @@ try {
 			const rail = await evaluate("getComputedStyle(document.querySelector('.rail')).display");
 			if (rail !== "none") failures.push("phone width: the rail is still shown");
 		}
+	}
+	// Exercise the real Links API and disk store through the rendered explorer.
+	// All mutations stay in this script's disposable state directory.
+	for (const width of [1280, 390]) {
+		await page("Emulation.setDeviceMetricsOverride", {width, height:844, deviceScaleFactor:1, mobile:width===390});
+		await evaluate("location.hash = '#/links'");
+		await until("Links explorer", () => evaluate("document.querySelector('button[aria-label=\"New link or folder\"]') !== null"));
+		const clickLabel = (label) => evaluate(`[...document.querySelectorAll('button')].find(el => el.getAttribute('aria-label') === ${JSON.stringify(label)} || el.textContent.trim() === ${JSON.stringify(label)}).click()`);
+		const fill = async (selector, value) => {
+			await evaluate(`document.querySelector(${JSON.stringify(selector)}).focus()`);
+			await page("Input.insertText", {text:value});
+		};
+		const submitLinkDialog = () => evaluate("document.querySelector('.link-dialog form').requestSubmit()");
+		const folder = `Browser folder ${width}`;
+		const renamed = `Renamed folder ${width}`;
+		const title = `Browser link ${width}`;
+		await clickLabel("New link or folder");
+		await clickLabel("Folder…");
+		await fill("#link-name", folder);
+		await check(`Links folder dialog at ${width}px`);
+		if (width === 390) await checkPhone("Links folder dialog");
+		await submitLinkDialog();
+		await until("saved folder", () => evaluate(`document.body.innerText.includes(${JSON.stringify(folder)}) && !document.querySelector('.link-dialog')`));
+		await evaluate(`[...document.querySelectorAll('.link-folder-name')].find(el => el.textContent === ${JSON.stringify(folder)}).closest('button').click()`);
+		await clickLabel("New link or folder");
+		await clickLabel("Link…");
+		await fill("#link-url", "https://example.test/fixture");
+		await fill("#link-title", title);
+		await submitLinkDialog();
+		await until("saved link", () => evaluate(`document.body.innerText.includes(${JSON.stringify(title)}) && !document.querySelector('.link-dialog')`));
+		const safe = await evaluate(`(() => {const a=[...document.querySelectorAll('a.link-title')].find(el=>el.textContent.includes(${JSON.stringify(title)}));return a?.target === '_blank' && a.rel === 'noopener noreferrer';})()`);
+		if (!safe) failures.push(`Links at ${width}px lost safe external navigation`);
+		await clickLabel(`Actions for ${folder}`);
+		await clickLabel("Rename");
+		await evaluate("document.querySelector('#link-name').select()");
+		await page("Input.insertText", {text:renamed});
+		await submitLinkDialog();
+		await until("renamed folder", () => evaluate(`document.body.innerText.includes(${JSON.stringify(renamed)}) && !document.querySelector('.link-dialog')`));
+		await page("Page.reload");
+		await until("Links survives reload", () => evaluate(`[...document.querySelectorAll('.link-folder-name')].some(el => el.textContent === ${JSON.stringify(renamed)}) && [...document.querySelectorAll('a.link-title')].some(el => el.textContent.includes(${JSON.stringify(title)}))`));
+		await check(`Links saved tree at ${width}px`);
+		if (width === 390) await checkPhone("Links saved tree");
+		const saved = JSON.parse(await readFile(join(stateDir,"links.json"),"utf8"));
+		const savedFolder = saved.folders.find(entry => entry.name === renamed);
+		if (saved.version !== 2 || !savedFolder || !saved.links.some(entry => entry.title === title && entry.parentId === savedFolder.id)) failures.push("Links tree not saved as version 2");
+		await clickLabel(`Actions for ${renamed}`);
+		await clickLabel("Remove");
+		await evaluate("document.querySelector('.link-row .button-danger').click()");
+		await until("folder and contents removed", () => evaluate(`![...document.querySelectorAll('.link-folder-name')].some(el => el.textContent === ${JSON.stringify(renamed)}) && ![...document.querySelectorAll('a.link-title')].some(el => el.textContent.includes(${JSON.stringify(title)}))`));
 	}
 	const fonts = await evaluate("document.fonts.ready.then(() => [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family))");
 	await evaluate(`location.hash = '#/today/draft/${"c".repeat(64)}'`);

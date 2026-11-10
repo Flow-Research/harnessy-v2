@@ -888,8 +888,13 @@ describe("app pieces", () => {
 
 	it("filters palette entries by every word and builds them from held data", () => {
 		const entries = paletteEntries(undefined, undefined, undefined);
-		expect(entries).toEqual(screenEntries());
-		expect(filterEntries(entries, "  ").length).toBe(9);
+		expect(entries).toEqual([
+			...screenEntries(),
+			{ id: "links:new-link", title: "New link", group: "Actions", target: "#/links/new-link" },
+			{ id: "links:new-folder", title: "New link folder", group: "Actions", target: "#/links/new-folder" },
+		]);
+		expect(filterEntries(entries, "  ").length).toBe(11);
+		expect(filterEntries(entries, "new link").map((entry) => entry.title)).toEqual(["New link", "New link folder"]);
 		expect(filterEntries(entries, "screens jobs").map((entry) => entry.title)).toEqual(["Jobs"]);
 		expect(filterEntries(entries, "nothing-matches")).toEqual([]);
 	});

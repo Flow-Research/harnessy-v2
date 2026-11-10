@@ -30,7 +30,7 @@ import { ConnectionsScreen } from "./screens/Connections.tsx";
 import { InboxScreen } from "./screens/Inbox.tsx";
 import { JobsScreen } from "./screens/Jobs.tsx";
 import { LearningScreen } from "./screens/Learning.tsx";
-import { LinksScreen } from "./screens/Links.tsx";
+import { LINKS_ROUTE_ACTIONS, LinksScreen } from "./screens/Links.tsx";
 import { ReviewsScreen } from "./screens/Reviews.tsx";
 import { TasksScreen } from "./screens/Tasks.tsx";
 import { TerminalScreen } from "./screens/Terminal.tsx";
@@ -42,7 +42,21 @@ export const paletteEntries = (
 	jobs: JobsResponse | undefined,
 	tasks: TasksResponse | undefined,
 ): ReadonlyArray<PaletteEntry> => {
-	const entries: PaletteEntry[] = [...screenEntries()];
+	const entries: PaletteEntry[] = [
+		...screenEntries(),
+		{
+			id: "links:new-link",
+			title: "New link",
+			group: "Actions",
+			target: routeHref("links", LINKS_ROUTE_ACTIONS.newLink),
+		},
+		{
+			id: "links:new-folder",
+			title: "New link folder",
+			group: "Actions",
+			target: routeHref("links", LINKS_ROUTE_ACTIONS.newFolder),
+		},
+	];
 	if (inbox?.tiles.inbox.state === "ok")
 		for (const item of inbox.tiles.inbox.data?.items ?? []) {
 			entries.push({
@@ -138,7 +152,7 @@ const ScreenView = ({
 		case "connections":
 			return <ConnectionsScreen rest={rest} />;
 		case "links":
-			return <LinksScreen client={client} />;
+			return <LinksScreen client={client} rest={rest} />;
 	}
 };
 
