@@ -366,6 +366,28 @@ multiple store versions, nested layouts, missing versions and override rules
 with local temporary fixtures. Reapply this overlay on an upstream sync unless
 upstream provides equivalent version checks.
 
+### TanStack Router upgrade overlay — 2026-11-10
+
+Root `overrides` in `package.json` pin the TanStack Router family to one
+coherent set: `@tanstack/react-router` 1.170.46, `router-plugin` 1.169.0,
+`router-generator` and `router-cli` 1.168.0, `router-core` 1.171.39,
+`router-utils` 1.163.0 and `history` 1.162.5. This removes the zod 3 copy that
+`router-plugin` 1.167.22 required (advisory GHSA-mrhx-c7xc-m3w5). The vendored
+version ranges already allow these releases, so no vendored `package.json`
+changed.
+
+`router-core` 1.171 renamed the route-match flag `globalNotFound` to
+`_notFound`. The flag has the same meaning: it marks the match that renders
+the not-found page when no route matched. `packages/react/src/multiplayer/org-slug-gate.tsx`
+reads `_notFound` instead of `globalNotFound`. Without this change the
+property does not exist, the gate never detects a not-found page, and the
+type check fails. No Harnessy host mounts `OrgSlugGate` (it serves the
+excluded org-scoped hosts), so no Harnessy runtime behaviour changes.
+
+The committed `routeTree.gen.ts` files were not regenerated. The new
+generator sorts the same routes in a different order; the routes do not
+change. Remove this overlay on an upstream sync that ships these versions.
+
 ## Self-hosted app world (`hsy web`)
 
 To run the vendored local web app (`apps/local`) as Harnessy's local test
