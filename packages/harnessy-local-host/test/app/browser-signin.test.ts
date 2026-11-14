@@ -68,16 +68,19 @@ it("authorises only the initiating tab through the native CLI, without opening a
 				).status,
 			).toBe(403);
 		}
-		await runPortalCommand(["signin", "--port", String(server.port), "--state-dir", root, "--request", pending.id], {
-			env: {},
-			homeDir: root,
-			write: () => undefined,
-			version: "test",
-			cliPath: "/unused",
-			nodePath: process.execPath,
-			probe: () => "unsupported",
-			openUrl: (url) => opened.push(url),
-		});
+		await runPortalCommand(
+			["signin", "--port", String(server.port), "--state-dir", root, `--request=${pending.id}`],
+			{
+				env: {},
+				homeDir: root,
+				write: () => undefined,
+				version: "test",
+				cliPath: "/unused",
+				nodePath: process.execPath,
+				probe: () => "unsupported",
+				openUrl: (url) => opened.push(url),
+			},
+		);
 		await expect(client.claimBrowserSignIn(pending.id, pending.id)).rejects.toThrow();
 		expect(await client.claimBrowserSignIn(pending.id, pending.claim)).toBe(true);
 		expect(client.session()).toBeDefined();
