@@ -66,11 +66,12 @@ const fixture = (behaviour: Record<string, unknown>) => {
 	chmodSync(adapter, 0o700);
 	writeFileSync(join(root, "behaviour.json"), JSON.stringify(behaviour));
 	for (const name of ["sources", "state"]) mkdirSync(join(root, name));
+	// A reader can observe the adapter's new file before its append is complete.
 	const requests = () =>
 		existsSync(join(root, "requests.ndjson"))
 			? readFileSync(join(root, "requests.ndjson"), "utf8")
-					.trim()
 					.split("\n")
+					.slice(0, -1)
 					.map((line) => JSON.parse(line) as { action: string; week_start?: string; pid: number })
 			: [];
 	let now = new Date("2026-10-18T23:05:00+01:00");
@@ -152,6 +153,20 @@ const alive = (pid: number) => {
 		return false;
 	}
 };
+
+it("reads only complete adapter requests while an append is in progress", () => {
+	const run = fixture({});
+	const path = join(run.root, "requests.ndjson");
+	writeFileSync(path, "");
+	expect(run.requests()).toEqual([]);
+	const request = { action: "generate", week_start: "2026-10-12", pid: 123 };
+	writeFileSync(path, JSON.stringify(request));
+	expect(run.requests()).toEqual([]);
+	writeFileSync(path, `${JSON.stringify(request)}\n{"action":`);
+	expect(run.requests()).toEqual([request]);
+	writeFileSync(path, "invalid\n");
+	expect(() => run.requests()).toThrow(SyntaxError);
+});
 
 it("drafts each due week once as a one-shot child of the review service, and not again after a restart", async () => {
 	const run = fixture({});
