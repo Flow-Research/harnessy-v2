@@ -2,6 +2,8 @@
 
 STE was built for aircraft maintenance manuals. The same properties transfer to any text where a misreading has a cost: one meaning per word, short sentences, condition-first commands. Each case below names the mode and the adaptations.
 
+Some "After" examples contain a cause, a number, or a time that the "Before" text does not give. The writer of a real message knows those facts. Do not invent a fact. If you do not know it, keep the general statement or write "unknown".
+
 ## Error messages and CLI output
 
 Mode: procedural. An error message is an instruction to a reader who is in the middle of a failure.
@@ -54,7 +56,7 @@ Mode: descriptive, 25-word limit. Many readers of these messages are non-native 
 
 ## Translation and localization prep
 
-Mode: strict. STE was written so that non-native maintenance crews can read English manuals. The same rules prepare text for machine translation. One meaning per word and complete grammar (articles, "that") remove many ambiguities that a translator must otherwise guess at.
+Mode: plain by default, strict when the user asks for STE. STE was written so that non-native maintenance crews can read English manuals. The same rules prepare text for machine translation. One meaning per word and complete grammar (articles, "that") remove many ambiguities that a translator must otherwise guess at.
 
 ## UI copy and empty states
 

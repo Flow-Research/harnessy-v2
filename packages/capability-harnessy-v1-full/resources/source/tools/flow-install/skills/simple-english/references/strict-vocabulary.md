@@ -1,6 +1,6 @@
 # Strict mode: the dictionary discipline
 
-Read this file when the user names STE, ASD-STE100, or compliance. Strict mode adds the dictionary rules to the document. It does not change the reply to the user, which stays in Plain mode.
+Read this file when the user names STE, ASD-STE100, or compliance with that standard. Strict mode adds the dictionary rules to the document. It does not change the reply to the user, which stays in Plain mode.
 
 The official dictionary (about 900 approved words and 1,200 rejected words with their alternatives) is copyrighted by ASD and is not reproduced here. This file gives the rules that depend on it, the rulings that software writers meet most, and the words the standard names as recurring errors. Tell the user, one time per conversation and in one sentence, that this index is lossy and that full compliance needs the official dictionary (free at asd-ste100.org).
 
@@ -73,5 +73,5 @@ The dictionary introduction lists the words that writers get wrong most often. T
 
 Add these two steps to the self-check in SKILL.md:
 
-1. Search the draft for every verb in the two tables above. Replace each hit with the approved word.
+1. Search the draft for every verb in the two tables above. Replace each use that the tables reject with the approved word. Keep approved verbs, legal technical verbs, and quoted text such as SQL commands.
 2. Search for the phrasal verbs you built ("set up", "go down"). Replace each with the one-word verb (Rule 9.3: "install", "decrease").

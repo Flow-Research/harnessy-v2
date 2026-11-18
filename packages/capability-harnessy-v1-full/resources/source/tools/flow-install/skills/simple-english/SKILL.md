@@ -1,6 +1,6 @@
 ---
 name: simple-english
-description: 'Write or rewrite text in plain, layman-readable English in the spirit of ASD-STE100 Simplified Technical English: short sentences, active voice, simple tenses, one word one meaning, condition before command, every technical term defined at first use, no AI slop. Default mode is Plain. Strict mode applies full STE vocabulary compliance when the user names STE, ASD-STE100, or compliance. Use for documentation, READMEs, runbooks, procedures, error messages, release notes, incident reports, API guides, and explanations for readers outside the field. Also use when the user says "STE", "Simplified Technical English", "ASD-STE100", "plain English", "layman''s terms", "explain it simply", "no jargon", "de-slop", "make this readable", "write for non-native readers", or asks for docs that translate well. The same rules govern the reply: answer first, prose by default.'
+description: 'Write or rewrite text in plain, layman-readable English in the spirit of ASD-STE100 Simplified Technical English: short sentences, active voice, simple tenses, one word one meaning, condition before command, every technical term defined at first use, no AI slop. Default mode is Plain. Strict mode applies full STE vocabulary compliance when the user names STE, ASD-STE100, or compliance with that standard. Use for documentation, READMEs, runbooks, procedures, error messages, release notes, incident reports, API guides, and explanations for readers outside the field. Also use when the user says "STE", "Simplified Technical English", "ASD-STE100", "plain English", "layman''s terms", "explain it simply", "no jargon", "de-slop", "make this readable", "write for non-native readers", or asks for docs that translate well. The same rules govern the reply: answer first, prose by default.'
 license: MIT
 compatibility: claude-code cursor codex gemini-cli opencode
 metadata:
@@ -23,7 +23,7 @@ When asked to write or rewrite documentation, apply these rules to the prose:
 5. Modals: can, will, must. Never should, would, may, might, could. A required "should" becomes "must". An optional one is deleted.
 6. Use complete grammar. No contractions, keep articles, keep "that". Write short sentences, not telegraph style.
 7. No semicolons and no em-dashes. Write two sentences, or name the relation.
-8. One word, one meaning, for the whole document. Use `make sure that` for check, verify, confirm, validate, ensure. Use `configuration` for config, settings, options. Break noun chains over three words with a preposition ("the timeout value for the connection pool").
+8. One word, one meaning, for the whole document. Use `make sure that` for check, verify, confirm, validate, ensure when the word means an ordinary confirmation. If a verb names a distinct technical operation ("verify the checksum"), keep that verb and use it for that operation only. Use `configuration` for config, settings, options. Break noun chains over three words with a preposition ("the timeout value for the connection pool").
 9. Give the reader each term and each fact before the step that needs it. Define a concept term at its first use, under ten words, one per sentence. Do not define product names, standard names (Postgres, S3, HTTP), or the tool the document is about. Also name the host, the flag, or the prior step that a command depends on. "Restart the service" becomes "Restart the `sync` service on the host that runs the job."
 10. State the fact, not its importance. Delete words that carry no fact: simply, seamlessly, robust, powerful, comprehensive, leverage, crucial, "in order to", "it is worth noting". No "not just X, it is Y". No decorative triplets. No "in conclusion".
 11. Use formatting only where it carries structure. No bold lead-ins, no bold as emphasis, no emoji, no heading over two sentences. A vertical list is for three or more parallel items or steps: colon on the lead-in, uppercase start, one instruction per item.
@@ -41,7 +41,7 @@ After (procedural, headed, numbered):
 >
 > sqlpipe stops with `dial tcp: i/o timeout` when it cannot connect to the Postgres port (5432 by default).
 >
-> 1. Make sure that the host that runs sqlpipe can connect to the Postgres port. A firewall or security group usually blocks it.
+> 1. Make sure that the host that runs sqlpipe can connect to the Postgres port. A firewall or security group often blocks it.
 > 2. If the database is managed (RDS, Cloud SQL), make sure that the instance accepts connections from the IP of sqlpipe.
 
 ## The Reply
@@ -60,14 +60,16 @@ After: The pods restarted and the queue lost its leader for a short time. It rec
 
 ## Self-Check Before You Deliver
 
+Apply both checks only to the prose that you wrote. Do not change code, commands, file paths, quoted errors, or warnings.
+
 1. Reply: search for `—` and `**`. Remove each one. For each `#` and each line that starts with `-`, make sure that the content has that shape.
 2. Document: count the words in your three longest sentences. Over 20 or 25, split. Search for `'`, `has been`, `should`, `may`, `;`, `—`, `, making`, `**`, `check`, `verify`, `config`, and any heading that covers fewer than three sentences. Fix each hit. Read each step: does it name a host, a flag, or a prior step the reader must already have? If not, add it or point to it.
 
 ## Modes
 
-Plain is the default and is all of the above. Strict applies when the user names STE, ASD-STE100, or compliance: read `references/strict-vocabulary.md` before you draft the document, and say once that no tool guarantees compliance. The reply stays Plain in every mode.
+Plain is the default and is all of the above. Strict applies when the user names STE, ASD-STE100, or compliance with that standard: read `references/strict-vocabulary.md` before you draft the document, and say once that no tool guarantees compliance. The reply stays Plain in every mode.
 
-When asked to CHECK text instead of writing it, first open `references/rule-catalog.md`. Then report each violation as: rule number quoted from that file, the offending text, a compliant rewrite. Never cite a rule number from memory. When the user asked for compliance, end with one sentence: no tool can guarantee ASD-STE100 compliance, and the standard is a free download at asd-ste100.org.
+When asked to CHECK text instead of writing it, first open `references/rule-catalog.md`. Then report each violation as: rule number quoted from that file, the offending text, a compliant rewrite. Never cite a rule number from memory. When the user asked for compliance with the standard, end with one sentence: no tool can guarantee ASD-STE100 compliance, and the standard is a free download at asd-ste100.org.
 
 ## Limits
 
@@ -75,7 +77,7 @@ These rules are for facts and instructions, not marketing copy or brand writing,
 
 ## References
 
-Template paths are resolved from ${AGENTS_SKILLS_ROOT}/simple-english/.
+Template paths are resolved from `${AGENTS_SKILLS_ROOT}/simple-english/`.
 
 - `references/rule-catalog.md`: the 53 rules of Issue 9 with software examples, for CHECK mode
 - `references/strict-vocabulary.md`: the dictionary discipline for Strict mode

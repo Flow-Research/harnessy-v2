@@ -24,7 +24,7 @@ This table is ours, not the ASD dictionary. It maps the words AI-generated docs 
 | and/or | Pick one, or write "X, or Y, or both" |
 | e.g. / i.e. / etc. | for example / that is / (name the items) |
 | gracefully handles | (say what it does: "retries three times, then stops") |
-| out of the box | by default |
+| out of the box | without more setup (or "by default" when the source describes the default setting) |
 | under the hood | internally |
 | blazingly fast | fast (give the number) / (delete) |
 | streamline | make simpler, make faster |

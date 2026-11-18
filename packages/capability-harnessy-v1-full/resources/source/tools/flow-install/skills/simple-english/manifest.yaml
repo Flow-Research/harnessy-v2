@@ -13,7 +13,8 @@ invoke: "/simple-english"
 location: tools/flow-install/skills/simple-english
 # Vendored from https://github.com/AminBlg/SimpleEnglish (MIT, see LICENSE).
 # Upstream release 2.1.2, commit 300432a9e4c473229a7049ab61b8ca2522d9214c.
-# Local changes to SKILL.md: the description is one line, and the template path line is added.
+# Local changes: in SKILL.md the description is one line and the template path line is added.
+# Review fixes from PR #188 changed SKILL.md and three reference files. Compare with upstream before an update.
 autoresearch:
   enabled: true
   metric_layer: 1
