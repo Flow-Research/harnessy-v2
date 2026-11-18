@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseArgs } from "node:util";
 import test from "node:test";
 import { installReleaseLaunchers } from "./install-release.mjs";
 import { installPortalLauncher } from "../packages/harnessy-local-host/resources/macos/install-launcher.mjs";
@@ -27,9 +28,10 @@ test("compiled launcher preserves literal paths, signs in without opening anothe
 	assert.equal(installPortalLauncher({ target, portal, stateDir }), target);
 	assert(existsSync(join(target, "Contents/Resources/Scripts/main.scpt")));
 	const helpers = join(target, "Contents/Resources");
-	const request = "a".repeat(43);
-	assert.deepEqual(execFileSync(join(helpers, "signin-portal"), [request], { encoding: "utf8", env: { PATH: "/nonexistent" } }).trim().split("\n"),
-		["signin", "--request", request, "--port", "8790", "--state-dir", stateDir]);
+	const request = `-${"a".repeat(42)}`;
+	const signInArgs = execFileSync(join(helpers, "signin-portal"), [request], { encoding: "utf8", env: { PATH: "/nonexistent" } }).trim().split("\n");
+	assert.equal(parseArgs({ args: signInArgs, allowPositionals: true, options: { request: { type: "string" }, port: { type: "string" }, "state-dir": { type: "string" } } }).values.request, request);
+	assert.deepEqual(signInArgs, ["signin", `--request=${request}`, "--port", "8790", "--state-dir", stateDir]);
 	assert.deepEqual(execFileSync(join(helpers, "open-portal"), [], { encoding: "utf8" }).trim().split("\n"),
 		["open", "--port", "8790", "--state-dir", stateDir]);
 	assert.equal(execFileSync("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleURLTypes:0:CFBundleURLSchemes:0", join(target, "Contents/Info.plist")], { encoding: "utf8" }).trim(), "harnessy");
@@ -57,7 +59,7 @@ test("native app helpers use the generated release wrapper and pinned Node witho
 	const target = installPortalLauncher({ target: join(root, "Harnessy.app"), portal: join(release.commands, "harnessy-portal"), stateDir });
 	for (const [helper, args, expected] of [
 		["open-portal", [], ["open", "--port", "8790", "--state-dir", stateDir]],
-		["signin-portal", ["b".repeat(43)], ["signin", "--request", "b".repeat(43), "--port", "8790", "--state-dir", stateDir]],
+		["signin-portal", ["b".repeat(43)], ["signin", `--request=${"b".repeat(43)}`, "--port", "8790", "--state-dir", stateDir]],
 	]) {
 		const output = execFileSync(join(target, "Contents/Resources", helper), args, { encoding: "utf8", env: { PATH: "/nonexistent" } });
 		assert.deepEqual(JSON.parse(output), { node: realpathSync(release.node), args: expected });
