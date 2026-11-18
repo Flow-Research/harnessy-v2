@@ -1,0 +1,24 @@
+name: simple-english
+type: opencode
+version: 2.1.2
+install_scope: global
+owner: julian
+status: experimental
+blast_radius: low
+description: "Write replies and documents in plain English with the discipline of ASD-STE100 Simplified Technical English: answer first, prose by default, short sentences, active voice, one word for one meaning, condition before command, terms defined at first use."
+permissions: [read]
+data_categories: [none]
+egress: []
+invoke: "/simple-english"
+location: tools/flow-install/skills/simple-english
+# Vendored from https://github.com/AminBlg/SimpleEnglish (MIT, see LICENSE).
+# Upstream release 2.1.2, commit 300432a9e4c473229a7049ab61b8ca2522d9214c.
+# Local changes to SKILL.md: the description is one line, and the template path line is added.
+autoresearch:
+  enabled: true
+  metric_layer: 1
+  time_budget_seconds: 600
+  evaluation_window: 3
+  constraints:
+    max_regression_rate: 0.1
+    max_human_intervention: 0.5
