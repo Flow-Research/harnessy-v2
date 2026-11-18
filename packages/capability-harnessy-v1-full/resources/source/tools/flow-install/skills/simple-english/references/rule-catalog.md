@@ -12,7 +12,7 @@ Read this file for CHECK mode, for Strict mode, or when a rule number is in ques
 | 1.2 (S) | Use an approved word only as its listed part of speech. |
 | 1.3 (S) | Use an approved word only with its approved meaning. |
 | 1.4 (S) | Use only the approved forms of verbs and adjectives. |
-| 1.6 (S) | Use an unapproved word only when it is a technical noun or part of one. |
+| 1.6 (S) | Use an unapproved word only when it is a technical noun, a technical verb (Rule 1.12), or part of one. |
 | 1.5 | You can use domain words as technical nouns ("webhook", "commit", "endpoint"). |
 | 1.7 | Do not use technical nouns as verbs. |
 | 1.8 | Use the technical nouns of your project or industry. |
