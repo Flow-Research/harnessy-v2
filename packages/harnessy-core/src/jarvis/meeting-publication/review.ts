@@ -405,6 +405,7 @@ gap: 8px; margin: 0; padding-bottom: 8px; }
 .meeting-takeaways li::marker { color: var(--accent); }
 .meeting-item .editor-help { margin: .4rem 0 0; }
 .meeting-actions { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: .9rem; }
+.meeting-actions form { margin: 0; }
 .meeting-actions details[open] { flex: 1 1 100%; }
 .connection-details dl { color: var(--muted); font-size: .85rem; }
 .connection-details dd { margin: 0 0 .65rem; overflow-wrap: anywhere; }
@@ -941,6 +942,12 @@ ${quickDecisions(item, nextMeeting.purpose)}
 	const meetingCard = (item: MeetingPublicationItem) => {
 		const preview = previewFor(item);
 		const open = `<a class="button" href="/item/${item.itemId}">Review meeting</a>`;
+		// Same condition and same fields as the next-meeting card. The document action needs
+		// the current saved revision, so a card without a preview does not offer it.
+		const documentForm =
+			mode === "full" && generateGoogleDocAvailable
+				? `<form method="post" action="/generate-google-doc/${item.itemId}">${decisionFields(item)}<button type="submit">Generate Google Doc</button></form>`
+				: "";
 		if (preview === undefined || preview.summary === null) {
 			return `<li class="meeting-item"><h4><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></h4><p class="editor-help">${preview === undefined ? "Details are not loaded for this meeting. Open it to review." : "The saved note changed or could not be read. Open the meeting to check it before taking action."}</p><div class="meeting-actions">${open}</div></li>`;
 		}
@@ -961,12 +968,12 @@ ${quickDecisions(item, nextMeeting.purpose)}
 			preview.participants === null || preview.participants === undefined
 				? ""
 				: `<div class="meta-row"><span class="meta-pill">${preview.participants} participant${preview.participants === 1 ? "" : "s"}</span></div>`;
-		return `<li class="meeting-item"><h4><a href="/item/${item.itemId}">${preview.title === null ? "Meeting title unavailable" : safeReviewText(preview.title)}</a></h4>${people}<p class="meeting-purpose"><strong>Purpose:</strong> ${safeReviewText(preview.purpose ?? "")}</p>${detail}<div class="meeting-actions">${open}${quickDecisions(item, preview.purpose)}</div></li>`;
+		return `<li class="meeting-item"><h4><a href="/item/${item.itemId}">${preview.title === null ? "Meeting title unavailable" : safeReviewText(preview.title)}</a></h4>${people}<p class="meeting-purpose"><strong>Purpose:</strong> ${safeReviewText(preview.purpose ?? "")}</p>${detail}<div class="meeting-actions">${open}${documentForm}${quickDecisions(item, preview.purpose)}</div></li>`;
 	};
 	const otherMeetings =
 		reviewItems.length < 2
 			? ""
-			: `<details class="card queue-status other-meetings" id="other-meetings" open><summary>Other meetings waiting (${reviewItems.length - 1})</summary><p class="editor-help">Each card shows the saved title, the purpose and the key takeaways. Accept, reject or open a meeting from its card.</p>${Array.from(
+			: `<details class="card queue-status other-meetings" id="other-meetings" open><summary>Other meetings waiting (${reviewItems.length - 1})</summary><p class="editor-help">Each card shows the saved title, the purpose and the key takeaways. Accept, reject or open a meeting from its card.${mode === "full" && generateGoogleDocAvailable ? " Generate Google Doc creates a document from the full saved note; it does not approve the meeting or send anything to Discord." : ""}</p>${Array.from(
 					dayGroups,
 					([day, group]) =>
 						`<section class="day-group" id="day-${escapeHtml(day)}"><h3><time datetime="${escapeHtml(day)}">${escapeHtml(reviewDay(day))}</time> <span class="group-count">${group.length}</span></h3><ul class="meeting-list">${group.map(meetingCard).join("")}</ul></section>`,

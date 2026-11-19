@@ -642,10 +642,35 @@ describe("MeetingPublicationReviewServer", () => {
 						call(review.address.origin, "/", { cookie: cookieFrom(exchange).cookie }),
 					);
 					return inbox.body;
-				}).pipe(Effect.provide(makeReviewLayer(config, makeState()))),
+				}).pipe(
+					Effect.provide(
+						MeetingPublicationReviewServer.layer(config).pipe(
+							Layer.provideMerge(
+								Layer.merge(
+									Layer.effect(
+										MeetingPublicationService,
+										Effect.gen(function* () {
+											const original = yield* MeetingPublicationService;
+											return MeetingPublicationService.of({
+												...original,
+												generateGoogleDoc: () => Effect.die("not called by an inbox read"),
+											});
+										}),
+									).pipe(Layer.provideMerge(makeServiceLayer(config, makeState()))),
+									testRandomLayer(),
+								),
+							),
+						),
+					),
+				),
 			),
 		);
 		const card = /<li class="meeting-item">.*?<\/li>\s*<\/ul><\/section>/su.exec(body)?.[0] ?? "";
+		// With the document action available, the card offers it for its own item and revision.
+		const documentItemId = /action="\/generate-google-doc\/([a-f0-9]{24})"/u.exec(card)?.[1] ?? "";
+		expect(card).toContain(`<a class="button" href="/item/${documentItemId}">Review meeting</a>`);
+		expect(card).toContain('<button type="submit">Generate Google Doc</button>');
+		expect(body.split('action="/generate-google-doc/').length - 1).toBe(2);
 		expect(card).toContain("Structured meeting</a></h4>");
 		expect(card).toContain('<span class="meta-pill">3 participants</span>');
 		expect(card).toContain(
@@ -740,6 +765,8 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(card).toContain(`action="/reject/${cardItemId}"`);
 		expect(card).toContain(`name="item_id" value="${cardItemId}"`);
 		expect(result.current.body.split('action="/approve/').length - 1).toBe(2);
+		// This service has no document action, so no card offers it.
+		expect(result.current.body).not.toContain("/generate-google-doc/");
 		expect(result.current.body.indexOf("Next meeting")).toBeLessThan(
 			result.current.body.indexOf("Publication connection health"),
 		);
