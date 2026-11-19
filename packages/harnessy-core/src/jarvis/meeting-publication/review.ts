@@ -406,6 +406,7 @@ gap: 8px; margin: 0; padding-bottom: 8px; }
 .meeting-item .editor-help { margin: .4rem 0 0; }
 .meeting-actions { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: .9rem; }
 .meeting-actions form { margin: 0; }
+.doc-link { color: var(--accent-dark); }
 .meeting-actions details[open] { flex: 1 1 100%; }
 .connection-details dl { color: var(--muted); font-size: .85rem; }
 .connection-details dd { margin: 0 0 .65rem; overflow-wrap: anywhere; }
@@ -757,6 +758,8 @@ interface MeetingReviewPreview {
 	readonly purpose: string | null;
 	/** Number of people in the note's Participants line; the names stay in the note. */
 	readonly participants?: number | null;
+	/** Link to the draft document that already exists for this exact saved revision. */
+	readonly docUrl?: string | null;
 }
 
 const previewInline = (value: string) =>
@@ -829,6 +832,14 @@ const renderInbox = (
 	const quickDecisions = (item: MeetingPublicationItem, purpose: string | null) =>
 		`<details class="quick-accept"><summary>Accept &amp; publish…</summary><p>Accept the full saved meeting note for publication? The summary above is only a preview. This approves the exact saved version for the publication worker to send to Google Docs and Discord.</p><p><strong>Discord purpose:</strong> ${safeReviewText(purpose ?? "")}</p><form method="post" action="/approve/${item.itemId}">${decisionFields(item)}<input type="hidden" name="purpose" value="${escapeHtml(purpose ?? "")}"><button class="approve" type="submit">Confirm acceptance &amp; publish</button></form></details>
 <details class="quick-reject"><summary>Reject meeting…</summary><p>Reject this saved version of the meeting note? It will leave the review queue without approval or publication.</p><form method="post" action="/reject/${item.itemId}">${decisionFields(item)}<button class="reject" type="submit">Confirm rejection</button></form></details>`;
+	// One control per meeting: a link when the document for this saved revision exists, the
+	// generate action when it does not. Generation returns to this page, so no extra screen.
+	const documentControl = (item: MeetingPublicationItem, docUrl: string | null | undefined) =>
+		docUrl !== null && docUrl !== undefined
+			? openGoogleDocLink(docUrl)
+			: mode === "full" && generateGoogleDocAvailable
+				? `<form method="post" action="/generate-google-doc/${item.itemId}">${decisionFields(item)}<button type="submit">Generate Google Doc</button></form>`
+				: "";
 	const nextMeeting = reviewItems[0] === undefined ? undefined : previewFor(reviewItems[0]);
 	const attentionItems = items.filter(
 		(item) => item.status === "blocked" || (item.status === "approved" && item.failureStage !== null),
@@ -922,9 +933,8 @@ ${
 					const text = previewPlainText(nextMeeting.summary);
 					const points = Array.from(text);
 					const preview = points.slice(0, 600).join("");
-					const fields = decisionFields(item);
 					return `<div class="meeting-preview"><h3>Executive summary preview</h3><p>${preview.length === 0 ? "No executive summary is available. Open the full note to review it." : safeReviewText(preview) + (points.length > 600 ? "…" : "")}</p>${points.length > 600 ? '<p class="editor-help">Showing the first 600 characters of the saved summary.</p>' : ""}</div>
-<div class="actions"><a class="button primary-button" href="/item/${item.itemId}">Review meeting</a>${mode === "full" && generateGoogleDocAvailable ? `<form method="post" action="/generate-google-doc/${item.itemId}">${fields}<button type="submit">Generate Google Doc</button></form>` : ""}</div>
+<div class="actions"><a class="button primary-button" href="/item/${item.itemId}">Review meeting</a>${documentControl(item, nextMeeting.docUrl)}</div>
 ${mode === "full" && generateGoogleDocAvailable ? '<p class="editor-help">The Google Doc contains the full saved meeting note, not just this preview. Generating it does not approve the meeting or send anything to Discord.</p>' : ""}
 ${quickDecisions(item, nextMeeting.purpose)}
 <p class="editor-help">Use Review meeting if you need to read or edit the full note before deciding.</p>`;
@@ -942,14 +952,8 @@ ${quickDecisions(item, nextMeeting.purpose)}
 	const meetingCard = (item: MeetingPublicationItem) => {
 		const preview = previewFor(item);
 		const open = `<a class="button" href="/item/${item.itemId}">Review meeting</a>`;
-		// Same condition and same fields as the next-meeting card. The document action needs
-		// the current saved revision, so a card without a preview does not offer it.
-		const documentForm =
-			mode === "full" && generateGoogleDocAvailable
-				? `<form method="post" action="/generate-google-doc/${item.itemId}">${decisionFields(item)}<button type="submit">Generate Google Doc</button></form>`
-				: "";
 		if (preview === undefined || preview.summary === null) {
-			return `<li class="meeting-item"><h4><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></h4><p class="editor-help">${preview === undefined ? "Details are not loaded for this meeting. Open it to review." : "The saved note changed or could not be read. Open the meeting to check it before taking action."}</p><div class="meeting-actions">${open}</div></li>`;
+			return `<li class="meeting-item" id="meeting-${item.itemId}"><h4><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></h4><p class="editor-help">${preview === undefined ? "Details are not loaded for this meeting. Open it to review." : "The saved note changed or could not be read. Open the meeting to check it before taking action."}</p><div class="meeting-actions">${open}</div></li>`;
 		}
 		const takeaways = previewTakeaways(preview.summary);
 		const text = previewPlainText(preview.summary);
@@ -968,12 +972,12 @@ ${quickDecisions(item, nextMeeting.purpose)}
 			preview.participants === null || preview.participants === undefined
 				? ""
 				: `<div class="meta-row"><span class="meta-pill">${preview.participants} participant${preview.participants === 1 ? "" : "s"}</span></div>`;
-		return `<li class="meeting-item"><h4><a href="/item/${item.itemId}">${preview.title === null ? "Meeting title unavailable" : safeReviewText(preview.title)}</a></h4>${people}<p class="meeting-purpose"><strong>Purpose:</strong> ${safeReviewText(preview.purpose ?? "")}</p>${detail}<div class="meeting-actions">${open}${documentForm}${quickDecisions(item, preview.purpose)}</div></li>`;
+		return `<li class="meeting-item" id="meeting-${item.itemId}"><h4><a href="/item/${item.itemId}">${preview.title === null ? "Meeting title unavailable" : safeReviewText(preview.title)}</a></h4>${people}<p class="meeting-purpose"><strong>Purpose:</strong> ${safeReviewText(preview.purpose ?? "")}</p>${detail}<div class="meeting-actions">${open}${documentControl(item, preview.docUrl)}${quickDecisions(item, preview.purpose)}</div></li>`;
 	};
 	const otherMeetings =
 		reviewItems.length < 2
 			? ""
-			: `<details class="card queue-status other-meetings" id="other-meetings" open><summary>Other meetings waiting (${reviewItems.length - 1})</summary><p class="editor-help">Each card shows the saved title, the purpose and the key takeaways. Accept, reject or open a meeting from its card.${mode === "full" && generateGoogleDocAvailable ? " Generate Google Doc creates a document from the full saved note; it does not approve the meeting or send anything to Discord." : ""}</p>${Array.from(
+			: `<details class="card queue-status other-meetings" id="other-meetings" open><summary>Other meetings waiting (${reviewItems.length - 1})</summary><p class="editor-help">Each card shows the saved title, the purpose and the key takeaways. Accept, reject or open a meeting from its card.${mode === "full" && generateGoogleDocAvailable ? " Generate Google Doc creates a document from the full saved note and returns here with an Open Google Doc link; it does not approve the meeting or send anything to Discord." : ""}</p>${Array.from(
 					dayGroups,
 					([day, group]) =>
 						`<section class="day-group" id="day-${escapeHtml(day)}"><h3><time datetime="${escapeHtml(day)}">${escapeHtml(reviewDay(day))}</time> <span class="group-count">${group.length}</span></h3><ul class="meeting-list">${group.map(meetingCard).join("")}</ul></section>`,
@@ -1027,6 +1031,9 @@ const safeGoogleDocUrl = (value: string | null): string | null =>
 		? value
 		: null;
 
+const openGoogleDocLink = (docUrl: string) =>
+	`<a class="button doc-link" href="${escapeHtml(docUrl)}" target="_blank" rel="noopener noreferrer">Open Google Doc</a>`;
+
 const renderItem = (
 	item: MeetingPublicationItem,
 	note: { readonly title: string; readonly meetingDate: string; readonly summary: string; readonly markdown: string },
@@ -1035,6 +1042,7 @@ const renderItem = (
 	mode: MeetingPublicationReviewMode,
 	project: string,
 	generateGoogleDocAvailable = false,
+	googleDocUrl: string | null = null,
 ) => {
 	const hidden = `<input type="hidden" name="csrf" value="${csrf}">
 <input type="hidden" name="item_id" value="${item.itemId}">
@@ -1045,7 +1053,7 @@ const renderItem = (
 <p class="lede">Generate a Google Doc from the full saved meeting note. This does not approve the meeting or send anything to Discord.</p>
 <p class="editor-help">If you edit the note below, use Update meeting note before generating the document. The document uses the configured Google account and folder permissions.</p>
 <p class="editor-help">Generating the same saved version again returns its existing document. This action does not add public access.</p>
-<form class="actions" method="post" action="/generate-google-doc/${item.itemId}">${hidden}<button type="submit">Generate Google Doc</button></form></section>`
+${googleDocUrl === null ? `<form class="actions" method="post" action="/generate-google-doc/${item.itemId}">${hidden}<input type="hidden" name="return_to" value="item"><button type="submit">Generate Google Doc</button></form>` : `<p class="editor-help">A document exists for this saved version.</p><div class="actions">${openGoogleDocLink(googleDocUrl)}</div>`}</section>`
 			: "";
 	const noteEditor =
 		mode === "full" && item.status === "pending_review"
@@ -1498,6 +1506,14 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					if (authenticated.session.portalOrigin !== undefined)
 						portalReturnOrigins.set(response, authenticated.session.portalOrigin);
 
+					// A draft link is shown only for the exact revision the queue row records, and only
+					// when it is a Google Docs document address.
+					const readyGoogleDocUrl = async (item: MeetingPublicationItem) => {
+						const draft = await runRequestEffect(store.googleDraft(item.itemId)).catch(() => null);
+						return draft !== null && draft.state === "ready" && draft.sourceHash === item.sourceHash
+							? safeGoogleDocUrl(draft.docUrl)
+							: null;
+					};
 					if (request.method === "GET" || request.method === "HEAD") {
 						if (url.search.length > 0) throw new ReviewHttpError(400, "query");
 						if (url.pathname === "/google-reconnect") {
@@ -1555,6 +1571,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 												itemId: item.itemId,
 												title: current?.title ?? null,
 												participants: current === null ? null : previewParticipants(current.markdown),
+												docUrl: current === null ? null : await readyGoogleDocUrl(item),
 												summary: current?.summary ?? null,
 												purpose:
 													current === null
@@ -1603,6 +1620,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 								mode,
 								config.project ?? "Local",
 								publication.generateGoogleDoc !== undefined,
+								await readyGoogleDocUrl(item),
 							),
 							head,
 							"same-origin",
@@ -1619,16 +1637,22 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						if (mode !== "full" || generate === undefined || url.search.length > 0)
 							throw new ReviewHttpError(404, "route");
 						const itemId = documentAction[1]!;
+						let returnToItem = false;
 						const result = await runMutation(async () => {
-							const form = parseForm(await readBody(request, config.reviewMaxBodyBytes), [
+							const body = await readBody(request, config.reviewMaxBodyBytes);
+							const form = parseForm(body, [
 								"csrf",
 								"item_id",
 								"source_hash",
+								...(new URLSearchParams(body).has("return_to") ? ["return_to"] : []),
 							]);
 							if (!secureEqual(form.csrf ?? "", authenticated.session.csrf))
 								throw new ReviewHttpError(403, "csrf");
 							if (form.item_id !== itemId || !hashPattern.test(form.source_hash ?? ""))
 								throw new ReviewHttpError(409, "item");
+							if (form.return_to !== undefined && form.return_to !== "item")
+								throw new ReviewHttpError(400, "return");
+							returnToItem = form.return_to === "item";
 							const item = await runRequestEffect(store.get(itemId));
 							if (item === null) throw new ReviewHttpError(404, "item");
 							const note = await runRequestEffect(source.read(item.notePath)).catch(() => null);
@@ -1662,14 +1686,9 @@ export class MeetingPublicationReviewServer extends Context.Service<
 								detail:
 									"A document result was returned, but its link could not be verified. The meeting was not approved and nothing was sent to Discord. Return to the meeting to check its saved document status.",
 							});
-						send(
-							response,
-							200,
-							page(
-								"Google Doc ready",
-								`<section class="card message-card"><h1>Google Doc ready</h1><p>The document contains the full saved meeting note. The meeting remains unapproved. Nothing was sent to Discord.</p><p><a class="button primary-button" href="${escapeHtml(docUrl)}" target="_blank" rel="noopener noreferrer">Open Google Doc</a></p><a href="/item/${itemId}">Back to this meeting</a></section>`,
-							),
-						);
+						// The document link now appears beside the meeting, so the reviewer returns to the
+						// page they came from in place of a separate result screen.
+						redirect(response, returnToItem ? `/item/${itemId}` : `/#meeting-${itemId}`);
 						return;
 					}
 					if (url.pathname.startsWith("/google-reconnect/")) {

@@ -630,7 +630,20 @@ describe("MeetingPublicationReviewServer", () => {
 				Effect.gen(function* () {
 					const service = yield* MeetingPublicationService;
 					const review = yield* MeetingPublicationReviewServer;
-					yield* service.scan();
+					const store = yield* MeetingPublicationStore;
+					const scan = yield* service.scan();
+					// The next meeting already has a document for its saved revision.
+					for (const itemId of scan.itemIds) {
+						const item = yield* store.get(itemId);
+						if (item === null || item.meetingDate !== "2026-09-03") continue;
+						yield* store.beginGoogleDraft(item.itemId, item.sourceHash);
+						yield* store.finishGoogleDraft(item.itemId, {
+							sourceHash: item.sourceHash,
+							docId: "doc_ready",
+							docUrl: "https://docs.google.com/document/d/doc_ready/edit",
+							state: "ready",
+						});
+					}
 					const token = readFileSync(
 						join(config.statePath as string, "meeting-publication-v2-review.token"),
 						"utf8",
@@ -665,12 +678,18 @@ describe("MeetingPublicationReviewServer", () => {
 				),
 			),
 		);
-		const card = /<li class="meeting-item">.*?<\/li>\s*<\/ul><\/section>/su.exec(body)?.[0] ?? "";
+		const card =
+			/<li class="meeting-item" id="meeting-[a-f0-9]{24}">.*?<\/li>\s*<\/ul><\/section>/su.exec(body)?.[0] ?? "";
 		// With the document action available, the card offers it for its own item and revision.
 		const documentItemId = /action="\/generate-google-doc\/([a-f0-9]{24})"/u.exec(card)?.[1] ?? "";
 		expect(card).toContain(`<a class="button" href="/item/${documentItemId}">Review meeting</a>`);
 		expect(card).toContain('<button type="submit">Generate Google Doc</button>');
-		expect(body.split('action="/generate-google-doc/').length - 1).toBe(2);
+		// A meeting whose document exists shows the link in place of the generate action.
+		expect(body.split('action="/generate-google-doc/').length - 1).toBe(1);
+		expect(body).toContain(
+			'<a class="button doc-link" href="https://docs.google.com/document/d/doc_ready/edit" target="_blank" rel="noopener noreferrer">Open Google Doc</a>',
+		);
+		expect(card).toContain(`<li class="meeting-item" id="meeting-${documentItemId}">`);
 		expect(card).toContain("Structured meeting</a></h4>");
 		expect(card).toContain('<span class="meta-pill">3 participants</span>');
 		expect(card).toContain(
@@ -752,7 +771,8 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(result.current.body.indexOf('<main class="inbox-main">')).toBeLessThan(
 			result.current.body.indexOf('<aside class="inbox-side"'),
 		);
-		const card = /<li class="meeting-item">.*?<\/li>/su.exec(result.current.body)?.[0] ?? "";
+		const card =
+			/<li class="meeting-item" id="meeting-[a-f0-9]{24}">.*?<\/li>/su.exec(result.current.body)?.[0] ?? "";
 		expect(card).toMatch(/<h4><a href="\/item\/[a-f0-9]{24}">Another meeting<\/a><\/h4>/u);
 		expect(card).toContain('<p class="meeting-summary">');
 		expect(card).toContain(
