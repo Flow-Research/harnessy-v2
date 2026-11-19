@@ -374,7 +374,15 @@ padding: .15rem 1rem; }
 text-decoration-color: var(--accent); text-underline-offset: 3px; }
 .metadata-body ul { font-size: .83rem; }
 .operations > .card { background: transparent; border: 0; border-radius: 0; border-top: 1px solid var(--line); margin: 16px 0 0; padding: 16px 0 0; width: 100%; }
-.other-meetings a { color: var(--accent-dark); }
+.other-meetings h3 a { color: var(--accent-dark); }
+.meeting-list { display: grid; gap: 12px; list-style: none; margin: 16px 0 0; padding: 0; }
+.meeting-item { border: 1px solid var(--line); border-radius: 8px; min-width: 0; padding: 16px; }
+.meeting-item h3 { font-size: 1.05rem; margin: 0; overflow-wrap: anywhere; }
+.meeting-item .meta-row { margin-top: .5rem; }
+.meeting-summary, .meeting-purpose { margin: .7rem 0 0; overflow-wrap: anywhere; }
+.meeting-purpose { color: var(--muted); font-size: .85rem; }
+.meeting-actions { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: .9rem; }
+.meeting-actions details[open] { flex: 1 1 100%; }
 .connection-details dl { color: var(--muted); font-size: .85rem; }
 .connection-details dd { margin: 0 0 .65rem; overflow-wrap: anywhere; }
 .metadata-card { background: var(--raised); border: 1px solid var(--line); border-radius: 12px;
@@ -705,15 +713,23 @@ const renderDispatchResult = (result: {
 <a class="button primary-button" href="/">Return to review</a></section>`,
 	);
 
+interface MeetingReviewPreview {
+	readonly itemId: string;
+	readonly title: string | null;
+	readonly summary: string | null;
+	readonly purpose: string | null;
+}
+
+// The inbox reads one note per waiting meeting. These limits bound that work for a large queue;
+// meetings beyond the first limit still appear, with a link and without a preview.
+const MEETING_REVIEW_PREVIEW_LIMIT = 100;
+const MEETING_REVIEW_PREVIEW_CONCURRENCY = 8;
+const MEETING_REVIEW_CARD_SUMMARY_LENGTH = 320;
+
 const renderInbox = (
 	items: ReadonlyArray<MeetingPublicationItem>,
 	csrf: string,
-	nextMeeting: {
-		readonly itemId: string;
-		readonly title: string | null;
-		readonly summary: string | null;
-		readonly purpose: string | null;
-	} | null,
+	previews: ReadonlyArray<MeetingReviewPreview>,
 	mode: MeetingPublicationReviewMode,
 	dispatch: MeetingPublicationReviewDispatch | undefined,
 	health: ReadonlyArray<MeetingProviderHealth>,
@@ -723,6 +739,15 @@ const renderInbox = (
 	generateGoogleDocAvailable = false,
 ) => {
 	const reviewItems = items.filter((item) => item.status === "pending_review");
+	const previewFor = (item: MeetingPublicationItem) => previews.find((preview) => preview.itemId === item.itemId);
+	const decisionFields = (item: MeetingPublicationItem) =>
+		`<input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="item_id" value="${item.itemId}"><input type="hidden" name="source_hash" value="${item.sourceHash}">`;
+	// The same two confirmations serve the next meeting and every card in the list, so a
+	// quick decision always names the exact saved version and its Discord purpose.
+	const quickDecisions = (item: MeetingPublicationItem, purpose: string | null) =>
+		`<details class="quick-accept"><summary>Accept &amp; publish…</summary><p>Accept the full saved meeting note for publication? The summary above is only a preview. This approves the exact saved version for the publication worker to send to Google Docs and Discord.</p><p><strong>Discord purpose:</strong> ${safeReviewText(purpose ?? "")}</p><form method="post" action="/approve/${item.itemId}">${decisionFields(item)}<input type="hidden" name="purpose" value="${escapeHtml(purpose ?? "")}"><button class="approve" type="submit">Confirm acceptance &amp; publish</button></form></details>
+<details class="quick-reject"><summary>Reject meeting…</summary><p>Reject this saved version of the meeting note? It will leave the review queue without approval or publication.</p><form method="post" action="/reject/${item.itemId}">${decisionFields(item)}<button class="reject" type="submit">Confirm rejection</button></form></details>`;
+	const nextMeeting = reviewItems[0] === undefined ? undefined : previewFor(reviewItems[0]);
 	const attentionItems = items.filter(
 		(item) => item.status === "blocked" || (item.status === "approved" && item.failureStage !== null),
 	);
@@ -805,22 +830,21 @@ ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} wait
 					.map(
 						(item) =>
 							`<section class="card queue-card"><p class="section-label">Next meeting</p>
-<h2>${nextMeeting?.itemId === item.itemId ? (nextMeeting.title === null ? "Meeting title unavailable" : safeReviewText(nextMeeting.title)) : `Meeting · ${escapeHtml(item.meetingDate)}`}</h2><div class="meta-row">
+<h2>${nextMeeting !== undefined ? (nextMeeting.title === null ? "Meeting title unavailable" : safeReviewText(nextMeeting.title)) : `Meeting · ${escapeHtml(item.meetingDate)}`}</h2><div class="meta-row">
 <span class="meta-pill">${escapeHtml(reviewDate(item.meetingDate))}</span><span class="meta-pill">${safeReviewText(statusLabel(project))}</span>
 <span class="status-pill status-${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></div>
 ${
-	nextMeeting?.itemId === item.itemId && nextMeeting.summary !== null
+	nextMeeting !== undefined && nextMeeting.summary !== null
 		? (
 				() => {
 					const text = nextMeeting.summary.replace(/\s+/gu, " ").trim();
 					const points = Array.from(text);
 					const preview = points.slice(0, 600).join("");
-					const fields = `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="item_id" value="${item.itemId}"><input type="hidden" name="source_hash" value="${item.sourceHash}">`;
+					const fields = decisionFields(item);
 					return `<div class="meeting-preview"><h3>Executive summary preview</h3><p>${preview.length === 0 ? "No executive summary is available. Open the full note to review it." : safeReviewText(preview) + (points.length > 600 ? "…" : "")}</p>${points.length > 600 ? '<p class="editor-help">Showing the first 600 characters of the saved summary.</p>' : ""}</div>
 <div class="actions"><a class="button primary-button" href="/item/${item.itemId}">Review meeting</a>${mode === "full" && generateGoogleDocAvailable ? `<form method="post" action="/generate-google-doc/${item.itemId}">${fields}<button type="submit">Generate Google Doc</button></form>` : ""}</div>
 ${mode === "full" && generateGoogleDocAvailable ? '<p class="editor-help">The Google Doc contains the full saved meeting note, not just this preview. Generating it does not approve the meeting or send anything to Discord.</p>' : ""}
-<details class="quick-accept"><summary>Accept &amp; publish…</summary><p>Accept the full saved meeting note for publication? The summary above is only a preview. This approves the exact saved version for the publication worker to send to Google Docs and Discord.</p><p><strong>Discord purpose:</strong> ${safeReviewText(nextMeeting.purpose ?? "")}</p><form method="post" action="/approve/${item.itemId}">${fields}<input type="hidden" name="purpose" value="${escapeHtml(nextMeeting.purpose ?? "")}"><button class="approve" type="submit">Confirm acceptance &amp; publish</button></form></details>
-<details class="quick-reject"><summary>Reject meeting…</summary><p>Reject this saved version of the meeting note? It will leave the review queue without approval or publication.</p><form method="post" action="/reject/${item.itemId}">${fields}<button class="reject" type="submit">Confirm rejection</button></form></details>
+${quickDecisions(item, nextMeeting.purpose)}
 <p class="editor-help">Use Review meeting if you need to read or edit the full note before deciding.</p>`;
 				}
 			)()
@@ -831,12 +855,23 @@ ${mode === "full" && generateGoogleDocAvailable ? '<p class="editor-help">The Go
 	const otherMeetings =
 		reviewItems.length < 2
 			? ""
-			: `<details class="card queue-status other-meetings"><summary>Other meetings waiting (${reviewItems.length - 1})</summary><ul>${reviewItems
+			: `<details class="card queue-status other-meetings" open><summary>Other meetings waiting (${reviewItems.length - 1})</summary><p class="editor-help">Each card shows the saved title, a summary preview and the Discord purpose. Accept, reject or open a meeting from its card.</p><ul class="meeting-list">${reviewItems
 					.slice(1)
-					.map(
-						(item) =>
-							`<li><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></li>`,
-					)
+					.map((item) => {
+						const preview = previewFor(item);
+						const date = `<span class="meta-pill"><time datetime="${escapeHtml(item.meetingDate)}">${escapeHtml(reviewDate(item.meetingDate))}</time></span>`;
+						const open = `<a class="button" href="/item/${item.itemId}">Review meeting</a>`;
+						if (preview === undefined || preview.summary === null) {
+							return `<li class="meeting-item"><h3><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></h3><div class="meta-row">${date}</div><p class="editor-help">${preview === undefined ? "Details are not loaded for this meeting. Open it to review." : "The saved note changed or could not be read. Open the meeting to check it before taking action."}</p><div class="meeting-actions">${open}</div></li>`;
+						}
+						const points = Array.from(preview.summary.replace(/\s+/gu, " ").trim());
+						const summary =
+							points.length === 0
+								? "No executive summary is available. Open the full note to review it."
+								: safeReviewText(points.slice(0, MEETING_REVIEW_CARD_SUMMARY_LENGTH).join("")) +
+									(points.length > MEETING_REVIEW_CARD_SUMMARY_LENGTH ? "…" : "");
+						return `<li class="meeting-item"><h3><a href="/item/${item.itemId}">${preview.title === null ? "Meeting title unavailable" : safeReviewText(preview.title)}</a></h3><div class="meta-row">${date}</div><p class="meeting-summary">${summary}</p><p class="meeting-purpose"><strong>Discord purpose:</strong> ${safeReviewText(preview.purpose ?? "")}</p><div class="meeting-actions">${open}${quickDecisions(item, preview.purpose)}</div></li>`;
+					})
 					.join("")}</ul></details>`;
 	const attention =
 		attentionItems.length === 0
@@ -1382,36 +1417,40 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						}
 						if (url.pathname === "/") {
 							const items = await runRequestEffect(store.list());
-							const next = items.find((item) => item.status === "pending_review");
-							const note =
-								next === undefined
-									? null
-									: await runRequestEffect(source.read(next.notePath)).catch(() => null);
-							const nextMeeting =
-								next === undefined
-									? null
-									: {
-											itemId: next.itemId,
-											summary:
-												note !== null && note.itemId === next.itemId && note.sourceHash === next.sourceHash
-													? note.summary
-													: null,
-											purpose:
-												note !== null && note.itemId === next.itemId && note.sourceHash === next.sourceHash
-													? (next.discordPurposeOverride ?? meetingPublicationDefaultPurpose(note))
-													: null,
-											title:
-												note !== null && note.itemId === next.itemId && note.sourceHash === next.sourceHash
-													? note.title
-													: null,
-										};
+							const waiting = items
+								.filter((item) => item.status === "pending_review")
+								.slice(0, MEETING_REVIEW_PREVIEW_LIMIT);
+							const previews: Array<MeetingReviewPreview> = [];
+							for (let start = 0; start < waiting.length; start += MEETING_REVIEW_PREVIEW_CONCURRENCY) {
+								previews.push(
+									...(await Promise.all(
+										waiting.slice(start, start + MEETING_REVIEW_PREVIEW_CONCURRENCY).map(async (item) => {
+											const note = await runRequestEffect(source.read(item.notePath)).catch(() => null);
+											// A preview is shown only for the exact revision the queue row records.
+											const current =
+												note !== null && note.itemId === item.itemId && note.sourceHash === item.sourceHash
+													? note
+													: null;
+											return {
+												itemId: item.itemId,
+												title: current?.title ?? null,
+												summary: current?.summary ?? null,
+												purpose:
+													current === null
+														? null
+														: (item.discordPurposeOverride ?? meetingPublicationDefaultPurpose(current)),
+											};
+										}),
+									)),
+								);
+							}
 							send(
 								response,
 								200,
 								renderInbox(
 									items,
 									authenticated.session.csrf,
-									nextMeeting,
+									previews,
 									mode,
 									boundedDispatch,
 									await runRequestEffect(store.providerHealth()),

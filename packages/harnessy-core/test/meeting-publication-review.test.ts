@@ -648,7 +648,20 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(result.current.body).toContain("<h2>Current next meeting</h2>");
 		expect(result.current.body).not.toContain("Meeting title unavailable");
 		expect(result.current.body).toContain("Next meeting");
-		expect(result.current.body).toMatch(/<details[^>]*><summary>Other meetings/u);
+		expect(result.current.body).toMatch(/<details[^>]*><summary>Other meetings waiting \(1\)/u);
+		// Every other waiting meeting is a card with its saved title, a summary preview, the
+		// Discord purpose and its own confirmed decisions bound to that item and revision.
+		const card = /<li class="meeting-item">.*?<\/li>/su.exec(result.current.body)?.[0] ?? "";
+		expect(card).toMatch(/<h3><a href="\/item\/[a-f0-9]{24}">Another meeting<\/a><\/h3>/u);
+		expect(card).toContain('<p class="meeting-summary">');
+		expect(card).toContain("<strong>Discord purpose:</strong>");
+		const cardItemId = /href="\/item\/([a-f0-9]{24})"/u.exec(card)?.[1] ?? "";
+		expect(cardItemId).not.toBe(result.storedBefore?.itemId);
+		expect(card).toContain(`<details class="quick-accept">`);
+		expect(card).toContain(`action="/approve/${cardItemId}"`);
+		expect(card).toContain(`action="/reject/${cardItemId}"`);
+		expect(card).toContain(`name="item_id" value="${cardItemId}"`);
+		expect(result.current.body.split('action="/approve/').length - 1).toBe(2);
 		expect(result.current.body.indexOf("Next meeting")).toBeLessThan(
 			result.current.body.indexOf("Publication connection health"),
 		);
@@ -656,6 +669,9 @@ describe("MeetingPublicationReviewServer", () => {
 			expect(unavailable).toMatchObject({ status: 200 });
 			expect(unavailable.body).toContain("<h2>Meeting title unavailable</h2>");
 			expect(unavailable.body).not.toContain("Changed after collection");
+			// Only the unchanged meeting keeps its quick decisions.
+			expect(unavailable.body.split('action="/approve/').length - 1).toBe(1);
+			expect(unavailable.body).toContain("Another meeting</a></h3>");
 		}
 		expect(result.storedAfter).toEqual(result.storedBefore);
 		for (const after of [result.databaseAfterCurrent, result.databaseAfterStale, result.databaseAfterMissing]) {
