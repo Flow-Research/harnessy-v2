@@ -593,6 +593,73 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(operations.filter((operation) => operation === "review_serve")).toHaveLength(7);
 	});
 
+	it("shows plain purpose and key takeaways on a waiting meeting card", async () => {
+		const root = makeRoot();
+		writeFileSync(join(root, "notes", "first.md"), markdown({ title: "First meeting" }));
+		writeFileSync(
+			join(root, "notes", "second.md"),
+			markdown({
+				title: "Structured meeting",
+				fingerprint: "structured-meeting",
+				summary: [
+					"### Meeting Purpose",
+					"",
+					"[Align on the plan.](https://links.example.test/purpose?tab=summary&timestamp=65.0)",
+					"",
+					"### Key Takeaways",
+					"",
+					"  - [**First point.** With detail.](https://links.example.test/a)",
+					"  - Second `point`",
+					"- Third point",
+					"- Fourth point",
+					"",
+					"### Topics",
+					"",
+					"- Not a takeaway",
+				].join("\n"),
+			})
+				.replace("2026-09-03", "2026-09-04")
+				.replace(
+					"- Project: alpha",
+					"- Project: alpha\n- Participants: a@example.test, b@example.test, c@example.test",
+				),
+		);
+		const config = makeConfig(root);
+		const body = await Effect.runPromise(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const service = yield* MeetingPublicationService;
+					const review = yield* MeetingPublicationReviewServer;
+					yield* service.scan();
+					const token = readFileSync(
+						join(config.statePath as string, "meeting-publication-v2-review.token"),
+						"utf8",
+					).trim();
+					const exchange = yield* Effect.promise(() =>
+						call(review.address.origin, `/exchange?token=${encodeURIComponent(token)}`),
+					);
+					const inbox = yield* Effect.promise(() =>
+						call(review.address.origin, "/", { cookie: cookieFrom(exchange).cookie }),
+					);
+					return inbox.body;
+				}).pipe(Effect.provide(makeReviewLayer(config, makeState()))),
+			),
+		);
+		const card = /<li class="meeting-item">.*?<\/li>\s*<\/ul><\/section>/su.exec(body)?.[0] ?? "";
+		expect(card).toContain("Structured meeting</a></h4>");
+		expect(card).toContain('<span class="meta-pill">3 participants</span>');
+		expect(card).toContain(
+			'<ul class="meeting-takeaways"><li>First point. With detail.</li><li>Second point</li><li>Third point</li></ul>',
+		);
+		expect(card).toContain("1 more in the full note.");
+		// Link targets, Markdown markers, other sections and participant names stay out of the card.
+		expect(card).not.toContain("links.example.test");
+		expect(card).not.toContain("###");
+		expect(card).not.toContain("**");
+		expect(card).not.toContain("Not a takeaway");
+		expect(card).not.toContain("a@example.test");
+	});
+
 	it("shows only a current next-meeting title and keeps queue state unchanged on inbox reads", async () => {
 		const root = makeRoot();
 		const notePath = join(root, "notes", "meeting.md");
@@ -649,12 +716,23 @@ describe("MeetingPublicationReviewServer", () => {
 		expect(result.current.body).not.toContain("Meeting title unavailable");
 		expect(result.current.body).toContain("Next meeting");
 		expect(result.current.body).toMatch(/<details[^>]*><summary>Other meetings waiting \(1\)/u);
-		// Every other waiting meeting is a card with its saved title, a summary preview, the
-		// Discord purpose and its own confirmed decisions bound to that item and revision.
+		// Every other waiting meeting is a card with its saved title, its purpose, a summary preview
+		// and its own confirmed decisions bound to that item and revision.
+		// The list is grouped by day, and the side navigation links to each group.
+		expect(result.current.body).toContain(
+			'<section class="day-group" id="day-2026-09-04"><h3><time datetime="2026-09-04">Friday, September 4</time> ',
+		);
+		expect(result.current.body).toContain('<a href="#day-2026-09-04">Fri, Sep 4 ');
+		expect(result.current.body).toContain('<a href="#next-meeting">Next meeting</a>');
+		expect(result.current.body.indexOf('<main class="inbox-main">')).toBeLessThan(
+			result.current.body.indexOf('<aside class="inbox-side"'),
+		);
 		const card = /<li class="meeting-item">.*?<\/li>/su.exec(result.current.body)?.[0] ?? "";
-		expect(card).toMatch(/<h3><a href="\/item\/[a-f0-9]{24}">Another meeting<\/a><\/h3>/u);
+		expect(card).toMatch(/<h4><a href="\/item\/[a-f0-9]{24}">Another meeting<\/a><\/h4>/u);
 		expect(card).toContain('<p class="meeting-summary">');
-		expect(card).toContain("<strong>Discord purpose:</strong>");
+		expect(card).toContain(
+			'<p class="meeting-purpose"><strong>Purpose:</strong> Ship the safe publication foundation.</p>',
+		);
 		const cardItemId = /href="\/item\/([a-f0-9]{24})"/u.exec(card)?.[1] ?? "";
 		expect(cardItemId).not.toBe(result.storedBefore?.itemId);
 		expect(card).toContain(`<details class="quick-accept">`);
@@ -671,7 +749,7 @@ describe("MeetingPublicationReviewServer", () => {
 			expect(unavailable.body).not.toContain("Changed after collection");
 			// Only the unchanged meeting keeps its quick decisions.
 			expect(unavailable.body.split('action="/approve/').length - 1).toBe(1);
-			expect(unavailable.body).toContain("Another meeting</a></h3>");
+			expect(unavailable.body).toContain("Another meeting</a></h4>");
 		}
 		expect(result.storedAfter).toEqual(result.storedBefore);
 		for (const after of [result.databaseAfterCurrent, result.databaseAfterStale, result.databaseAfterMissing]) {

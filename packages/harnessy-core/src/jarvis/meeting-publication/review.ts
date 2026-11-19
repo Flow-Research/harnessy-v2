@@ -306,7 +306,7 @@ margin: 2rem auto 0; max-width: 1220px; padding: 0 1.5rem; text-decoration: none
 .back-link:hover { color: var(--accent); }
 .page-intro, .meeting-header { margin: 0 auto; max-width: 1220px; padding: 24px 24px;
 width: 100%; }
-.page-intro { max-width: 920px; }
+.page-intro { max-width: 1220px; }
 .intro-row { align-items: flex-end; display: flex; gap: 2rem; justify-content: space-between; }
 .eyebrow, .section-label { color: var(--accent); font-size: .73rem; font-weight: 800;
 letter-spacing: .1em; margin: 0 0 .45rem; text-transform: uppercase; }
@@ -374,13 +374,36 @@ padding: .15rem 1rem; }
 text-decoration-color: var(--accent); text-underline-offset: 3px; }
 .metadata-body ul { font-size: .83rem; }
 .operations > .card { background: transparent; border: 0; border-radius: 0; border-top: 1px solid var(--line); margin: 16px 0 0; padding: 16px 0 0; width: 100%; }
-.other-meetings h3 a { color: var(--accent-dark); }
-.meeting-list { display: grid; gap: 12px; list-style: none; margin: 16px 0 0; padding: 0; }
+.inbox-grid { align-items: start; display: grid; gap: 0 24px; grid-template-columns: minmax(0, 1fr) 320px;
+margin: 0 auto; max-width: 1220px; padding: 0 24px 48px; width: 100%; }
+.inbox-main, .inbox-side { min-width: 0; }
+.inbox-side { max-height: calc(100vh - 32px); overflow-y: auto; position: sticky; top: 16px; }
+.inbox-grid .card, .inbox-grid .logout { margin: 0 0 16px; max-width: none; width: 100%; }
+.inbox-grid [id] { scroll-margin-top: 16px; }
+.inbox-nav { padding: 16px 24px; }
+.inbox-nav h2 { color: var(--muted); font-size: .73rem; letter-spacing: .1em; margin: 0 0 8px; text-transform: uppercase; }
+.inbox-nav ul { list-style: none; margin: 0; padding: 0; }
+.inbox-nav ul ul { border-left: 2px solid var(--line); margin: 4px 0 4px 4px; padding-left: 12px; }
+.inbox-nav a { align-items: center; color: var(--ink); display: flex; font-weight: 650; gap: 8px;
+justify-content: space-between; min-height: 36px; text-decoration: none; }
+.inbox-nav ul ul a { color: var(--muted); font-weight: 600; }
+.inbox-nav a:hover { color: var(--accent); }
+.group-count { background: var(--raised); border-radius: 999px; color: var(--muted); font-size: .72rem;
+font-weight: 750; padding: 2px 8px; }
+.day-group { margin-top: 24px; }
+.day-group h3 { align-items: center; border-bottom: 1px solid var(--line); display: flex; font-size: 1rem;
+gap: 8px; margin: 0; padding-bottom: 8px; }
+.meeting-item h4 a { color: var(--accent-dark); }
+.meeting-list { display: grid; gap: 12px; list-style: none; margin: 12px 0 0; padding: 0; }
 .meeting-item { border: 1px solid var(--line); border-radius: 8px; min-width: 0; padding: 16px; }
-.meeting-item h3 { font-size: 1.05rem; margin: 0; overflow-wrap: anywhere; }
+.meeting-item h4 { font-size: 1.05rem; margin: 0; overflow-wrap: anywhere; }
 .meeting-item .meta-row { margin-top: .5rem; }
 .meeting-summary, .meeting-purpose { margin: .7rem 0 0; overflow-wrap: anywhere; }
-.meeting-purpose { color: var(--muted); font-size: .85rem; }
+.meeting-summary, .meeting-takeaways { color: var(--muted); font-size: .9rem; }
+.meeting-takeaways { margin: .5rem 0 0; overflow-wrap: anywhere; padding-left: 1.2rem; }
+.meeting-takeaways li { margin: .25rem 0; }
+.meeting-takeaways li::marker { color: var(--accent); }
+.meeting-item .editor-help { margin: .4rem 0 0; }
 .meeting-actions { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: .9rem; }
 .meeting-actions details[open] { flex: 1 1 100%; }
 .connection-details dl { color: var(--muted); font-size: .85rem; }
@@ -435,10 +458,13 @@ outline-offset: 3px; }
 .message-card { margin-top: 24px; }
 .message-card form { margin-block: 16px; }
 .message-card > a { display: inline-flex; margin-block: 8px; }
-@media (max-width: 880px) { .review-grid { grid-template-columns: 1fr; }
-.review-sidebar { position: static; } }
+@media (max-width: 880px) { .review-grid, .inbox-grid { grid-template-columns: 1fr; }
+.review-sidebar, .inbox-side { position: static; }
+.inbox-side { display: contents; }
+.inbox-nav { order: -1; }
+.inbox-nav ul ul { border-left: 0; display: flex; flex-wrap: wrap; gap: 0 16px; margin: 0; padding-left: 0; } }
 @media (max-width: 600px) { .page-intro, .meeting-header { padding: 24px 16px; }
-.back-link { padding: 0 1rem; } .review-grid { padding: 0 1rem 2rem; }
+.back-link { padding: 0 1rem; } .review-grid { padding: 0 1rem 2rem; } .inbox-grid { padding: 0 16px 32px; }
 .connection-card, .queue-card, .empty-card, .attention-card, .queue-status, .message-card, .logout { width: calc(100% - 2rem); }
 .intro-row { align-items: flex-start; flex-direction: column; gap: 1rem; }
 .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -648,6 +674,16 @@ const reviewDate = (value: string) =>
 		new Date(`${value}T00:00:00Z`),
 	);
 
+const reviewDay = (value: string) =>
+	new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(
+		new Date(`${value}T00:00:00Z`),
+	);
+
+const reviewShortDay = (value: string) =>
+	new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(
+		new Date(`${value}T00:00:00Z`),
+	);
+
 const statusClass = (status: string) =>
 	(["pending_review", "approved", "publishing", "published", "rejected", "blocked"] as ReadonlyArray<string>).includes(
 		status,
@@ -718,13 +754,58 @@ interface MeetingReviewPreview {
 	readonly title: string | null;
 	readonly summary: string | null;
 	readonly purpose: string | null;
+	/** Number of people in the note's Participants line; the names stay in the note. */
+	readonly participants?: number | null;
 }
+
+const previewInline = (value: string) =>
+	value
+		.replace(/\[([^\]]*)\]\((?:[^()\s]|\([^()\s]*\))*\)/gu, "$1")
+		.replace(/\*\*|__|`/gu, "")
+		.replace(/\s+/gu, " ")
+		.trim();
+
+/** A summary is Markdown. A preview shows its words, without headings, link targets or list markers. */
+const previewPlainText = (summary: string) =>
+	summary
+		.split("\n")
+		.filter((line) => !/^\s*#{1,6}\s/u.test(line))
+		.map((line) => previewInline(line.replace(/^\s*(?:[-*+]|\d+\.)\s+/u, "")))
+		.filter((line) => line.length > 0)
+		.join(" ");
+
+/** The list items under a "Key Takeaways" heading, as plain text. Empty when the note has no such section. */
+const previewTakeaways = (summary: string): ReadonlyArray<string> => {
+	const lines = summary.split("\n");
+	const start = lines.findIndex((line) => /^\s*#{1,6}\s+key takeaways\s*$/iu.test(line));
+	if (start === -1) return [];
+	const end = lines.findIndex((line, index) => index > start && /^\s*#{1,6}\s/u.test(line));
+	return lines
+		.slice(start + 1, end === -1 ? undefined : end)
+		.filter((line) => /^\s*[-*+]\s+/u.test(line))
+		.map((line) => previewInline(line.replace(/^\s*[-*+]\s+/u, "")))
+		.filter((line) => line.length > 0);
+};
+
+const previewParticipants = (markdown: string): number | null => {
+	const line = /^- Participants:[ \t]*(.+)$/mu.exec(markdown)?.[1];
+	if (line === undefined) return null;
+	const count = line.split(",").filter((entry) => entry.trim().length > 0).length;
+	return count === 0 ? null : count;
+};
+
+const clip = (value: string, length: number) => {
+	const points = Array.from(value);
+	return points.length > length ? `${points.slice(0, length).join("")}…` : value;
+};
 
 // The inbox reads one note per waiting meeting. These limits bound that work for a large queue;
 // meetings beyond the first limit still appear, with a link and without a preview.
 const MEETING_REVIEW_PREVIEW_LIMIT = 100;
 const MEETING_REVIEW_PREVIEW_CONCURRENCY = 8;
 const MEETING_REVIEW_CARD_SUMMARY_LENGTH = 320;
+const MEETING_REVIEW_CARD_TAKEAWAYS = 3;
+const MEETING_REVIEW_CARD_TAKEAWAY_LENGTH = 220;
 
 const renderInbox = (
 	items: ReadonlyArray<MeetingPublicationItem>,
@@ -829,7 +910,7 @@ ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} wait
 					.slice(0, 1)
 					.map(
 						(item) =>
-							`<section class="card queue-card"><p class="section-label">Next meeting</p>
+							`<section class="card queue-card" id="next-meeting"><p class="section-label">Next meeting</p>
 <h2>${nextMeeting !== undefined ? (nextMeeting.title === null ? "Meeting title unavailable" : safeReviewText(nextMeeting.title)) : `Meeting · ${escapeHtml(item.meetingDate)}`}</h2><div class="meta-row">
 <span class="meta-pill">${escapeHtml(reviewDate(item.meetingDate))}</span><span class="meta-pill">${safeReviewText(statusLabel(project))}</span>
 <span class="status-pill status-${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></div>
@@ -837,7 +918,7 @@ ${
 	nextMeeting !== undefined && nextMeeting.summary !== null
 		? (
 				() => {
-					const text = nextMeeting.summary.replace(/\s+/gu, " ").trim();
+					const text = previewPlainText(nextMeeting.summary);
 					const points = Array.from(text);
 					const preview = points.slice(0, 600).join("");
 					const fields = decisionFields(item);
@@ -852,31 +933,61 @@ ${quickDecisions(item, nextMeeting.purpose)}
 }</section>`,
 					)
 					.join("");
+	// Waiting meetings are grouped by day so the side navigation can jump to a group.
+	const dayGroups = new Map<string, Array<MeetingPublicationItem>>();
+	for (const item of reviewItems.slice(1)) {
+		dayGroups.set(item.meetingDate, [...(dayGroups.get(item.meetingDate) ?? []), item]);
+	}
+	const meetingCard = (item: MeetingPublicationItem) => {
+		const preview = previewFor(item);
+		const open = `<a class="button" href="/item/${item.itemId}">Review meeting</a>`;
+		if (preview === undefined || preview.summary === null) {
+			return `<li class="meeting-item"><h4><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></h4><p class="editor-help">${preview === undefined ? "Details are not loaded for this meeting. Open it to review." : "The saved note changed or could not be read. Open the meeting to check it before taking action."}</p><div class="meeting-actions">${open}</div></li>`;
+		}
+		const takeaways = previewTakeaways(preview.summary);
+		const text = previewPlainText(preview.summary);
+		// The purpose is the lead line. Takeaways follow when the note has them; if not, the
+		// card shows the start of the summary.
+		const detail =
+			takeaways.length > 0
+				? `<ul class="meeting-takeaways">${takeaways
+						.slice(0, MEETING_REVIEW_CARD_TAKEAWAYS)
+						.map((entry) => `<li>${safeReviewText(clip(entry, MEETING_REVIEW_CARD_TAKEAWAY_LENGTH))}</li>`)
+						.join(
+							"",
+						)}</ul>${takeaways.length > MEETING_REVIEW_CARD_TAKEAWAYS ? `<p class="editor-help">${takeaways.length - MEETING_REVIEW_CARD_TAKEAWAYS} more in the full note.</p>` : ""}`
+				: `<p class="meeting-summary">${text.length === 0 ? "No executive summary is available. Open the full note to review it." : safeReviewText(clip(text, MEETING_REVIEW_CARD_SUMMARY_LENGTH))}</p>`;
+		const people =
+			preview.participants === null || preview.participants === undefined
+				? ""
+				: `<div class="meta-row"><span class="meta-pill">${preview.participants} participant${preview.participants === 1 ? "" : "s"}</span></div>`;
+		return `<li class="meeting-item"><h4><a href="/item/${item.itemId}">${preview.title === null ? "Meeting title unavailable" : safeReviewText(preview.title)}</a></h4>${people}<p class="meeting-purpose"><strong>Purpose:</strong> ${safeReviewText(preview.purpose ?? "")}</p>${detail}<div class="meeting-actions">${open}${quickDecisions(item, preview.purpose)}</div></li>`;
+	};
 	const otherMeetings =
 		reviewItems.length < 2
 			? ""
-			: `<details class="card queue-status other-meetings" open><summary>Other meetings waiting (${reviewItems.length - 1})</summary><p class="editor-help">Each card shows the saved title, a summary preview and the Discord purpose. Accept, reject or open a meeting from its card.</p><ul class="meeting-list">${reviewItems
-					.slice(1)
-					.map((item) => {
-						const preview = previewFor(item);
-						const date = `<span class="meta-pill"><time datetime="${escapeHtml(item.meetingDate)}">${escapeHtml(reviewDate(item.meetingDate))}</time></span>`;
-						const open = `<a class="button" href="/item/${item.itemId}">Review meeting</a>`;
-						if (preview === undefined || preview.summary === null) {
-							return `<li class="meeting-item"><h3><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></h3><div class="meta-row">${date}</div><p class="editor-help">${preview === undefined ? "Details are not loaded for this meeting. Open it to review." : "The saved note changed or could not be read. Open the meeting to check it before taking action."}</p><div class="meeting-actions">${open}</div></li>`;
-						}
-						const points = Array.from(preview.summary.replace(/\s+/gu, " ").trim());
-						const summary =
-							points.length === 0
-								? "No executive summary is available. Open the full note to review it."
-								: safeReviewText(points.slice(0, MEETING_REVIEW_CARD_SUMMARY_LENGTH).join("")) +
-									(points.length > MEETING_REVIEW_CARD_SUMMARY_LENGTH ? "…" : "");
-						return `<li class="meeting-item"><h3><a href="/item/${item.itemId}">${preview.title === null ? "Meeting title unavailable" : safeReviewText(preview.title)}</a></h3><div class="meta-row">${date}</div><p class="meeting-summary">${summary}</p><p class="meeting-purpose"><strong>Discord purpose:</strong> ${safeReviewText(preview.purpose ?? "")}</p><div class="meeting-actions">${open}${quickDecisions(item, preview.purpose)}</div></li>`;
-					})
-					.join("")}</ul></details>`;
+			: `<details class="card queue-status other-meetings" id="other-meetings" open><summary>Other meetings waiting (${reviewItems.length - 1})</summary><p class="editor-help">Each card shows the saved title, the purpose and the key takeaways. Accept, reject or open a meeting from its card.</p>${Array.from(
+					dayGroups,
+					([day, group]) =>
+						`<section class="day-group" id="day-${escapeHtml(day)}"><h3><time datetime="${escapeHtml(day)}">${escapeHtml(reviewDay(day))}</time> <span class="group-count">${group.length}</span></h3><ul class="meeting-list">${group.map(meetingCard).join("")}</ul></section>`,
+				).join("")}</details>`;
+	const attentionCount = attentionItems.length;
+	const jump =
+		reviewItems.length === 0 && attentionCount === 0
+			? ""
+			: `<nav class="card inbox-nav" aria-labelledby="inbox-nav-title"><h2 id="inbox-nav-title">Jump to</h2><ul>${reviewItems.length === 0 ? "" : '<li><a href="#next-meeting">Next meeting</a></li>'}${attentionCount === 0 ? "" : `<li><a href="#attention">Needs attention <span class="group-count">${attentionCount}</span></a></li>`}${
+					reviewItems.length < 2
+						? ""
+						: `<li><a href="#other-meetings">Other meetings waiting <span class="group-count">${reviewItems.length - 1}</span></a><ul>${Array.from(
+								dayGroups,
+								([day, group]) =>
+									`<li><a href="#day-${escapeHtml(day)}">${escapeHtml(reviewShortDay(day))} <span class="group-count">${group.length}</span></a></li>`,
+							).join("")}</ul></li>`
+				}</ul></nav>`;
 	const attention =
 		attentionItems.length === 0
 			? ""
-			: `<section class="card attention-card"><p class="section-label">Dispatch needs attention</p>
+			: `<section class="card attention-card" id="attention"><p class="section-label">Dispatch needs attention</p>
 <ul>${attentionItems
 					.map((item) => {
 						const stage =
@@ -898,7 +1009,9 @@ ${quickDecisions(item, nextMeeting.purpose)}
 		.join("")}</div></details>`;
 	return page(
 		"Meeting publication review",
-		`${header}${googleStatus}${connectionFailure ? providerStatus : ""}${queue}${otherMeetings}${attention}${recoveryGuidance}${connectionFailure ? "" : providerStatus}${counts}${mode === "full" ? `<details class="card queue-status operations"><summary>Publication controls</summary>${preflightForm(csrf, mode)}${dispatchForm(csrf, dispatch)}</details>` : ""}${logoutForm(csrf)}`,
+		// Decisions and anything that blocks them stay in the main column. Navigation, status
+		// and controls sit beside it, so a long queue does not push them out of reach.
+		`${header}<div class="inbox-grid"><main class="inbox-main">${googleStatus}${connectionFailure ? providerStatus : ""}${attention}${recoveryGuidance}${queue}${otherMeetings}</main><aside class="inbox-side" aria-label="Navigation, status and controls">${jump}${connectionFailure ? "" : providerStatus}${counts}${mode === "full" ? `<details class="card queue-status operations"><summary>Publication controls</summary>${preflightForm(csrf, mode)}${dispatchForm(csrf, dispatch)}</details>` : ""}${logoutForm(csrf)}</aside></div>`,
 	);
 };
 
@@ -1434,6 +1547,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 											return {
 												itemId: item.itemId,
 												title: current?.title ?? null,
+												participants: current === null ? null : previewParticipants(current.markdown),
 												summary: current?.summary ?? null,
 												purpose:
 													current === null
