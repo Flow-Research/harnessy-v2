@@ -165,9 +165,8 @@ try {
 	await until("decision recorded", async () => {
 		if (failures.length) throw Error(failures.join(", "));
 		if (posts.length !== 1 || mainFrameNavigations <= beforeSubmission) return false;
-		return action === "generate-google-doc"
-			? evaluate(`document.querySelector('h1')?.textContent === 'Google Doc ready' && !!document.querySelector('a[target="_blank"][rel="noopener noreferrer"]')`)
-			: evaluate(`location.pathname === '/' && !!document.querySelector('#google-connection-title')`);
+		// Every action, document generation included, returns to the inbox.
+		return evaluate(`location.pathname === '/' && !!document.querySelector('#google-connection-title')`);
 	});
 	if (posts.length !== 1 || posts[0].origin !== origin || failures.length) throw Error("Native review submission failed");
 	console.log("Browser concurrent review passed");

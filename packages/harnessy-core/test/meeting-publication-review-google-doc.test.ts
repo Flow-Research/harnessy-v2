@@ -70,6 +70,8 @@ describe("meeting review Google Doc action", () => {
 		"decision-only",
 		"unsupported",
 		"unsaved-fields",
+		"return-item",
+		"return-invalid",
 		"get",
 		...(process.env.HARNESSY_RECONNECT_BROWSER === "1"
 			? ["browser" as const, "browser-landing" as const, "browser-reject" as const, "browser-approve" as const]
@@ -278,6 +280,8 @@ describe("meeting review Google Doc action", () => {
 					if (variant.startsWith("landing-approve"))
 						body.set("purpose", /name="purpose" value="([^"]+)"/u.exec(inbox)![1]!);
 					if (variant === "unsaved-fields") body.set("meeting_markdown", "unsaved edit");
+					if (variant === "return-item") body.set("return_to", "item");
+					if (variant === "return-invalid") body.set("return_to", "https://attacker.test/");
 					const response = yield* Effect.promise(() =>
 						fetch(
 							`${origin}/${variant.startsWith("landing-reject") ? "reject" : variant.startsWith("landing-approve") ? "approve" : "generate-google-doc"}/${item.itemId}`,
@@ -299,6 +303,7 @@ describe("meeting review Google Doc action", () => {
 						before,
 						after: yield* store.get(item.itemId),
 						status: response.status,
+						location: response.headers.get("location"),
 						body: yield* Effect.promise(() => response.text()),
 					};
 				}),
@@ -312,14 +317,14 @@ describe("meeting review Google Doc action", () => {
 			"landing-approve": 303,
 			"landing-approve-stale": 409,
 			"landing-approve-csrf": 403,
-			landing: 200,
-			"landing-long": 200,
+			landing: 303,
+			"landing-long": 303,
 			"landing-stale": 409,
 			"landing-unreadable": 409,
 			"landing-reject": 303,
 			"landing-reject-stale": 409,
 			"landing-reject-csrf": 403,
-			success: 200,
+			success: 303,
 			csrf: 403,
 			origin: 403,
 			session: 401,
@@ -330,6 +335,8 @@ describe("meeting review Google Doc action", () => {
 			"decision-only": 404,
 			unsupported: 404,
 			"unsaved-fields": 400,
+			"return-item": 303,
+			"return-invalid": 400,
 			get: 404,
 		};
 		expect(result.status).toBe(expected[variant]);
@@ -347,6 +354,7 @@ describe("meeting review Google Doc action", () => {
 		expect(calls).toEqual(
 			[
 				"success",
+				"return-item",
 				"landing",
 				"landing-long",
 				"unsafe-link",
@@ -365,12 +373,15 @@ describe("meeting review Google Doc action", () => {
 			expect(result.page).toContain("use Update meeting note before generating");
 			expect(result.page).toContain("configured Google account and folder permissions");
 		}
+		// Generation has no result screen: it returns to the inbox at the meeting, where the
+		// document link is shown.
 		if (variant === "success") {
-			expect(result.body).toContain(
-				'href="https://docs.google.com/document/d/doc_123/edit" target="_blank" rel="noopener noreferrer"',
-			);
-			expect(result.body).toContain("The meeting remains unapproved. Nothing was sent to Discord.");
+			expect(result.location).toBe(`/#meeting-${result.item.itemId}`);
+			expect(result.body).toBe("");
 		}
+		// The item page asks to return to itself. Any other return value is refused before generation.
+		if (variant === "return-item") expect(result.location).toBe(`/item/${result.item.itemId}`);
+		if (variant === "return-invalid") expect(result.location).toBeNull();
 		if (variant === "unsafe-link") expect(result.body).not.toContain("javascript:");
 		if (variant === "provider-failure") expect(result.body).toContain("automatic retries are paused");
 	});

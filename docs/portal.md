@@ -213,8 +213,10 @@ note, select **Update meeting note** first. Generation uses the configured Googl
 account and a `Drafts` subfolder. Existing folder permissions apply; this action
 does not add public access.
 
-The result includes an **Open Google Doc** link. Document links open in a new
-tab. Repeated generation of the same saved revision returns the existing draft.
+Generation returns to the page it started from, where **Open Google Doc**
+replaces **Generate Google Doc** for that saved revision. The same action is on
+each waiting meeting in the inbox. Document links open in a new tab. Repeated
+generation of the same saved revision returns the existing draft.
 A later saved revision updates that draft. Generation does not approve the
 meeting, change publication receipts, or send a Discord message. **Approve &
 publish** remains a separate action and uses the publication document.
