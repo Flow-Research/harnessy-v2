@@ -20,6 +20,7 @@ import {
 	JOB_SCHEDULES,
 	type JobData,
 	type JobListData,
+	type JobSchedule,
 	LEARNING_WIKI_SERVICE_LABEL,
 	MEETING_PUBLICATION_SERVICE_LABEL,
 	nextJobRun,
@@ -30,6 +31,7 @@ import {
 } from "@harnessy/core/read-model";
 import { handoffTarget } from "./handoff.ts";
 import type { LoopbackHost, PortProbe } from "./liveness.ts";
+import { OWNER_JOBS_FILE, type OwnerJobsRead } from "./owner-jobs.ts";
 
 const FATHOM_LABEL = "com.flow-harness.meeting-fathom-poll";
 const LIFE_RESEARCH_LABEL = "com.flow-harness.life-orchestrator.learning-research";
@@ -73,6 +75,8 @@ export interface JobsContext {
 	readonly communityPort: number | null;
 	readonly communityHost?: string | null;
 	readonly communityStatePath: string | null;
+	/** Jobs the owner listed in `jobs.json`; none when omitted. */
+	readonly ownerJobs?: OwnerJobsRead;
 }
 
 /** The loopback addresses a review service with configured `host` listens on. Unknown hosts default to IPv4. */
@@ -127,7 +131,48 @@ interface JobDefinition {
 	readonly controls: ReadonlyArray<AppActionData>;
 	readonly neverPause: boolean;
 	readonly schedule?: string;
+	/** The schedule of an owner job; fixed jobs take theirs from `JOB_SCHEDULES`. */
+	readonly timing?: JobSchedule;
+	/** A row that reports a fault of its own, not a launchd job. */
+	readonly fault?: string;
 }
+
+/** The id of the row that reports an unusable `jobs.json`. */
+export const OWNER_JOBS_FAULT_ID = "owner-jobs-file";
+
+/** One row for each owner job, or one failing row when the owner's file cannot be used. */
+const ownerJobDefinitions = (owner: OwnerJobsRead | undefined): ReadonlyArray<JobDefinition> => {
+	if (owner === undefined) return [];
+	if (owner.problem !== null)
+		return [
+			{
+				id: OWNER_JOBS_FAULT_ID,
+				name: "Your jobs file",
+				label: null,
+				kind: "timed",
+				port: null,
+				hosts: [],
+				notes: [
+					`${OWNER_JOBS_FILE} in the Harnessy state folder cannot be used, so none of your own jobs is shown.`,
+				],
+				controls: [],
+				neverPause: false,
+				fault: owner.problem,
+			},
+		];
+	return owner.jobs.map((job) => ({
+		id: job.id,
+		name: job.name,
+		label: job.label,
+		kind: "timed" as const,
+		port: null,
+		hosts: [],
+		notes: [...job.notes, `Your own job, listed in ${OWNER_JOBS_FILE}. Harnessy only reports it.`],
+		controls: job.run === null ? [] : [copy("Run now", job.run)],
+		neverPause: false,
+		...(job.schedule === null ? {} : { timing: job.schedule }),
+	}));
+};
 
 /** The fixed job table. Ports and commands that depend on configuration are filled from `context`. */
 export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinition> => {
@@ -278,8 +323,23 @@ export const jobDefinitions = (context: JobsContext): ReadonlyArray<JobDefinitio
 			controls: [link("Open cockpit", handoffTarget("cockpit")), copy("Start or open", "harnessy web")],
 			neverPause: false,
 		},
+		...ownerJobDefinitions(context.ownerJobs),
 	];
 };
+
+/** The ids of the fixed rows. An owner job may not take one. */
+export const FIXED_JOB_IDS: ReadonlySet<string> = new Set([
+	"fathom-poll",
+	"learning-research",
+	"daily-brief",
+	"weekly-plan",
+	"community-review",
+	"meeting-publication",
+	"portal",
+	"learning-wiki",
+	"executor",
+	OWNER_JOBS_FAULT_ID,
+]);
 
 const xmlText = (value: string): string =>
 	value
@@ -362,6 +422,7 @@ const healthOf = (
 	tile: TileResult<ServiceHealthData> | undefined,
 	open: boolean | null,
 ): { readonly health: JobData["health"]; readonly reason: string } => {
+	if (definition.fault !== undefined) return { health: "error", reason: definition.fault };
 	if (definition.kind === "on-demand")
 		return open === true ? { health: "ok", reason: "running" } : { health: "idle", reason: "not running" };
 	if (tile === undefined || tile.state === "unsupported") return { health: "unknown", reason: LAUNCHD_UNAVAILABLE };
@@ -402,7 +463,8 @@ export const readJobs = async (context: JobsContext): Promise<JobListData> => {
 				data?.lastLog === null || data?.lastLog === undefined
 					? null
 					: { at: data.lastLog.modifiedAt, evidence: "log-mtime" as const };
-			const schedule = definition.label === null ? undefined : JOB_SCHEDULES[definition.label];
+			const schedule =
+				definition.label === null ? undefined : (JOB_SCHEDULES[definition.label] ?? definition.timing);
 			const next =
 				schedule === undefined
 					? null

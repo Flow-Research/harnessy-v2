@@ -19,6 +19,7 @@ import { renderPortalLaunchAgent } from "./launchd-plan.ts";
 import { LinksState } from "./links-state.ts";
 import { ManagedTerminal } from "./managed-terminal.ts";
 import { createPortalServiceOpener } from "./open-service.ts";
+import { OWNER_JOBS_FILE } from "./owner-jobs.ts";
 import { loadPortalPageAssets } from "./page-assets.ts";
 import {
 	PORTAL_DEFAULT_PORT,
@@ -240,6 +241,7 @@ export const runPortalCommand = async (
 				probe: io.probe,
 				timeoutMs: DEFAULT_READ_TIMEOUT_MS,
 				clock: () => new Date(),
+				ownerJobsPath: join(root, OWNER_JOBS_FILE),
 			});
 			const options: PortalServerOptions = {
 				inboxState: new InboxState(join(root, "inbox-archive.json")),
