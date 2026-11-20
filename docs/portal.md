@@ -35,6 +35,15 @@ It has nine screens. Use `g` and a letter to move between them, and `⌘K` (or
   that control it. "Last activity" is a log file's modified time. A job whose
   LaunchAgent is not loaded shows no next run. Program arguments are shown with
   the environment left out and values that may be secrets redacted.
+  To show a launchd job of your own, list it in `jobs.json` in the portal's
+  state folder (`~/.harnessy/portal/jobs.json`):
+  `{"version": 1, "jobs": [{"id": "notes-sync", "name": "Notes sync", "label": "com.example.notes-sync", "schedule": {"hour": 7, "minute": 0}, "notes": ["What the job does."], "run": "the command that runs it now"}]}`.
+  `schedule` is a time in Africa/Lagos with an optional `weekday` (0 is
+  Sunday), or `{"everySeconds": 300}`; `schedule`, `notes` and `run` are
+  optional. The file holds at most six jobs. Harnessy only reports these jobs:
+  it does not install, start or stop them. A job whose last run failed shows
+  as an error here and in the Inbox. If the file breaks a rule, none of your
+  jobs is shown and one failing row, "Your jobs file", names the problem.
 - **Reviews** (`g r`): meeting and community review queues (`#/reviews/meetings`
   and `#/reviews/community`). Each Open button starts the service's sign-in
   helper and opens its review page in the same tab with a fresh session.
