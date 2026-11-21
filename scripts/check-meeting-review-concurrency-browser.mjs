@@ -165,8 +165,11 @@ try {
 	await until("decision recorded", async () => {
 		if (failures.length) throw Error(failures.join(", "));
 		if (posts.length !== 1 || mainFrameNavigations <= beforeSubmission) return false;
-		// Every action, document generation included, returns to the inbox.
-		return evaluate(`location.pathname === '/' && !!document.querySelector('#google-connection-title')`);
+		// A decision returns to the inbox. Document generation returns to the page it started
+		// from: the inbox, or the item page, which then shows its document section again.
+		return action === "generate-google-doc" && process.argv[5] !== "inbox"
+			? evaluate(`location.pathname === '/item/${itemId}' && !!document.querySelector('.action-card')`)
+			: evaluate(`location.pathname === '/' && !!document.querySelector('#google-connection-title')`);
 	});
 	if (posts.length !== 1 || posts[0].origin !== origin || failures.length) throw Error("Native review submission failed");
 	console.log("Browser concurrent review passed");
