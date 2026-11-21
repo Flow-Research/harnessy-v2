@@ -464,6 +464,23 @@ describe.skipIf(process.platform !== "darwin")("candidate verification in real c
 		expect(inside).toEqual({ verdict: "reject", reason: "The verification work folder is inside a denied folder" });
 	}, 60_000);
 
+	it("rejects when a required security report cannot be produced or reports a finding", async () => {
+		// A security check is one more required host command. A scanner that is not installed,
+		// or that reports a finding, gives a reject. Nothing turns a missing report into a pass.
+		const missing = setup([
+			["/bin/sh", "-c", "true"],
+			["/nonexistent/security-scanner", "--report"],
+		]);
+		const verdict = await missing.judge(missing.commit("value.txt", "two\n"));
+		expect(verdict.verdict).toBe("reject");
+		if (verdict.verdict === "reject") expect(verdict.reason).toContain("/nonexistent/security-scanner");
+		const finding = setup([
+			["/bin/sh", "-c", "true"],
+			["/bin/sh", "-c", 'echo "{\\"ok\\":false,\\"findings\\":[1]}"; exit 1'],
+		]);
+		expect((await finding.judge(finding.commit("value.txt", "two\n"))).verdict).toBe("reject");
+	}, 60_000);
+
 	it("rejects a failed check, an unchanged candidate and an unknown revision", async () => {
 		const world = setup([["/bin/sh", "-c", 'test "$(cat value.txt)" = two']]);
 		expect((await world.judge(world.commit("value.txt", "three\n"))).verdict).toBe("reject");

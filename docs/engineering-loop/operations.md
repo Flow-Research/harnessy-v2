@@ -32,7 +32,7 @@ A worktree is a second working folder of a Git repository. A tick is one admissi
       "workstreamCli": ["/absolute/path/to/workstream"],
       "agentDeps": "clone",
       "agentAllow": "Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *)",
-      "verify": [["npm", "run", "check"]],
+      "verify": [["npm", "run", "check"], ["node", "scripts/check-security-invariants.mjs"]],
       "verifyTimeoutMinutes": 30,
       "protected": ["scripts", "qa"],
       "reviewer": "claude"
@@ -41,7 +41,7 @@ A worktree is a second working folder of a Git repository. A tick is one admissi
 }
 ```
 
-`verify` holds the commands that judge a candidate. `protected` holds path prefixes that define those commands. The loop always protects package files, lockfiles, compiler and formatter settings, and `.github/`.
+`verify` holds the commands that judge a candidate. Put each required security check in this list. A check that is missing, that fails, or that reports a finding rejects the candidate. `protected` holds path prefixes that define those commands. The loop always protects package files, lockfiles, compiler and formatter settings, and `.github/`.
 
 5. Confirm that extra usage billing is off for the subscription account. Only the account owner can make this statement. The record is valid for 30 days:
 
