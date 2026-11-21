@@ -4,6 +4,7 @@ import { attestCommand } from "./cli/attest.ts";
 import { capabilityCommand } from "./cli/capability.ts";
 import { connectorCommand } from "./cli/connector.ts";
 import { depsCommand } from "./cli/deps.ts";
+import { engineeringCommand } from "./cli/engineering.ts";
 import { bootstrapCommand, initCommand, installCommand } from "./cli/install.ts";
 import { jarvisCommand } from "./cli/jarvis.ts";
 import { mcpCommand } from "./cli/mcp.ts";
@@ -33,6 +34,7 @@ export const rootCommand = Command.make("harnessy").pipe(
 		aiCommand,
 		workspaceCommand,
 		workCommand,
+		engineeringCommand,
 		attestCommand,
 	] as const),
 	Command.withDescription("Harnessy capability harness CLI"),
