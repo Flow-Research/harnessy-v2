@@ -1,0 +1,39 @@
+name: forge-host
+type: opencode
+version: 0.1.0
+install_scope: global
+owner: julian
+status: experimental
+blast_radius: high
+description: "Install and operate a self-hosted Git forge (Forgejo first) with CI runners on a server, and keep a register of each install."
+permissions: [read, write, execute, network]
+data_categories: [credentials]
+egress: [codeberg.org, data.forgejo.org, ghcr.io, github.com, api.ipify.org]
+invoke: "/forge-host"
+location: tools/flow-install/skills/forge-host
+autoresearch:
+  enabled: true
+  metric_layer: 1
+  time_budget_seconds: 1800
+  evaluation_window: 3
+  constraints:
+    max_regression_rate: 0.1
+    max_human_intervention: 0.5
+traces:
+  enabled: true
+  gates:
+    quality: [server_inspect_check, install_evidence_check, register_check]
+    human: [install_confirmation, runner_confirmation, publish_approval]
+dependencies:
+  - tool: python3
+    description: "Python 3 for the harness-forge runtime (standard library only)"
+    check: "python3 --version"
+    required: true
+  - tool: ssh
+    description: "OpenSSH client; each server step goes through SSH with key login"
+    check: "command -v ssh"
+    required: true
+  - tool: docker
+    description: "Docker on this machine, only for a local CI runner"
+    check: "docker --version"
+    required: false

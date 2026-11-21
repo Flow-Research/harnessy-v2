@@ -1,0 +1,925 @@
+#!/usr/bin/env python3
+"""harness-forge: install and operate a self-hosted Git forge (Forgejo) with CI runners.
+
+Deterministic surface of the Harnessy skill `forge-host`. Standard library only.
+
+What it does:
+- `inspect`  reads a server over SSH and says if it can hold a forge (changes nothing);
+- `plan`     shows what `install` would put on the server (no SSH);
+- `install`  puts Forgejo on the server with Docker Compose, behind the reverse proxy that is
+             already there, creates the first admin, and records the install;
+- `runner`   adds a CI runner on the server or on this machine;
+- `token`    makes an API token for a forge user and keeps it in a local secret file;
+- `repo`     moves a repository from another forge, or sets a push mirror;
+- `backup`   makes a dump on the server now, or sets a nightly dump;
+- `list` and `status` read the register of installs.
+
+Records (no secret values, only names of secret files):
+  <workspace>/.jarvis/context/forge-hosts/register.json
+  <workspace>/.jarvis/context/forge-hosts/runs/<run-id>/
+Secrets (mode 0600, folder 0700):
+  ${XDG_CONFIG_HOME:-~/.config}/harnessy/forge/<install-id>/
+
+Out of scope: DNS changes, billing, deleting an install, restoring a backup over live data.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import datetime as dt
+import getpass
+import ipaddress
+import json
+import os
+import re
+import secrets
+import shlex
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+VERSION = "0.1.0"
+DEFAULT_FORGEJO_IMAGE = "codeberg.org/forgejo/forgejo:15.0.12"
+DEFAULT_RUNNER_IMAGE = "data.forgejo.org/forgejo/runner:13.2.2"
+DEFAULT_JOB_IMAGE = "ghcr.io/catthehacker/ubuntu:act-24.04"
+DEFAULT_JOB_LABEL = "ubuntu-24.04"
+MIN_AVAILABLE_MEMORY_MB = 2048
+MIN_FREE_DISK_GB = 20
+ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}[a-z0-9]$")
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$")
+DOMAIN_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
+IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+$")
+LABEL_RE = re.compile(r"^[A-Za-z0-9._-]+(:(docker://[A-Za-z0-9._/:-]+|host))?$")
+PROXY_TRAEFIK = "traefik-docker"
+
+
+class Refused(Exception):
+    """The command stops and nothing more is changed. The text says why."""
+
+
+# ---------------------------------------------------------------- small helpers
+
+def now() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def say(text: str) -> None:
+    print(text, flush=True)
+
+
+def out_json(value: Any) -> None:
+    print(json.dumps(value, indent=2, sort_keys=True), flush=True)
+
+
+def workspace_root() -> Path:
+    """The Harnessy workspace: HARNESSY_WORKSPACE, else the nearest parent with
+    `.harnessy/workspace.json`, else the current folder."""
+    env = os.environ.get("HARNESSY_WORKSPACE")
+    if env:
+        return Path(env).expanduser().resolve()
+    here = Path.cwd().resolve()
+    for folder in (here, *here.parents):
+        if (folder / ".harnessy" / "workspace.json").is_file():
+            return folder
+    return here
+
+
+def records_root() -> Path:
+    return workspace_root() / ".jarvis" / "context" / "forge-hosts"
+
+
+def secrets_dir(install_id: str) -> Path:
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "harnessy" / "forge" / install_id
+
+
+def write_secret(install_id: str, name: str, value: str) -> Path:
+    folder = secrets_dir(install_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    os.chmod(folder, 0o700)
+    path = folder / name
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(value.strip() + "\n")
+    os.chmod(path, 0o600)
+    return path
+
+
+def read_secret(install_id: str, name: str) -> str:
+    path = secrets_dir(install_id) / name
+    if not path.is_file():
+        raise Refused(f"secret file not found: {path}")
+    return path.read_text().strip()
+
+
+def load_register() -> dict:
+    path = records_root() / "register.json"
+    if not path.is_file():
+        return {"version": 1, "installs": {}}
+    data = json.loads(path.read_text())
+    data.setdefault("installs", {})
+    return data
+
+
+def save_register(data: dict) -> Path:
+    root = records_root()
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "register.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    tmp.replace(path)
+    return path
+
+
+def get_install(install_id: str) -> tuple[dict, dict]:
+    register = load_register()
+    install = register["installs"].get(install_id)
+    if install is None:
+        known = ", ".join(sorted(register["installs"])) or "none"
+        raise Refused(f"no install with the id {install_id!r} in the register (known: {known})")
+    return register, install
+
+
+class Run:
+    """One evidence folder for one command that changes something."""
+
+    def __init__(self, command: str, install_id: str) -> None:
+        stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self.run_id = f"{stamp}-{command}-{install_id}"
+        self.folder = records_root() / "runs" / self.run_id
+        self.folder.mkdir(parents=True, exist_ok=True)
+        self.steps: list[dict] = []
+
+    def write(self, name: str, value: Any) -> None:
+        text = value if isinstance(value, str) else json.dumps(value, indent=2, sort_keys=True) + "\n"
+        (self.folder / name).write_text(text)
+
+    def step(self, name: str, ok: bool, detail: str = "") -> None:
+        self.steps.append({"step": name, "ok": ok, "detail": detail, "at": now()})
+        self.write("steps.json", self.steps)
+
+
+def check_id(value: str, what: str = "install id") -> str:
+    if not ID_RE.match(value):
+        raise Refused(f"{what} {value!r} is not valid: use 3 to 32 lower-case letters, digits and '-'")
+    return value
+
+
+def check_match(pattern: re.Pattern, value: str, what: str) -> str:
+    if not pattern.match(value):
+        raise Refused(f"{what} {value!r} is not valid")
+    return value
+
+
+# ---------------------------------------------------------------- SSH
+
+class Target:
+    def __init__(self, host: str, user: str, key: str | None, port: int = 22) -> None:
+        if not re.match(r"^[A-Za-z0-9._:-]+$", host) or not re.match(r"^[a-z_][a-z0-9_-]*$", user):
+            raise Refused("the SSH host or user is not valid")
+        self.host, self.user, self.key, self.port = host, user, key, port
+
+    def base(self) -> list[str]:
+        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+               "-o", "StrictHostKeyChecking=accept-new", "-p", str(self.port)]
+        if self.key:
+            cmd += ["-o", "IdentitiesOnly=yes", "-i", str(Path(self.key).expanduser())]
+        return cmd + [f"{self.user}@{self.host}"]
+
+    def run(self, step: str, script: str, timeout: int = 900) -> str:
+        """Run a shell script on the server as root. The script goes through stdin, so no value
+        of it is in a command line on this machine. Returns stdout; raises Refused on failure."""
+        remote = "bash -s" if self.user == "root" else "sudo -n bash -s"
+        body = f"# harness-forge:{step}\nset -euo pipefail\n{script}\n"
+        try:
+            done = subprocess.run(self.base() + [remote], input=body, text=True,
+                                  capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise Refused(f"step {step}: no answer from the server in {timeout} s")
+        if done.returncode != 0:
+            tail = (done.stderr or done.stdout).strip().splitlines()[-6:]
+            raise Refused(f"step {step} failed on the server (exit {done.returncode}): " + " | ".join(tail))
+        return done.stdout
+
+
+def target_of(args) -> Target:
+    return Target(args.host, args.ssh_user, args.ssh_key, args.ssh_port)
+
+
+def target_of_install(install: dict) -> Target:
+    ssh = install["ssh"]
+    return Target(ssh["host"], ssh["user"], ssh.get("key"), ssh.get("port", 22))
+
+
+# ---------------------------------------------------------------- inspect
+
+INSPECT_SCRIPT = r"""
+kv() { printf '%s=%s\n' "$1" "$2"; }
+. /etc/os-release 2>/dev/null || true
+kv os "${PRETTY_NAME:-unknown}"
+kv arch "$(uname -m)"
+kv cpus "$(nproc)"
+kv memory_available_mb "$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)"
+kv disk_free_gb "$(df -BG --output=avail / | tail -1 | tr -dc 0-9)"
+kv docker "$(docker version --format '{{.Server.Version}}' 2>/dev/null || true)"
+kv compose "$(docker compose version --short 2>/dev/null || true)"
+kv public_ip "$(curl -4 -s --max-time 6 https://api.ipify.org 2>/dev/null || true)"
+kv port80 "$(ss -ltnH 'sport = :80' 2>/dev/null | wc -l | tr -d ' ')"
+kv port443 "$(ss -ltnH 'sport = :443' 2>/dev/null | wc -l | tr -d ' ')"
+proxy=""; network=""; resolver=""; web=""; websecure=""
+for c in $(docker ps --format '{{.Names}}' 2>/dev/null); do
+  args="$(docker inspect "$c" --format '{{range .Config.Cmd}}{{println .}}{{end}}{{range .Config.Entrypoint}}{{println .}}{{end}}' 2>/dev/null || true)"
+  if printf '%s' "$args" | grep -qi -- '--providers.docker=true'; then
+    proxy="$c"
+    network="$(docker inspect "$c" --format '{{range $k,$v := .NetworkSettings.Networks}}{{println $k}}{{end}}' | head -1)"
+    resolver="$(printf '%s' "$args" | grep -io -- '--certificatesresolvers\.[a-z0-9_-]*\.acme' | head -1 | cut -d. -f2)"
+    web="$(printf '%s' "$args" | grep -io -- '--entrypoints\.[a-z0-9_-]*\.address=:80$' | head -1 | cut -d. -f2)"
+    websecure="$(printf '%s' "$args" | grep -io -- '--entrypoints\.[a-z0-9_-]*\.address=:443$' | head -1 | cut -d. -f2)"
+    break
+  fi
+done
+kv proxy_container "$proxy"
+kv proxy_network "$network"
+kv proxy_resolver "$resolver"
+kv proxy_entrypoint_http "$web"
+kv proxy_entrypoint_https "$websecure"
+kv existing_forge_dirs "$(ls -d /opt/forge-* 2>/dev/null | tr '\n' ' ')"
+"""
+
+
+def inspect_server(target: Target) -> dict:
+    raw = target.run("inspect", INSPECT_SCRIPT, timeout=120)
+    facts: dict[str, Any] = {}
+    for line in raw.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            facts[key.strip()] = value.strip()
+    for key in ("cpus", "memory_available_mb", "disk_free_gb", "port80", "port443"):
+        facts[key] = int(facts.get(key) or 0)
+    facts["proxy"] = PROXY_TRAEFIK if facts.get("proxy_container") else ""
+    checks = [
+        ("x86_64 or aarch64 CPU", facts.get("arch") in ("x86_64", "aarch64"), facts.get("arch", "")),
+        ("Docker runs", bool(facts.get("docker")), facts.get("docker") or "not found"),
+        ("Docker Compose is installed", bool(facts.get("compose")), facts.get("compose") or "not found"),
+        (f"at least {MIN_AVAILABLE_MEMORY_MB} MB of memory available",
+         facts["memory_available_mb"] >= MIN_AVAILABLE_MEMORY_MB, f"{facts['memory_available_mb']} MB"),
+        (f"at least {MIN_FREE_DISK_GB} GB of free disk",
+         facts["disk_free_gb"] >= MIN_FREE_DISK_GB, f"{facts['disk_free_gb']} GB"),
+        ("a supported reverse proxy with HTTPS certificates is on the server",
+         facts["proxy"] == PROXY_TRAEFIK and bool(facts.get("proxy_resolver"))
+         and bool(facts.get("proxy_entrypoint_https")),
+         facts.get("proxy_container") or "none found (supported: Traefik with the Docker provider)"),
+    ]
+    facts["checks"] = [{"check": name, "ok": ok, "found": found} for name, ok, found in checks]
+    facts["ok"] = all(ok for _, ok, _ in checks)
+    return facts
+
+
+def print_inspect(facts: dict) -> None:
+    say(f"Server: {facts.get('os')} {facts.get('arch')}, {facts.get('cpus')} CPUs, "
+        f"public address {facts.get('public_ip') or 'unknown'}")
+    for item in facts["checks"]:
+        say(f"  {'ok ' if item['ok'] else 'NO '} {item['check']}: {item['found']}")
+    say("Result: the server can hold a forge." if facts["ok"]
+        else "Result: the server CANNOT hold a forge until each line marked NO is solved.")
+
+
+def cmd_inspect(args) -> int:
+    facts = inspect_server(target_of(args))
+    out_json(facts) if args.json else print_inspect(facts)
+    return 0 if facts["ok"] else 1
+
+
+# ---------------------------------------------------------------- plan and install
+
+def auto_domain(public_ip: str) -> str:
+    try:
+        ip = ipaddress.IPv4Address(public_ip)
+    except ValueError:
+        raise Refused("the public IPv4 address of the server is not known; give --domain")
+    return f"git.{str(ip).replace('.', '-')}.sslip.io"
+
+
+def compose_text(plan: dict) -> str:
+    """The Compose file of the forge. Every value was checked against a strict pattern before."""
+    rid = "forge-" + plan["id"]
+    p = plan["proxy"]
+    labels = [
+        "traefik.enable=true",
+        f"traefik.docker.network={p['network']}",
+        f"traefik.http.routers.{rid}-http.entrypoints={p['entrypoint_http']}",
+        f"traefik.http.routers.{rid}-http.rule=Host(`{plan['domain']}`)",
+        f"traefik.http.routers.{rid}-http.middlewares={rid}-https",
+        f"traefik.http.middlewares.{rid}-https.redirectscheme.scheme=https",
+        f"traefik.http.routers.{rid}.entrypoints={p['entrypoint_https']}",
+        f"traefik.http.routers.{rid}.rule=Host(`{plan['domain']}`)",
+        f"traefik.http.routers.{rid}.tls=true",
+        f"traefik.http.routers.{rid}.tls.certresolver={p['resolver']}",
+        f"traefik.http.services.{rid}.loadbalancer.server.port=3000",
+    ]
+    env = {
+        "USER_UID": "1000", "USER_GID": "1000",
+        "FORGEJO__server__ROOT_URL": plan["url"] + "/",
+        "FORGEJO__server__DOMAIN": plan["domain"],
+        "FORGEJO__server__DISABLE_SSH": "true",
+        "FORGEJO__database__DB_TYPE": "sqlite3",
+        "FORGEJO__security__INSTALL_LOCK": "true",
+        "FORGEJO__service__DISABLE_REGISTRATION": "true",
+        "FORGEJO__service__REQUIRE_SIGNIN_VIEW": "true",
+        "FORGEJO__actions__ENABLED": "true",
+        "FORGEJO__packages__ENABLED": "true",
+    }
+    lines = [
+        f"# Written by harness-forge {VERSION} for the install '{plan['id']}'. Do not edit by hand:",
+        "# the next harness-forge command writes it again.",
+        "services:",
+        "  forgejo:",
+        f"    image: {plan['image']}",
+        f"    container_name: {rid}",
+        "    restart: unless-stopped",
+        "    environment:",
+        *[f"      {k}: \"{v}\"" for k, v in env.items()],
+        "    volumes:",
+        "      - ./data:/data",
+        "    networks:",
+        f"      - {p['network']}",
+        "    labels:",
+        *[f"      - \"{label}\"" for label in labels],
+        "networks:",
+        f"  {p['network']}:",
+        "    external: true",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def build_plan(args, facts: dict | None) -> dict:
+    install_id = check_id(args.id)
+    image = check_match(IMAGE_RE, args.image, "image")
+    admin = check_match(NAME_RE, args.admin_user, "admin user name")
+    if facts is None:
+        domain = args.domain if args.domain != "auto" else "git.<server-ip>.sslip.io"
+        proxy = {"kind": PROXY_TRAEFIK, "network": "<found by inspect>", "resolver": "<found by inspect>",
+                 "entrypoint_http": "<found by inspect>", "entrypoint_https": "<found by inspect>"}
+    else:
+        domain = auto_domain(facts.get("public_ip", "")) if args.domain == "auto" else args.domain
+        proxy = {"kind": facts["proxy"], "network": facts.get("proxy_network", ""),
+                 "resolver": facts.get("proxy_resolver", ""),
+                 "entrypoint_http": facts.get("proxy_entrypoint_http", ""),
+                 "entrypoint_https": facts.get("proxy_entrypoint_https", "")}
+        for key, value in proxy.items():
+            if not re.match(r"^[A-Za-z0-9_-]+$", value or ""):
+                raise Refused(f"the reverse proxy setting {key} was not found on the server")
+    if facts is not None:
+        check_match(DOMAIN_RE, domain, "domain")
+    return {
+        "id": install_id, "forge": "forgejo", "image": image, "domain": domain,
+        "url": f"https://{domain}", "remote_dir": f"/opt/forge-{install_id}", "proxy": proxy,
+        "admin_user": admin, "admin_email": args.admin_email,
+        "settings": {"registration": "closed", "sign_in_required_to_view": True, "ssh": "off (HTTPS only)",
+                     "database": "sqlite3", "actions": True, "packages": True},
+        "ssh": {"host": args.host, "user": args.ssh_user, "key": args.ssh_key, "port": args.ssh_port},
+    }
+
+
+def print_plan(plan: dict) -> None:
+    say(f"Install '{plan['id']}': {plan['forge']} from the image {plan['image']}")
+    say(f"  server        {plan['ssh']['user']}@{plan['ssh']['host']}, folder {plan['remote_dir']}")
+    say(f"  web address   {plan['url']}")
+    say(f"  proxy         {plan['proxy']['kind']} (network {plan['proxy']['network']}, "
+        f"certificates {plan['proxy']['resolver']})")
+    say(f"  first admin   {plan['admin_user']} (random password, must be changed at the first sign-in)")
+    say("  settings      " + ", ".join(f"{k}={v}" for k, v in plan["settings"].items()))
+
+
+def cmd_plan(args) -> int:
+    plan = build_plan(args, None)
+    out_json(plan) if args.json else print_plan(plan)
+    return 0
+
+
+def wait_for_url(url: str, seconds: int) -> tuple[bool, str]:
+    """True when the forge answers over HTTPS with a certificate that this machine trusts."""
+    deadline = time.monotonic() + seconds
+    last = "no answer"
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url + "/api/healthz", timeout=10) as response:
+                if response.status == 200:
+                    return True, "HTTP 200 with a trusted certificate"
+                last = f"HTTP {response.status}"
+        except urllib.error.HTTPError as error:
+            last = f"HTTP {error.code}"
+        except Exception as error:  # certificate not ready, DNS, connection refused
+            last = f"{type(error).__name__}: {str(error)[:120]}"
+        time.sleep(5)
+    return False, last
+
+
+def cmd_install(args) -> int:
+    register = load_register()
+    install_id = check_id(args.id)
+    if install_id in register["installs"]:
+        raise Refused(f"the register already has an install with the id {install_id!r}")
+    target = target_of(args)
+    facts = inspect_server(target)
+    plan = build_plan(args, facts)
+    if not args.json:
+        print_inspect(facts)
+        print_plan(plan)
+    if not facts["ok"]:
+        raise Refused("the server does not meet the requirements; nothing was changed")
+    if f"/opt/forge-{install_id}" in facts.get("existing_forge_dirs", "").split():
+        raise Refused(f"{plan['remote_dir']} exists on the server but is not in the register; "
+                      "nothing was changed")
+    if args.dry_run:
+        say("Dry run: nothing was changed.")
+        return 0
+    if args.confirm != install_id:
+        raise Refused(f"this command changes the server. Run it again with --confirm {install_id}")
+
+    run = Run("install", install_id)
+    run.write("inspect.json", facts)
+    run.write("plan.json", plan)
+    run.write("docker-compose.yml", compose_text(plan))
+    d = shlex.quote(plan["remote_dir"])
+    encoded = base64.b64encode(compose_text(plan).encode()).decode()
+
+    target.run("install-files", f"""
+install -d -m 0750 {d} {d}/data {d}/backups
+chown 1000:1000 {d}/data
+printf '%s' {shlex.quote(encoded)} | base64 -d > {d}/docker-compose.yml
+cd {d} && docker compose pull -q && docker compose up -d
+for i in $(seq 1 60); do
+  docker exec forge-{install_id} curl -fsS http://127.0.0.1:3000/api/healthz >/dev/null 2>&1 && break
+  sleep 2
+done
+docker exec forge-{install_id} curl -fsS http://127.0.0.1:3000/api/healthz >/dev/null
+""", timeout=1200)
+    run.step("forge container started", True)
+
+    password = secrets.token_urlsafe(24)
+    password_file = write_secret(install_id, "admin-initial-password.txt", password)
+    target.run("install-admin", f"""
+docker exec -u git forge-{install_id} forgejo admin user create --admin \\
+  --username {shlex.quote(plan['admin_user'])} --email {shlex.quote(plan['admin_email'])} \\
+  --password {shlex.quote(password)} --must-change-password=true >/dev/null
+""")
+    run.step("first admin created", True, f"password in {password_file}")
+
+    token_file = ensure_service_account(target, install_id)
+    run.step("service account for the tool created", True, f"token in {token_file}")
+
+    version = target.run("install-version",
+                         f"docker exec forge-{install_id} forgejo --version | awk '{{print $3}}'").strip()
+    ok, detail = wait_for_url(plan["url"], args.wait)
+    run.step("web address answers over HTTPS", ok, detail)
+
+    record = {
+        **{k: plan[k] for k in ("id", "forge", "image", "domain", "url", "remote_dir", "proxy", "ssh",
+                                 "admin_user", "settings")},
+        "version": version, "installed_at": now(), "installed_by": getpass.getuser(),
+        "state": "installed" if ok else "installed-not-reachable",
+        "server": {k: facts.get(k) for k in ("os", "arch", "cpus", "public_ip")},
+        "service_account": SERVICE_ACCOUNT,
+        "secret_files": {"admin_initial_password": str(password_file), "admin-token": str(token_file)},
+        "runners": {}, "repositories": {}, "backup": {}, "runs": [run.run_id],
+    }
+    register["installs"][install_id] = record
+    path = save_register(register)
+    run.write("result.json", {"ok": ok, "detail": detail, "record": record})
+    say(f"Installed '{install_id}' at {plan['url']} (Forgejo {version}).")
+    say(f"Register: {path}")
+    say(f"Evidence: {run.folder}")
+    say(f"First sign-in: user {plan['admin_user']}, initial password in {password_file} "
+        "(change it at the first sign-in, then turn on two-factor login).")
+    if not ok:
+        say(f"WARNING: {plan['url']} does not answer yet over HTTPS ({detail}). The container runs. "
+            "Check the certificate of the proxy, then run: harness-forge status --id " + install_id)
+        return 2
+    return 0
+
+
+# ---------------------------------------------------------------- forge API
+
+def api(install: dict, method: str, path: str, body: dict | None = None, token: str | None = None,
+        timeout: int = 60) -> Any:
+    token = token or read_secret(install["id"], "admin-token")
+    data = None if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(install["url"] + "/api/v1" + path, data=data, method=method,
+                                     headers={"Authorization": "token " + token,
+                                              "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            text = response.read().decode()
+            return json.loads(text) if text.strip() else None
+    except urllib.error.HTTPError as error:
+        message = error.read().decode()[:300]
+        raise Refused(f"the forge refused {method} {path}: HTTP {error.code} {message}")
+
+
+SERVICE_ACCOUNT = "harness-forge"
+
+
+def ensure_service_account(target: Target, install_id: str) -> Path:
+    """The account that harness-forge itself uses for the forge API. The first admin belongs to a
+    person and must change its password before the API accepts it, so the tool cannot use it.
+    The service account has a random password that is not kept (it never signs in with one) and
+    one token, kept in a local secret file."""
+    raw = target.run("service-account", f"""
+if ! docker exec -u git forge-{install_id} forgejo admin user list | awk '{{print $2}}' | grep -qx {SERVICE_ACCOUNT}; then
+  docker exec -u git forge-{install_id} forgejo admin user create --admin --username {SERVICE_ACCOUNT} \\
+    --email {SERVICE_ACCOUNT}@localhost.invalid --random-password --must-change-password=false >/dev/null
+fi
+docker exec -u git forge-{install_id} forgejo admin user generate-access-token --username {SERVICE_ACCOUNT} \\
+  --token-name "tool-$(date -u +%Y%m%dT%H%M%SZ)" --scopes all --raw
+""").strip().splitlines()
+    if not raw or not re.match(r"^[0-9a-f]{40}$", raw[-1]):
+        raise Refused("the forge did not return a token for the service account")
+    return write_secret(install_id, "admin-token", raw[-1])
+
+
+def cmd_service_account(args) -> int:
+    register, install = get_install(args.id)
+    if args.confirm != install["id"]:
+        raise Refused(f"this command makes an admin account for the tool. Run it again with --confirm {install['id']}")
+    path = ensure_service_account(target_of_install(install), install["id"])
+    install.setdefault("secret_files", {})["admin-token"] = str(path)
+    install["service_account"] = SERVICE_ACCOUNT
+    save_register(register)
+    say(f"Service account '{SERVICE_ACCOUNT}' is ready. Its token is in {path} (not shown).")
+    return 0
+
+
+def cmd_token(args) -> int:
+    register, install = get_install(args.id)
+    user = check_match(NAME_RE, args.user, "user name")
+    name = check_match(NAME_RE, args.name, "token name")
+    scopes = check_match(re.compile(r"^[a-z:,_-]+$"), args.scopes, "scopes")
+    raw = target_of_install(install).run("token", f"""
+docker exec -u git forge-{install['id']} forgejo admin user generate-access-token \\
+  --username {shlex.quote(user)} --token-name {shlex.quote(name)} --scopes {shlex.quote(scopes)} --raw
+""").strip().splitlines()
+    if not raw or not re.match(r"^[0-9a-f]{40}$", raw[-1]):
+        raise Refused("the forge did not return a token")
+    file_name = "admin-token" if args.as_admin_token else f"token-{user}-{name}"
+    path = write_secret(install["id"], file_name, raw[-1])
+    install.setdefault("secret_files", {})[file_name] = str(path)
+    save_register(register)
+    say(f"Token '{name}' of the user {user} saved in {path} (not shown).")
+    return 0
+
+
+# ---------------------------------------------------------------- runners
+
+def runner_secret() -> str:
+    return secrets.token_hex(20)
+
+
+def runner_setup_script(folder: str, image: str, url: str, name: str, secret: str, labels: list[str],
+                        capacity: int, container: str) -> str:
+    """Shell that makes the runner files in `folder` and starts the runner container. It is the
+    same on the server and on this machine. The runner gives each job the Docker socket, because
+    tests that start containers (for example Testcontainers) need it. The runner's own cache
+    server is off: a job container cannot reach it, and each cache call then waits for a
+    timeout of some minutes (measured on the first install: about 20 minutes for one job)."""
+    f, i = shlex.quote(folder), shlex.quote(image)
+    labels_json = json.dumps(labels)
+    return f"""
+install -d -m 0750 {f}
+docker run --rm {i} forgejo-runner generate-config > {f}/config.yml
+sed -i.bak -e 's|docker_host: "-"|docker_host: "automount"|' -e 's|^  capacity: 1$|  capacity: {capacity}|' \\
+  -e '/^cache:/,/^[a-z]/ s|^  enabled: true|  enabled: false|' {f}/config.yml
+rm -f {f}/config.yml.bak
+docker run --rm --user 0:0 -v {f}:/data -w /data {i} forgejo-runner create-runner-file \\
+  --instance {shlex.quote(url)} --name {shlex.quote(name)} --secret {shlex.quote(secret)} >/dev/null 2>&1
+python3 - {f}/.runner <<'PY'
+import json, sys
+path = sys.argv[1]
+data = json.load(open(path))
+data["labels"] = {labels_json}
+json.dump(data, open(path, "w"), indent=1)
+PY
+chmod 600 {f}/.runner
+docker rm -f {shlex.quote(container)} >/dev/null 2>&1 || true
+docker run -d --name {shlex.quote(container)} --restart unless-stopped --user 0:0 \\
+  -v {f}:/data -w /data -v /var/run/docker.sock:/var/run/docker.sock {i} \\
+  forgejo-runner daemon --config config.yml >/dev/null
+sleep 6
+docker logs {shlex.quote(container)} 2>&1 | grep -q 'declared successfully'
+"""
+
+
+def cmd_runner_add(args) -> int:
+    register, install = get_install(args.id)
+    install_id = install["id"]
+    name = check_match(NAME_RE, args.name, "runner name")
+    image = check_match(IMAGE_RE, args.image, "runner image")
+    scope = check_match(re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?$"), args.scope, "scope") if args.scope else ""
+    if name in install.get("runners", {}):
+        raise Refused(f"the install already has a runner with the name {name!r}")
+    labels = args.label or [f"{DEFAULT_JOB_LABEL}:docker://{DEFAULT_JOB_IMAGE}"]
+    for label in labels:
+        check_match(LABEL_RE, label, "label")
+    if args.where == "local" and any(label.split(":")[0] in ("amd64", "x86_64") for label in labels) \
+            and os.uname().machine not in ("x86_64", "amd64"):
+        raise Refused("this machine is not x86_64, so its runner may not take the label amd64")
+    if args.confirm != install_id:
+        raise Refused(f"this command starts a service. Run it again with --confirm {install_id}")
+
+    run = Run("runner-add", install_id)
+    secret = runner_secret()
+    secret_file = write_secret(install_id, f"runner-{name}.secret", secret)
+    target = target_of_install(install)
+    scope_flag = f"--scope {shlex.quote(scope)}" if scope else ""
+    target.run("runner-register", f"""
+docker exec -u git forge-{install_id} forgejo forgejo-cli actions register --name {shlex.quote(name)} \\
+  {scope_flag} --labels {shlex.quote(','.join(labels))} --secret {shlex.quote(secret)} >/dev/null
+""")
+    run.step("runner registered on the forge", True)
+    container = f"forge-runner-{install_id}-{name}"
+    if args.where == "remote":
+        folder = f"{install['remote_dir']}/runner-{name}"
+        target.run("runner-start", runner_setup_script(folder, image, install["url"], name, secret,
+                                                       labels, args.capacity, container), timeout=900)
+        machine = install["ssh"]["host"]
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+        folder = str(base / "harnessy" / "forge-runners" / f"{install_id}-{name}")
+        script = "set -euo pipefail\n" + runner_setup_script(folder, image, install["url"], name, secret,
+                                                             labels, args.capacity, container)
+        done = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True, timeout=900)
+        if done.returncode != 0:
+            tail = (done.stderr or done.stdout).strip().splitlines()[-6:]
+            raise Refused("the local runner did not start: " + " | ".join(tail))
+        machine = socket.gethostname()
+    run.step("runner started and declared to the forge", True, container)
+    install.setdefault("runners", {})[name] = {
+        "name": name, "where": args.where, "machine": machine, "container": container, "folder": folder,
+        "image": image, "labels": labels, "capacity": args.capacity, "scope": scope or "instance",
+        "added_at": now(), "secret_file": str(secret_file),
+    }
+    install.setdefault("runs", []).append(run.run_id)
+    save_register(register)
+    run.write("result.json", install["runners"][name])
+    say(f"Runner '{name}' runs on {machine} with the labels {', '.join(l.split(':')[0] for l in labels)}.")
+    return 0
+
+
+# ---------------------------------------------------------------- repositories
+
+def source_token(prompt: str) -> str:
+    token = os.environ.get("FORGE_SOURCE_TOKEN") or getpass.getpass(prompt + " (not shown): ")
+    if not token.strip():
+        raise Refused("no token was given")
+    return token.strip()
+
+
+def cmd_repo_migrate(args) -> int:
+    register, install = get_install(args.id)
+    owner = check_match(re.compile(r"^[A-Za-z0-9._-]+$"), args.owner, "owner")
+    name = check_match(re.compile(r"^[A-Za-z0-9._-]+$"), args.name, "repository name")
+    if not re.match(r"^https://[A-Za-z0-9./_-]+$", args.source):
+        raise Refused("--source must be an https clone address without a user name or a token")
+    token = source_token(f"Access token of the source forge for {args.source}")
+    run = Run("repo-migrate", install["id"])
+    body = {"clone_addr": args.source, "repo_owner": owner, "repo_name": name, "service": args.service,
+            "auth_token": token, "private": True, "mirror": False, "wiki": True, "issues": True,
+            "pull_requests": True, "releases": True, "labels": True, "milestones": True}
+    repo = api(install, "POST", "/repos/migrate", body, timeout=1800)
+    branches = api(install, "GET", f"/repos/{owner}/{name}/branches?limit=200") or []
+    heads = {b["name"]: b["commit"]["id"] for b in branches}
+    record = {"owner": owner, "name": name, "source": args.source, "service": args.service,
+              "migrated_at": now(), "branch_heads_at_migration": heads, "mirrors": []}
+    install.setdefault("repositories", {})[f"{owner}/{name}"] = record
+    install.setdefault("runs", []).append(run.run_id)
+    save_register(register)
+    run.write("result.json", {"full_name": repo.get("full_name"), **record})
+    say(f"Moved {args.source} to {install['url']}/{owner}/{name} with {len(heads)} branches.")
+    return 0
+
+
+def cmd_repo_mirror(args) -> int:
+    register, install = get_install(args.id)
+    key = f"{args.owner}/{args.name}"
+    if not re.match(r"^https://[A-Za-z0-9./_-]+$", args.to):
+        raise Refused("--to must be an https address without a user name or a token")
+    user = check_match(re.compile(r"^[A-Za-z0-9._-]+$"), args.remote_user, "remote user")
+    token = source_token(f"Access token with write access to {args.to}")
+    api(install, "POST", f"/repos/{key}/push_mirrors",
+        {"remote_address": args.to, "remote_username": user, "remote_password": token,
+         "interval": args.interval, "sync_on_commit": True})
+    repo = install.setdefault("repositories", {}).setdefault(
+        key, {"owner": args.owner, "name": args.name, "mirrors": []})
+    repo.setdefault("mirrors", []).append({"to": args.to, "interval": args.interval, "added_at": now()})
+    save_register(register)
+    say(f"{key} now pushes each change to {args.to}.")
+    return 0
+
+
+# ---------------------------------------------------------------- backup, list, status
+
+def cmd_backup(args) -> int:
+    register, install = get_install(args.id)
+    install_id, d = install["id"], shlex.quote(install["remote_dir"])
+    keep = int(args.keep)
+    if not 1 <= keep <= 365:
+        raise Refused("--keep must be from 1 to 365")
+    script_file = f"{install['remote_dir']}/backup.sh"
+    backup_script = f"""#!/bin/sh
+# Written by harness-forge {VERSION}. Makes one dump of the forge and keeps the newest {keep}.
+set -eu
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+docker exec -u git -w /tmp forge-{install_id} forgejo dump -c /data/gitea/conf/app.ini --file /tmp/forge-dump.zip >/dev/null 2>&1
+docker cp forge-{install_id}:/tmp/forge-dump.zip {install['remote_dir']}/backups/forge-$stamp.zip
+docker exec -u 0 forge-{install_id} rm -f /tmp/forge-dump.zip
+chmod 600 {install['remote_dir']}/backups/forge-$stamp.zip
+ls -1t {install['remote_dir']}/backups/forge-*.zip | tail -n +{keep + 1} | xargs -r rm -f
+"""
+    put_script = (f"printf '%s' {shlex.quote(base64.b64encode(backup_script.encode()).decode())} "
+                  f"| base64 -d > {shlex.quote(script_file)}\nchmod 750 {shlex.quote(script_file)}\n")
+    target = target_of_install(install)
+    if args.schedule:
+        if args.confirm != install_id:
+            raise Refused(f"this command adds a nightly job on the server. Run it again with --confirm {install_id}")
+        cron = f"17 2 * * * root {script_file} >/dev/null 2>&1\n"
+        encoded = base64.b64encode(cron.encode()).decode()
+        target.run("backup-schedule", put_script +
+                   f"printf '%s' {shlex.quote(encoded)} | base64 -d > /etc/cron.d/forge-{install_id}-backup\n"
+                   f"chmod 644 /etc/cron.d/forge-{install_id}-backup")
+        install.setdefault("backup", {}).update({"schedule": "nightly 02:17 UTC", "keep": keep,
+                                                  "scheduled_at": now()})
+        say(f"A nightly backup is set on the server ({keep} copies kept).")
+    else:
+        listing = target.run("backup-now", put_script + f"{shlex.quote(script_file)}\n"
+                             f"ls -1t {d}/backups/forge-*.zip | head -1\n"
+                             f"du -h $(ls -1t {d}/backups/forge-*.zip | head -1) | cut -f1",
+                             timeout=1800).strip().splitlines()
+        install.setdefault("backup", {}).update({"last_file": listing[0] if listing else "",
+                                                  "last_size": listing[1] if len(listing) > 1 else "",
+                                                  "last_at": now(), "keep": keep})
+        say(f"Backup made on the server: {listing[0] if listing else 'unknown'}")
+    save_register(register)
+    return 0
+
+
+def live_state(install: dict) -> dict:
+    try:
+        with urllib.request.urlopen(install["url"] + "/api/healthz", timeout=10) as response:
+            return {"reachable": response.status == 200, "detail": f"HTTP {response.status}"}
+    except Exception as error:
+        return {"reachable": False, "detail": f"{type(error).__name__}: {str(error)[:100]}"}
+
+
+def summary(install: dict, live: bool) -> dict:
+    row = {"id": install["id"], "url": install["url"], "forge": install["forge"],
+           "version": install.get("version"), "server": install["ssh"]["host"],
+           "installed_at": install.get("installed_at"), "state": install.get("state"),
+           "runners": sorted(install.get("runners", {})),
+           "repositories": sorted(install.get("repositories", {})),
+           "last_backup": install.get("backup", {}).get("last_at") or "none",
+           "backup_schedule": install.get("backup", {}).get("schedule") or "none"}
+    if live:
+        row["live"] = live_state(install)
+    return row
+
+
+def cmd_list(args) -> int:
+    rows = [summary(i, args.live) for _, i in sorted(load_register()["installs"].items())]
+    if args.json:
+        out_json(rows)
+        return 0
+    if not rows:
+        say(f"No install in the register ({records_root() / 'register.json'}).")
+        return 0
+    for row in rows:
+        live = f" | now: {'reachable' if row['live']['reachable'] else 'NOT reachable'}" if args.live else ""
+        say(f"{row['id']}: {row['url']} | {row['forge']} {row['version']} on {row['server']} | "
+            f"{len(row['runners'])} runner(s), {len(row['repositories'])} repository(ies) | "
+            f"last backup {row['last_backup']}{live}")
+    return 0
+
+
+def cmd_status(args) -> int:
+    _, install = get_install(args.id)
+    row = summary(install, True)
+    row["runner_details"] = install.get("runners", {})
+    row["secret_files"] = install.get("secret_files", {})
+    row["runs"] = install.get("runs", [])
+    if args.json:
+        out_json(row)
+    else:
+        say(f"{row['id']}: {row['url']} is {'reachable' if row['live']['reachable'] else 'NOT reachable'} "
+            f"({row['live']['detail']})")
+        say(f"  {row['forge']} {row['version']} on {row['server']}, installed {row['installed_at']}")
+        for name, runner in row["runner_details"].items():
+            say(f"  runner {name}: {runner['where']} on {runner['machine']}, labels "
+                f"{', '.join(l.split(':')[0] for l in runner['labels'])}")
+        say(f"  repositories: {', '.join(row['repositories']) or 'none'}")
+        say(f"  backup: last {row['last_backup']}, schedule {row['backup_schedule']}")
+    return 0 if row["live"]["reachable"] else 1
+
+
+# ---------------------------------------------------------------- command line
+
+def add_ssh(parser) -> None:
+    parser.add_argument("--host", required=True, help="server name or IP address")
+    parser.add_argument("--ssh-user", default="root")
+    parser.add_argument("--ssh-key", default=None, help="private key file (default: the SSH agent)")
+    parser.add_argument("--ssh-port", type=int, default=22)
+
+
+def add_install_options(parser) -> None:
+    parser.add_argument("--id", required=True, help="short name of this install, for example 'mustard'")
+    add_ssh(parser)
+    parser.add_argument("--domain", default="auto",
+                        help="web address without https://; 'auto' = git.<server-ip>.sslip.io")
+    parser.add_argument("--image", default=DEFAULT_FORGEJO_IMAGE)
+    parser.add_argument("--admin-user", default="forge-admin")
+    parser.add_argument("--admin-email", default="forge-admin@localhost.invalid")
+    parser.add_argument("--json", action="store_true")
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="harness-forge", description=__doc__.splitlines()[0])
+    p.add_argument("--version", action="version", version=VERSION)
+    sub = p.add_subparsers(dest="command", required=True)
+
+    s = sub.add_parser("inspect", help="read a server and say if it can hold a forge")
+    add_ssh(s); s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_inspect)
+
+    s = sub.add_parser("plan", help="show what install would do (no SSH)")
+    add_install_options(s); s.set_defaults(func=cmd_plan)
+
+    s = sub.add_parser("install", help="install the forge on the server")
+    add_install_options(s)
+    s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--confirm", default="", help="type the install id to allow the change")
+    s.add_argument("--wait", type=int, default=240, help="seconds to wait for HTTPS")
+    s.set_defaults(func=cmd_install)
+
+    s = sub.add_parser("service-account", help="make or renew the account that this tool uses for the API")
+    s.add_argument("--id", required=True); s.add_argument("--confirm", default="")
+    s.set_defaults(func=cmd_service_account)
+
+    s = sub.add_parser("token", help="make an API token and keep it in a local secret file")
+    s.add_argument("--id", required=True); s.add_argument("--user", required=True)
+    s.add_argument("--name", required=True); s.add_argument("--scopes", default="all")
+    s.add_argument("--as-admin-token", action="store_true",
+                   help="save it as the token that harness-forge itself uses")
+    s.set_defaults(func=cmd_token)
+
+    runner = sub.add_parser("runner", help="CI runners").add_subparsers(dest="runner_command", required=True)
+    s = runner.add_parser("add", help="add a CI runner on the server or on this machine")
+    s.add_argument("--id", required=True); s.add_argument("--name", required=True)
+    s.add_argument("--where", choices=["remote", "local"], required=True)
+    s.add_argument("--scope", default="", help="organisation or owner/repository (default: whole forge)")
+    s.add_argument("--label", action="append", help="repeat; default ubuntu-24.04 with an Ubuntu job image")
+    s.add_argument("--capacity", type=int, default=1, help="jobs at the same time")
+    s.add_argument("--image", default=DEFAULT_RUNNER_IMAGE)
+    s.add_argument("--confirm", default="")
+    s.set_defaults(func=cmd_runner_add)
+
+    repo = sub.add_parser("repo", help="repositories").add_subparsers(dest="repo_command", required=True)
+    s = repo.add_parser("migrate", help="move a repository from another forge, with its pull requests")
+    s.add_argument("--id", required=True); s.add_argument("--source", required=True)
+    s.add_argument("--service", default="github", choices=["github", "gitlab", "gitea", "forgejo", "git"])
+    s.add_argument("--owner", required=True); s.add_argument("--name", required=True)
+    s.set_defaults(func=cmd_repo_migrate)
+    s = repo.add_parser("mirror", help="push each change to another forge (a backup mirror)")
+    s.add_argument("--id", required=True); s.add_argument("--owner", required=True)
+    s.add_argument("--name", required=True); s.add_argument("--to", required=True)
+    s.add_argument("--remote-user", required=True); s.add_argument("--interval", default="8h0m0s")
+    s.set_defaults(func=cmd_repo_mirror)
+
+    s = sub.add_parser("backup", help="make a dump on the server now, or set a nightly dump")
+    s.add_argument("--id", required=True); s.add_argument("--keep", type=int, default=14)
+    s.add_argument("--schedule", action="store_true"); s.add_argument("--confirm", default="")
+    s.set_defaults(func=cmd_backup)
+
+    s = sub.add_parser("list", help="all installs in the register")
+    s.add_argument("--live", action="store_true", help="also ask each forge if it answers")
+    s.add_argument("--json", action="store_true"); s.set_defaults(func=cmd_list)
+
+    s = sub.add_parser("status", help="one install, with a live check")
+    s.add_argument("--id", required=True); s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_status)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except Refused as refusal:
+        print(f"harness-forge: refused: {refusal}", file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())
