@@ -1,26 +1,42 @@
 /**
  * Live host adapters: the pilot allowance rule, process observation limits and
- * candidate verification. Every external command here is a fake `Run`.
+ * candidate verification. The allowance tests use a fake `Run`. The verification
+ * tests use real Git and the real macOS sandbox on a temporary repository.
  */
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+	agentDescendants,
 	claudeSubscriptionGuard,
 	EXTRA_USAGE_CONFIRMATION_MS,
 	EXTRA_USAGE_FILE,
 	limitPauseFromResult,
+	MAX_LIMIT_PAUSE_MS,
+	meteredSettings,
 	PROVIDER_PAUSE_FILE,
 	processesUnder,
 	profileEvaluatorDigest,
 	profileWorkloadDigest,
+	protectedChanges,
 	readHostConfig,
 	recordProviderPause,
 	verifyCandidate,
 } from "../src/engineering/live.ts";
 import { type ExecutionGuardRequest, requireExecutionPermit } from "../src/work/execution-policy.ts";
-import type { Run, RunResult } from "../src/work/run.ts";
+import { execRun, type RunResult } from "../src/work/run.ts";
 
 const cleanup: string[] = [];
 afterEach(() => {
@@ -97,10 +113,17 @@ describe("pilot allowance rule", () => {
 	it("refuses a metered key or provider switch in the parent environment", async () => {
 		const root = temp();
 		confirm(root);
-		for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK"])
+		for (const name of [
+			"ANTHROPIC_API_KEY",
+			"OPENAI_API_KEY",
+			"ANTHROPIC_BASE_URL",
+			"CLAUDE_CODE_USE_BEDROCK",
+			"CLAUDE_CODE_USE_SOMETHING_NEW",
+			"CLAUDE_CONFIG_DIR",
+		])
 			expect(await guardWith(root, signedIn(), { [name]: "x" })(request())).toEqual({
 				status: "paused",
-				reason: `Metered provider settings are present: ${name}`,
+				reason: `Provider or account settings are present: ${name}`,
 			});
 		expect((await guardWith(root, signedIn(), { ANTHROPIC_API_KEY: "" })(request())).status).toBe("allowed");
 	});
@@ -177,11 +200,15 @@ describe("pilot allowance rule", () => {
 			undefined,
 		);
 		expect(limitPauseFromResult(JSON.stringify({ is_error: true, result: "tests failed" }), NOW)).toBe(undefined);
+		// No readable reset time: the pause is the maximum, and the owner clears it.
 		expect(limitPauseFromResult("You have hit your usage limit", NOW)).toEqual({
-			until: NOW + 3_600_000,
+			until: NOW + MAX_LIMIT_PAUSE_MS,
 			reason: "The subscription limit stopped the agent",
 		});
-		expect(limitPauseFromResult(`rate limit, resets 1999999999`, NOW)?.until).toBe(NOW + 3_600_000);
+		// A number that the worker wrote elsewhere in the text is not a reset time.
+		expect(limitPauseFromResult(`rate limit, see 1800000001`, NOW)?.until).toBe(NOW + MAX_LIMIT_PAUSE_MS);
+		expect(limitPauseFromResult("usage limit reached|1999999999", NOW)?.until).toBe(NOW + MAX_LIMIT_PAUSE_MS);
+		expect(limitPauseFromResult("usage limit reached|18000000019", NOW)?.until).toBe(NOW + MAX_LIMIT_PAUSE_MS);
 	});
 
 	it("gives a permit that goes stale, so an old check cannot authorize a later effect", async () => {
@@ -202,103 +229,245 @@ describe("pilot allowance rule", () => {
 	});
 });
 
-describe("host observation and verification", () => {
-	it("lists only processes whose directory is inside the worktree", async () => {
-		const run: Run = async () =>
-			ok(
-				[
-					"p101",
-					"fcwd",
-					"n/work/.harnessy-work/task",
-					"p102",
-					"fcwd",
-					"n/work/.harnessy-work/task/packages/a",
-					"p103",
-					"fcwd",
-					"n/work/.harnessy-work/task-other",
-					"p104",
-					"fcwd",
-					"n/Users/owner",
-					`p${process.pid}`,
-					"fcwd",
-					"n/work/.harnessy-work/task",
-				].join("\n"),
-			);
-		expect(await processesUnder(run, "/work/.harnessy-work/task")).toEqual([101, 102]);
-		expect(await processesUnder(async () => ({ exitCode: 1, stdout: "", stderr: "" }), "/x")).toBe(undefined);
-	});
-
-	const profile = {
-		id: "harnessy-v2" as const,
-		root: "/repo",
-		base: "main",
-		workstreamCli: ["workstream"],
-		verify: [
-			["npm", "run", "check"],
-			["node", "test.js"],
-		],
-		verifyTimeoutMinutes: 30,
-	};
-	const head = "a".repeat(40);
-	const runner =
-		(failing?: string, dirty = "", after = head): Run =>
-		async (argv) => {
-			if (argv.includes("rev-parse")) return ok(`${argv === undefined ? "" : calls.length < 2 ? head : after}\n`);
-			if (argv.includes("status")) return ok(dirty);
-			return argv[0] === failing ? { exitCode: 1, stdout: "", stderr: "boom" } : ok("fine");
-		};
-	let calls: ReadonlyArray<string>[] = [];
-	const counted = (inner: Run): Run => {
-		calls = [];
-		return async (argv, options) => {
-			calls.push(argv);
-			return inner(argv, options);
-		};
-	};
-
-	it("passes only when every host command passes on the exact clean candidate", async () => {
+describe("launcher and login shell environment", () => {
+	it("refuses a provider setting that only the login shell exports", async () => {
 		const root = temp();
-		const passed = await verifyCandidate(counted(runner()), profile, "/wt", head, root, () => NOW);
-		expect(passed.verdict).toBe("pass");
-		if (passed.verdict !== "pass") return;
-		const evidence = readFileSync(passed.evidencePath, "utf8");
-		expect(passed.evidenceDigest).toMatch(/^[a-f0-9]{64}$/);
-		expect(JSON.parse(evidence)).toMatchObject({
-			candidateRevision: head,
-			evaluatorDigest: profileEvaluatorDigest(profile),
-			verdict: "pass",
+		confirm(root);
+		const calls: string[] = [];
+		const guard = claudeSubscriptionGuard({
+			run: async (argv) => {
+				calls.push(argv.join(" "));
+				return argv[1] === "-lic"
+					? ok("PATH=/bin\nANTHROPIC_API_KEY=sk-test\nANTHROPIC_MODEL=opus\n")
+					: ok(signedIn());
+			},
+			environment: {},
+			shell: "/bin/zsh",
+			stateRoot: root,
+			now: () => NOW,
 		});
-		expect(calls.filter((argv) => argv[0] === "npm" || argv[0] === "node")).toEqual(profile.verify);
+		expect(await guard(request())).toEqual({
+			status: "paused",
+			reason: "Provider or account settings are present in the login shell: ANTHROPIC_API_KEY",
+		});
+		expect(calls).toEqual(["/bin/zsh -lic env"]);
+		const unreadable = claudeSubscriptionGuard({
+			run: async (argv) => (argv[1] === "-lic" ? { exitCode: 1, stdout: "", stderr: "" } : ok(signedIn())),
+			environment: {},
+			stateRoot: root,
+			now: () => NOW,
+		});
+		expect(await unreadable(request())).toEqual({
+			status: "paused",
+			reason: "The login shell environment cannot be read",
+		});
 	});
 
-	it("rejects a failed command, a dirty worktree, a wrong revision and a moved head", async () => {
-		const root = temp();
-		expect((await verifyCandidate(counted(runner("node")), profile, "/wt", head, root, () => NOW)).verdict).toBe(
-			"reject",
-		);
-		const stopped = await verifyCandidate(counted(runner("npm")), profile, "/wt", head, root, () => NOW);
-		expect(stopped.verdict).toBe("reject");
-		expect(calls.some((argv) => argv[0] === "node")).toBe(false);
+	it("allows model choice names and ignores empty values", () => {
 		expect(
-			(await verifyCandidate(counted(runner(undefined, " M file")), profile, "/wt", head, root, () => NOW)).verdict,
-		).toBe("reject");
-		expect((await verifyCandidate(counted(runner()), profile, "/wt", "b".repeat(40), root, () => NOW)).verdict).toBe(
-			"reject",
-		);
-		expect(
-			(await verifyCandidate(counted(runner(undefined, "", "c".repeat(40))), profile, "/wt", head, root, () => NOW))
-				.verdict,
-		).toBe("reject");
+			meteredSettings({ ANTHROPIC_MODEL: "opus", OPENAI_API_KEY: "", PATH: "/bin", CLAUDE_CODE_USE_VERTEX: "1" }),
+		).toEqual(["CLAUDE_CODE_USE_VERTEX"]);
 	});
+
+	it("keeps the later pause when a second limit reply gives an earlier time", () => {
+		const root = temp();
+		recordProviderPause(root, NOW + 10_000, "first", NOW);
+		recordProviderPause(root, NOW + 5_000, "second", NOW + 1);
+		expect(JSON.parse(readFileSync(join(root, PROVIDER_PAUSE_FILE), "utf8"))).toMatchObject({
+			until: NOW + 10_000,
+			reason: "first",
+		});
+		recordProviderPause(root, NOW + 20_000, "third", NOW + 2);
+		expect(JSON.parse(readFileSync(join(root, PROVIDER_PAUSE_FILE), "utf8")).until).toBe(NOW + 20_000);
+	});
+});
+
+describe("host process observation", () => {
+	it("lists only processes whose real directory is inside the worktree", async () => {
+		const root = temp();
+		mkdirSync(join(root, "task", "packages"), { recursive: true });
+		mkdirSync(join(root, "task-other"));
+		symlinkSync(join(root, "task"), join(root, "link"));
+		const lsof = [
+			"p101",
+			"fcwd",
+			`n${root}/task`,
+			"p102",
+			"fcwd",
+			`n${root}/task/packages`,
+			"p103",
+			"fcwd",
+			`n${root}/task-other`,
+			"p104",
+			"fcwd",
+			"n/Users/owner",
+			`p${process.pid}`,
+			"fcwd",
+			`n${root}/task`,
+		].join("\n");
+		expect(await processesUnder(async () => ok(lsof), join(root, "task"))).toEqual([101, 102]);
+		// lsof prints real paths, so a symlinked root must still match.
+		expect(await processesUnder(async () => ({ exitCode: 1, stdout: lsof, stderr: "" }), join(root, "link"))).toEqual(
+			[101, 102],
+		);
+		for (const incomplete of [
+			{ exitCode: 1, stdout: "", stderr: "" },
+			{ exitCode: undefined, stdout: lsof, stderr: "" },
+			{ exitCode: 0, stdout: lsof, stderr: "", timedOut: true },
+		])
+			expect(await processesUnder(async () => incomplete, join(root, "task"))).toBe(undefined);
+		expect(await processesUnder(async () => ok(lsof), join(root, "missing"))).toBe(undefined);
+	});
+
+	it("selects only the agent of this task and its descendants for a signal", () => {
+		const settings = "/state/work/task-1/agent-settings.json";
+		const table = [
+			"    1     0 /sbin/launchd",
+			`  200     1 claude -p --settings ${settings} --tools Read`,
+			"  201   200 node /wt/node_modules/.bin/vitest run",
+			"  202   201 node worker",
+			"  300     1 claude -p --settings /state/work/task-2/agent-settings.json",
+			"  301   300 node other",
+			"  400     1 -zsh",
+			"  401   400 vim /wt/file.ts",
+		].join("\n");
+		expect(agentDescendants(table, settings)).toEqual([200, 201, 202]);
+		expect(agentDescendants(table, "/state/work/task-9/agent-settings.json")).toEqual([]);
+	});
+});
+
+const git = (cwd: string, ...args: string[]): string =>
+	execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+		encoding: "utf8",
+	}).trim();
+
+describe.skipIf(process.platform !== "darwin")("candidate verification in real custody", () => {
+	const setup = (verify: string[][], protectedPaths: string[] = []) => {
+		const base = temp();
+		const repo = join(base, "repo");
+		mkdirSync(repo);
+		git(repo, "init", "--quiet", "--initial-branch=main");
+		writeFileSync(join(repo, "value.txt"), "one\n");
+		writeFileSync(join(repo, "package.json"), '{"scripts":{"check":"exit 1"}}\n');
+		mkdirSync(join(repo, "scripts"));
+		writeFileSync(join(repo, "scripts", "check.sh"), "exit 1\n");
+		git(repo, "add", ".");
+		git(repo, "commit", "--quiet", "-m", "base");
+		const baseRevision = git(repo, "rev-parse", "HEAD");
+		const commit = (path: string, content: string): string => {
+			writeFileSync(join(repo, path), content);
+			git(repo, "add", path);
+			git(repo, "commit", "--quiet", "-m", `change ${path}`);
+			const head = git(repo, "rev-parse", "HEAD");
+			git(repo, "reset", "--quiet", "--hard", baseRevision);
+			return head;
+		};
+		const state = join(base, "state");
+		mkdirSync(state, { mode: 0o700 });
+		writeFileSync(join(state, "owner.json"), "secret\n", { mode: 0o600 });
+		const profile = {
+			id: "harnessy-v2" as const,
+			root: repo,
+			base: "main",
+			workstreamCli: ["workstream"],
+			verify,
+			verifyTimeoutMinutes: 2,
+			protected: protectedPaths,
+		};
+		const judge = (headSha: string) =>
+			verifyCandidate({
+				run: execRun,
+				platform: process.platform,
+				profile,
+				baseRevision,
+				headSha,
+				evidenceRoot: join(state, "verification"),
+				deniedRoots: [state],
+				now: Date.now,
+			});
+		return { base, repo, state, profile, baseRevision, commit, judge };
+	};
+
+	it("passes the exact candidate in a new export and leaves no export behind", async () => {
+		const world = setup([["/bin/sh", "-c", 'test "$(cat value.txt)" = two && test -z "$ANTHROPIC_API_KEY"']]);
+		const head = world.commit("value.txt", "two\n");
+		process.env.ANTHROPIC_API_KEY = "must-not-reach-the-check";
+		const verdict = await world.judge(head).finally(() => {
+			delete process.env.ANTHROPIC_API_KEY;
+		});
+		expect(verdict.verdict).toBe("pass");
+		if (verdict.verdict !== "pass") return;
+		expect(JSON.parse(readFileSync(verdict.evidencePath, "utf8"))).toMatchObject({
+			schema: "harnessy.engineering.verification.v2",
+			baselineRevision: world.baseRevision,
+			candidateRevision: head,
+			verdict: "pass",
+			evaluatorDigest: profileEvaluatorDigest(world.profile),
+		});
+		expect(git(world.repo, "worktree", "list").split("\n")).toHaveLength(1);
+		// The base checkout itself was never changed.
+		expect(readFileSync(join(world.repo, "value.txt"), "utf8")).toBe("one\n");
+	}, 60_000);
+
+	it("rejects a failed check, an unchanged candidate and an unknown revision", async () => {
+		const world = setup([["/bin/sh", "-c", 'test "$(cat value.txt)" = two']]);
+		expect((await world.judge(world.commit("value.txt", "three\n"))).verdict).toBe("reject");
+		expect(await world.judge(world.baseRevision)).toEqual({
+			verdict: "reject",
+			reason: "The candidate changes nothing",
+		});
+		expect((await world.judge("d".repeat(40))).verdict).toBe("reject");
+		expect((await world.judge("main")).verdict).toBe("reject");
+	}, 60_000);
+
+	it("rejects a candidate that changes the checks that judge it", async () => {
+		const world = setup([["/bin/sh", "-c", "true"]], ["scripts"]);
+		for (const [path, content] of [
+			["package.json", '{"scripts":{"check":"exit 0"}}\n'],
+			["scripts/check.sh", "exit 0\n"],
+		] as const) {
+			const verdict = await world.judge(world.commit(path, content));
+			expect(verdict).toMatchObject({ verdict: "reject" });
+			if (verdict.verdict === "reject") expect(verdict.reason).toContain("check definitions");
+		}
+		expect(protectedChanges({ protected: ["scripts"] }, ["scripts2/a", "src/package.json", ".github/x.yml"])).toEqual(
+			["src/package.json", ".github/x.yml"],
+		);
+	}, 60_000);
+
+	it("keeps candidate code away from the network, owner state and other folders", async () => {
+		const outside = join(temp(), "written-by-candidate");
+		const world = setup([
+			[
+				"/bin/sh",
+				"-c",
+				// Each line must fail inside the sandbox. A success writes a marker into the export.
+				[
+					`(echo x > ${JSON.stringify(outside)}) 2>/dev/null && echo wrote-outside >> escaped.txt`,
+					'(cat "$STATE/owner.json") 2>/dev/null && echo read-state >> escaped.txt',
+					'(echo x > "$STATE/owner.json") 2>/dev/null && echo wrote-state >> escaped.txt',
+					"(curl -s -m 3 http://example.com) >/dev/null 2>&1 && echo network >> escaped.txt",
+					"echo inside > allowed.txt && test ! -e escaped.txt",
+				]
+					.join("; ")
+					.replaceAll("$STATE", "__STATE__"),
+			],
+		]);
+		const command = world.profile.verify[0];
+		if (command === undefined) throw new Error("missing command");
+		command[2] = (command[2] ?? "").replaceAll("__STATE__", realpathSync(world.state));
+		const verdict = await world.judge(world.commit("value.txt", "two\n"));
+		expect(verdict.verdict).toBe("pass");
+		expect(existsSync(outside)).toBe(false);
+		expect(readFileSync(join(world.state, "owner.json"), "utf8")).toBe("secret\n");
+	}, 60_000);
 
 	it("binds the evaluator digest to the host rule and refuses an open host file", () => {
-		expect(profileEvaluatorDigest(profile)).not.toBe(
-			profileEvaluatorDigest({ ...profile, verify: [["npm", "run", "check"]] }),
-		);
+		const { profile, base } = setup([["npm", "run", "check"]]);
+		expect(profileEvaluatorDigest(profile)).not.toBe(profileEvaluatorDigest({ ...profile, verify: [["true"]] }));
+		expect(profileEvaluatorDigest(profile)).not.toBe(profileEvaluatorDigest({ ...profile, protected: ["scripts"] }));
 		expect(profileWorkloadDigest(profile)).toMatch(/^[a-f0-9]{64}$/);
-		const root = temp();
-		mkdirSync(join(root, "c"));
-		const path = join(root, "c", "host.json");
+		const path = join(base, "host.json");
 		const config = { schema: "harnessy.engineering.host.v1", accountId: ACCOUNT, profiles: [profile] };
 		writeFileSync(path, JSON.stringify(config), { mode: 0o600 });
 		expect(readHostConfig(path).profiles[0]?.id).toBe("harnessy-v2");
@@ -306,6 +475,10 @@ describe("host observation and verification", () => {
 		expect(() => readHostConfig(path)).toThrow("mode 600");
 		writeFileSync(path, JSON.stringify({ ...config, extra: true }), { mode: 0o600 });
 		chmodSync(path, 0o600);
+		expect(() => readHostConfig(path)).toThrow();
+		writeFileSync(path, JSON.stringify({ ...config, profiles: [{ ...profile, protected: ["../outside"] }] }), {
+			mode: 0o600,
+		});
 		expect(() => readHostConfig(path)).toThrow();
 	});
 });

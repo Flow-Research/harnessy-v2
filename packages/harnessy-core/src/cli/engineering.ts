@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Console, Effect } from "effect";
@@ -10,6 +10,7 @@ import {
 	appendServiceReport,
 	EXTRA_USAGE_FILE,
 	liveControllerDeps,
+	PROVIDER_PAUSE_FILE,
 	profileEvaluatorDigest,
 	profileWorkloadDigest,
 	readHostConfig,
@@ -156,6 +157,7 @@ export const makeEngineeringCommand = (
 				try {
 					const deps = liveControllerDeps({
 						config: readHostConfig(flags.hostConfig),
+						configRoot: dirname(flags.hostConfig),
 						work: workDeps(),
 						stateRoot,
 						environment: process.env,
@@ -184,20 +186,43 @@ export const makeEngineeringCommand = (
 	);
 	const serve = Command.make("serve", { database, hostConfig }, (flags) =>
 		Effect.tryPromise({
-			try: (signal) =>
-				withController(flags, (controller, stateRoot) =>
-					runEngineeringService(
-						controller,
-						signal,
+			// The service owns its stop signal. An interrupt lets the current tick finish, so that
+			// a running worker keeps its authority checks and the store closes cleanly.
+			try: async () => {
+				const stop = new AbortController();
+				const onSignal = () => {
+					process.stderr.write("Stopping after the current tick. The worker keeps its checks until then.\n");
+					stop.abort();
+				};
+				process.once("SIGINT", onSignal);
+				process.once("SIGTERM", onSignal);
+				const stateRoot = dirname(flags.database);
+				const store = new EngineeringStore(flags.database);
+				try {
+					const deps = liveControllerDeps({
+						config: readHostConfig(flags.hostConfig),
+						configRoot: dirname(flags.hostConfig),
+						work: workDeps(),
+						stateRoot,
+						environment: process.env,
+					});
+					await runEngineeringService(
+						new EngineeringController(store, deps),
+						stop.signal,
 						async (report) => appendServiceReport(stateRoot, report),
 						clock,
-					),
-				).pipe(Effect.runPromise),
+					);
+				} finally {
+					process.removeListener("SIGINT", onSignal);
+					process.removeListener("SIGTERM", onSignal);
+					store.close();
+				}
+			},
 			catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
 		}),
 	).pipe(
 		Command.withDescription(
-			"Run admission checks every 15 minutes until stopped. The loop does not run while the computer sleeps.",
+			"Run admission checks every 15 minutes until stopped. A stop waits for the current tick. The loop does not run while the computer sleeps.",
 		),
 	);
 	const digests = Command.make("digests", { hostConfig }, (flags) =>
@@ -237,6 +262,18 @@ export const makeEngineeringCommand = (
 			"Record the owner's statement that extra usage billing is off for the subscription account",
 		),
 	);
+	const clearPause = Command.make(
+		"clear-provider-pause",
+		{ database, confirmedBy: Flag.Literals("confirmed-by", ["julian"]) },
+		(flags) =>
+			Effect.try({
+				try: () => {
+					rmSync(join(dirname(flags.database), PROVIDER_PAUSE_FILE), { force: true });
+					return { cleared: true, clearedBy: flags.confirmedBy, at: clock() };
+				},
+				catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+			}).pipe(Effect.flatMap((value) => Console.log(JSON.stringify(value)))),
+	).pipe(Command.withDescription("Remove a recorded subscription limit pause after the owner checked the limit"));
 	return Command.make("engineering").pipe(
 		Command.withSubcommands([
 			status,
@@ -246,6 +283,7 @@ export const makeEngineeringCommand = (
 			revoke,
 			digests,
 			confirmExtraUsage,
+			clearPause,
 			tick,
 			serve,
 			benchmark,

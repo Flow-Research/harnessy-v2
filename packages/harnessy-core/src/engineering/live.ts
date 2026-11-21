@@ -1,10 +1,20 @@
 import { createHash } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	realpathSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import * as Result from "effect/Result";
 import { z } from "zod";
 import type { ExecutionGuard, ExecutionGuardRequest } from "../work/execution-policy.ts";
-import { herdrArgv } from "../work/logic.ts";
+import { cloneArgv, gitArgv, herdrArgv, parseDepDirs } from "../work/logic.ts";
 import { inspectWorkProcess, type Run, type WorkDeps, type WorkOutcome, worktreePath } from "../work/run.ts";
 import type { EngineeringJob, EngineeringRun } from "./contracts.ts";
 import type {
@@ -20,26 +30,44 @@ import type {
  * job, the task text or the worker's output.
  */
 
-/** Settings that select a metered provider path. Their presence refuses a launch. */
-export const METERED_ENVIRONMENT: ReadonlyArray<string> = [
-	"ANTHROPIC_API_KEY",
-	"ANTHROPIC_AUTH_TOKEN",
-	"ANTHROPIC_BASE_URL",
-	"ANTHROPIC_CUSTOM_HEADERS",
-	"ANTHROPIC_AWS_API_KEY",
-	"CLAUDE_CODE_USE_BEDROCK",
-	"CLAUDE_CODE_USE_VERTEX",
-	"CLAUDE_CODE_USE_FOUNDRY",
-	"CLAUDE_CODE_OAUTH_TOKEN",
-	"CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
-	"CLAUDE_CONFIG_DIR",
-	"OPENAI_API_KEY",
-	"OPENAI_BASE_URL",
-];
+/**
+ * Environment names that can select a provider, an account or a metered
+ * path. The rule is a pattern, so a new switch of the same family is refused
+ * without a change here. The model-choice names are the only exceptions.
+ */
+const PROVIDER_NAME =
+	/^(ANTHROPIC_|OPENAI_|CLAUDE_CODE_USE_|CLAUDE_CODE_OAUTH|CLAUDE_CONFIG_DIR$|AWS_BEARER_TOKEN_BEDROCK$|CLAUDE_CODE_API_KEY)/;
+const PROVIDER_NAME_ALLOWED: ReadonlySet<string> = new Set([
+	"ANTHROPIC_MODEL",
+	"ANTHROPIC_SMALL_FAST_MODEL",
+	"ANTHROPIC_DEFAULT_OPUS_MODEL",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL",
+	"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+]);
+
+/** Names in `environment` that the allowance rule refuses. Empty values do not count. */
+export const meteredSettings = (environment: Readonly<Record<string, string | undefined>>): ReadonlyArray<string> =>
+	Object.keys(environment)
+		.filter(
+			(name) => PROVIDER_NAME.test(name) && !PROVIDER_NAME_ALLOWED.has(name) && (environment[name] ?? "") !== "",
+		)
+		.sort();
+
+/** Parse `env` output. A value that spans lines keeps only its first line, which is enough for names. */
+export const parseEnvironment = (stdout: string): Readonly<Record<string, string>> =>
+	Object.fromEntries(
+		stdout
+			.split("\n")
+			.map((line) => /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line))
+			.filter((match) => match !== null)
+			.map((match) => [match[1] ?? "", match[2] ?? ""]),
+	);
 
 const argvSchema = z.array(z.string().min(1).max(400)).min(1).max(40);
+const relativePath = z.string().regex(/^(?!\/)(?!.*(^|\/)\.\.?(\/|$))[A-Za-z0-9._@/-]{1,300}$/);
 const profileSchema = z.strictObject({
 	id: z.enum(["harnessy-v2", "garden", "workstream"]),
+	/** A host checkout with installed dependencies. The agent cannot write to it. */
 	root: z.string().min(1).max(1000),
 	base: z.string().regex(/^[A-Za-z0-9._/-]{1,100}$/),
 	workstreamCli: argvSchema,
@@ -48,6 +76,8 @@ const profileSchema = z.strictObject({
 	/** Commands that must pass on the exact candidate. Host-owned, never task-owned. */
 	verify: z.array(argvSchema).min(1).max(12),
 	verifyTimeoutMinutes: z.number().int().min(1).max(90).default(30),
+	/** Path prefixes that define the checks. A candidate that changes one goes to a person. */
+	protected: z.array(relativePath).max(100).default([]),
 });
 export const hostConfigSchema = z.strictObject({
 	schema: z.literal("harnessy.engineering.host.v1"),
@@ -75,8 +105,9 @@ const pauseSchema = z.strictObject({
 export const EXTRA_USAGE_CONFIRMATION_MS = 30 * 24 * 60 * 60_000;
 export const EXTRA_USAGE_FILE = "extra-usage-confirmation.json";
 export const PROVIDER_PAUSE_FILE = "provider-pause.json";
-const DEFAULT_LIMIT_PAUSE_MS = 60 * 60_000;
-const MAX_LIMIT_PAUSE_MS = 7 * 24 * 60 * 60_000;
+/** A limit reply without a readable reset time pauses this long, or until the owner clears it. */
+export const MAX_LIMIT_PAUSE_MS = 7 * 24 * 60 * 60_000;
+const SHELL_PROBE_MS = 10 * 60_000;
 
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 
@@ -97,9 +128,35 @@ const writePrivateJson = (path: string, value: unknown): void => {
 
 export const readHostConfig = (path: string): EngineeringHostConfig => hostConfigSchema.parse(readOwnerJson(path));
 
+/** Check-definition files that no candidate may change, in every repository. */
+const PROTECTED_BASENAME =
+	/^(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lock|bun\.lockb|biome\.jsonc?|tsconfig[^/]*\.json|\.npmrc|pyproject\.toml|uv\.lock|Makefile)$/;
+
+/** Changed paths that would let a candidate redefine the checks that judge it. */
+export const protectedChanges = (
+	profile: Pick<EngineeringHostProfile, "protected">,
+	changed: ReadonlyArray<string>,
+): ReadonlyArray<string> =>
+	changed.filter(
+		(path) =>
+			path.startsWith(".github/") ||
+			PROTECTED_BASENAME.test(path.slice(path.lastIndexOf("/") + 1)) ||
+			profile.protected.some(
+				(prefix) => path === prefix || path.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`),
+			),
+	);
+
 /** The evaluator identity is the exact host-owned verification rule for a repository. */
 export const profileEvaluatorDigest = (profile: EngineeringHostProfile): string =>
-	sha256(JSON.stringify(["harnessy.engineering.repository-checks.v1", profile.id, profile.base, profile.verify]));
+	sha256(
+		JSON.stringify([
+			"harnessy.engineering.repository-checks.v2",
+			profile.id,
+			profile.base,
+			profile.verify,
+			[...profile.protected].sort(),
+		]),
+	);
 
 /** A product task has no benchmark workload. The digest names that fact for the repository. */
 export const profileWorkloadDigest = (profile: EngineeringHostProfile): string =>
@@ -109,8 +166,9 @@ export const profileWorkloadDigest = (profile: EngineeringHostProfile): string =
 const LIMIT_TEXT = /usage limit|rate limit|limit reached|out of extra usage|too many requests/i;
 
 /**
- * Read the agent result and decide if a subscription limit stopped it. The
- * reset time is taken from an epoch in the text when one exists.
+ * Read the agent result and decide if a subscription limit stopped it. Only
+ * the `limit reached|<epoch seconds>` form gives a reset time. Any other
+ * limit reply pauses for the maximum, until the owner clears it.
  */
 export const limitPauseFromResult = (
 	resultText: string,
@@ -127,20 +185,29 @@ export const limitPauseFromResult = (
 		parsed.success.is_error === false
 	)
 		return undefined;
-	const epoch = /\b(1[7-9]\d{8})\b/.exec(resultText)?.[1];
+	const epoch = /limit reached\|(\d{10})(?!\d)/.exec(resultText)?.[1];
 	const reset = epoch === undefined ? Number.NaN : Number(epoch) * 1000;
 	const until =
-		Number.isFinite(reset) && reset > now && reset - now <= MAX_LIMIT_PAUSE_MS ? reset : now + DEFAULT_LIMIT_PAUSE_MS;
+		Number.isFinite(reset) && reset > now ? Math.min(reset, now + MAX_LIMIT_PAUSE_MS) : now + MAX_LIMIT_PAUSE_MS;
 	return { until, reason: "The subscription limit stopped the agent" };
 };
 
-export const recordProviderPause = (stateRoot: string, until: number, reason: string, now: number): void =>
+const readPause = (stateRoot: string) => {
+	const path = join(stateRoot, PROVIDER_PAUSE_FILE);
+	return existsSync(path) ? pauseSchema.parse(readOwnerJson(path)) : undefined;
+};
+
+/** Record a pause. An existing later pause is kept. An unreadable record is replaced. */
+export const recordProviderPause = (stateRoot: string, until: number, reason: string, now: number): void => {
+	const existing = Result.try(() => readPause(stateRoot));
+	if (Result.isSuccess(existing) && existing.success !== undefined && existing.success.until >= until) return;
 	writePrivateJson(join(stateRoot, PROVIDER_PAUSE_FILE), {
 		schema: "harnessy.engineering.provider-pause.v1",
 		until,
 		reason,
 		recordedAt: now,
 	});
+};
 
 export interface ClaudeGuardOptions {
 	readonly run: Run;
@@ -148,31 +215,41 @@ export interface ClaudeGuardOptions {
 	/** Private controller state folder. It holds the owner confirmation and any pause. */
 	readonly stateRoot: string;
 	readonly now: () => number;
+	/** The login shell that the agent pane starts. Its environment is probed too. */
+	readonly shell?: string;
 }
 
 const paused = (reason: string) => ({ status: "paused" as const, reason });
 
 /**
  * The pilot allowance rule. A permit needs all of these facts at the moment
- * of the check: no metered setting in the launcher environment, a Claude Code
+ * of the check: no provider or account setting in the launcher environment
+ * or in the login shell environment that the agent pane gets, a Claude Code
  * sign-in through the subscription for the expected account, an owner
  * confirmation that extra usage is off, and no active limit pause.
  *
  * `remainingRequests` is 1 in a permit. The provider gives no remaining
  * count, so 1 means only "no limit reply is on record".
  */
-export const claudeSubscriptionGuard =
-	(options: ClaudeGuardOptions): ExecutionGuard =>
-	async (request: ExecutionGuardRequest) => {
-		const metered = METERED_ENVIRONMENT.filter((name) => (options.environment[name] ?? "") !== "");
-		if (metered.length > 0) return paused(`Metered provider settings are present: ${metered.join(", ")}`);
-		const pausePath = join(options.stateRoot, PROVIDER_PAUSE_FILE);
-		if (existsSync(pausePath)) {
-			const pause = Result.try(() => pauseSchema.parse(readOwnerJson(pausePath)));
-			if (Result.isFailure(pause)) return paused("The provider pause record cannot be read");
-			if (options.now() < pause.success.until)
-				return paused(`${pause.success.reason}; paused until ${new Date(pause.success.until).toISOString()}`);
-		}
+export const claudeSubscriptionGuard = (options: ClaudeGuardOptions): ExecutionGuard => {
+	let shellProbe: { readonly at: number; readonly metered: ReadonlyArray<string> } | undefined;
+	const shellMetered = async (): Promise<ReadonlyArray<string> | undefined> => {
+		const now = options.now();
+		if (shellProbe !== undefined && now >= shellProbe.at && now - shellProbe.at < SHELL_PROBE_MS)
+			return shellProbe.metered;
+		const shell = options.shell ?? options.environment.SHELL ?? "/bin/zsh";
+		const probed = await options.run([shell, "-lic", "env"], { timeoutMs: 10_000 });
+		if (probed.exitCode !== 0 || probed.timedOut === true) return undefined;
+		shellProbe = { at: now, metered: meteredSettings(parseEnvironment(probed.stdout)) };
+		return shellProbe.metered;
+	};
+	return async (request: ExecutionGuardRequest) => {
+		const metered = meteredSettings(options.environment);
+		if (metered.length > 0) return paused(`Provider or account settings are present: ${metered.join(", ")}`);
+		const pause = Result.try(() => readPause(options.stateRoot));
+		if (Result.isFailure(pause)) return paused("The provider pause record cannot be read");
+		if (pause.success !== undefined && options.now() < pause.success.until)
+			return paused(`${pause.success.reason}; paused until ${new Date(pause.success.until).toISOString()}`);
 		const confirmation = Result.try(() =>
 			extraUsageSchema.parse(readOwnerJson(join(options.stateRoot, EXTRA_USAGE_FILE))),
 		);
@@ -183,6 +260,10 @@ export const claudeSubscriptionGuard =
 			options.now() - confirmation.success.confirmedAt > EXTRA_USAGE_CONFIRMATION_MS
 		)
 			return paused("The extra usage confirmation is stale or names another account");
+		const inShell = await shellMetered();
+		if (inShell === undefined) return paused("The login shell environment cannot be read");
+		if (inShell.length > 0)
+			return paused(`Provider or account settings are present in the login shell: ${inShell.join(", ")}`);
 		const status = await options.run(["claude", "auth", "status"], { timeoutMs: 10_000 });
 		const parsed = Result.try((): unknown => JSON.parse(status.stdout));
 		if (status.exitCode !== 0 || Result.isFailure(parsed) || typeof parsed.success !== "object")
@@ -211,30 +292,64 @@ export const claudeSubscriptionGuard =
 			validUntil: Math.min(request.policy.expiresAt, loginExpiry, now + 60_000),
 		};
 	};
+};
 
-/** Process ids whose working directory is inside `root`. Unrelated processes never match. */
+/**
+ * Process ids whose working directory is inside `root`. `undefined` means
+ * that the list is not complete, which the caller must treat as unknown.
+ */
 export const processesUnder = async (run: Run, root: string): Promise<ReadonlyArray<number> | undefined> => {
 	const uid = process.getuid?.();
 	if (uid === undefined) return undefined;
+	// lsof prints real paths, so a symlink in `root` must be resolved first.
+	const real = Result.try(() => realpathSync(root));
+	if (Result.isFailure(real)) return undefined;
 	const listed = await run(["lsof", "-a", "-d", "cwd", "-Fpn", "-u", String(uid)], { timeoutMs: 15_000 });
-	// lsof exits 1 when some processes cannot be read; its output is still usable.
-	if (listed.stdout === "" && listed.exitCode !== 0) return undefined;
-	const prefix = resolve(root) + sep;
+	// lsof exits 1 when some processes cannot be read; its output is still complete for this user.
+	if (listed.timedOut === true || listed.exitCode === undefined || listed.exitCode > 1 || listed.stdout === "")
+		return undefined;
+	const base = real.success;
 	const found: number[] = [];
 	let pid: number | undefined;
 	for (const line of listed.stdout.split("\n")) {
 		if (line.startsWith("p")) pid = Number(line.slice(1));
 		else if (line.startsWith("n") && pid !== undefined) {
 			const path = line.slice(1);
-			if ((path === resolve(root) || path.startsWith(prefix)) && Number.isSafeInteger(pid) && pid !== process.pid)
+			if ((path === base || path.startsWith(base + sep)) && Number.isSafeInteger(pid) && pid !== process.pid)
 				found.push(pid);
 		}
 	}
 	return found;
 };
 
+/**
+ * Descendants of the agent process that Harnessy started for this task. The
+ * agent is the one process whose command names the task's private settings
+ * file. Other processes of the owner never match, even inside the worktree.
+ */
+export const agentDescendants = (psOutput: string, settingsPath: string): ReadonlyArray<number> => {
+	const rows = psOutput
+		.split("\n")
+		.map((line) => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line))
+		.filter((match) => match !== null)
+		.map((match) => ({ pid: Number(match[1]), parent: Number(match[2]), command: match[3] ?? "" }));
+	const found = new Set<number>(rows.filter((row) => row.command.includes(settingsPath)).map((row) => row.pid));
+	for (let added = true; added; ) {
+		added = false;
+		for (const row of rows)
+			if (found.has(row.parent) && !found.has(row.pid)) {
+				found.add(row.pid);
+				added = true;
+			}
+	}
+	found.delete(process.pid);
+	return [...found].sort((left, right) => left - right);
+};
+
 export interface LiveHostOptions {
 	readonly config: EngineeringHostConfig;
+	/** Folder of the owner host profile. The agent may not read or edit it. */
+	readonly configRoot: string;
 	readonly work: WorkDeps;
 	/** Private controller state folder, outside every worktree. */
 	readonly stateRoot: string;
@@ -246,28 +361,131 @@ const profileOf = (config: EngineeringHostConfig, repository: EngineeringJob["re
 
 const identityOf = (run: EngineeringRun): string => `harnessy-work:${run.id}`;
 
-/** Run the host-owned commands on the exact candidate and keep their output as evidence. */
+export interface VerifyCandidateInput {
+	readonly run: Run;
+	readonly platform: string;
+	readonly profile: EngineeringHostProfile;
+	readonly baseRevision: string;
+	readonly headSha: string;
+	/** Private folder for evidence and the temporary export. */
+	readonly evidenceRoot: string;
+	/** Folders that the checks may not read: controller state, owner profile, credentials. */
+	readonly deniedRoots: ReadonlyArray<string>;
+	readonly now: () => number;
+}
+
+const sandboxQuote = (path: string): string => {
+	if ([...path].some((character) => character.charCodeAt(0) < 32)) throw new Error("Invalid sandbox path");
+	return JSON.stringify(path);
+};
+
+/**
+ * Seatbelt profile for the checks. Candidate code can run inside it (tests,
+ * build steps), so it gets no network, no write outside its own export and
+ * scratch folders, and no read of controller state or credentials.
+ */
+export const verificationSandboxProfile = (
+	exportRoot: string,
+	scratch: string,
+	deniedRoots: ReadonlyArray<string>,
+): string =>
+	[
+		"(version 1)",
+		"(allow default)",
+		"(deny network*)",
+		'(deny file-write* (subpath "/"))',
+		`(allow file-write* (subpath ${sandboxQuote(exportRoot)}) (subpath ${sandboxQuote(scratch)}) (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))`,
+		...deniedRoots.map((path) => `(deny file-read* file-write* (subpath ${sandboxQuote(path)}))`),
+		// The export and scratch folders can sit inside a denied state folder, so they are allowed last.
+		`(allow file-read* file-write* (subpath ${sandboxQuote(exportRoot)}) (subpath ${sandboxQuote(scratch)}))`,
+	].join("\n");
+
+/**
+ * Judge one exact revision with the host-owned commands.
+ *
+ * - A candidate that changes a check definition is rejected, so that the
+ *   commands mean what the host profile says.
+ * - The commands run in a new export of the revision that Harnessy makes.
+ *   The worker's own worktree and its copied dependencies are not used.
+ * - Dependencies come from the host checkout, which the agent cannot write.
+ * - Each command runs in a sandbox with an empty environment.
+ */
 export const verifyCandidate = async (
-	run: Run,
-	profile: EngineeringHostProfile,
-	worktree: string,
-	headSha: string,
-	evidenceRoot: string,
-	now: () => number,
+	input: VerifyCandidateInput,
 ): Promise<
 	| { readonly verdict: "pass"; readonly evidenceDigest: string; readonly evidencePath: string }
 	| { readonly verdict: "reject"; readonly reason: string }
 > => {
-	const head = await run(["git", "-C", worktree, "rev-parse", "HEAD"], { timeoutMs: 30_000 });
-	if (head.exitCode !== 0 || head.stdout.trim() !== headSha)
-		return { verdict: "reject", reason: "The worktree is not at the candidate revision" };
-	const status = await run(["git", "-C", worktree, "status", "--porcelain"], { timeoutMs: 30_000 });
-	if (status.exitCode !== 0 || status.stdout.trim() !== "")
-		return { verdict: "reject", reason: "The candidate worktree has uncommitted changes" };
+	const { run, profile, headSha, baseRevision, now } = input;
+	if (input.platform !== "darwin")
+		return { verdict: "reject", reason: "Sandboxed verification is not qualified on this host platform" };
+	if (!/^[a-f0-9]{40}$/.test(headSha) || !/^[a-f0-9]{40}$/.test(baseRevision))
+		return { verdict: "reject", reason: "The candidate or base revision is not an exact commit" };
+	const root = Result.try(() => realpathSync(profile.root));
+	if (Result.isFailure(root)) return { verdict: "reject", reason: "The host checkout is unavailable" };
+	const changed = await run(["git", "-C", root.success, "diff", "--name-only", "-z", `${baseRevision}...${headSha}`], {
+		timeoutMs: 60_000,
+	});
+	if (changed.exitCode !== 0) return { verdict: "reject", reason: "The candidate diff cannot be read" };
+	const paths = changed.stdout.split("\0").filter((path) => path !== "");
+	if (paths.length === 0) return { verdict: "reject", reason: "The candidate changes nothing" };
+	const protectedPaths = protectedChanges(profile, paths);
+	if (protectedPaths.length > 0)
+		return {
+			verdict: "reject",
+			reason: `The candidate changes check definitions, which needs a person: ${protectedPaths.slice(0, 5).join(", ")}`,
+		};
+	mkdirSync(input.evidenceRoot, { recursive: true, mode: 0o700 });
+	const evidenceRoot = realpathSync(input.evidenceRoot);
+	const stamp = `${headSha}-${now()}`;
+	const exportRoot = join(evidenceRoot, "export", stamp);
+	const scratch = join(evidenceRoot, "scratch", stamp);
+	mkdirSync(dirname(exportRoot), { recursive: true, mode: 0o700 });
+	mkdirSync(scratch, { recursive: true, mode: 0o700 });
+	const added = await run(["git", "-C", root.success, "worktree", "add", "--detach", exportRoot, headSha], {
+		timeoutMs: 120_000,
+	});
+	if (added.exitCode !== 0) return { verdict: "reject", reason: "The candidate revision cannot be exported" };
 	const results: Array<Readonly<Record<string, unknown>>> = [];
-	for (const argv of profile.verify) {
+	let failure: string | undefined;
+	const listed = await run(gitArgv.ignoredDirs(root.success), { timeoutMs: 120_000 });
+	if (listed.exitCode !== 0) failure = "The host dependency folders cannot be listed";
+	for (const path of failure === undefined ? parseDepDirs(listed.stdout) : []) {
+		// A dependency folder nested in another one arrives with its parent.
+		if (existsSync(join(exportRoot, path))) continue;
+		mkdirSync(dirname(join(exportRoot, path)), { recursive: true });
+		const copied = await run(cloneArgv(input.platform, join(root.success, path), join(exportRoot, path)).argv, {
+			timeoutMs: 300_000,
+		});
+		if (copied.exitCode !== 0) {
+			failure = `A host dependency folder cannot be copied: ${path}`;
+			break;
+		}
+	}
+	const sandbox = verificationSandboxProfile(
+		exportRoot,
+		realpathSync(scratch),
+		input.deniedRoots.filter((path) => existsSync(path)).map((path) => realpathSync(path)),
+	);
+	for (const argv of failure === undefined ? profile.verify : []) {
 		const startedAt = now();
-		const result = await run(argv, { cwd: worktree, timeoutMs: profile.verifyTimeoutMinutes * 60_000 });
+		const result = await run(
+			[
+				"/usr/bin/env",
+				"-i",
+				`PATH=${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+				`HOME=${scratch}`,
+				`TMPDIR=${scratch}`,
+				"LANG=C",
+				"TZ=UTC",
+				"CI=1",
+				"/usr/bin/sandbox-exec",
+				"-p",
+				sandbox,
+				...argv,
+			],
+			{ cwd: exportRoot, timeoutMs: profile.verifyTimeoutMinutes * 60_000 },
+		);
 		results.push({
 			argv,
 			exitCode: result.exitCode ?? null,
@@ -279,35 +497,72 @@ export const verifyCandidate = async (
 			stdoutTail: result.stdout.slice(-4000),
 			stderrTail: result.stderr.slice(-4000),
 		});
-		if (result.exitCode !== 0) break;
+		if (result.exitCode !== 0) {
+			failure = `A required check failed: ${argv.join(" ")}`;
+			break;
+		}
 	}
-	const after = await run(["git", "-C", worktree, "rev-parse", "HEAD"], { timeoutMs: 30_000 });
-	const passed =
-		results.length === profile.verify.length &&
-		results.every((entry) => entry.exitCode === 0) &&
-		after.stdout.trim() === headSha;
+	const exported = await run(["git", "-C", exportRoot, "rev-parse", "HEAD"], { timeoutMs: 30_000 });
+	if (failure === undefined && exported.stdout.trim() !== headSha) failure = "The export moved during verification";
+	await run(["git", "-C", root.success, "worktree", "remove", "--force", exportRoot], { timeoutMs: 120_000 });
+	const passed = failure === undefined && results.length === profile.verify.length;
 	const evidence = `${JSON.stringify(
 		{
-			schema: "harnessy.engineering.verification.v1",
+			schema: "harnessy.engineering.verification.v2",
 			repository: profile.id,
+			baselineRevision: baseRevision,
 			candidateRevision: headSha,
 			evaluatorDigest: profileEvaluatorDigest(profile),
+			isolation: "macos-seatbelt: no network, writes only in a host export and scratch, empty environment",
+			changedPaths: paths.length,
 			verdict: passed ? "pass" : "reject",
+			...(failure === undefined ? {} : { failure }),
 			results,
 		},
 		null,
 		2,
 	)}\n`;
-	const evidencePath = join(evidenceRoot, `${headSha}-${now()}.json`);
-	mkdirSync(evidenceRoot, { recursive: true, mode: 0o700 });
+	const evidencePath = join(evidenceRoot, `${stamp}.json`);
 	writeFileSync(evidencePath, evidence, { mode: 0o600 });
 	return passed
 		? { verdict: "pass", evidenceDigest: sha256(evidence), evidencePath }
-		: { verdict: "reject", reason: `A required check failed; evidence: ${evidencePath}` };
+		: { verdict: "reject", reason: `${failure ?? "Verification is incomplete"}; evidence: ${evidencePath}` };
 };
 
 /** Outcomes of the existing runner that mean "a checked pull request exists". */
 const DELIVERED_HANDOFFS = new Set(["merge_timeout"]);
+
+/** The few facts this module needs from the runner's private state file. */
+const savedWork = (
+	work: Pick<WorkDeps, "stateRoot">,
+	taskId: string,
+):
+	| { readonly present: false }
+	| {
+			readonly present: true;
+			readonly readable: boolean;
+			readonly launchId?: string;
+			readonly pushedSha?: string;
+			readonly prUrl?: string;
+	  } => {
+	const path = join(work.stateRoot, taskId, "state.json");
+	if (!existsSync(path)) return { present: false };
+	const parsed = Result.try((): unknown => JSON.parse(readFileSync(path, "utf8")));
+	if (Result.isFailure(parsed) || typeof parsed.success !== "object" || parsed.success === null)
+		return { present: true, readable: false };
+	const state = parsed.success as Readonly<Record<string, unknown>>;
+	const binding = (typeof state.binding === "object" && state.binding !== null ? state.binding : {}) as Readonly<
+		Record<string, unknown>
+	>;
+	const pr = (typeof state.pr === "object" && state.pr !== null ? state.pr : {}) as Readonly<Record<string, unknown>>;
+	return {
+		present: true,
+		readable: true,
+		...(typeof binding.launchId === "string" ? { launchId: binding.launchId } : {}),
+		...(typeof state.pushedSha === "string" ? { pushedSha: state.pushedSha } : {}),
+		...(typeof pr.url === "string" ? { prUrl: pr.url } : {}),
+	};
+};
 
 /** Build the controller ports for this machine. */
 export const liveControllerDeps = (options: LiveHostOptions): EngineeringControllerDeps => {
@@ -319,6 +574,19 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		now: work.now,
 	});
 	const evidenceRoot = join(stateRoot, "verification");
+	const home = homedir();
+	const deniedRoots = [
+		stateRoot,
+		options.configRoot,
+		work.stateRoot,
+		join(home, ".claude"),
+		join(home, ".ssh"),
+		join(home, ".config"),
+		join(home, ".aws"),
+		join(home, ".gnupg"),
+		join(home, "Library", "Keychains"),
+	];
+	const settingsOf = (run: EngineeringRun): string => join(work.stateRoot, run.job.taskId, "agent-settings.json");
 	const worktreeOf = (run: EngineeringRun): string | undefined => {
 		const profile = profileOf(config, run.job.repository);
 		return profile === undefined ? undefined : worktreePath(resolve(profile.root), run.job.taskId);
@@ -332,6 +600,17 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		...(profile.agentAllow === undefined ? {} : { agentAllow: profile.agentAllow }),
 		...(profile.agentDeps === undefined ? {} : { agentDeps: profile.agentDeps }),
 	}));
+	const check = (profile: EngineeringHostProfile, baseRevision: string, headSha: string) =>
+		verifyCandidate({
+			run: work.run,
+			platform: work.platform,
+			profile,
+			baseRevision,
+			headSha,
+			evidenceRoot,
+			deniedRoots,
+			now: work.now,
+		});
 	const readiness = async (
 		job: EngineeringJob,
 		controllerProfile: EngineeringRepositoryProfile,
@@ -343,6 +622,8 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 			evaluatorDigest: profileEvaluatorDigest(profile),
 			workloadDigest: profileWorkloadDigest(profile),
 		};
+		if (work.platform !== "darwin")
+			return { status: "paused", reason: "This host platform is not qualified", sourceRevision: "", ...digests };
 		const root = resolve(controllerProfile.root);
 		const fetched = await work.run(["git", "-C", root, "fetch", "--quiet", "origin", profile.base], {
 			timeoutMs: 120_000,
@@ -353,60 +634,80 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		const sourceRevision = head.exitCode === 0 ? head.stdout.trim() : "";
 		if (!/^[a-f0-9]{40}$/.test(sourceRevision))
 			return { status: "paused", reason: "The base revision cannot be read", sourceRevision: "", ...digests };
-		for (const tool of ["herdr", "claude", "gh"]) {
+		for (const tool of ["herdr", "claude", "gh", "/usr/bin/sandbox-exec"]) {
 			const found = await work.run(["which", tool], { timeoutMs: 10_000 });
 			if (found.exitCode !== 0)
 				return { status: "paused", reason: `Required tool is missing: ${tool}`, sourceRevision, ...digests };
 		}
 		return { status: "ready", reason: "Host probes passed", sourceRevision, ...digests };
 	};
+	/** Record a limit reply as soon as a stopped agent is seen, on every settlement path. */
+	const noteLimit = (taskId: string): boolean => {
+		const resultPath = join(work.stateRoot, taskId, "result.json");
+		if (!existsSync(resultPath)) return true;
+		const limit = limitPauseFromResult(readFileSync(resultPath, "utf8"), work.now());
+		if (limit === undefined) return true;
+		return Result.isSuccess(Result.try(() => recordProviderPause(stateRoot, limit.until, limit.reason, work.now())));
+	};
 	const inspect = async (run: EngineeringRun): Promise<HostProcessObservation> => {
 		const worktree = worktreeOf(run);
 		if (worktree === undefined) return { state: "unknown", reason: "No host profile for the run" };
-		const pane = await inspectWorkProcess(run.job.taskId, work);
-		if (pane.launchId !== undefined && pane.launchId !== run.id)
-			return { state: "unknown", reason: "The saved work state belongs to another launch" };
-		const live = await processesUnder(work.run, worktree);
+		const saved = savedWork(work, run.job.taskId);
+		if (saved.present && (!saved.readable || saved.launchId !== run.id))
+			return { state: "unknown", reason: "The saved work state is unreadable or belongs to another launch" };
+		const table = await work.run(["ps", "-A", "-o", "pid=,ppid=,command="], { timeoutMs: 15_000 });
+		if (table.exitCode !== 0 || table.timedOut === true || table.stdout === "")
+			return { state: "unknown", reason: "Host processes cannot be listed" };
+		if (agentDescendants(table.stdout, settingsOf(run)).length > 0)
+			return { state: "active", identity: identityOf(run) };
+		const live = existsSync(worktree) ? await processesUnder(work.run, worktree) : [];
 		if (live === undefined) return { state: "unknown", reason: "Host processes cannot be listed" };
 		if (live.length > 0) return { state: "active", identity: identityOf(run) };
-		// A pane without a completion line can still hold the agent, which keeps its own directory.
-		if (pane.pane !== undefined && pane.status !== "completion-observed")
-			return { state: "active", identity: identityOf(run) };
+		let paneStatus = "no work state";
+		let agentExitCode: number | undefined;
+		if (saved.present) {
+			const pane = await inspectWorkProcess(run.job.taskId, work);
+			// A recorded pane without its completion line can still hold the agent.
+			if (pane.status === "unknown")
+				return pane.pane === undefined
+					? { state: "unknown", reason: "The saved work state cannot be read" }
+					: { state: "active", identity: identityOf(run) };
+			paneStatus = pane.status;
+			agentExitCode = pane.exitCode;
+		} else if (!run.runnerReturned)
+			// Without any saved state, only a returned runner shows that nothing was launched.
+			return { state: "unknown", reason: "The runner has not returned and saved no work state" };
+		if (!noteLimit(run.job.taskId)) return { state: "unknown", reason: "A provider limit pause cannot be recorded" };
 		return {
 			state: "stopped",
 			identity: identityOf(run),
 			evidence: JSON.stringify({
 				observedAt: work.now(),
-				pane: pane.status,
-				...(pane.exitCode === undefined ? {} : { agentExitCode: pane.exitCode }),
+				pane: paneStatus,
+				...(agentExitCode === undefined ? {} : { agentExitCode }),
+				agentProcesses: 0,
 				processesUnderWorktree: 0,
-				limit: "Processes that left the worktree directory are not observed",
+				limit: "A process that left the agent's process tree and the worktree directory is not observed",
 			}),
 		};
 	};
 	const cancel = async (run: EngineeringRun): Promise<void> => {
-		const worktree = worktreeOf(run);
-		if (worktree === undefined) return;
+		const saved = savedWork(work, run.job.taskId);
+		// Another launch, or a manual run of the same task, is never interrupted.
+		if (!saved.present || !saved.readable || saved.launchId !== run.id) return;
 		const pane = await inspectWorkProcess(run.job.taskId, work);
-		if (pane.pane !== undefined && (pane.launchId === undefined || pane.launchId === run.id))
-			await work.run(herdrArgv.interrupt(pane.pane), { timeoutMs: 10_000 });
-		// Only processes inside this run's own worktree receive a signal.
-		for (const pid of (await processesUnder(work.run, worktree)) ?? [])
-			Result.try(() => process.kill(pid, "SIGTERM"));
+		if (pane.pane !== undefined) await work.run(herdrArgv.interrupt(pane.pane), { timeoutMs: 10_000 });
+		const table = await work.run(["ps", "-A", "-o", "pid=,ppid=,command="], { timeoutMs: 15_000 });
+		if (table.exitCode !== 0) return;
+		// Only the agent that Harnessy started for this task, and its descendants, receive a signal.
+		for (const pid of agentDescendants(table.stdout, settingsOf(run))) Result.try(() => process.kill(pid, "SIGTERM"));
 	};
 	const verify: EngineeringControllerDeps["verify"] = async (run, outcome?: WorkOutcome) => {
 		const profile = profileOf(config, run.job.repository);
-		const worktree = worktreeOf(run);
-		if (profile === undefined || worktree === undefined)
-			return { verdict: "reject", reason: "No host profile for the run" };
-		const resultPath = join(work.stateRoot, run.job.taskId, "result.json");
-		if (existsSync(resultPath)) {
-			const limit = limitPauseFromResult(readFileSync(resultPath, "utf8"), work.now());
-			if (limit !== undefined) {
-				recordProviderPause(stateRoot, limit.until, limit.reason, work.now());
-				return { verdict: "reject", reason: limit.reason };
-			}
-		}
+		if (profile === undefined) return { verdict: "reject", reason: "No host profile for the run" };
+		const pause = Result.try(() => readPause(stateRoot));
+		if (Result.isFailure(pause) || (pause.success !== undefined && pause.success.recordedAt >= run.reservedAt))
+			return { verdict: "reject", reason: "A subscription limit stopped the agent" };
 		if (outcome === undefined) return { verdict: "reject", reason: "The runner returned no outcome" };
 		const report = outcome.report;
 		const delivered =
@@ -416,13 +717,27 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 				verdict: "reject",
 				reason: `The runner stopped: ${typeof report.reason === "string" ? report.reason : "unknown"}`,
 			};
-		const head = await work.run(["git", "-C", worktree, "rev-parse", "HEAD"], { timeoutMs: 30_000 });
-		const headSha = head.stdout.trim();
-		if (head.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(headSha))
-			return { verdict: "reject", reason: "The candidate revision cannot be read" };
-		if (typeof report.pr_url !== "string")
-			return { verdict: "reject", reason: "The runner reported no pull request" };
-		const checked = await verifyCandidate(work.run, profile, worktree, headSha, evidenceRoot, work.now);
+		// The candidate is the revision that Harnessy pushed, from its own private state.
+		const saved = savedWork(work, run.job.taskId);
+		if (!saved.present || !saved.readable || saved.launchId !== run.id)
+			return { verdict: "reject", reason: "The saved work state does not belong to this run" };
+		const headSha = saved.pushedSha ?? "";
+		if (!/^[a-f0-9]{40}$/.test(headSha) || saved.prUrl === undefined || report.pr_url !== saved.prUrl)
+			return { verdict: "reject", reason: "No pushed candidate with a pull request is on record" };
+		const pull = await work.run(["gh", "pr", "view", saved.prUrl, "--json", "headRefOid,state"], {
+			timeoutMs: 60_000,
+		});
+		const pullFacts = Result.try((): unknown => JSON.parse(pull.stdout));
+		if (
+			pull.exitCode !== 0 ||
+			Result.isFailure(pullFacts) ||
+			typeof pullFacts.success !== "object" ||
+			pullFacts.success === null ||
+			!("headRefOid" in pullFacts.success) ||
+			pullFacts.success.headRefOid !== headSha
+		)
+			return { verdict: "reject", reason: "The pull request head is not the pushed candidate" };
+		const checked = await check(profile, run.job.sourceRevision, headSha);
 		if (checked.verdict === "reject") return checked;
 		return {
 			verdict: "pass",
@@ -436,26 +751,28 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		};
 	};
 	const reviewCandidate: NonNullable<WorkDeps["reviewCandidate"]> = async (candidate) => {
+		const rejected = { verdict: "reject" as const, headSha: candidate.headSha, evidenceDigest: "" };
 		const profile = config.profiles.find((entry) => resolve(entry.root) === resolve(candidate.repository));
-		if (profile === undefined) return { verdict: "reject", headSha: candidate.headSha, evidenceDigest: "" };
-		const checked = await verifyCandidate(
-			work.run,
-			profile,
-			candidate.worktree,
-			candidate.headSha,
-			evidenceRoot,
-			work.now,
+		if (profile === undefined) return rejected;
+		const base = await work.run(
+			["git", "-C", resolve(profile.root), "merge-base", `origin/${profile.base}`, candidate.headSha],
+			{ timeoutMs: 30_000 },
 		);
-		return {
-			verdict: checked.verdict,
-			headSha: candidate.headSha,
-			evidenceDigest: checked.verdict === "pass" ? checked.evidenceDigest : "",
-		};
+		if (base.exitCode !== 0) return rejected;
+		const checked = await check(profile, base.stdout.trim(), candidate.headSha);
+		return checked.verdict === "pass"
+			? { verdict: "pass", headSha: candidate.headSha, evidenceDigest: checked.evidenceDigest }
+			: rejected;
 	};
 	return {
 		now: work.now,
 		profiles,
-		work: { ...work, executionGuard: guard, reviewCandidate, protectedPaths: [stateRoot] },
+		work: {
+			...work,
+			executionGuard: guard,
+			reviewCandidate,
+			protectedPaths: [stateRoot, options.configRoot],
+		},
 		readiness,
 		inspect,
 		cancel,
