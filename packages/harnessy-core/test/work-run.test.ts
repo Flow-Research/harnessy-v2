@@ -533,7 +533,10 @@ describe("runWork", () => {
 		});
 		const done = await runWork(options, approved.deps);
 		expect(done.report).toMatchObject({ status: "submitted" });
-		expect(JSON.parse(readFileSync(join(approved.stateDir, "proof.json"), "utf8")).commit_sha).toBe(NEXT);
+		expect(JSON.parse(readFileSync(join(approved.stateDir, "proof.json"), "utf8"))).toMatchObject({
+			commit_sha: "m".repeat(40),
+			source_head_sha: NEXT,
+		});
 		expect(has(approved.calls, "pr", "create")).toBe(false);
 		expect(approved.calls).toContainEqual([
 			"git",
@@ -777,8 +780,9 @@ describe("runWork", () => {
 			schema: "harnessy.work.proof.v1",
 			task_id: TASK,
 			repo: "flow/app",
-			commit_sha: HEAD,
+			commit_sha: "m".repeat(40),
 			merge_commit_sha: "m".repeat(40),
+			source_head_sha: HEAD,
 			pr_url: "https://github.com/flow/app/pull/7",
 			ci_run_url: "https://github.com/flow/app/actions/runs/9",
 			ci_conclusion: "success",
