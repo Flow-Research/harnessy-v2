@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,15 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(testDir, "../../..");
 const v1FullPackRoot = resolve(testDir, "../../capability-harnessy-v1-full");
 const v1ArtifactResources = ".harnessy/capabilities/npm-harnessy-capability-harnessy-v1-full/resources";
+const engineeringSkillFiles = [
+	"SKILL.md",
+	"manifest.yaml",
+	"references/attribution.md",
+	"references/experiment-record.md",
+	"test/verify-skill.test.mjs",
+] as const;
+// The reviewed V2 amendment adds five files to the prior 746-file package.
+const amendedPackFileCount = 746 + engineeringSkillFiles.length;
 
 const expectedV1Checks = [
 	["v1-source-root-present", "passed"],
@@ -58,7 +67,7 @@ describe("Harnessy v1 full compatibility pack", () => {
 					expect(added.capability.id).toBe("npm:@harnessy/capability-harnessy-v1-full");
 					expect(added.capability.resolvedSource?.local?.root).toBe(v1FullPackRoot);
 					expect(added.capability.fingerprint?.kind).toBe("directory");
-					expect(added.capability.fingerprint?.fileCount).toBe(746);
+					expect(added.capability.fingerprint?.fileCount).toBe(amendedPackFileCount);
 					expect(added.materialization?.issues).toEqual([]);
 					expect(added.materialization?.copied.map((resource) => resource.target)).toEqual([
 						"source",
@@ -67,6 +76,14 @@ describe("Harnessy v1 full compatibility pack", () => {
 					]);
 
 					const artifactRoot = `${targetDir}/${v1ArtifactResources}`;
+					for (const file of engineeringSkillFiles) {
+						expect(
+							yield* fs.exists(`${artifactRoot}/source/tools/flow-install/skills/engineering-loop/${file}`),
+						).toBe(true);
+					}
+					expect(yield* fs.readFileString(`${artifactRoot}/source/.jarvis/context/skills/_catalog.md`)).toContain(
+						"engineering-loop",
+					);
 					expect(yield* fs.exists(`${artifactRoot}/source/package.json`)).toBe(true);
 					expect(yield* fs.exists(`${artifactRoot}/SOURCE.json`)).toBe(true);
 					expect(yield* fs.exists(`${artifactRoot}/source/scripts/flow/verify-harness.mjs`)).toBe(true);
@@ -128,8 +145,24 @@ describe("Harnessy v1 full compatibility pack", () => {
 			readonly tree: { readonly fileCount: number; readonly digest: string };
 		};
 		expect(report).toMatchObject({ ok: true, issues: [] });
-		expect(report.tree.fileCount).toBeGreaterThan(700);
+		expect(report.tree.fileCount).toBe(740 + engineeringSkillFiles.length);
 		expect(report.tree.digest).toMatch(/^[a-f0-9]{64}$/);
+		const provenance = JSON.parse(readFileSync(resolve(v1FullPackRoot, "resources/SOURCE.json"), "utf8"));
+		expect(provenance.source.repository).toBe("https://github.com/Flow-Research/harnessy.git");
+		expect(provenance.source.v2Amendments).toHaveLength(1);
+		const amendment = provenance.source.v2Amendments[0];
+		expect(amendment.owner).toBe("harnessy-v2");
+		expect(amendment.baseTree).toMatchObject({
+			fileCount: 740,
+			digest: "7fd0e3adc470fd3d41937b60e3d560a6f26e92fbe93e3b408df8b34f0e02f8eb",
+		});
+		expect(amendment.changes.map((change: { path: string }) => change.path).sort()).toEqual(
+			[
+				".jarvis/context/skills/_catalog.md",
+				...engineeringSkillFiles.map((file) => `tools/flow-install/skills/engineering-loop/${file}`),
+			].sort(),
+		);
+		expect(amendment.changes.filter((change: { before: unknown }) => change.before === null)).toHaveLength(5);
 	});
 
 	it("fails closed when the authoritative snapshot is tampered without updating provenance", () => {
@@ -152,6 +185,29 @@ describe("Harnessy v1 full compatibility pack", () => {
 			expect(report.issues).toEqual(
 				expect.arrayContaining(["source-digest-mismatch", "source-file-count-mismatch"]),
 			);
+			rmSync(resolve(copyRoot, "resources/source/TAMPERED.txt"));
+			writeFileSync(
+				resolve(copyRoot, "resources/source/tools/flow-install/skills/engineering-loop/SKILL.md"),
+				"unreviewed skill bytes\n",
+			);
+			const altered = spawnSync(
+				process.execPath,
+				[resolve(repositoryRoot, "scripts/verify-v1-compatibility.mjs"), copyRoot],
+				{ encoding: "utf8" },
+			);
+			expect(altered.status).toBe(1);
+			expect(JSON.parse(altered.stdout).issues).toContain(
+				"v2-amendment-after-mismatch: tools/flow-install/skills/engineering-loop/SKILL.md",
+			);
+			mkdirSync(resolve(copyRoot, "resources/source/private"));
+			writeFileSync(resolve(copyRoot, "resources/source/private/secret.md"), "synthetic private fixture\n");
+			const privateBytes = spawnSync(
+				process.execPath,
+				[resolve(repositoryRoot, "scripts/verify-v1-compatibility.mjs"), copyRoot],
+				{ encoding: "utf8" },
+			);
+			expect(privateBytes.status).toBe(1);
+			expect(JSON.parse(privateBytes.stdout).issues).toContain("private-context: private/secret.md");
 		} finally {
 			rmSync(temporaryRoot, { recursive: true, force: true });
 		}
@@ -191,7 +247,7 @@ describe("Harnessy v1 full compatibility pack", () => {
 					const verify = JSON.parse(verifyLog) as StructuredVerifyOutput;
 					expect(verify.ok).toBe(true);
 					expect(verify.lockfile.capabilities[0]?.resolvedSource?.local?.root).toBe(v1FullPackRoot);
-					expect(verify.lockfile.capabilities[0]?.fingerprint?.fileCount).toBe(746);
+					expect(verify.lockfile.capabilities[0]?.fingerprint?.fileCount).toBe(amendedPackFileCount);
 					expect(verify.checks?.results.map((result) => [result.checkId, result.status])).toEqual(
 						expectedV1Checks,
 					);

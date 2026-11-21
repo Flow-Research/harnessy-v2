@@ -12,7 +12,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-node --test "$repository_root/scripts/v1-reconciliation-lib.test.mjs" "$repository_root/scripts/single-source-package.test.mjs"
+node --test "$repository_root/scripts/v1-reconciliation-lib.test.mjs" "$repository_root/scripts/single-source-package.test.mjs" "$repository_root/scripts/v2-source-amendment.test.mjs"
 
 command -v uv >/dev/null 2>&1 || {
     echo "uv is required to test the V1 compatibility pack." >&2

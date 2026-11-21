@@ -140,6 +140,10 @@ const walk = async (root, directory = root, entries = []) => {
 
 export const describeV1Tree = async (root) => {
 	const entries = await walk(resolve(root));
+	return describeTreeEntries(entries);
+};
+
+const describeTreeEntries = (entries) => {
 	const digestInput = entries
 		.map((entry) => `${entry.path}\0${entry.sha256}\0${entry.size}\0${entry.executable ? "x" : "-"}\n`)
 		.join("");
@@ -243,6 +247,7 @@ export const verifyV1Compatibility = async (packageRoot) => {
 
 const validateV1Provenance = (inspection, provenance) => {
 	const issues = [...inspection.issues];
+	issues.push(...validateV2Amendments(inspection.source, provenance.source?.v2Amendments));
 	if (![V1_LEGACY_PROVENANCE_SCHEMA_VERSION, 2, V1_PROVENANCE_SCHEMA_VERSION].includes(provenance.schemaVersion))
 		issues.push(`unsupported-provenance-schema: ${String(provenance.schemaVersion)}`);
 	if (provenance.tree?.digest !== inspection.source.digest) issues.push("source-digest-mismatch");
@@ -319,6 +324,66 @@ const validateV1Provenance = (inspection, provenance) => {
 			issues.push("dirty-patch-digest-mismatch");
 	}
 	return { ...inspection, ok: issues.length === 0, issues: [...new Set(issues)].sort(), provenance };
+};
+
+// A V2 amendment records exact changes against the previously verified artifact.
+// It does not rewrite the retained V1 repository, selected inputs, or dirty input.
+const validateV2Amendments = (current, amendments) => {
+	if (amendments === undefined) return [];
+	if (!Array.isArray(amendments) || amendments.length === 0) return ["v2-amendments-invalid"];
+	let entries = current.entries;
+	const ids = new Set();
+	const validFile = (value) => value !== null && typeof value === "object" &&
+		Number.isSafeInteger(value.size) && value.size >= 0 && typeof value.executable === "boolean" &&
+		/^[a-f0-9]{64}$/.test(value.sha256);
+	for (const amendment of [...amendments].reverse()) {
+		if (amendment === null || typeof amendment !== "object" ||
+			typeof amendment.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,99}$/.test(amendment.id) || ids.has(amendment.id) ||
+			amendment.owner !== "harnessy-v2" || typeof amendment.reason !== "string" || amendment.reason.length === 0 ||
+			!Array.isArray(amendment.changes) || amendment.changes.length === 0 ||
+			amendment.baseTree?.algorithm !== "sha256" || !/^[a-f0-9]{64}$/.test(amendment.baseTree.digest) ||
+			!Number.isSafeInteger(amendment.baseTree.fileCount) || !Number.isSafeInteger(amendment.baseTree.byteCount))
+			return ["v2-amendment-invalid"];
+		ids.add(amendment.id);
+		const paths = new Set();
+		const restored = new Map(entries.map((entry) => [entry.path, entry]));
+		for (const change of amendment.changes) {
+			if (change === null || typeof change !== "object" || typeof change.path !== "string" ||
+				change.path.split("/").some((part) => ["", ".", ".."].includes(part)) || change.path.includes("\\") ||
+				paths.has(change.path) || (change.before !== null && !validFile(change.before)) ||
+				(change.after !== null && !validFile(change.after)) || (change.before === null && change.after === null))
+				return ["v2-amendment-change-invalid"];
+			paths.add(change.path);
+			const actual = restored.get(change.path);
+			if (change.after === null ? actual !== undefined : actual === undefined ||
+				actual.sha256 !== change.after.sha256 || actual.size !== change.after.size || actual.executable !== change.after.executable)
+				return [`v2-amendment-after-mismatch: ${change.path}`];
+			if (change.before === null) restored.delete(change.path);
+			else restored.set(change.path, { path: change.path, size: change.before.size, executable: change.before.executable, sha256: change.before.sha256 });
+		}
+		// Match walk's directory-first traversal, including locale ordering.
+		entries = [...restored.values()].sort((left, right) => {
+			const a = left.path.split("/");
+			const b = right.path.split("/");
+			for (let i = 0; i < Math.min(a.length, b.length); i++) {
+				const order = a[i].localeCompare(b[i]);
+				if (order !== 0) return order;
+			}
+			return a.length - b.length;
+		});
+		if (!sameTree(describeTreeEntries(entries), amendment.baseTree)) return [`v2-amendment-base-mismatch: ${amendment.id}`];
+	}
+	return [];
+};
+
+/** Record a reviewed V2 delta without attributing its bytes to the original V1 input. */
+export const writeV2SourceAmendment = async (packageRoot, amendment) => {
+	const previous = await readV1Provenance(packageRoot);
+	if (!sameTree(previous.tree, amendment.baseTree)) throw new Error("V2 amendment does not bind the prior source tree");
+	return writeV1Provenance(packageRoot, {
+		...previous.source,
+		v2Amendments: [...(previous.source.v2Amendments ?? []), amendment],
+	});
 };
 
 export const writeV1Provenance = async (
