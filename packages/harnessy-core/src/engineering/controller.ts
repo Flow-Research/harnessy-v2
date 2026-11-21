@@ -13,6 +13,8 @@ export interface EngineeringRepositoryProfile {
 	readonly accountId: string;
 	readonly workstreamCli: ReadonlyArray<string>;
 	readonly agentAllow?: string;
+	/** Copy the checkout's ignored dependency folders into the worktree, so that checks can run there. */
+	readonly agentDeps?: "clone";
 }
 
 /** Facts come from host probes and the provider adapter, never the job payload. */
@@ -339,6 +341,7 @@ export class EngineeringController {
 				executionPolicy: policy,
 				...(run.job.proofOnlyResume === undefined ? {} : { proofOnlyResume: run.job.proofOnlyResume }),
 				...(profile.agentAllow === undefined ? {} : { agentAllow: profile.agentAllow }),
+				...(profile.agentDeps === undefined ? {} : { agentDeps: profile.agentDeps }),
 			},
 			{
 				...this.#deps.work,

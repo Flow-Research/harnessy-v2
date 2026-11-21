@@ -1,12 +1,23 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Console, Effect } from "effect";
 import { Command, Flag } from "effect/cli";
 import { benchmarkHarnessy } from "../engineering/benchmark.ts";
 import { engineeringJobSchema } from "../engineering/contracts.ts";
+import { EngineeringController } from "../engineering/controller.ts";
+import {
+	appendServiceReport,
+	EXTRA_USAGE_FILE,
+	liveControllerDeps,
+	profileEvaluatorDigest,
+	profileWorkloadDigest,
+	readHostConfig,
+} from "../engineering/live.ts";
+import { runEngineeringService } from "../engineering/service.ts";
 import { EngineeringStore, engineeringGrant } from "../engineering/store.ts";
 import { causeMessage, HarnessError } from "../errors.ts";
+import { liveWorkDeps, type WorkDeps } from "../work/run.ts";
 
 const statePath = () =>
 	join(
@@ -16,8 +27,19 @@ const statePath = () =>
 		"controller.sqlite",
 	);
 
-/** Local owner commands do not start a worker or grant remote callers access. */
-export const makeEngineeringCommand = (defaultPath: () => string = statePath, clock: () => number = Date.now) => {
+const hostConfigPath = () =>
+	join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "harnessy", "engineering", "host.json");
+
+/**
+ * `status`, `events`, `approve`, `cancel`, `revoke` and `benchmark` start no
+ * worker. `tick` and `serve` can start one worker for an approved job, and only
+ * when every host probe and the included-allowance check pass.
+ */
+export const makeEngineeringCommand = (
+	defaultPath: () => string = statePath,
+	clock: () => number = Date.now,
+	workDeps: () => WorkDeps = liveWorkDeps,
+) => {
 	const database = Flag.String("database").pipe(
 		Flag.withDefault(defaultPath()),
 		Flag.withDescription("Private controller SQLite database."),
@@ -119,9 +141,118 @@ export const makeEngineeringCommand = (defaultPath: () => string = statePath, cl
 			"Measure pure-task-operations, preparation-plan, or local-status in protected local custody. Full startup, full task preparation, and remote status are unsupported.",
 		),
 	);
+	const hostConfig = Flag.String("host-config").pipe(
+		Flag.withDefault(hostConfigPath()),
+		Flag.withDescription("Owner host profile file (mode 600): account, repositories and required checks."),
+	);
+	const withController = <A>(
+		flags: { readonly database: string; readonly hostConfig: string },
+		operation: (controller: EngineeringController, stateRoot: string) => Promise<A>,
+	) =>
+		Effect.tryPromise({
+			try: async () => {
+				const stateRoot = dirname(flags.database);
+				const store = new EngineeringStore(flags.database);
+				try {
+					const deps = liveControllerDeps({
+						config: readHostConfig(flags.hostConfig),
+						work: workDeps(),
+						stateRoot,
+						environment: process.env,
+					});
+					return await operation(new EngineeringController(store, deps), stateRoot);
+				} finally {
+					store.close();
+				}
+			},
+			catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+		});
+	const tick = Command.make("tick", { database, hostConfig }, (flags) =>
+		withController(flags, async (controller, stateRoot) => {
+			const report = {
+				schema: "harnessy.engineering.service.v1" as const,
+				at: clock(),
+				result: await controller.tick(),
+			};
+			appendServiceReport(stateRoot, report);
+			return report;
+		}).pipe(Effect.flatMap((value) => Console.log(JSON.stringify(value)))),
+	).pipe(
+		Command.withDescription(
+			"Run one admission check now. It can start one worker for an approved job and waits for that worker.",
+		),
+	);
+	const serve = Command.make("serve", { database, hostConfig }, (flags) =>
+		Effect.tryPromise({
+			try: (signal) =>
+				withController(flags, (controller, stateRoot) =>
+					runEngineeringService(
+						controller,
+						signal,
+						async (report) => appendServiceReport(stateRoot, report),
+						clock,
+					),
+				).pipe(Effect.runPromise),
+			catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+		}),
+	).pipe(
+		Command.withDescription(
+			"Run admission checks every 15 minutes until stopped. The loop does not run while the computer sleeps.",
+		),
+	);
+	const digests = Command.make("digests", { hostConfig }, (flags) =>
+		Effect.try({
+			try: () =>
+				readHostConfig(flags.hostConfig).profiles.map((profile) => ({
+					repository: profile.id,
+					evaluatorDigest: profileEvaluatorDigest(profile),
+					workloadDigest: profileWorkloadDigest(profile),
+				})),
+			catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+		}).pipe(Effect.flatMap((value) => Console.log(JSON.stringify(value)))),
+	).pipe(Command.withDescription("Print the evaluator and workload digests that a job for each repository must name"));
+	const confirmExtraUsage = Command.make(
+		"confirm-extra-usage-off",
+		{ database, hostConfig, confirmedBy: Flag.Literals("confirmed-by", ["julian"]) },
+		(flags) =>
+			Effect.try({
+				try: () => {
+					const path = join(dirname(flags.database), EXTRA_USAGE_FILE);
+					const record = {
+						schema: "harnessy.engineering.extra-usage.v1",
+						accountId: readHostConfig(flags.hostConfig).accountId,
+						extraUsage: "off",
+						confirmedBy: flags.confirmedBy,
+						confirmedAt: clock(),
+					};
+					mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+					writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+					chmodSync(path, 0o600);
+					return { ...record, notice: "Valid for 30 days. Only the account owner may record this." };
+				},
+				catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+			}).pipe(Effect.flatMap((value) => Console.log(JSON.stringify(value)))),
+	).pipe(
+		Command.withDescription(
+			"Record the owner's statement that extra usage billing is off for the subscription account",
+		),
+	);
 	return Command.make("engineering").pipe(
-		Command.withSubcommands([status, events, approve, cancel, revoke, benchmark]),
-		Command.withDescription("Inspect engineering work and manage exact-job approval and cancellation receipts"),
+		Command.withSubcommands([
+			status,
+			events,
+			approve,
+			cancel,
+			revoke,
+			digests,
+			confirmExtraUsage,
+			tick,
+			serve,
+			benchmark,
+		]),
+		Command.withDescription(
+			"Inspect engineering work, manage exact-job approval and cancellation, and run the bounded engineering loop",
+		),
 	);
 };
 

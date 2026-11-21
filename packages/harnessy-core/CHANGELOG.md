@@ -24,6 +24,14 @@
 
 ### Added
 
+- `harnessy engineering` inspects and runs the bounded engineering loop for
+  one owner machine: `status`, `events`, `approve`, `cancel`, `revoke`,
+  `digests`, `confirm-extra-usage-off`, `tick`, `serve` and `benchmark`.
+  `tick` and `serve` can start one worker for an approved job through
+  `harnessy work`, only on the included Claude subscription allowance. A
+  metered key in the environment, a missing sign-in, another account, a
+  missing owner confirmation that extra usage is off, or a recorded limit
+  reply pauses the loop. There is no metered fallback.
 - `harnessy work --github-app <slug>` (or `github.app` in the settings file)
   pushes and calls `gh` as a GitHub App installation instead of the
   operator's account, so the operator can approve the PR. Each run mints an
