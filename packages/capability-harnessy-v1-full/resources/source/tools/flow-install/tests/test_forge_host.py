@@ -50,6 +50,24 @@ sys.stdout.write(answer.read_text() if answer.exists() else "")
 """
 
 
+FAKE_DOCKER = r"""#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+home = Path(os.environ["FAKE_SSH_DIR"])
+args = sys.argv[1:]
+count = len(list(home.glob("docker-*.argv")))
+(home / f"docker-{count:02d}.argv").write_text("\n".join(args))
+if "generate-config" in args:
+    print("runner:\n  capacity: 1\ncache:\n  # the cache server\n  enabled: true\ncontainer:\n  docker_host: \"-\"\nhost:\n  enabled: true")
+elif any("create-runner-file" in a for a in args):
+    folder = args[args.index("-v") + 1].rsplit(":/data", 1)[0]
+    Path(folder, ".runner").write_text(json.dumps({"id": 0, "name": args[-1], "address": args[-2],
+                                                   "token": os.environ.get("FORGE_RUNNER_SECRET", ""), "labels": []}))
+elif args[:1] == ["logs"]:
+    print("runner: declared successfully")
+"""
+
+
 def make_env(tmp_path: Path, server: str = GOOD_SERVER) -> dict:
     fake = tmp_path / "fake"
     bin_dir = tmp_path / "bin"
@@ -57,6 +75,9 @@ def make_env(tmp_path: Path, server: str = GOOD_SERVER) -> dict:
     ssh = bin_dir / "ssh"
     ssh.write_text(FAKE_SSH)
     ssh.chmod(ssh.stat().st_mode | stat.S_IEXEC)
+    fake_docker = bin_dir / "docker"
+    fake_docker.write_text(FAKE_DOCKER)
+    fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IEXEC)
     (fake / "answer-inspect").write_text(server)
     (fake / "answer-install-version").write_text("15.0.12+gitea-1.22.0\n")
     (fake / "answer-token").write_text("a" * 40 + "\n")
@@ -276,6 +297,44 @@ def test_a_remote_runner_is_registered_started_and_recorded(tmp_path):
     assert "/opt/forge-acme/runner-vps-1" in start and "--restart unless-stopped" in start
     secret = (Path(env["XDG_CONFIG_HOME"]) / "harnessy/forge/acme/runner-vps-1.secret").read_text().strip()
     assert len(secret) == 40 and secret not in json.dumps(register(env)) and secret not in done.stdout
+
+
+def test_a_local_runner_uses_only_docker_and_keeps_the_secret_out_of_command_lines(tmp_path):
+    """The local path has no shell script, so it is the same on macOS, Linux and Windows."""
+    env = make_env(tmp_path)
+    install(env)
+    done = run(env, "runner", "add", "--id", "acme", "--name", "laptop-1", "--where", "local",
+               "--capacity", "2", "--confirm", "acme")
+    assert done.returncode == 0, done.stderr
+    runner = register(env)["installs"]["acme"]["runners"]["laptop-1"]
+    folder = Path(runner["folder"])
+    assert runner["where"] == "local" and folder == Path(env["XDG_DATA_HOME"]) / "harnessy/forge-runners/acme-laptop-1"
+    config = (folder / "config.yml").read_text()
+    assert 'docker_host: "automount"' in config and "  capacity: 2" in config
+    assert "cache:\n  # the cache server\n  enabled: false" in config, "the cache server must be off"
+    assert "host:\n  enabled: true" in config, "only the cache section may change"
+    runner_file = json.loads((folder / ".runner").read_text())
+    secret = (Path(env["XDG_CONFIG_HOME"]) / "harnessy/forge/acme/runner-laptop-1.secret").read_text().strip()
+    assert runner_file["token"] == secret, "the secret reaches the container through the environment"
+    assert runner_file["labels"] == ["ubuntu-24.04:docker://ghcr.io/catthehacker/ubuntu:act-24.04"]
+    docker_calls = [p.read_text() for p in sorted(Path(env["FAKE_SSH_DIR"]).glob("docker-*.argv"))]
+    assert all(secret not in call for call in docker_calls), "the secret is in a docker command line"
+    assert any("--restart\nunless-stopped" in call and "daemon" in call for call in docker_calls)
+    assert not any(c.endswith("runner-start.sh") for c in calls(env)), "a local runner starts nothing on the server"
+    assert secret not in done.stdout + json.dumps(register(env))
+
+
+def test_a_local_runner_on_an_arm_machine_may_not_take_the_label_amd64(tmp_path):
+    import platform
+
+    if platform.machine().lower() in ("x86_64", "amd64"):
+        return  # the refusal applies to machines that are not x86_64
+    env = make_env(tmp_path)
+    install(env)
+    done = run(env, "runner", "add", "--id", "acme", "--name", "laptop-1", "--where", "local",
+               "--label", "amd64:docker://ghcr.io/catthehacker/ubuntu:act-24.04", "--confirm", "acme")
+    assert done.returncode == 3 and "may not take the label amd64" in done.stderr
+    assert not list(Path(env["FAKE_SSH_DIR"]).glob("docker-*.argv"))
 
 
 def test_a_runner_needs_the_confirmation_and_a_free_name(tmp_path):

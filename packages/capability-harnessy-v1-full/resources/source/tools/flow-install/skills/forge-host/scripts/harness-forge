@@ -31,6 +31,7 @@ import getpass
 import ipaddress
 import json
 import os
+import platform
 import re
 import secrets
 import shlex
@@ -615,6 +616,89 @@ docker logs {shlex.quote(container)} 2>&1 | grep -q 'declared successfully'
 """
 
 
+def local_data_dir() -> Path:
+    """Where this machine keeps the files of its own runners. XDG_DATA_HOME wins on every system;
+    else %LOCALAPPDATA% on Windows and ~/.local/share on macOS and Linux."""
+    if os.environ.get("XDG_DATA_HOME"):
+        return Path(os.environ["XDG_DATA_HOME"]) / "harnessy"
+    if platform.system() == "Windows" and os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "harnessy"
+    return Path.home() / ".local" / "share" / "harnessy"
+
+
+def docker(*args: str, env: dict | None = None, timeout: int = 900) -> str:
+    """Run the local docker command (no shell). Raises Refused with the end of its output."""
+    try:
+        done = subprocess.run(["docker", *args], text=True, capture_output=True, timeout=timeout,
+                              env={**os.environ, **(env or {})})
+    except FileNotFoundError:
+        raise Refused("the command `docker` was not found on this machine; install Docker "
+                      "(Docker Desktop on macOS and Windows, Docker Engine on Linux) and start it")
+    except subprocess.TimeoutExpired:
+        raise Refused(f"docker {args[0]} gave no answer in {timeout} s")
+    if done.returncode != 0:
+        tail = (done.stderr or done.stdout).strip().splitlines()[-4:]
+        raise Refused(f"docker {args[0]} failed on this machine: " + " | ".join(tail))
+    return done.stdout
+
+
+def tune_runner_config(text: str, capacity: int) -> str:
+    """The same three changes that the server script makes with sed, in Python, so that the local
+    path needs no shell tools: give jobs the Docker socket, set the capacity, turn the cache off."""
+    lines, section = [], ""
+    for line in text.splitlines():
+        if line and not line[0].isspace() and not line.startswith("#"):
+            section = line.split(":", 1)[0]
+        if line == '  docker_host: "-"':
+            line = '  docker_host: "automount"'
+        elif line == "  capacity: 1":
+            line = f"  capacity: {capacity}"
+        elif section == "cache" and line == "  enabled: true":
+            line = "  enabled: false"
+        lines.append(line)
+    return "\n".join(lines) + "\n"
+
+
+def start_local_runner(folder: str, image: str, url: str, name: str, secret: str, labels: list[str],
+                       capacity: int, container: str) -> None:
+    """Start a runner on this machine. Only Python and the `docker` command are used, so the same
+    code works on macOS, Linux and Windows (Docker Desktop or Docker Engine, Linux containers)."""
+    home = Path(folder)
+    home.mkdir(parents=True, exist_ok=True)
+    windows = platform.system() == "Windows"
+    # On Linux the files must belong to the user who runs this command; Docker Desktop (macOS,
+    # Windows) maps the owner by itself.
+    as_user = [] if windows or not hasattr(os, "getuid") else ["--user", f"{os.getuid()}:{os.getgid()}"]
+    (home / "config.yml").write_text(
+        tune_runner_config(docker("run", "--rm", image, "forgejo-runner", "generate-config"), capacity))
+    # The secret goes to the container through the environment, not through a command line.
+    docker("run", "--rm", *as_user, "-e", "FORGE_RUNNER_SECRET", "-v", f"{home}:/data", "-w", "/data", image,
+           "sh", "-c", 'forgejo-runner create-runner-file --instance "$1" --name "$2" '
+                       '--secret "$FORGE_RUNNER_SECRET" >/dev/null 2>&1',
+           "_", url, name, env={"FORGE_RUNNER_SECRET": secret})
+    runner_file = home / ".runner"
+    if not runner_file.is_file():
+        raise Refused(f"the runner file was not made in {home}")
+    data = json.loads(runner_file.read_text())
+    data["labels"] = labels
+    runner_file.write_text(json.dumps(data, indent=1))
+    if not windows:
+        os.chmod(runner_file, 0o600)
+    subprocess.run(["docker", "rm", "-f", container], capture_output=True, text=True)
+    socket_path = "//var/run/docker.sock" if windows else "/var/run/docker.sock"
+    docker("run", "-d", "--name", container, "--restart", "unless-stopped", "--user", "0:0",
+           "-v", f"{home}:/data", "-w", "/data", "-v", f"{socket_path}:/var/run/docker.sock", image,
+           "forgejo-runner", "daemon", "--config", "config.yml")
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        logs = subprocess.run(["docker", "logs", container], capture_output=True, text=True)
+        if "declared successfully" in logs.stdout + logs.stderr:
+            return
+        time.sleep(2)
+    raise Refused(f"the runner container {container} started but did not connect to {url} in 60 s; "
+                  f"read `docker logs {container}`")
+
+
 def cmd_runner_add(args) -> int:
     register, install = get_install(args.id)
     install_id = install["id"]
@@ -627,7 +711,7 @@ def cmd_runner_add(args) -> int:
     for label in labels:
         check_match(LABEL_RE, label, "label")
     if args.where == "local" and any(label.split(":")[0] in ("amd64", "x86_64") for label in labels) \
-            and os.uname().machine not in ("x86_64", "amd64"):
+            and platform.machine().lower() not in ("x86_64", "amd64"):
         raise Refused("this machine is not x86_64, so its runner may not take the label amd64")
     if args.confirm != install_id:
         raise Refused(f"this command starts a service. Run it again with --confirm {install_id}")
@@ -649,15 +733,9 @@ docker exec -u git forge-{install_id} forgejo forgejo-cli actions register --nam
                                                        labels, args.capacity, container), timeout=900)
         machine = install["ssh"]["host"]
     else:
-        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-        folder = str(base / "harnessy" / "forge-runners" / f"{install_id}-{name}")
-        script = "set -euo pipefail\n" + runner_setup_script(folder, image, install["url"], name, secret,
-                                                             labels, args.capacity, container)
-        done = subprocess.run(["bash", "-s"], input=script, text=True, capture_output=True, timeout=900)
-        if done.returncode != 0:
-            tail = (done.stderr or done.stdout).strip().splitlines()[-6:]
-            raise Refused("the local runner did not start: " + " | ".join(tail))
-        machine = socket.gethostname()
+        folder = str(local_data_dir() / "forge-runners" / f"{install_id}-{name}")
+        start_local_runner(folder, image, install["url"], name, secret, labels, args.capacity, container)
+        machine = f"{socket.gethostname()} ({platform.system()} {platform.machine()})"
     run.step("runner started and declared to the forge", True, container)
     install.setdefault("runners", {})[name] = {
         "name": name, "where": args.where, "machine": machine, "container": container, "folder": folder,
