@@ -51,9 +51,10 @@ import {
 	meetingConnections,
 } from "./connections.ts";
 import { deriveInbox } from "./inbox.ts";
-import { readJobs } from "./jobs.ts";
+import { FIXED_JOB_IDS, readJobs } from "./jobs.ts";
 import { readLearningSummary } from "./learning.ts";
 import { type PortProbe, tcpPortProbe } from "./liveness.ts";
+import { NO_OWNER_JOBS, readOwnerJobs } from "./owner-jobs.ts";
 import type { PortalRouteParams } from "./routes.ts";
 import { TaskChangeTracker } from "./task-changes.ts";
 
@@ -69,6 +70,8 @@ export interface PortalSourceOptions {
 	readonly clock: () => Date;
 	/** Loopback liveness probe for the Jobs list; defaults to a 300 ms TCP connect. */
 	readonly probePort?: PortProbe;
+	/** The owner's `jobs.json`; without it the Jobs list holds the fixed jobs only. */
+	readonly ownerJobsPath?: string;
 }
 
 export type PortalTiles = Readonly<Record<string, TileResult<unknown>>>;
@@ -220,11 +223,18 @@ export const createPortalSources = (options: PortalSourceOptions): PortalSources
 		life: LifeSettings,
 		meetings: ReturnType<typeof meeting>,
 		communitySummary: CommunitySummary,
-	) =>
-		readJobs({
+	) => {
+		const ownerJobs =
+			options.ownerJobsPath === undefined ? NO_OWNER_JOBS : readOwnerJobs(options.ownerJobsPath, FIXED_JOB_IDS);
+		return readJobs({
 			now,
 			homeRoot,
-			health: readServiceHealth(PORTAL_SERVICE_LABELS, options.probe, { homeRoot, now }),
+			health: readServiceHealth(
+				[...PORTAL_SERVICE_LABELS, ...ownerJobs.jobs.map((job) => job.label)],
+				options.probe,
+				{ homeRoot, now },
+			),
+			ownerJobs,
 			probePort,
 			workspaceRoot: workspaceRootOf(life),
 			meetingPort: meetings.config.state === "ok" ? meetings.config.data!.reviewPort : null,
@@ -234,6 +244,7 @@ export const createPortalSources = (options: PortalSourceOptions): PortalSources
 			communityHost: communitySummary.config.state === "ok" ? communitySummary.config.data!.reviewHost : null,
 			communityStatePath: communityStatePath(),
 		});
+	};
 
 	return {
 		today: () => {
