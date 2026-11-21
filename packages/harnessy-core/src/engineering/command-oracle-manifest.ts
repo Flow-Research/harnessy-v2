@@ -37,7 +37,7 @@ const reviewed: {
 	readonly generator: Readonly<Record<string, string>>;
 	readonly files: Readonly<Record<string, { readonly ts: string; readonly js: string }>>;
 } = /* REVIEWED_ORACLE_START */ {
-	revision: "harnessy.engineering.command-oracle.v1.r3",
+	revision: "harnessy.engineering.command-oracle.v1.r4",
 	node: "22.22.2",
 	sqlite: "3.51.2",
 	generator: {
@@ -117,8 +117,8 @@ const reviewed: {
 			js: "d2c08f98e56b34926265084fce70144398b0eaf75eaf9f7ed5569d84f7e13f75",
 		},
 		"work/run": {
-			ts: "94eba3ab6f4ebbf2689e3cf866305d4e002c6eb30591f8c1edf2f75ee0054bd2",
-			js: "20af1b3bee58154ac47a44e57409487ac7ce99ee809b4d83801a416e2dfb6c53",
+			ts: "d2da59b60f7e8e1f65e486379ac9dc688a41f17c3960095ea8589b70a752d721",
+			js: "c58e67fe6b7de0cf7051dfddda5224a126083ad05d85c19e779c8e657410ecee",
 		},
 		"work/task-content": {
 			ts: "cf72399760f50f76f1363b086042283b573bd53e8e7181fd90d68f154bf270f5",

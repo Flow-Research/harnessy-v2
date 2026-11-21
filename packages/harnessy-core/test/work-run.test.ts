@@ -150,6 +150,10 @@ interface Scenario {
 	pushEchoesEnv?: boolean;
 	/** `gh pr create` fails and echoes its whole environment on stderr. */
 	prCreateEchoesEnv?: boolean;
+	/** The first this many `herdr pane run` calls are refused because the new shell is not ready. */
+	paneNotReadyFirst?: number;
+	/** `herdr pane run` fails with this herdr error code every time. */
+	paneRunError?: string;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -290,6 +294,16 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				if (joined.startsWith("workspace create"))
 					return ok(JSON.stringify({ result: { root_pane: { pane_id: "w1:p1" } } }));
 				if (joined.startsWith("pane run")) {
+					const earlier = calls.filter((entry) => entry[1] === "pane" && entry[2] === "run").length - 1;
+					const code =
+						scenario.paneRunError ??
+						(earlier < (scenario.paneNotReadyFirst ?? 0) ? "pane_send_failed" : undefined);
+					if (code !== undefined)
+						return {
+							exitCode: 1,
+							stdout: "",
+							stderr: JSON.stringify({ error: { code, message: "the terminal is in canonical mode" } }),
+						};
 					const result =
 						scenario.agentResult ??
 						JSON.stringify({
@@ -409,6 +423,28 @@ describe("runWork", () => {
 		};
 	});
 	afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+	it("sends the agent line again when the new pane's shell was not ready, and gives up on another error", async () => {
+		const fake = fakeTools(root, { paneNotReadyFirst: 2 });
+		const outcome = await runWork({ ...options, approvePush: false }, fake.deps);
+		expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
+		const sent = fake.calls.filter((argv) => argv[1] === "pane" && argv[2] === "run");
+		expect(sent).toHaveLength(3);
+		// The same complete line each time: a refused send typed nothing.
+		expect(new Set(sent.map((argv) => argv[4])).size).toBe(1);
+	});
+
+	it("gives up when the pane never becomes ready or refuses for another reason", async () => {
+		const stuck = fakeTools(root, { paneNotReadyFirst: 1000 });
+		await expect(runWork(options, stuck.deps)).rejects.toThrow("herdr pane run failed");
+		expect(stuck.calls.filter((argv) => argv[1] === "pane" && argv[2] === "run")).toHaveLength(31);
+	});
+
+	it("does not retry a pane error that is not a busy shell", async () => {
+		const gone = fakeTools(root, { paneRunError: "pane_not_found" });
+		await expect(runWork(options, gone.deps)).rejects.toThrow("herdr pane run failed");
+		expect(gone.calls.filter((argv) => argv[1] === "pane" && argv[2] === "run")).toHaveLength(1);
+	});
 
 	it("stops after the local commit until the push is approved", async () => {
 		const fake = fakeTools(root);

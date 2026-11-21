@@ -227,6 +227,9 @@ const PREPARE_POLL_MS = 10 * 1000;
 const PREPARE_ATTEMPTS = 60;
 const CI_ATTEMPTS = 30;
 const PROBE_TIMEOUT_MS = 30 * 1000;
+/** How long a new pane's shell may take to show its prompt before the agent line is refused. */
+const PANE_READY_POLL_MS = 1000;
+const PANE_READY_ATTEMPTS = 30;
 const MIN_WAIT_MS = 1000;
 const ATTR_BATCH = 200;
 
@@ -1133,13 +1136,26 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				...(options.executionPolicy === undefined ? {} : { agentMarker: `HSY_WORK_EXIT_${deps.uuid()}=` }),
 			});
 			deps.log(`Running agent in herdr pane ${pane}`);
-			await must(
-				herdrArgv.paneRun(
-					pane,
-					agentRunLine(budgetLeft, paths, agentAllow, options.executionPolicy?.billing, state.agentMarker),
-				),
-				"herdr pane run",
+			// A new pane's shell is still starting. Until it shows its prompt, the terminal is in
+			// canonical mode and refuses a line over 1,024 bytes, without typing any of it. Nothing
+			// was sent, so the same line is sent again when the shell is ready.
+			const agentLine = agentRunLine(
+				budgetLeft,
+				paths,
+				agentAllow,
+				options.executionPolicy?.billing,
+				state.agentMarker,
 			);
+			for (let attempt = 0; ; attempt++) {
+				const sent = await work.run(herdrArgv.paneRun(pane, agentLine));
+				if (sent.exitCode === 0) break;
+				const refused = parseHerdrError(sent.stderr) ?? parseHerdrError(sent.stdout);
+				if (refused !== "pane_send_failed" || attempt >= PANE_READY_ATTEMPTS)
+					throw new Error(
+						`herdr pane run failed (exit ${sent.exitCode ?? "none"}): ${redactSecrets((sent.stderr || sent.stdout).trim()).slice(0, 500) || "no output"}`,
+					);
+				await deps.sleep(PANE_READY_POLL_MS);
+			}
 		} else deps.log(`Re-attaching to agent in herdr pane ${pane}`);
 		const deadline = state.agentDeadline ?? deps.now() + options.maxMinutes * 60_000;
 		// herdr checks existing output first, so even an expired deadline still sees a finished run.
