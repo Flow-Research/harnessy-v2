@@ -165,8 +165,10 @@ try {
 	await until("decision recorded", async () => {
 		if (failures.length) throw Error(failures.join(", "));
 		if (posts.length !== 1 || mainFrameNavigations <= beforeSubmission) return false;
-		return action === "generate-google-doc"
-			? evaluate(`document.querySelector('h1')?.textContent === 'Google Doc ready' && !!document.querySelector('a[target="_blank"][rel="noopener noreferrer"]')`)
+		// A decision returns to the inbox. Document generation returns to the page it started
+		// from: the inbox, or the item page, which then shows its document section again.
+		return action === "generate-google-doc" && process.argv[5] !== "inbox"
+			? evaluate(`location.pathname === '/item/${itemId}' && !!document.querySelector('.action-card')`)
 			: evaluate(`location.pathname === '/' && !!document.querySelector('#google-connection-title')`);
 	});
 	if (posts.length !== 1 || posts[0].origin !== origin || failures.length) throw Error("Native review submission failed");

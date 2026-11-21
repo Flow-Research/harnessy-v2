@@ -954,6 +954,27 @@ created: 2026-11-05
 updated: 2026-11-05
 ---
 
+---
+name: simple-english
+type: opencode
+version: 2.1.2
+install_scope: global
+status: experimental
+owner: julian
+blast_radius: low
+description: "Write replies and documents in plain English with the discipline of ASD-STE100 Simplified Technical English: answer first, prose by default, short sentences, active voice, one word for one meaning, condition before command, terms defined at first use."
+location: tools/flow-install/skills/simple-english
+invoke: "/simple-english"
+permissions: [read]
+data_categories: [none]
+egress: []
+phase: P0
+tags: [writing, plain-english, ste, replies, docs]
+depends_on: []
+created: 2026-11-18
+updated: 2026-11-18
+---
+
 ## Notes
 
 - **Owner is required**. If unowned, default to the project's primary maintainer.
