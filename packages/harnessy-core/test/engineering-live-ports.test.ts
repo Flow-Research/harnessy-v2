@@ -34,6 +34,7 @@ const world = (
 		readonly workstream?: RunResult;
 		readonly paneInfo?: RunResult;
 		readonly settled?: ReadonlyArray<string>;
+		readonly pull?: unknown;
 	} = {},
 ) => {
 	const base = realpathSync(mkdtempSync(join(tmpdir(), "engineering-ports-")));
@@ -51,6 +52,8 @@ const world = (
 		if (argv[0] === "lsof") return ok(overrides.lsof?.({ settings, worktree }) ?? "p1\nfcwd\nn/\n");
 		if (argv[0] === "herdr" && argv.includes("wait-output"))
 			return overrides.pane ?? { exitCode: 1, stdout: "", stderr: '{"error":{"code":"timeout"}}' };
+		if (argv[0] === "gh" && argv[1] === "pr" && argv[2] === "view" && overrides.pull !== undefined)
+			return ok(JSON.stringify(overrides.pull));
 		if (argv[0] === "herdr" && argv.includes("process-info"))
 			return overrides.paneInfo ?? { exitCode: 1, stdout: "", stderr: "" };
 		if (argv.includes("rev-parse")) return ok(`${"b".repeat(40)}\n`);
@@ -290,6 +293,29 @@ describe("cancellation", () => {
 });
 
 describe("verify gate", () => {
+	it("keeps the review findings of the pull request and rejects on a request for changes", async () => {
+		const w = world({
+			pull: {
+				headRefOid: HEAD,
+				state: "OPEN",
+				reviewDecision: "CHANGES_REQUESTED",
+				reviews: [{ author: { login: "ada" }, state: "CHANGES_REQUESTED", body: "This removes a required test." }],
+				comments: [],
+			},
+		});
+		w.saveState({ ...binding(), pushedSha: HEAD, pr: { url: "https://example.com/pr/1" } });
+		expect(await w.deps.verify(w.run(), { exitCode: 0, report: { pr_url: "https://example.com/pr/1" } })).toEqual({
+			verdict: "reject",
+			reason: "A reviewer requested changes on the pull request",
+		});
+		const kept = JSON.parse(readFileSync(join(w.stateRoot, "reviews", `${RUN_ID}.json`), "utf8"));
+		expect(kept).toMatchObject({
+			candidateRevision: HEAD,
+			changesRequested: true,
+			findings: [{ kind: "review", author: "ada", state: "CHANGES_REQUESTED" }],
+		});
+	});
+
 	it("rejects a run without a delivered pull request of this launch", async () => {
 		const w = world();
 		const run = w.run();

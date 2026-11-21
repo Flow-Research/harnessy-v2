@@ -33,6 +33,7 @@ import {
 	protectedChanges,
 	readHostConfig,
 	recordProviderPause,
+	reviewDisposition,
 	verifyCandidate,
 } from "../src/engineering/live.ts";
 import { type ExecutionGuardRequest, requireExecutionPermit } from "../src/work/execution-policy.ts";
@@ -279,6 +280,37 @@ describe("launcher and login shell environment", () => {
 		});
 		recordProviderPause(root, NOW + 20_000, "third", NOW + 2);
 		expect(JSON.parse(readFileSync(join(root, PROVIDER_PAUSE_FILE), "utf8")).until).toBe(NOW + 20_000);
+	});
+});
+
+describe("review disposition", () => {
+	const review = (login: string, state: string, body = "") => ({ author: { login }, state, body });
+	it("keeps review summaries and conversation comments, which are not inline threads", () => {
+		const disposition = reviewDisposition({
+			reviewDecision: "",
+			reviews: [review("ada", "COMMENTED", "The second test asserts a mock.")],
+			comments: [{ author: { login: "bot" }, body: "Coverage fell in\none file." }],
+		});
+		expect(disposition.changesRequested).toBe(false);
+		expect(disposition.findings).toMatchObject([
+			{ kind: "review", author: "ada", state: "COMMENTED", bodyStart: "The second test asserts a mock." },
+			{ kind: "comment", author: "bot", state: "COMMENTED", bodyStart: "Coverage fell in one file." },
+		]);
+		expect(disposition.findings[0]?.bodyDigest).toMatch(/^[a-f0-9]{64}$/);
+	});
+
+	it("rejects on a request for changes, unless the same reviewer approved later", () => {
+		expect(reviewDisposition({ reviewDecision: "CHANGES_REQUESTED" }).changesRequested).toBe(true);
+		expect(reviewDisposition({ reviews: [review("ada", "CHANGES_REQUESTED")] }).changesRequested).toBe(true);
+		expect(
+			reviewDisposition({ reviews: [review("ada", "CHANGES_REQUESTED"), review("ada", "APPROVED")] })
+				.changesRequested,
+		).toBe(false);
+		expect(
+			reviewDisposition({ reviews: [review("ada", "APPROVED"), review("ben", "CHANGES_REQUESTED")] })
+				.changesRequested,
+		).toBe(true);
+		expect(reviewDisposition("not an object")).toEqual({ changesRequested: false, findings: [] });
 	});
 });
 

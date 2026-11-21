@@ -557,6 +557,50 @@ export const verifyCandidate = async (
 		: { verdict: "reject", reason: `${failure ?? "Verification is incomplete"}; evidence: ${evidencePath}` };
 };
 
+/**
+ * Review findings that are not inline threads: each review with its state,
+ * and each conversation comment. The text is kept as a digest and a short
+ * start, because it is untrusted input.
+ */
+export const reviewDisposition = (
+	pull: unknown,
+): {
+	readonly changesRequested: boolean;
+	readonly findings: ReadonlyArray<{
+		readonly kind: "review" | "comment";
+		readonly author: string;
+		readonly state: string;
+		readonly bodyDigest: string;
+		readonly bodyStart: string;
+	}>;
+} => {
+	const value = (typeof pull === "object" && pull !== null ? pull : {}) as Readonly<Record<string, unknown>>;
+	const entries = (key: string, kind: "review" | "comment") =>
+		(Array.isArray(value[key]) ? value[key] : []).map((entry: unknown) => {
+			const item = (typeof entry === "object" && entry !== null ? entry : {}) as Readonly<Record<string, unknown>>;
+			const author = (typeof item.author === "object" && item.author !== null ? item.author : {}) as Readonly<
+				Record<string, unknown>
+			>;
+			const body = typeof item.body === "string" ? item.body : "";
+			return {
+				kind,
+				author: typeof author.login === "string" ? author.login.slice(0, 100) : "unknown",
+				state: typeof item.state === "string" ? item.state : kind === "comment" ? "COMMENTED" : "UNKNOWN",
+				bodyDigest: sha256(body),
+				bodyStart: body.replace(/\s+/g, " ").slice(0, 200),
+			};
+		});
+	const findings = [...entries("reviews", "review"), ...entries("comments", "comment")];
+	// The latest review of each author counts: a later approval replaces an earlier request.
+	const latest = new Map<string, string>();
+	for (const finding of findings) if (finding.kind === "review") latest.set(finding.author, finding.state);
+	return {
+		changesRequested:
+			value.reviewDecision === "CHANGES_REQUESTED" || [...latest.values()].includes("CHANGES_REQUESTED"),
+		findings,
+	};
+};
+
 /** Outcomes of the existing runner that mean "a checked pull request exists". */
 const DELIVERED_HANDOFFS = new Set(["merge_timeout"]);
 
@@ -801,9 +845,10 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		const headSha = saved.pushedSha ?? "";
 		if (!/^[a-f0-9]{40}$/.test(headSha) || saved.prUrl === undefined || report.pr_url !== saved.prUrl)
 			return { verdict: "reject", reason: "No pushed candidate with a pull request is on record" };
-		const pull = await work.run(["gh", "pr", "view", saved.prUrl, "--json", "headRefOid,state"], {
-			timeoutMs: 60_000,
-		});
+		const pull = await work.run(
+			["gh", "pr", "view", saved.prUrl, "--json", "headRefOid,state,reviewDecision,reviews,comments"],
+			{ timeoutMs: 60_000 },
+		);
 		const pullFacts = Result.try((): unknown => JSON.parse(pull.stdout));
 		if (
 			pull.exitCode !== 0 ||
@@ -814,6 +859,18 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 			pullFacts.success.headRefOid !== headSha
 		)
 			return { verdict: "reject", reason: "The pull request head is not the pushed candidate" };
+		// Review summaries and conversation comments are findings outside inline threads. They are
+		// kept with the run, and a request for changes rejects the outcome.
+		const disposition = reviewDisposition(pullFacts.success);
+		writePrivateJson(join(stateRoot, "reviews", `${run.id}.json`), {
+			schema: "harnessy.engineering.review-disposition.v1",
+			runId: run.id,
+			candidateRevision: headSha,
+			recordedAt: work.now(),
+			...disposition,
+		});
+		if (disposition.changesRequested)
+			return { verdict: "reject", reason: "A reviewer requested changes on the pull request" };
 		const checked = await check(profile, run.job.sourceRevision, headSha);
 		if (checked.verdict === "reject") return checked;
 		return {
