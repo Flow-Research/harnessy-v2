@@ -22,7 +22,12 @@ export interface RequiredCheck {
 export interface ObjectiveMetric {
 	readonly id: string;
 	readonly direction: MetricDirection;
-	readonly method: "paired-t" | "deterministic";
+	/**
+	 * `paired-signed-rank` is the exact Wilcoxon signed-rank interval for ten
+	 * pairs. It needs independent pairs and differences that are symmetric
+	 * about their centre. It does not need normal differences.
+	 */
+	readonly method: "paired-t" | "paired-signed-rank" | "deterministic";
 	readonly minimumImprovement: number;
 }
 
@@ -46,6 +51,8 @@ export interface EvaluationPlan {
 	readonly assumptions: {
 		readonly independentPairs: boolean;
 		readonly approximatelyNormalDifferences: boolean;
+		/** Supported by a null calibration of this workload on this environment. */
+		readonly symmetricDifferences?: boolean;
 	};
 }
 
@@ -102,7 +109,7 @@ export interface ExperimentDecision {
 	readonly reason: string;
 	readonly improvement?: number;
 	readonly interval?: readonly [number, number];
-	readonly intervalMethod?: "paired-student-t-df9";
+	readonly intervalMethod?: "paired-student-t-df9" | "paired-signed-rank-exact-n10";
 }
 
 const DIGEST = /^[a-f0-9]{64}$/;
@@ -169,7 +176,7 @@ function freezePlan(input: EvaluationPlan): EvaluationPlan {
 		typeof plan.primary.id !== "string" ||
 		plan.primary.id === "" ||
 		!directionValid(plan.primary.direction) ||
-		!["paired-t", "deterministic"].includes(plan.primary.method) ||
+		!["paired-t", "paired-signed-rank", "deterministic"].includes(plan.primary.method) ||
 		!Number.isFinite(plan.primary.minimumImprovement) ||
 		plan.primary.minimumImprovement < 0.05 ||
 		plan.primary.minimumImprovement > 1
@@ -195,7 +202,9 @@ function freezePlan(input: EvaluationPlan): EvaluationPlan {
 	if (
 		!plan.assumptions ||
 		typeof plan.assumptions.independentPairs !== "boolean" ||
-		typeof plan.assumptions.approximatelyNormalDifferences !== "boolean"
+		typeof plan.assumptions.approximatelyNormalDifferences !== "boolean" ||
+		(plan.assumptions.symmetricDifferences !== undefined &&
+			typeof plan.assumptions.symmetricDifferences !== "boolean")
 	)
 		throw new Error("Missing statistical assumptions");
 	Object.freeze(plan.binding);
@@ -224,6 +233,103 @@ function interval(values: ReadonlyArray<number>): {
 	// Two-sided 95% Student t interval, df=9. Assumptions are declared before execution.
 	const margin = 2.2621571627409915 * Math.sqrt(variance / values.length);
 	return { mean, bounds: [mean - margin, mean + margin] };
+}
+
+/**
+ * Exact two-sided Wilcoxon signed-rank interval for ten paired differences.
+ * The estimate is the Hodges-Lehmann pseudo-median: the median of the 55
+ * Walsh averages (the means of every pair of differences, each with itself
+ * included). The bounds are the 9th smallest and the 9th largest Walsh
+ * average. Under the null, 25 of the 1,024 sign patterns give a rank sum of
+ * 8 or less, so the interval covers the centre with probability
+ * 1 - 50/1024 = 95.1%. This holds for any continuous distribution that is
+ * symmetric about its centre, when the pairs are independent.
+ */
+export function signedRankInterval(values: ReadonlyArray<number>): {
+	readonly mean: number;
+	readonly bounds: readonly [number, number];
+} {
+	if (values.length !== 10) throw new Error("The exact signed-rank interval is defined here for ten pairs");
+	const walsh: number[] = [];
+	for (let i = 0; i < values.length; i++)
+		for (let j = i; j < values.length; j++) walsh.push(((values[i] ?? Number.NaN) + (values[j] ?? Number.NaN)) / 2);
+	walsh.sort((left, right) => left - right);
+	return { mean: walsh[27] ?? Number.NaN, bounds: [walsh[8] ?? Number.NaN, walsh[46] ?? Number.NaN] };
+}
+
+export interface NullCalibration {
+	readonly experiments: number;
+	/** Null experiments whose interval excluded zero. About 5% is expected. */
+	readonly intervalsExcludingZero: number;
+	/** Null experiments that the decision rule would keep at a 5% minimum improvement. */
+	readonly falseKeeps: number;
+	/** Correlation of each difference with the next one, over all experiments. */
+	readonly lagOneCorrelation: number;
+	/** Share of positive differences. Symmetry about zero gives about one half. */
+	readonly positiveShare: number;
+	readonly supported: boolean;
+	readonly reasons: ReadonlyArray<string>;
+}
+
+/**
+ * Judge the signed-rank assumptions from baseline against baseline
+ * experiments. Each experiment is the ten relative differences of one run in
+ * which both sides are the same source. The assumptions are supported only
+ * when no null experiment would be kept, the share of intervals that exclude
+ * zero is plausible for a 5% test, and the differences show no strong serial
+ * correlation and no strong sign bias.
+ */
+export function calibrateNullExperiments(experiments: ReadonlyArray<ReadonlyArray<number>>): NullCalibration {
+	const reasons: string[] = [];
+	if (experiments.length < 20) reasons.push("at_least_20_null_experiments_required");
+	if (experiments.some((entry) => entry.length !== 10 || entry.some((value) => !Number.isFinite(value))))
+		return {
+			experiments: experiments.length,
+			intervalsExcludingZero: 0,
+			falseKeeps: 0,
+			lagOneCorrelation: Number.NaN,
+			positiveShare: Number.NaN,
+			supported: false,
+			reasons: ["each_experiment_needs_ten_finite_differences"],
+		};
+	let excluding = 0;
+	let falseKeeps = 0;
+	for (const entry of experiments) {
+		const result = signedRankInterval(entry);
+		if (result.bounds[0] > 0 || result.bounds[1] < 0) excluding++;
+		if (result.bounds[0] > 0 && result.mean >= 0.05) falseKeeps++;
+	}
+	const all = experiments.flat();
+	const mean = all.reduce((sum, value) => sum + value, 0) / Math.max(1, all.length);
+	let covariance = 0;
+	let variance = 0;
+	for (const entry of experiments)
+		for (let index = 0; index < entry.length; index++) {
+			const value = (entry[index] ?? 0) - mean;
+			variance += value * value;
+			if (index + 1 < entry.length) covariance += value * ((entry[index + 1] ?? 0) - mean);
+		}
+	const lagOneCorrelation = variance === 0 ? 0 : covariance / variance;
+	const nonZero = all.filter((value) => value !== 0);
+	const positiveShare = nonZero.length === 0 ? 0.5 : nonZero.filter((value) => value > 0).length / nonZero.length;
+	if (falseKeeps > 0) reasons.push("a_null_experiment_would_be_kept");
+	// A 5% test over n experiments: allow up to the mean plus three standard deviations.
+	if (excluding > 0.05 * experiments.length + 3 * Math.sqrt(0.05 * 0.95 * experiments.length))
+		reasons.push("too_many_null_intervals_exclude_zero");
+	// The standard error of a lag-one correlation is about 1/sqrt(n).
+	if (Math.abs(lagOneCorrelation) > 3 / Math.sqrt(Math.max(1, all.length)))
+		reasons.push("differences_are_serially_correlated");
+	if (Math.abs(positiveShare - 0.5) > 3 * Math.sqrt(0.25 / Math.max(1, nonZero.length)))
+		reasons.push("differences_are_not_centred_on_zero");
+	return {
+		experiments: experiments.length,
+		intervalsExcludingZero: excluding,
+		falseKeeps,
+		lagOneCorrelation,
+		positiveShare,
+		supported: reasons.length === 0,
+		reasons,
+	};
 }
 
 function relativeDifferences(
@@ -388,7 +494,13 @@ export class EvaluationSession {
 		const values = (issued: IssuedReceipt, id: string) =>
 			issued.receipt.samples.map((sample) => sample.measurements[id]);
 		const plan = base.plan;
-		const assumptionsSupported = plan.assumptions.independentPairs && plan.assumptions.approximatelyNormalDifferences;
+		const signedRank = plan.primary.method === "paired-signed-rank";
+		const assumptionsSupported =
+			plan.assumptions.independentPairs &&
+			(signedRank
+				? plan.assumptions.symmetricDifferences === true
+				: plan.assumptions.approximatelyNormalDifferences);
+		const estimate = signedRank ? signedRankInterval : interval;
 		for (const guard of plan.guardrails) {
 			const a = values(base, guard.id);
 			const b = values(candidate, guard.id);
@@ -410,7 +522,7 @@ export class EvaluationSession {
 			}
 			if (!assumptionsSupported)
 				return { verdict: "inconclusive", reason: "unsupported_paired_interval_assumptions" };
-			const result = interval(differences);
+			const result = estimate(differences);
 			if (![result.mean, ...result.bounds].every(Number.isFinite))
 				return { verdict: "inconclusive", reason: `invalid_protected_interval:${guard.id}` };
 			if (-result.bounds[1] > guard.maximumRegression)
@@ -432,7 +544,7 @@ export class EvaluationSession {
 				: { verdict: "reject", reason: "deterministic_threshold_not_met", improvement: differences[0] };
 		}
 		if (!assumptionsSupported) return { verdict: "inconclusive", reason: "unsupported_paired_interval_assumptions" };
-		const result = interval(differences);
+		const result = estimate(differences);
 		if (![result.mean, ...result.bounds].every(Number.isFinite))
 			return { verdict: "inconclusive", reason: "invalid_primary_interval" };
 		if (result.mean <= 0) return { verdict: "reject", reason: "no_primary_improvement", improvement: result.mean };
@@ -448,7 +560,7 @@ export class EvaluationSession {
 			reason: "measured_improvement",
 			improvement: result.mean,
 			interval: result.bounds,
-			intervalMethod: "paired-student-t-df9",
+			intervalMethod: signedRank ? "paired-signed-rank-exact-n10" : "paired-student-t-df9",
 		};
 	}
 }
