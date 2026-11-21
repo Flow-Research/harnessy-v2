@@ -32,6 +32,7 @@ const world = (
 		readonly lsof?: (paths: Paths) => string;
 		readonly pane?: RunResult;
 		readonly workstream?: RunResult;
+		readonly paneInfo?: RunResult;
 	} = {},
 ) => {
 	const base = realpathSync(mkdtempSync(join(tmpdir(), "engineering-ports-")));
@@ -49,6 +50,8 @@ const world = (
 		if (argv[0] === "lsof") return ok(overrides.lsof?.({ settings, worktree }) ?? "p1\nfcwd\nn/\n");
 		if (argv[0] === "herdr" && argv.includes("wait-output"))
 			return overrides.pane ?? { exitCode: 1, stdout: "", stderr: '{"error":{"code":"timeout"}}' };
+		if (argv[0] === "herdr" && argv.includes("process-info"))
+			return overrides.paneInfo ?? { exitCode: 1, stdout: "", stderr: "" };
 		if (argv.includes("rev-parse")) return ok(`${"b".repeat(40)}\n`);
 		if (argv[0] === "workstream") return overrides.workstream ?? ok("workstream 1.0.0");
 		return ok();
@@ -172,10 +175,39 @@ describe("process observation", () => {
 		expect((await w.deps.inspect(w.run())).state).toBe("active");
 	});
 
+	it("does not count the idle pane shell that stays in the worktree, and counts a shell that runs something", async () => {
+		const idle = world({
+			ps: () => "    1     0 /sbin/launchd\n 4242     1 -zsh\n",
+			lsof: ({ worktree }) => `p4242\nfcwd\nn${worktree}\n`,
+		});
+		const observed = await idle.deps.inspect(idle.run());
+		expect(observed.state).toBe("stopped");
+		if (observed.state === "stopped")
+			expect(JSON.parse(observed.evidence)).toMatchObject({ idleShellsUnderWorktree: 1 });
+		const busy = world({
+			ps: () => "    1     0 /sbin/launchd\n 4242     1 -zsh\n 4300  4242 node build.js\n",
+			lsof: ({ worktree }) => `p4242\nfcwd\nn${worktree}\n`,
+		});
+		expect((await busy.deps.inspect(busy.run())).state).toBe("active");
+	});
+
 	it("treats a pane without its completion line as active, and an unlisted host as unknown", async () => {
 		const w = world();
 		w.saveState({ ...binding(), pane: "pane-1", agentMarker: "HSY_WORK_EXIT_abc=" });
 		expect((await w.deps.inspect(w.run())).state).toBe("active");
+		// The terminal reports that only its idle shell is in the pane: the agent is not there.
+		const paneInfo = (pids: number[]) =>
+			ok(
+				JSON.stringify({
+					result: { process_info: { shell_pid: 4242, foreground_processes: pids.map((pid) => ({ pid })) } },
+				}),
+			);
+		const idlePane = world({ ps: () => " 4242     1 -zsh\n", paneInfo: paneInfo([4242]) });
+		idlePane.saveState({ ...binding(), pane: "pane-1", agentMarker: "HSY_WORK_EXIT_abc=" });
+		expect((await idlePane.deps.inspect(idlePane.run())).state).toBe("stopped");
+		const busyPane = world({ ps: () => " 4242     1 -zsh\n 4300  4242 claude\n", paneInfo: paneInfo([4300]) });
+		busyPane.saveState({ ...binding(), pane: "pane-1", agentMarker: "HSY_WORK_EXIT_abc=" });
+		expect((await busyPane.deps.inspect(busyPane.run())).state).toBe("active");
 		const blind = world({ ps: () => "" });
 		expect((await blind.deps.inspect(blind.run())).state).toBe("unknown");
 	});

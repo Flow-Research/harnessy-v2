@@ -349,9 +349,17 @@ export class EngineeringController {
 				protectedPaths: [...(this.#deps.work.protectedPaths ?? []), this.#store.root],
 			},
 		)
-			.catch(() => {
+			.catch((cause: unknown) => {
 				// A thrown call is not proof of failure before launch. Retain capacity and inspect.
-				this.#store.markUncertain(run.id, "Runner interrupted, host reconciliation required", this.#deps.now());
+				// The message is kept, so that an operator can see why the runner stopped.
+				const message = (cause instanceof Error ? cause.message : "unknown error")
+					.replace(/\s+/g, " ")
+					.slice(0, 300);
+				this.#store.markUncertain(
+					run.id,
+					`Runner interrupted, host reconciliation required: ${message}`,
+					this.#deps.now(),
+				);
 				return undefined;
 			})
 			.finally(() => {

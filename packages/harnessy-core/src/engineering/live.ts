@@ -346,6 +346,25 @@ export const agentDescendants = (psOutput: string, settingsPath: string): Readon
 	return [...found].sort((left, right) => left - right);
 };
 
+/**
+ * An idle terminal shell: a login or plain shell with no child process. The
+ * runner's pane keeps such a shell in the worktree after the agent ends, and
+ * it does no work. A shell that runs anything has a child, so it is not idle.
+ */
+export const idleShells = (psOutput: string): ReadonlySet<number> => {
+	const rows = psOutput
+		.split("\n")
+		.map((line) => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line))
+		.filter((match) => match !== null)
+		.map((match) => ({ pid: Number(match[1]), parent: Number(match[2]), command: (match[3] ?? "").trim() }));
+	const parents = new Set(rows.map((row) => row.parent));
+	return new Set(
+		rows
+			.filter((row) => /^-?(\/[\w./-]*\/)?(zsh|bash|sh|fish)$/.test(row.command) && !parents.has(row.pid))
+			.map((row) => row.pid),
+	);
+};
+
 export interface LiveHostOptions {
 	readonly config: EngineeringHostConfig;
 	/** Folder of the owner host profile. The agent may not read or edit it. */
@@ -665,19 +684,39 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 			return { state: "unknown", reason: "Host processes cannot be listed" };
 		if (agentDescendants(table.stdout, settingsOf(run)).length > 0)
 			return { state: "active", identity: identityOf(run) };
-		const live = existsSync(worktree) ? await processesUnder(work.run, worktree) : [];
-		if (live === undefined) return { state: "unknown", reason: "Host processes cannot be listed" };
+		const under = existsSync(worktree) ? await processesUnder(work.run, worktree) : [];
+		if (under === undefined) return { state: "unknown", reason: "Host processes cannot be listed" };
+		const idle = idleShells(table.stdout);
+		const live = under.filter((pid) => !idle.has(pid));
 		if (live.length > 0) return { state: "active", identity: identityOf(run) };
 		let paneStatus = "no work state";
 		let agentExitCode: number | undefined;
 		if (saved.present) {
 			const pane = await inspectWorkProcess(run.job.taskId, work);
-			// A recorded pane without its completion line can still hold the agent.
-			if (pane.status === "unknown")
-				return pane.pane === undefined
-					? { state: "unknown", reason: "The saved work state cannot be read" }
-					: { state: "active", identity: identityOf(run) };
 			paneStatus = pane.status;
+			if (pane.status === "unknown") {
+				if (pane.pane === undefined) return { state: "unknown", reason: "The saved work state cannot be read" };
+				// A recorded pane without its completion line can still hold the agent. It is idle
+				// only when the terminal itself reports that its shell is the one foreground process.
+				const info = await work.run(["herdr", "pane", "process-info", "--pane", pane.pane], { timeoutMs: 10_000 });
+				const parsed = Result.try((): unknown => JSON.parse(info.stdout));
+				const facts =
+					info.exitCode === 0 && Result.isSuccess(parsed)
+						? (parsed.success as { result?: { process_info?: Record<string, unknown> } }).result?.process_info
+						: undefined;
+				const foreground = Array.isArray(facts?.foreground_processes) ? facts.foreground_processes : undefined;
+				const idlePane =
+					typeof facts?.shell_pid === "number" &&
+					foreground !== undefined &&
+					foreground.length > 0 &&
+					foreground.every(
+						(entry: unknown) =>
+							typeof entry === "object" && entry !== null && "pid" in entry && entry.pid === facts.shell_pid,
+					) &&
+					idle.has(facts.shell_pid);
+				if (!idlePane) return { state: "active", identity: identityOf(run) };
+				paneStatus = "idle shell, no completion line";
+			}
 			agentExitCode = pane.exitCode;
 		} else if (!run.runnerReturned)
 			// Without any saved state, only a returned runner shows that nothing was launched.
@@ -692,6 +731,7 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 				...(agentExitCode === undefined ? {} : { agentExitCode }),
 				agentProcesses: 0,
 				processesUnderWorktree: 0,
+				idleShellsUnderWorktree: under.length,
 				limit: "A process that left the agent's process tree and the worktree directory is not observed",
 			}),
 		};
