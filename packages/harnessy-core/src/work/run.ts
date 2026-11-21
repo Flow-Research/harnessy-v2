@@ -77,6 +77,7 @@ import {
 	parseActor,
 	parseAssignment,
 	parseChangedPaths,
+	parseCheckBuckets,
 	parseDepDirs,
 	parseExitMarker,
 	parseHerdrError,
@@ -227,6 +228,9 @@ const PREPARE_POLL_MS = 10 * 1000;
 const PREPARE_ATTEMPTS = 60;
 const CI_ATTEMPTS = 30;
 const PROBE_TIMEOUT_MS = 30 * 1000;
+/** How long a new pane's shell may take to show its prompt before the agent line is refused. */
+const PANE_READY_POLL_MS = 1000;
+const PANE_READY_ATTEMPTS = 30;
 const MIN_WAIT_MS = 1000;
 const ATTR_BATCH = 200;
 
@@ -1133,13 +1137,26 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				...(options.executionPolicy === undefined ? {} : { agentMarker: `HSY_WORK_EXIT_${deps.uuid()}=` }),
 			});
 			deps.log(`Running agent in herdr pane ${pane}`);
-			await must(
-				herdrArgv.paneRun(
-					pane,
-					agentRunLine(budgetLeft, paths, agentAllow, options.executionPolicy?.billing, state.agentMarker),
-				),
-				"herdr pane run",
+			// A new pane's shell is still starting. Until it shows its prompt, the terminal is in
+			// canonical mode and refuses a line over 1,024 bytes, without typing any of it. Nothing
+			// was sent, so the same line is sent again when the shell is ready.
+			const agentLine = agentRunLine(
+				budgetLeft,
+				paths,
+				agentAllow,
+				options.executionPolicy?.billing,
+				state.agentMarker,
 			);
+			for (let attempt = 0; ; attempt++) {
+				const sent = await work.run(herdrArgv.paneRun(pane, agentLine));
+				if (sent.exitCode === 0) break;
+				const refused = parseHerdrError(sent.stderr) ?? parseHerdrError(sent.stdout);
+				if (refused !== "pane_send_failed" || attempt >= PANE_READY_ATTEMPTS)
+					throw new Error(
+						`herdr pane run failed (exit ${sent.exitCode ?? "none"}): ${redactSecrets((sent.stderr || sent.stdout).trim()).slice(0, 500) || "no output"}`,
+					);
+				await deps.sleep(PANE_READY_POLL_MS);
+			}
 		} else deps.log(`Re-attaching to agent in herdr pane ${pane}`);
 		const deadline = state.agentDeadline ?? deps.now() + options.maxMinutes * 60_000;
 		// herdr checks existing output first, so even an expired deadline still sees a finished run.
@@ -1370,7 +1387,21 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			for (;;) {
 				const timeoutMs = app === undefined ? CHECKS_TIMEOUT_MS : Math.min(APP_CHECKS_SLICE_MS, until - deps.now());
 				const result = await work.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs });
-				if (app === undefined || result.timedOut !== true || deps.now() >= until) return result;
+				if (result.exitCode === 0 || deps.now() >= until) return result;
+				if (result.timedOut === true) {
+					if (app === undefined) return result;
+					continue;
+				}
+				// The watch can end with an error while no check has failed, for example on a failed
+				// request. That is not a verdict. Keep waiting only when the checks themselves say
+				// that none failed and some are still pending.
+				if (NO_CHECKS_YET.test(`${result.stdout}\n${result.stderr}`)) return result;
+				const buckets = parseCheckBuckets(
+					(await work.run(ghArgv.checksState(pr.number), { cwd: worktree, timeoutMs: PROBE_TIMEOUT_MS })).stdout,
+				);
+				if (buckets === undefined || buckets.failed > 0 || buckets.pending === 0) return result;
+				deps.log(`The checks watch ended early (gh exit ${result.exitCode ?? "none"}); none failed, waiting again`);
+				await deps.sleep(CHECKS_APPEAR_POLL_MS);
 			}
 		};
 		let checks = await watch();
@@ -1388,6 +1419,8 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			return handoff(
 				"checks_not_passed",
 				`checks on PR #${pr.number} have not passed (gh exit ${checks.exitCode}); it stays a draft. Re-run once they pass, or close the PR.`,
+				// The last lines of the command, so that an early stop can be told from a failed check.
+				{ checks_output: redactSecrets(`${checks.stdout}\n${checks.stderr}`.trim()).slice(-600) },
 			);
 		// Mark ready only the reviewed commit: the branch could have moved while checks ran.
 		const current = parsePrView(await must(ghArgv.prView(pr.number), "gh pr view", worktree));

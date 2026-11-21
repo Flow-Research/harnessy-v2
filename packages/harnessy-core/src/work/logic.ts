@@ -515,6 +515,7 @@ export const ghArgv = {
 		bodyFile,
 	],
 	checksWatch: (pr: number) => ["gh", "pr", "checks", String(pr), "--watch"],
+	checksState: (pr: number) => ["gh", "pr", "checks", String(pr), "--json", "bucket"],
 	/** Returns a PR to draft while a revision is prepared, so the old head cannot be merged. */
 	prDraft: (pr: number) => ["gh", "pr", "ready", String(pr), "--undo"],
 	prComment: (pr: number, bodyFile: string) => ["gh", "pr", "comment", String(pr), "--body-file", bodyFile],
@@ -935,6 +936,24 @@ export const agentRunLine = (
 		JSON.stringify(AGENT_RESULT_SCHEMA),
 	];
 	return `${argv.map(shellWord).join(" ")} < ${shellWord(paths.prompt)} > ${shellWord(paths.result)}; echo ${marker}$?`;
+};
+
+/**
+ * Summary of `gh pr checks --json bucket`. `undefined` when the output is not
+ * a list of checks, so that a caller never reads an error as "nothing failed".
+ */
+export const parseCheckBuckets = (
+	stdout: string,
+): { readonly failed: number; readonly pending: number; readonly total: number } | undefined => {
+	const value = parseJson(stdout.trim());
+	if (!Array.isArray(value)) return undefined;
+	const buckets = value.map((entry) => field(entry, "bucket"));
+	if (buckets.some((bucket) => typeof bucket !== "string")) return undefined;
+	return {
+		failed: buckets.filter((bucket) => bucket === "fail" || bucket === "cancel").length,
+		pending: buckets.filter((bucket) => bucket === "pending").length,
+		total: buckets.length,
+	};
 };
 
 /** Error code from herdr's JSON error on stderr (`{"error":{"code":"timeout"}}`). */

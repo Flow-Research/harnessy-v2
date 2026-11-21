@@ -37,7 +37,7 @@ const reviewed: {
 	readonly generator: Readonly<Record<string, string>>;
 	readonly files: Readonly<Record<string, { readonly ts: string; readonly js: string }>>;
 } = /* REVIEWED_ORACLE_START */ {
-	revision: "harnessy.engineering.command-oracle.v1.r1",
+	revision: "harnessy.engineering.command-oracle.v1.r5",
 	node: "22.22.2",
 	sqlite: "3.51.2",
 	generator: {
@@ -65,8 +65,8 @@ const reviewed: {
 			js: "b6a76bbe8fc3802c39a08e534ab88a54ae7ab170fa2045caffffbe0f06494580",
 		},
 		"engineering/store": {
-			ts: "2e28509c7bd577ffa7bf14692986f786080d0b769c5e65d9d828a5f6a5321602",
-			js: "68e3ebb12eb47e5a6c9996b567f0ecb0611b01e5230c985427a6555cb643a0dd",
+			ts: "0285f1f3cf4851111300f939157cfb7d32cb0bb9423c98be7124f2751002136d",
+			js: "616ac93e0551d81a24d8a2a2b809d8cc6408fb4a61d0c279cf5917b063a3caa9",
 		},
 		errors: {
 			ts: "e063578d3934955a6a3107dffca7b66f22e2a3dd6a70cf01721c32291d26d96c",
@@ -109,20 +109,20 @@ const reviewed: {
 			js: "fca5ef7bc555829f870f576518215388c9123689676e7c5e6740a2bad211c984",
 		},
 		"work/logic": {
-			ts: "cc129ca641c413988890df6f1ff78426501b73fb0a330325b114addcc912f9cd",
-			js: "717be1d78db27a3af5b7da953530da15ff60368cc9265df061dd999910ffa547",
+			ts: "34f267acdc90df94ace0534d10af21abd2a346ad7c47821057657737124bc2d8",
+			js: "546c260682e630542342db439cd1b0b9bb90aa124e66b182f41140a81b69d044",
 		},
 		"work/notifications": {
 			ts: "02cfaa74e77c6c178bc079db91380548747b8eb81baab37f0b8e692380bb13bf",
 			js: "d2c08f98e56b34926265084fce70144398b0eaf75eaf9f7ed5569d84f7e13f75",
 		},
 		"work/run": {
-			ts: "94eba3ab6f4ebbf2689e3cf866305d4e002c6eb30591f8c1edf2f75ee0054bd2",
-			js: "20af1b3bee58154ac47a44e57409487ac7ce99ee809b4d83801a416e2dfb6c53",
+			ts: "25b7e1043f4290e13f0b0a4c6a47ff16913e139f08f8c7251f0d762e819059f2",
+			js: "43eea215d71c8b7fe379944ddd148d3b6acb47b3768f9470f89bcc67e9795191",
 		},
 		"work/task-content": {
-			ts: "67342851f7e52c2cc54d9efd9da534d1f5aea67a65bccb5037494434deda3da1",
-			js: "789568144fe718e9f612a3cc3fc087d337b08f3750d50520e8a790d330ed9286",
+			ts: "cf72399760f50f76f1363b086042283b573bd53e8e7181fd90d68f154bf270f5",
+			js: "ec89fcab0328d93295fddffba4577107baccb7cf7a61d3928eeb352729f0f8bb",
 		},
 		"work/zip": {
 			ts: "e05e7deea4effbe00125530f8f56027c63d601554c99f434182b963bed9cd781",

@@ -115,8 +115,25 @@ finally { s.close(); }`;
 			store.settle(`slot-${index}`, "failed", "Owned worker never created", at);
 		}
 		const at = now + lanes.length * ENGINEERING_PILOT.windowMs;
+		// After native, native, maintenance, native, the next slot belongs to the native lane.
+		const due = approve(store, job("native"), at);
 		const wrong = approve(store, job("maintenance"), at);
 		expect(() => store.reserve(wrong.job.id, wrong.grant.id, "wrong", at)).toThrow(/slot/);
+		store.reserve(due.job.id, due.grant.id, "due", at);
+		store.settle("due", "failed", "Owned worker never created", at);
+	});
+	it("yields a slot when its lane has no approved work, and keeps that lane's turn", () => {
+		const { store } = fixture();
+		// The first slot belongs to the native lane, and nothing native is approved.
+		const first = approve(store, job("maintenance"));
+		store.reserve(first.job.id, first.grant.id, "yielded", now);
+		expect(store.events().at(-1)?.detail).toContain("native slot yielded, no approved native work");
+		store.settle("yielded", "failed", "Owned worker never created", now);
+		// The yielded slot did not advance: native work that arrives takes priority again.
+		const native = approve(store, job("native"), now + 1);
+		const maintenance = approve(store, job("maintenance"), now + 1);
+		expect(() => store.reserve(maintenance.job.id, maintenance.grant.id, "blocked", now + 1)).toThrow(/slot/);
+		store.reserve(native.job.id, native.grant.id, "native-first", now + 1);
 	});
 	it("counts every reservation against the daily cap and three objective failures", () => {
 		const { store } = fixture();

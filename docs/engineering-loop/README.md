@@ -47,13 +47,31 @@ The report binds measurements to maintained source bytes and modes, Git revision
 
 The command rechecks original sources, copied sources, dependencies, and host tools around each measurement. It rejects missing operations, changed identities, invalid output, and unavailable resource measurements. Each default-profile child has a five-second time limit. Command-profile children have a 15-second time limit. All children have bounded output. Source and dependency preparation also has file and byte limits.
 
-The default comparison result is `inconclusive`. Ten samples alone do not establish the statistical assumptions for a reliable performance claim. No CLI option accepts a policy file, a worker result, arbitrary commands, or a claim that these assumptions hold. Saved JSON is an audit record. It cannot recreate the trusted measurement objects from the current process.
+Without a calibration, the comparison result of a noisy metric is `inconclusive`. Ten samples alone do not establish the statistical assumptions for a reliable performance claim. [Calibrate the benchmark on a host](#calibrate-the-benchmark-on-a-host) gives the procedure that supplies those assumptions. No CLI option accepts a policy file, a worker result, arbitrary commands, or a claim that these assumptions hold. Saved JSON is an audit record. It cannot recreate the trusted measurement objects from the current process.
+
+## Calibrate the benchmark on a host
+
+A null experiment is one benchmark run in which the baseline and the candidate are the same source. Every measured difference in it is noise.
+
+1. Run the benchmark at least 20 times with the same path for `--baseline` and `--candidate`. Put each run in its own sub-folder of one private folder.
+2. Build the calibration record:
+
+```sh
+harnessy engineering calibrate --reports /absolute/private-measurements/null-runs \
+  --profile pure-task-operations --output /absolute/private-measurements/calibration.json
+```
+
+3. Pass the record to a later benchmark with `--calibration /absolute/private-measurements/calibration.json`.
+
+The record supports a metric only when no null experiment would count as an improvement, the differences show no drift, and the two sides are balanced. The benchmark refuses a record of another profile, host, toolchain, evaluator or workload size, and a record that is older than 30 days. With a record, the decision uses the exact signed-rank interval for ten pairs. This interval does not need normal differences.
+
+A calibrated decision can still be `inconclusive`. On a short workload, timing noise can be as large as the 5 percent limits. The result then names the metric that is too noisy.
 
 ## Execution boundaries
 
 The engineering controller uses the existing task runner and private SQLite state. Remote host delivery retains launch identities, pending operations, acknowledgments, and event sequence numbers in that state. It requires a confirmed acknowledgment and fresh central authority before remote execution. A lost reply keeps the reservation held until reconciliation. Local controller state alone does not qualify a multi-host pilot.
 
-Owner commands can approve an exact job, inspect local state, request cancellation, and revoke authority. These commands do not enable a daemon. Provider admission still requires trusted evidence of available included allowance and disabled additional paid usage. Login or a subscription name does not supply that evidence.
+Owner commands can approve an exact job, inspect local state, request cancellation, and revoke authority. The commands `tick` and `serve` can start one worker for an approved job. Provider admission requires all of these facts: a subscription sign-in for the expected account, no provider setting in the environment, an owner statement that extra usage billing is off, and no recorded limit pause. [Operate the engineering loop on one machine](operations.md) gives the procedure.
 
 The benchmark has no provider, model, merge, deployment, or job-approval capability. It does not authorize a task or release. The retired command-measurement and JSON-comparison prototypes are no longer public entrypoints. Earlier prototype smoke reports remain historical evidence only.
 
@@ -61,4 +79,4 @@ The benchmark has no provider, model, merge, deployment, or job-approval capabil
 
 Full Harnessy startup, preparation, and status workloads remain open. Garden and WorkStream collectors remain unsupported. Native mobile, web, and device measurements also remain open. The functional host qualification uses real authentication, signatures, HTTP, and database state, with synthetic provider and execution ports. It does not prove a live provider, the full task runner, WorkStream proof acceptance, or a device journey.
 
-Do not activate unattended work from this benchmark alone. The full loop still needs the missing provider, execution, measurement, and device evidence. No command in this document merges or deploys a change.
+Do not activate unattended work from this benchmark alone. One owner machine completed a verified run to a draft pull request. A scheduled service, a multi-host pilot, measurement workloads for the other products, and device evidence remain open. No command in this document merges or deploys a change.

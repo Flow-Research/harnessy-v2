@@ -19,6 +19,7 @@ import { arch, cpus, release } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { Run } from "../work/run.ts";
+import { calibrationProblems, hostIdentityDigest } from "./calibration.ts";
 import { type CommandRuntimeLock, freezeCommandDependencies } from "./command-dependencies.ts";
 import { macosCommandIsolation } from "./command-isolation.ts";
 import {
@@ -46,6 +47,12 @@ export interface HarnessyBenchmarkOptions {
 	readonly output: string;
 	readonly timeoutMs?: number;
 	readonly signal?: AbortSignal;
+	/**
+	 * A null calibration record of this profile on this host. With it, the
+	 * decision uses the exact signed-rank interval. Without it, the verdict of a
+	 * noisy metric stays inconclusive. A record that does not match is refused.
+	 */
+	readonly calibration?: unknown;
 }
 
 const hash = (bytes: string | Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
@@ -552,7 +559,7 @@ export async function benchmarkHarnessy(options: HarnessyBenchmarkOptions) {
 				},
 				workload.validateOutput,
 			);
-			const plan = (side: "baseline" | "candidate") => {
+			const basePlan = (side: "baseline" | "candidate") => {
 				const value = commandWorkload
 					? harnessyCommandPlan(binding(side), commandWorkload)
 					: harnessyWorkloadPlan(binding(side), workload as ReturnType<typeof createHarnessyWorkload>);
@@ -563,6 +570,29 @@ export async function benchmarkHarnessy(options: HarnessyBenchmarkOptions) {
 						{ id: "cpu.time_per_operation", direction: "lower" as const, maximumRegression: 0.05 },
 					],
 				};
+			};
+			const calibrated = options.calibration !== undefined;
+			if (calibrated) {
+				const reference = basePlan("baseline");
+				const problems = calibrationProblems(options.calibration, {
+					profile,
+					hostDigest: hostIdentityDigest(initialEnvironment.identity),
+					evaluatorDigest: evaluator.digest,
+					completedWork: reference.workload.completedWork,
+					metrics: [reference.primary.id, ...reference.guardrails.map((guard) => guard.id)],
+					now: Date.now(),
+				});
+				if (problems.length > 0)
+					throw new Error(`The calibration does not support this benchmark: ${problems.join(", ")}`);
+			}
+			const assumptions = calibrated
+				? { independentPairs: true, approximatelyNormalDifferences: false, symmetricDifferences: true }
+				: { independentPairs: false, approximatelyNormalDifferences: false };
+			const plan = (side: "baseline" | "candidate") => {
+				const value = basePlan(side);
+				return calibrated
+					? { ...value, primary: { ...value.primary, method: "paired-signed-rank" as const }, assumptions }
+					: value;
 			};
 			const session = new EvaluationSession();
 			const receipts = await session.collectPair(
@@ -610,7 +640,8 @@ export async function benchmarkHarnessy(options: HarnessyBenchmarkOptions) {
 				baseline: receipts.baseline,
 				candidate: receipts.candidate,
 				decision,
-				assumptions: { independentPairs: false, approximatelyNormalDifferences: false },
+				assumptions,
+				...(calibrated ? { calibrationDigest: hash(JSON.stringify(options.calibration)) } : {}),
 				notice:
 					"Persisted JSON is audit evidence only. Re-run to obtain fresh controller receipts. No source change, approval, merge or deployment is authorized.",
 			};
