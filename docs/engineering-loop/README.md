@@ -47,7 +47,25 @@ The report binds measurements to maintained source bytes and modes, Git revision
 
 The command rechecks original sources, copied sources, dependencies, and host tools around each measurement. It rejects missing operations, changed identities, invalid output, and unavailable resource measurements. Each default-profile child has a five-second time limit. Command-profile children have a 15-second time limit. All children have bounded output. Source and dependency preparation also has file and byte limits.
 
-The default comparison result is `inconclusive`. Ten samples alone do not establish the statistical assumptions for a reliable performance claim. No CLI option accepts a policy file, a worker result, arbitrary commands, or a claim that these assumptions hold. Saved JSON is an audit record. It cannot recreate the trusted measurement objects from the current process.
+Without a calibration, the comparison result of a noisy metric is `inconclusive`. Ten samples alone do not establish the statistical assumptions for a reliable performance claim. [Calibrate the benchmark on a host](#calibrate-the-benchmark-on-a-host) gives the procedure that supplies those assumptions. No CLI option accepts a policy file, a worker result, arbitrary commands, or a claim that these assumptions hold. Saved JSON is an audit record. It cannot recreate the trusted measurement objects from the current process.
+
+## Calibrate the benchmark on a host
+
+A null experiment is one benchmark run in which the baseline and the candidate are the same source. Every measured difference in it is noise.
+
+1. Run the benchmark at least 20 times with the same path for `--baseline` and `--candidate`. Put each run in its own sub-folder of one private folder.
+2. Build the calibration record:
+
+```sh
+harnessy engineering calibrate --reports /absolute/private-measurements/null-runs \
+  --profile pure-task-operations --output /absolute/private-measurements/calibration.json
+```
+
+3. Pass the record to a later benchmark with `--calibration /absolute/private-measurements/calibration.json`.
+
+The record supports a metric only when no null experiment would count as an improvement, the differences show no drift, and the two sides are balanced. The benchmark refuses a record of another profile, host, toolchain, evaluator or workload size, and a record that is older than 30 days. With a record, the decision uses the exact signed-rank interval for ten pairs. This interval does not need normal differences.
+
+A calibrated decision can still be `inconclusive`. On a short workload, timing noise can be as large as the 5 percent limits. The result then names the metric that is too noisy.
 
 ## Execution boundaries
 

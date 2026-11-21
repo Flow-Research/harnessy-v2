@@ -1,10 +1,11 @@
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { Console, Effect } from "effect";
+import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/cli";
 import * as Result from "effect/Result";
 import { benchmarkHarnessy } from "../engineering/benchmark.ts";
+import { buildNullCalibration } from "../engineering/calibration.ts";
 import { engineeringJobSchema } from "../engineering/contracts.ts";
 import { EngineeringController } from "../engineering/controller.ts";
 import {
@@ -127,6 +128,12 @@ export const makeEngineeringCommand = (
 						),
 					),
 					seconds: Flag.Int("timeout-seconds").pipe(Flag.withDefault(300)),
+					calibration: Flag.String("calibration").pipe(
+						Flag.optional,
+						Flag.withDescription(
+							"Null calibration file of this profile on this host, from 'engineering calibrate'. With it the decision uses the exact signed-rank interval. A file that does not match is refused.",
+						),
+					),
 				},
 				(flags) =>
 					Effect.tryPromise({
@@ -137,6 +144,9 @@ export const makeEngineeringCommand = (
 								candidate: flags.candidate,
 								output: flags.output,
 								timeoutMs: flags.seconds * 1000,
+								...(Option.isSome(flags.calibration)
+									? { calibration: JSON.parse(readFileSync(flags.calibration.value, "utf8")) }
+									: {}),
 								signal,
 							}),
 						catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
@@ -145,6 +155,45 @@ export const makeEngineeringCommand = (
 		]),
 		Command.withDescription(
 			"Measure pure-task-operations, preparation-plan, or local-status in protected local custody. Full startup, full task preparation, and remote status are unsupported.",
+		),
+	);
+	const calibrate = Command.make(
+		"calibrate",
+		{
+			reports: Flag.String("reports").pipe(
+				Flag.withDescription(
+					"Folder with one sub-folder for each benchmark run in which baseline and candidate were the same source.",
+				),
+			),
+			profile: Flag.Literals("profile", ["pure-task-operations", "preparation-plan", "local-status"]).pipe(
+				Flag.withDefault("pure-task-operations"),
+			),
+			output: Flag.String("output").pipe(Flag.withDescription("New calibration file.")),
+		},
+		(flags) =>
+			Effect.try({
+				try: () => {
+					const reports = readdirSync(flags.reports)
+						.sort()
+						.map((name) => join(flags.reports, name, "reports", "benchmark.json"))
+						.filter((path) => existsSync(path) && readFileSync(path, "utf8").trim() !== "")
+						.map((path): unknown => JSON.parse(readFileSync(path, "utf8")));
+					const calibration = buildNullCalibration(reports, flags.profile, clock());
+					writeFileSync(flags.output, `${JSON.stringify(calibration, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+					return {
+						schema: calibration.schema,
+						experiments: calibration.experiments,
+						supported: Object.fromEntries(
+							Object.entries(calibration.metrics).map(([id, metric]) => [id, metric.supported]),
+						),
+						output: flags.output,
+					};
+				},
+				catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+			}).pipe(Effect.flatMap((value) => Console.log(JSON.stringify(value)))),
+	).pipe(
+		Command.withDescription(
+			"Build a null calibration from baseline against baseline benchmark reports of one profile on this host",
 		),
 	);
 	const hostConfig = Flag.String("host-config").pipe(
@@ -303,6 +352,7 @@ export const makeEngineeringCommand = (
 			cancel,
 			revoke,
 			digests,
+			calibrate,
 			confirmExtraUsage,
 			clearPause,
 			tick,
