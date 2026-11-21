@@ -382,6 +382,7 @@ describe.skipIf(process.platform !== "darwin")("candidate verification in real c
 				baseRevision,
 				headSha,
 				evidenceRoot: join(state, "verification"),
+				workRoot: join(base, "verification-work"),
 				deniedRoots: [state],
 				now: Date.now,
 			});
@@ -407,6 +408,28 @@ describe.skipIf(process.platform !== "darwin")("candidate verification in real c
 		expect(git(world.repo, "worktree", "list").split("\n")).toHaveLength(1);
 		// The base checkout itself was never changed.
 		expect(readFileSync(join(world.repo, "value.txt"), "utf8")).toBe("one\n");
+	}, 60_000);
+
+	it("lets a Node program run in the export, and refuses a work folder inside a denied folder", async () => {
+		// Node resolves the real path of every parent folder of its script. The first real run
+		// failed here, because the export sat inside the hidden state folder.
+		const world = setup([
+			["node", "-e", 'require("node:fs").readFileSync("value.txt", "utf8") === "two\\n" || process.exit(1)'],
+		]);
+		const head = world.commit("value.txt", "two\n");
+		expect((await world.judge(head)).verdict).toBe("pass");
+		const inside = await verifyCandidate({
+			run: execRun,
+			platform: process.platform,
+			profile: world.profile,
+			baseRevision: world.baseRevision,
+			headSha: head,
+			evidenceRoot: join(world.state, "verification"),
+			workRoot: join(world.state, "work"),
+			deniedRoots: [world.state],
+			now: Date.now,
+		});
+		expect(inside).toEqual({ verdict: "reject", reason: "The verification work folder is inside a denied folder" });
 	}, 60_000);
 
 	it("rejects a failed check, an unchanged candidate and an unknown revision", async () => {

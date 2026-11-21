@@ -388,8 +388,14 @@ export interface VerifyCandidateInput {
 	readonly profile: EngineeringHostProfile;
 	readonly baseRevision: string;
 	readonly headSha: string;
-	/** Private folder for evidence and the temporary export. */
+	/** Private folder for the evidence files. */
 	readonly evidenceRoot: string;
+	/**
+	 * Private folder for the temporary export and scratch space. It must be
+	 * outside every denied folder: a program resolves the real path of each
+	 * parent folder of its files, and the sandbox hides the denied folders.
+	 */
+	readonly workRoot: string;
 	/** Folders that the checks may not read: controller state, owner profile, credentials. */
 	readonly deniedRoots: ReadonlyArray<string>;
 	readonly now: () => number;
@@ -417,7 +423,7 @@ export const verificationSandboxProfile = (
 		'(deny file-write* (subpath "/"))',
 		`(allow file-write* (subpath ${sandboxQuote(exportRoot)}) (subpath ${sandboxQuote(scratch)}) (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper"))`,
 		...deniedRoots.map((path) => `(deny file-read* file-write* (subpath ${sandboxQuote(path)}))`),
-		// The export and scratch folders can sit inside a denied state folder, so they are allowed last.
+		// The export and scratch folders are allowed last, after every deny rule.
 		`(allow file-read* file-write* (subpath ${sandboxQuote(exportRoot)}) (subpath ${sandboxQuote(scratch)}))`,
 	].join("\n");
 
@@ -459,8 +465,13 @@ export const verifyCandidate = async (
 	mkdirSync(input.evidenceRoot, { recursive: true, mode: 0o700 });
 	const evidenceRoot = realpathSync(input.evidenceRoot);
 	const stamp = `${headSha}-${now()}`;
-	const exportRoot = join(evidenceRoot, "export", stamp);
-	const scratch = join(evidenceRoot, "scratch", stamp);
+	mkdirSync(input.workRoot, { recursive: true, mode: 0o700 });
+	const workRoot = realpathSync(input.workRoot);
+	const denied = input.deniedRoots.filter((path) => existsSync(path)).map((path) => realpathSync(path));
+	if (denied.some((path) => workRoot === path || workRoot.startsWith(path + sep)))
+		return { verdict: "reject", reason: "The verification work folder is inside a denied folder" };
+	const exportRoot = join(workRoot, "export", stamp);
+	const scratch = join(workRoot, "scratch", stamp);
 	mkdirSync(dirname(exportRoot), { recursive: true, mode: 0o700 });
 	mkdirSync(scratch, { recursive: true, mode: 0o700 });
 	const added = await run(["git", "-C", root.success, "worktree", "add", "--detach", exportRoot, headSha], {
@@ -483,11 +494,7 @@ export const verifyCandidate = async (
 			break;
 		}
 	}
-	const sandbox = verificationSandboxProfile(
-		exportRoot,
-		realpathSync(scratch),
-		input.deniedRoots.filter((path) => existsSync(path)).map((path) => realpathSync(path)),
-	);
+	const sandbox = verificationSandboxProfile(exportRoot, realpathSync(scratch), denied);
 	for (const argv of failure === undefined ? profile.verify : []) {
 		const startedAt = now();
 		const result = await run(
@@ -595,6 +602,8 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		now: work.now,
 	});
 	const evidenceRoot = join(stateRoot, "verification");
+	// A sibling of the state folder: private, hidden from the agent, and not hidden from the checks.
+	const verificationWork = `${stateRoot}-verification-work`;
 	const home = homedir();
 	const deniedRoots = [
 		stateRoot,
@@ -629,6 +638,7 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 			baseRevision,
 			headSha,
 			evidenceRoot,
+			workRoot: verificationWork,
 			deniedRoots,
 			now: work.now,
 		});
@@ -838,7 +848,7 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 			...work,
 			executionGuard: guard,
 			reviewCandidate,
-			protectedPaths: [stateRoot, options.configRoot],
+			protectedPaths: [stateRoot, verificationWork, options.configRoot],
 		},
 		readiness,
 		inspect,
