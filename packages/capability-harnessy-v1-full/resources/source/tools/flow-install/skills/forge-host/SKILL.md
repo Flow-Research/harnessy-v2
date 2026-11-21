@@ -24,7 +24,8 @@ Forgejo is the first forge adapter. The command name is neutral
 - A server with SSH key login, Docker, Docker Compose and a supported reverse
   proxy (Traefik with the Docker provider, for example the Coolify proxy).
 - A short install id (for example `mustard`). It names the folder on the
-  server, the containers, the register entry and the secret folder.
+  server, the containers and the register entry. It is the first part of the
+  name of the secret folder.
 - Command intent: `inspect`, `plan`, `install`, `service-account`, `token`,
   `runner add`, `repo migrate`, `repo mirror`, `backup`, `list` or `status`.
 
@@ -38,8 +39,10 @@ Forgejo is the first forge adapter. The command name is neutral
 3. Start with `inspect`. If a check fails, stop and report the failed check.
 4. Before `install`, show the output of `install --dry-run` to the user and get
    a clear yes for that server. A server can hold other sites; name them.
-5. Pass `--confirm <install-id>` only after that yes. The command refuses a
-   change to a server without it.
+5. Pass `--confirm <install-id>` only after that yes. Each command that
+   changes the server or the forge refuses to run without it: `install`,
+   `service-account`, `token`, `runner add`, `repo migrate`, `repo mirror`
+   and `backup`.
 6. Never print, copy or ask for a secret value. The command keeps each secret
    in a private file and prints only the file name. When a command needs a
    token of another forge, it reads `FORGE_SOURCE_TOKEN` or asks with a hidden
@@ -61,6 +64,9 @@ Forgejo is the first forge adapter. The command name is neutral
   - Side effects: `install`, `service-account`, `token`, `runner add`,
     `repo migrate`, `repo mirror` and `backup` change the server or the forge.
     Each writes to the register, and the larger ones write an evidence folder.
+    Each reads the register again and saves its change under a lock
+    (`register.json.lock`), so commands that run at the same time keep the
+    records of each other.
 
 ## Records
 
@@ -68,8 +74,16 @@ Forgejo is the first forge adapter. The command name is neutral
   for each install: server, web address, version, runners, repositories,
   backups, and the names of the secret files. It holds no secret value.
 - Evidence: `<workspace>/.jarvis/context/forge-hosts/runs/<run-id>/`.
-- Secrets: `${XDG_CONFIG_HOME:-~/.config}/harnessy/forge/<install-id>/`
-  (folder mode 0700, files mode 0600).
+- Pending: `<workspace>/.jarvis/context/forge-hosts/pending/<install-id>.json`.
+  It is the record of an `install` that did not finish. It holds no secret
+  value. `install` removes it when the install is in the register.
+- Secrets:
+  `${XDG_CONFIG_HOME:-~/.config}/harnessy/forge/<install-id>.<install-uid>/`
+  (folder mode 0700, files mode 0600). The install uid is a random value in
+  the register entry, so two workspaces can use the same install id. An
+  install that has no uid in its register entry keeps its secrets in
+  `${XDG_CONFIG_HOME:-~/.config}/harnessy/forge/<install-id>/`. The command
+  does not move or delete that folder.
 
 `<workspace>` is `HARNESSY_WORKSPACE`, else the nearest parent folder with
 `.harnessy/workspace.json`, else the current folder.

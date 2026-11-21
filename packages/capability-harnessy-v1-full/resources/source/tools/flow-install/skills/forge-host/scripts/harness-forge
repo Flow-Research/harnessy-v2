@@ -17,8 +17,10 @@ What it does:
 Records (no secret values, only names of secret files):
   <workspace>/.jarvis/context/forge-hosts/register.json
   <workspace>/.jarvis/context/forge-hosts/runs/<run-id>/
+  <workspace>/.jarvis/context/forge-hosts/pending/<install-id>.json  (an install that did not finish)
 Secrets (mode 0600, folder 0700):
-  ${XDG_CONFIG_HOME:-~/.config}/harnessy/forge/<install-id>/
+  ${XDG_CONFIG_HOME:-~/.config}/harnessy/forge/<install-id>.<install-uid>/
+  An install made before the install uid existed keeps ${XDG_CONFIG_HOME:-~/.config}/harnessy/forge/<install-id>/.
 
 Out of scope: DNS changes, billing, deleting an install, restoring a backup over live data.
 """
@@ -26,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import datetime as dt
 import getpass
 import ipaddress
@@ -42,7 +45,16 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterator
+
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+try:
+    import msvcrt
+except ImportError:  # not Windows
+    msvcrt = None
 
 VERSION = "0.1.0"
 DEFAULT_FORGEJO_IMAGE = "codeberg.org/forgejo/forgejo:15.0.12"
@@ -51,6 +63,8 @@ DEFAULT_JOB_IMAGE = "ghcr.io/catthehacker/ubuntu:act-24.04"
 DEFAULT_JOB_LABEL = "ubuntu-24.04"
 MIN_AVAILABLE_MEMORY_MB = 2048
 MIN_FREE_DISK_GB = 20
+RUNNER_DECLARE_SECONDS = 60
+OWNER_MARKER = ".harness-forge-install"
 ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}[a-z0-9]$")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$")
 DOMAIN_RE = re.compile(r"^(?=.{4,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$")
@@ -94,13 +108,18 @@ def records_root() -> Path:
     return workspace_root() / ".jarvis" / "context" / "forge-hosts"
 
 
-def secrets_dir(install_id: str) -> Path:
+def secrets_dir(install: dict) -> Path:
+    """The secret folder of one install. The install id is unique only in one workspace, so the
+    folder name also has the install uid: two workspaces can use the same id for different servers.
+    An install made before the uid existed has none; its secrets stay in the folder named by the
+    id alone, and this tool does not move or delete them."""
     base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return base / "harnessy" / "forge" / install_id
+    uid = install.get("uid")
+    return base / "harnessy" / "forge" / (f"{install['id']}.{uid}" if uid else install["id"])
 
 
-def write_secret(install_id: str, name: str, value: str) -> Path:
-    folder = secrets_dir(install_id)
+def write_secret(install: dict, name: str, value: str) -> Path:
+    folder = secrets_dir(install)
     folder.mkdir(parents=True, exist_ok=True)
     os.chmod(folder, 0o700)
     path = folder / name
@@ -111,8 +130,8 @@ def write_secret(install_id: str, name: str, value: str) -> Path:
     return path
 
 
-def read_secret(install_id: str, name: str) -> str:
-    path = secrets_dir(install_id) / name
+def read_secret(install: dict, name: str) -> str:
+    path = secrets_dir(install) / name
     if not path.is_file():
         raise Refused(f"secret file not found: {path}")
     return path.read_text().strip()
@@ -131,19 +150,67 @@ def save_register(data: dict) -> Path:
     root = records_root()
     root.mkdir(parents=True, exist_ok=True)
     path = root / "register.json"
-    tmp = path.with_suffix(".json.tmp")
+    tmp = path.with_suffix(f".json.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
     tmp.replace(path)
     return path
 
 
-def get_install(install_id: str) -> tuple[dict, dict]:
+@contextlib.contextmanager
+def register_lock() -> Iterator[None]:
+    """Only one process at a time may read and then save the register. The system releases the
+    lock when the process stops, so a command that was killed leaves no stale lock."""
+    root = records_root()
+    root.mkdir(parents=True, exist_ok=True)
+    with open(root / "register.json.lock", "a+") as handle:
+        try:
+            if fcntl:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+            elif msvcrt:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        except OSError as error:
+            raise Refused(f"the register is in use by another harness-forge command ({error})")
+        try:
+            yield
+        finally:
+            if fcntl:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+            elif msvcrt:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def update_register(change: Callable[[dict], None]) -> Path:
+    """Read the register again, apply one change and save it, all under the lock. A command reads
+    the register at its start and can then work on the server for minutes. If it saved that old
+    copy, it would remove each record that another command wrote in that time."""
+    with register_lock():
+        register = load_register()
+        change(register)
+        return save_register(register)
+
+
+def update_install(install_id: str, change: Callable[[dict], None]) -> Path:
+    def apply(register: dict) -> None:
+        if install_id not in register["installs"]:
+            raise Refused(f"the install {install_id!r} is no longer in the register; the change was not recorded")
+        change(register["installs"][install_id])
+    return update_register(apply)
+
+
+def get_install(install_id: str) -> dict:
     register = load_register()
     install = register["installs"].get(install_id)
     if install is None:
         known = ", ".join(sorted(register["installs"])) or "none"
         raise Refused(f"no install with the id {install_id!r} in the register (known: {known})")
-    return register, install
+    return install
+
+
+def need_confirm(args, install_id: str, what: str) -> None:
+    if args.confirm != install_id:
+        raise Refused(f"this command {what}. Run it again with --confirm {install_id}")
 
 
 class Run:
@@ -422,10 +489,25 @@ def wait_for_url(url: str, seconds: int) -> tuple[bool, str]:
     return False, last
 
 
+def owned_folder_guard(remote_dir: str, uid: str) -> str:
+    """Shell for the server: stop when the folder of the install has files of something else, then
+    make the folder and write the install uid in it. An empty folder holds nothing to damage."""
+    d, marker = shlex.quote(remote_dir), shlex.quote(uid)
+    return f"""if [ -e {d} ] && [ -n "$(ls -A {d} 2>/dev/null)" ] \\
+    && [ "$(cat {d}/{OWNER_MARKER} 2>/dev/null || true)" != {marker} ]; then
+  echo {shlex.quote(remote_dir + " exists on the server and does not belong to this install")} >&2
+  exit 1
+fi
+install -d -m 0750 {d}
+printf '%s\\n' {marker} > {d}/{OWNER_MARKER}"""
+
+
 def cmd_install(args) -> int:
-    register = load_register()
+    """A run that changes the server first writes a pending record (no secret value) with the
+    install uid. If a later step fails, the next confirmed run with the same settings finds that
+    record and continues: each server step is safe to run again."""
     install_id = check_id(args.id)
-    if install_id in register["installs"]:
+    if install_id in load_register()["installs"]:
         raise Refused(f"the register already has an install with the id {install_id!r}")
     target = target_of(args)
     facts = inspect_server(target)
@@ -435,24 +517,48 @@ def cmd_install(args) -> int:
         print_plan(plan)
     if not facts["ok"]:
         raise Refused("the server does not meet the requirements; nothing was changed")
-    if f"/opt/forge-{install_id}" in facts.get("existing_forge_dirs", "").split():
+    pending_file = records_root() / "pending" / f"{install_id}.json"
+    state = json.loads(pending_file.read_text()) if pending_file.is_file() else None
+    same = ("domain", "image", "remote_dir", "admin_user", "admin_email")
+    if state and (state["ssh"]["host"] != plan["ssh"]["host"] or any(state[k] != plan[k] for k in same)):
+        raise Refused(f"an install with the id {install_id!r} did not finish, and it had another server, web "
+                      f"address, image or admin. Run install with the settings in {pending_file} to continue "
+                      "it; nothing was changed")
+    if f"/opt/forge-{install_id}" in facts.get("existing_forge_dirs", "").split() and not state:
         raise Refused(f"{plan['remote_dir']} exists on the server but is not in the register; "
                       "nothing was changed")
     if args.dry_run:
+        if args.json:
+            out_json({"dry_run": True, "changed": False, "continues_unfinished_install": bool(state),
+                      "inspect": facts, "plan": plan})
+            return 0
+        if state:
+            say(f"An install with this id did not finish ({pending_file}). A confirmed run continues it.")
         say("Dry run: nothing was changed.")
         return 0
-    if args.confirm != install_id:
-        raise Refused(f"this command changes the server. Run it again with --confirm {install_id}")
+    need_confirm(args, install_id, "changes the server")
 
     run = Run("install", install_id)
     run.write("inspect.json", facts)
     run.write("plan.json", plan)
     run.write("docker-compose.yml", compose_text(plan))
+    state = state or {"id": install_id, "uid": secrets.token_hex(8), "ssh": plan["ssh"],
+                      **{k: plan[k] for k in same}, "started_at": now(), "completed": [], "runs": []}
+    state["runs"].append(run.run_id)
+
+    def keep(phase: str = "") -> None:
+        if phase and phase not in state["completed"]:
+            state["completed"].append(phase)
+        pending_file.parent.mkdir(parents=True, exist_ok=True)
+        pending_file.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+    keep()
     d = shlex.quote(plan["remote_dir"])
     encoded = base64.b64encode(compose_text(plan).encode()).decode()
 
     target.run("install-files", f"""
-install -d -m 0750 {d} {d}/data {d}/backups
+{owned_folder_guard(plan["remote_dir"], state["uid"])}
+install -d -m 0750 {d}/data {d}/backups
 chown 1000:1000 {d}/data
 printf '%s' {shlex.quote(encoded)} | base64 -d > {d}/docker-compose.yml
 cd {d} && docker compose pull -q && docker compose up -d
@@ -463,18 +569,29 @@ done
 docker exec forge-{install_id} curl -fsS http://127.0.0.1:3000/api/healthz >/dev/null
 """, timeout=1200)
     run.step("forge container started", True)
+    keep("install-files")
 
-    password = secrets.token_urlsafe(24)
-    password_file = write_secret(install_id, "admin-initial-password.txt", password)
+    # A run that continues uses the password of the first try: the admin can be on the forge already.
+    password_file = secrets_dir(state) / "admin-initial-password.txt"
+    if password_file.is_file():
+        password = read_secret(state, password_file.name)
+    else:
+        password = secrets.token_urlsafe(24)
+        write_secret(state, password_file.name, password)
     target.run("install-admin", f"""
-docker exec -u git forge-{install_id} forgejo admin user create --admin \\
-  --username {shlex.quote(plan['admin_user'])} --email {shlex.quote(plan['admin_email'])} \\
-  --password {shlex.quote(password)} --must-change-password=true >/dev/null
+if ! docker exec -u git forge-{install_id} forgejo admin user list \\
+    | awk -v name={shlex.quote(plan['admin_user'])} '$2 == name {{ found = 1 }} END {{ exit !found }}'; then
+  docker exec -u git forge-{install_id} forgejo admin user create --admin \\
+    --username {shlex.quote(plan['admin_user'])} --email {shlex.quote(plan['admin_email'])} \\
+    --password {shlex.quote(password)} --must-change-password=true >/dev/null
+fi
 """)
     run.step("first admin created", True, f"password in {password_file}")
+    keep("install-admin")
 
-    token_file = ensure_service_account(target, install_id)
+    token_file = ensure_service_account(target, state)
     run.step("service account for the tool created", True, f"token in {token_file}")
+    keep("service-account")
 
     version = target.run("install-version",
                          f"docker exec forge-{install_id} forgejo --version | awk '{{print $3}}'").strip()
@@ -484,16 +601,26 @@ docker exec -u git forge-{install_id} forgejo admin user create --admin \\
     record = {
         **{k: plan[k] for k in ("id", "forge", "image", "domain", "url", "remote_dir", "proxy", "ssh",
                                  "admin_user", "settings")},
-        "version": version, "installed_at": now(), "installed_by": getpass.getuser(),
+        "uid": state["uid"], "version": version, "installed_at": now(), "installed_by": getpass.getuser(),
         "state": "installed" if ok else "installed-not-reachable",
         "server": {k: facts.get(k) for k in ("os", "arch", "cpus", "public_ip")},
         "service_account": SERVICE_ACCOUNT,
         "secret_files": {"admin_initial_password": str(password_file), "admin-token": str(token_file)},
-        "runners": {}, "repositories": {}, "backup": {}, "runs": [run.run_id],
+        "runners": {}, "repositories": {}, "backup": {}, "runs": state["runs"],
     }
-    register["installs"][install_id] = record
-    path = save_register(register)
+
+    def add(register: dict) -> None:
+        if install_id in register["installs"]:
+            raise Refused(f"another command put an install with the id {install_id!r} in the register while "
+                          f"this one ran. The server was changed; the record of this run is {pending_file}")
+        register["installs"][install_id] = record
+
+    path = update_register(add)
+    pending_file.unlink()
     run.write("result.json", {"ok": ok, "detail": detail, "record": record})
+    if args.json:
+        out_json({"ok": ok, "detail": detail, "record": record, "register": str(path), "evidence": str(run.folder)})
+        return 0 if ok else 2
     say(f"Installed '{install_id}' at {plan['url']} (Forgejo {version}).")
     say(f"Register: {path}")
     say(f"Evidence: {run.folder}")
@@ -510,7 +637,7 @@ docker exec -u git forge-{install_id} forgejo admin user create --admin \\
 
 def api(install: dict, method: str, path: str, body: dict | None = None, token: str | None = None,
         timeout: int = 60) -> Any:
-    token = token or read_secret(install["id"], "admin-token")
+    token = token or read_secret(install, "admin-token")
     data = None if body is None else json.dumps(body).encode()
     request = urllib.request.Request(install["url"] + "/api/v1" + path, data=data, method=method,
                                      headers={"Authorization": "token " + token,
@@ -527,11 +654,12 @@ def api(install: dict, method: str, path: str, body: dict | None = None, token: 
 SERVICE_ACCOUNT = "harness-forge"
 
 
-def ensure_service_account(target: Target, install_id: str) -> Path:
+def ensure_service_account(target: Target, install: dict) -> Path:
     """The account that harness-forge itself uses for the forge API. The first admin belongs to a
     person and must change its password before the API accepts it, so the tool cannot use it.
     The service account has a random password that is not kept (it never signs in with one) and
     one token, kept in a local secret file."""
+    install_id = install["id"]
     raw = target.run("service-account", f"""
 if ! docker exec -u git forge-{install_id} forgejo admin user list | awk '{{print $2}}' | grep -qx {SERVICE_ACCOUNT}; then
   docker exec -u git forge-{install_id} forgejo admin user create --admin --username {SERVICE_ACCOUNT} \\
@@ -542,26 +670,29 @@ docker exec -u git forge-{install_id} forgejo admin user generate-access-token -
 """).strip().splitlines()
     if not raw or not re.match(r"^[0-9a-f]{40}$", raw[-1]):
         raise Refused("the forge did not return a token for the service account")
-    return write_secret(install_id, "admin-token", raw[-1])
+    return write_secret(install, "admin-token", raw[-1])
 
 
 def cmd_service_account(args) -> int:
-    register, install = get_install(args.id)
-    if args.confirm != install["id"]:
-        raise Refused(f"this command makes an admin account for the tool. Run it again with --confirm {install['id']}")
-    path = ensure_service_account(target_of_install(install), install["id"])
-    install.setdefault("secret_files", {})["admin-token"] = str(path)
-    install["service_account"] = SERVICE_ACCOUNT
-    save_register(register)
+    install = get_install(args.id)
+    need_confirm(args, install["id"], "makes an admin account for the tool")
+    path = ensure_service_account(target_of_install(install), install)
+
+    def change(entry: dict) -> None:
+        entry.setdefault("secret_files", {})["admin-token"] = str(path)
+        entry["service_account"] = SERVICE_ACCOUNT
+
+    update_install(install["id"], change)
     say(f"Service account '{SERVICE_ACCOUNT}' is ready. Its token is in {path} (not shown).")
     return 0
 
 
 def cmd_token(args) -> int:
-    register, install = get_install(args.id)
+    install = get_install(args.id)
     user = check_match(NAME_RE, args.user, "user name")
     name = check_match(NAME_RE, args.name, "token name")
     scopes = check_match(re.compile(r"^[a-z:,_-]+$"), args.scopes, "scopes")
+    need_confirm(args, install["id"], "makes an API token on the forge")
     raw = target_of_install(install).run("token", f"""
 docker exec -u git forge-{install['id']} forgejo admin user generate-access-token \\
   --username {shlex.quote(user)} --token-name {shlex.quote(name)} --scopes {shlex.quote(scopes)} --raw
@@ -569,9 +700,8 @@ docker exec -u git forge-{install['id']} forgejo admin user generate-access-toke
     if not raw or not re.match(r"^[0-9a-f]{40}$", raw[-1]):
         raise Refused("the forge did not return a token")
     file_name = "admin-token" if args.as_admin_token else f"token-{user}-{name}"
-    path = write_secret(install["id"], file_name, raw[-1])
-    install.setdefault("secret_files", {})[file_name] = str(path)
-    save_register(register)
+    path = write_secret(install, file_name, raw[-1])
+    update_install(install["id"], lambda entry: entry.setdefault("secret_files", {}).update({file_name: str(path)}))
     say(f"Token '{name}' of the user {user} saved in {path} (not shown).")
     return 0
 
@@ -709,23 +839,29 @@ def start_local_runner(folder: str, image: str, url: str, name: str, secret: str
     runner_file.write_text(json.dumps(data, indent=1))
     if not windows:
         os.chmod(runner_file, 0o600)
-    subprocess.run(["docker", "rm", "-f", container], capture_output=True, text=True)
+    try:
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        raise Refused(f"docker rm gave no answer in 120 s for the container {container}")
     socket_path = "//var/run/docker.sock" if windows else "/var/run/docker.sock"
     docker("run", "-d", "--name", container, "--restart", "unless-stopped", "--user", "0:0",
            "-v", f"{home}:/data", "-w", "/data", "-v", f"{socket_path}:/var/run/docker.sock", image,
            "forgejo-runner", "daemon", "--config", "config.yml")
-    deadline = time.monotonic() + 60
-    while time.monotonic() < deadline:
-        logs = subprocess.run(["docker", "logs", container], capture_output=True, text=True)
+    deadline = time.monotonic() + RUNNER_DECLARE_SECONDS
+    while (left := deadline - time.monotonic()) > 0:
+        try:
+            logs = subprocess.run(["docker", "logs", container], capture_output=True, text=True, timeout=left)
+        except subprocess.TimeoutExpired:
+            break
         if "declared successfully" in logs.stdout + logs.stderr:
             return
         time.sleep(2)
-    raise Refused(f"the runner container {container} started but did not connect to {url} in 60 s; "
-                  f"read `docker logs {container}`")
+    raise Refused(f"the runner container {container} started but did not connect to {url} in "
+                  f"{RUNNER_DECLARE_SECONDS} s; read `docker logs {container}`")
 
 
 def cmd_runner_add(args) -> int:
-    register, install = get_install(args.id)
+    install = get_install(args.id)
     install_id = install["id"]
     name = check_match(NAME_RE, args.name, "runner name")
     image = check_match(IMAGE_RE, args.image, "runner image")
@@ -741,12 +877,11 @@ def cmd_runner_add(args) -> int:
     envs = parse_envs(args.env)
     if not 1 <= args.capacity <= 16:
         raise Refused("--capacity must be from 1 to 16")
-    if args.confirm != install_id:
-        raise Refused(f"this command starts a service. Run it again with --confirm {install_id}")
+    need_confirm(args, install_id, "starts a service")
 
     run = Run("runner-add", install_id)
     secret = runner_secret()
-    secret_file = write_secret(install_id, f"runner-{name}.secret", secret)
+    secret_file = write_secret(install, f"runner-{name}.secret", secret)
     target = target_of_install(install)
     scope_flag = f"--scope {shlex.quote(scope)}" if scope else ""
     target.run("runner-register", f"""
@@ -769,15 +904,19 @@ docker exec -u git forge-{install_id} forgejo forgejo-cli actions register --nam
         start_local_runner(folder, image, install["url"], name, secret, labels, args.capacity, container, envs)
         machine = f"{socket.gethostname()} ({platform.system()} {platform.machine()})"
     run.step("runner started and declared to the forge", True, container)
-    install.setdefault("runners", {})[name] = {
+    record = {
         "name": name, "where": args.where, "machine": machine, "container": container, "folder": folder,
         "image": image, "labels": labels, "capacity": args.capacity, "scope": scope or "instance",
         "job_env_names": sorted(envs),
         "added_at": now(), "secret_file": str(secret_file),
     }
-    install.setdefault("runs", []).append(run.run_id)
-    save_register(register)
-    run.write("result.json", install["runners"][name])
+
+    def change(entry: dict) -> None:
+        entry.setdefault("runners", {})[name] = record
+        entry.setdefault("runs", []).append(run.run_id)
+
+    update_install(install_id, change)
+    run.write("result.json", record)
     say(f"Runner '{name}' runs on {machine} with the labels {', '.join(l.split(':')[0] for l in labels)}.")
     return 0
 
@@ -792,43 +931,61 @@ def source_token(prompt: str) -> str:
 
 
 def cmd_repo_migrate(args) -> int:
-    register, install = get_install(args.id)
+    install = get_install(args.id)
     owner = check_match(re.compile(r"^[A-Za-z0-9._-]+$"), args.owner, "owner")
     name = check_match(re.compile(r"^[A-Za-z0-9._-]+$"), args.name, "repository name")
     if not re.match(r"^https://[A-Za-z0-9./_-]+$", args.source):
         raise Refused("--source must be an https clone address without a user name or a token")
+    need_confirm(args, install["id"], "makes a repository on the forge")
     token = source_token(f"Access token of the source forge for {args.source}")
     run = Run("repo-migrate", install["id"])
     body = {"clone_addr": args.source, "repo_owner": owner, "repo_name": name, "service": args.service,
             "auth_token": token, "private": True, "mirror": False, "wiki": True, "issues": True,
             "pull_requests": True, "releases": True, "labels": True, "milestones": True}
     repo = api(install, "POST", "/repos/migrate", body, timeout=1800)
-    branches = api(install, "GET", f"/repos/{owner}/{name}/branches?limit=200") or []
-    heads = {b["name"]: b["commit"]["id"] for b in branches}
+    # The forge gives one page for each call (50 items by default, whatever `limit` asks), so
+    # read pages until one brings no new branch.
+    heads: dict[str, str] = {}
+    page = 1
+    while True:
+        branches = api(install, "GET", f"/repos/{owner}/{name}/branches?page={page}&limit=50") or []
+        new = {b["name"]: b["commit"]["id"] for b in branches if b["name"] not in heads}
+        if not new:
+            break
+        heads.update(new)
+        page += 1
     record = {"owner": owner, "name": name, "source": args.source, "service": args.service,
               "migrated_at": now(), "branch_heads_at_migration": heads, "mirrors": []}
-    install.setdefault("repositories", {})[f"{owner}/{name}"] = record
-    install.setdefault("runs", []).append(run.run_id)
-    save_register(register)
+
+    def change(entry: dict) -> None:
+        entry.setdefault("repositories", {})[f"{owner}/{name}"] = record
+        entry.setdefault("runs", []).append(run.run_id)
+
+    update_install(install["id"], change)
     run.write("result.json", {"full_name": repo.get("full_name"), **record})
     say(f"Moved {args.source} to {install['url']}/{owner}/{name} with {len(heads)} branches.")
     return 0
 
 
 def cmd_repo_mirror(args) -> int:
-    register, install = get_install(args.id)
+    install = get_install(args.id)
     key = f"{args.owner}/{args.name}"
     if not re.match(r"^https://[A-Za-z0-9./_-]+$", args.to):
         raise Refused("--to must be an https address without a user name or a token")
     user = check_match(re.compile(r"^[A-Za-z0-9._-]+$"), args.remote_user, "remote user")
+    need_confirm(args, install["id"], "makes the forge push a repository to another forge")
     token = source_token(f"Access token with write access to {args.to}")
     api(install, "POST", f"/repos/{key}/push_mirrors",
         {"remote_address": args.to, "remote_username": user, "remote_password": token,
          "interval": args.interval, "sync_on_commit": True})
-    repo = install.setdefault("repositories", {}).setdefault(
-        key, {"owner": args.owner, "name": args.name, "mirrors": []})
-    repo.setdefault("mirrors", []).append({"to": args.to, "interval": args.interval, "added_at": now()})
-    save_register(register)
+    mirror = {"to": args.to, "interval": args.interval, "added_at": now()}
+
+    def change(entry: dict) -> None:
+        repo = entry.setdefault("repositories", {}).setdefault(
+            key, {"owner": args.owner, "name": args.name, "mirrors": []})
+        repo.setdefault("mirrors", []).append(mirror)
+
+    update_install(install["id"], change)
     say(f"{key} now pushes each change to {args.to}.")
     return 0
 
@@ -836,11 +993,13 @@ def cmd_repo_mirror(args) -> int:
 # ---------------------------------------------------------------- backup, list, status
 
 def cmd_backup(args) -> int:
-    register, install = get_install(args.id)
+    install = get_install(args.id)
     install_id, d = install["id"], shlex.quote(install["remote_dir"])
     keep = int(args.keep)
     if not 1 <= keep <= 365:
         raise Refused("--keep must be from 1 to 365")
+    need_confirm(args, install_id, "adds a nightly job on the server" if args.schedule
+                 else f"makes a backup on the server and removes all but the newest {keep} backups")
     script_file = f"{install['remote_dir']}/backup.sh"
     backup_script = f"""#!/bin/sh
 # Written by harness-forge {VERSION}. Makes one dump of the forge and keeps the newest {keep}.
@@ -856,26 +1015,22 @@ ls -1t {install['remote_dir']}/backups/forge-*.zip | tail -n +{keep + 1} | xargs
                   f"| base64 -d > {shlex.quote(script_file)}\nchmod 750 {shlex.quote(script_file)}\n")
     target = target_of_install(install)
     if args.schedule:
-        if args.confirm != install_id:
-            raise Refused(f"this command adds a nightly job on the server. Run it again with --confirm {install_id}")
         cron = f"17 2 * * * root {script_file} >/dev/null 2>&1\n"
         encoded = base64.b64encode(cron.encode()).decode()
         target.run("backup-schedule", put_script +
                    f"printf '%s' {shlex.quote(encoded)} | base64 -d > /etc/cron.d/forge-{install_id}-backup\n"
                    f"chmod 644 /etc/cron.d/forge-{install_id}-backup")
-        install.setdefault("backup", {}).update({"schedule": "nightly 02:17 UTC", "keep": keep,
-                                                  "scheduled_at": now()})
+        values = {"schedule": "nightly 02:17 UTC", "keep": keep, "scheduled_at": now()}
         say(f"A nightly backup is set on the server ({keep} copies kept).")
     else:
         listing = target.run("backup-now", put_script + f"{shlex.quote(script_file)}\n"
                              f"ls -1t {d}/backups/forge-*.zip | head -1\n"
                              f"du -h $(ls -1t {d}/backups/forge-*.zip | head -1) | cut -f1",
                              timeout=1800).strip().splitlines()
-        install.setdefault("backup", {}).update({"last_file": listing[0] if listing else "",
-                                                  "last_size": listing[1] if len(listing) > 1 else "",
-                                                  "last_at": now(), "keep": keep})
+        values = {"last_file": listing[0] if listing else "", "last_size": listing[1] if len(listing) > 1 else "",
+                  "last_at": now(), "keep": keep}
         say(f"Backup made on the server: {listing[0] if listing else 'unknown'}")
-    save_register(register)
+    update_install(install_id, lambda entry: entry.setdefault("backup", {}).update(values))
     return 0
 
 
@@ -917,7 +1072,7 @@ def cmd_list(args) -> int:
 
 
 def cmd_status(args) -> int:
-    _, install = get_install(args.id)
+    install = get_install(args.id)
     row = summary(install, True)
     row["runner_details"] = install.get("runners", {})
     row["secret_files"] = install.get("secret_files", {})
@@ -983,6 +1138,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--name", required=True); s.add_argument("--scopes", default="all")
     s.add_argument("--as-admin-token", action="store_true",
                    help="save it as the token that harness-forge itself uses")
+    s.add_argument("--confirm", default="", help="type the install id to allow the change")
     s.set_defaults(func=cmd_token)
 
     runner = sub.add_parser("runner", help="CI runners").add_subparsers(dest="runner_command", required=True)
@@ -1003,11 +1159,13 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--id", required=True); s.add_argument("--source", required=True)
     s.add_argument("--service", default="github", choices=["github", "gitlab", "gitea", "forgejo", "git"])
     s.add_argument("--owner", required=True); s.add_argument("--name", required=True)
+    s.add_argument("--confirm", default="", help="type the install id to allow the change")
     s.set_defaults(func=cmd_repo_migrate)
     s = repo.add_parser("mirror", help="push each change to another forge (a backup mirror)")
     s.add_argument("--id", required=True); s.add_argument("--owner", required=True)
     s.add_argument("--name", required=True); s.add_argument("--to", required=True)
     s.add_argument("--remote-user", required=True); s.add_argument("--interval", default="8h0m0s")
+    s.add_argument("--confirm", default="", help="type the install id to allow the change")
     s.set_defaults(func=cmd_repo_mirror)
 
     s = sub.add_parser("backup", help="make a dump on the server now, or set a nightly dump")

@@ -14,7 +14,7 @@ harness-forge inspect --host <server> --ssh-user <user> --ssh-key <key file>
 harness-forge install --id <id> --host <server> --ssh-user <user> --ssh-key <key file> --admin-user <name> --dry-run
 harness-forge install --id <id> --host <server> --ssh-user <user> --ssh-key <key file> --admin-user <name> --confirm <id>
 harness-forge runner add --id <id> --name vps-1 --where remote --confirm <id>
-harness-forge repo migrate --id <id> --source https://github.com/<owner>/<repo> --owner <org> --name <repo>
+harness-forge repo migrate --id <id> --source https://github.com/<owner>/<repo> --owner <org> --name <repo> --confirm <id>
 harness-forge backup --id <id> --schedule --confirm <id>
 harness-forge list --live
 ```
@@ -56,16 +56,26 @@ Settings of the forge: registration closed, sign-in required to see anything,
 SSH off (Git over HTTPS), SQLite, Actions on, packages on.
 
 `--dry-run` stops after the plan. `--confirm <id>` is required for a change.
+With `--json`, the dry run and the result are JSON only.
+
+If a step fails after the server was changed, the register gets no entry. The
+command keeps a pending record in
+`<workspace>/.jarvis/context/forge-hosts/pending/<id>.json`. Run `install`
+again with the same settings and `--confirm <id>` to continue: each server
+step is safe to run again, and the first admin keeps the password of the first
+try. The command refuses to continue with another server, web address, image
+or admin. It also refuses a folder `/opt/forge-<id>` that has files and does
+not have the mark of this install (`.harness-forge-install`).
 
 ### `harness-forge service-account`
 
 Makes the service account if it is missing, and gives it a new token. Use it to
-renew the token.
+renew the token. `--confirm <id>` is required.
 
 ### `harness-forge token`
 
 Makes an API token for a forge user and saves it in the secret folder. The
-token is never printed.
+token is never printed. `--confirm <id>` is required.
 
 ### `harness-forge runner add`
 
@@ -103,17 +113,18 @@ machine: add a runner only for trusted repositories.
 Moves a repository from another forge with its branches, tags, pull requests,
 issues, labels and releases. The token of the source forge comes from
 `FORGE_SOURCE_TOKEN` or from a hidden prompt. The register gets the commit of
-each branch at the move.
+each branch at the move. `--confirm <id>` is required.
 
 ### `harness-forge repo mirror`
 
 Makes the forge push each change to another forge. Use it for a backup mirror.
+`--confirm <id>` is required.
 
 ### `harness-forge backup`
 
 Without `--schedule`: makes one dump now in `/opt/forge-<id>/backups` and keeps
 the newest `--keep` files (default 14). With `--schedule`: adds a nightly job
-on the server.
+on the server. `--confirm <id>` is required for the two forms.
 
 Restoring a dump over live data is out of scope. To test a dump, restore it
 into a separate container.
