@@ -447,10 +447,17 @@ PRAGMA user_version=3;`);
 			if (failures >= ENGINEERING_PILOT.maximumObjectiveFailures)
 				throw new Error("Objective paused after three unsuccessful attempts");
 			const slot = Number(this.#database.prepare("SELECT value FROM metadata WHERE key='slot'").get()?.value);
+			let reservedDetail = "Reservation persisted before resource creation";
 			if (job.lane === "native" || job.lane === "maintenance") {
-				if (job.lane !== (["native", "native", "maintenance"] as const)[slot % 3])
-					throw new Error("Job does not match the next delivery slot");
-				this.#database.prepare("UPDATE metadata SET value=value+1 WHERE key='slot'").run();
+				const due = (["native", "native", "maintenance"] as const)[slot % 3];
+				if (job.lane === due) this.#database.prepare("UPDATE metadata SET value=value+1 WHERE key='slot'").run();
+				else {
+					// The sequence gives the due lane priority. It must not stop all work when that lane
+					// has nothing approved. A yielded slot does not advance, so the due lane keeps its turn.
+					if (this.approvedJobs(now).some((entry) => entry.job.lane === due))
+						throw new Error("Job does not match the next delivery slot");
+					reservedDetail = `Reservation persisted before resource creation; ${due} slot yielded, no approved ${due} work`;
+				}
 			}
 			const workerDeadline = Math.min(now + ENGINEERING_PILOT.workerMs, this.#grantExpiry(grantId));
 			this.#database
@@ -466,7 +473,7 @@ PRAGMA user_version=3;`);
 					now,
 					workerDeadline,
 					workerDeadline + ENGINEERING_PILOT.verificationMs,
-					"Reservation persisted before resource creation",
+					reservedDetail,
 				);
 			if (binding !== undefined)
 				this.#queueHostOperation(`ack:${launchId}`, launchId, {
@@ -475,7 +482,7 @@ PRAGMA user_version=3;`);
 					requestDigest: String(binding.request_digest),
 					runId: launchId,
 				});
-			this.#event(launchId, now, "reserved", "Reservation persisted before resource creation");
+			this.#event(launchId, now, "reserved", reservedDetail);
 			return this.get(launchId);
 		});
 	}
