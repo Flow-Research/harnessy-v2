@@ -25,7 +25,8 @@ export function installPortalLauncher({ target, portal, stateDir, port = 8790 })
 		const resources = join(destination, "Contents/Resources");
 		const common = `--port ${port} --state-dir ${quote(stateDir)}`;
 		writeFileSync(join(resources, "open-portal"), `#!/bin/sh\nexec ${quote(executable)} open ${common}\n`, { mode: 0o700, flag: "wx" });
-		writeFileSync(join(resources, "signin-portal"), `#!/bin/sh\n[ "$#" -eq 1 ] || exit 64\nexec ${quote(executable)} signin --request "$1" ${common}\n`, { mode: 0o700, flag: "wx" });
+		// Base64url request IDs can start with a dash; bind the value before CLI parsing.
+		writeFileSync(join(resources, "signin-portal"), `#!/bin/sh\n[ "$#" -eq 1 ] || exit 64\nexec ${quote(executable)} signin --request="$1" ${common}\n`, { mode: 0o700, flag: "wx" });
 		const plist = join(destination, "Contents/Info.plist");
 		for (const command of [
 			"Add :CFBundleIdentifier string dev.harnessy.portal",

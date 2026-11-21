@@ -306,7 +306,7 @@ margin: 2rem auto 0; max-width: 1220px; padding: 0 1.5rem; text-decoration: none
 .back-link:hover { color: var(--accent); }
 .page-intro, .meeting-header { margin: 0 auto; max-width: 1220px; padding: 24px 24px;
 width: 100%; }
-.page-intro { max-width: 920px; }
+.page-intro { max-width: 1220px; }
 .intro-row { align-items: flex-end; display: flex; gap: 2rem; justify-content: space-between; }
 .eyebrow, .section-label { color: var(--accent); font-size: .73rem; font-weight: 800;
 letter-spacing: .1em; margin: 0 0 .45rem; text-transform: uppercase; }
@@ -374,7 +374,40 @@ padding: .15rem 1rem; }
 text-decoration-color: var(--accent); text-underline-offset: 3px; }
 .metadata-body ul { font-size: .83rem; }
 .operations > .card { background: transparent; border: 0; border-radius: 0; border-top: 1px solid var(--line); margin: 16px 0 0; padding: 16px 0 0; width: 100%; }
-.other-meetings a { color: var(--accent-dark); }
+.inbox-grid { align-items: start; display: grid; gap: 0 24px; grid-template-columns: minmax(0, 1fr) 320px;
+margin: 0 auto; max-width: 1220px; padding: 0 24px 48px; width: 100%; }
+.inbox-main, .inbox-side { min-width: 0; }
+.inbox-side { max-height: calc(100vh - 32px); overflow-y: auto; position: sticky; top: 16px; }
+.inbox-grid .card, .inbox-grid .logout { margin: 0 0 16px; max-width: none; width: 100%; }
+.inbox-grid [id] { scroll-margin-top: 16px; }
+.inbox-nav { padding: 16px 24px; }
+.inbox-nav h2 { color: var(--muted); font-size: .73rem; letter-spacing: .1em; margin: 0 0 8px; text-transform: uppercase; }
+.inbox-nav ul { list-style: none; margin: 0; padding: 0; }
+.inbox-nav ul ul { border-left: 2px solid var(--line); margin: 4px 0 4px 4px; padding-left: 12px; }
+.inbox-nav a { align-items: center; color: var(--ink); display: flex; font-weight: 650; gap: 8px;
+justify-content: space-between; min-height: 36px; text-decoration: none; }
+.inbox-nav ul ul a { color: var(--muted); font-weight: 600; }
+.inbox-nav a:hover { color: var(--accent); }
+.group-count { background: var(--raised); border-radius: 999px; color: var(--muted); font-size: .72rem;
+font-weight: 750; padding: 2px 8px; }
+.day-group { margin-top: 24px; }
+.day-group h3 { align-items: center; border-bottom: 1px solid var(--line); display: flex; font-size: 1rem;
+gap: 8px; margin: 0; padding-bottom: 8px; }
+.meeting-item h4 a { color: var(--accent-dark); }
+.meeting-list { display: grid; gap: 12px; list-style: none; margin: 12px 0 0; padding: 0; }
+.meeting-item { border: 1px solid var(--line); border-radius: 8px; min-width: 0; padding: 16px; }
+.meeting-item h4 { font-size: 1.05rem; margin: 0; overflow-wrap: anywhere; }
+.meeting-item .meta-row { margin-top: .5rem; }
+.meeting-summary, .meeting-purpose { margin: .7rem 0 0; overflow-wrap: anywhere; }
+.meeting-summary, .meeting-takeaways { color: var(--muted); font-size: .9rem; }
+.meeting-takeaways { margin: .5rem 0 0; overflow-wrap: anywhere; padding-left: 1.2rem; }
+.meeting-takeaways li { margin: .25rem 0; }
+.meeting-takeaways li::marker { color: var(--accent); }
+.meeting-item .editor-help { margin: .4rem 0 0; }
+.meeting-actions { align-items: flex-start; display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: .9rem; }
+.meeting-actions form { margin: 0; }
+.doc-link { color: var(--accent-dark); }
+.meeting-actions details[open] { flex: 1 1 100%; }
 .connection-details dl { color: var(--muted); font-size: .85rem; }
 .connection-details dd { margin: 0 0 .65rem; overflow-wrap: anywhere; }
 .metadata-card { background: var(--raised); border: 1px solid var(--line); border-radius: 12px;
@@ -427,10 +460,13 @@ outline-offset: 3px; }
 .message-card { margin-top: 24px; }
 .message-card form { margin-block: 16px; }
 .message-card > a { display: inline-flex; margin-block: 8px; }
-@media (max-width: 880px) { .review-grid { grid-template-columns: 1fr; }
-.review-sidebar { position: static; } }
+@media (max-width: 880px) { .review-grid, .inbox-grid { grid-template-columns: 1fr; }
+.review-sidebar, .inbox-side { position: static; }
+.inbox-side { display: contents; }
+.inbox-nav { order: -1; }
+.inbox-nav ul ul { border-left: 0; display: flex; flex-wrap: wrap; gap: 0 16px; margin: 0; padding-left: 0; } }
 @media (max-width: 600px) { .page-intro, .meeting-header { padding: 24px 16px; }
-.back-link { padding: 0 1rem; } .review-grid { padding: 0 1rem 2rem; }
+.back-link { padding: 0 1rem; } .review-grid { padding: 0 1rem 2rem; } .inbox-grid { padding: 0 16px 32px; }
 .connection-card, .queue-card, .empty-card, .attention-card, .queue-status, .message-card, .logout { width: calc(100% - 2rem); }
 .intro-row { align-items: flex-start; flex-direction: column; gap: 1rem; }
 .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -640,6 +676,16 @@ const reviewDate = (value: string) =>
 		new Date(`${value}T00:00:00Z`),
 	);
 
+const reviewDay = (value: string) =>
+	new Intl.DateTimeFormat("en", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" }).format(
+		new Date(`${value}T00:00:00Z`),
+	);
+
+const reviewShortDay = (value: string) =>
+	new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(
+		new Date(`${value}T00:00:00Z`),
+	);
+
 const statusClass = (status: string) =>
 	(["pending_review", "approved", "publishing", "published", "rejected", "blocked"] as ReadonlyArray<string>).includes(
 		status,
@@ -705,15 +751,70 @@ const renderDispatchResult = (result: {
 <a class="button primary-button" href="/">Return to review</a></section>`,
 	);
 
+interface MeetingReviewPreview {
+	readonly itemId: string;
+	readonly title: string | null;
+	readonly summary: string | null;
+	readonly purpose: string | null;
+	/** Number of people in the note's Participants line; the names stay in the note. */
+	readonly participants?: number | null;
+	/** Link to the draft document that already exists for this exact saved revision. */
+	readonly docUrl?: string | null;
+}
+
+const previewInline = (value: string) =>
+	value
+		.replace(/\[([^\]]*)\]\((?:[^()\s]|\([^()\s]*\))*\)/gu, "$1")
+		.replace(/\*\*|__|`/gu, "")
+		.replace(/\s+/gu, " ")
+		.trim();
+
+/** A summary is Markdown. A preview shows its words, without headings, link targets or list markers. */
+const previewPlainText = (summary: string) =>
+	summary
+		.split("\n")
+		.filter((line) => !/^\s*#{1,6}\s/u.test(line))
+		.map((line) => previewInline(line.replace(/^\s*(?:[-*+]|\d+\.)\s+/u, "")))
+		.filter((line) => line.length > 0)
+		.join(" ");
+
+/** The list items under a "Key Takeaways" heading, as plain text. Empty when the note has no such section. */
+const previewTakeaways = (summary: string): ReadonlyArray<string> => {
+	const lines = summary.split("\n");
+	const start = lines.findIndex((line) => /^\s*#{1,6}\s+key takeaways\s*$/iu.test(line));
+	if (start === -1) return [];
+	const end = lines.findIndex((line, index) => index > start && /^\s*#{1,6}\s/u.test(line));
+	return lines
+		.slice(start + 1, end === -1 ? undefined : end)
+		.filter((line) => /^\s*[-*+]\s+/u.test(line))
+		.map((line) => previewInline(line.replace(/^\s*[-*+]\s+/u, "")))
+		.filter((line) => line.length > 0);
+};
+
+const previewParticipants = (markdown: string): number | null => {
+	const line = /^- Participants:[ \t]*(.+)$/mu.exec(markdown)?.[1];
+	if (line === undefined) return null;
+	const count = line.split(",").filter((entry) => entry.trim().length > 0).length;
+	return count === 0 ? null : count;
+};
+
+const clip = (value: string, length: number) => {
+	const points = Array.from(value);
+	return points.length > length ? `${points.slice(0, length).join("")}…` : value;
+};
+
+// The inbox reads one note per waiting meeting. These limits bound that work for a large queue;
+// meetings beyond the first limit still appear, with a link and without a preview.
+const MEETING_REVIEW_PREVIEW_LIMIT = 100;
+const MEETING_REVIEW_PREVIEW_CONCURRENCY = 8;
+const MEETING_REVIEW_CARD_SUMMARY_LENGTH = 320;
+const MEETING_REVIEW_CARD_TAKEAWAYS = 3;
+const MEETING_REVIEW_CARD_TAKEAWAY_LENGTH = 220;
+
 const renderInbox = (
 	items: ReadonlyArray<MeetingPublicationItem>,
 	csrf: string,
-	nextMeeting: {
-		readonly itemId: string;
-		readonly title: string | null;
-		readonly summary: string | null;
-		readonly purpose: string | null;
-	} | null,
+	previews: ReadonlyArray<MeetingReviewPreview>,
 	mode: MeetingPublicationReviewMode,
 	dispatch: MeetingPublicationReviewDispatch | undefined,
 	health: ReadonlyArray<MeetingProviderHealth>,
@@ -723,6 +824,23 @@ const renderInbox = (
 	generateGoogleDocAvailable = false,
 ) => {
 	const reviewItems = items.filter((item) => item.status === "pending_review");
+	const previewFor = (item: MeetingPublicationItem) => previews.find((preview) => preview.itemId === item.itemId);
+	const decisionFields = (item: MeetingPublicationItem) =>
+		`<input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="item_id" value="${item.itemId}"><input type="hidden" name="source_hash" value="${item.sourceHash}">`;
+	// The same two confirmations serve the next meeting and every card in the list, so a
+	// quick decision always names the exact saved version and its Discord purpose.
+	const quickDecisions = (item: MeetingPublicationItem, purpose: string | null) =>
+		`<details class="quick-accept"><summary>Accept &amp; publish…</summary><p>Accept the full saved meeting note for publication? The summary above is only a preview. This approves the exact saved version for the publication worker to send to Google Docs and Discord.</p><p><strong>Discord purpose:</strong> ${safeReviewText(purpose ?? "")}</p><form method="post" action="/approve/${item.itemId}">${decisionFields(item)}<input type="hidden" name="purpose" value="${escapeHtml(purpose ?? "")}"><button class="approve" type="submit">Confirm acceptance &amp; publish</button></form></details>
+<details class="quick-reject"><summary>Reject meeting…</summary><p>Reject this saved version of the meeting note? It will leave the review queue without approval or publication.</p><form method="post" action="/reject/${item.itemId}">${decisionFields(item)}<button class="reject" type="submit">Confirm rejection</button></form></details>`;
+	// One control per meeting: a link when the document for this saved revision exists, the
+	// generate action when it does not. Generation returns to this page, so no extra screen.
+	const documentControl = (item: MeetingPublicationItem, docUrl: string | null | undefined) =>
+		docUrl !== null && docUrl !== undefined
+			? openGoogleDocLink(docUrl)
+			: mode === "full" && generateGoogleDocAvailable
+				? `<form method="post" action="/generate-google-doc/${item.itemId}">${decisionFields(item)}<button type="submit">Generate Google Doc</button></form>`
+				: "";
+	const nextMeeting = reviewItems[0] === undefined ? undefined : previewFor(reviewItems[0]);
 	const attentionItems = items.filter(
 		(item) => item.status === "blocked" || (item.status === "approved" && item.failureStage !== null),
 	);
@@ -804,23 +922,21 @@ ${reviewItems.length > 0 ? `<span class="count-badge">${reviewItems.length} wait
 					.slice(0, 1)
 					.map(
 						(item) =>
-							`<section class="card queue-card"><p class="section-label">Next meeting</p>
-<h2>${nextMeeting?.itemId === item.itemId ? (nextMeeting.title === null ? "Meeting title unavailable" : safeReviewText(nextMeeting.title)) : `Meeting · ${escapeHtml(item.meetingDate)}`}</h2><div class="meta-row">
+							`<section class="card queue-card" id="next-meeting"><p class="section-label">Next meeting</p>
+<h2>${nextMeeting !== undefined ? (nextMeeting.title === null ? "Meeting title unavailable" : safeReviewText(nextMeeting.title)) : `Meeting · ${escapeHtml(item.meetingDate)}`}</h2><div class="meta-row">
 <span class="meta-pill">${escapeHtml(reviewDate(item.meetingDate))}</span><span class="meta-pill">${safeReviewText(statusLabel(project))}</span>
 <span class="status-pill status-${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></div>
 ${
-	nextMeeting?.itemId === item.itemId && nextMeeting.summary !== null
+	nextMeeting !== undefined && nextMeeting.summary !== null
 		? (
 				() => {
-					const text = nextMeeting.summary.replace(/\s+/gu, " ").trim();
+					const text = previewPlainText(nextMeeting.summary);
 					const points = Array.from(text);
 					const preview = points.slice(0, 600).join("");
-					const fields = `<input type="hidden" name="csrf" value="${escapeHtml(csrf)}"><input type="hidden" name="item_id" value="${item.itemId}"><input type="hidden" name="source_hash" value="${item.sourceHash}">`;
 					return `<div class="meeting-preview"><h3>Executive summary preview</h3><p>${preview.length === 0 ? "No executive summary is available. Open the full note to review it." : safeReviewText(preview) + (points.length > 600 ? "…" : "")}</p>${points.length > 600 ? '<p class="editor-help">Showing the first 600 characters of the saved summary.</p>' : ""}</div>
-<div class="actions"><a class="button primary-button" href="/item/${item.itemId}">Review meeting</a>${mode === "full" && generateGoogleDocAvailable ? `<form method="post" action="/generate-google-doc/${item.itemId}">${fields}<button type="submit">Generate Google Doc</button></form>` : ""}</div>
+<div class="actions"><a class="button primary-button" href="/item/${item.itemId}">Review meeting</a>${documentControl(item, nextMeeting.docUrl)}</div>
 ${mode === "full" && generateGoogleDocAvailable ? '<p class="editor-help">The Google Doc contains the full saved meeting note, not just this preview. Generating it does not approve the meeting or send anything to Discord.</p>' : ""}
-<details class="quick-accept"><summary>Accept &amp; publish…</summary><p>Accept the full saved meeting note for publication? The summary above is only a preview. This approves the exact saved version for the publication worker to send to Google Docs and Discord.</p><p><strong>Discord purpose:</strong> ${safeReviewText(nextMeeting.purpose ?? "")}</p><form method="post" action="/approve/${item.itemId}">${fields}<input type="hidden" name="purpose" value="${escapeHtml(nextMeeting.purpose ?? "")}"><button class="approve" type="submit">Confirm acceptance &amp; publish</button></form></details>
-<details class="quick-reject"><summary>Reject meeting…</summary><p>Reject this saved version of the meeting note? It will leave the review queue without approval or publication.</p><form method="post" action="/reject/${item.itemId}">${fields}<button class="reject" type="submit">Confirm rejection</button></form></details>
+${quickDecisions(item, nextMeeting.purpose)}
 <p class="editor-help">Use Review meeting if you need to read or edit the full note before deciding.</p>`;
 				}
 			)()
@@ -828,20 +944,61 @@ ${mode === "full" && generateGoogleDocAvailable ? '<p class="editor-help">The Go
 }</section>`,
 					)
 					.join("");
+	// Waiting meetings are grouped by day so the side navigation can jump to a group.
+	const dayGroups = new Map<string, Array<MeetingPublicationItem>>();
+	for (const item of reviewItems.slice(1)) {
+		dayGroups.set(item.meetingDate, [...(dayGroups.get(item.meetingDate) ?? []), item]);
+	}
+	const meetingCard = (item: MeetingPublicationItem) => {
+		const preview = previewFor(item);
+		const open = `<a class="button" href="/item/${item.itemId}">Review meeting</a>`;
+		if (preview === undefined || preview.summary === null) {
+			return `<li class="meeting-item" id="meeting-${item.itemId}"><h4><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></h4><p class="editor-help">${preview === undefined ? "Details are not loaded for this meeting. Open it to review." : "The saved note changed or could not be read. Open the meeting to check it before taking action."}</p><div class="meeting-actions">${open}</div></li>`;
+		}
+		const takeaways = previewTakeaways(preview.summary);
+		const text = previewPlainText(preview.summary);
+		// The purpose is the lead line. Takeaways follow when the note has them; if not, the
+		// card shows the start of the summary.
+		const detail =
+			takeaways.length > 0
+				? `<ul class="meeting-takeaways">${takeaways
+						.slice(0, MEETING_REVIEW_CARD_TAKEAWAYS)
+						.map((entry) => `<li>${safeReviewText(clip(entry, MEETING_REVIEW_CARD_TAKEAWAY_LENGTH))}</li>`)
+						.join(
+							"",
+						)}</ul>${takeaways.length > MEETING_REVIEW_CARD_TAKEAWAYS ? `<p class="editor-help">${takeaways.length - MEETING_REVIEW_CARD_TAKEAWAYS} more in the full note.</p>` : ""}`
+				: `<p class="meeting-summary">${text.length === 0 ? "No executive summary is available. Open the full note to review it." : safeReviewText(clip(text, MEETING_REVIEW_CARD_SUMMARY_LENGTH))}</p>`;
+		const people =
+			preview.participants === null || preview.participants === undefined
+				? ""
+				: `<div class="meta-row"><span class="meta-pill">${preview.participants} participant${preview.participants === 1 ? "" : "s"}</span></div>`;
+		return `<li class="meeting-item" id="meeting-${item.itemId}"><h4><a href="/item/${item.itemId}">${preview.title === null ? "Meeting title unavailable" : safeReviewText(preview.title)}</a></h4>${people}<p class="meeting-purpose"><strong>Purpose:</strong> ${safeReviewText(preview.purpose ?? "")}</p>${detail}<div class="meeting-actions">${open}${documentControl(item, preview.docUrl)}${quickDecisions(item, preview.purpose)}</div></li>`;
+	};
 	const otherMeetings =
 		reviewItems.length < 2
 			? ""
-			: `<details class="card queue-status other-meetings"><summary>Other meetings waiting (${reviewItems.length - 1})</summary><ul>${reviewItems
-					.slice(1)
-					.map(
-						(item) =>
-							`<li><a href="/item/${item.itemId}">Meeting · ${escapeHtml(reviewDate(item.meetingDate))}</a></li>`,
-					)
-					.join("")}</ul></details>`;
+			: `<details class="card queue-status other-meetings" id="other-meetings" open><summary>Other meetings waiting (${reviewItems.length - 1})</summary><p class="editor-help">Each card shows the saved title, the purpose and the key takeaways. Accept, reject or open a meeting from its card.${mode === "full" && generateGoogleDocAvailable ? " Generate Google Doc creates a document from the full saved note and returns here with an Open Google Doc link; it does not approve the meeting or send anything to Discord." : ""}</p>${Array.from(
+					dayGroups,
+					([day, group]) =>
+						`<section class="day-group" id="day-${escapeHtml(day)}"><h3><time datetime="${escapeHtml(day)}">${escapeHtml(reviewDay(day))}</time> <span class="group-count">${group.length}</span></h3><ul class="meeting-list">${group.map(meetingCard).join("")}</ul></section>`,
+				).join("")}</details>`;
+	const attentionCount = attentionItems.length;
+	const jump =
+		reviewItems.length === 0 && attentionCount === 0
+			? ""
+			: `<nav class="card inbox-nav" aria-labelledby="inbox-nav-title"><h2 id="inbox-nav-title">Jump to</h2><ul>${reviewItems.length === 0 ? "" : '<li><a href="#next-meeting">Next meeting</a></li>'}${attentionCount === 0 ? "" : `<li><a href="#attention">Needs attention <span class="group-count">${attentionCount}</span></a></li>`}${
+					reviewItems.length < 2
+						? ""
+						: `<li><a href="#other-meetings">Other meetings waiting <span class="group-count">${reviewItems.length - 1}</span></a><ul>${Array.from(
+								dayGroups,
+								([day, group]) =>
+									`<li><a href="#day-${escapeHtml(day)}">${escapeHtml(reviewShortDay(day))} <span class="group-count">${group.length}</span></a></li>`,
+							).join("")}</ul></li>`
+				}</ul></nav>`;
 	const attention =
 		attentionItems.length === 0
 			? ""
-			: `<section class="card attention-card"><p class="section-label">Dispatch needs attention</p>
+			: `<section class="card attention-card" id="attention"><p class="section-label">Dispatch needs attention</p>
 <ul>${attentionItems
 					.map((item) => {
 						const stage =
@@ -863,7 +1020,9 @@ ${mode === "full" && generateGoogleDocAvailable ? '<p class="editor-help">The Go
 		.join("")}</div></details>`;
 	return page(
 		"Meeting publication review",
-		`${header}${googleStatus}${connectionFailure ? providerStatus : ""}${queue}${otherMeetings}${attention}${recoveryGuidance}${connectionFailure ? "" : providerStatus}${counts}${mode === "full" ? `<details class="card queue-status operations"><summary>Publication controls</summary>${preflightForm(csrf, mode)}${dispatchForm(csrf, dispatch)}</details>` : ""}${logoutForm(csrf)}`,
+		// Decisions and anything that blocks them stay in the main column. Navigation, status
+		// and controls sit beside it, so a long queue does not push them out of reach.
+		`${header}<div class="inbox-grid"><main class="inbox-main">${googleStatus}${connectionFailure ? providerStatus : ""}${attention}${recoveryGuidance}${queue}${otherMeetings}</main><aside class="inbox-side" aria-label="Navigation, status and controls">${jump}${connectionFailure ? "" : providerStatus}${counts}${mode === "full" ? `<details class="card queue-status operations"><summary>Publication controls</summary>${preflightForm(csrf, mode)}${dispatchForm(csrf, dispatch)}</details>` : ""}${logoutForm(csrf)}</aside></div>`,
 	);
 };
 
@@ -871,6 +1030,9 @@ const safeGoogleDocUrl = (value: string | null): string | null =>
 	value !== null && /^https:\/\/docs\.google\.com\/document\/d\/[A-Za-z0-9_-]+(?:\/(?:edit|view))?$/u.test(value)
 		? value
 		: null;
+
+const openGoogleDocLink = (docUrl: string) =>
+	`<a class="button doc-link" href="${escapeHtml(docUrl)}" target="_blank" rel="noopener noreferrer">Open Google Doc</a>`;
 
 const renderItem = (
 	item: MeetingPublicationItem,
@@ -880,6 +1042,7 @@ const renderItem = (
 	mode: MeetingPublicationReviewMode,
 	project: string,
 	generateGoogleDocAvailable = false,
+	googleDocUrl: string | null = null,
 ) => {
 	const hidden = `<input type="hidden" name="csrf" value="${csrf}">
 <input type="hidden" name="item_id" value="${item.itemId}">
@@ -890,7 +1053,7 @@ const renderItem = (
 <p class="lede">Generate a Google Doc from the full saved meeting note. This does not approve the meeting or send anything to Discord.</p>
 <p class="editor-help">If you edit the note below, use Update meeting note before generating the document. The document uses the configured Google account and folder permissions.</p>
 <p class="editor-help">Generating the same saved version again returns its existing document. This action does not add public access.</p>
-<form class="actions" method="post" action="/generate-google-doc/${item.itemId}">${hidden}<button type="submit">Generate Google Doc</button></form></section>`
+${googleDocUrl === null ? `<form class="actions" method="post" action="/generate-google-doc/${item.itemId}">${hidden}<input type="hidden" name="return_to" value="item"><button type="submit">Generate Google Doc</button></form>` : `<p class="editor-help">A document exists for this saved version.</p><div class="actions">${openGoogleDocLink(googleDocUrl)}</div>`}</section>`
 			: "";
 	const noteEditor =
 		mode === "full" && item.status === "pending_review"
@@ -1343,6 +1506,14 @@ export class MeetingPublicationReviewServer extends Context.Service<
 					if (authenticated.session.portalOrigin !== undefined)
 						portalReturnOrigins.set(response, authenticated.session.portalOrigin);
 
+					// A draft link is shown only for the exact revision the queue row records, and only
+					// when it is a Google Docs document address.
+					const readyGoogleDocUrl = async (item: MeetingPublicationItem) => {
+						const draft = await runRequestEffect(store.googleDraft(item.itemId)).catch(() => null);
+						return draft !== null && draft.state === "ready" && draft.sourceHash === item.sourceHash
+							? safeGoogleDocUrl(draft.docUrl)
+							: null;
+					};
 					if (request.method === "GET" || request.method === "HEAD") {
 						if (url.search.length > 0) throw new ReviewHttpError(400, "query");
 						if (url.pathname === "/google-reconnect") {
@@ -1382,36 +1553,42 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						}
 						if (url.pathname === "/") {
 							const items = await runRequestEffect(store.list());
-							const next = items.find((item) => item.status === "pending_review");
-							const note =
-								next === undefined
-									? null
-									: await runRequestEffect(source.read(next.notePath)).catch(() => null);
-							const nextMeeting =
-								next === undefined
-									? null
-									: {
-											itemId: next.itemId,
-											summary:
-												note !== null && note.itemId === next.itemId && note.sourceHash === next.sourceHash
-													? note.summary
-													: null,
-											purpose:
-												note !== null && note.itemId === next.itemId && note.sourceHash === next.sourceHash
-													? (next.discordPurposeOverride ?? meetingPublicationDefaultPurpose(note))
-													: null,
-											title:
-												note !== null && note.itemId === next.itemId && note.sourceHash === next.sourceHash
-													? note.title
-													: null,
-										};
+							const waiting = items
+								.filter((item) => item.status === "pending_review")
+								.slice(0, MEETING_REVIEW_PREVIEW_LIMIT);
+							const previews: Array<MeetingReviewPreview> = [];
+							for (let start = 0; start < waiting.length; start += MEETING_REVIEW_PREVIEW_CONCURRENCY) {
+								previews.push(
+									...(await Promise.all(
+										waiting.slice(start, start + MEETING_REVIEW_PREVIEW_CONCURRENCY).map(async (item) => {
+											const note = await runRequestEffect(source.read(item.notePath)).catch(() => null);
+											// A preview is shown only for the exact revision the queue row records.
+											const current =
+												note !== null && note.itemId === item.itemId && note.sourceHash === item.sourceHash
+													? note
+													: null;
+											return {
+												itemId: item.itemId,
+												title: current?.title ?? null,
+												participants: current === null ? null : previewParticipants(current.markdown),
+												docUrl: current === null ? null : await readyGoogleDocUrl(item),
+												summary: current?.summary ?? null,
+												purpose:
+													current === null
+														? null
+														: (item.discordPurposeOverride ?? meetingPublicationDefaultPurpose(current)),
+											};
+										}),
+									)),
+								);
+							}
 							send(
 								response,
 								200,
 								renderInbox(
 									items,
 									authenticated.session.csrf,
-									nextMeeting,
+									previews,
 									mode,
 									boundedDispatch,
 									await runRequestEffect(store.providerHealth()),
@@ -1443,6 +1620,7 @@ export class MeetingPublicationReviewServer extends Context.Service<
 								mode,
 								config.project ?? "Local",
 								publication.generateGoogleDoc !== undefined,
+								await readyGoogleDocUrl(item),
 							),
 							head,
 							"same-origin",
@@ -1459,16 +1637,22 @@ export class MeetingPublicationReviewServer extends Context.Service<
 						if (mode !== "full" || generate === undefined || url.search.length > 0)
 							throw new ReviewHttpError(404, "route");
 						const itemId = documentAction[1]!;
+						let returnToItem = false;
 						const result = await runMutation(async () => {
-							const form = parseForm(await readBody(request, config.reviewMaxBodyBytes), [
+							const body = await readBody(request, config.reviewMaxBodyBytes);
+							const form = parseForm(body, [
 								"csrf",
 								"item_id",
 								"source_hash",
+								...(new URLSearchParams(body).has("return_to") ? ["return_to"] : []),
 							]);
 							if (!secureEqual(form.csrf ?? "", authenticated.session.csrf))
 								throw new ReviewHttpError(403, "csrf");
 							if (form.item_id !== itemId || !hashPattern.test(form.source_hash ?? ""))
 								throw new ReviewHttpError(409, "item");
+							if (form.return_to !== undefined && form.return_to !== "item")
+								throw new ReviewHttpError(400, "return");
+							returnToItem = form.return_to === "item";
 							const item = await runRequestEffect(store.get(itemId));
 							if (item === null) throw new ReviewHttpError(404, "item");
 							const note = await runRequestEffect(source.read(item.notePath)).catch(() => null);
@@ -1502,14 +1686,9 @@ export class MeetingPublicationReviewServer extends Context.Service<
 								detail:
 									"A document result was returned, but its link could not be verified. The meeting was not approved and nothing was sent to Discord. Return to the meeting to check its saved document status.",
 							});
-						send(
-							response,
-							200,
-							page(
-								"Google Doc ready",
-								`<section class="card message-card"><h1>Google Doc ready</h1><p>The document contains the full saved meeting note. The meeting remains unapproved. Nothing was sent to Discord.</p><p><a class="button primary-button" href="${escapeHtml(docUrl)}" target="_blank" rel="noopener noreferrer">Open Google Doc</a></p><a href="/item/${itemId}">Back to this meeting</a></section>`,
-							),
-						);
+						// The document link now appears beside the meeting, so the reviewer returns to the
+						// page they came from in place of a separate result screen.
+						redirect(response, returnToItem ? `/item/${itemId}` : `/#meeting-${itemId}`);
 						return;
 					}
 					if (url.pathname.startsWith("/google-reconnect/")) {
