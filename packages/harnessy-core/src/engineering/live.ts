@@ -639,6 +639,11 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 			if (found.exitCode !== 0)
 				return { status: "paused", reason: `Required tool is missing: ${tool}`, sourceRevision, ...digests };
 		}
+		// The runner needs the WorkStream command. A stopped local service must pause admission,
+		// not fail a reserved run and spend an attempt.
+		const workstream = await work.run([...profile.workstreamCli, "--version"], { timeoutMs: 30_000 });
+		if (workstream.exitCode !== 0)
+			return { status: "paused", reason: "The WorkStream command is unavailable", sourceRevision, ...digests };
 		return { status: "ready", reason: "Host probes passed", sourceRevision, ...digests };
 	};
 	/** Record a limit reply as soon as a stopped agent is seen, on every settlement path. */
@@ -710,12 +715,20 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 			return { verdict: "reject", reason: "A subscription limit stopped the agent" };
 		if (outcome === undefined) return { verdict: "reject", reason: "The runner returned no outcome" };
 		const report = outcome.report;
+		// The runner's own report is kept, so that a stopped run can be understood later.
+		writePrivateJson(join(stateRoot, "outcomes", `${run.id}.json`), {
+			schema: "harnessy.engineering.runner-outcome.v1",
+			runId: run.id,
+			recordedAt: work.now(),
+			exitCode: outcome.exitCode,
+			report,
+		});
 		const delivered =
 			outcome.exitCode === 0 || (typeof report.reason === "string" && DELIVERED_HANDOFFS.has(report.reason));
 		if (!delivered)
 			return {
 				verdict: "reject",
-				reason: `The runner stopped: ${typeof report.reason === "string" ? report.reason : "unknown"}`,
+				reason: `The runner stopped: ${typeof report.reason === "string" ? report.reason : typeof report.status === "string" ? report.status : "unknown"}${typeof report.detail === "string" ? ` (${report.detail.slice(0, 300)})` : ""}`,
 			};
 		// The candidate is the revision that Harnessy pushed, from its own private state.
 		const saved = savedWork(work, run.job.taskId);

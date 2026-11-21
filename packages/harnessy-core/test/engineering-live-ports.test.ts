@@ -31,6 +31,7 @@ const world = (
 		readonly ps?: (paths: Paths) => string;
 		readonly lsof?: (paths: Paths) => string;
 		readonly pane?: RunResult;
+		readonly workstream?: RunResult;
 	} = {},
 ) => {
 	const base = realpathSync(mkdtempSync(join(tmpdir(), "engineering-ports-")));
@@ -48,6 +49,8 @@ const world = (
 		if (argv[0] === "lsof") return ok(overrides.lsof?.({ settings, worktree }) ?? "p1\nfcwd\nn/\n");
 		if (argv[0] === "herdr" && argv.includes("wait-output"))
 			return overrides.pane ?? { exitCode: 1, stdout: "", stderr: '{"error":{"code":"timeout"}}' };
+		if (argv.includes("rev-parse")) return ok(`${"b".repeat(40)}\n`);
+		if (argv[0] === "workstream") return overrides.workstream ?? ok("workstream 1.0.0");
 		return ok();
 	};
 	const work: WorkDeps = {
@@ -192,6 +195,23 @@ describe("process observation", () => {
 			verdict: "reject",
 			reason: "A subscription limit stopped the agent",
 		});
+	});
+});
+
+describe("readiness", () => {
+	it("pauses admission when the WorkStream command is unavailable", async () => {
+		const down = world({ workstream: { exitCode: 1, stdout: "", stderr: "service is not running" } });
+		const profile = down.deps.profiles[0];
+		if (profile === undefined) throw new Error("missing profile");
+		expect(await down.deps.readiness(down.run().job, profile)).toMatchObject({
+			status: "paused",
+			reason: "The WorkStream command is unavailable",
+			sourceRevision: "b".repeat(40),
+		});
+		const up = world();
+		const upProfile = up.deps.profiles[0];
+		if (upProfile === undefined) throw new Error("missing profile");
+		expect(await up.deps.readiness(up.run().job, upProfile)).toMatchObject({ status: "ready" });
 	});
 });
 
