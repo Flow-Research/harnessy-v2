@@ -77,6 +77,7 @@ import {
 	parseActor,
 	parseAssignment,
 	parseChangedPaths,
+	parseCheckBuckets,
 	parseDepDirs,
 	parseExitMarker,
 	parseHerdrError,
@@ -1386,7 +1387,21 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			for (;;) {
 				const timeoutMs = app === undefined ? CHECKS_TIMEOUT_MS : Math.min(APP_CHECKS_SLICE_MS, until - deps.now());
 				const result = await work.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs });
-				if (app === undefined || result.timedOut !== true || deps.now() >= until) return result;
+				if (result.exitCode === 0 || deps.now() >= until) return result;
+				if (result.timedOut === true) {
+					if (app === undefined) return result;
+					continue;
+				}
+				// The watch can end with an error while no check has failed, for example on a failed
+				// request. That is not a verdict. Keep waiting only when the checks themselves say
+				// that none failed and some are still pending.
+				if (NO_CHECKS_YET.test(`${result.stdout}\n${result.stderr}`)) return result;
+				const buckets = parseCheckBuckets(
+					(await work.run(ghArgv.checksState(pr.number), { cwd: worktree, timeoutMs: PROBE_TIMEOUT_MS })).stdout,
+				);
+				if (buckets === undefined || buckets.failed > 0 || buckets.pending === 0) return result;
+				deps.log(`The checks watch ended early (gh exit ${result.exitCode ?? "none"}); none failed, waiting again`);
+				await deps.sleep(CHECKS_APPEAR_POLL_MS);
 			}
 		};
 		let checks = await watch();
@@ -1404,6 +1419,8 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			return handoff(
 				"checks_not_passed",
 				`checks on PR #${pr.number} have not passed (gh exit ${checks.exitCode}); it stays a draft. Re-run once they pass, or close the PR.`,
+				// The last lines of the command, so that an early stop can be told from a failed check.
+				{ checks_output: redactSecrets(`${checks.stdout}\n${checks.stderr}`.trim()).slice(-600) },
 			);
 		// Mark ready only the reviewed commit: the branch could have moved while checks ran.
 		const current = parsePrView(await must(ghArgv.prView(pr.number), "gh pr view", worktree));

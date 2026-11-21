@@ -37,7 +37,7 @@ const reviewed: {
 	readonly generator: Readonly<Record<string, string>>;
 	readonly files: Readonly<Record<string, { readonly ts: string; readonly js: string }>>;
 } = /* REVIEWED_ORACLE_START */ {
-	revision: "harnessy.engineering.command-oracle.v1.r4",
+	revision: "harnessy.engineering.command-oracle.v1.r5",
 	node: "22.22.2",
 	sqlite: "3.51.2",
 	generator: {
@@ -109,16 +109,16 @@ const reviewed: {
 			js: "fca5ef7bc555829f870f576518215388c9123689676e7c5e6740a2bad211c984",
 		},
 		"work/logic": {
-			ts: "cc129ca641c413988890df6f1ff78426501b73fb0a330325b114addcc912f9cd",
-			js: "717be1d78db27a3af5b7da953530da15ff60368cc9265df061dd999910ffa547",
+			ts: "34f267acdc90df94ace0534d10af21abd2a346ad7c47821057657737124bc2d8",
+			js: "546c260682e630542342db439cd1b0b9bb90aa124e66b182f41140a81b69d044",
 		},
 		"work/notifications": {
 			ts: "02cfaa74e77c6c178bc079db91380548747b8eb81baab37f0b8e692380bb13bf",
 			js: "d2c08f98e56b34926265084fce70144398b0eaf75eaf9f7ed5569d84f7e13f75",
 		},
 		"work/run": {
-			ts: "d2da59b60f7e8e1f65e486379ac9dc688a41f17c3960095ea8589b70a752d721",
-			js: "c58e67fe6b7de0cf7051dfddda5224a126083ad05d85c19e779c8e657410ecee",
+			ts: "25b7e1043f4290e13f0b0a4c6a47ff16913e139f08f8c7251f0d762e819059f2",
+			js: "43eea215d71c8b7fe379944ddd148d3b6acb47b3768f9470f89bcc67e9795191",
 		},
 		"work/task-content": {
 			ts: "cf72399760f50f76f1363b086042283b573bd53e8e7181fd90d68f154bf270f5",
