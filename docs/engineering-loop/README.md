@@ -53,7 +53,7 @@ The default comparison result is `inconclusive`. Ten samples alone do not establ
 
 The engineering controller uses the existing task runner and private SQLite state. Remote host delivery retains launch identities, pending operations, acknowledgments, and event sequence numbers in that state. It requires a confirmed acknowledgment and fresh central authority before remote execution. A lost reply keeps the reservation held until reconciliation. Local controller state alone does not qualify a multi-host pilot.
 
-Owner commands can approve an exact job, inspect local state, request cancellation, and revoke authority. These commands do not enable a daemon. Provider admission still requires trusted evidence of available included allowance and disabled additional paid usage. Login or a subscription name does not supply that evidence.
+Owner commands can approve an exact job, inspect local state, request cancellation, and revoke authority. The commands `tick` and `serve` can start one worker for an approved job. Provider admission requires all of these facts: a subscription sign-in for the expected account, no provider setting in the environment, an owner statement that extra usage billing is off, and no recorded limit pause. [Operate the engineering loop on one machine](operations.md) gives the procedure.
 
 The benchmark has no provider, model, merge, deployment, or job-approval capability. It does not authorize a task or release. The retired command-measurement and JSON-comparison prototypes are no longer public entrypoints. Earlier prototype smoke reports remain historical evidence only.
 
@@ -61,4 +61,4 @@ The benchmark has no provider, model, merge, deployment, or job-approval capabil
 
 Full Harnessy startup, preparation, and status workloads remain open. Garden and WorkStream collectors remain unsupported. Native mobile, web, and device measurements also remain open. The functional host qualification uses real authentication, signatures, HTTP, and database state, with synthetic provider and execution ports. It does not prove a live provider, the full task runner, WorkStream proof acceptance, or a device journey.
 
-Do not activate unattended work from this benchmark alone. The full loop still needs the missing provider, execution, measurement, and device evidence. No command in this document merges or deploys a change.
+Do not activate unattended work from this benchmark alone. One owner machine completed a verified run to a draft pull request. A scheduled service, a multi-host pilot, measurement workloads for the other products, and device evidence remain open. No command in this document merges or deploys a change.
