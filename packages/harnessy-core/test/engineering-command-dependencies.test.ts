@@ -99,7 +99,12 @@ async function lockChild(fixture: Awaited<ReturnType<typeof lockFixture>>, body:
 		execFile(
 			process.execPath,
 			["--experimental-strip-types", entry],
-			{ timeout: 55000, killSignal: "SIGKILL", maxBuffer: 16384, env: { PATH: "/usr/bin:/bin", LANG: "C" } },
+			{
+				timeout: 55000,
+				killSignal: "SIGKILL",
+				maxBuffer: 16384,
+				env: { PATH: "/usr/bin:/bin", LANG: "C", HSY_AUTH_ENCRYPTION: "off", PI_AUTH_ENCRYPTION: "off" },
+			},
 			(error, stdout) => (error ? reject(error) : resolve(stdout)),
 		),
 	);
