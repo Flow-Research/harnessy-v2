@@ -26,8 +26,8 @@ const engineeringSkillFiles = [
 	"references/experiment-record.md",
 	"test/verify-skill.test.mjs",
 ] as const;
-// The reviewed V2 amendment adds five files to the prior 746-file package.
-const amendedPackFileCount = 746 + engineeringSkillFiles.length;
+// The reviewed V2 amendment adds five files to the prior 751-file package.
+const amendedPackFileCount = 751 + engineeringSkillFiles.length;
 
 const expectedV1Checks = [
 	["v1-source-root-present", "passed"],
@@ -145,7 +145,7 @@ describe("Harnessy v1 full compatibility pack", () => {
 			readonly tree: { readonly fileCount: number; readonly digest: string };
 		};
 		expect(report).toMatchObject({ ok: true, issues: [] });
-		expect(report.tree.fileCount).toBe(740 + engineeringSkillFiles.length);
+		expect(report.tree.fileCount).toBe(745 + engineeringSkillFiles.length);
 		expect(report.tree.digest).toMatch(/^[a-f0-9]{64}$/);
 		const provenance = JSON.parse(readFileSync(resolve(v1FullPackRoot, "resources/SOURCE.json"), "utf8"));
 		expect(provenance.source.repository).toBe("https://github.com/Flow-Research/harnessy.git");
@@ -153,8 +153,8 @@ describe("Harnessy v1 full compatibility pack", () => {
 		const amendment = provenance.source.v2Amendments[0];
 		expect(amendment.owner).toBe("harnessy-v2");
 		expect(amendment.baseTree).toMatchObject({
-			fileCount: 740,
-			digest: "7fd0e3adc470fd3d41937b60e3d560a6f26e92fbe93e3b408df8b34f0e02f8eb",
+			fileCount: 745,
+			digest: "8799da85b3db8be85dc4215bceb93e33fd882f7a63183a72cdb6d54f8aa3299b",
 		});
 		expect(amendment.changes.map((change: { path: string }) => change.path).sort()).toEqual(
 			[

@@ -2529,22 +2529,22 @@
         "reason": "Add the user-authorized global engineering-loop skill through the shared Harnessy skill protocol. These files are V2 additions, not original V1 source.",
         "baseTree": {
           "algorithm": "sha256",
-          "digest": "7fd0e3adc470fd3d41937b60e3d560a6f26e92fbe93e3b408df8b34f0e02f8eb",
-          "fileCount": 740,
-          "byteCount": 5163243
+          "digest": "8799da85b3db8be85dc4215bceb93e33fd882f7a63183a72cdb6d54f8aa3299b",
+          "fileCount": 745,
+          "byteCount": 5245819
         },
         "changes": [
           {
             "path": ".jarvis/context/skills/_catalog.md",
             "before": {
-              "size": 25983,
+              "size": 26621,
               "executable": false,
-              "sha256": "4ae6abde13f4fb4ac5b11ef0974ed7666b789f9df8a8c0b711770c49c790d84f"
+              "sha256": "099253cc33ee502185a8e028898f20ede465ffc7cb860cd7e1728402a6f3fbe3"
             },
             "after": {
-              "size": 26601,
+              "size": 27239,
               "executable": false,
-              "sha256": "455c4a0bfd2a8f0c2c57ed4e2b251c8b45d7ece1bda1f03f64d32cca03054393"
+              "sha256": "f7eb118b16533367cac340f0a8cd28bb02f0c338aba78167640f64885d73ad10"
             }
           },
           {
@@ -2612,8 +2612,8 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "363075f615858144bc8d97adb15d1ace7d976c2230eb0ec64b78ccc1aa23add5",
-    "fileCount": 745,
-    "byteCount": 5179842
+    "digest": "d9cc7c867c708668139e368dccf508242ad34201d94099c41ffb6c77918e13ce",
+    "fileCount": 750,
+    "byteCount": 5262418
   }
 }
