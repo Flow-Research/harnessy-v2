@@ -28,8 +28,12 @@ const statePath = () =>
 		"controller.sqlite",
 	);
 
-const hostConfigPath = () =>
-	join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "harnessy", "engineering", "host.json");
+/** A process without a home folder, such as a sandboxed benchmark, must still build the command. */
+const hostConfigPath = () => {
+	const base =
+		process.env.XDG_CONFIG_HOME ?? (process.env.HOME === undefined ? undefined : join(process.env.HOME, ".config"));
+	return base === undefined ? "host.json" : join(base, "harnessy", "engineering", "host.json");
+};
 
 /**
  * `status`, `events`, `approve`, `cancel`, `revoke` and `benchmark` start no

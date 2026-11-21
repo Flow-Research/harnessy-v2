@@ -16,10 +16,9 @@ describe("approved WorkStream task content", () => {
 			digest({
 				...task(),
 				status: "in_progress",
-				assigned_to: "actor",
 				updated_at: "2026-11-21T11:00:00Z",
-				locked_review_policy_hash: "policy-locked-by-owner",
-				locked_review_policy_generation: 1,
+				compensation: "unpaid",
+				last_assignment_outcome: { outcome: "released" },
 			}),
 		).toBe(digest(task()));
 	});
@@ -30,19 +29,26 @@ describe("approved WorkStream task content", () => {
 		{ rejection_criteria: "Different rejection" },
 		{ deadline_at: "2026-11-22T10:00:00Z" },
 		{ project_id: "77777777-8888-4777-8666-555555555555" },
-		{ source_payload_hash: `sha256:${"a".repeat(64)}` },
-		{ source_ref: "another-import" },
-		{ source_type: "json_import" },
-		{ external_task_id: "another-task" },
+		{ task_type: "docs" },
+		{ created_at: "2026-11-20T10:00:00Z" },
 		{ difficulty: "large" },
 		{ skill_tags: ["python"] },
 		{ estimated_time_minutes: 60 },
 	])("invalidates changed scope or source provenance %j", (change) => {
 		expect(digest({ ...task(), ...change })).not.toBe(digest(task()));
 	});
+	it("accepts the real contributor view, where the command omits null fields", () => {
+		const { deadline_at: _deadline, ...withoutDeadline } = task();
+		expect(digest(withoutDeadline)).toBe(digest(task()));
+		const { rejection_criteria: _rejection, ...withoutRejection } = { ...task(), rejection_criteria: null };
+		expect(digest(withoutRejection)).toBe(digest({ ...task(), rejection_criteria: null }));
+		// The manager view has other fields (`id`, `locked_*`). The runner never reads it, and it is refused.
+		const { task_id: _taskId, ...rest } = task();
+		expect(() => digest({ ...rest, id, locked_guide_version: null })).toThrow();
+	});
 	it("refuses foreign task identity, reduced projections, duplicate keys, and unknown fields", () => {
-		expect(() => digest({ ...task(), id: "77777777-8888-4777-8666-555555555555" })).toThrow("different task");
-		expect(() => digest({ id, title: "Incomplete", description: "Incomplete" })).toThrow();
+		expect(() => digest({ ...task(), task_id: "77777777-8888-4777-8666-555555555555" })).toThrow("different task");
+		expect(() => digest({ task_id: id, title: "Incomplete", description: "Incomplete" })).toThrow();
 		expect(() => digest({ ...task(), workerApproved: true })).toThrow();
 		const duplicate = JSON.stringify(task()).replace('"title":', '"title":"forged","title":');
 		expect(() => workstreamTaskContentDigest(duplicate, id)).toThrow();
