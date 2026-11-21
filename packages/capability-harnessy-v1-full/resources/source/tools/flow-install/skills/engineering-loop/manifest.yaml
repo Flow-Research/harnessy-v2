@@ -1,0 +1,30 @@
+name: engineering-loop
+type: opencode
+version: 0.1.0
+install_scope: global
+owner: julian
+status: experimental
+blast_radius: medium
+description: "Prepare and inspect approved engineering experiments through the existing Harnessy controller and task runner."
+permissions: [read-source, read-controller-state, write-private-reports, execute-authorized-cli]
+data_categories: [source_code, task_metadata]
+egress: []
+invoke: /engineering-loop
+location: tools/flow-install/skills/engineering-loop
+autoresearch:
+  enabled: true
+  metric_layer: 1
+  time_budget_seconds: 1200
+  evaluation_window: 3
+  constraints:
+    max_regression_rate: 0.05
+    max_human_intervention: 0.5
+    required_behavior: preserve
+    authority_and_privacy: veto
+    evaluator_changes_by_worker: forbidden
+    paid_fallback: forbidden
+dependencies:
+  - tool: harnessy
+    description: "Installed Harnessy controller receipts and task runner"
+    check: "harnessy engineering --help"
+    required: true
