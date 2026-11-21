@@ -23,6 +23,7 @@ import type {
 	HostProcessObservation,
 	HostReadiness,
 } from "./controller.ts";
+import { runAgentReview } from "./reviewer.ts";
 
 /**
  * Live adapters for one owner machine. Every fact here comes from a host
@@ -78,6 +79,11 @@ const profileSchema = z.strictObject({
 	verifyTimeoutMinutes: z.number().int().min(1).max(90).default(30),
 	/** Path prefixes that define the checks. A candidate that changes one goes to a person. */
 	protected: z.array(relativePath).max(100).default([]),
+	/**
+	 * A second reader of each candidate, after the host commands pass. It can
+	 * only block a candidate. It uses the same included subscription.
+	 */
+	reviewer: z.literal("claude").optional(),
 });
 export const hostConfigSchema = z.strictObject({
 	schema: z.literal("harnessy.engineering.host.v1"),
@@ -155,6 +161,7 @@ export const profileEvaluatorDigest = (profile: EngineeringHostProfile): string 
 			profile.base,
 			profile.verify,
 			[...profile.protected].sort(),
+			profile.reviewer ?? "none",
 		]),
 	);
 
@@ -894,9 +901,29 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		);
 		if (base.exitCode !== 0) return rejected;
 		const checked = await check(profile, base.stdout.trim(), candidate.headSha);
-		return checked.verdict === "pass"
-			? { verdict: "pass", headSha: candidate.headSha, evidenceDigest: checked.evidenceDigest }
-			: rejected;
+		if (checked.verdict !== "pass") return rejected;
+		if (profile.reviewer === "claude") {
+			const diff = await work.run(
+				["git", "-C", resolve(profile.root), "diff", "--no-color", `${base.stdout.trim()}...${candidate.headSha}`],
+				{ timeoutMs: 60_000 },
+			);
+			if (diff.exitCode !== 0) return rejected;
+			mkdirSync(verificationWork, { recursive: true, mode: 0o700 });
+			const outcome = await runAgentReview(work.run, diff.stdout, verificationWork);
+			// A limit reply in the reviewer's output pauses the loop like one from the worker.
+			const limit = limitPauseFromResult(outcome.output, work.now());
+			if (limit !== undefined) recordProviderPause(stateRoot, limit.until, limit.reason, work.now());
+			writePrivateJson(join(stateRoot, "agent-reviews", `${candidate.headSha}-${work.now()}.json`), {
+				schema: "harnessy.engineering.agent-review.v1",
+				candidateRevision: candidate.headSha,
+				baselineRevision: base.stdout.trim(),
+				status: outcome.status,
+				...(outcome.status === "reviewed" ? { review: outcome.review } : { reason: outcome.reason }),
+				note: "The reviewer can only block. The host commands in the sandbox are the authority.",
+			});
+			if (outcome.status !== "reviewed" || outcome.review.verdict !== "pass") return rejected;
+		}
+		return { verdict: "pass", headSha: candidate.headSha, evidenceDigest: checked.evidenceDigest };
 	};
 	return {
 		now: work.now,

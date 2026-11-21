@@ -34,7 +34,8 @@ A worktree is a second working folder of a Git repository. A tick is one admissi
       "agentAllow": "Bash(node_modules/.bin/vitest run *),Bash(node_modules/.bin/biome check *)",
       "verify": [["npm", "run", "check"]],
       "verifyTimeoutMinutes": 30,
-      "protected": ["scripts", "qa"]
+      "protected": ["scripts", "qa"],
+      "reviewer": "claude"
     }
   ]
 }
@@ -138,9 +139,11 @@ harnessy engineering clear-provider-pause --confirmed-by julian
 
 The same check runs before the push and again on the head of the pull request.
 
+When the profile sets `"reviewer": "claude"`, a second reader runs before the push, after the host commands pass. It is one Claude Code call with no tools and no settings. It reads the diff and can only block the candidate: a rejection, a missing result, or a change over 150,000 bytes stops the push. A pass from the reviewer adds nothing to the verdict, because the diff is untrusted text. The result is kept in `agent-reviews/` in the state folder.
+
 ## Known gaps
 
 - A limit message that does not reach the agent result file records no pause.
 - A process that leaves both the agent's process tree and the worktree folder is not observed.
-- No second reviewer agent reads the change. The check runs the host commands only.
+- The reviewer agent reads the diff only. It does not read the rest of the repository.
 - The loop does not submit the WorkStream proof. The runner does that after a person merges the pull request.
