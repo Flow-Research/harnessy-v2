@@ -464,7 +464,12 @@ export const readJobs = async (context: JobsContext): Promise<JobListData> => {
 					? null
 					: { at: data.lastLog.modifiedAt, evidence: "log-mtime" as const };
 			const schedule =
-				definition.label === null ? undefined : (JOB_SCHEDULES[definition.label] ?? definition.timing);
+				definition.label === null
+					? undefined
+					: // An owner label can be any valid string, such as "constructor". Only an own entry is a fixed schedule.
+						Object.hasOwn(JOB_SCHEDULES, definition.label)
+						? JOB_SCHEDULES[definition.label]
+						: definition.timing;
 			const next =
 				schedule === undefined
 					? null

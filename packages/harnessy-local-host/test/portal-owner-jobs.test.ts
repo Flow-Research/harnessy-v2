@@ -195,6 +195,28 @@ describe("owner jobs on the Jobs list", () => {
 		});
 	});
 
+	it("uses the owner's schedule for a label that is also an Object property name", async () => {
+		for (const label of ["constructor", "toString", "valueOf"]) {
+			const named = read({ version: 1, jobs: [job({ id: "odd", label })] });
+			expect(named.problem).toBe(null);
+			const jobs = await list({
+				ownerJobs: named,
+				health: {
+					[label]: {
+						state: "ok",
+						data: { label, state: "not running", pid: null, lastExitCode: 0, lastLog: null },
+						readAt: at,
+					} as unknown as TileResult<never>,
+				},
+			});
+			expect(jobs.jobs.find((entry) => entry.id === "odd")).toMatchObject({
+				schedule: "07:00 daily",
+				nextRun: "2026-10-18T06:00:00.000Z",
+				health: "ok",
+			});
+		}
+	});
+
 	it("shows one failing row when the file cannot be used", async () => {
 		const broken = await list({ ownerJobs: { jobs: [], problem: "schema_invalid" } });
 		expect(broken.jobs.at(-1)).toMatchObject({
