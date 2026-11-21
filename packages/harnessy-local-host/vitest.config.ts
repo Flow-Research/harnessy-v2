@@ -107,7 +107,7 @@ export default defineConfig({
 				"src/portal/app/components/ErrorBoundary.tsx": { statements: 85, branches: 95, functions: 80, lines: 85 },
 				"src/portal/app/components/Palette.tsx": { statements: 95, branches: 80, functions: 100, lines: 95 },
 				"src/portal/app/components/primitives.tsx": { statements: 95, branches: 90, functions: 100, lines: 95 },
-				"src/portal/app/components/SafeMarkdown.tsx": { statements: 85, branches: 70, functions: 100, lines: 85 },
+				"src/portal/app/components/SafeMarkdown.tsx": { statements: 85, branches: 95, functions: 100, lines: 85 },
 				"src/portal/app/components/Shell.tsx": { statements: 95, branches: 90, functions: 100, lines: 95 },
 				"src/portal/app/screens/Connections.tsx": { statements: 95, branches: 95, functions: 100, lines: 95 },
 				"src/portal/app/screens/Inbox.tsx": { statements: 90, branches: 95, functions: 90, lines: 95 },
