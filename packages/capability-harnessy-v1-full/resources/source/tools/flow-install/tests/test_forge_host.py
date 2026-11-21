@@ -50,6 +50,22 @@ sys.stdout.write(answer.read_text() if answer.exists() else "")
 """
 
 
+DEFAULT_RUNNER_CONFIG = """runner:
+  capacity: 1
+  # Extra environment variables to run jobs.
+  envs:
+    A_TEST_ENV_NAME_1: a_test_env_value_1
+    A_TEST_ENV_NAME_2: a_test_env_value_2
+  env_file: .env
+cache:
+  # the cache server
+  enabled: true
+container:
+  docker_host: "-"
+host:
+  enabled: true
+"""
+
 FAKE_DOCKER = r"""#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
@@ -58,7 +74,7 @@ args = sys.argv[1:]
 count = len(list(home.glob("docker-*.argv")))
 (home / f"docker-{count:02d}.argv").write_text("\n".join(args))
 if "generate-config" in args:
-    print("runner:\n  capacity: 1\ncache:\n  # the cache server\n  enabled: true\ncontainer:\n  docker_host: \"-\"\nhost:\n  enabled: true")
+    print(os.environ["FAKE_RUNNER_CONFIG"], end="")
 elif any("create-runner-file" in a for a in args):
     folder = args[args.index("-v") + 1].rsplit(":/data", 1)[0]
     Path(folder, ".runner").write_text(json.dumps({"id": 0, "name": args[-1], "address": args[-2],
@@ -82,6 +98,7 @@ def make_env(tmp_path: Path, server: str = GOOD_SERVER) -> dict:
     (fake / "answer-install-version").write_text("15.0.12+gitea-1.22.0\n")
     (fake / "answer-token").write_text("a" * 40 + "\n")
     (fake / "answer-service-account").write_text("b" * 40 + "\n")
+    (fake / "answer-runner-config").write_text(DEFAULT_RUNNER_CONFIG)
     workspace = tmp_path / "workspace"
     (workspace / ".harnessy").mkdir(parents=True)
     (workspace / ".harnessy" / "workspace.json").write_text("{}")
@@ -92,11 +109,16 @@ def make_env(tmp_path: Path, server: str = GOOD_SERVER) -> dict:
         "HARNESSY_WORKSPACE": str(workspace),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),
         "XDG_DATA_HOME": str(tmp_path / "data"),
+        "FAKE_RUNNER_CONFIG": DEFAULT_RUNNER_CONFIG,
     }
 
 
 def run(env: dict, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, str(HARNESS_FORGE), *args], env=env, text=True, capture_output=True)
+
+
+def secret_of(env: dict, runner: str) -> str:
+    return (Path(env["XDG_CONFIG_HOME"]) / f"harnessy/forge/acme/runner-{runner}.secret").read_text().strip()
 
 
 def calls(env: dict) -> list[str]:
@@ -292,8 +314,15 @@ def test_a_remote_runner_is_registered_started_and_recorded(tmp_path):
     assert runner["where"] == "remote" and runner["machine"] == "server.example"
     assert runner["labels"] == ["ubuntu-24.04:docker://ghcr.io/catthehacker/ubuntu:act-24.04"]
     start = next(Path(env["FAKE_SSH_DIR"]).glob("call-*-runner-start.sh")).read_text()
-    assert 'docker_host: "automount"' in start and "capacity: 2" in start
-    assert "/^cache:/,/^[a-z]/ s|^  enabled: true|  enabled: false|" in start, "the cache server must be off"
+    run_id = register(env)["installs"]["acme"]["runs"][-1]
+    config = (Path(env["HARNESSY_WORKSPACE"]) / ".jarvis/context/forge-hosts/runs" / run_id / "runner-config.yml").read_text()
+    assert 'docker_host: "automount"' in config and "  capacity: 2" in config
+    assert "cache:\n  # the cache server\n  enabled: false" in config, "the cache server must be off"
+    assert "  envs: {}" in config and "A_TEST_ENV_NAME" not in config, "the example job environment must go"
+    import base64
+    assert base64.b64encode(config.encode()).decode() in start, "the server gets exactly this config"
+    assert secret_of(env, "vps-1") not in Path(env["FAKE_SSH_DIR"], next(
+        p.name for p in Path(env["FAKE_SSH_DIR"]).glob("call-*-runner-start.argv"))).read_text()
     assert "/opt/forge-acme/runner-vps-1" in start and "--restart unless-stopped" in start
     secret = (Path(env["XDG_CONFIG_HOME"]) / "harnessy/forge/acme/runner-vps-1.secret").read_text().strip()
     assert len(secret) == 40 and secret not in json.dumps(register(env)) and secret not in done.stdout
@@ -313,6 +342,7 @@ def test_a_local_runner_uses_only_docker_and_keeps_the_secret_out_of_command_lin
     assert 'docker_host: "automount"' in config and "  capacity: 2" in config
     assert "cache:\n  # the cache server\n  enabled: false" in config, "the cache server must be off"
     assert "host:\n  enabled: true" in config, "only the cache section may change"
+    assert "  envs: {}" in config and "A_TEST_ENV_NAME" not in config
     runner_file = json.loads((folder / ".runner").read_text())
     secret = (Path(env["XDG_CONFIG_HOME"]) / "harnessy/forge/acme/runner-laptop-1.secret").read_text().strip()
     assert runner_file["token"] == secret, "the secret reaches the container through the environment"
@@ -322,6 +352,23 @@ def test_a_local_runner_uses_only_docker_and_keeps_the_secret_out_of_command_lin
     assert any("--restart\nunless-stopped" in call and "daemon" in call for call in docker_calls)
     assert not any(c.endswith("runner-start.sh") for c in calls(env)), "a local runner starts nothing on the server"
     assert secret not in done.stdout + json.dumps(register(env))
+
+
+def test_a_runner_can_give_each_job_a_machine_setting_and_refuses_a_bad_one(tmp_path):
+    """Found on an Apple M4 with an old Docker Desktop: ARM containers crashed in OpenSSL until
+    OPENSSL_armcap was set. Such a value belongs to the machine, so the runner carries it."""
+    env = make_env(tmp_path)
+    install(env)
+    base = ("runner", "add", "--id", "acme", "--where", "local", "--confirm", "acme")
+    done = run(env, *base, "--name", "laptop-1", "--env", "OPENSSL_armcap=0x3D", "--env", "TZ=UTC")
+    assert done.returncode == 0, done.stderr
+    runner = register(env)["installs"]["acme"]["runners"]["laptop-1"]
+    config = (Path(runner["folder"]) / "config.yml").read_text()
+    assert '  envs:\n    OPENSSL_armcap: "0x3D"\n    TZ: "UTC"\n' in config and "A_TEST_ENV_NAME" not in config
+    assert runner["job_env_names"] == ["OPENSSL_armcap", "TZ"]
+    for bad in ("NOEQUALS", "A=b c", "A=$(id)", "1A=x", 'A=x"y'):
+        refused = run(env, *base, "--name", "laptop-2", "--env", bad)
+        assert refused.returncode == 3 and "is not valid" in refused.stderr, bad
 
 
 def test_a_local_runner_on_an_arm_machine_may_not_take_the_label_amd64(tmp_path):

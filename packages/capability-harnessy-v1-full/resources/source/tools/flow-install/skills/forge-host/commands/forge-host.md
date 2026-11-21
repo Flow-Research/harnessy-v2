@@ -79,6 +79,21 @@ The default label is `ubuntu-24.04` with an Ubuntu job image, so a workflow
 with `runs-on: ubuntu-24.04` needs no change. Add labels with `--label`. A
 machine that is not x86_64 may not take the label `amd64`.
 
+A local runner needs only Python and Docker with Linux containers (Docker
+Desktop on macOS and Windows, Docker Engine on Linux). It was run for real on
+macOS (ARM). Linux and Windows have unit coverage only.
+
+`--env NAME=value` (repeatable) gives each job on that runner a value that
+belongs to the machine. Do not use it for secrets. Known case: on an Apple M4
+with Docker Desktop engine 27.5.1, an ARM container that loads OpenSSL (for
+example the Python package `cryptography`) stops with "Illegal instruction".
+`--env OPENSSL_armcap=0x3D` avoids it; a newer Docker Desktop is the real fix.
+The value reaches the job only, not the containers that the job starts, so
+keep jobs that start application images on an x86 runner (label `amd64`).
+
+A runner is a long-lived machine. A job that starts containers by name must
+remove them before and after, or the next run fails with a name conflict.
+
 The runner gives each job the Docker socket of its machine. Tests that start
 containers need this. It also means that a job can control Docker on that
 machine: add a runner only for trusted repositories.
