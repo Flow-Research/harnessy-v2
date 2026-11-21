@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Console, Effect } from "effect";
 import { Command, Flag } from "effect/cli";
+import * as Result from "effect/Result";
 import { benchmarkHarnessy } from "../engineering/benchmark.ts";
 import { engineeringJobSchema } from "../engineering/contracts.ts";
 import { EngineeringController } from "../engineering/controller.ts";
@@ -165,6 +166,14 @@ export const makeEngineeringCommand = (
 						work: workDeps(),
 						stateRoot,
 						environment: process.env,
+						launchSettled: (launchId) =>
+							Result.match(
+								Result.try(() => store.get(launchId).state),
+								{
+									onFailure: () => false,
+									onSuccess: (state) => ["succeeded", "failed", "cancelled"].includes(state),
+								},
+							),
 					});
 					return await operation(new EngineeringController(store, deps), stateRoot);
 				} finally {
@@ -209,6 +218,14 @@ export const makeEngineeringCommand = (
 						work: workDeps(),
 						stateRoot,
 						environment: process.env,
+						launchSettled: (launchId) =>
+							Result.match(
+								Result.try(() => store.get(launchId).state),
+								{
+									onFailure: () => false,
+									onSuccess: (state) => ["succeeded", "failed", "cancelled"].includes(state),
+								},
+							),
 					});
 					await runEngineeringService(
 						new EngineeringController(store, deps),

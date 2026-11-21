@@ -33,6 +33,7 @@ const world = (
 		readonly pane?: RunResult;
 		readonly workstream?: RunResult;
 		readonly paneInfo?: RunResult;
+		readonly settled?: ReadonlyArray<string>;
 	} = {},
 ) => {
 	const base = realpathSync(mkdtempSync(join(tmpdir(), "engineering-ports-")));
@@ -87,6 +88,7 @@ const world = (
 		work,
 		stateRoot,
 		environment: {},
+		launchSettled: (launchId) => (overrides.settled ?? []).includes(launchId),
 	});
 	const saveState = (state: Record<string, unknown> | string) => {
 		const path = join(workState, TASK, "state.json");
@@ -158,6 +160,25 @@ describe("process observation", () => {
 		expect((await w.deps.inspect(w.run())).state).toBe("unknown");
 		w.saveState(binding(null));
 		expect((await w.deps.inspect(w.run())).state).toBe("unknown");
+	});
+
+	it("settles a refused relaunch only when the earlier launch is settled and the runner returned", async () => {
+		const w = world({ settled: ["earlier-launch"] });
+		w.saveState(binding("earlier-launch"));
+		const observed = await w.deps.inspect(w.run());
+		expect(observed.state).toBe("stopped");
+		if (observed.state === "stopped") expect(observed.evidence).toContain("settled launch earlier-launch");
+		expect((await w.deps.inspect(w.run({ runnerReturned: false }))).state).toBe("unknown");
+		const open = world();
+		open.saveState(binding("earlier-launch"));
+		expect((await open.deps.inspect(open.run())).state).toBe("unknown");
+		// A live agent of the task still means active, whatever the saved state says.
+		const live = world({
+			settled: ["earlier-launch"],
+			ps: ({ settings }) => `  900     1 claude -p --settings ${settings}\n`,
+		});
+		live.saveState(binding("earlier-launch"));
+		expect((await live.deps.inspect(live.run())).state).toBe("active");
 	});
 
 	it("reports active while the agent of this task lives, and ignores the agent of another task", async () => {

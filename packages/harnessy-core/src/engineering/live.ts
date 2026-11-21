@@ -373,6 +373,8 @@ export interface LiveHostOptions {
 	/** Private controller state folder, outside every worktree. */
 	readonly stateRoot: string;
 	readonly environment: Readonly<Record<string, string | undefined>>;
+	/** True when the controller holds this launch in a terminal state. */
+	readonly launchSettled?: (launchId: string) => boolean;
 }
 
 const profileOf = (config: EngineeringHostConfig, repository: EngineeringJob["repository"]) =>
@@ -677,7 +679,17 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		const worktree = worktreeOf(run);
 		if (worktree === undefined) return { state: "unknown", reason: "No host profile for the run" };
 		const saved = savedWork(work, run.job.taskId);
-		if (saved.present && (!saved.readable || saved.launchId !== run.id))
+		// The runner refuses a task whose saved state belongs to another launch, before any effect.
+		// When that other launch is settled and this runner has returned, the saved state says
+		// nothing about this run, and only the process checks below decide.
+		const foreign =
+			saved.present &&
+			saved.readable &&
+			saved.launchId !== undefined &&
+			saved.launchId !== run.id &&
+			run.runnerReturned &&
+			options.launchSettled?.(saved.launchId) === true;
+		if (saved.present && !foreign && (!saved.readable || saved.launchId !== run.id))
 			return { state: "unknown", reason: "The saved work state is unreadable or belongs to another launch" };
 		const table = await work.run(["ps", "-A", "-o", "pid=,ppid=,command="], { timeoutMs: 15_000 });
 		if (table.exitCode !== 0 || table.timedOut === true || table.stdout === "")
@@ -691,7 +703,9 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		if (live.length > 0) return { state: "active", identity: identityOf(run) };
 		let paneStatus = "no work state";
 		let agentExitCode: number | undefined;
-		if (saved.present) {
+		if (foreign)
+			paneStatus = `no work state of this launch; the saved state belongs to settled launch ${saved.launchId}`;
+		else if (saved.present) {
 			const pane = await inspectWorkProcess(run.job.taskId, work);
 			paneStatus = pane.status;
 			if (pane.status === "unknown") {
