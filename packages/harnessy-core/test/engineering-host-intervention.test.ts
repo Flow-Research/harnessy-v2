@@ -535,6 +535,32 @@ describe("engineering intervention transport", () => {
 		expect(state.executed).toEqual([]);
 	});
 
+	it("raises a review intervention for a remote run that needs reconciliation", async () => {
+		const state = await fixture();
+		const broker = state.brokerFor(state.store, state.interventions);
+		await broker.poll();
+		await new EngineeringController(state.store, state.depsFor(broker, state.interventions, true)).tick();
+		await broker.flushOne();
+		state.setCommands([]);
+		state.store.start(state.launch.launchId, start);
+		state.store.markUncertain(state.launch.launchId, "Runner interrupted, host reconciliation required", start);
+		const deps = {
+			...state.depsFor(broker, state.interventions, true),
+			inspect: async () => ({ state: "unknown" as const, reason: "Host observation unavailable" }),
+		};
+		for (let tick = 0; tick < 2; tick++)
+			expect((await new EngineeringController(state.store, deps).tick()).reason).toContain("intervention raised");
+		const [raised] = state.interventions.open(state.launch.launchId);
+		expect(raised?.intervention).toMatchObject({ kind: "review", reason: "reconciliation_required" });
+		expect(state.interventions.open(state.launch.launchId)).toHaveLength(1);
+		while (state.interventions.pending() !== undefined)
+			await flushIntervention(state.interventions, state.transport, () => start);
+		state.setCommands([{ kind: "answer", answer: state.answerFor(raised!, "stop") }]);
+		expect((await broker.poll()).status).toBe("received");
+		expect(state.store.get(state.launch.launchId).state).toBe("cancel_requested");
+		expect(state.executed).toEqual([]);
+	});
+
 	it("resume lets a held run start only when every existing admission check passes", async () => {
 		const state = await fixture();
 		const broker = await state.pausedOnLimit();
