@@ -24,6 +24,16 @@
 
 ### Added
 
+- The engineering loop raises a durable intervention for a remote run when
+  provider admission pauses an acknowledged run or when the run needs
+  reconciliation. It delivers the intervention to Garden through the signed
+  host transport and retries the same bytes after a lost reply. An answer
+  from Garden must name the exact delivered intervention, run, grant and
+  operator before the grant expires. `resume` only lets the existing
+  admission checks run again, and `stop` only requests cancellation. An
+  answer cannot approve a job or extend a grant. The host contract adds the
+  `intervention` operation, the `intervention_recorded` receipt and the
+  `answer` command. Command oracle manifest: reviewed revision r6.
 - `harnessy engineering` inspects and runs the bounded engineering loop for
   one owner machine: `status`, `events`, `approve`, `cancel`, `revoke`,
   `digests`, `confirm-extra-usage-off`, `tick`, `serve` and `benchmark`.

@@ -106,6 +106,11 @@ const makeTransport = (configuration: GardenHostTransportConfiguration, loopback
 				(body.event.hostId !== enrollment.hostId || body.event.workspaceId !== enrollment.workspaceId)
 			)
 				return { status: "invalid_request", reason: "Event differs from enrolled scope", attempts: 0 };
+			if (
+				body.operation === "intervention" &&
+				(body.intervention.hostId !== enrollment.hostId || body.intervention.workspaceId !== enrollment.workspaceId)
+			)
+				return { status: "invalid_request", reason: "Intervention differs from enrolled scope", attempts: 0 };
 			const attempts = 1;
 			const signedAt = now();
 			if (!Number.isSafeInteger(signedAt) || signedAt < clockFloor)
@@ -253,10 +258,7 @@ const exchange = async (
 			if (
 				(parsed.data.kind === "authority_current" && parsed.data.expiresAt <= validatedAt) ||
 				(parsed.data.kind === "commands" &&
-					parsed.data.commands.some(
-						(entry) =>
-							(entry.kind === "launch" ? entry.launch.grant.expiresAt : entry.command.expiresAt) <= validatedAt,
-					))
+					parsed.data.commands.some((entry) => commandExpiry(entry) <= validatedAt))
 			)
 				return protocolError("Garden authority expired during response validation");
 			// Body decoding and asynchronous digest checks also consume the request deadline.
@@ -277,6 +279,13 @@ const exchange = async (
 	controller.abort();
 	return result;
 };
+
+const commandExpiry = (entry: Extract<HostOutcome, { kind: "commands" }>["commands"][number]): number =>
+	entry.kind === "launch"
+		? entry.launch.grant.expiresAt
+		: entry.kind === "cancel"
+			? entry.command.expiresAt
+			: entry.answer.expiresAt;
 
 const outcomeMatches = async (
 	body: HostBody,
@@ -308,16 +317,30 @@ const outcomeMatches = async (
 			outcome.launchId === body.event.launchId &&
 			outcome.sequence === body.event.sequence
 		);
+	if (body.operation === "intervention")
+		return (
+			outcome.kind === "intervention_recorded" &&
+			outcome.launchId === body.intervention.launchId &&
+			outcome.interventionId === body.intervention.id
+		);
 	if (outcome.kind !== "commands" || outcome.commands.filter((entry) => entry.kind === "launch").length > 1)
 		return false;
 	const identities = new Set<string>();
 	for (const entry of outcome.commands) {
-		const command = entry.kind === "launch" ? entry.launch : entry.command;
+		const command = entry.kind === "launch" ? entry.launch : entry.kind === "cancel" ? entry.command : entry.answer;
 		if (command.hostId !== enrollment.hostId || command.workspaceId !== enrollment.workspaceId) return false;
 		const identity =
-			entry.kind === "launch" ? `launch:${entry.launch.launchId}` : `cancel:${entry.command.commandId}`;
+			entry.kind === "launch"
+				? `launch:${entry.launch.launchId}`
+				: entry.kind === "cancel"
+					? `cancel:${entry.command.commandId}`
+					: `answer:${entry.answer.answerId}`;
 		if (identities.has(identity)) return false;
 		identities.add(identity);
+		if (entry.kind === "answer") {
+			if (entry.answer.operatorId !== enrollment.operatorId || entry.answer.expiresAt <= now) return false;
+			continue;
+		}
 		if (entry.kind === "cancel") {
 			if (entry.command.expiresAt <= now) return false;
 			continue;

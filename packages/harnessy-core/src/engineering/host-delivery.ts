@@ -1,6 +1,7 @@
 import * as Result from "effect/Result";
 import type { RemoteAuthorityReceipt } from "./controller.ts";
 import type { HostEnrollment, HostLaunch } from "./host-contract.ts";
+import type { EngineeringInterventionStore } from "./host-intervention.ts";
 import type { GardenHostTransport, GardenHostTransportResult } from "./host-transport.ts";
 import type { EngineeringStore } from "./store.ts";
 
@@ -15,16 +16,22 @@ export class EngineeringHostDelivery {
 	readonly #store: EngineeringStore;
 	readonly #transport: GardenHostTransport;
 	readonly #now: () => number;
+	readonly #enrollment: HostEnrollment;
+	readonly #interventions: EngineeringInterventionStore | undefined;
 
+	/** Without an intervention ledger, every received answer is refused. */
 	constructor(
 		store: EngineeringStore,
 		enrollment: HostEnrollment,
 		transport: GardenHostTransport,
 		now: () => number = Date.now,
+		interventions?: EngineeringInterventionStore,
 	) {
 		this.#store = store;
 		this.#transport = transport;
 		this.#now = now;
+		this.#enrollment = enrollment;
+		this.#interventions = interventions;
 		store.configureHostDelivery(enrollment, transport.endpoint, now());
 	}
 
@@ -34,14 +41,33 @@ export class EngineeringHostDelivery {
 			return { status: "paused", reason: "Host pull was not confirmed", transport };
 		if (transport.outcome.kind !== "commands")
 			return { status: "paused", reason: "Host pull returned another operation", transport };
+		const commands = transport.outcome.commands;
 		const recorded = Result.try(() => {
-			for (const entry of transport.outcome.kind === "commands" ? transport.outcome.commands : []) {
+			for (const entry of commands) {
 				if (entry.kind === "launch") this.#store.acceptHostLaunch(entry.launch, this.#now());
-				else this.#store.acceptHostCancellation(entry.command, this.#now());
+				else if (entry.kind === "cancel") this.#store.acceptHostCancellation(entry.command, this.#now());
 			}
 		});
-		return Result.isFailure(recorded)
-			? { status: "paused", reason: "Remote command could not be reconciled with the private ledger", transport }
+		if (Result.isFailure(recorded))
+			return {
+				status: "paused",
+				reason: "Remote command could not be reconciled with the private ledger",
+				transport,
+			};
+		// Answers follow launches and cancellations, so that a refused answer cannot hold back a cancellation.
+		const interventions = this.#interventions;
+		let refused = 0;
+		for (const entry of commands)
+			if (
+				entry.kind === "answer" &&
+				(interventions === undefined ||
+					Result.isFailure(
+						Result.try(() => interventions.acceptAnswer(entry.answer, this.#enrollment.operatorId, this.#now())),
+					))
+			)
+				refused++;
+		return refused > 0
+			? { status: "paused", reason: `${refused} intervention answer(s) refused; no effect applied`, transport }
 			: { status: "received", reason: "Remote commands retained; no worker was started", transport };
 	}
 

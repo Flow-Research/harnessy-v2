@@ -129,6 +129,39 @@ When the agent result reports a usage limit, the loop records a pause in `provid
 harnessy engineering clear-provider-pause --confirmed-by julian
 ```
 
+## Interventions for a remote run
+
+An intervention is a request from the loop to a person about one remote run. A remote run is a run that Garden launched through the signed host transport. The local `tick` and `serve` commands do not use interventions.
+
+The controller raises an intervention in two cases:
+
+| Reason | Kind | When |
+| --- | --- | --- |
+| `allowance_unavailable` | `input` | Provider admission paused a run that Garden acknowledged, for example after a usage limit. |
+| `reconciliation_required` | `review` | The run is in the `reconciling` state, and the host cannot yet prove that the worker stopped. |
+
+The loop keeps each intervention in `interventions.sqlite` in the state folder. The record names the workspace, host, launch, run, grant, source revision and task revision. Its expiry is the grant expiry. One open intervention exists for each run and reason. A repeated raise returns the same record.
+
+The loop sends each intervention to Garden in a signed request. It retries the same bytes until Garden returns a receipt with the same intervention and launch identities. A lost reply or a refusal keeps the intervention pending. A receipt marks delivery only.
+
+An open intervention holds a reserved run before its worker starts. The next tick returns `paused` until a person answers.
+
+Garden returns an answer in a later pull reply. The loop accepts the answer only when all of these conditions are true:
+
+- The answer names a delivered, open intervention and its exact digest.
+- The workspace, host, operator, launch, run, grant, source revision and task revision are the same as in the record.
+- The answer time is inside the intervention, and the answer, the intervention and the grant have not expired.
+- For `resume`, the grant is not revoked and the run can still issue effects.
+
+Otherwise the loop refuses the answer and changes nothing. An answer has only two decisions:
+
+- `resume` closes the intervention. The next tick does all admission checks again. A usage limit that is still in effect raises a new intervention.
+- `stop` closes the intervention and requests cancellation of the run through the existing cancellation rule.
+
+An answer cannot approve a job, issue or extend a grant, or start a worker. The same answer can arrive again. The loop applies it once.
+
+Garden does not receive interventions or send answers yet. Until it does, Garden refuses each intervention request, and the intervention stays pending. To stop such a run, use `harnessy engineering cancel --run <run id>`.
+
 ## How a candidate is checked
 
 1. The loop rejects a candidate that changes a protected path. A person must review such a change.
