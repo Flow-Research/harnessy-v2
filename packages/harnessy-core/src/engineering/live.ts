@@ -653,16 +653,29 @@ export const gateCandidateMetrics = async (
 	if (match === null || repository !== PRODUCT_REPOSITORIES[profile.id])
 		return { verdict: "reject", reason: "The pull request is not in the declared repository of the product" };
 	const pullRequest = Number(match[2]);
-	const collected = await collectPullRequestChecks({ source: input.source, repository, pullRequest, now: input.now });
+	// The declared base fixes the required check set: a pull request with another base fails collection.
+	const collected = await collectPullRequestChecks({
+		source: input.source,
+		repository,
+		pullRequest,
+		expectedBase: profile.base,
+		now: input.now,
+	});
 	const collection = assembleCollection({ product: profile.id, repository, collected, now: input.now });
-	const otherHead = collected.some(
-		(entry) => entry.provenance.subject.headSha !== undefined && entry.provenance.subject.headSha !== headSha,
-	);
+	const subjects = collected.map((entry) => entry.provenance.subject);
 	const gate = collectionGate(
 		collection,
 		requirements.map((entry) => ({ metricId: entry.metric, threshold: entry.threshold })),
 	);
-	const reasons = [...(otherHead ? ["collected_head_is_not_the_candidate"] : []), ...gate.reasons];
+	// Each fact must be present and exact. A missing fact fails, as a different one does.
+	const reasons = [
+		...(subjects.some((subject) => subject.headSha !== headSha) ? ["collected_head_is_not_the_candidate"] : []),
+		...(subjects.some((subject) => subject.baseRef !== profile.base)
+			? ["collected_base_is_not_the_declared_base"]
+			: []),
+		...(subjects.some((subject) => subject.state !== "open") ? ["pull_request_is_not_open"] : []),
+		...gate.reasons,
+	];
 	const passed = reasons.length === 0;
 	const record = {
 		schema: "harnessy.engineering.candidate-metrics.v1",
@@ -968,7 +981,7 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		if (!/^[a-f0-9]{40}$/.test(headSha) || saved.prUrl === undefined || report.pr_url !== saved.prUrl)
 			return { verdict: "reject", reason: "No pushed candidate with a pull request is on record" };
 		const pull = await work.run(
-			["gh", "pr", "view", saved.prUrl, "--json", "headRefOid,state,reviewDecision,reviews,comments"],
+			["gh", "pr", "view", saved.prUrl, "--json", "headRefOid,baseRefName,state,reviewDecision,reviews,comments"],
 			{ timeoutMs: 60_000 },
 		);
 		const pullFacts = Result.try((): unknown => JSON.parse(pull.stdout));
@@ -993,6 +1006,9 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		});
 		if (disposition.changesRequested)
 			return { verdict: "reject", reason: "A reviewer requested changes on the pull request" };
+		// The pull request must target the declared base, whose rules judge it.
+		if (!("baseRefName" in pullFacts.success) || pullFacts.success.baseRefName !== profile.base)
+			return { verdict: "reject", reason: "The pull request base is not the declared base" };
 		const checked = await check(profile, run.job.sourceRevision, headSha);
 		if (checked.verdict === "reject") return checked;
 		let evidenceDigest = checked.evidenceDigest;

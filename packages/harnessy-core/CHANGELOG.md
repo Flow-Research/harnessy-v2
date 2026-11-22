@@ -48,7 +48,10 @@
   `tests.skipped` (at most a count). After the host commands pass, candidate
   verification collects these metrics from the exact pull request head. A
   metric that is not observed, a value outside the limit, or a pull request
-  head other than the candidate rejects the run. The record is kept with the
+  head other than the candidate, a base other than the profile base, or a
+  pull request that is not open rejects the run. Candidate verification now
+  also rejects a pull request whose base is not the profile base, for every
+  profile. The record is kept with the
   run, and the field is part of the evaluator digest. A profile without the
   field is verified as before.
 - `harnessy work --github-app <slug>` (or `github.app` in the settings file)

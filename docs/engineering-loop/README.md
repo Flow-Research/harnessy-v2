@@ -119,9 +119,9 @@ The field accepts only these two metrics, because only they describe the exact c
 
 Candidate verification applies the rule in this order:
 
-1. All existing rules run first: the runner outcome, the saved pull request, the pull request head, the review decision, the protected paths, and the host commands in the sandbox.
-2. If all of them pass, the collector reads the required checks of the pull request from the runner's private state. The pull request must be in the product repository.
-3. A required metric that is not observed rejects the run. A value outside the threshold rejects the run. A collected head that is not the candidate rejects the run.
+1. All existing rules run first: the runner outcome, the saved pull request, the pull request head, the review decision, the pull request base, the protected paths, and the host commands in the sandbox. The pull request base must be the `base` of the profile, for every profile.
+2. If all of them pass, the collector reads the required checks of the pull request from the runner's private state. The pull request must be in the product repository, it must be open, and its base must be the `base` of the profile. The required checks are always those of that base.
+3. A required metric that is not observed rejects the run. A value outside the threshold rejects the run. A collected head that is not the candidate, another base, or a closed or merged pull request rejects the run.
 
 The runner returns a delivered outcome only after the pull request checks pass, so a pending check at this step is not expected. A pending check rejects the run. The record goes to `collections/<run id>.json` in the controller state, with mode 600. The verification receipt digest binds the host-command evidence and this record. The field is part of the evaluator digest, so a job approved for one rule cannot run with another. A profile without the field has the same evaluator digest and the same verification as before.
 

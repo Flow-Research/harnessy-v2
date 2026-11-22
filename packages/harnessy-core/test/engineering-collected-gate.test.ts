@@ -69,6 +69,8 @@ const world = (options: {
 	readonly github?: Record<string, unknown>;
 	readonly hostCommand?: RunResult;
 	readonly id?: EngineeringHostProfile["id"];
+	/** The base branch that `gh pr view` reports. */
+	readonly viewBase?: string;
 }) => {
 	const base = realpathSync(mkdtempSync(join(tmpdir(), "engineering-collected-gate-")));
 	cleanup.push(base);
@@ -81,7 +83,16 @@ const world = (options: {
 	const run: Run = async (argv) => {
 		calls.push([...argv]);
 		if (argv[0] === "gh" && argv[1] === "pr" && argv[2] === "view")
-			return ok(JSON.stringify({ headRefOid: HEAD, state: "OPEN", reviewDecision: "", reviews: [], comments: [] }));
+			return ok(
+				JSON.stringify({
+					headRefOid: HEAD,
+					baseRefName: options.viewBase ?? "dev",
+					state: "OPEN",
+					reviewDecision: "",
+					reviews: [],
+					comments: [],
+				}),
+			);
 		if (argv[0] === "gh" && argv[1] === "api") {
 			const path = argv.at(-1) ?? "";
 			return path in responses
@@ -260,6 +271,55 @@ describe("collected-metric gate in candidate verification", () => {
 				}).verify()
 			).verdict,
 		).toBe("pass");
+	});
+
+	it("judges only an open pull request on the declared base", async () => {
+		// The declared base passes.
+		expect((await world({ requiredMetrics: [coverage, skipped], github: green() }).verify()).verdict).toBe("pass");
+		// A pull request retargeted to a base with weaker rules: the collector refuses it before any branch rule.
+		const weaker = {
+			...green(),
+			[`repos/${REPO}/pulls/7`]: { state: "open", head: { sha: HEAD }, base: { ref: "main" } },
+			[`repos/${REPO}/branches/main`]: {
+				name: "main",
+				protection: {
+					required_status_checks: {
+						enforcement_level: "everyone",
+						checks: [{ context: "PR contract", app_id: 15368 }],
+					},
+				},
+			},
+			[`repos/${REPO}/rules/branches/main`]: [],
+		};
+		const retargeted = world({ requiredMetrics: [coverage], github: weaker });
+		expect(await retargeted.verify()).toMatchObject({
+			verdict: "reject",
+			reason: expect.stringContaining("collected_base_is_not_the_declared_base"),
+		});
+		expect(retargeted.apiCalls().map((argv) => argv.at(-1))).toEqual([`repos/${REPO}/pulls/7`]);
+		expect(JSON.parse(readFileSync(retargeted.record(), "utf8")).collection.metrics[0]).toBeDefined();
+		// The pull request view names another base: rejected before the host commands, with or without the field.
+		const variants: ReadonlyArray<EngineeringHostProfile["requiredMetrics"]> = [[coverage], undefined];
+		for (const requiredMetrics of variants) {
+			const viewed = world({ github: green(), viewBase: "main", ...(requiredMetrics ? { requiredMetrics } : {}) });
+			expect(await viewed.verify()).toEqual({
+				verdict: "reject",
+				reason: "The pull request base is not the declared base",
+			});
+			expect(viewed.calls.some((argv) => argv[0] === "/usr/bin/env")).toBe(false);
+		}
+		// A closed or merged pull request (REST state "closed") is not judged, even when its checks are green.
+		const closed = world({
+			requiredMetrics: [coverage],
+			github: {
+				...green(),
+				[`repos/${REPO}/pulls/7`]: { state: "closed", head: { sha: HEAD }, base: { ref: "dev" } },
+			},
+		});
+		expect(await closed.verify()).toMatchObject({
+			verdict: "reject",
+			reason: expect.stringContaining("pull_request_is_not_open"),
+		});
 	});
 
 	it("rejects when the pull request head moved away from the candidate", async () => {
