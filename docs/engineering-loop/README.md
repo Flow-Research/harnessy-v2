@@ -103,6 +103,27 @@ The `collectionGate` function passes a required metric only when its status is `
 
 These collectors do not measure web or native performance, data-store use, defect severity, repair time, or test run time. The required checks come from the current branch rules, not from the rules at the time of each run. Submission records carry no policy revision, so one project is the policy scope.
 
+### Require collected metrics for a candidate
+
+A host profile for Garden or WorkStream can name collected metrics that each candidate must meet. Add the optional field `requiredMetrics` to the profile in the owner host file. This example requires that every required check passed and that no required check was skipped or missing:
+
+```json
+"requiredMetrics": [
+  { "metric": "tests.required_scenario_coverage", "threshold": 1 },
+  { "metric": "tests.skipped", "threshold": 0 }
+]
+```
+
+The field accepts only these two metrics, because only they describe the exact candidate. `tests.required_scenario_coverage` takes a ratio from 0 to 1, and the value must be at least the threshold. `tests.skipped` takes a whole count, and the value must be at most the threshold. Each metric can occur one time. The `harnessy-v2` profile refuses the field.
+
+Candidate verification applies the rule in this order:
+
+1. All existing rules run first: the runner outcome, the saved pull request, the pull request head, the review decision, the protected paths, and the host commands in the sandbox.
+2. If all of them pass, the collector reads the required checks of the pull request from the runner's private state. The pull request must be in the product repository.
+3. A required metric that is not observed rejects the run. A value outside the threshold rejects the run. A collected head that is not the candidate rejects the run.
+
+The runner returns a delivered outcome only after the pull request checks pass, so a pending check at this step is not expected. A pending check rejects the run. The record goes to `collections/<run id>.json` in the controller state, with mode 600. The verification receipt digest binds the host-command evidence and this record. The field is part of the evaluator digest, so a job approved for one rule cannot run with another. A profile without the field has the same evaluator digest and the same verification as before.
+
 ## Execution boundaries
 
 The engineering controller uses the existing task runner and private SQLite state. Remote host delivery retains launch identities, pending operations, acknowledgments, and event sequence numbers in that state. It requires a confirmed acknowledgment and fresh central authority before remote execution. A lost reply keeps the reservation held until reconciliation. Local controller state alone does not qualify a multi-host pilot.
@@ -113,6 +134,6 @@ The benchmark has no provider, model, merge, deployment, or job-approval capabil
 
 ## Remaining qualification
 
-Full Harnessy startup, preparation, and status workloads remain open. Garden and WorkStream have collectors for four metrics only. The other metrics for these products remain unsupported, and the benchmark does not use the collected values yet. Native mobile, web, and device measurements also remain open. The functional host qualification uses real authentication, signatures, HTTP, and database state, with synthetic provider and execution ports. It does not prove a live provider, the full task runner, WorkStream proof acceptance, or a device journey.
+Full Harnessy startup, preparation, and status workloads remain open. Garden and WorkStream have collectors for four metrics only. The other metrics for these products remain unsupported. Candidate verification can require the two test metrics, and the benchmark does not use collected values yet. Native mobile, web, and device measurements also remain open. The functional host qualification uses real authentication, signatures, HTTP, and database state, with synthetic provider and execution ports. It does not prove a live provider, the full task runner, WorkStream proof acceptance, or a device journey.
 
 Do not activate unattended work from this benchmark alone. One owner machine completed a verified run to a draft pull request. A scheduled service, a multi-host pilot, measurement workloads for the other products, and device evidence remain open. No command in this document merges or deploys a change.

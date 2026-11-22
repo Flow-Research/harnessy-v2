@@ -43,6 +43,14 @@
   `inconclusive`, `unavailable` or `unsupported` with no value, and the
   other 93 registered metrics are `unsupported`. `collectionGate` fails every
   required metric that is not observed.
+- A Garden or WorkStream host profile can name `requiredMetrics`. Each entry
+  is `tests.required_scenario_coverage` (at least a ratio) or
+  `tests.skipped` (at most a count). After the host commands pass, candidate
+  verification collects these metrics from the exact pull request head. A
+  metric that is not observed, a value outside the limit, or a pull request
+  head other than the candidate rejects the run. The record is kept with the
+  run, and the field is part of the evaluator digest. A profile without the
+  field is verified as before.
 - `harnessy work --github-app <slug>` (or `github.app` in the settings file)
   pushes and calls `gh` as a GitHub App installation instead of the
   operator's account, so the operator can approve the PR. Each run mints an
