@@ -67,6 +67,42 @@ The record supports a metric only when no null experiment would count as an impr
 
 A calibrated decision can still be `inconclusive`. On a short workload, timing noise can be as large as the 5 percent limits. The result then names the metric that is too noisy.
 
+## Collect Garden and WorkStream metrics
+
+A collector reads real records of Garden or WorkStream work and turns them into values of registered metrics. It records the provenance of each value: the collector, the source, the subject, each request, and the SHA-256 digest of each response. The collectors send only GET requests. They do not read or change a Garden or WorkStream checkout.
+
+These collectors are installed:
+
+| Collector | Metrics | Source |
+| --- | --- | --- |
+| `github.pull-request-required-checks.v1` | `tests.required_scenario_coverage`, `tests.skipped` | Check runs and commit statuses on the exact head of one pull request, through `gh api` |
+| `github.reopened-defects.v1` | `defects.reopened` | Issues with a declared defect label that were reopened in the last 30 days, through `gh api` |
+| `workstream.submission-outcomes.v1` | `behavior.task_acceptance` | The caller's own decided submissions in one project, from a loopback WorkStream API |
+
+Run the command with the GitHub CLI signed in. Give only the flags for the collectors that you want to run:
+
+```sh
+harnessy engineering collect --product garden \
+  --pull-request 421 --defect-label bug \
+  --output /absolute/private-measurements/garden-collection.json
+```
+
+To read WorkStream submissions, add `--workstream-url http://127.0.0.1:18100` and `--workstream-project <project-id>`, and set `WORKSTREAM_TOKEN`. The collector refuses an API that is not on the loopback interface. It does not send the token with the health request, and it does not write the token to the record.
+
+The output file must not exist. The command writes it with mode 600. The record has one entry for each of the 97 registered metrics. A metric without an installed collector, or with a collector that you did not configure, is `unsupported`.
+
+A collector never makes a value up. These rules apply:
+
+- The required checks are the union of the base branch protection and the branch rulesets. A base branch without required checks gives `unsupported`.
+- A required check passes only with conclusion `success` on the exact head. A skipped or missing required check counts as not executed. A pending required check, or a head that changes during collection, gives `inconclusive`.
+- The defect label must exist. Otherwise the result is `failed`, not zero. Incomplete search results give `inconclusive`.
+- Acceptance is accepted submissions divided by decided submissions in the window. A decision is `accepted`, `needs_revision` or `rejected`. Without a credential, a project, or a decided submission, the result is `unavailable`.
+- A read failure, malformed JSON, an unknown state, or an incomplete page gives `failed`.
+
+The `collectionGate` function passes a required metric only when its status is `observed` and its value is inside the limit. Every other status fails the gate. The record is an audit record. It does not approve a task, a merge, a deployment, or a WorkStream decision.
+
+These collectors do not measure web or native performance, data-store use, defect severity, repair time, or test run time. The required checks come from the current branch rules, not from the rules at the time of each run. Submission records carry no policy revision, so one project is the policy scope.
+
 ## Execution boundaries
 
 The engineering controller uses the existing task runner and private SQLite state. Remote host delivery retains launch identities, pending operations, acknowledgments, and event sequence numbers in that state. It requires a confirmed acknowledgment and fresh central authority before remote execution. A lost reply keeps the reservation held until reconciliation. Local controller state alone does not qualify a multi-host pilot.
@@ -77,6 +113,6 @@ The benchmark has no provider, model, merge, deployment, or job-approval capabil
 
 ## Remaining qualification
 
-Full Harnessy startup, preparation, and status workloads remain open. Garden and WorkStream collectors remain unsupported. Native mobile, web, and device measurements also remain open. The functional host qualification uses real authentication, signatures, HTTP, and database state, with synthetic provider and execution ports. It does not prove a live provider, the full task runner, WorkStream proof acceptance, or a device journey.
+Full Harnessy startup, preparation, and status workloads remain open. Garden and WorkStream have collectors for four metrics only. The other metrics for these products remain unsupported, and the benchmark does not use the collected values yet. Native mobile, web, and device measurements also remain open. The functional host qualification uses real authentication, signatures, HTTP, and database state, with synthetic provider and execution ports. It does not prove a live provider, the full task runner, WorkStream proof acceptance, or a device journey.
 
 Do not activate unattended work from this benchmark alone. One owner machine completed a verified run to a draft pull request. A scheduled service, a multi-host pilot, measurement workloads for the other products, and device evidence remain open. No command in this document merges or deploys a change.

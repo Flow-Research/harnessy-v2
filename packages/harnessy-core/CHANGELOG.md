@@ -32,6 +32,17 @@
   metered key in the environment, a missing sign-in, another account, a
   missing owner confirmation that extra usage is off, or a recorded limit
   reply pauses the loop. There is no metered fallback.
+- `harnessy engineering collect` reads Garden or WorkStream work into
+  registered metrics with GET requests only. It observes
+  `tests.required_scenario_coverage` and `tests.skipped` from the required
+  checks on the exact head of one pull request, `defects.reopened` from
+  issues with a declared defect label in the last 30 days, and
+  `behavior.task_acceptance` from the caller's decided submissions on a
+  loopback WorkStream API. Each value carries its requests and response
+  digests. Missing, malformed, pending or incomplete input gives `failed`,
+  `inconclusive`, `unavailable` or `unsupported` with no value, and the
+  other 93 registered metrics are `unsupported`. `collectionGate` fails every
+  required metric that is not observed.
 - `harnessy work --github-app <slug>` (or `github.app` in the settings file)
   pushes and calls `gh` as a GitHub App installation instead of the
   operator's account, so the operator can approve the PR. Each run mints an
