@@ -105,6 +105,58 @@ describe("pull request required check collector", () => {
 		for (const request of coverage.provenance.requests) expect(request.digest).toMatch(/^[a-f0-9]{64}$/);
 	});
 
+	it("fails a pull request whose base is not the declared base, before it reads any branch rule", async () => {
+		const green = pullFixtures([run("Verify", "success", 1), run("PR contract", "success", 2)]);
+		const declared = await collectPullRequestChecks({
+			source: fixtures(green).source,
+			repository: REPO,
+			pullRequest: 7,
+			expectedBase: "dev",
+		});
+		expect(declared.map((entry) => entry.observation.status)).toEqual(["observed", "observed"]);
+		const other = fixtures(green);
+		for (const entry of await collectPullRequestChecks({
+			source: other.source,
+			repository: REPO,
+			pullRequest: 7,
+			expectedBase: "main",
+		}))
+			expect(entry.observation).toMatchObject({
+				status: "failed",
+				reason: "pull_request_base_is_not_the_declared_base",
+			});
+		expect(other.seen).toEqual([`repos/${REPO}/pulls/7`]);
+		await expect(
+			collectPullRequestChecks({ source: other.source, repository: REPO, pullRequest: 7, expectedBase: "a b" }),
+		).rejects.toThrow("Invalid expected base branch");
+	});
+
+	it("fails when the pull request base changes during collection", async () => {
+		const responses = pullFixtures([run("Verify", "success", 1), run("PR contract", "success", 2)]);
+		let reads = 0;
+		const source: ReadOnlySource = async (request) => {
+			if (request === `repos/${REPO}/pulls/7`) {
+				reads++;
+				return {
+					ok: true,
+					body: JSON.stringify({
+						state: "open",
+						head: { sha: HEAD },
+						base: { ref: reads === 1 ? "dev" : "main" },
+					}),
+				};
+			}
+			return request in responses
+				? { ok: true, body: JSON.stringify(responses[request]) }
+				: { ok: false, reason: "not_found" };
+		};
+		for (const entry of await collectPullRequestChecks({ source, repository: REPO, pullRequest: 7 }))
+			expect(entry.observation).toMatchObject({
+				status: "failed",
+				reason: "pull_request_base_changed_during_collection",
+			});
+	});
+
 	it("counts a missing and a skipped required check as not executed, never as passed", async () => {
 		const { source } = fixtures(
 			pullFixtures([run("Verify", "skipped", 1)], {
