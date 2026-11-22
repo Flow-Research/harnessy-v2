@@ -150,6 +150,14 @@ interface Scenario {
 	pushEchoesEnv?: boolean;
 	/** `gh pr create` fails and echoes its whole environment on stderr. */
 	prCreateEchoesEnv?: boolean;
+	/** The first this many `herdr pane run` calls are refused because the new shell is not ready. */
+	paneNotReadyFirst?: number;
+	/** The first this many `gh pr checks --watch` runs end with an error although no check failed. */
+	checksEarlyExitFirst?: number;
+	/** Buckets that `gh pr checks --json bucket` reports; the command fails when undefined. */
+	checkBuckets?: string[];
+	/** `herdr pane run` fails with this herdr error code every time. */
+	paneRunError?: string;
 }
 
 /** Scripted stand-in for every external tool. Records each argv. */
@@ -290,6 +298,16 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 				if (joined.startsWith("workspace create"))
 					return ok(JSON.stringify({ result: { root_pane: { pane_id: "w1:p1" } } }));
 				if (joined.startsWith("pane run")) {
+					const earlier = calls.filter((entry) => entry[1] === "pane" && entry[2] === "run").length - 1;
+					const code =
+						scenario.paneRunError ??
+						(earlier < (scenario.paneNotReadyFirst ?? 0) ? "pane_send_failed" : undefined);
+					if (code !== undefined)
+						return {
+							exitCode: 1,
+							stdout: "",
+							stderr: JSON.stringify({ error: { code, message: "the terminal is in canonical mode" } }),
+						};
 					const result =
 						scenario.agentResult ??
 						JSON.stringify({
@@ -325,6 +343,14 @@ const fakeTools = (root: string, scenario: Scenario = {}) => {
 					return { exitCode: 1, stdout: "", stderr: "secondary rate limit" };
 				if (joined === "pr ready 7" && scenario.readyFails === true)
 					return { exitCode: 1, stdout: "", stderr: "HTTP 502" };
+				if (joined.startsWith("pr checks") && argv.includes("--json"))
+					return scenario.checkBuckets === undefined
+						? { exitCode: 1, stdout: "", stderr: "HTTP 502" }
+						: ok(JSON.stringify(scenario.checkBuckets.map((bucket) => ({ bucket }))));
+				if (joined.startsWith("pr checks") && (scenario.checksEarlyExitFirst ?? 0) > 0) {
+					scenario.checksEarlyExitFirst = (scenario.checksEarlyExitFirst ?? 0) - 1;
+					return { exitCode: 1, stdout: "", stderr: "Post https://api.github.com/graphql: EOF" };
+				}
 				if (joined.startsWith("pr checks") && (scenario.checksMissingFirst ?? 0) > 0) {
 					scenario.checksMissingFirst = (scenario.checksMissingFirst ?? 0) - 1;
 					return { exitCode: 1, stdout: "", stderr: "no checks reported on the 'work/x' branch" };
@@ -409,6 +435,28 @@ describe("runWork", () => {
 		};
 	});
 	afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+	it("sends the agent line again when the new pane's shell was not ready, and gives up on another error", async () => {
+		const fake = fakeTools(root, { paneNotReadyFirst: 2 });
+		const outcome = await runWork({ ...options, approvePush: false }, fake.deps);
+		expect(outcome.report).toMatchObject({ reason: "awaiting_push_approval" });
+		const sent = fake.calls.filter((argv) => argv[1] === "pane" && argv[2] === "run");
+		expect(sent).toHaveLength(3);
+		// The same complete line each time: a refused send typed nothing.
+		expect(new Set(sent.map((argv) => argv[4])).size).toBe(1);
+	});
+
+	it("gives up when the pane never becomes ready or refuses for another reason", async () => {
+		const stuck = fakeTools(root, { paneNotReadyFirst: 1000 });
+		await expect(runWork(options, stuck.deps)).rejects.toThrow("herdr pane run failed");
+		expect(stuck.calls.filter((argv) => argv[1] === "pane" && argv[2] === "run")).toHaveLength(31);
+	});
+
+	it("does not retry a pane error that is not a busy shell", async () => {
+		const gone = fakeTools(root, { paneRunError: "pane_not_found" });
+		await expect(runWork(options, gone.deps)).rejects.toThrow("herdr pane run failed");
+		expect(gone.calls.filter((argv) => argv[1] === "pane" && argv[2] === "run")).toHaveLength(1);
+	});
 
 	it("stops after the local commit until the push is approved", async () => {
 		const fake = fakeTools(root);
@@ -683,6 +731,32 @@ describe("runWork", () => {
 		const green = fakeTools(root);
 		expect((await runWork(options, green.deps)).report).toMatchObject({ status: "submitted" });
 		expect(green.calls).toContainEqual(["gh", "pr", "ready", "7"]);
+	});
+
+	it("keeps waiting when the checks watch ends early and no check has failed", async () => {
+		const fake = fakeTools(root, { checksEarlyExitFirst: 2, checkBuckets: ["pass", "pending", "skipping"] });
+		expect((await runWork(options, fake.deps)).report).toMatchObject({ status: "submitted" });
+		const watches = fake.calls.filter(
+			(argv) => argv.join(" ").startsWith("gh pr checks") && argv.includes("--watch"),
+		);
+		expect(watches).toHaveLength(3);
+		expect(fake.logs.some((line) => line.includes("ended early"))).toBe(true);
+	});
+
+	it("stops when the watch ends early and a check failed, was cancelled, or cannot be read", async () => {
+		for (const checkBuckets of [["pass", "fail", "pending"], ["cancel", "pending"], ["pass", "pass"], undefined]) {
+			const dir = mkdtempSync(join(tmpdir(), "harnessy-work-"));
+			mkdirSync(join(dir, "repo"));
+			const fake = fakeTools(dir, {
+				checksEarlyExitFirst: 5,
+				...(checkBuckets === undefined ? {} : { checkBuckets }),
+			});
+			const outcome = await runWork({ ...options, repo: join(dir, "repo") }, fake.deps);
+			expect(outcome.report).toMatchObject({ reason: "checks_not_passed" });
+			expect(String(outcome.report.checks_output)).toContain("EOF");
+			expect(fake.calls.filter((argv) => argv.includes("--watch"))).toHaveLength(1);
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 
 	it("waits for a new commit's checks to appear before judging them", async () => {
