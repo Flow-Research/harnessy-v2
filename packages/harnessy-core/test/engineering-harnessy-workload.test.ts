@@ -17,6 +17,8 @@ import { prepareEvaluatorSupervisor } from "../src/engineering/evaluator-supervi
 import {
 	createHarnessyWorkload,
 	HARNESSY_OPERATION_DRIVER,
+	HARNESSY_OPERATION_ITERATIONS,
+	HARNESSY_OPERATION_MAXIMUM_ITERATIONS,
 	harnessyWorkloadPlan,
 } from "../src/engineering/harnessy-workload.ts";
 import { execRun } from "../src/work/run.ts";
@@ -28,6 +30,56 @@ afterEach(async () => {
 	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
+/** The expected results of one iteration, written here without the workload module. */
+function expectedCheckOperations(seed: string): ReadonlyArray<unknown> {
+	const task = "11111111-2222-4333-8444-555555555555";
+	const state = {
+		schema: "harnessy.work.state.v2",
+		taskId: task,
+		startedAt: 1,
+		binding: {
+			repo: "/fixture/repo",
+			worktree: "/fixture/work",
+			branch: "work/fixed",
+			base: "main",
+			workstreamCli: ["workstream"],
+			actor: `actor-${seed}`,
+		},
+		gitFile: "gitdir: /fixture/git/worktrees/fixed\n",
+		keys: { claim: "claim", start: "start", prepare: "prepare" },
+		summary: `Task ${seed}`,
+	};
+	const results: ReadonlyArray<readonly [string, unknown]> = [
+		[
+			"task.authorized-read",
+			{
+				value: {
+					id: task,
+					title: `Task ${seed}`,
+					description: "Synthetic useful work",
+					acceptanceCriteria: "Preserve exact output",
+				},
+			},
+		],
+		["task.untrusted-text", { value: { id: task, title: "$(do-not-execute)", description: seed } }],
+		["task.missing-fields", { error: true }],
+		["preparation.ready", { value: { status: "ready", admissionId: `admission-${seed}` } }],
+		["preparation.pending", { value: { status: "preparing" } }],
+		["preparation.missing-status", { error: true }],
+		["preparation.conflict-terminal", { value: true }],
+		["preparation.duplicate-key", { error: true }],
+		["status.pending", { undefined: true }],
+		["status.accepted", { value: "accepted" }],
+		["status.revision", { value: "needs_revision" }],
+		["status.rejected", { value: "rejected" }],
+		["status.saved-run", { value: state }],
+		["status.foreign-task", { undefined: true }],
+		["actor.identity", { value: `actor-${seed}` }],
+		["assignment.identity", { value: `assignment-${seed}` }],
+	];
+	return results.map(([caseId, result]) => ({ iteration: 0, caseId, result }));
+}
+
 describe("protected Harnessy task/preparation/status workload", () => {
 	it("keeps expected outputs out of the worker input and refuses invalid sizes", () => {
 		const workload = createHarnessyWorkload("fixed", 2);
@@ -37,7 +89,7 @@ describe("protected Harnessy task/preparation/status workload", () => {
 		for (const args of [
 			["", 1],
 			["x", 0],
-			["x", 129],
+			["x", HARNESSY_OPERATION_MAXIMUM_ITERATIONS + 1],
 		] as const)
 			expect(() => createHarnessyWorkload(args[0], args[1])).toThrow();
 		expect(() =>
@@ -51,6 +103,107 @@ describe("protected Harnessy task/preparation/status workload", () => {
 			"identities",
 		);
 	});
+
+	it("makes a long sample by default and expects one digest that covers each iteration", () => {
+		const sample = { argv: [], kind: "sample", side: "candidate" } as const;
+		const workload = createHarnessyWorkload("fixed");
+		expect(HARNESSY_OPERATION_ITERATIONS).toBeGreaterThanOrEqual(32_768);
+		expect(workload.completedWork).toBe(16 * HARNESSY_OPERATION_ITERATIONS);
+		const two = createHarnessyWorkload("fixed", 2);
+		const three = createHarnessyWorkload("fixed", 3);
+		const lines = (count: number): string =>
+			Array.from(
+				{ length: count },
+				(_, iteration) =>
+					`${JSON.stringify(
+						(JSON.parse(checkOutput) as { operations: Array<Record<string, unknown>> }).operations.map(
+							(operation) => ({ ...operation, iteration }),
+						),
+					)}\n`,
+			).join("");
+		const output = (iterations: number, operationsDigest: string): string =>
+			`${JSON.stringify({
+				schema: "harnessy.engineering.operation-digest.v1",
+				iterations,
+				operations: 16 * iterations,
+				operationsDigest,
+			})}\n`;
+		// The check output of the controller is the expected result of iteration zero.
+		const checkOutput = `${JSON.stringify({
+			schema: "harnessy.engineering.operation-output.v1",
+			operations: expectedCheckOperations("fixed"),
+		})}\n`;
+		expect(digest(checkOutput)).toBe(two.checkDigest);
+		const good = output(2, digest(lines(2)));
+		expect(digest(good)).toBe(two.sampleDigest);
+		expect(two.validateOutput(good, sample, {} as EvaluationBinding).completedWork).toBe(32);
+		// A digest of fewer iterations, of other results, or the check output is not a valid sample.
+		expect(() => two.validateOutput(output(2, digest(lines(1))), sample, {} as EvaluationBinding)).toThrow(
+			"Protected",
+		);
+		expect(() =>
+			two.validateOutput(
+				output(2, digest(lines(2).replace("accepted", "rejected"))),
+				sample,
+				{} as EvaluationBinding,
+			),
+		).toThrow("Protected");
+		expect(() => two.validateOutput(checkOutput, sample, {} as EvaluationBinding)).toThrow("Protected");
+		expect(() => three.validateOutput(good, sample, {} as EvaluationBinding)).toThrow("Protected");
+	});
+
+	it("runs the fixed driver on the maintained functions and refuses one wrong result in a late iteration", async () => {
+		const root = await realpath(await mkdtemp(join(tmpdir(), "harnessy-operation-driver-")));
+		roots.push(root);
+		const iterations = 300;
+		const workload = createHarnessyWorkload("driver-seed", iterations);
+		await writeFile(join(root, "driver.cjs"), HARNESSY_OPERATION_DRIVER);
+		await writeFile(join(root, "workload.json"), workload.input);
+		const drive = async (sourceRoot: string, kind: "check" | "sample") => {
+			const result = await execRun(
+				[
+					process.execPath,
+					"--experimental-strip-types",
+					join(root, "driver.cjs"),
+					sourceRoot,
+					join(root, "workload.json"),
+					kind,
+				],
+				{ timeoutMs: 20_000 },
+			);
+			expect(result.exitCode).toBe(0);
+			return result.stdout;
+		};
+		const sample = { argv: [], kind: "sample", side: "candidate" } as const;
+		const check = { argv: [], kind: "check", side: "candidate" } as const;
+		const stdout = await drive(checkout, "sample");
+		expect(Buffer.byteLength(stdout)).toBeLessThan(1024);
+		const validated = workload.validateOutput(stdout, sample, {} as EvaluationBinding);
+		expect(validated.completedWork).toBe(16 * iterations);
+		expect(validated.outputDigest).toBe(workload.sampleDigest);
+		expect(workload.validateOutput(await drive(checkout, "check"), check, {} as EvaluationBinding).outputDigest).toBe(
+			workload.checkDigest,
+		);
+		// This source gives one wrong result, in iteration 250 only. The check passes; the sample does not.
+		const forged = join(root, "forged");
+		await mkdir(join(forged, "packages/harnessy-core/src/work"), { recursive: true });
+		await writeFile(
+			join(forged, "packages/harnessy-core/src/work/logic.ts"),
+			`const real = require(${JSON.stringify(join(checkout, "packages/harnessy-core/src/work/logic.ts"))});
+let calls = 0;
+module.exports = { ...real, parseActor: (...args) => (++calls === 250 ? "forged" : real.parseActor(...args)) };
+`,
+		);
+		expect(workload.validateOutput(await drive(forged, "check"), check, {} as EvaluationBinding).outputDigest).toBe(
+			workload.checkDigest,
+		);
+		expect(() =>
+			workload.validateOutput(stdout.replace(/[a-f0-9]{64}/, "0".repeat(64)), sample, {} as EvaluationBinding),
+		).toThrow("Protected");
+		const forgedSample = await drive(forged, "sample");
+		expect(forgedSample).not.toBe(stdout);
+		expect(() => workload.validateOutput(forgedSample, sample, {} as EvaluationBinding)).toThrow("Protected");
+	}, 60_000);
 
 	it.skipIf(process.platform !== "darwin")(
 		"runs the existing pure functions inside the real sandbox and validates outputs in the controller",

@@ -4,6 +4,11 @@
 
 ### Changed
 
+- `harnessy engineering benchmark` runs 32,768 iterations of the 16 cases in
+  each sample of the `pure-task-operations` profile (64 before). One sample
+  now runs for about one second, so process startup no longer hides the
+  measured work. A sample prints one digest that covers every result. A
+  calibration record of the earlier workload is refused; build a new one.
 - Moved the Effect runtime/platform cohort to 4.1.3 and updated schema, CLI,
   HTTP and process interfaces. Existing Boolean flag defaults remain explicit.
 - `harnessy work --revise "<notes>"` sends the latest commit back to the agent
