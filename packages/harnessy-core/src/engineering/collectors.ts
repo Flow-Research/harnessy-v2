@@ -139,11 +139,18 @@ export async function collectPullRequestChecks(input: {
 	readonly source: ReadOnlySource;
 	readonly repository: string;
 	readonly pullRequest: number;
+	/**
+	 * The declared base branch. When it is given, a pull request with another
+	 * base fails, so the required checks are always those of this branch.
+	 */
+	readonly expectedBase?: string;
 	readonly now?: () => number;
 }): Promise<ReadonlyArray<CollectedObservation>> {
 	if (!REPOSITORY.test(input.repository)) throw new Error("Repository must be OWNER/NAME");
 	if (!Number.isSafeInteger(input.pullRequest) || input.pullRequest < 1)
 		throw new Error("Invalid pull request number");
+	if (input.expectedBase !== undefined && !/^[A-Za-z0-9._/-]{1,100}$/.test(input.expectedBase))
+		throw new Error("Invalid expected base branch");
 	const now = input.now ?? Date.now;
 	const metrics = INSTALLED_COLLECTORS["github.pull-request-required-checks.v1"];
 	const requests: CollectionRequest[] = [];
@@ -172,6 +179,8 @@ export async function collectPullRequestChecks(input: {
 			const head = text(record(pull.head, "malformed_pull_head").sha, "malformed_pull_head");
 			const base = text(record(pull.base, "malformed_pull_base").ref, "malformed_pull_base");
 			if (!/^[a-f0-9]{40}$/.test(head)) fail("malformed_pull_head");
+			if (input.expectedBase !== undefined && base !== input.expectedBase)
+				fail("pull_request_base_is_not_the_declared_base");
 			Object.assign(subject, { headSha: head, baseRef: base, state: text(pull.state, "malformed_pull_state") });
 			const branch = record(
 				await readJson(input.source, `${repo}/branches/${encodeURIComponent(base)}`, requests),
@@ -278,6 +287,8 @@ export async function collectPullRequestChecks(input: {
 			);
 			if (record(after.head, "malformed_pull_head").sha !== head)
 				throw new CollectionFailure("inconclusive", "pull_request_head_changed_during_collection");
+			if (record(after.base, "malformed_pull_base").ref !== base)
+				fail("pull_request_base_changed_during_collection");
 			if (states.some((check) => check.state === "pending"))
 				throw new CollectionFailure("inconclusive", "required_checks_pending_on_exact_head");
 			const passed = states.filter((check) => check.state === "passed").length;
