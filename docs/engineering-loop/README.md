@@ -41,7 +41,7 @@ Command wall time covers the protected invocation, including fixed fixture setup
 
 ## Read the result
 
-The CLI prints a JSON summary and the path to `reports/benchmark.json`. The report contains ten paired samples for each source. In the default pure-task-operation profile, each sample completes 1,024 useful operations across 16 required cases. The evaluator alternates the execution order between baseline and candidate. A separate process measures CPU time and peak resident memory, which is the maximum physical memory in use.
+The CLI prints a JSON summary and the path to `reports/benchmark.json`. The report contains ten paired samples for each source. In the default pure-task-operation profile, each sample completes 524,288 useful operations: 32,768 iterations of 16 required cases. One sample runs for approximately one second on an Apple M4 Pro host. Process startup is then a small part of the sample. The required check prints each result of one iteration. A sample prints one SHA-256 digest that covers each result of each iteration, and the controller compares it with its own digest. The evaluator alternates the execution order between baseline and candidate. A separate process measures CPU time and peak resident memory, which is the maximum physical memory in use.
 
 The report binds measurements to maintained source bytes and modes, Git revisions, the fixed evaluator, the workload, and the host environment. The command copies maintained source bytes without rewriting code or imports. The sandbox reads these copies and a frozen Effect dependency. It cannot read the original source roots, measurement reports, or the supervisor. The supervisor controls process execution and measures its resources.
 
@@ -65,7 +65,9 @@ harnessy engineering calibrate --reports /absolute/private-measurements/null-run
 
 The record supports a metric only when no null experiment would count as an improvement, the differences show no drift, and the two sides are balanced. The benchmark refuses a record of another profile, host, toolchain, evaluator or workload size, and a record that is older than 30 days. With a record, the decision uses the exact signed-rank interval for ten pairs. This interval does not need normal differences.
 
-A calibrated decision can still be `inconclusive`. On a short workload, timing noise can be as large as the 5 percent limits. The result then names the metric that is too noisy.
+A calibrated decision can still be `inconclusive`. Other work on the host can make timing noise as large as the 5 percent limits. The result then names the metric that is too noisy. Run the benchmark again when the host is quiet. Do not change the limits.
+
+A change of the workload size or of the fixed driver makes an earlier calibration record invalid. The benchmark refuses that record. Run the null experiments again and build a new record.
 
 ## Collect Garden and WorkStream metrics
 
