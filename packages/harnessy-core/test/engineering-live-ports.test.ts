@@ -35,6 +35,7 @@ const world = (
 		readonly paneInfo?: RunResult;
 		readonly settled?: ReadonlyArray<string>;
 		readonly pull?: unknown;
+		readonly ancestor?: RunResult;
 	} = {},
 ) => {
 	const base = realpathSync(mkdtempSync(join(tmpdir(), "engineering-ports-")));
@@ -57,6 +58,7 @@ const world = (
 		if (argv[0] === "herdr" && argv.includes("process-info"))
 			return overrides.paneInfo ?? { exitCode: 1, stdout: "", stderr: "" };
 		if (argv.includes("rev-parse")) return ok(`${"b".repeat(40)}\n`);
+		if (argv.includes("merge-base")) return overrides.ancestor ?? { exitCode: 1, stdout: "", stderr: "" };
 		if (argv[0] === "workstream") return overrides.workstream ?? ok("workstream 1.0.0");
 		return ok();
 	};
@@ -268,6 +270,55 @@ describe("readiness", () => {
 		const upProfile = up.deps.profiles[0];
 		if (upProfile === undefined) throw new Error("missing profile");
 		expect(await up.deps.readiness(up.run().job, upProfile)).toMatchObject({ status: "ready" });
+	});
+
+	it("reports whether the pinned source of a proof-only job is an ancestor of the base", async () => {
+		const proofOnly = (w: ReturnType<typeof world>) => ({
+			...w.run().job,
+			sourceRevision: "a".repeat(40),
+			proofOnlyResume: {
+				previousAuthorityId: "5f0c4b1e-0b0a-4a4e-9a55-3d8f3f6f0009",
+				expectedHeadSha: "9".repeat(40),
+			},
+		});
+		const reached = world({ ancestor: ok() });
+		const reachedProfile = reached.deps.profiles[0];
+		if (reachedProfile === undefined) throw new Error("missing profile");
+		expect(await reached.deps.readiness(proofOnly(reached), reachedProfile)).toMatchObject({
+			status: "ready",
+			sourceRevision: "b".repeat(40),
+			pinnedSourceIsAncestor: true,
+		});
+		expect(reached.calls).toContainEqual([
+			"git",
+			"-C",
+			reachedProfile.root,
+			"merge-base",
+			"--is-ancestor",
+			"a".repeat(40),
+			"b".repeat(40),
+		]);
+		for (const ancestor of [
+			{ exitCode: 1, stdout: "", stderr: "" },
+			{ exitCode: 128, stdout: "", stderr: "fatal: Not a valid commit name" },
+		]) {
+			const refused = world({ ancestor });
+			const profile = refused.deps.profiles[0];
+			if (profile === undefined) throw new Error("missing profile");
+			expect(await refused.deps.readiness(proofOnly(refused), profile)).toMatchObject({
+				status: "ready",
+				pinnedSourceIsAncestor: false,
+			});
+		}
+		const ordinary = world({ ancestor: ok() });
+		const ordinaryProfile = ordinary.deps.profiles[0];
+		if (ordinaryProfile === undefined) throw new Error("missing profile");
+		const plain = await ordinary.deps.readiness(
+			{ ...ordinary.run().job, sourceRevision: "a".repeat(40) },
+			ordinaryProfile,
+		);
+		expect(plain).not.toHaveProperty("pinnedSourceIsAncestor");
+		expect(ordinary.calls.some((argv) => argv.includes("merge-base"))).toBe(false);
 	});
 });
 
