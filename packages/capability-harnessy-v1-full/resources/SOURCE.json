@@ -2593,6 +2593,32 @@
             }
           }
         ]
+      },
+      {
+        "id": "jarvis-pypdf-6-21-4",
+        "owner": "harnessy-v2",
+        "reason": "Update the Jarvis pypdf dependency from 6.21.1 to 6.21.4.",
+        "baseTree": {
+          "algorithm": "sha256",
+          "digest": "6b8e63bdbeb930a3c8260512b1253d07af6705edc0d5fb11ac00077c040d3085",
+          "fileCount": 750,
+          "byteCount": 5286951
+        },
+        "changes": [
+          {
+            "path": "jarvis-cli/uv.lock",
+            "before": {
+              "size": 273501,
+              "executable": false,
+              "sha256": "4e4daebd7dcc88c55126abe051f9aba124fda66bea02ae28c93ae9758741a1a4"
+            },
+            "after": {
+              "size": 273668,
+              "executable": false,
+              "sha256": "1cccd62ba30f59acc8865b3850254e61fcbcb0bff04fb3f441fbc9edf2397258"
+            }
+          }
+        ]
       }
     ]
   },
@@ -2612,8 +2638,8 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "6b8e63bdbeb930a3c8260512b1253d07af6705edc0d5fb11ac00077c040d3085",
+    "digest": "8ef7b81d1e228fbbe53117a6f69c39548ab8cebb5ba3cf718e8e7eade4b28917",
     "fileCount": 750,
-    "byteCount": 5286951
+    "byteCount": 5287118
   }
 }
