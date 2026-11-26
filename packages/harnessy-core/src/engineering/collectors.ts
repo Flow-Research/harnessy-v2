@@ -316,6 +316,12 @@ export async function collectPullRequestChecks(input: {
  * reopened inside the window. The label must exist, so a missing label cannot
  * produce a silent zero. Incomplete search results are inconclusive.
  */
+function observationWindow(days: number, clock: () => number, name: string) {
+	if (!Number.isSafeInteger(days) || days < 1 || days > 90) throw new Error(`${name} window must be 1 to 90 days`);
+	const now = clock();
+	return { now, since: now - days * 86_400_000 };
+}
+
 export async function collectReopenedDefects(input: {
 	readonly source: ReadOnlySource;
 	readonly repository: string;
@@ -325,10 +331,7 @@ export async function collectReopenedDefects(input: {
 }): Promise<ReadonlyArray<CollectedObservation>> {
 	if (!REPOSITORY.test(input.repository)) throw new Error("Repository must be OWNER/NAME");
 	if (!/^[A-Za-z0-9 _.:/-]{1,50}$/.test(input.label)) throw new Error("Invalid defect label");
-	const days = input.windowDays ?? 30;
-	if (!Number.isSafeInteger(days) || days < 1 || days > 90) throw new Error("Defect window must be 1 to 90 days");
-	const now = (input.now ?? Date.now)();
-	const since = now - days * 86_400_000;
+	const { now, since } = observationWindow(input.windowDays ?? 30, input.now ?? Date.now, "Defect");
 	const metrics = INSTALLED_COLLECTORS["github.reopened-defects.v1"];
 	const requests: CollectionRequest[] = [];
 	const subject: Record<string, string | number | boolean | ReadonlyArray<unknown>> = {
@@ -449,10 +452,7 @@ export async function collectWorkStreamAcceptance(input: {
 		base.search !== ""
 	)
 		throw new Error("The WorkStream collector reads only a loopback http API root");
-	const days = input.windowDays ?? 30;
-	if (!Number.isSafeInteger(days) || days < 1 || days > 90) throw new Error("Acceptance window must be 1 to 90 days");
-	const now = (input.now ?? Date.now)();
-	const since = now - days * 86_400_000;
+	const { now, since } = observationWindow(input.windowDays ?? 30, input.now ?? Date.now, "Acceptance");
 	const metrics = INSTALLED_COLLECTORS["workstream.submission-outcomes.v1"];
 	const requests: CollectionRequest[] = [];
 	const subject: Record<string, string | number | boolean | ReadonlyArray<unknown>> = {
