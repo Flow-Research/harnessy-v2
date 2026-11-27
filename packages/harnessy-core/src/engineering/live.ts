@@ -1033,9 +1033,9 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 				pullRequestUrl: saved.prUrl,
 				headSha,
 				now: work.now,
-			}).catch((cause: unknown) => ({
+			}).catch(() => ({
 				verdict: "reject" as const,
-				reason: `The collected metrics cannot be read: ${(cause instanceof Error ? cause.message : "unknown error").slice(0, 200)}`,
+				reason: "The collected metrics cannot be read",
 				record: undefined,
 			}));
 			if (gated.record === undefined) return { verdict: "reject", reason: gated.reason };
