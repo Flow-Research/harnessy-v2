@@ -150,6 +150,13 @@ PRAGMA user_version=1;`);
 			.map((row) => this.intervention(String(row.id))!);
 	}
 
+	/** A retained stop answer can close a reservation that never acquired a worker. */
+	hasStopAnswer(runId: string): boolean {
+		return Boolean(
+			this.#database.prepare("SELECT 1 FROM interventions WHERE run_id=? AND status='stopped' LIMIT 1").get(runId),
+		);
+	}
+
 	pending(): RetainedIntervention | undefined {
 		const row = this.#database
 			.prepare("SELECT id FROM interventions WHERE delivered_at IS NULL ORDER BY sequence LIMIT 1")

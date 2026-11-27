@@ -531,7 +531,8 @@ describe("engineering intervention transport", () => {
 			state.store,
 			state.depsFor(broker, state.interventions, true),
 		).tick();
-		expect(settled.state).not.toBe("idle");
+		expect(settled.state).toBe("settled");
+		expect(state.store.get(state.launch.launchId).state).toBe("cancelled");
 		expect(state.executed).toEqual([]);
 	});
 

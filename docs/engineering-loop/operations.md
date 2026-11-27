@@ -180,3 +180,18 @@ When the profile sets `"reviewer": "claude"`, a second reader runs before the pu
 - A process that leaves both the agent's process tree and the worktree folder is not observed.
 - The reviewer agent reads the diff only. It does not read the rest of the repository.
 - The loop does not submit the WorkStream proof. The runner does that after a person merges the pull request.
+
+### Deliver a paused run to Garden
+
+In the private host configuration, set `remoteDelivery.origin` to the HTTPS Garden origin.
+Set `remoteDelivery.enrollment` to the existing host enrollment. Set
+`remoteDelivery.signingKeyFile` to the private Ed25519 JWK file for that enrollment.
+A relative path starts at the host configuration directory. Use an owner-only file.
+Omit `remoteDelivery` for local operation.
+
+Both `engineering tick` and `engineering serve` use this configuration.
+Use the same state directory after a restart. The host retains each question there until
+Garden confirms delivery. If a reply is lost, the next exchange uses the original question ID.
+A Resume decision releases the hold. Admission checks authority and provider allowance again.
+A Stop decision requests cancellation. For a started worker, the host confirms cancellation
+only after it observes termination.
