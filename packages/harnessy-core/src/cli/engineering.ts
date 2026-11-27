@@ -1,9 +1,10 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/cli";
 import * as Result from "effect/Result";
+import { z } from "zod";
 import { benchmarkHarnessy } from "../engineering/benchmark.ts";
 import { buildNullCalibration } from "../engineering/calibration.ts";
 import {
@@ -16,6 +17,9 @@ import {
 } from "../engineering/collectors.ts";
 import { engineeringJobSchema } from "../engineering/contracts.ts";
 import { EngineeringController } from "../engineering/controller.ts";
+import { EngineeringHostDelivery } from "../engineering/host-delivery.ts";
+import { EngineeringInterventionStore, flushIntervention } from "../engineering/host-intervention.ts";
+import { createGardenHostTransport } from "../engineering/host-transport.ts";
 import {
 	appendServiceReport,
 	EXTRA_USAGE_FILE,
@@ -24,6 +28,7 @@ import {
 	profileEvaluatorDigest,
 	profileWorkloadDigest,
 	readHostConfig,
+	readOwnerJson,
 } from "../engineering/live.ts";
 import { runEngineeringService } from "../engineering/service.ts";
 import { EngineeringStore, engineeringGrant } from "../engineering/store.ts";
@@ -288,15 +293,16 @@ export const makeEngineeringCommand = (
 	);
 	const withController = <A>(
 		flags: { readonly database: string; readonly hostConfig: string },
-		operation: (controller: EngineeringController, stateRoot: string) => Promise<A>,
+		operation: (controller: Pick<EngineeringController, "tick">, stateRoot: string) => Promise<A>,
 	) =>
 		Effect.tryPromise({
 			try: async () => {
 				const stateRoot = dirname(flags.database);
 				const store = new EngineeringStore(flags.database);
 				try {
+					const config = readHostConfig(flags.hostConfig);
 					const deps = liveControllerDeps({
-						config: readHostConfig(flags.hostConfig),
+						config,
 						configRoot: dirname(flags.hostConfig),
 						work: workDeps(),
 						stateRoot,
@@ -310,7 +316,42 @@ export const makeEngineeringCommand = (
 								},
 							),
 					});
-					return await operation(new EngineeringController(store, deps), stateRoot);
+					if (!config.remoteDelivery) return await operation(new EngineeringController(store, deps), stateRoot);
+					const { origin, enrollment, signingKeyFile } = config.remoteDelivery;
+					const key = z
+						.object({
+							kty: z.literal("OKP"),
+							crv: z.literal("Ed25519"),
+							x: z.string(),
+							d: z.string(),
+						})
+						.parse(readOwnerJson(resolve(dirname(flags.hostConfig), signingKeyFile)));
+					const privateKey = await crypto.subtle.importKey("jwk", key, "Ed25519", false, ["sign"]);
+					const transport = createGardenHostTransport({ origin, enrollment, privateKey, now: clock });
+					const interventions = new EngineeringInterventionStore(store);
+					try {
+						const delivery = new EngineeringHostDelivery(store, enrollment, transport, clock, interventions);
+						const controller = new EngineeringController(store, {
+							...deps,
+							interventions,
+							remoteAuthority: (launch) => delivery.authority(launch),
+						});
+						return await operation(
+							{
+								tick: async () => {
+									await delivery.poll();
+									await delivery.flushOne();
+									const result = await controller.tick();
+									await flushIntervention(interventions, transport, clock);
+									await delivery.flushOne();
+									return result;
+								},
+							},
+							stateRoot,
+						);
+					} finally {
+						interventions.close();
+					}
 				} finally {
 					store.close();
 				}
@@ -333,48 +374,25 @@ export const makeEngineeringCommand = (
 		),
 	);
 	const serve = Command.make("serve", { database, hostConfig }, (flags) =>
-		Effect.tryPromise({
-			// The service owns its stop signal. An interrupt lets the current tick finish, so that
-			// a running worker keeps its authority checks and the store closes cleanly.
-			try: async () => {
-				const stop = new AbortController();
-				const onSignal = () => {
-					process.stderr.write("Stopping after the current tick. The worker keeps its checks until then.\n");
-					stop.abort();
-				};
-				process.once("SIGINT", onSignal);
-				process.once("SIGTERM", onSignal);
-				const stateRoot = dirname(flags.database);
-				const store = new EngineeringStore(flags.database);
-				try {
-					const deps = liveControllerDeps({
-						config: readHostConfig(flags.hostConfig),
-						configRoot: dirname(flags.hostConfig),
-						work: workDeps(),
-						stateRoot,
-						environment: process.env,
-						launchSettled: (launchId) =>
-							Result.match(
-								Result.try(() => store.get(launchId).state),
-								{
-									onFailure: () => false,
-									onSuccess: (state) => ["succeeded", "failed", "cancelled"].includes(state),
-								},
-							),
-					});
-					await runEngineeringService(
-						new EngineeringController(store, deps),
-						stop.signal,
-						async (report) => appendServiceReport(stateRoot, report),
-						clock,
-					);
-				} finally {
-					process.removeListener("SIGINT", onSignal);
-					process.removeListener("SIGTERM", onSignal);
-					store.close();
-				}
-			},
-			catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+		withController(flags, async (controller, stateRoot) => {
+			const stop = new AbortController();
+			const onSignal = () => {
+				process.stderr.write("Stopping after the current tick. The worker keeps its checks until then.\n");
+				stop.abort();
+			};
+			process.once("SIGINT", onSignal);
+			process.once("SIGTERM", onSignal);
+			try {
+				await runEngineeringService(
+					controller,
+					stop.signal,
+					async (report) => appendServiceReport(stateRoot, report),
+					clock,
+				);
+			} finally {
+				process.removeListener("SIGINT", onSignal);
+				process.removeListener("SIGTERM", onSignal);
+			}
 		}),
 	).pipe(
 		Command.withDescription(

@@ -4,6 +4,7 @@ import { type ExecutionGuard, type IncludedExecutionPolicy, requireExecutionPerm
 import { runWork, type WorkDeps, type WorkOptions, type WorkOutcome } from "../work/run.ts";
 import { ENGINEERING_PILOT, type EngineeringJob, type EngineeringRun } from "./contracts.ts";
 import type { HostLaunch, HostRequestUnsigned } from "./host-contract.ts";
+import type { EngineeringInterventionStore, InterventionReason } from "./host-intervention.ts";
 import { type EngineeringStore, engineeringLaunchId, type HostTerminationEvidence } from "./store.ts";
 
 export interface EngineeringRepositoryProfile {
@@ -53,6 +54,8 @@ export interface EngineeringControllerDeps {
 	readonly work: WorkDeps;
 	/** Live server authority is checked separately from stored delivery acknowledgments. */
 	readonly remoteAuthority?: (launch: HostLaunch) => Promise<RemoteAuthorityReceipt>;
+	/** Remote runs only. An open intervention holds a reserved run until a person resumes or stops it. */
+	readonly interventions?: EngineeringInterventionStore;
 	readonly readiness: (job: EngineeringJob, profile: EngineeringRepositoryProfile) => Promise<HostReadiness>;
 	readonly inspect: (run: EngineeringRun) => Promise<HostProcessObservation>;
 	readonly cancel: (run: EngineeringRun, identity: string) => Promise<void>;
@@ -98,6 +101,9 @@ export class EngineeringController {
 		const active = this.#store.active();
 		if (active !== undefined) {
 			const offer = this.#store.hostOffer(active.id);
+			// Recover a stop already committed by an older host before its controller write.
+			if (active.state !== "cancel_requested" && this.#deps.interventions?.hasStopAnswer(active.id))
+				return this.#observe(this.#store.requestCancellation(active.id, this.#deps.now()));
 			if (active.state === "reserved" && offer !== undefined) {
 				if (!offer.acknowledged)
 					return {
@@ -105,12 +111,30 @@ export class EngineeringController {
 						reason: "Remote acknowledgment pending; worker has not started",
 						runId: active.id,
 					};
+				if ((this.#deps.interventions?.open(active.id).length ?? 0) > 0) {
+					const now = this.#deps.now();
+					if (
+						now >= active.workerDeadline ||
+						Result.isFailure(Result.try(() => this.#store.assertAuthority(active.id, now)))
+					)
+						return this.#observe(this.#store.requestCancellation(active.id, now));
+					return {
+						state: "paused",
+						reason: "Intervention open; a person must resume or stop the run",
+						runId: active.id,
+					};
+				}
 				const admitted = await this.#admit(active.job, active.grantId, active.id);
-				return admitted.status === "paused"
-					? { state: "paused", reason: admitted.reason, runId: active.id }
-					: this.#execute(active, admitted.profile);
+				if (admitted.status === "ready") return this.#execute(active, admitted.profile);
+				const raised = admitted.code === "allowance_unavailable" ? this.#raise(active.id, admitted.code) : "";
+				return { state: "paused", reason: `${admitted.reason}${raised}`, runId: active.id };
 			}
-			return this.#observe(active);
+			const observed = await this.#observe(active);
+			return offer !== undefined &&
+				observed.state === "occupied" &&
+				this.#store.get(active.id).state === "reconciling"
+				? { ...observed, reason: `${observed.reason}${this.#raise(active.id, "reconciliation_required")}` }
+				: observed;
 		}
 		const fence = this.#store.hostFence();
 		if (fence?.disposition === "declining")
@@ -187,6 +211,15 @@ export class EngineeringController {
 		return reasons.length === 0
 			? { state: "idle", reason: "No approved work" }
 			: { state: "paused", reason: reasons.join("; ") };
+	}
+
+	/** Raising is idempotent. A failure leaves the tick result unchanged and is named in its reason. */
+	#raise(runId: string, reason: InterventionReason): string {
+		const interventions = this.#deps.interventions;
+		if (interventions === undefined) return "";
+		return Result.isFailure(Result.try(() => interventions.raise(runId, reason, this.#deps.now())))
+			? "; intervention could not be recorded"
+			: "; intervention raised for a person";
 	}
 
 	async #admit(
@@ -394,6 +427,22 @@ export class EngineeringController {
 		if (run.processIdentity !== null && run.processIdentity !== observation.identity) {
 			this.#store.markUncertain(run.id, "Host process identity changed", this.#deps.now());
 			return { state: "occupied", reason: "Host process identity changed", runId: run.id };
+		}
+		if (
+			run.state === "cancel_requested" &&
+			run.processIdentity === null &&
+			run.ownerPid === null &&
+			run.ownerToken === null &&
+			observation.state === "stopped" &&
+			observation.evidence.length > 0 &&
+			this.#store.hostOffer(run.id)?.acknowledged === true
+		) {
+			this.#store.settle(run.id, "cancelled", "Reservation cancelled before worker start", this.#deps.now(), {
+				identity: null,
+				terminationEvidence: observation.evidence,
+			});
+			this.#deps.interventions?.closeTerminalRun(run.id);
+			return { state: "settled", reason: "Cancellation confirmed before worker start", runId: run.id };
 		}
 		if (run.processIdentity === null)
 			return { state: "occupied", reason: "Launch generation has not been acknowledged", runId: run.id };

@@ -31,6 +31,7 @@ import type {
 	HostProcessObservation,
 	HostReadiness,
 } from "./controller.ts";
+import { hostEnrollmentSchema } from "./host-contract.ts";
 import { runAgentReview } from "./reviewer.ts";
 
 /**
@@ -124,6 +125,13 @@ const profileSchema = z
 	});
 export const hostConfigSchema = z.strictObject({
 	schema: z.literal("harnessy.engineering.host.v1"),
+	remoteDelivery: z
+		.strictObject({
+			origin: z.string().url(),
+			enrollment: hostEnrollmentSchema,
+			signingKeyFile: z.string().min(1),
+		})
+		.optional(),
 	/** The subscription account that `claude auth status` must report. */
 	accountId: z.string().min(3).max(200),
 	profiles: z.array(profileSchema).min(1).max(3),
@@ -155,7 +163,7 @@ const SHELL_PROBE_MS = 10 * 60_000;
 const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
 
 /** A private owner file: regular, owned by this user, and closed to group and others. */
-const readOwnerJson = (path: string): unknown => {
+export const readOwnerJson = (path: string): unknown => {
 	const stat = statSync(path);
 	if (!stat.isFile() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0)
 		throw new Error(`${path} must be a regular file with mode 600 that this user owns`);
@@ -934,7 +942,15 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 				paneStatus = "idle shell, no completion line";
 			}
 			agentExitCode = pane.exitCode;
-		} else if (!run.runnerReturned)
+		} else if (
+			!run.runnerReturned &&
+			!(
+				run.state === "cancel_requested" &&
+				run.ownerToken === null &&
+				run.ownerPid === null &&
+				run.processIdentity === null
+			)
+		)
 			// Without any saved state, only a returned runner shows that nothing was launched.
 			return { state: "unknown", reason: "The runner has not returned and saved no work state" };
 		if (!noteLimit(run.job.taskId)) return { state: "unknown", reason: "A provider limit pause cannot be recorded" };

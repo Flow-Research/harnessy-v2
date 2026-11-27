@@ -129,7 +129,7 @@ The runner returns a delivered outcome only after the pull request checks pass, 
 
 ## Execution boundaries
 
-The engineering controller uses the existing task runner and private SQLite state. Remote host delivery retains launch identities, pending operations, acknowledgments, and event sequence numbers in that state. It requires a confirmed acknowledgment and fresh central authority before remote execution. A lost reply keeps the reservation held until reconciliation. Local controller state alone does not qualify a multi-host pilot.
+The engineering controller uses the existing task runner and private SQLite state. Remote host delivery retains launch identities, pending operations, acknowledgments, and event sequence numbers in that state. It requires a confirmed acknowledgment and fresh central authority before remote execution. A lost reply keeps the reservation held until reconciliation. Interventions for remote runs use the same signed transport. [Interventions for a remote run](operations.md#interventions-for-a-remote-run) gives the rules. Local controller state alone does not qualify a multi-host pilot.
 
 Owner commands can approve an exact job, inspect local state, request cancellation, and revoke authority. The commands `tick` and `serve` can start one worker for an approved job. Provider admission requires all of these facts: a subscription sign-in for the expected account, no provider setting in the environment, an owner statement that extra usage billing is off, and no recorded limit pause. [Operate the engineering loop on one machine](operations.md) gives the procedure.
 

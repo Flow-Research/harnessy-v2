@@ -129,6 +129,39 @@ When the agent result reports a usage limit, the loop records a pause in `provid
 harnessy engineering clear-provider-pause --confirmed-by julian
 ```
 
+## Interventions for a remote run
+
+An intervention is a request from the loop to a person about one remote run. A remote run is a run that Garden launched through the signed host transport. When the host configuration includes `remoteDelivery`, both `tick` and `serve` deliver interventions for remote runs.
+
+The controller raises an intervention in two cases:
+
+| Reason | Kind | When |
+| --- | --- | --- |
+| `allowance_unavailable` | `input` | Provider admission paused a run that Garden acknowledged, for example after a usage limit. |
+| `reconciliation_required` | `review` | The run is in the `reconciling` state, and the host cannot yet prove that the worker stopped. |
+
+The loop keeps each intervention in `interventions.sqlite` in the state folder. The record names the workspace, host, launch, run, grant, source revision and task revision. Its expiry is the grant expiry. One open intervention exists for each run and reason. A repeated raise returns the same record.
+
+The loop sends each intervention to Garden in a signed request. It retries the same bytes until Garden returns a receipt with the same intervention and launch identities. A lost reply or a refusal keeps the intervention pending. A receipt marks delivery only.
+
+An open intervention holds a reserved run before its worker starts. The next tick returns `paused` until a person answers.
+
+Garden returns an answer in a later pull reply. The loop accepts the answer only when all of these conditions are true:
+
+- The answer names a delivered, open intervention and its exact digest.
+- The workspace, host, operator, launch, run, grant, source revision and task revision are the same as in the record.
+- The answer time is inside the intervention, and the answer, the intervention and the grant have not expired.
+- For `resume`, the grant is not revoked and the run can still issue effects.
+
+Otherwise the loop refuses the answer and changes nothing. An answer has only two decisions:
+
+- `resume` closes the intervention. The next tick does all admission checks again. A usage limit that is still in effect raises a new intervention.
+- `stop` closes the intervention and requests cancellation of the run through the existing cancellation rule.
+
+An answer cannot approve a job, issue or extend a grant, or start a worker. The same answer can arrive again. The loop applies it once.
+
+Use a Garden receiver that supports interventions and answers. If Garden refuses a delivery, the intervention stays pending while other questions can still be sent. To stop such a run, use `harnessy engineering cancel --run <run id>`.
+
 ## How a candidate is checked
 
 1. The loop rejects a candidate that changes a protected path. A person must review such a change.
@@ -147,3 +180,18 @@ When the profile sets `"reviewer": "claude"`, a second reader runs before the pu
 - A process that leaves both the agent's process tree and the worktree folder is not observed.
 - The reviewer agent reads the diff only. It does not read the rest of the repository.
 - The loop does not submit the WorkStream proof by itself. After a person merges the pull request, approve a proof-only job. It names the same task, the `sourceRevision` of the first run, and a `proofOnlyResume` object with the grant of the first run and the reviewed head. The loop admits it when that source is an ancestor of the current base. A proof-only job needs a new job `id`.
+
+### Deliver a paused run to Garden
+
+In the private host configuration, set `remoteDelivery.origin` to the HTTPS Garden origin.
+Set `remoteDelivery.enrollment` to the existing host enrollment. Set
+`remoteDelivery.signingKeyFile` to the private Ed25519 JWK file for that enrollment.
+A relative path starts at the host configuration directory. Use an owner-only file.
+Omit `remoteDelivery` for local operation.
+
+Both `engineering tick` and `engineering serve` use this configuration.
+Use the same state directory after a restart. The host retains each question there until
+Garden confirms delivery. If a reply is lost, the next exchange uses the original question ID.
+A Resume decision releases the hold. Admission checks authority and provider allowance again.
+A Stop decision requests cancellation. For a started worker, the host confirms cancellation
+only after it observes termination.

@@ -43,7 +43,7 @@ export interface PendingHostOperation {
 	readonly body: HostBody;
 }
 export interface HostTerminationEvidence {
-	readonly identity: string;
+	readonly identity: string | null;
 	readonly terminationEvidence: string;
 	readonly verificationDigest?: string;
 }
@@ -591,6 +591,11 @@ PRAGMA user_version=3;`);
 				if (
 					hostEvidence === undefined ||
 					hostEvidence.identity !== run.processIdentity ||
+					(hostEvidence.identity === null &&
+						(outcome !== "cancelled" ||
+							run.state !== "cancel_requested" ||
+							run.ownerToken !== null ||
+							run.ownerPid !== null)) ||
 					hostEvidence.terminationEvidence.length === 0 ||
 					hostEvidence.terminationEvidence.length > 65_536 ||
 					(outcome === "succeeded" && !/^[a-f0-9]{64}$/.test(hostEvidence.verificationDigest ?? ""))
