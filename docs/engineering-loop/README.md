@@ -96,7 +96,7 @@ The output file must not exist. The command writes it with mode 600. The record 
 A collector never makes a value up. These rules apply:
 
 - The required checks are the union of the base branch protection and the branch rulesets. A base branch without required checks gives `unsupported`.
-- A caller can declare the expected base branch. A pull request with another base then gives `failed`. A base that changes during collection also gives `failed`.
+- Callers of the collector library can set `expectedBase`. The standalone `collect` command uses the base on the pull request. A pull request with another base then gives `failed`. A base that changes during collection also gives `failed`.
 - A required check passes only with conclusion `success` on the exact head. A skipped or missing required check counts as not executed. A pending required check, or a head that changes during collection, gives `inconclusive`.
 - The defect label must exist. Otherwise the result is `failed`, not zero. Incomplete search results give `inconclusive`.
 - Acceptance is accepted submissions divided by decided submissions in the window. A decision is `accepted`, `needs_revision` or `rejected`. Without a credential, a project, or a decided submission, the result is `unavailable`.
