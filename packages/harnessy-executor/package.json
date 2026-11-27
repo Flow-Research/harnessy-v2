@@ -9,6 +9,7 @@
 	},
 	"files": [
 		"bin",
+		"social-cockpit",
 		"LICENSE",
 		"README.md"
 	],

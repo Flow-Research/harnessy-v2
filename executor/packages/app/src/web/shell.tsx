@@ -202,6 +202,12 @@ function SidebarContent(props: {
           onNavigate={props.onNavigate}
         />
 
+        <a
+          href="/social"
+          className="flex items-center rounded-md px-2.5 py-1.5 text-sm text-sidebar-foreground hover:bg-sidebar-active/60 hover:text-foreground"
+        >
+          Social inbox
+        </a>
         <PluginNav pathname={props.pathname} onNavigate={props.onNavigate} />
 
         {/* Integrations list */}

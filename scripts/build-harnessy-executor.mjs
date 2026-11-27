@@ -60,6 +60,7 @@ if (tags.length === 0) throw new Error("Executor build produced no platform vari
 
 rmSync(wrapperOutput, { recursive: true, force: true });
 mkdirSync(join(wrapperOutput, "bin"), { recursive: true });
+cpSync(join(wrapperSource, "social-cockpit"), join(wrapperOutput, "social-cockpit"), { recursive: true });
 for (const path of ["LICENSE", "README.md"]) cpSync(join(wrapperSource, path), join(wrapperOutput, path));
 for (const path of ["harnessy-executor", "platform.cjs"]) {
 	cpSync(join(wrapperSource, "bin", path), join(wrapperOutput, "bin", path));

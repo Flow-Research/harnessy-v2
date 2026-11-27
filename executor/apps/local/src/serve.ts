@@ -14,6 +14,7 @@ import { setOAuthCompletionListener } from "@executor-js/api";
 import { oauthClientIdMetadataDocumentFromRequest } from "@executor-js/api/server";
 import { loadOrMintLocalAuthToken, resolveExecutorDataDir, secureLocalStateDir } from "./auth";
 import { consumeOAuthResult, publishOAuthResult } from "./oauth-result-store";
+import { socialHost } from "./social/host";
 import { startIntegrationsRefresh } from "./integrations";
 import { disposeServerHandlers, getServerHandlers } from "./main";
 import {
@@ -619,6 +620,11 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   const authToken = normalizeCredential(opts.authToken) ?? loadOrMintLocalAuthToken();
   const isAuthorized = makeIsAuthorized(authToken);
   const loginCodes = makeLocalLoginCodes();
+  const social = socialHost(
+    resolveExecutorDataDir(),
+    resolve(process.env.EXECUTOR_SCOPE_DIR || process.cwd()),
+    authToken,
+  );
   // CORS origin allowlist; `--allowed-host` names also pass the Host gate.
   // `selfOrigins` is filled in once Bun reports the bound port.
   const extraHosts = (opts.allowedHosts ?? []).map(parseAllowedHost);
@@ -645,6 +651,7 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
   let viteChild: ViteChild | null = null;
 
   const disposeOwnedResources = async (): Promise<void> => {
+    social.close();
     setOAuthCompletionListener(null);
     if (ownsHandlers) {
       await disposeServerHandlers();
@@ -718,6 +725,9 @@ export async function startServer(opts: StartServerOptions = {}): Promise<Server
         }
 
         const url = new URL(req.url);
+
+        if (url.pathname === "/social" || url.pathname.startsWith("/api/social/v1/"))
+          return social.handle(req, url);
 
         // Unauthenticated liveness probe — carries no data, used by the CLI
         // reachability check (which therefore never forwards a credential).

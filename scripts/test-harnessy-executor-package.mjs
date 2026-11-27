@@ -89,6 +89,11 @@ const main = () => {
 		if (wrapperManifest.bin?.["harnessy-executor"] !== "bin/harnessy-executor") {
 			throw new Error("Installed wrapper is missing the Harnessy Executor bin mapping");
 		}
+		const socialPack = join(wrapperDirectory, "social-cockpit");
+		const capability = JSON.parse(readFileSync(join(socialPack, "harnessy.capability.json"), "utf8"));
+		if (!capability.resources.some((r) => r.kind === "extension" && statSync(join(socialPack, r.path)).isFile())) {
+			throw new Error("Installed social capability does not contain its agent extension");
+		}
 		const binary = join(wrapperDirectory, "bin", "harnessy-executor");
 		if (!statSync(binary).isFile()) throw new Error("Installed wrapper bin is not a file");
 		const versionOutput = runNodeScript(binary, ["--version"], { capture: true, cwd: installDirectory });

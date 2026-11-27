@@ -24,6 +24,7 @@
  * with PI_AUTH_ENCRYPTION=off and HSY_AUTH_ENCRYPTION=off, so no keychain,
  * live service or real state is touched.
  */
+import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -34,6 +35,8 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { assertStrictCockpitCsp, signInTargetFromOpenerArg } from "./cockpit-smoke-lib.mjs";
+
+import { checkSocialInbox } from "./social-cockpit-browser-flow.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const executorCli = join(repoRoot, "executor/apps/cli/src/main.ts");
@@ -88,7 +91,13 @@ const profile = join(root, "chrome-profile");
 const children = [];
 const failures = [];
 
+const operatorCode = randomBytes(32).toString("base64url");
+const agentToken = randomBytes(32).toString("base64url");
 const childEnv = {
+	HARNESSY_SOCIAL_MODE: "fixture",
+	HARNESSY_SOCIAL_OPERATOR_CODE: operatorCode,
+	HARNESSY_SOCIAL_AGENT_TOKEN: agentToken,
+	HARNESSY_SOCIAL_AGENT_ACCOUNTS: "x-fixture",
 	HOME: home,
 	PATH: `${stubDir}${delimiter}${process.env.PATH ?? ""}`,
 	EXECUTOR_DATA_DIR: dataDir,
@@ -153,7 +162,9 @@ try {
 	const opened = spawnSync("bun", ["run", executorCli, "open"], { cwd: scopeDir, env: childEnv, encoding: "utf8", timeout: 60_000 });
 	if (opened.status !== 0) throw new Error(`executor open failed: ${opened.stdout}\n${opened.stderr}`);
 	if (`${opened.stdout}${opened.stderr}`.includes(token)) throw new Error("executor open printed the bearer.");
-	const openerArg = (await readFile(openerLog, "utf8")).trim().split("\n").at(-1);
+	const openerArg = await until("opener stub", async () => (await readFile(openerLog, "utf8").catch(() => "")).trim().split("\n").at(-1), 5_000).catch(() => {
+    throw new Error(`Executor open produced no opener record. ${opened.stdout.replaceAll(token, "[redacted]")} ${opened.stderr.replaceAll(token, "[redacted]")}`);
+  });
 	const fileTarget = signInTargetFromOpenerArg(openerArg, join(dataDir, "server-control"), [token]);
 	const fileCode = new URLSearchParams(new URL(fileTarget).hash.slice(1)).get("_code");
 
@@ -334,6 +345,8 @@ try {
 	await second.page("Page.navigate", { url: `${origin}/auth/sign-in#_code=${code}` });
 	await signedIn(second, "loopback URL");
 	if (second.violations().length > 0) failures.push(`loopback URL: CSP violations during sign-in: ${second.violations().join("; ")}`);
+
+	await checkSocialInbox({ origin, session: second, until, agentToken, operatorCode });
 
 	// Chromium may drop the socket before it acknowledges; never wait for that.
 	await Promise.race([send("Browser.close").catch(() => undefined), wait(3_000)]);
