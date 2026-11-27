@@ -1,23 +1,49 @@
 Harnessy
+Copyright (c) 2025 Mario Zechner
 Copyright (c) 2026 Flow Research
 
-This project is derived from Pi, a coding agent created by Mario Zechner
-(originally github.com/badlogic/pi-mono, now github.com/earendil-works/pi),
-which is distributed under the MIT License.
+Harnessy is a mixed-provenance monorepo derived from Pi, a coding agent created
+by Mario Zechner (originally github.com/badlogic/pi-mono, now
+github.com/earendil-works/pi). This NOTICE is a license map for the repository,
+following docs/adr/0007-harnessy-authored-package-license-model.md. The root
+LICENSE file is the inherited Pi MIT notice; it is not a repository-wide
+license for Harnessy-authored code.
 
-Ownership of the code in this repository is split as follows:
+1. Original Pi code (MIT)
 
-1. Original Pi code. Code that came from Pi at the time of the fork, and any
-   later changes taken from Pi, remain Copyright (c) 2025 Mario Zechner and
-   their respective contributors.
+   Code inherited from Pi remains Copyright (c) 2025 Mario Zechner and its
+   respective contributors, and is distributed under the MIT License in the
+   root LICENSE file. That copyright notice must be kept in all copies or
+   substantial portions of the software.
 
-2. Flow Research changes. All changes, additions, and new files made by or for
-   Flow Research after the fork (from June 2026 onward) are
-   Copyright (c) 2026 Flow Research.
+2. Harnessy-authored packages (AGPL-3.0-only)
 
-The whole project, including both parts, is distributed under the MIT License
-in the LICENSE file. The original Mario Zechner copyright notice must be kept
-in all copies or substantial portions of the software.
+   The following packages are Copyright (c) 2026 Flow Research and are
+   licensed under the GNU Affero General Public License, version 3 only
+   (AGPL-3.0-only). Each carries its own LICENSE file at its package root:
 
-Third-party code bundled in this repository keeps its own copyright and
-license notices.
+   - @harnessy/core                          packages/harnessy-core
+   - @harnessy/engine                        packages/harnessy-engine
+   - @harnessy/sdk                           packages/harnessy-sdk
+   - @harnessy/local-host                    packages/harnessy-local-host
+   - @harnessy/capability-harnessy-v1-full   packages/capability-harnessy-v1-full
+   - @harnessy/capability-org-knowledge      packages/capability-org-knowledge
+
+   Selecting AGPL-3.0-only does not withdraw rights already granted under any
+   earlier AGPL-3.0-or-later declaration.
+
+3. Other Flow Research changes after the fork (pending owner confirmation)
+
+   Changes made by or for Flow Research after the fork that are outside the
+   six packages above, including Harnessy overlay contributions to inherited
+   Pi packages, @harnessy/executor and its platform variants, and the Claude
+   bridge, are Copyright (c) 2026 Flow Research. The license terms for these
+   contributions are pending owner confirmation (ADR 0007, approval question
+   7). Until confirmed, this NOTICE does not grant any license to them beyond
+   what the applicable package-root LICENSE files already state.
+
+4. Third-party code
+
+   Bundled third-party code, including the vendored Executor code under its own
+   MIT notice, keeps its own copyright and license notices and is not
+   relicensed by this repository.
