@@ -178,6 +178,25 @@ describe("pull request required check collector", () => {
 		expect(skipped.observation).toMatchObject({ status: "observed", value: 3 });
 	});
 
+	it("reads the next page of rules and counts a shared generic and app-bound context once", async () => {
+		const path = `repos/${REPO}/rules/branches/dev`;
+		const data = pullFixtures([run("Verify", "success", 1), run("PR contract", "success", 2)], {
+			[path]: Array.from({ length: 30 }, () => ({ type: "deletion" })),
+			[`${path}?page=2`]: [
+				{
+					type: "required_status_checks",
+					parameters: { required_status_checks: [{ context: "Verify" }, { context: "Extra" }] },
+				},
+			],
+		});
+		const [coverage] = await collectPullRequestChecks({
+			source: fixtures(data).source,
+			repository: REPO,
+			pullRequest: 7,
+		});
+		expect(coverage.observation).toMatchObject({ status: "observed", value: 2 / 3, denominator: 3 });
+	});
+
 	it("reports pending required checks as inconclusive without a value", async () => {
 		const { source } = fixtures(
 			pullFixtures([run("Verify", null, 1, "in_progress"), run("PR contract", "success", 2)]),
@@ -384,6 +403,21 @@ describe("WorkStream submission acceptance collector", () => {
 		expect(entry.observation).toMatchObject({ status: "unavailable", reason: "no_workstream_read_credential" });
 		expect(entry.observation).not.toHaveProperty("value");
 		expect(calls).toHaveLength(1);
+	});
+
+	it("keeps a transport exception containing a credential out of the record", async () => {
+		const token = "private-fixture-value";
+		const [entry] = await collectWorkStreamAcceptance({
+			fetch: async (url, init) => {
+				if (url.endsWith("/health")) return { status: 200, text: async () => '{"status":"ok"}' };
+				throw new Error(`Invalid header: ${init.headers.Authorization}`);
+			},
+			baseUrl: "http://127.0.0.1:18100",
+			projectId: PROJECT,
+			token,
+		});
+		expect(entry.observation.status).toBe("failed");
+		expect(JSON.stringify(entry)).not.toContain(token);
 	});
 
 	it("does not invent a ratio without decided submissions", async () => {
