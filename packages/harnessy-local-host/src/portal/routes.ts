@@ -20,7 +20,8 @@ export type PortalRouteAuth =
 	| "terminal"
 	| "weekly"
 	| "inbox-action"
-	| "links";
+	| "links"
+	| "tasks";
 
 /** One path parameter: the pattern its value must match whole, and an example for the OpenAPI document. */
 export interface PortalRouteParam {
@@ -206,11 +207,12 @@ export const PORTAL_APP_ROUTES: ReadonlyArray<PortalRoute> = [
 		method: "GET",
 		path: "/v1/tasks",
 		operationId: "getTasks",
-		summary: "Follow-ups and tasks derived read-only from briefs, reminders, the action register and status files",
+		summary: "Today's brief and local-store tasks, plus reminders, the action register and status files",
 		auth: "read",
 		schema: "Tasks",
 		data: { name: "tasks", source: "tasks" },
 	},
+
 	{
 		method: "GET",
 		path: "/v1/jobs",
@@ -286,6 +288,15 @@ export const PORTAL_ROUTES: ReadonlyArray<PortalRoute> = [
 		operationId: "linksAction",
 		summary: "Add, rename, move, remove, reorder or open saved links and folders",
 		auth: "links",
+		schema: null,
+	},
+
+	{
+		method: "POST",
+		path: "/v1/tasks/action",
+		operationId: "tasksAction",
+		summary: "Check off, add, insert, reorder, set priority or record an outcome in the local task store",
+		auth: "tasks",
 		schema: null,
 	},
 	{

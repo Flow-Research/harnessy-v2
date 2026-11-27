@@ -41,7 +41,7 @@ import {
 	type TileResult,
 	type WaitingData,
 } from "@harnessy/core/read-model";
-
+import { lagosCalendarDate, mergeTasks, type TasksState } from "@harnessy/core/tasks";
 import {
 	cockpitConnections,
 	codexConnections,
@@ -72,6 +72,8 @@ export interface PortalSourceOptions {
 	readonly probePort?: PortProbe;
 	/** The owner's `jobs.json`; without it the Jobs list holds the fixed jobs only. */
 	readonly ownerJobsPath?: string;
+	/** Local task store; when omitted the page is still derived-only. */
+	readonly tasks?: TasksState;
 }
 
 export type PortalTiles = Readonly<Record<string, TileResult<unknown>>>;
@@ -380,7 +382,21 @@ export const createPortalSources = (options: PortalSourceOptions): PortalSources
 				ownerNames: user === undefined ? [] : [user],
 			});
 			if (tile.state !== "ok") return { tasks: tile };
-			return { tasks: { ...tile, data: { ...tile.data!, tasks: [...taskChanges.apply(tile.data!.tasks, now)] } } };
+			let list = tile.data!;
+			if (options.tasks !== undefined) {
+				try {
+					list = mergeTasks({
+						derived: list,
+						store: options.tasks.read(),
+						today: lagosCalendarDate(now),
+						now,
+						ownerNames: user === undefined ? [] : [user],
+					});
+				} catch {
+					/* A malformed store is reported as a source; derived tasks still show. */
+				}
+			}
+			return { tasks: { ...tile, data: { ...list, tasks: [...taskChanges.apply(list.tasks, now)] } } };
 		},
 		jobs: async () => {
 			const now = options.clock();

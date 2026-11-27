@@ -7,6 +7,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { TasksState } from "@harnessy/core/tasks";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -124,6 +125,7 @@ const pressOn = async (element: Element, key: string, options: KeyboardEventInit
 const startPortal = async () => {
 	const fixture = await buildPortalHome("app-e2e");
 	const token = newPortalSecret();
+	const tasks = new TasksState(join(fixture.home, "tasks.json"));
 	const server = await startPortalServer({
 		openService: async (service) => {
 			opened.push(service);
@@ -136,7 +138,9 @@ const startPortal = async () => {
 			timeoutMs: 250,
 			clock: () => FIXTURE_NOW,
 			probePort: async (_host, port) => port === 8770,
+			tasks,
 		}),
+		tasks,
 		version: "0.0.3",
 		port: 0,
 	});
@@ -306,9 +310,12 @@ describe("the app against a real portal", () => {
 
 		await navigate("#/tasks");
 		await waitFor(() => expect(text()).toContain("Settle the mandate"));
-		expect(text()).toContain("Derived, not tracked");
+		expect(text()).toContain("Outcomes write only to the local store");
 		expect(text()).not.toContain("Garden delivery");
 		expect(container.querySelector('.tabs a[aria-current="page"]')?.getAttribute("href")).toBe("#/tasks/mine");
+		await act(async () => {
+			container.querySelector<HTMLInputElement>(".task-filter input")!.click();
+		});
 		await navigate("#/tasks/project");
 		await waitFor(() => expect(container.querySelectorAll(".group-row").length).toBeGreaterThan(1));
 		const groups = [...container.querySelectorAll(".group-row th")].map((cell) => cell.firstChild?.textContent);
@@ -482,6 +489,9 @@ describe("the app against a real portal", () => {
 		expect(meta.querySelector(".source-chip")).not.toBeNull();
 		await act(async () => card.querySelector<HTMLButtonElement>(".stack-card-title button")!.click());
 		expect(card.querySelector(".stack-card-detail")?.textContent).toMatch(/\.md:\d+/u);
+		await act(async () => {
+			container.querySelector<HTMLInputElement>(".task-filter input")!.click();
+		});
 		await navigate("#/tasks/project");
 		await waitFor(() => expect(container.querySelectorAll(".stack-group-title").length).toBeGreaterThan(1));
 		expect(container.querySelector("table")).toBeNull();

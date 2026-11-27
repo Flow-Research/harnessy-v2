@@ -84,6 +84,60 @@ const LINKS_ACTION_SCHEMA = {
 	],
 };
 
+const TASK_REF = {
+	type: "string",
+	pattern: "^([a-f0-9]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$",
+};
+const tasksAction = (action: string, properties: Record<string, unknown>, optional: string[] = []) => ({
+	type: "object",
+	additionalProperties: false,
+	required: ["action", ...Object.keys(properties).filter((name) => !optional.includes(name))],
+	properties: { action: { const: action }, ...properties },
+});
+
+/** `POST /v1/tasks/action`: one action per request. Never writes source Markdown. */
+const TASKS_ACTION_SCHEMA = {
+	oneOf: [
+		tasksAction(
+			"add",
+			{
+				title: { type: "string" },
+				owner: { type: "string" },
+				due: { type: "string" },
+				project: { type: "string" },
+				priority: { type: "integer", minimum: 0, maximum: 10000 },
+				index: { type: "integer", minimum: 0, maximum: 500 },
+			},
+			["owner", "due", "project", "priority", "index"],
+		),
+		tasksAction(
+			"insert",
+			{
+				title: { type: "string" },
+				index: { type: "integer", minimum: 0, maximum: 500 },
+				owner: { type: "string" },
+				due: { type: "string" },
+				project: { type: "string" },
+				priority: { type: "integer", minimum: 0, maximum: 10000 },
+			},
+			["owner", "due", "project", "priority"],
+		),
+		tasksAction("setPriority", { id: TASK_REF, priority: { type: "integer", minimum: 0, maximum: 10000 } }),
+		tasksAction("reorder", { ids: { type: "array", maxItems: 500, items: TASK_REF } }),
+		tasksAction("complete", { id: TASK_REF }),
+		tasksAction(
+			"outcome",
+			{
+				id: TASK_REF,
+				outcome: { enum: ["done", "carried", "dropped", "delegated"] },
+				owner: { type: "string" },
+				date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+			},
+			["owner", "date"],
+		),
+	],
+};
+
 export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: string): Record<string, unknown> => {
 	const paths: Record<string, Record<string, unknown>> = {};
 	for (const route of routes) {
@@ -167,6 +221,9 @@ export const buildPortalOpenApi = (routes: ReadonlyArray<PortalRoute>, version: 
 					: {}),
 				...(route.auth === "links" && route.method === "POST"
 					? { requestBody: { required: true, content: { "application/json": { schema: LINKS_ACTION_SCHEMA } } } }
+					: {}),
+				...(route.auth === "tasks" && route.method === "POST"
+					? { requestBody: { required: true, content: { "application/json": { schema: TASKS_ACTION_SCHEMA } } } }
 					: {}),
 				...(route.auth === "weekly" && route.method === "POST"
 					? {

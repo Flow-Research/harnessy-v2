@@ -165,6 +165,44 @@ describe("session action requests", () => {
 		});
 	});
 
+	it("sends task actions and explains each refusal without exposing server text", async () => {
+		const { client, fetch } = setup();
+		const id = "00000000-0000-4000-8000-000000000001";
+		await client.taskAction({ action: "add", title: "Ship the close-out" });
+		await client.taskAction({ action: "insert", title: "Insert me", index: 0 });
+		await client.taskAction({ action: "complete", id });
+		await client.taskAction({ action: "outcome", id, outcome: "carried" });
+		await client.taskAction({ action: "outcome", id, outcome: "delegated", owner: "Seyi" });
+		await client.taskAction({ action: "setPriority", id, priority: 10 });
+		await client.taskAction({ action: "reorder", ids: [id] });
+		expect(fetch.mock.calls.map(([path, init]) => [path, init.method, JSON.parse(init.body!)])).toEqual([
+			["/v1/tasks/action", "POST", { action: "add", title: "Ship the close-out" }],
+			["/v1/tasks/action", "POST", { action: "insert", title: "Insert me", index: 0 }],
+			["/v1/tasks/action", "POST", { action: "complete", id }],
+			["/v1/tasks/action", "POST", { action: "outcome", id, outcome: "carried" }],
+			["/v1/tasks/action", "POST", { action: "outcome", id, outcome: "delegated", owner: "Seyi" }],
+			["/v1/tasks/action", "POST", { action: "setPriority", id, priority: 10 }],
+			["/v1/tasks/action", "POST", { action: "reorder", ids: [id] }],
+		]);
+		for (const [error, message] of [
+			["invalid_title", "title of 1 to 300"],
+			["owner_required", "delegated to"],
+			["invalid_priority", "0 to 10000"],
+			["tasks_full", "full (500)"],
+			["task_missing", "no longer in the list"],
+			["tasks_changed", "changed in another view"],
+			["invalid_outcome", "done, carried, dropped or delegated"],
+			["unwritable", "could not be saved"],
+			["private internal detail", "Could not update the task"],
+		] as const) {
+			fetch.mockResolvedValueOnce({ status: 400, json: async () => ({ error }) });
+			expect(await client.taskAction({ action: "add", title: "x" })).toEqual({
+				kind: "error",
+				message: expect.stringContaining(message),
+			});
+		}
+	});
+
 	it("forgets refused credentials and never sends a later write until signed in again", async () => {
 		const { client, fetch, storage } = setup(true);
 		fetch.mockResolvedValue({ status: 401, json: async () => ({}) });

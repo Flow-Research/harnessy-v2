@@ -1,0 +1,65 @@
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { NodeServices } from "@effect/platform-node";
+import { Command } from "effect/cli";
+import * as Effect from "effect/Effect";
+import { describe, expect, it } from "vitest";
+
+import { jarvisTasksCommand } from "../src/cli/jarvis-tasks.ts";
+import { TasksState } from "../src/jarvis/tasks/index.ts";
+
+const run = (args: ReadonlyArray<string>) =>
+	Effect.runPromise(
+		Command.runWith(jarvisTasksCommand, { version: "test" })(args).pipe(Effect.provide(NodeServices.layer)),
+	);
+
+describe("harnessy jarvis tasks CLI", () => {
+	it("adds, records outcomes and closeout in non-interactive JSON", async () => {
+		const root = mkdtempSync(join(tmpdir(), "harnessy-tasks-cli-"));
+		const file = join(root, "tasks.json");
+		await run(["add", "--tasks-file", file, "--title", "Ship the close-out", "--priority", "10"]);
+		const created = new TasksState(file).read().items[0]!;
+		await run(["outcome", "--tasks-file", file, "--id", created.id, "--outcome", "carried", "--date", "2026-11-27"]);
+		expect(new TasksState(file).read().items[0]).toMatchObject({
+			id: created.id,
+			status: "todo",
+			outcome: "carried",
+			carriedFrom: "2026-11-27",
+		});
+		const second = await run(["add", "--tasks-file", file, "--title", "Call Seyi"]);
+		void second;
+		const other = new TasksState(file).read().items.find((item) => item.title === "Call Seyi")!;
+		const input = join(root, "outcomes.json");
+		writeFileSync(
+			input,
+			JSON.stringify({
+				date: "2026-11-27",
+				outcomes: [
+					{ id: created.id, outcome: "done" },
+					{ id: other.id, outcome: "delegated", owner: "Seyi" },
+				],
+			}),
+		);
+		await run(["closeout", "--tasks-file", file, "--input", input]);
+		const items = new TasksState(file).read().items;
+		expect(items.find((item) => item.id === created.id)).toMatchObject({ status: "done", outcome: "done" });
+		expect(items.find((item) => item.id === other.id)).toMatchObject({
+			status: "waiting",
+			outcome: "delegated",
+			owner: "Seyi",
+		});
+	});
+
+	it("refuses a close-out when a delegated owner is missing, without writing", async () => {
+		const root = mkdtempSync(join(tmpdir(), "harnessy-tasks-cli-refuse-"));
+		const file = join(root, "tasks.json");
+		await run(["add", "--tasks-file", file, "--title", "Hand this off"]);
+		const id = new TasksState(file).read().items[0]!.id;
+		const input = join(root, "outcomes.json");
+		writeFileSync(input, JSON.stringify({ outcomes: [{ id, outcome: "delegated" }] }));
+		await expect(run(["closeout", "--tasks-file", file, "--input", input])).rejects.toThrow();
+		expect(new TasksState(file).read().items[0]).toMatchObject({ status: "todo", outcome: null });
+		expect(JSON.parse(readFileSync(file, "utf8")).items[0].status).toBe("todo");
+	});
+});

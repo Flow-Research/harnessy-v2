@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import process from "node:process";
 
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import { codexProviderFailureCode } from "../../ai/codex-failure.ts";
 import type { HarnessError } from "../../errors.ts";
 import { CommandRunner, type CommandRunResult, type ExternalCommand } from "../../runtime/command-runner.ts";
 import { prepareWorkspaceLifeCommand } from "../../workspace-life.ts";
+import { defaultTasksFile, ingestPublishedBrief } from "../tasks/index.ts";
 import { replaceWorthReadingSection, validateWorthReadingSection } from "./artifact.ts";
 import type { LifeOrchestratorSettings } from "./config.ts";
 import { nextLifeCurriculumReadings } from "./curriculum.ts";
@@ -137,7 +139,17 @@ const lifeProviderEnvironment = (settings: LifeOrchestratorSettings) => ({
 	HARNESSY_AI_PROVIDER: "codex",
 	FLOW_CRON_PROMPT_RUNNER: "codex",
 	HARNESSY_AI_CODEX_DEFAULT_MODEL: "gpt-6-astra",
+	HARNESSY_TASKS_FILE: process.env.HARNESSY_TASKS_FILE ?? defaultTasksFile(settings.paths.homeRoot),
 });
+
+/** Align the local task store with a published brief. Failures are ignored so a published brief is not rolled back. */
+const ingestDailyTaskStore = (settings: LifeOrchestratorSettings, briefPath: string, date: string): void => {
+	try {
+		ingestPublishedBrief(settings.paths.homeRoot, briefPath, date);
+	} catch {
+		/* The close-out CLI can ingest later. */
+	}
+};
 
 const commandFailure = (label: string, detail: string) =>
 	new LifeOrchestratorError({
@@ -477,6 +489,7 @@ export const runLifeDaily = (
 			Effect.gen(function* () {
 				const canonicalBrief = canonicalLifeBriefPath(settings.paths.lifeDirectory, now);
 				if (options.force !== true && options.publish !== false && existsSync(`${canonicalBrief}.journaled`)) {
+					ingestDailyTaskStore(settings, canonicalBrief, date);
 					return new LifeDailyResult({
 						runId: `daily:${date}`,
 						briefPath: canonicalBrief,
@@ -711,6 +724,7 @@ export const runLifeDaily = (
 								);
 							}
 							yield* ledger.markDelivered(runId, canonicalBrief, new Date().toISOString());
+							ingestDailyTaskStore(settings, canonicalBrief, date);
 							return new LifeDailyResult({
 								runId,
 								briefPath: canonicalBrief,

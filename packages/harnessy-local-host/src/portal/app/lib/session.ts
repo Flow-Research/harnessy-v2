@@ -254,6 +254,10 @@ export class SessionClient {
 		return this.#request("/v1/links/action", "POST", JSON.stringify(body));
 	}
 
+	async taskAction(body: Record<string, unknown>): Promise<ApiResult> {
+		return this.#request("/v1/tasks/action", "POST", JSON.stringify(body));
+	}
+
 	async terminalAction(body: Record<string, unknown>): Promise<ApiResult> {
 		return this.#request("/v1/terminal/action", "POST", JSON.stringify(body));
 	}
@@ -284,6 +288,28 @@ export class SessionClient {
 						message:
 							"Could not update the Inbox. Refresh and try again; an item may have changed. Your selection is retained.",
 					};
+				if (path === "/v1/tasks/action") {
+					const failure = (await response.json().catch(() => ({}))) as { error?: string };
+					const messages: Record<string, string> = {
+						invalid_title: "Use a title of 1 to 300 characters.",
+						invalid_owner: "Use an owner name of up to 64 characters.",
+						owner_required: "Name the person this is delegated to.",
+						invalid_due: "Use a due date as YYYY-MM-DD.",
+						invalid_priority: "Priority must be a whole number from 0 to 10000.",
+						invalid_index: "Insert at a whole-number position in the list.",
+						tasks_full: "The task store is full (500). Close or drop one before adding another.",
+						task_missing: "That task is no longer in the list. Refresh and try again.",
+						tasks_changed: "The list changed in another view. It was refreshed; try again.",
+						invalid_outcome: "Choose done, carried, dropped or delegated.",
+						duplicate_id: "Each task can appear only once in a close-out.",
+						unreadable: "The task store could not be read. The Markdown sources were not changed.",
+						unwritable: "The task store could not be saved. The Markdown sources were not changed.",
+					};
+					return {
+						kind: "error",
+						message: messages[failure.error ?? ""] ?? "Could not update the task. Your entry is kept; try again.",
+					};
+				}
 				if (path === "/v1/links/action") {
 					const failure = (await response.json().catch(() => ({}))) as { error?: string };
 					const messages: Record<string, string> = {

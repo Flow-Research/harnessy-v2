@@ -402,6 +402,12 @@ export const readTasks = (options: TaskReadOptions): TileResult<TaskListData> =>
 					raw: task.raw,
 					sourceChanged: false,
 					previousTitle: null,
+					priority: 100,
+					group: file.kind === "brief" ? "primary" : "other",
+					outcome: null,
+					carriedFrom: null,
+					fingerprint: null,
+					inStore: false,
 					source: {
 						kind: file.kind,
 						path,

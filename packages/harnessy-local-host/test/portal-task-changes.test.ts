@@ -20,6 +20,12 @@ const task = (id: string, line: number, path = "/r.md"): TaskData => ({
 	raw: false,
 	sourceChanged: false,
 	previousTitle: null,
+	priority: 100,
+	group: "other",
+	outcome: null,
+	carriedFrom: null,
+	fingerprint: null,
+	inStore: false,
 	source: { kind: "reminders", path, line, revision: "2026-10-17T00:00:00.000Z", displayRef: "reminders" },
 });
 

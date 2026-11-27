@@ -196,6 +196,7 @@ describe("portal non-writer regression", () => {
 				path.startsWith("/v1/life/brief/generat") ||
 				/^\/v1\/life\/weekly\/[^/]+\/(status|close)$/u.test(path) ||
 				path === "/v1/inbox/action" ||
+				path === "/v1/tasks/action" ||
 				path.startsWith("/v1/links");
 			expect([method, path, response.status]).toEqual([method, path, pageOnly ? 401 : 200]);
 			expect(response.text).not.toContain(CANARY);
@@ -206,6 +207,7 @@ describe("portal non-writer regression", () => {
 		expect(called).toHaveLength(operations.length);
 		expect(called).toContain("POST /v1/inbox/action");
 		expect(called).toContain("POST /v1/links/action");
+		expect(called).toContain("POST /v1/tasks/action");
 		expect(called.some((operation) => /^POST \/v1\/life\/weekly\/.+\/close$/u.test(operation))).toBe(true);
 		// The page files are served from memory: they spawn nothing and open nothing per request.
 		for (const path of PORTAL_PAGE_PATHS) {

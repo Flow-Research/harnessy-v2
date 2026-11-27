@@ -347,12 +347,20 @@ try {
 		if (buttons.length === 0 || buttons.some(([, height]) => mobile ? height < 44 : height > 40))
 			failures.push(`inbox detail at ${width}px: copy buttons ${JSON.stringify(buttons)}`);
 		await evaluate("location.hash = '#/tasks/mine'");
-		await until(`tasks at ${width}px`, () => evaluate("document.body.innerText.includes('Team lead deep dive')"));
-		await evaluate("[...document.querySelectorAll('button.link-button')].find((el) => el.textContent.startsWith('Team lead deep dive')).click()");
+		await until(`tasks at ${width}px`, () => evaluate("document.body.innerText.includes('Settle the plan')"));
+		if (await evaluate("document.body.innerText.includes('Team lead deep dive')"))
+			failures.push(`tasks at ${width}px showed a reminder without Other sources`);
+		await evaluate("[...document.querySelectorAll('button.link-button')].find((el) => el.textContent.includes('Settle the plan')).click()");
 		await until(`the task detail at ${width}px`, () => evaluate("document.querySelector('.screen .command-row') !== null"));
 		await wait(300);
 		await check(`task detail at ${width}px`);
-		if (mobile) await checkPhone(`task detail at ${width}px`);
+		if (mobile) {
+			await checkPhone(`task detail at ${width}px`);
+			const smallControls = await evaluate("[...document.querySelectorAll('.task-check, .task-filter, .task-filter input, .task-title-button, .task-actions button, .task-actions input, .screen header .button, .task-reorder .button')].filter(el => { const r=el.getBoundingClientRect(); return r.width > 0 && (r.width < 44 || r.height < 44); }).map(el => el.outerHTML.slice(0,120))");
+			if (smallControls.length) failures.push(`task controls below 44px at ${width}px: ${JSON.stringify(smallControls)}`);
+		}
+		await evaluate("document.querySelector('.task-filter input').click()");
+		await until(`other sources at ${width}px`, () => evaluate("document.body.innerText.includes('Team lead deep dive')"));
 
 		if (mobile) {
 			const bar = await evaluate("getComputedStyle(document.querySelector('.bottom-bar')).display");

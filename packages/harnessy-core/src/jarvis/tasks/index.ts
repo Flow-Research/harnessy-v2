@@ -1,0 +1,40 @@
+export {
+	briefTasksSidecarPath,
+	candidatesFromExtracted,
+	ensureStoredTask,
+	type IngestBriefResult,
+	ingestBriefFile,
+	ingestPublishedBrief,
+} from "./ingest.ts";
+export { type MergeTasksOptions, mergeTasks } from "./merge.ts";
+export {
+	appendCloseoutNote,
+	closeoutNotePath,
+} from "./notes.ts";
+export {
+	type CloseoutEntry,
+	defaultTasksFile,
+	type IngestCandidate,
+	lagosCalendarDate,
+	type StoredTask,
+	type StoredTaskSource,
+	type StoredTaskSourceKind,
+	TASK_DAY,
+	TASK_FINGERPRINT,
+	TASK_ID,
+	TASK_OWNER_MAX,
+	TASK_PRIORITY_MAX,
+	TASK_PROJECT_MAX,
+	TASK_TITLE_MAX,
+	TASKS_FILE_MAX_BYTES,
+	TASKS_MAX,
+	TASKS_STORE_VERSION,
+	type TaskOutcome,
+	TaskRefused,
+	type TaskSidecar,
+	type TaskSidecarItem,
+	type TaskStatus,
+	TasksState,
+	type TasksStore,
+	taskFingerprint,
+} from "./store.ts";
