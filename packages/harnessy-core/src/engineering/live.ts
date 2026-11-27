@@ -734,7 +734,20 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		const workstream = await work.run([...profile.workstreamCli, "--version"], { timeoutMs: 30_000 });
 		if (workstream.exitCode !== 0)
 			return { status: "paused", reason: "The WorkStream command is unavailable", sourceRevision, ...digests };
-		return { status: "ready", reason: "Host probes passed", sourceRevision, ...digests };
+		if (job.proofOnlyResume === undefined || job.sourceRevision === sourceRevision)
+			return { status: "ready", reason: "Host probes passed", sourceRevision, ...digests };
+		// Exit 0 means ancestor, exit 1 means not an ancestor; any other exit fails closed.
+		const ancestor = await work.run(
+			["git", "-C", root, "merge-base", "--is-ancestor", job.sourceRevision, sourceRevision],
+			{ timeoutMs: 30_000 },
+		);
+		return {
+			status: "ready",
+			reason: "Host probes passed",
+			sourceRevision,
+			pinnedSourceIsAncestor: ancestor.exitCode === 0,
+			...digests,
+		};
 	};
 	/** Record a limit reply as soon as a stopped agent is seen, on every settlement path. */
 	const noteLimit = (taskId: string): boolean => {

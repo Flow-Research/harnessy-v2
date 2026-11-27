@@ -179,7 +179,7 @@ When the profile sets `"reviewer": "claude"`, a second reader runs before the pu
 - A limit message that does not reach the agent result file records no pause.
 - A process that leaves both the agent's process tree and the worktree folder is not observed.
 - The reviewer agent reads the diff only. It does not read the rest of the repository.
-- The loop does not submit the WorkStream proof. The runner does that after a person merges the pull request.
+- The loop does not submit the WorkStream proof by itself. After a person merges the pull request, approve a proof-only job. It names the same task, the `sourceRevision` of the first run, and a `proofOnlyResume` object with the grant of the first run and the reviewed head. The loop admits it when that source is an ancestor of the current base. A proof-only job needs a new job `id`.
 
 ### Deliver a paused run to Garden
 
