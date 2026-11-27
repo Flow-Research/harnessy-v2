@@ -1,0 +1,23 @@
+Harnessy
+Copyright (c) 2026 Flow Research
+
+This project is derived from Pi, a coding agent created by Mario Zechner
+(originally github.com/badlogic/pi-mono, now github.com/earendil-works/pi),
+which is distributed under the MIT License.
+
+Ownership of the code in this repository is split as follows:
+
+1. Original Pi code. Code that came from Pi at the time of the fork, and any
+   later changes taken from Pi, remain Copyright (c) 2025 Mario Zechner and
+   their respective contributors.
+
+2. Flow Research changes. All changes, additions, and new files made by or for
+   Flow Research after the fork (from June 2026 onward) are
+   Copyright (c) 2026 Flow Research.
+
+The whole project, including both parts, is distributed under the MIT License
+in the LICENSE file. The original Mario Zechner copyright notice must be kept
+in all copies or substantial portions of the software.
+
+Third-party code bundled in this repository keeps its own copyright and
+license notices.
