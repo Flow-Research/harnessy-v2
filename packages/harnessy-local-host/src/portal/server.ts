@@ -478,6 +478,9 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 							owner: optionalString("owner") ?? null,
 							due: optionalString("due") ?? null,
 							project: optionalString("project") ?? null,
+							...(fields.kind === undefined ? {} : { kind: fields.kind as "task" }),
+							...(fields.waitingOn === undefined ? {} : { waitingOn: optionalString("waitingOn") ?? null }),
+							...(fields.link === undefined ? {} : { link: optionalString("link") ?? null }),
 							...(fields.priority === undefined ? {} : { priority: fields.priority as number }),
 							...(index === undefined ? {} : { index: index as number }),
 						});
@@ -504,6 +507,16 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 						tasks.reorder(fields.ids as string[]);
 						cache.clear();
 						return { ok: true };
+					}
+					if (
+						fields.action === "resolve" &&
+						(keys === "action,id" || keys === "action,id,note") &&
+						isTaskRef(fields.id) &&
+						(fields.note === undefined || typeof fields.note === "string")
+					) {
+						const item = tasks.resolve(resolveId(fields.id), optionalString("note") ?? null);
+						cache.clear();
+						return { item };
 					}
 					if ((fields.action === "outcome" || fields.action === "complete") && isTaskRef(fields.id)) {
 						const outcome = fields.action === "complete" ? "done" : fields.outcome;

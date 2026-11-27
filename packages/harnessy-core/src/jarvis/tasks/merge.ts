@@ -35,6 +35,11 @@ const overlay = (derived: TaskData, stored: StoredTask, group: "primary" | "othe
 	group,
 	outcome: stored.outcome,
 	carriedFrom: stored.carriedFrom,
+	kind: stored.kind,
+	waitingOn: stored.waitingOn,
+	link: stored.link,
+	resolvedAt: stored.resolvedAt,
+	resolution: stored.resolution,
 	fingerprint: stored.fingerprint ?? derived.fingerprint,
 	inStore: true,
 	source: {
@@ -68,6 +73,11 @@ const fromStoreOnly = (
 		group,
 		outcome: item.outcome,
 		carriedFrom: item.carriedFrom,
+		kind: item.kind,
+		waitingOn: item.waitingOn,
+		link: item.link,
+		resolvedAt: item.resolvedAt,
+		resolution: item.resolution,
 		fingerprint: item.fingerprint,
 		inStore: true,
 		source: {

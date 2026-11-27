@@ -406,6 +406,11 @@ export const readTasks = (options: TaskReadOptions): TileResult<TaskListData> =>
 					group: file.kind === "brief" ? "primary" : "other",
 					outcome: null,
 					carriedFrom: null,
+					kind: file.kind === "reminders" ? "followup" : "task",
+					waitingOn: null,
+					link: null,
+					resolvedAt: null,
+					resolution: null,
 					fingerprint: null,
 					inStore: false,
 					source: {

@@ -135,6 +135,43 @@ describe("tasks routes", () => {
 		}
 	});
 
+	it("adds a follow-up and resolves it with a note", async () => {
+		const fixture = await buildPortalHome("tasks-followups");
+		const tasks = new TasksState(join(fixture.home, "tasks.json"), () => FIXTURE_NOW);
+		const { server, post, list } = await start(fixture.home, tasks);
+		try {
+			const added = await post({
+				action: "add",
+				title: "Signed SOW from Tjaart",
+				kind: "followup",
+				owner: "Tjaart",
+				waitingOn: "signature",
+				due: "2026-11-30",
+				link: "https://mail.example.com/thread/1",
+			});
+			expect(added.status).toBe(200);
+			const item = (added.json as { item: { id: string } }).item;
+			expect(added.json).toMatchObject({ item: { kind: "followup", status: "waiting", waitingOn: "signature" } });
+			expect(
+				(await post({ action: "add", title: "x", kind: "followup", link: "javascript:alert(1)" })).json,
+			).toEqual({ error: "invalid_link" });
+			expect((await post({ action: "add", title: "x", kind: "chore" })).json).toEqual({ error: "invalid_kind" });
+			expect((await post({ action: "resolve", id: item.id, note: 5 })).status).toBe(400);
+			expect((await post({ action: "resolve", id: item.id, extra: true })).status).toBe(400);
+			expect((await post({ action: "resolve", id: item.id, note: "n".repeat(501) })).json).toEqual({
+				error: "invalid_resolution",
+			});
+			const resolved = await post({ action: "resolve", id: item.id, note: "Signed today." });
+			expect(resolved.status).toBe(200);
+			expect(resolved.json).toMatchObject({ item: { status: "done", resolution: "Signed today." } });
+			const row = (await titles(list)).find((entry) => entry.id === item.id);
+			expect(row).toMatchObject({ kind: "followup", status: "done", resolution: "Signed today." });
+			expect(tasks.read().items.map((entry) => entry.title)).toEqual(["Signed SOW from Tjaart"]);
+		} finally {
+			await server.close();
+		}
+	});
+
 	it("ingests a derived brief item on first action and keeps its UUID", async () => {
 		const fixture = await buildPortalHome("tasks-ingest-action");
 		const tasks = new TasksState(join(fixture.home, "tasks.json"), () => FIXTURE_NOW);

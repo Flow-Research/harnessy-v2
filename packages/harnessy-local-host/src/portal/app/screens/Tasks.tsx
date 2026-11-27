@@ -1,8 +1,11 @@
 /**
  * Tasks: today's brief items and native store items first; reminders, the
  * first-week register and project status.md lists sit behind Other sources.
- * Completion, add, insert, reorder, priority and outcomes write only to the
- * local store. Source Markdown and notes files are never written from here.
+ * Follow-ups (things waiting on someone, or owed to someone) have their own
+ * tabs: open follow-ups by priority then due date, and the overdue ones.
+ * Completion, add, insert, reorder, priority, outcomes and resolving a
+ * follow-up write only to the local store. Source Markdown and notes files are
+ * never written from here.
  */
 import { type FormEvent, useState } from "react";
 
@@ -17,7 +20,9 @@ import { routeHref } from "../lib/router.ts";
 import type { SessionClient } from "../lib/session.ts";
 import "./tasks.css";
 
-export type TaskTab = "mine" | "waiting" | "project" | "done";
+export type TaskTab = "mine" | "waiting" | "followups" | "overdue" | "project" | "done";
+
+export const TASK_TABS: ReadonlyArray<TaskTab> = ["mine", "waiting", "followups", "overdue", "project", "done"];
 
 const STATUS_TONE: Readonly<Record<Task["status"], Tone>> = {
 	todo: "idle",
@@ -29,13 +34,45 @@ const STATUS_TONE: Readonly<Record<Task["status"], Tone>> = {
 
 const open = (task: Task) => task.status !== "done" && task.status !== "dropped";
 
+/** Today's calendar date in Lagos, as YYYY-MM-DD; due dates are Lagos days. */
+export const lagosToday = (now: Date = new Date()): string =>
+	new Intl.DateTimeFormat("en-CA", {
+		timeZone: "Africa/Lagos",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	}).format(now);
+
+const isOverdue = (task: Task, today: string): boolean =>
+	task.kind === "followup" && open(task) && task.due !== null && task.due < today;
+
+/** Open follow-ups: priority first, then the earliest due date (undated last), then list order. */
+const byPriorityThenDue = (tasks: ReadonlyArray<Task>): Task[] =>
+	tasks
+		.map((task, index) => ({ task, index }))
+		.sort(
+			(a, b) =>
+				a.task.priority - b.task.priority ||
+				(a.task.due ?? "9999-99-99").localeCompare(b.task.due ?? "9999-99-99") ||
+				a.index - b.index,
+		)
+		.map((entry) => entry.task);
+
 /** The tasks a tab shows, before the Other sources filter. */
-export const tasksForTab = (tasks: ReadonlyArray<Task>, tab: TaskTab): ReadonlyArray<Task> => {
+export const tasksForTab = (
+	tasks: ReadonlyArray<Task>,
+	tab: TaskTab,
+	today: string = lagosToday(),
+): ReadonlyArray<Task> => {
 	switch (tab) {
 		case "mine":
 			return tasks.filter((task) => open(task) && task.mine && task.status !== "waiting");
 		case "waiting":
 			return tasks.filter((task) => open(task) && (!task.mine || task.status === "waiting"));
+		case "followups":
+			return byPriorityThenDue(tasks.filter((task) => task.kind === "followup" && open(task)));
+		case "overdue":
+			return byPriorityThenDue(tasks.filter((task) => isOverdue(task, today)));
 		case "project":
 			return tasks
 				.filter(open)
@@ -54,8 +91,15 @@ export const tasksForTab = (tasks: ReadonlyArray<Task>, tab: TaskTab): ReadonlyA
 };
 
 /** Apply the Other sources filter: off shows only the primary group. */
-export const tasksForView = (tasks: ReadonlyArray<Task>, tab: TaskTab, otherSources: boolean): ReadonlyArray<Task> => {
-	const shown = tasksForTab(tasks, tab);
+export const tasksForView = (
+	tasks: ReadonlyArray<Task>,
+	tab: TaskTab,
+	otherSources: boolean,
+	today: string = lagosToday(),
+): ReadonlyArray<Task> => {
+	const shown = tasksForTab(tasks, tab, today);
+	// Follow-ups come from your list and from reminders; both views show every one.
+	if (tab === "followups" || tab === "overdue") return shown;
 	// In-store done or dropped items stay visible on Done without the Other sources filter.
 	return otherSources ? shown : shown.filter((task) => task.group === "primary" || (!open(task) && task.inStore));
 };
@@ -63,6 +107,8 @@ export const tasksForView = (tasks: ReadonlyArray<Task>, tab: TaskTab, otherSour
 const TABS: ReadonlyArray<TabItem<TaskTab>> = [
 	{ id: "mine", label: "Mine" },
 	{ id: "waiting", label: "Waiting on others" },
+	{ id: "followups", label: "Follow-ups" },
+	{ id: "overdue", label: "Overdue" },
 	{ id: "project", label: "By project" },
 	{ id: "done", label: "Done" },
 ];
@@ -85,6 +131,14 @@ const TaskTitle = ({ task, expanded, onToggle }: { task: Task; expanded: boolean
 		<button type="button" className="link-button task-title-button" aria-expanded={expanded} onClick={onToggle}>
 			{visibleTitle(task.title)}
 		</button>
+		{task.kind === "followup" ? <span className="pill">follow-up</span> : null}
+		{isOverdue(task, lagosToday()) ? <span className="pill pill-attention">overdue</span> : null}
+		{task.kind === "followup" && open(task) && task.waitingOn !== null ? (
+			<span className="task-previous muted">waiting on {task.waitingOn}</span>
+		) : null}
+		{!open(task) && task.resolution !== null ? (
+			<span className="task-previous muted">resolved: {task.resolution}</span>
+		) : null}
 		{task.raw ? <span className="pill">unparsed line</span> : null}
 		{task.outcome === "carried" && task.carriedFrom !== null ? (
 			<span className="pill">carried from {task.carriedFrom}</span>
@@ -114,8 +168,23 @@ const TaskDetail = ({
 	error: string | undefined;
 }) => {
 	const [owner, setOwner] = useState("");
+	const [note, setNote] = useState("");
 	return (
 		<>
+			{task.link !== null && /^https?:\/\//iu.test(task.link) ? (
+				<p>
+					<a href={task.link} target="_blank" rel="noopener noreferrer">
+						Open the link
+					</a>{" "}
+					<span className="muted mono">{task.link}</span>
+				</p>
+			) : null}
+			{task.resolvedAt !== null ? (
+				<p className="muted">
+					Resolved {dayLabel(lagosToday(new Date(task.resolvedAt)))}
+					{task.resolution !== null ? `: ${task.resolution}` : ""}
+				</p>
+			) : null}
 			{task.source.kind !== "native" ? (
 				<>
 					<p className="label">Open the source</p>
@@ -131,6 +200,33 @@ const TaskDetail = ({
 			<CommandChip command={task.title} />
 			{client !== undefined && open(task) ? (
 				<div className="task-actions">
+					{task.kind === "followup" ? (
+						<div className="task-action-row">
+							<label className="task-field">
+								<span className="label">Resolution note (optional)</span>
+								<input
+									className="input"
+									value={note}
+									onChange={(event) => setNote(event.target.value)}
+									maxLength={500}
+								/>
+							</label>
+							<button
+								type="button"
+								className="button button-sm"
+								disabled={busy}
+								onClick={() =>
+									onAct(
+										note.trim() === ""
+											? { action: "resolve", id: task.id }
+											: { action: "resolve", id: task.id, note: note.trim() },
+									)
+								}
+							>
+								Resolve
+							</button>
+						</div>
+					) : null}
 					<p className="label">Record an outcome</p>
 					<div className="task-action-row">
 						<button
@@ -367,11 +463,19 @@ const AddForm = ({
 	const [due, setDue] = useState("");
 	const [priority, setPriority] = useState("0");
 	const [index, setIndex] = useState("");
+	const [followup, setFollowup] = useState(false);
+	const [waitingOn, setWaitingOn] = useState("");
+	const [link, setLink] = useState("");
 	const submit = (event: FormEvent) => {
 		event.preventDefault();
 		const body: Record<string, unknown> = { action: "add", title: title.trim() };
 		if (owner.trim() !== "") body.owner = owner.trim();
 		if (due.trim() !== "") body.due = due.trim();
+		if (followup) {
+			body.kind = "followup";
+			if (waitingOn.trim() !== "") body.waitingOn = waitingOn.trim();
+			if (link.trim() !== "") body.link = link.trim();
+		}
 		const priorityValue = Number(priority);
 		if (Number.isInteger(priorityValue)) body.priority = priorityValue;
 		if (index.trim() !== "") {
@@ -388,6 +492,9 @@ const AddForm = ({
 		setDue("");
 		setPriority("0");
 		setIndex("");
+		setFollowup(false);
+		setWaitingOn("");
+		setLink("");
 		setOpen(false);
 	};
 	if (!openForm)
@@ -408,14 +515,41 @@ const AddForm = ({
 					maxLength={300}
 				/>
 			</label>
+			<label className="task-filter">
+				<input type="checkbox" checked={followup} onChange={(event) => setFollowup(event.target.checked)} />
+				Follow-up
+			</label>
 			<label className="task-field">
-				<span className="label">Owner (optional)</span>
+				<span className="label">{followup ? "Who it is with (optional)" : "Owner (optional)"}</span>
 				<input className="input" value={owner} onChange={(event) => setOwner(event.target.value)} maxLength={64} />
 			</label>
 			<label className="task-field">
 				<span className="label">Due (YYYY-MM-DD)</span>
 				<input className="input" value={due} onChange={(event) => setDue(event.target.value)} />
 			</label>
+			{followup ? (
+				<>
+					<label className="task-field">
+						<span className="label">Waiting on (optional)</span>
+						<input
+							className="input"
+							value={waitingOn}
+							onChange={(event) => setWaitingOn(event.target.value)}
+							maxLength={120}
+						/>
+					</label>
+					<label className="task-field">
+						<span className="label">Link (optional, https://…)</span>
+						<input
+							className="input"
+							type="url"
+							value={link}
+							onChange={(event) => setLink(event.target.value)}
+							maxLength={2048}
+						/>
+					</label>
+				</>
+			) : null}
 			<label className="task-field">
 				<span className="label">Priority (lower first)</span>
 				<input
@@ -451,7 +585,7 @@ const AddForm = ({
 
 export const TasksScreen = ({ rest, client }: { rest: ReadonlyArray<string>; client?: SessionClient }) => {
 	const tasks = useResource<TasksResponse>("/v1/tasks");
-	const tab: TaskTab = (["mine", "waiting", "project", "done"] as const).find((id) => id === rest[0]) ?? "mine";
+	const tab: TaskTab = TASK_TABS.find((id) => id === rest[0]) ?? "mine";
 	const [expanded, setExpanded] = useState<string | undefined>(undefined);
 	const [otherSources, setOtherSources] = useState(false);
 	const [busy, setBusy] = useState(false);
@@ -533,11 +667,19 @@ export const TasksScreen = ({ rest, client }: { rest: ReadonlyArray<string>; cli
 			<WithTile tile={tile}>
 				{(data) => {
 					const shown = tasksForView(data.tasks, tab, otherSources);
-					const canReorder = tab !== "done" && tab !== "project";
+					const canReorder = tab === "mine" || tab === "waiting";
 					return (
 						<>
 							{shown.length === 0 ? (
-								<EmptyState title="No tasks here." />
+								<EmptyState
+									title={
+										tab === "overdue"
+											? "No overdue follow-ups."
+											: tab === "followups"
+												? "No open follow-ups."
+												: "No tasks here."
+									}
+								/>
 							) : phone ? (
 								<div className="stack-groups">
 									{tab === "project" ? (

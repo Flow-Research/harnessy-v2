@@ -114,6 +114,15 @@ export const TaskSchema = Type.Object(
 		group: TaskGroupSchema,
 		outcome: nullable(TaskOutcomeSchema),
 		carriedFrom: nullable(day),
+		/** `followup` for something owed to or by someone else (waiting on, chase, reply); else `task`. */
+		kind: literals(["task", "followup"] as const),
+		/** What the follow-up is waiting on. */
+		waitingOn: nullable(Type.String({ maxLength: 120 })),
+		/** An http(s) link to where the follow-up came from (thread, doc, ticket). */
+		link: nullable(Type.String({ maxLength: 2048 })),
+		/** When a follow-up was resolved, and the note left with it. */
+		resolvedAt: nullable(instant),
+		resolution: nullable(Type.String({ maxLength: 500 })),
 		/** Stable kind+title fingerprint, or null for a native task that has none. */
 		fingerprint: nullable(Type.String({ pattern: "^[a-f0-9]{64}$" })),
 		inStore: Type.Boolean(),

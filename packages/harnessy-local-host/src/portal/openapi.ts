@@ -107,8 +107,11 @@ const TASKS_ACTION_SCHEMA = {
 				project: { type: "string" },
 				priority: { type: "integer", minimum: 0, maximum: 10000 },
 				index: { type: "integer", minimum: 0, maximum: 500 },
+				kind: { enum: ["task", "followup"] },
+				waitingOn: { type: "string", maxLength: 120 },
+				link: { type: "string", maxLength: 2048, pattern: "^https?://" },
 			},
-			["owner", "due", "project", "priority", "index"],
+			["owner", "due", "project", "priority", "index", "kind", "waitingOn", "link"],
 		),
 		tasksAction(
 			"insert",
@@ -125,6 +128,7 @@ const TASKS_ACTION_SCHEMA = {
 		tasksAction("setPriority", { id: TASK_REF, priority: { type: "integer", minimum: 0, maximum: 10000 } }),
 		tasksAction("reorder", { ids: { type: "array", maxItems: 500, items: TASK_REF } }),
 		tasksAction("complete", { id: TASK_REF }),
+		tasksAction("resolve", { id: TASK_REF, note: { type: "string", maxLength: 500 } }, ["note"]),
 		tasksAction(
 			"outcome",
 			{
