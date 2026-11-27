@@ -1,3 +1,4 @@
+import { isReviewedSandboxZod, sandboxZodPath } from "./sandbox-zod-scope.mjs";
 import { basename } from "node:path";
 import { satisfies, valid } from "semver";
 
@@ -168,12 +169,9 @@ const bunDependencyVersion = (line, dependencyName) => {
 const isExactSafeVersion = (version, vulnerableRange) =>
 	typeof version === "string" && valid(version) !== null && !satisfies(version, vulnerableRange);
 
-// GHSA-mrhx-c7xc-m3w5 (zod <4.6.6) has no fixed zod 3 release. The reviewed audit
-// exceptions cover only these owners' pinned copies, whose schemas validate local
-// configuration; every other zod resolution must be a fixed release.
+// GHSA-mrhx-c7xc-m3w5 (zod <4.6.6) has no fixed zod 3 release. The
+// root exception covers the sandbox example only. Every Executor resolution must be fixed.
 const zodVulnerableRange = "<4.6.6";
-const rootZodExceptionPaths = new Set(["node_modules/@anthropic-ai/sandbox-runtime/node_modules/zod"]);
-const executorZodExceptionKeys = new Set(["@cloudflare/vitest-pool-workers/zod", "@tanstack/router-plugin/zod"]);
 
 export const checkDependencyResolutionContract = (files) => {
 	const findings = [];
@@ -215,7 +213,7 @@ export const checkDependencyResolutionContract = (files) => {
 	}
 
 	const rootZodResolutions = Object.entries(rootLock?.packages ?? {}).filter(
-		([path]) => (path === "node_modules/zod" || path.endsWith("/node_modules/zod")) && !rootZodExceptionPaths.has(path),
+		([path]) => (path === "node_modules/zod" || path.endsWith("/node_modules/zod")) && !(path === sandboxZodPath && isReviewedSandboxZod(rootLock?.packages)),
 	);
 	if (
 		rootZodResolutions.length === 0 ||
@@ -241,8 +239,8 @@ export const checkDependencyResolutionContract = (files) => {
 		dynamicWorkerManifest?.devDependencies?.wrangler,
 	];
 	const poolVersions = [
-		dynamicWorkerManifest?.devDependencies?.["@cloudflare/vitest-pool-workers"],
-		appsManifest?.devDependencies?.["@cloudflare/vitest-pool-workers"],
+		dynamicWorkerManifest?.devDependencies?.["@cloudflare/vitest-plugin"],
+		appsManifest?.devDependencies?.["@cloudflare/vitest-plugin"],
 	];
 	if (wranglerVersions.some((version) => valid(version) === null) || new Set(wranglerVersions).size !== 1) {
 		findings.push({
@@ -278,9 +276,7 @@ export const checkDependencyResolutionContract = (files) => {
 			}
 		}
 
-		const zodResolutions = [...executorLock.matchAll(/^ {4}"((?:[^"]+\/)?zod)": \["zod@([^"\]]+)"/gm)].filter(
-			(match) => !executorZodExceptionKeys.has(match[1]),
-		);
+		const zodResolutions = [...executorLock.matchAll(/^ {4}"((?:[^"]+\/)?zod)": \["zod@([^"\]]+)"/gm)];
 		if (
 			zodResolutions.length === 0 ||
 			zodResolutions.some((match) => !isExactSafeVersion(match[2], zodVulnerableRange))
@@ -288,16 +284,16 @@ export const checkDependencyResolutionContract = (files) => {
 			findings.push({ rule: "unsafe-executor-lock-resolution", path: executorLockPath, line: 1 });
 		}
 
-		const poolLine = bunEntryLine(executorLock, "@cloudflare/vitest-pool-workers");
+		const poolLine = bunEntryLine(executorLock, "@cloudflare/vitest-plugin");
 		const wranglerLine = bunEntryLine(executorLock, "wrangler");
 		const miniflareLine = bunEntryLine(executorLock, "miniflare");
 		const poolVersion = poolVersions[0];
 		const wranglerVersion = wranglerVersions[0];
 		const poolMiniflare = bunDependencyVersion(poolLine, "miniflare");
 		if (
-			bunEntryVersion(poolLine, "@cloudflare/vitest-pool-workers") !== poolVersion ||
+			bunEntryVersion(poolLine, "@cloudflare/vitest-plugin") !== poolVersion ||
 			bunEntryVersion(wranglerLine, "wrangler") !== wranglerVersion ||
-			bunDependencyVersion(poolLine, "wrangler") !== wranglerVersion ||
+			!isExactSafeVersion(bunDependencyVersion(poolLine, "zod"), zodVulnerableRange) ||
 			bunDependencyVersion(wranglerLine, "miniflare") !== poolMiniflare ||
 			bunEntryVersion(miniflareLine, "miniflare") !== poolMiniflare
 		) {
