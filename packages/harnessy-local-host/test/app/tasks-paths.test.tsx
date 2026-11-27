@@ -456,3 +456,45 @@ it("shows the new priority after a move changes it", async () => {
 		expect(row.querySelector<HTMLInputElement>(".task-priority-input")!.value).toBe("100");
 	});
 });
+
+it("moves past the next row you can see, sending every stored id, hidden ones too", async () => {
+	const native = source("native", "native");
+	const { client, calls } = fakeClient([
+		task({ id: ID(1), title: "Visible A", inStore: true, priority: 5, source: native }),
+		task({ id: ID(2), title: "Hidden waiting", inStore: true, priority: 1, status: "waiting", source: native }),
+		task({ id: ID(3), title: "Visible B", inStore: true, priority: 5, source: native }),
+	]);
+	await render([], client);
+	await waitFor(() => expect(container.textContent).toContain("Visible B"));
+	expect(container.textContent).not.toContain("Hidden waiting");
+	await click(container.querySelectorAll<HTMLButtonElement>('button[aria-label="Move down"]')[0]!);
+	await waitFor(() => expect(calls).toEqual([{ action: "reorder", ids: [ID(2), ID(3), ID(1)] }]));
+});
+
+it("does not move a primary row below an other-source row", async () => {
+	const { client, calls } = fakeClient([
+		task({ id: ID(1), title: "Primary A", inStore: true, priority: 5, source: source("native", "native") }),
+		task({
+			id: ID(2),
+			title: "Reminder C",
+			inStore: true,
+			priority: 9,
+			group: "other",
+			source: source("reminders", "reminders.md"),
+		}),
+	]);
+	await render([], client);
+	await waitFor(() => expect(container.textContent).toContain("Primary A"));
+	await click(
+		[...container.querySelectorAll("label")]
+			.find((entry) => entry.textContent === "Other sources")!
+			.querySelector("input")!,
+	);
+	await waitFor(() => expect(container.textContent).toContain("Reminder C"));
+	await click(container.querySelectorAll<HTMLButtonElement>('button[aria-label="Move down"]')[0]!);
+	await click(container.querySelectorAll<HTMLButtonElement>('button[aria-label="Move up"]')[1]!);
+	await act(async () => {
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	});
+	expect(calls).toEqual([]);
+});

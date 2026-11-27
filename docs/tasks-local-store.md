@@ -64,7 +64,9 @@ Follow-Ups in reminders are shown as follow-ups too.
 - `resolved`: done or dropped follow-ups, most recently resolved first.
 - `all`: every follow-up.
 
-`followup resolve` marks it `done` with `resolvedAt` and the optional note.
+`followup resolve` marks it `done` with `resolvedAt` and the optional note. A
+follow-up closed as done or dropped by an outcome also records `resolvedAt`
+(the first time is kept).
 Resolving again with the same note changes nothing. Carrying or delegating a
 resolved item reopens it and clears the resolution. Refusals include
 `invalid_link`, `invalid_waiting_on`, `invalid_resolution`, `invalid_view` and
@@ -115,7 +117,10 @@ JSON
 
 `followups` (create) and `resolve` are optional and go in the same
 all-or-nothing write as `outcomes`; `outcomes` may be left out when only these
-are given. An id may appear once across `outcomes` and `resolve`.
+are given. An id may appear once across `outcomes` and `resolve`. Replaying a
+payload is safe: a follow-up with the same title and counterparty that is still
+open, or was created on that close-out date, is not added again and counts in
+`unchanged`.
 
 `--write-note` appends the `note` field (or `--note`) under
 `{target}/.jarvis/context/private/{FLOW_USER|USER}/notes/YYYY/Mon/DD.md` in the

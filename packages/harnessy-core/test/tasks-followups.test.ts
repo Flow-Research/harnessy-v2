@@ -183,6 +183,56 @@ describe("follow-ups in the store", () => {
 	});
 });
 
+describe("follow-up replay and completion times", () => {
+	it("replays a close-out with follow-ups without duplicating them", () => {
+		const { state } = fresh("replay");
+		const task = state.add({ title: "Ship" });
+		const payload = [
+			[{ id: task.id, outcome: "done" as const }],
+			"2026-11-27",
+			{ followups: [{ title: "Chase Alex", owner: "Alex" }] },
+		] as const;
+		const first = state.closeout(...payload);
+		expect(first.created).toHaveLength(1);
+		const before = JSON.stringify(state.read());
+		const again = state.closeout(...payload);
+		expect(again).toEqual({ updated: [], unchanged: 2, created: [] });
+		expect(JSON.stringify(state.read())).toBe(before);
+		// Resolved the same day, a replay still does not re-add it.
+		state.resolve(first.created[0]!.id, "Done.");
+		expect(state.closeout(...payload).created).toEqual([]);
+		// A different counterparty, or the same title in one payload twice, adds only once each.
+		const other = state.closeout([], "2026-11-27", {
+			followups: [
+				{ title: "Chase Alex", owner: "Bola" },
+				{ title: "chase  alex", owner: "bola" },
+			],
+		});
+		expect(other.created.map((item) => item.owner)).toEqual(["Bola"]);
+		expect(other.unchanged).toBe(1);
+		expect(state.read().items.filter((item) => item.kind === "followup")).toHaveLength(2);
+	});
+
+	it("records when a follow-up is closed by an outcome and keeps it on replay", () => {
+		let now = new Date("2026-11-27T10:00:00.000Z");
+		const file = join(mkdtempSync(join(tmpdir(), "harnessy-followups-closed-")), "tasks.json");
+		const state = new TasksState(file, () => now);
+		const followup = state.addFollowup({ title: "Hear back" });
+		const plain = state.add({ title: "Plain" });
+		expect(state.applyOutcome(followup.id, "done").resolvedAt).toBe("2026-11-27T10:00:00.000Z");
+		expect(state.applyOutcome(plain.id, "dropped").resolvedAt).toBeNull();
+		now = new Date("2026-11-27T12:00:00.000Z");
+		expect(state.closeout([{ id: followup.id, outcome: "done" }], "2026-11-27").unchanged).toBe(1);
+		expect(state.applyOutcome(followup.id, "dropped").resolvedAt).toBe("2026-11-27T10:00:00.000Z");
+		const later = state.addFollowup({ title: "Later" });
+		state.applyOutcome(later.id, "done");
+		expect(followupsForView(state.read().items, "resolved", "2026-11-27").map((item) => item.title)).toEqual([
+			"Later",
+			"Hear back",
+		]);
+	});
+});
+
 describe("harnessy jarvis tasks followup", () => {
 	it("adds, lists by view and resolves follow-ups in JSON", async () => {
 		const { file } = fresh("cli");

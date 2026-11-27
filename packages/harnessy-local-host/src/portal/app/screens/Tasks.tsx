@@ -616,19 +616,20 @@ export const TasksScreen = ({ rest, client }: { rest: ReadonlyArray<string>; cli
 	};
 	const act = (body: Record<string, unknown>) => actAll([body]);
 	const move = (id: string, direction: -1 | 1) => {
-		const stored = all.filter((task) => task.inStore);
-		const index = stored.findIndex((task) => task.id === id);
-		if (index < 0) return;
-		const next = index + direction;
-		if (next < 0 || next >= stored.length) return;
-		const ids = stored.map((task) => task.id);
-		const [item] = ids.splice(index, 1);
-		if (item === undefined) return;
-		ids.splice(next, 0, item);
+		// The neighbour is the next stored row you can see in this view and group;
+		// primary rows always sort above other-source rows, so a move never crosses.
+		const visible = tasksForView(all, tab, otherSources).filter((task) => task.inStore);
+		const index = visible.findIndex((task) => task.id === id);
+		const moving = visible[index];
+		if (moving === undefined) return;
+		const neighbour = visible[index + direction];
+		if (neighbour === undefined || neighbour.group !== moving.group) return;
+		// Send every stored id (hidden ones too), with the task placed beside its neighbour.
+		const ids = all.filter((task) => task.inStore && task.id !== id).map((task) => task.id);
+		const at = ids.indexOf(neighbour.id) + (direction === 1 ? 1 : 0);
+		ids.splice(at, 0, id);
 		// The list sorts by priority before stored order, so a move past a task of
 		// another priority takes that task's priority; otherwise it would not show.
-		const moving = stored[index]!;
-		const neighbour = stored[next]!;
 		actAll(
 			moving.priority === neighbour.priority
 				? [{ action: "reorder", ids }]

@@ -291,6 +291,17 @@ const EMPTY: TasksStore = { version: TASKS_STORE_VERSION, items: [] };
 /** Reopening a resolved follow-up clears its resolution. */
 const REOPENED = { resolvedAt: null, resolution: null } as const;
 
+/** A follow-up closed by any path records when; the first time is kept on replay. */
+const closedAt = (item: StoredTask, updatedAt: string): { resolvedAt: string | null } => ({
+	resolvedAt: item.kind === "followup" ? (item.resolvedAt ?? updatedAt) : item.resolvedAt,
+});
+
+/** Same follow-up for close-out replay: same normalised title and counterparty. */
+const sameFollowup = (item: StoredTask, title: string, owner: string | null): boolean =>
+	item.kind === "followup" &&
+	normaliseTaskText(item.title) === normaliseTaskText(title) &&
+	(item.owner ?? "").toLowerCase() === (owner ?? "").toLowerCase();
+
 const applyOutcomeFields = (
 	item: StoredTask,
 	outcome: TaskOutcome,
@@ -300,9 +311,23 @@ const applyOutcomeFields = (
 ): StoredTask => {
 	switch (outcome) {
 		case "done":
-			return { ...item, status: "done", outcome: "done", carriedFrom: null, updatedAt };
+			return {
+				...item,
+				...closedAt(item, updatedAt),
+				status: "done",
+				outcome: "done",
+				carriedFrom: null,
+				updatedAt,
+			};
 		case "dropped":
-			return { ...item, status: "dropped", outcome: "dropped", carriedFrom: null, updatedAt };
+			return {
+				...item,
+				...closedAt(item, updatedAt),
+				status: "dropped",
+				outcome: "dropped",
+				carriedFrom: null,
+				updatedAt,
+			};
 		case "carried":
 			return { ...item, ...REOPENED, status: "todo", outcome: "carried", carriedFrom: date, updatedAt };
 		case "delegated": {
@@ -596,13 +621,25 @@ export class TasksState {
 				nextById.set(item.id, next);
 				updated.push(next);
 			}
-			if (store.items.length + creates.length > TASKS_MAX) throw new TaskRefused("tasks_full");
-			if (updated.length > 0 || creates.length > 0)
+			// A replayed payload must not add the same follow-up again: one already open,
+			// or created on this close-out day, with the same title and counterparty is kept.
+			const fresh: StoredTask[] = [];
+			for (const candidate of creates) {
+				const existing = [...store.items, ...fresh].some(
+					(item) =>
+						sameFollowup(item, candidate.title, candidate.owner) &&
+						(isOpen(item) || lagosCalendarDate(new Date(item.createdAt)) === day),
+				);
+				if (existing) unchanged += 1;
+				else fresh.push(candidate);
+			}
+			if (store.items.length + fresh.length > TASKS_MAX) throw new TaskRefused("tasks_full");
+			if (updated.length > 0 || fresh.length > 0)
 				this.#write({
 					version: TASKS_STORE_VERSION,
-					items: [...store.items.map((item) => nextById.get(item.id) ?? item), ...creates],
+					items: [...store.items.map((item) => nextById.get(item.id) ?? item), ...fresh],
 				});
-			return { updated, unchanged, created: creates };
+			return { updated, unchanged, created: fresh };
 		});
 	}
 
