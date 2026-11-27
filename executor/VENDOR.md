@@ -324,6 +324,16 @@ Known gaps, not fixed by this overlay:
 - `/api/logo` exists only in `apps/local`; the excluded cloud and desktop
   apps would need it before using these `packages/react` components.
 
+### Workers test plugin update, 2026-11-27
+
+The dynamic Worker and apps suites use `@cloudflare/vitest-plugin@1.9.2`.
+The plugin and Wrangler 4.168.0 both select Miniflare 5.20261123.1-beta.
+The kernel test fixture uses Postgres.js 4.1.1 and the Workers compatibility date
+2026-11-23 for its database connection. The production Worker keeps its existing
+configuration. The plugin requires Zod 4.6.6. The Executor audit has no Zod exception.
+The security checks verify both owners and all locked Zod versions.
+See the [Cloudflare migration guide](https://developers.cloudflare.com/workers/testing/vitest-integration/migration-guides/migrate-to-vitest-plugin/).
+
 ### Existing migration deltas — 2026-09-05
 
 These are observed uncommitted changes against the V2 checkout baseline,

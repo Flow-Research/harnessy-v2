@@ -127,35 +127,34 @@ const dependencyContractFiles = () =>
 		],
 		[
 			"executor/packages/core/test-servers/package.json",
-			JSON.stringify({ devDependencies: { wrangler: "4.120.1" } }),
+			JSON.stringify({ devDependencies: { wrangler: "4.168.0" } }),
 		],
 		[
 			"executor/packages/kernel/runtime-dynamic-worker/package.json",
 			JSON.stringify({
-				devDependencies: { "@cloudflare/vitest-pool-workers": "0.21.0", wrangler: "4.120.1" },
+				devDependencies: { "@cloudflare/vitest-plugin": "1.9.2", wrangler: "4.168.0" },
 			}),
 		],
 		[
 			"executor/packages/plugins/apps/package.json",
-			JSON.stringify({ devDependencies: { "@cloudflare/vitest-pool-workers": "0.21.0" } }),
+			JSON.stringify({ devDependencies: { "@cloudflare/vitest-plugin": "1.9.2" } }),
 		],
 		[
 			"executor/bun.lock",
 			[
-				'    "@cloudflare/vitest-pool-workers": ["@cloudflare/vitest-pool-workers@0.21.0", "", { "dependencies": { "miniflare": "5.20260804.0-alpha", "wrangler": "4.120.1" } }],',
+				'    "@cloudflare/vitest-plugin": ["@cloudflare/vitest-plugin@1.9.2", "", { "dependencies": { "miniflare": "5.20261123.1-beta", "zod": "4.6.6" } }],',
 				'    "axios": ["axios@1.20.0", "", {}],',
 				'    "form-data": ["form-data@4.0.6", "", {}],',
-				'    "miniflare": ["miniflare@5.20260804.0-alpha", "", { "dependencies": { "sharp": "0.35.2", "undici": "7.29.0", "ws": "8.21.0" } }],',
+				'    "miniflare": ["miniflare@5.20261123.1-beta", "", { "dependencies": { "sharp": "0.35.2", "undici": "7.29.0", "ws": "8.21.0" } }],',
 				'    "sharp": ["sharp@0.35.4", "", {}],',
 				'    "toml": ["toml@4.2.0", "", {}],',
 				'    "undici": ["undici@8.10.1", "", {}],',
 				'    "miniflare/undici": ["undici@7.29.0", "", {}],',
-				'    "wrangler": ["wrangler@4.120.1", "", { "dependencies": { "miniflare": "5.20260804.0-alpha" } }],',
+				'    "wrangler": ["wrangler@4.168.0", "", { "dependencies": { "miniflare": "5.20261123.1-beta" } }],',
 				'    "ws": ["ws@8.21.3", "", {}],',
 				'    "miniflare/ws": ["ws@8.21.0", "", {}],',
 				'    "zod": ["zod@4.6.7", "", {}],',
-				'    "@cloudflare/vitest-pool-workers/zod": ["zod@4.4.3", "", {}],',
-				'    "@tanstack/router-plugin/zod": ["zod@3.25.76", "", {}],',
+				'    "@cloudflare/vitest-plugin/zod": ["zod@4.6.6", "", {}],',
 			].join("\n"),
 		],
 	]);
@@ -200,7 +199,7 @@ describe("dependency resolution security contract", () => {
 		rootLock.packages["node_modules/toml"].version = "4.1.1";
 		files.set("package-lock.json", JSON.stringify(rootLock));
 		const dynamicWorker = JSON.parse(files.get("executor/packages/kernel/runtime-dynamic-worker/package.json"));
-		dynamicWorker.devDependencies.wrangler = "^4.120.1";
+		dynamicWorker.devDependencies.wrangler = "^4.168.0";
 		files.set("executor/packages/kernel/runtime-dynamic-worker/package.json", JSON.stringify(dynamicWorker));
 		assert.deepEqual(
 			new Set(checkDependencyResolutionContract(files).map((finding) => finding.rule)),
@@ -215,7 +214,7 @@ describe("dependency resolution security contract", () => {
 		files.set("package-lock.json", JSON.stringify(rootLock));
 		files.set(
 			"executor/bun.lock",
-			`${files.get("executor/bun.lock")}\n    "@tanstack/router-generator/zod": ["zod@4.4.3", "", {}],`,
+			`${files.get("executor/bun.lock")}\n    "@tanstack/router-plugin/zod": ["zod@4.4.3", "", {}],`,
 		);
 		assert.deepEqual(
 			new Set(checkDependencyResolutionContract(files).map((finding) => finding.rule)),
@@ -253,7 +252,7 @@ describe("dependency resolution security contract", () => {
 			"executor/bun.lock",
 			files
 				.get("executor/bun.lock")
-				.replace('"miniflare": "5.20260804.0-alpha"', '"miniflare": "5.20260811.0-alpha"'),
+				.replace('"miniflare": "5.20261123.1-beta"', '"miniflare": "5.20260811.0-alpha"'),
 		);
 		assert.deepEqual(
 			new Set(checkDependencyResolutionContract(files).map((finding) => finding.rule)),
