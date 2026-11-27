@@ -493,7 +493,11 @@ export class TasksState {
 				}
 				const existing = (openByFingerprint.get(candidate.fingerprint) ?? []).find(unused);
 				const titleKey = `${source.kind}\0${normaliseTaskText(candidate.title)}`;
-				const titleMatches = (titleIndex.get(titleKey) ?? []).filter(unused);
+				// Briefs restate titles across days; other sources (status-md, register,
+				// reminders) only match a title within the same file.
+				const titleMatches = (titleIndex.get(titleKey) ?? []).filter(
+					(item) => unused(item) && (source.kind === "brief" || item.source.path === source.path),
+				);
 				const uniqueTitle = existing === undefined && titleMatches.length === 1 ? titleMatches[0] : undefined;
 				const nativeMatches =
 					existing === undefined && uniqueTitle === undefined && source.kind === "brief"

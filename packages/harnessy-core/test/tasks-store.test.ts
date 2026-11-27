@@ -537,3 +537,85 @@ for (let index = 0; index < 40; index += 1) state.add({ title: ${JSON.stringify(
 		expect(titles.filter((title) => title.startsWith("right "))).toHaveLength(40);
 	}, 30_000);
 });
+
+describe("review follow-ups: occurrence and scope matching", () => {
+	const candidate = (title: string, fingerprint: string) => ({
+		title,
+		status: "todo" as const,
+		owner: null,
+		due: null,
+		line: 3,
+		fingerprint,
+		displayRef: "status",
+	});
+
+	it("does not let a status-md task take another file's task by title", () => {
+		const { state } = stateFile("scope");
+		const alpha = state.ingest([candidate("Ship it", taskFingerprint("status-md", "Ship it", 0, "Alpha"))], {
+			kind: "status-md",
+			path: "/work/alpha/status.md",
+			displayRef: "alpha status",
+			briefDate: null,
+		}).items[0]!;
+		const beta = state.ingest([candidate("Ship it", taskFingerprint("status-md", "Ship it", 0, "Beta"))], {
+			kind: "status-md",
+			path: "/work/beta/status.md",
+			displayRef: "beta status",
+			briefDate: null,
+		});
+		expect(beta.created).toBe(1);
+		expect(beta.items[0]!.id).not.toBe(alpha.id);
+		const stored = state.read().items.find((item) => item.id === alpha.id)!;
+		expect(stored.source.path).toBe("/work/alpha/status.md");
+	});
+
+	it("links today's brief task to today's open occurrence, not an earlier completed one", () => {
+		const { state } = stateFile("occurrence");
+		const extracted = extractBriefTasks(briefText).slice(0, 1);
+		const yesterday = state.ingest(candidatesFromExtracted("brief", extracted, "brief 26 Nov"), {
+			kind: "brief",
+			path: "/life/2026/Nov/26-daily-brief.md",
+			displayRef: "brief 26 Nov",
+			briefDate: "2026-11-26",
+		}).items[0]!;
+		state.applyOutcome(yesterday.id, "done", { date: "2026-11-26" });
+		const today = state.ingest(candidatesFromExtracted("brief", extracted, "brief 27 Nov"), {
+			kind: "brief",
+			path: "/life/2026/Nov/27-daily-brief.md",
+			displayRef: "brief 27 Nov",
+			briefDate: "2026-11-27",
+		}).items[0]!;
+		expect(today.id).not.toBe(yesterday.id);
+		const merged = mergeTasks({
+			derived: {
+				tasks: [
+					task({
+						id: "c".repeat(64),
+						title: extracted[0]!.title,
+						source: {
+							kind: "brief",
+							path: "/life/2026/Nov/27-daily-brief.md",
+							line: 8,
+							revision: "2026-11-27T05:00:00.000Z",
+							displayRef: "brief 27 Nov",
+						},
+					}),
+				],
+				sources: [],
+				omitted: 0,
+				projectsTruncated: false,
+			},
+			store: state.read(),
+			today: "2026-11-27",
+			now: new Date("2026-11-27T13:00:00.000Z"),
+			ownerNames: [],
+		});
+		const rows = merged.tasks.filter((item) => item.title === extracted[0]!.title);
+		const open = rows.filter((item) => item.status !== "done");
+		expect(open).toHaveLength(1);
+		expect(open[0]!.id).toBe(today.id);
+		// Today's derived brief line (its revision) is overlaid on today's open item, not on yesterday's done one.
+		expect(open[0]!.source.revision).toBe("2026-11-27T05:00:00.000Z");
+		expect(rows.find((item) => item.id === yesterday.id)?.source.revision).not.toBe("2026-11-27T05:00:00.000Z");
+	});
+});

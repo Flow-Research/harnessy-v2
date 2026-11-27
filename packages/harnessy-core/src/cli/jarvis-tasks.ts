@@ -247,15 +247,22 @@ export const jarvisTasksCloseoutCommand = Command.make(
 				payload.outcomes,
 				payload.date,
 			);
+			// Outcomes are already committed here, so a note failure is reported beside
+			// them (ok stays true) rather than as a failed command a retry would hide.
 			let notePath: string | undefined;
+			let noteError: string | undefined;
 			if (writeNote && noteBody !== undefined) {
 				const user = process.env.FLOW_USER ?? process.env.USER ?? "default";
-				notePath = appendCloseoutNote(resolve(target, ".jarvis/context"), user, noteBody);
+				const body = noteBody;
+				const appended = Result.try(() => appendCloseoutNote(resolve(target, ".jarvis/context"), user, body));
+				if (Result.isSuccess(appended)) notePath = appended.success;
+				else noteError = "note_unwritable";
 			}
 			return {
 				updated: result.updated,
 				unchanged: result.unchanged,
 				...(notePath === undefined ? {} : { notePath }),
+				...(noteError === undefined ? {} : { noteError }),
 			};
 		}),
 );

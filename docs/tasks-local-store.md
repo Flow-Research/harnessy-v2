@@ -84,5 +84,5 @@ A successful close-out looks like:
 }
 ```
 
-`notePath` is present only when `--write-note` was passed. Use `--tasks-file`
+`notePath` is present only when `--write-note` was passed. If the outcomes were saved but the note could not be written, the command still returns `ok: true` with the outcomes and adds `"noteError": "note_unwritable"`; fix the note location and add the note by hand rather than re-running the close-out. Use `--tasks-file`
 when the routine should not rely on the default path.

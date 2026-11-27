@@ -1,10 +1,10 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { jarvisTasksCommand } from "../src/cli/jarvis-tasks.ts";
 import { TasksState } from "../src/jarvis/tasks/index.ts";
@@ -72,5 +72,28 @@ describe("harnessy jarvis tasks CLI", () => {
 		writeFileSync(input, JSON.stringify({ outcomes: [{ id, outcome: "done" }] }));
 		await expect(run(["closeout", "--tasks-file", file, "--input", input, "--write-note"])).rejects.toThrow();
 		expect(new TasksState(file).read().items[0]).toMatchObject({ status: "todo", outcome: null });
+	});
+
+	it("reports committed outcomes with ok when only the note write fails", async () => {
+		const root = mkdtempSync(join(tmpdir(), "harnessy-tasks-cli-note-fail-"));
+		const file = join(root, "tasks.json");
+		await run(["add", "--tasks-file", file, "--title", "Ship the close-out"]);
+		const id = new TasksState(file).read().items[0]!.id;
+		const input = join(root, "outcomes.json");
+		writeFileSync(input, JSON.stringify({ outcomes: [{ id, outcome: "done" }], note: "Closed out." }));
+		// A regular file where .jarvis should be a directory makes the note append fail.
+		const target = join(root, "workspace");
+		mkdirSync(target);
+		writeFileSync(join(target, ".jarvis"), "not a directory");
+		const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+		try {
+			await run(["closeout", "--tasks-file", file, "--input", input, "--write-note", "--target", target]);
+			const printed = JSON.parse(String(log.mock.calls.at(-1)?.[0]));
+			expect(printed).toMatchObject({ ok: true, noteError: "note_unwritable", unchanged: 0 });
+			expect(printed.updated).toHaveLength(1);
+		} finally {
+			log.mockRestore();
+		}
+		expect(new TasksState(file).read().items[0]).toMatchObject({ status: "done", outcome: "done" });
 	});
 });

@@ -116,7 +116,13 @@ export const mergeTasks = (options: MergeTasksOptions): TaskListData => {
 		seen.set(kindKey, occurrence + 1);
 		const fingerprint = derivedFingerprint(task, occurrence);
 		const derived: TaskData = { ...task, fingerprint, group: groupOfDerived(task), inStore: false };
-		const stored = options.store.items.find((item) => !used.has(item.id) && item.fingerprint === fingerprint);
+		// The fingerprint has no date: prefer the occurrence from this same source
+		// file (today's brief, even when completed), then an open one, then any.
+		const matches = options.store.items.filter((item) => !used.has(item.id) && item.fingerprint === fingerprint);
+		const stored =
+			matches.find((item) => item.source.path === task.source.path) ??
+			matches.find((item) => item.status !== "done" && item.status !== "dropped") ??
+			matches[0];
 		if (stored === undefined) {
 			push(derived);
 			continue;
