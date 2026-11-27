@@ -101,6 +101,9 @@ export class EngineeringController {
 		const active = this.#store.active();
 		if (active !== undefined) {
 			const offer = this.#store.hostOffer(active.id);
+			// Recover a stop already committed by an older host before its controller write.
+			if (active.state !== "cancel_requested" && this.#deps.interventions?.hasStopAnswer(active.id))
+				return this.#observe(this.#store.requestCancellation(active.id, this.#deps.now()));
 			if (active.state === "reserved" && offer !== undefined) {
 				if (!offer.acknowledged)
 					return {
@@ -108,12 +111,19 @@ export class EngineeringController {
 						reason: "Remote acknowledgment pending; worker has not started",
 						runId: active.id,
 					};
-				if ((this.#deps.interventions?.open(active.id).length ?? 0) > 0)
+				if ((this.#deps.interventions?.open(active.id).length ?? 0) > 0) {
+					const now = this.#deps.now();
+					if (
+						now >= active.workerDeadline ||
+						Result.isFailure(Result.try(() => this.#store.assertAuthority(active.id, now)))
+					)
+						return this.#observe(this.#store.requestCancellation(active.id, now));
 					return {
 						state: "paused",
 						reason: "Intervention open; a person must resume or stop the run",
 						runId: active.id,
 					};
+				}
 				const admitted = await this.#admit(active.job, active.grantId, active.id);
 				if (admitted.status === "ready") return this.#execute(active, admitted.profile);
 				const raised = admitted.code === "allowance_unavailable" ? this.#raise(active.id, admitted.code) : "";
@@ -425,12 +435,13 @@ export class EngineeringController {
 			run.ownerToken === null &&
 			observation.state === "stopped" &&
 			observation.evidence.length > 0 &&
-			this.#deps.interventions?.hasStopAnswer(run.id)
+			this.#store.hostOffer(run.id)?.acknowledged === true
 		) {
 			this.#store.settle(run.id, "cancelled", "Reservation cancelled before worker start", this.#deps.now(), {
 				identity: null,
 				terminationEvidence: observation.evidence,
 			});
+			this.#deps.interventions?.closeTerminalRun(run.id);
 			return { state: "settled", reason: "Cancellation confirmed before worker start", runId: run.id };
 		}
 		if (run.processIdentity === null)

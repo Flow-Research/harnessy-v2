@@ -21,7 +21,7 @@ export const hostInterventionDigest = (value: HostIntervention): string =>
 		.digest("hex");
 
 export type InterventionReason = HostIntervention["reason"];
-export type InterventionStatus = "open" | "resumed" | "stopped";
+export type InterventionStatus = "open" | "resumed" | "stopped" | "closed";
 export interface RetainedIntervention {
 	readonly intervention: HostIntervention;
 	readonly digest: string;
@@ -151,6 +151,11 @@ PRAGMA user_version=1;`);
 			.map((row) => this.intervention(String(row.id))!);
 	}
 
+	closeTerminalRun(runId: string): void {
+		if (!terminal.has(this.#store.get(runId).state)) throw new Error("A live run must retain its open questions");
+		this.#database.prepare("UPDATE interventions SET status='closed' WHERE run_id=? AND status='open'").run(runId);
+	}
+
 	/** A retained stop answer can close a reservation that never acquired a worker. */
 	hasStopAnswer(runId: string): boolean {
 		return Boolean(
@@ -161,7 +166,7 @@ PRAGMA user_version=1;`);
 	pending(): RetainedIntervention | undefined {
 		const row = this.#database
 			.prepare(`SELECT i.id FROM interventions i LEFT JOIN delivery_order d ON i.id=d.id
-WHERE i.delivered_at IS NULL ORDER BY COALESCE(d.last_attempt,0), i.sequence LIMIT 1`)
+WHERE i.delivered_at IS NULL AND i.status='open' ORDER BY COALESCE(d.last_attempt,0), i.sequence LIMIT 1`)
 			.get();
 		return row === undefined ? undefined : this.intervention(String(row.id));
 	}
@@ -169,7 +174,11 @@ WHERE i.delivered_at IS NULL ORDER BY COALESCE(d.last_attempt,0), i.sequence LIM
 	/** Rotate before sending, so even a lost reply followed by a restart lets another question through. */
 	nextDelivery(): RetainedIntervention | undefined {
 		return this.#transaction(() => {
-			const pending = this.pending();
+			let pending = this.pending();
+			while (pending !== undefined && terminal.has(this.#store.get(pending.intervention.runId).state)) {
+				this.closeTerminalRun(pending.intervention.runId);
+				pending = this.pending();
+			}
 			if (pending !== undefined)
 				this.#database
 					.prepare(`INSERT OR REPLACE INTO delivery_order (id,last_attempt)
@@ -247,6 +256,8 @@ SELECT ?,COALESCE(MAX(last_attempt),0)+1 FROM delivery_order`)
 			if (this.#store.authorityExpiresAt(record.runId) <= now) throw new Error("Run grant expired");
 			// Resume uses the existing authority rule: a revoked grant or a stopping run refuses it.
 			if (answer.decision === "resume") this.#store.assertAuthority(record.runId, now);
+			// Persist cancellation before releasing this hold. Both writes can safely repeat after a crash.
+			if (answer.decision === "stop") this.#store.requestCancellation(record.runId, now);
 			this.#database
 				.prepare("INSERT INTO answers VALUES (?,?,?,?,?)")
 				.run(answer.answerId, answer.interventionId, digest, encoded, now);

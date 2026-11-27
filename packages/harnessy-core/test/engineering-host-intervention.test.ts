@@ -4,7 +4,7 @@ import { createServer, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EngineeringController, type EngineeringControllerDeps } from "../src/engineering/controller.ts";
 import { verifyHostRequest } from "../src/engineering/host-auth.ts";
 import {
@@ -410,6 +410,43 @@ describe("engineering intervention transport", () => {
 		expect(state.interventions.pending()?.intervention.id).toBe(second.intervention.id);
 		expect((await flushIntervention(state.interventions, state.transport, () => start)).status).toBe("confirmed");
 		expect(state.interventions.pending()?.intervention.id).toBe(first.intervention.id);
+	});
+
+	it.each(["expired", "revoked", "cancelled"] as const)(
+		"closes an acknowledged reservation held when %s",
+		async (condition) => {
+			const state = await fixture();
+			const broker = await state.pausedOnLimit();
+			if (condition === "expired") state.setClock(state.grant.expiresAt);
+			else if (condition === "revoked") state.store.revoke(state.grant.id, start);
+			else state.store.requestCancellation(state.launch.launchId, start);
+			const tick = await new EngineeringController(
+				state.store,
+				state.depsFor(broker, state.interventions, true),
+			).tick();
+			expect(tick.state).toBe("settled");
+			expect(state.store.get(state.launch.launchId).state).toBe("cancelled");
+			expect(state.executed).toEqual([]);
+		},
+	);
+
+	it("keeps the hold when the controller cannot record the stop request", async () => {
+		const state = await fixture();
+		await state.pausedOnLimit();
+		await flushIntervention(state.interventions, state.transport, () => start);
+		const [record] = state.interventions.open(state.launch.launchId);
+		const answer = state.answerFor(record!, "stop");
+		const fault = vi.spyOn(state.store, "requestCancellation").mockImplementationOnce(() => {
+			throw new Error("simulated storage failure");
+		});
+		expect(() => state.interventions.acceptAnswer(answer, state.enrollment.operatorId, start)).toThrow(
+			/storage failure/,
+		);
+		fault.mockRestore();
+		expect(state.interventions.open(state.launch.launchId)).toHaveLength(1);
+		expect(state.store.get(state.launch.launchId).state).toBe("reserved");
+		state.interventions.acceptAnswer(answer, state.enrollment.operatorId, start);
+		expect(state.store.get(state.launch.launchId).state).toBe("cancel_requested");
 	});
 
 	it("retains a valid cancellation in a pull alongside an answer for a different operator", async () => {

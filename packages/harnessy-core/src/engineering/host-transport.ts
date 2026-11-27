@@ -250,13 +250,13 @@ const exchange = async (
 			const receivedAt = now();
 			if (!Number.isSafeInteger(receivedAt) || receivedAt < signedAt)
 				return protocolError("Invalid or regressed response clock");
-			let outcome = retainCancellations(parsed.data, enrollment, receivedAt);
+			let outcome = retainValidCommands(parsed.data, enrollment, receivedAt);
 			if (!(await outcomeMatches(body, outcome, enrollment, receivedAt)))
 				return protocolError("Garden response differs from requested operation or enrolled scope");
 			const validatedAt = now();
 			if (!Number.isSafeInteger(validatedAt) || validatedAt < receivedAt)
 				return protocolError("Invalid or regressed response clock");
-			outcome = retainCancellations(outcome, enrollment, validatedAt);
+			outcome = retainValidCommands(outcome, enrollment, validatedAt);
 			if (
 				(outcome.kind === "authority_current" && outcome.expiresAt <= validatedAt) ||
 				(outcome.kind === "commands" && outcome.commands.some((entry) => commandExpiry(entry) <= validatedAt))
@@ -281,9 +281,9 @@ const exchange = async (
 	return result;
 };
 
-/** A stale or foreign answer must not hold a valid cancellation hostage. All retained commands still pass normal validation. */
-const retainCancellations = (outcome: HostOutcome, enrollment: HostEnrollment, now: number): HostOutcome => {
-	if (outcome.kind !== "commands" || !outcome.commands.some((entry) => entry.kind === "cancel")) return outcome;
+/** An invalid answer must not hold an independent command. Answers pulled alone retain their protocol error. */
+const retainValidCommands = (outcome: HostOutcome, enrollment: HostEnrollment, now: number): HostOutcome => {
+	if (outcome.kind !== "commands" || !outcome.commands.some((entry) => entry.kind !== "answer")) return outcome;
 	return {
 		...outcome,
 		commands: outcome.commands.filter(
