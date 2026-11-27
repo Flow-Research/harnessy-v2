@@ -8,6 +8,7 @@ import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
+import * as Result from "effect/Result";
 import { extractBriefTasks } from "../../read-model/followups.ts";
 import { candidatesFromExtracted } from "./ingest.ts";
 import {
@@ -82,11 +83,12 @@ const readBody = (req: IncomingMessage, max = 256 * 1024): Promise<unknown> =>
 				resolve({});
 				return;
 			}
-			try {
-				resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-			} catch {
+			const parsed = Result.try((): unknown => JSON.parse(Buffer.concat(chunks).toString("utf8")));
+			if (Result.isFailure(parsed)) {
 				reject(new TaskRefused("invalid_body"));
+				return;
 			}
+			resolve(parsed.success);
 		});
 		req.on("error", reject);
 	});
@@ -137,7 +139,7 @@ const textField = (row: Record<string, unknown>, key: string): string | null | u
 	return value;
 };
 
-const followupInput = (value: unknown): FollowupInput & { id?: string } => {
+const followupInput = (value: unknown): FollowupInput & { id?: string; index?: number } => {
 	if (!isRecord(value) || typeof value.title !== "string") throw new TaskRefused("invalid_title");
 	if (value.priority !== undefined && !Number.isInteger(value.priority)) throw new TaskRefused("invalid_priority");
 	return {
@@ -149,6 +151,7 @@ const followupInput = (value: unknown): FollowupInput & { id?: string } => {
 		project: textField(value, "project") ?? null,
 		...(value.priority === undefined ? {} : { priority: value.priority as number }),
 		...(typeof value.id === "string" ? { id: value.id } : {}),
+		...(typeof value.index === "number" && Number.isInteger(value.index) ? { index: value.index } : {}),
 	};
 };
 
@@ -253,7 +256,20 @@ const handle = async (state: TasksState, token: string, req: IncomingMessage, re
 		const path = typeof body.path === "string" ? body.path : `remote-brief/${body.date}.md`;
 		const displayRef = typeof body.displayRef === "string" ? body.displayRef : `brief ${body.date}`;
 		const extracted = extractBriefTasks(body.markdown);
-		const candidates = candidatesFromExtracted("brief", extracted, displayRef);
+		const allocations = Array.isArray(body.allocations)
+			? body.allocations.filter(
+					(entry): entry is { id: string; fingerprint: string } =>
+						!!entry &&
+						typeof entry === "object" &&
+						typeof (entry as { id?: unknown }).id === "string" &&
+						typeof (entry as { fingerprint?: unknown }).fingerprint === "string",
+				)
+			: [];
+		const ids = new Map(allocations.map((entry) => [entry.fingerprint, entry.id]));
+		const candidates = candidatesFromExtracted("brief", extracted, displayRef).map((candidate) => {
+			const id = ids.get(candidate.fingerprint);
+			return id === undefined ? candidate : { ...candidate, id };
+		});
 		const result = state.ingest(
 			candidates,
 			{ kind: "brief", path, displayRef, briefDate: body.date },

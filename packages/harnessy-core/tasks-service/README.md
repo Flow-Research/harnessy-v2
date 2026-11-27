@@ -24,7 +24,15 @@ file attaches the container to the existing Coolify `coolify` network with
 Traefik labels. It does not change the Coolify proxy or existing apps.
 
 Copy `docker-compose.yml` and a `tasks.token` file (mode 0600) into that
-directory, then start the compose project. The token is mounted into the
-container and is not set as an environment variable.
+directory. Before the first start, create the data directory so Docker does
+not create a root-owned mount that the non-root service (uid/gid 1003) cannot
+write:
+
+```sh
+sudo install -d -m 0700 -o 1003 -g 1003 ./data
+```
+
+Then start the compose project. The token is mounted into the container and is
+not set as an environment variable. Keep the service non-root.
 
 Default URL: `https://tasks.187-77-170-118.sslip.io`

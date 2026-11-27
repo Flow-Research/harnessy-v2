@@ -123,6 +123,8 @@ export interface IngestCandidate {
 	readonly line: number;
 	readonly fingerprint: string;
 	readonly displayRef: string;
+	/** When set, a newly created item reuses this UUID so an offline ingest can be replayed. */
+	readonly id?: string;
 }
 
 export interface TaskSidecarItem {
@@ -421,6 +423,7 @@ export class TasksState {
 	readonly file: string;
 	readonly #clock: () => Date;
 	readonly #lockWaitMs: number;
+	#lockDepth = 0;
 
 	constructor(file: string, clock: () => Date = () => new Date(), lockWaitMs: number = TASKS_LOCK_WAIT_MS) {
 		this.file = file;
@@ -788,8 +791,11 @@ export class TasksState {
 				}
 				if (items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
 				created += 1;
+				if (candidate.id !== undefined && !isId(candidate.id)) throw new TaskRefused("invalid_id");
+				if (candidate.id !== undefined && items.some((row) => row.id === candidate.id))
+					throw new TaskRefused("duplicate_id");
 				const item: StoredTask = {
-					id: randomUUID(),
+					id: candidate.id ?? randomUUID(),
 					title: candidate.title.slice(0, TASK_TITLE_MAX),
 					status: candidate.status,
 					owner: candidate.owner,
@@ -870,6 +876,14 @@ export class TasksState {
 		});
 	}
 
+	/**
+	 * Hold the store's cross-process lock for a synchronous action that may also
+	 * update the sync queue. Nested store writes in the same process reuse the lock.
+	 */
+	runExclusive<A>(action: () => A): A {
+		return this.#locked(action);
+	}
+
 	#guardRevision(store: TasksStore, expected?: number): void {
 		if (expected !== undefined && store.revision !== expected) throw new TaskRefused("stale_revision");
 	}
@@ -885,6 +899,7 @@ export class TasksState {
 	 * record. Refuses `tasks_busy` when another writer holds it past the wait.
 	 */
 	#locked<A>(action: () => A): A {
+		if (this.#lockDepth > 0) return action();
 		const lockPath = `${this.file}.lock`;
 		const prepared = Result.try(() => {
 			mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
@@ -899,9 +914,11 @@ export class TasksState {
 				database.exec("BEGIN EXCLUSIVE");
 			});
 			if (Result.isFailure(locked)) throw new TaskRefused("tasks_busy");
+			this.#lockDepth += 1;
 			try {
 				return action();
 			} finally {
+				this.#lockDepth -= 1;
 				database.exec("ROLLBACK");
 			}
 		} finally {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { jarvisTasksCommand } from "../src/cli/jarvis-tasks.ts";
 import { TasksState } from "../src/jarvis/tasks/index.ts";
@@ -15,6 +15,15 @@ const run = (args: ReadonlyArray<string>) =>
 	);
 
 describe("harnessy jarvis tasks CLI", () => {
+	beforeEach(() => {
+		vi.stubEnv("HARNESSY_TASKS_SYNC_CONFIG", join(tmpdir(), "harnessy-missing-tasks-sync.json"));
+		vi.stubEnv("HARNESSY_TASKS_ENDPOINT", "");
+		vi.stubEnv("HARNESSY_TASKS_TOKEN_FILE", "");
+	});
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	it("adds, records outcomes and closeout in non-interactive JSON", async () => {
 		const root = mkdtempSync(join(tmpdir(), "harnessy-tasks-cli-"));
 		const file = join(root, "tasks.json");

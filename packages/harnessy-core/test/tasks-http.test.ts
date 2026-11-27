@@ -86,4 +86,18 @@ describe("tasks HTTP service", () => {
 		expect(body.error).toBe("stale_revision");
 		expect(body.revision).toBe(2);
 	});
+
+	it("inserts an added task at the requested index", async () => {
+		const { server } = await start();
+		await request(server, "/v1/tasks", { method: "POST", revision: 0, body: { title: "A" } });
+		const inserted = await request(server, "/v1/tasks", {
+			method: "POST",
+			revision: 1,
+			body: { title: "B", index: 0 },
+		});
+		expect(inserted.status).toBe(201);
+		const listed = await request(server, "/v1/tasks?includeDone=1");
+		const listedBody = (await listed.json()) as { items: Array<{ title: string }> };
+		expect(listedBody.items.map((item) => item.title)).toEqual(["B", "A"]);
+	});
 });

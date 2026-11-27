@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { jarvisTasksCommand } from "../src/cli/jarvis-tasks.ts";
 import { followupsForView, TasksState } from "../src/jarvis/tasks/index.ts";
@@ -31,7 +31,25 @@ const cli = async (args: ReadonlyArray<string>) => {
 	}
 };
 
+beforeEach(() => {
+	vi.stubEnv("HARNESSY_TASKS_SYNC_CONFIG", join(tmpdir(), "harnessy-missing-tasks-sync.json"));
+	vi.stubEnv("HARNESSY_TASKS_ENDPOINT", "");
+	vi.stubEnv("HARNESSY_TASKS_TOKEN_FILE", "");
+});
+afterEach(() => {
+	vi.unstubAllEnvs();
+});
+
 describe("follow-ups in the store", () => {
+	beforeEach(() => {
+		vi.stubEnv("HARNESSY_TASKS_SYNC_CONFIG", join(tmpdir(), "harnessy-missing-tasks-sync.json"));
+		vi.stubEnv("HARNESSY_TASKS_ENDPOINT", "");
+		vi.stubEnv("HARNESSY_TASKS_TOKEN_FILE", "");
+	});
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	it("creates a follow-up with counterparty, waiting-on, due, priority and link", () => {
 		const { state, file } = fresh("add");
 		const item = state.addFollowup({

@@ -8,10 +8,15 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
+import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+
+import { extractBriefTasks } from "../../read-model/followups.ts";
+import { candidatesFromExtracted } from "./ingest.ts";
 import {
 	defaultTasksFile,
 	type FollowupInput,
@@ -64,6 +69,7 @@ export type QueuedMutation =
 			readonly date: string;
 			readonly path?: string;
 			readonly displayRef?: string;
+			readonly allocations?: ReadonlyArray<{ readonly id: string; readonly fingerprint: string }>;
 	  };
 
 export interface TasksSyncQueue {
@@ -77,7 +83,7 @@ export interface TasksRemoteResult {
 	readonly error?: string;
 	readonly item?: unknown;
 	readonly items?: unknown;
-	readonly created?: number;
+	readonly created?: number | readonly unknown[];
 	readonly matched?: number;
 	readonly updated?: unknown;
 	readonly unchanged?: number;
@@ -97,7 +103,13 @@ export interface TasksTransport {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	!!value && typeof value === "object" && !Array.isArray(value);
 
-export const defaultQueuePath = (tasksFile: string): string => join(dirname(tasksFile), DEFAULT_SYNC_QUEUE_NAME);
+export const defaultQueuePath = (tasksFile: string): string => {
+	const dir = dirname(tasksFile);
+	const name = basename(tasksFile);
+	// Keep the historical queue name next to the default tasks.json.
+	if (name === "tasks.json") return join(dir, DEFAULT_SYNC_QUEUE_NAME);
+	return join(dir, `${name}.sync-queue.json`);
+};
 
 export const parseSyncConfig = (value: unknown): TasksSyncConfig => {
 	if (!isRecord(value) || typeof value.endpoint !== "string" || typeof value.tokenFile !== "string")
@@ -108,14 +120,17 @@ export const parseSyncConfig = (value: unknown): TasksSyncConfig => {
 	return { endpoint, tokenFile };
 };
 
+const isEnoent = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === "ENOENT";
+
 export const readSyncConfigFile = (path: string): TasksSyncConfig | undefined => {
-	try {
-		return parseSyncConfig(JSON.parse(readFileSync(path, "utf8")));
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-		if (error instanceof TaskRefused) throw error;
+	const raw = Result.try(() => readFileSync(path, "utf8"));
+	if (Result.isFailure(raw)) {
+		if (isEnoent(raw.failure)) return undefined;
 		throw new TaskRefused("invalid_sync_config");
 	}
+	const parsed = Result.try((): unknown => JSON.parse(raw.success));
+	if (Result.isFailure(parsed)) throw new TaskRefused("invalid_sync_config");
+	return parseSyncConfig(parsed.success);
 };
 
 export const resolveSyncConfig = (input: {
@@ -144,49 +159,96 @@ export const readSyncToken = (tokenFile: string): string => {
 };
 
 export const readQueue = (path: string): TasksSyncQueue => {
-	try {
-		const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-		if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.items))
-			throw new TaskRefused("invalid_queue");
-		return { version: 1, items: value.items as QueuedMutation[] };
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, items: [] };
-		if (error instanceof TaskRefused) throw error;
+	const raw = Result.try(() => readFileSync(path, "utf8"));
+	if (Result.isFailure(raw)) {
+		if (isEnoent(raw.failure)) return { version: 1, items: [] };
 		throw new TaskRefused("invalid_queue");
 	}
+	const parsed = Result.try((): unknown => JSON.parse(raw.success));
+	if (Result.isFailure(parsed)) throw new TaskRefused("invalid_queue");
+	const value = parsed.success;
+	if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.items)) throw new TaskRefused("invalid_queue");
+	return { version: 1, items: value.items as QueuedMutation[] };
 };
 
 const atomicWrite = (file: string, value: unknown): void => {
 	mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 	const temp = `${file}.${randomUUID()}.tmp`;
-	try {
+	const written = Result.try(() => {
 		writeFileSync(temp, `${JSON.stringify(value)}\n`, { mode: 0o600, flag: "wx" });
 		renameSync(temp, file);
-	} catch (error) {
-		try {
-			unlinkSync(temp);
-		} catch {
-			// The temp file may already be gone.
-		}
-		throw error;
-	}
+	});
+	Result.try(() => unlinkSync(temp));
+	if (Result.isFailure(written)) throw written.failure;
 };
 
 export const writeQueue = (path: string, queue: TasksSyncQueue): void => {
 	if (queue.items.length === 0) {
-		try {
-			unlinkSync(path);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
+		if (!existsSync(path)) return;
+		const removed = Result.try(() => unlinkSync(path));
+		if (Result.isFailure(removed) && !isEnoent(removed.failure)) throw removed.failure;
 		return;
 	}
 	atomicWrite(path, queue);
 };
 
-export const enqueueMutation = (path: string, mutation: QueuedMutation): void => {
-	const queue = readQueue(path);
-	writeQueue(path, { version: 1, items: [...queue.items, mutation] });
+export const enqueueMutation = (path: string, mutation: QueuedMutation, state: TasksState): void => {
+	state.runExclusive(() => {
+		const queue = readQueue(path);
+		writeQueue(path, { version: 1, items: [...queue.items, mutation] });
+	});
+};
+
+const mutationKey = (mutation: QueuedMutation): string => JSON.stringify(mutation);
+
+const applyQueuedMutation = (state: TasksState, mutation: QueuedMutation): void => {
+	switch (mutation.op) {
+		case "add":
+			state.add(mutation.fields);
+			return;
+		case "addFollowup":
+			state.addFollowup(mutation.fields);
+			return;
+		case "outcome":
+			state.applyOutcome(mutation.id, mutation.outcome, { owner: mutation.owner, date: mutation.date });
+			return;
+		case "resolve":
+			state.resolve(mutation.id, mutation.note);
+			return;
+		case "closeout":
+			state.closeout(mutation.outcomes, mutation.date, {
+				followups: mutation.followups,
+				resolve: mutation.resolve,
+			});
+			return;
+		case "ingest": {
+			const displayRef = mutation.displayRef ?? `brief ${mutation.date}`;
+			const path = mutation.path ?? `remote-brief/${mutation.date}.md`;
+			const ids = new Map((mutation.allocations ?? []).map((entry) => [entry.fingerprint, entry.id]));
+			const candidates = candidatesFromExtracted("brief", extractBriefTasks(mutation.markdown), displayRef).map(
+				(candidate) => {
+					const id = ids.get(candidate.fingerprint);
+					return id === undefined ? candidate : { ...candidate, id };
+				},
+			);
+			state.ingest(candidates, { kind: "brief", path, displayRef, briefDate: mutation.date });
+		}
+	}
+};
+
+const commitReplay = (
+	state: TasksState,
+	queuePath: string,
+	snapshot: TasksStore,
+	replayed: ReadonlyArray<QueuedMutation>,
+): void => {
+	state.runExclusive(() => {
+		const replayedKeys = new Set(replayed.map(mutationKey));
+		const remaining = readQueue(queuePath).items.filter((item) => !replayedKeys.has(mutationKey(item)));
+		state.installSnapshot(snapshot);
+		for (const mutation of remaining) applyQueuedMutation(state, mutation);
+		writeQueue(queuePath, { version: 1, items: remaining });
+	});
 };
 
 export const fetchTransport: TasksTransport = {
@@ -197,21 +259,17 @@ export const fetchTransport: TasksTransport = {
 		};
 		if (body !== undefined) headers["content-type"] = "application/json";
 		if (revision !== undefined) headers["if-match"] = `"${revision}"`;
-		const response = await fetch(`${endpoint}${path}`, {
-			method,
-			headers,
-			body: body === undefined ? undefined : JSON.stringify(body),
-		});
+		const init: RequestInit = { method, headers };
+		if (body !== undefined && method !== "GET" && method !== "HEAD") init.body = JSON.stringify(body);
+		const response = await fetch(`${endpoint}${path}`, init);
 		const text = await response.text();
 		let parsed: unknown = {};
 		if (text.trim() !== "") {
-			try {
-				parsed = JSON.parse(text);
-			} catch {
-				parsed = { ok: false, error: "invalid_body" };
-			}
+			const parsedResult = Result.try((): unknown => JSON.parse(text));
+			parsed = Result.isSuccess(parsedResult) ? parsedResult.success : { ok: false, error: "invalid_body" };
 		}
 		const record = isRecord(parsed) ? parsed : { ok: false, error: "invalid_body" };
+		const created = Array.isArray(record.created) || typeof record.created === "number" ? record.created : undefined;
 		return {
 			status: response.status,
 			body: {
@@ -220,7 +278,7 @@ export const fetchTransport: TasksTransport = {
 				error: typeof record.error === "string" ? record.error : undefined,
 				item: record.item,
 				items: record.items,
-				created: typeof record.created === "number" ? record.created : undefined,
+				created,
 				matched: typeof record.matched === "number" ? record.matched : undefined,
 				updated: record.updated,
 				unchanged: typeof record.unchanged === "number" ? record.unchanged : undefined,
@@ -280,6 +338,7 @@ const pathFor = (mutation: QueuedMutation): { method: string; path: string; body
 					date: mutation.date,
 					path: mutation.path,
 					displayRef: mutation.displayRef,
+					allocations: mutation.allocations,
 				},
 			};
 	}
@@ -341,17 +400,22 @@ export const syncTasks = async (input: {
 	const queue = readQueue(queuePath);
 	const remote = await getStore(transport, input.config, token);
 	let revision = remote.revision;
-	let replayed = 0;
-	const remaining: QueuedMutation[] = [];
+	const replayedItems: QueuedMutation[] = [];
 	for (const mutation of queue.items) {
 		const result = await replayOne(transport, input.config, token, mutation, revision);
 		revision = result.revision;
-		replayed += 1;
+		replayedItems.push(mutation);
 	}
 	const latest = await getStore(transport, input.config, token);
-	state.installSnapshot({ version: 1, revision: latest.revision, items: latest.items });
-	writeQueue(queuePath, { version: 1, items: remaining });
-	return { ok: true, revision: latest.revision, replayed, remaining: remaining.length, pulled: latest.items.length };
+	commitReplay(state, queuePath, { version: 1, revision: latest.revision, items: latest.items }, replayedItems);
+	const remaining = readQueue(queuePath).items.length;
+	return {
+		ok: true,
+		revision: state.read().revision,
+		replayed: replayedItems.length,
+		remaining,
+		pulled: latest.items.length,
+	};
 };
 
 export const applyMutation = async (input: {
@@ -361,6 +425,7 @@ export const applyMutation = async (input: {
 	readonly transport?: TasksTransport;
 	readonly mutation: QueuedMutation;
 	readonly applyLocal: (state: TasksState) => unknown;
+	readonly mutationForQueue?: (result: unknown) => QueuedMutation;
 }): Promise<{ readonly mode: "remote" | "queued"; readonly revision: number; readonly result: unknown }> => {
 	const state = new TasksState(input.tasksFile);
 	if (input.config === undefined) {
@@ -369,28 +434,38 @@ export const applyMutation = async (input: {
 	}
 	const transport = input.transport ?? fetchTransport;
 	const queuePath = input.queuePath ?? defaultQueuePath(input.tasksFile);
-	try {
-		const token = readSyncToken(input.config.tokenFile);
-		const remote = await getStore(transport, input.config, token);
-		// Replay any queued work first so this mutation lands on a consistent primary.
-		let revision = remote.revision;
-		const queue = readQueue(queuePath);
-		for (const pending of queue.items) {
-			const result = await replayOne(transport, input.config, token, pending, revision);
-			revision = result.revision;
-		}
-		writeQueue(queuePath, { version: 1, items: [] });
-		const applied = await replayOne(transport, input.config, token, input.mutation, revision);
-		const latest = await getStore(transport, input.config, token);
-		state.installSnapshot({ version: 1, revision: latest.revision, items: latest.items });
-		return { mode: "remote" as const, revision: applied.revision, result: applied.body };
-	} catch (error) {
-		if (error instanceof TaskRefused && (error.code === "unauthorized" || error.code === "sync_conflict"))
-			throw error;
-		const result = input.applyLocal(state);
-		enqueueMutation(queuePath, input.mutation);
-		return { mode: "queued" as const, revision: state.read().revision, result };
-	}
+	const attempted = await Effect.runPromise(
+		Effect.tryPromise({
+			try: async () => {
+				const token = readSyncToken(input.config!.tokenFile);
+				const remote = await getStore(transport, input.config!, token);
+				// Replay any queued work first so this mutation lands on a consistent primary.
+				let revision = remote.revision;
+				const queue = readQueue(queuePath);
+				const replayedItems: QueuedMutation[] = [];
+				for (const pending of queue.items) {
+					const result = await replayOne(transport, input.config!, token, pending, revision);
+					revision = result.revision;
+					replayedItems.push(pending);
+				}
+				const applied = await replayOne(transport, input.config!, token, input.mutation, revision);
+				const latest = await getStore(transport, input.config!, token);
+				commitReplay(state, queuePath, { version: 1, revision: latest.revision, items: latest.items }, [
+					...replayedItems,
+					input.mutation,
+				]);
+				return { revision: applied.revision, result: applied.body };
+			},
+			catch: (error) => error,
+		}).pipe(Effect.result),
+	);
+	if (Result.isSuccess(attempted))
+		return { mode: "remote" as const, revision: attempted.success.revision, result: attempted.success.result };
+	const error = attempted.failure;
+	if (error instanceof TaskRefused) throw error;
+	const result = input.applyLocal(state);
+	enqueueMutation(queuePath, input.mutationForQueue?.(result) ?? input.mutation, state);
+	return { mode: "queued" as const, revision: state.read().revision, result };
 };
 
 export const writeSyncConfig = (path: string, config: TasksSyncConfig): void => {

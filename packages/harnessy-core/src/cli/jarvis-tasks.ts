@@ -136,11 +136,12 @@ export const jarvisTasksListCommand = Command.make(
 			const file = resolveFile(homeRoot, stateDir, tasksFile);
 			const config = configFrom(endpoint, tokenFile, syncConfig);
 			if (config !== undefined) {
-				try {
-					await syncTasks({ tasksFile: file, config });
-				} catch {
-					// Offline: list the local cache.
-				}
+				await Effect.runPromise(
+					Effect.tryPromise({
+						try: () => syncTasks({ tasksFile: file, config }),
+						catch: (error) => error,
+					}).pipe(Effect.result, Effect.asVoid),
+				);
 			}
 			const items = new TasksState(file)
 				.read()
@@ -165,11 +166,20 @@ export const jarvisTasksIngestCommand = Command.make(
 			const file = resolveFile(homeRoot, stateDir, tasksFile);
 			const briefPath = resolve(brief);
 			const markdown = readFileSync(briefPath, "utf8");
+			const mutation = { op: "ingest" as const, markdown, date: day, path: briefPath, displayRef: `brief ${day}` };
 			const applied = await applyMutation({
 				tasksFile: file,
 				config: configFrom(endpoint, tokenFile, syncConfig),
-				mutation: { op: "ingest", markdown, date: day, path: briefPath, displayRef: `brief ${day}` },
+				mutation,
 				applyLocal: (state) => ingestBriefFile(state, briefPath, { date: day }),
+				mutationForQueue: (result) => ({
+					...mutation,
+					allocations: (
+						(result as { items?: ReadonlyArray<{ id: string; fingerprint: string | null }> }).items ?? []
+					)
+						.filter((item) => item.fingerprint !== null)
+						.map((item) => ({ id: item.id, fingerprint: item.fingerprint as string })),
+				}),
 			});
 			if (applied.mode === "queued") {
 				const result = applied.result as {
@@ -315,13 +325,14 @@ const readCloseoutInput = (
 		if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new TaskRefused("invalid_body");
 		return entry as Record<string, unknown>;
 	};
-	const followups: FollowupInput[] = ((body.followups ?? []) as unknown[]).map((entry) => {
+	const followups: Array<FollowupInput & { id: string }> = ((body.followups ?? []) as unknown[]).map((entry) => {
 		const row = rowOf(entry);
 		const title = text(row, "title");
 		if (typeof title !== "string") throw new TaskRefused("invalid_title");
 		if (row.priority !== undefined && !Number.isInteger(row.priority)) throw new TaskRefused("invalid_priority");
 		return {
 			title,
+			id: typeof row.id === "string" ? row.id : randomUUID(),
 			owner: text(row, "owner") ?? null,
 			waitingOn: text(row, "waitingOn") ?? null,
 			due: text(row, "due") ?? null,
@@ -529,11 +540,12 @@ export const jarvisFollowupListCommand = Command.make(
 			const file = resolveFile(homeRoot, stateDir, tasksFile);
 			const config = configFrom(endpoint, tokenFile, syncConfig);
 			if (config !== undefined) {
-				try {
-					await syncTasks({ tasksFile: file, config });
-				} catch {
-					// Offline: list the local cache.
-				}
+				await Effect.runPromise(
+					Effect.tryPromise({
+						try: () => syncTasks({ tasksFile: file, config }),
+						catch: (error) => error,
+					}).pipe(Effect.result, Effect.asVoid),
+				);
 			}
 			const items = followupsForView(new TasksState(file).read().items, chosen, day);
 			const overdue = items.filter(

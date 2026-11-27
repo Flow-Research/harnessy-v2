@@ -9,9 +9,8 @@
  */
 
 import { loadTasksAuthToken, startTasksHttpServer, TASKS_SERVICE_PORT } from "./http.ts";
-import { defaultTasksFile } from "./store.ts";
 
-const file = process.env.TASKS_FILE?.trim() || defaultTasksFile("/data");
+const file = process.env.TASKS_FILE?.trim() || "/data/tasks.json";
 const host = process.env.HOST?.trim() || "0.0.0.0";
 const port = Number(process.env.PORT ?? TASKS_SERVICE_PORT);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
