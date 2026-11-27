@@ -16,6 +16,14 @@ import { z } from "zod";
 import type { ExecutionGuard, ExecutionGuardRequest } from "../work/execution-policy.ts";
 import { cloneArgv, gitArgv, herdrArgv, parseDepDirs } from "../work/logic.ts";
 import { inspectWorkProcess, type Run, type WorkDeps, type WorkOutcome, worktreePath } from "../work/run.ts";
+import {
+	assembleCollection,
+	collectionGate,
+	collectPullRequestChecks,
+	githubReadOnlySource,
+	PRODUCT_REPOSITORIES,
+	type ReadOnlySource,
+} from "./collectors.ts";
 import type { EngineeringJob, EngineeringRun } from "./contracts.ts";
 import type {
 	EngineeringControllerDeps,
@@ -64,27 +72,56 @@ export const parseEnvironment = (stdout: string): Readonly<Record<string, string
 			.map((match) => [match[1] ?? "", match[2] ?? ""]),
 	);
 
+/**
+ * A collected metric that the candidate pull request head must meet. Only the
+ * metrics of the required-checks collector are admitted, because only they
+ * describe the exact candidate. The other collected metrics describe the
+ * repository over a time window, not one candidate.
+ */
+const requiredMetricSchema = z.discriminatedUnion("metric", [
+	/** At least this share of the required checks passed on the exact head. */
+	z.strictObject({ metric: z.literal("tests.required_scenario_coverage"), threshold: z.number().min(0).max(1) }),
+	/** At most this many required checks were skipped or missing on the exact head. */
+	z.strictObject({ metric: z.literal("tests.skipped"), threshold: z.number().int().min(0).max(1000) }),
+]);
 const argvSchema = z.array(z.string().min(1).max(400)).min(1).max(40);
 const relativePath = z.string().regex(/^(?!\/)(?!.*(^|\/)\.\.?(\/|$))[A-Za-z0-9._@/-]{1,300}$/);
-const profileSchema = z.strictObject({
-	id: z.enum(["harnessy-v2", "garden", "workstream"]),
-	/** A host checkout with installed dependencies. The agent cannot write to it. */
-	root: z.string().min(1).max(1000),
-	base: z.string().regex(/^[A-Za-z0-9._/-]{1,100}$/),
-	workstreamCli: argvSchema,
-	agentAllow: z.string().min(1).max(2000).optional(),
-	agentDeps: z.literal("clone").optional(),
-	/** Commands that must pass on the exact candidate. Host-owned, never task-owned. */
-	verify: z.array(argvSchema).min(1).max(12),
-	verifyTimeoutMinutes: z.number().int().min(1).max(90).default(30),
-	/** Path prefixes that define the checks. A candidate that changes one goes to a person. */
-	protected: z.array(relativePath).max(100).default([]),
-	/**
-	 * A second reader of each candidate, after the host commands pass. It can
-	 * only block a candidate. It uses the same included subscription.
-	 */
-	reviewer: z.literal("claude").optional(),
-});
+const profileSchema = z
+	.strictObject({
+		id: z.enum(["harnessy-v2", "garden", "workstream"]),
+		/** A host checkout with installed dependencies. The agent cannot write to it. */
+		root: z.string().min(1).max(1000),
+		base: z.string().regex(/^[A-Za-z0-9._/-]{1,100}$/),
+		workstreamCli: argvSchema,
+		agentAllow: z.string().min(1).max(2000).optional(),
+		agentDeps: z.literal("clone").optional(),
+		/** Commands that must pass on the exact candidate. Host-owned, never task-owned. */
+		verify: z.array(argvSchema).min(1).max(12),
+		verifyTimeoutMinutes: z.number().int().min(1).max(90).default(30),
+		/** Path prefixes that define the checks. A candidate that changes one goes to a person. */
+		protected: z.array(relativePath).max(100).default([]),
+		/**
+		 * A second reader of each candidate, after the host commands pass. It can
+		 * only block a candidate. It uses the same included subscription.
+		 */
+		reviewer: z.literal("claude").optional(),
+		/**
+		 * Collected metrics that the pull request head must meet before a run can
+		 * succeed. A metric that is not observed fails the candidate. Without this
+		 * field, verification is unchanged.
+		 */
+		requiredMetrics: z
+			.array(requiredMetricSchema)
+			.min(1)
+			.max(2)
+			.refine((entries) => new Set(entries.map((entry) => entry.metric)).size === entries.length, {
+				message: "A required metric is repeated",
+			})
+			.optional(),
+	})
+	.refine((profile) => profile.requiredMetrics === undefined || profile.id !== "harnessy-v2", {
+		message: "Collected metrics are qualified only for Garden and WorkStream profiles",
+	});
 export const hostConfigSchema = z.strictObject({
 	schema: z.literal("harnessy.engineering.host.v1"),
 	/** The subscription account that `claude auth status` must report. */
@@ -162,6 +199,17 @@ export const profileEvaluatorDigest = (profile: EngineeringHostProfile): string 
 			profile.verify,
 			[...profile.protected].sort(),
 			profile.reviewer ?? "none",
+			// Appended only when present, so that a profile without the field keeps its digest.
+			...(profile.requiredMetrics === undefined
+				? []
+				: [
+						[
+							"harnessy.engineering.required-metrics.v1",
+							...[...profile.requiredMetrics]
+								.sort((left, right) => left.metric.localeCompare(right.metric))
+								.map((entry) => [entry.metric, entry.threshold]),
+						],
+					]),
 		]),
 	);
 
@@ -564,6 +612,86 @@ export const verifyCandidate = async (
 		: { verdict: "reject", reason: `${failure ?? "Verification is incomplete"}; evidence: ${evidencePath}` };
 };
 
+const PULL_REQUEST_URL =
+	/^https:\/\/github\.com\/([A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100})\/pull\/([1-9][0-9]{0,9})$/;
+
+export interface CandidateMetricsInput {
+	/** A read-only GitHub source, normally `githubReadOnlySource`. */
+	readonly source: ReadOnlySource;
+	readonly profile: EngineeringHostProfile;
+	/** The pull request URL from the runner's private state, not from the worker's report. */
+	readonly pullRequestUrl: string;
+	readonly headSha: string;
+	readonly now: () => number;
+}
+
+/**
+ * Judge the exact candidate pull request head with the collected metrics that
+ * the profile requires.
+ *
+ * - The pull request must be in the declared repository of the product.
+ * - Every collected value must name the candidate as the pull request head.
+ * - A required metric that is not observed fails, and an observed value must
+ *   meet the profile limit, as `collectionGate` decides.
+ *
+ * The record keeps the full collection, the requirements and the gate result.
+ */
+export const gateCandidateMetrics = async (
+	input: CandidateMetricsInput,
+): Promise<{
+	readonly verdict: "pass" | "reject";
+	readonly reason: string;
+	readonly record?: Readonly<Record<string, unknown>>;
+}> => {
+	const { profile, headSha } = input;
+	const requirements = profile.requiredMetrics ?? [];
+	if (requirements.length === 0) return { verdict: "reject", reason: "The profile requires no collected metric" };
+	if (profile.id === "harnessy-v2")
+		return { verdict: "reject", reason: "Collected metrics are qualified only for Garden and WorkStream" };
+	const match = PULL_REQUEST_URL.exec(input.pullRequestUrl);
+	const repository = match?.[1];
+	if (match === null || repository !== PRODUCT_REPOSITORIES[profile.id])
+		return { verdict: "reject", reason: "The pull request is not in the declared repository of the product" };
+	const pullRequest = Number(match[2]);
+	// The declared base fixes the required check set: a pull request with another base fails collection.
+	const collected = await collectPullRequestChecks({
+		source: input.source,
+		repository,
+		pullRequest,
+		expectedBase: profile.base,
+		now: input.now,
+	});
+	const collection = assembleCollection({ product: profile.id, repository, collected, now: input.now });
+	const subjects = collected.map((entry) => entry.provenance.subject);
+	const gate = collectionGate(
+		collection,
+		requirements.map((entry) => ({ metricId: entry.metric, threshold: entry.threshold })),
+	);
+	// Each fact must be present and exact. A missing fact fails, as a different one does.
+	const reasons = [
+		...(subjects.some((subject) => subject.headSha !== headSha) ? ["collected_head_is_not_the_candidate"] : []),
+		...(subjects.some((subject) => subject.baseRef !== profile.base)
+			? ["collected_base_is_not_the_declared_base"]
+			: []),
+		...(subjects.some((subject) => subject.state !== "open") ? ["pull_request_is_not_open"] : []),
+		...gate.reasons,
+	];
+	const passed = reasons.length === 0;
+	const record = {
+		schema: "harnessy.engineering.candidate-metrics.v1",
+		repository,
+		pullRequest,
+		candidateRevision: headSha,
+		requirements,
+		verdict: passed ? "pass" : "reject",
+		reasons,
+		collection,
+	};
+	return passed
+		? { verdict: "pass", reason: "Every required collected metric is observed and meets its limit", record }
+		: { verdict: "reject", reason: `A required collected metric fails: ${reasons.join(", ")}`, record };
+};
+
 /**
  * Review findings that are not inline threads: each review with its state,
  * and each conversation comment. The text is kept as a digest and a short
@@ -866,7 +994,7 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		if (!/^[a-f0-9]{40}$/.test(headSha) || saved.prUrl === undefined || report.pr_url !== saved.prUrl)
 			return { verdict: "reject", reason: "No pushed candidate with a pull request is on record" };
 		const pull = await work.run(
-			["gh", "pr", "view", saved.prUrl, "--json", "headRefOid,state,reviewDecision,reviews,comments"],
+			["gh", "pr", "view", saved.prUrl, "--json", "headRefOid,baseRefName,state,reviewDecision,reviews,comments"],
 			{ timeoutMs: 60_000 },
 		);
 		const pullFacts = Result.try((): unknown => JSON.parse(pull.stdout));
@@ -891,11 +1019,38 @@ export const liveControllerDeps = (options: LiveHostOptions): EngineeringControl
 		});
 		if (disposition.changesRequested)
 			return { verdict: "reject", reason: "A reviewer requested changes on the pull request" };
+		// The pull request must target the declared base, whose rules judge it.
+		if (!("baseRefName" in pullFacts.success) || pullFacts.success.baseRefName !== profile.base)
+			return { verdict: "reject", reason: "The pull request base is not the declared base" };
 		const checked = await check(profile, run.job.sourceRevision, headSha);
 		if (checked.verdict === "reject") return checked;
+		let evidenceDigest = checked.evidenceDigest;
+		if (profile.requiredMetrics !== undefined) {
+			// The collected metrics read the checks of the exact pull request head, after the host commands pass.
+			const gated = await gateCandidateMetrics({
+				source: githubReadOnlySource(work.run),
+				profile,
+				pullRequestUrl: saved.prUrl,
+				headSha,
+				now: work.now,
+			}).catch(() => ({
+				verdict: "reject" as const,
+				reason: "The collected metrics cannot be read",
+				record: undefined,
+			}));
+			if (gated.record === undefined) return { verdict: "reject", reason: gated.reason };
+			const text = `${JSON.stringify({ runId: run.id, recordedAt: work.now(), ...gated.record }, null, 2)}\n`;
+			const path = join(stateRoot, "collections", `${run.id}.json`);
+			mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+			writeFileSync(path, text, { mode: 0o600 });
+			chmodSync(path, 0o600);
+			if (gated.verdict === "reject") return { verdict: "reject", reason: `${gated.reason}; evidence: ${path}` };
+			// The receipt binds the host-command evidence and the collection record together.
+			evidenceDigest = sha256(JSON.stringify([checked.evidenceDigest, sha256(text)]));
+		}
 		return {
 			verdict: "pass",
-			evidenceDigest: checked.evidenceDigest,
+			evidenceDigest,
 			runId: run.id,
 			grantId: run.grantId,
 			baselineRevision: run.job.sourceRevision,

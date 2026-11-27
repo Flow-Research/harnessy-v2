@@ -437,7 +437,7 @@ export async function benchmarkHarnessy(options: HarnessyBenchmarkOptions) {
 			const commandWorkload = commandProfile
 				? await createHarnessyCommandWorkload(commandProfile, join(output, "fixtures"), controller.signal)
 				: undefined;
-			const workload = commandWorkload ?? createHarnessyWorkload(randomUUID(), 64);
+			const workload = commandWorkload ?? createHarnessyWorkload(randomUUID());
 			const driverSource = join(output, "driver-source.cjs"),
 				workloadSource = join(output, "workload-source.json");
 			await writeFile(driverSource, commandWorkload ? HARNESSY_COMMAND_DRIVER : HARNESSY_OPERATION_DRIVER, {

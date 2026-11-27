@@ -4,6 +4,11 @@
 
 ### Changed
 
+- `harnessy engineering benchmark` runs 32,768 iterations of the 16 cases in
+  each sample of the `pure-task-operations` profile (64 before). One sample
+  now runs for about one second, so process startup no longer hides the
+  measured work. A sample prints one digest that covers every result. A
+  calibration record of the earlier workload is refused; build a new one.
 - Moved the Effect runtime/platform cohort to 4.1.3 and updated schema, CLI,
   HTTP and process interfaces. Existing Boolean flag defaults remain explicit.
 - `harnessy work --revise "<notes>"` sends the latest commit back to the agent
@@ -32,6 +37,28 @@
   metered key in the environment, a missing sign-in, another account, a
   missing owner confirmation that extra usage is off, or a recorded limit
   reply pauses the loop. There is no metered fallback.
+- `harnessy engineering collect` reads Garden or WorkStream work into
+  registered metrics with GET requests only. It observes
+  `tests.required_scenario_coverage` and `tests.skipped` from the required
+  checks on the exact head of one pull request, `defects.reopened` from
+  issues with a declared defect label in the last 30 days, and
+  `behavior.task_acceptance` from the caller's decided submissions on a
+  loopback WorkStream API. Each value carries its requests and response
+  digests. Missing, malformed, pending or incomplete input gives `failed`,
+  `inconclusive`, `unavailable` or `unsupported` with no value, and the
+  other 93 registered metrics are `unsupported`. `collectionGate` fails every
+  required metric that is not observed.
+- A Garden or WorkStream host profile can name `requiredMetrics`. Each entry
+  is `tests.required_scenario_coverage` (at least a ratio) or
+  `tests.skipped` (at most a count). After the host commands pass, candidate
+  verification collects these metrics from the exact pull request head. A
+  metric that is not observed, a value outside the limit, or a pull request
+  head other than the candidate, a base other than the profile base, or a
+  pull request that is not open rejects the run. Candidate verification now
+  also rejects a pull request whose base is not the profile base, for every
+  profile. The record is kept with the
+  run, and the field is part of the evaluator digest. A profile without the
+  field is verified as before.
 - `harnessy work --github-app <slug>` (or `github.app` in the settings file)
   pushes and calls `gh` as a GitHub App installation instead of the
   operator's account, so the operator can approve the PR. Each run mints an

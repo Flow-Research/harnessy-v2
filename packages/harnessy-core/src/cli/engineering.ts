@@ -6,6 +6,14 @@ import { Command, Flag } from "effect/cli";
 import * as Result from "effect/Result";
 import { benchmarkHarnessy } from "../engineering/benchmark.ts";
 import { buildNullCalibration } from "../engineering/calibration.ts";
+import {
+	assembleCollection,
+	collectPullRequestChecks,
+	collectReopenedDefects,
+	collectWorkStreamAcceptance,
+	githubReadOnlySource,
+	PRODUCT_REPOSITORIES,
+} from "../engineering/collectors.ts";
 import { engineeringJobSchema } from "../engineering/contracts.ts";
 import { EngineeringController } from "../engineering/controller.ts";
 import {
@@ -38,7 +46,7 @@ const hostConfigPath = () => {
 };
 
 /**
- * `status`, `events`, `approve`, `cancel`, `revoke` and `benchmark` start no
+ * `status`, `events`, `approve`, `cancel`, `revoke`, `collect` and `benchmark` start no
  * worker. `tick` and `serve` can start one worker for an approved job, and only
  * when every host probe and the included-allowance check pass.
  */
@@ -194,6 +202,84 @@ export const makeEngineeringCommand = (
 	).pipe(
 		Command.withDescription(
 			"Build a null calibration from baseline against baseline benchmark reports of one profile on this host",
+		),
+	);
+	const collect = Command.make(
+		"collect",
+		{
+			product: Flag.Literals("product", ["garden", "workstream"]).pipe(
+				Flag.withDescription("Product whose repository work is observed."),
+			),
+			repository: Flag.String("repository").pipe(
+				Flag.optional,
+				Flag.withDescription("GitHub OWNER/NAME. The default is the product repository."),
+			),
+			pullRequest: Flag.Int("pull-request").pipe(
+				Flag.optional,
+				Flag.withDescription("Pull request whose exact head is read for required check results."),
+			),
+			defectLabel: Flag.String("defect-label").pipe(
+				Flag.optional,
+				Flag.withDescription("Existing issue label that declares a defect, for reopened defects in 30 days."),
+			),
+			workstreamUrl: Flag.String("workstream-url").pipe(
+				Flag.optional,
+				Flag.withDescription("Loopback WorkStream API root. The token comes from WORKSTREAM_TOKEN."),
+			),
+			workstreamProject: Flag.String("workstream-project").pipe(
+				Flag.optional,
+				Flag.withDescription("WorkStream project ID that scopes submission acceptance."),
+			),
+			output: Flag.String("output").pipe(Flag.withDescription("New collection record file.")),
+		},
+		(flags) =>
+			Effect.tryPromise({
+				try: async () => {
+					const repository = Option.getOrElse(flags.repository, () => PRODUCT_REPOSITORIES[flags.product]);
+					const source = githubReadOnlySource(workDeps().run);
+					const collected = [
+						...(Option.isSome(flags.pullRequest)
+							? await collectPullRequestChecks({
+									source,
+									repository,
+									pullRequest: flags.pullRequest.value,
+									now: clock,
+								})
+							: []),
+						...(Option.isSome(flags.defectLabel)
+							? await collectReopenedDefects({ source, repository, label: flags.defectLabel.value, now: clock })
+							: []),
+						...(Option.isSome(flags.workstreamUrl)
+							? await collectWorkStreamAcceptance({
+									fetch: (url, init) => fetch(url, init),
+									baseUrl: flags.workstreamUrl.value,
+									token: process.env.WORKSTREAM_TOKEN,
+									projectId: Option.getOrUndefined(flags.workstreamProject),
+									now: clock,
+								})
+							: []),
+					];
+					const collection = assembleCollection({ product: flags.product, repository, collected, now: clock });
+					writeFileSync(flags.output, `${JSON.stringify(collection, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+					return {
+						schema: collection.schema,
+						product: collection.product,
+						repository,
+						collected: collected.map((entry) => ({
+							metricId: entry.observation.metricId,
+							status: entry.observation.status,
+							...(entry.observation.value === undefined ? {} : { value: entry.observation.value }),
+							...(entry.observation.reason === undefined ? {} : { reason: entry.observation.reason }),
+						})),
+						unsupported: collection.metrics.filter((entry) => entry.observation.status === "unsupported").length,
+						output: flags.output,
+					};
+				},
+				catch: (cause) => new HarnessError({ message: causeMessage(cause), cause }),
+			}).pipe(Effect.flatMap((value) => Console.log(JSON.stringify(value)))),
+	).pipe(
+		Command.withDescription(
+			"Read Garden or WorkStream repository work into registered metrics. GET only; every metric without a collector is unsupported.",
 		),
 	);
 	const hostConfig = Flag.String("host-config").pipe(
@@ -353,6 +439,7 @@ export const makeEngineeringCommand = (
 			revoke,
 			digests,
 			calibrate,
+			collect,
 			confirmExtraUsage,
 			clearPause,
 			tick,

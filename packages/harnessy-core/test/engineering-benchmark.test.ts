@@ -47,7 +47,7 @@ describe.skipIf(process.platform !== "darwin")("protected Harnessy benchmark", (
 				{ id: "harnessy-task-preparation-status", passed: true, reason: "protected_cases_passed" },
 			]);
 			for (const sample of report[side].samples) {
-				expect(sample.completedWork).toBe(1024);
+				expect(sample.completedWork).toBe(524_288);
 				expect(sample.measurements["cpu.time_per_operation"]).toBeGreaterThan(0);
 				expect(sample.measurements["memory.peak_resident"]).toBeGreaterThan(0);
 			}

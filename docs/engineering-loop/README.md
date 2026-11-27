@@ -41,7 +41,7 @@ Command wall time covers the protected invocation, including fixed fixture setup
 
 ## Read the result
 
-The CLI prints a JSON summary and the path to `reports/benchmark.json`. The report contains ten paired samples for each source. In the default pure-task-operation profile, each sample completes 1,024 useful operations across 16 required cases. The evaluator alternates the execution order between baseline and candidate. A separate process measures CPU time and peak resident memory, which is the maximum physical memory in use.
+The CLI prints a JSON summary and the path to `reports/benchmark.json`. The report contains ten paired samples for each source. In the default pure-task-operation profile, each sample completes 524,288 useful operations: 32,768 iterations of 16 required cases. One sample runs for approximately one second on an Apple M4 Pro host. Process startup is then a small part of the sample. The required check prints each result of one iteration. A sample prints one SHA-256 digest that covers each result of each iteration, and the controller compares it with its own digest. The evaluator alternates the execution order between baseline and candidate. A separate process measures CPU time and peak resident memory, which is the maximum physical memory in use.
 
 The report binds measurements to maintained source bytes and modes, Git revisions, the fixed evaluator, the workload, and the host environment. The command copies maintained source bytes without rewriting code or imports. The sandbox reads these copies and a frozen Effect dependency. It cannot read the original source roots, measurement reports, or the supervisor. The supervisor controls process execution and measures its resources.
 
@@ -65,7 +65,67 @@ harnessy engineering calibrate --reports /absolute/private-measurements/null-run
 
 The record supports a metric only when no null experiment would count as an improvement, the differences show no drift, and the two sides are balanced. The benchmark refuses a record of another profile, host, toolchain, evaluator or workload size, and a record that is older than 30 days. With a record, the decision uses the exact signed-rank interval for ten pairs. This interval does not need normal differences.
 
-A calibrated decision can still be `inconclusive`. On a short workload, timing noise can be as large as the 5 percent limits. The result then names the metric that is too noisy.
+A calibrated decision can still be `inconclusive`. Other work on the host can make timing noise as large as the 5 percent limits. The result then names the metric that is too noisy. Run the benchmark again when the host is quiet. Do not change the limits.
+
+A change of the workload size or of the fixed driver makes an earlier calibration record invalid. The benchmark refuses that record. Run the null experiments again and build a new record.
+
+## Collect Garden and WorkStream metrics
+
+A collector reads real records of Garden or WorkStream work and turns them into values of registered metrics. It records the provenance of each value: the collector, the source, the subject, each request, and the SHA-256 digest of each response. The collectors send only GET requests. They do not read or change a Garden or WorkStream checkout.
+
+These collectors are installed:
+
+| Collector | Metrics | Source |
+| --- | --- | --- |
+| `github.pull-request-required-checks.v1` | `tests.required_scenario_coverage`, `tests.skipped` | Check runs and commit statuses on the exact head of one pull request, through `gh api` |
+| `github.reopened-defects.v1` | `defects.reopened` | Issues with a declared defect label that were reopened in the last 30 days, through `gh api` |
+| `workstream.submission-outcomes.v1` | `behavior.task_acceptance` | The caller's own decided submissions in one project, from a loopback WorkStream API |
+
+Run the command with the GitHub CLI signed in. Give only the flags for the collectors that you want to run:
+
+```sh
+harnessy engineering collect --product garden \
+  --pull-request 421 --defect-label bug \
+  --output /absolute/private-measurements/garden-collection.json
+```
+
+To read WorkStream submissions, add `--workstream-url http://127.0.0.1:18100` and `--workstream-project <project-id>`, and set `WORKSTREAM_TOKEN`. The collector refuses an API that is not on the loopback interface. It does not send the token with the health request, and it does not write the token to the record.
+
+The output file must not exist. The command writes it with mode 600. The record has one entry for each of the 97 registered metrics. A metric without an installed collector, or with a collector that you did not configure, is `unsupported`.
+
+A collector never makes a value up. These rules apply:
+
+- The required checks are the union of the base branch protection and the branch rulesets. A base branch without required checks gives `unsupported`.
+- Callers of the collector library can set `expectedBase`. The standalone `collect` command uses the base on the pull request. A pull request with another base then gives `failed`. A base that changes during collection also gives `failed`.
+- A required check passes only with conclusion `success` on the exact head. A skipped or missing required check counts as not executed. A pending required check, or a head that changes during collection, gives `inconclusive`.
+- The defect label must exist. Otherwise the result is `failed`, not zero. Incomplete search results give `inconclusive`.
+- Acceptance is accepted submissions divided by decided submissions in the window. A decision is `accepted`, `needs_revision` or `rejected`. Without a credential, a project, or a decided submission, the result is `unavailable`.
+- A read failure, malformed JSON, an unknown state, or an incomplete page gives `failed`.
+
+The `collectionGate` function passes a required metric only when its status is `observed` and its value is inside the limit. Every other status fails the gate. The record is an audit record. It does not approve a task, a merge, a deployment, or a WorkStream decision.
+
+These collectors do not measure web or native performance, data-store use, defect severity, repair time, or test run time. The required checks come from the current branch rules, not from the rules at the time of each run. Submission records carry no policy revision, so one project is the policy scope.
+
+### Require collected metrics for a candidate
+
+A host profile for Garden or WorkStream can name collected metrics that each candidate must meet. Add the optional field `requiredMetrics` to the profile in the owner host file. This example requires that every required check passed and that no required check was skipped or missing:
+
+```json
+"requiredMetrics": [
+  { "metric": "tests.required_scenario_coverage", "threshold": 1 },
+  { "metric": "tests.skipped", "threshold": 0 }
+]
+```
+
+The field accepts only these two metrics, because only they describe the exact candidate. `tests.required_scenario_coverage` takes a ratio from 0 to 1, and the value must be at least the threshold. `tests.skipped` takes a whole count, and the value must be at most the threshold. Each metric can occur one time. The `harnessy-v2` profile refuses the field.
+
+Candidate verification applies the rule in this order:
+
+1. All existing rules run first: the runner outcome, the saved pull request, the pull request head, the review decision, the pull request base, the protected paths, and the host commands in the sandbox. The pull request base must be the `base` of the profile, for every profile.
+2. If all of them pass, the collector reads the required checks of the pull request from the runner's private state. The pull request must be in the product repository, it must be open, and its base must be the `base` of the profile. The required checks are always those of that base.
+3. A required metric that is not observed rejects the run. A value outside the threshold rejects the run. A collected head that is not the candidate, another base, or a closed or merged pull request rejects the run.
+
+The runner returns a delivered outcome only after the pull request checks pass, so a pending check at this step is not expected. A pending check rejects the run. The record goes to `collections/<run id>.json` in the controller state, with mode 600. The verification receipt digest binds the host-command evidence and this record. The field is part of the evaluator digest, so a job approved for one rule cannot run with another. A profile without the field has the same evaluator digest and the same verification as before.
 
 ## Execution boundaries
 
@@ -77,6 +137,6 @@ The benchmark has no provider, model, merge, deployment, or job-approval capabil
 
 ## Remaining qualification
 
-Full Harnessy startup, preparation, and status workloads remain open. Garden and WorkStream collectors remain unsupported. Native mobile, web, and device measurements also remain open. The functional host qualification uses real authentication, signatures, HTTP, and database state, with synthetic provider and execution ports. It does not prove a live provider, the full task runner, WorkStream proof acceptance, or a device journey.
+Full Harnessy startup, preparation, and status workloads remain open. Garden and WorkStream have collectors for four metrics only. The other metrics for these products remain unsupported. Candidate verification can require the two test metrics, and the benchmark does not use collected values yet. Native mobile, web, and device measurements also remain open. The functional host qualification uses real authentication, signatures, HTTP, and database state, with synthetic provider and execution ports. It does not prove a live provider, the full task runner, WorkStream proof acceptance, or a device journey.
 
 Do not activate unattended work from this benchmark alone. One owner machine completed a verified run to a draft pull request. A scheduled service, a multi-host pilot, measurement workloads for the other products, and device evidence remain open. No command in this document merges or deploys a change.

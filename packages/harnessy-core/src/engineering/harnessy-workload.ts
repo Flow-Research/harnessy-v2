@@ -6,15 +6,31 @@ import {
 	type ProtectedSemanticValidator,
 } from "./evaluator-host.ts";
 
-/** This driver is untrusted execution. The controller validates all output separately. */
+/**
+ * Iterations of the 16 cases in one sample. One iteration takes about 25 microseconds on the
+ * calibration host, so one sample runs for about one second. The earlier 64 iterations took about
+ * 5 milliseconds of an 80 millisecond sample: process startup noise then hid the measured work.
+ */
+export const HARNESSY_OPERATION_ITERATIONS = 32_768;
+export const HARNESSY_OPERATION_MAXIMUM_ITERATIONS = 65_536;
+
+/**
+ * This driver is untrusted execution. The controller validates all output separately.
+ * A check prints each result. A sample prints one SHA-256 digest that covers each result of each
+ * iteration, so a long sample stays below the output limit and no operation escapes validation.
+ */
 export const HARNESSY_OPERATION_DRIVER = String.raw`"use strict";
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const input = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
 const logic = require(path.join(process.argv[2], "packages/harnessy-core/src/work/logic.ts"));
-const count = process.argv[4] === "check" ? 1 : input.iterations;
+const check = process.argv[4] === "check";
+const count = check ? 1 : input.iterations;
 const operations = [];
+const digest = crypto.createHash("sha256");
 for (let iteration = 0; iteration < count; iteration++) {
+  const completed = [];
   for (const test of input.cases) {
     let result;
     try {
@@ -24,10 +40,14 @@ for (let iteration = 0; iteration < count; iteration++) {
       else throw new Error("Unsupported fixed workload operation");
       result = value === undefined ? { undefined: true } : { value };
     } catch { result = { error: true }; }
-    operations.push({ iteration, caseId: test.id, result });
+    completed.push({ iteration, caseId: test.id, result });
   }
+  if (check) operations.push(...completed);
+  else digest.update(JSON.stringify(completed) + "\n");
 }
-process.stdout.write(JSON.stringify({ schema: "harnessy.engineering.operation-output.v1", operations }) + "\n");
+process.stdout.write(JSON.stringify(check
+  ? { schema: "harnessy.engineering.operation-output.v1", operations }
+  : { schema: "harnessy.engineering.operation-digest.v1", iterations: count, operations: count * input.cases.length, operationsDigest: digest.digest("hex") }) + "\n");
 `;
 
 interface OperationCase {
@@ -49,14 +69,14 @@ export interface HarnessyWorkload {
 }
 
 /** Generate synthetic task/preparation/status data with expectations kept in the controller. */
-export function createHarnessyWorkload(seed: string, iterations = 64): HarnessyWorkload {
+export function createHarnessyWorkload(seed: string, iterations = HARNESSY_OPERATION_ITERATIONS): HarnessyWorkload {
 	if (
 		typeof seed !== "string" ||
 		seed.length === 0 ||
 		seed.length > 128 ||
 		!Number.isSafeInteger(iterations) ||
 		iterations < 1 ||
-		iterations > 128
+		iterations > HARNESSY_OPERATION_MAXIMUM_ITERATIONS
 	)
 		throw new Error("Invalid fixed workload seed or iteration count");
 	const task = "11111111-2222-4333-8444-555555555555";
@@ -175,14 +195,21 @@ export function createHarnessyWorkload(seed: string, iterations = 64): HarnessyW
 		},
 	];
 	const input = `${JSON.stringify({ schema: "harnessy.engineering.operation-input.v1", iterations, cases: cases.map(({ id, method, args }) => ({ id, method, args })) })}\n`;
-	const expectedOutput = (count: number): string =>
-		`${JSON.stringify({
-			schema: "harnessy.engineering.operation-output.v1",
-			operations: Array.from({ length: count }, (_, iteration) =>
-				cases.map((test) => ({ iteration, caseId: test.id, result: test.expected })),
-			).flat(),
-		})}\n`;
-	const expected = { check: expectedOutput(1), sample: expectedOutput(iterations) };
+	const completed = (iteration: number) =>
+		cases.map((test) => ({ iteration, caseId: test.id, result: test.expected }));
+	// The sample digest covers the same bytes that the driver hashes: one line for each iteration.
+	const operations = createHash("sha256");
+	for (let iteration = 0; iteration < iterations; iteration++)
+		operations.update(`${JSON.stringify(completed(iteration))}\n`);
+	const expected = {
+		check: `${JSON.stringify({ schema: "harnessy.engineering.operation-output.v1", operations: completed(0) })}\n`,
+		sample: `${JSON.stringify({
+			schema: "harnessy.engineering.operation-digest.v1",
+			iterations,
+			operations: cases.length * iterations,
+			operationsDigest: operations.digest("hex"),
+		})}\n`,
+	};
 	const digest = (value: string): string => createHash("sha256").update(value).digest("hex");
 	const ids = Object.freeze(cases.map((test) => test.id));
 	return Object.freeze({
