@@ -1,9 +1,1 @@
-[
-	{
-		"package": "zod",
-		"url": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
-		"vulnerableVersions": "<4.6.6",
-		"reason": "Every Executor workspace pin and the hoisted zod resolve 4.6.7. One development-tool owner pins an older copy with no drop-in fix: @cloudflare/vitest-pool-workers pins zod 4.4.3 exactly (newest 0.23.0 still does; changing the pool would split the coherent Cloudflare owner set). It validates only Workers pool options written in this repository, never request input. The TanStack router family was upgraded on 2026-11-10 through executor/package.json overrides (router-plugin 1.169.0 uses zod ^4.5.4), which removed the zod 3 copy. scripts/security-invariants-lib.mjs fails if any other zod copy in executor/bun.lock is below 4.6.6. Remove when a pool release pins a fixed zod.",
-		"expires": "2026-11-24"
-	}
-]
+[]

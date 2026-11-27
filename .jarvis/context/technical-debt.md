@@ -415,6 +415,13 @@ not establish live activation.
 
 ## V2D-010 — Owner-selected Miniflare prerelease
 
+- **2026-11-27 dependency branch:** The Cloudflare Workers Vitest plugin
+  1.9.2 and Wrangler 4.168.0 both select Miniflare 5.20261123.1-beta.
+  The Executor audit has zero high findings and uses no exception. Miniflare
+  remains a prerelease. The root audit still finds Zod 3.25.76 through the
+  sandbox example. Anthropic's 0.0.83 release still requires Zod 3.
+  See [upstream issue 778](https://github.com/anthropics/sandbox-runtime/issues/778).
+
 - **Context:** No published Miniflare 4 owner cohort contains the patched
   `undici@7.29.0` boundary. Current stable top-level owners
   `@cloudflare/vitest-pool-workers@0.21.0` and `wrangler@4.120.1` both declare

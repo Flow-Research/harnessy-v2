@@ -257,7 +257,7 @@ const buildSandboxBridge = (spec: string, slug: string, baseUrl = "https://upstr
         Effect.ignore,
         Effect.andThen(
           Effect.tryPromise({
-            try: () => sql.end({ timeout: 0 }),
+            try: () => sql.end(),
             catch: (cause) => cause,
           }).pipe(Effect.ignore),
         ),
