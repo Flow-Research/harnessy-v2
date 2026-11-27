@@ -33,6 +33,11 @@ It has nine screens. Use `g` and a letter to move between them, and `⌘K` (or
   past one of another priority gives it that task's priority. Changes made by
   `harnessy jarvis tasks` show within 5 seconds. The page never writes the
   source Markdown or your notes files.
+  Follow-ups (things waiting on someone, or owed to someone) have their own
+  Follow-ups and Overdue tabs, sorted by priority then due date, from your list
+  and reminders alike; overdue means due before today in Africa/Lagos. Add one
+  with the Follow-up box in Add task (Waiting on, Link), and resolve it from its
+  detail with an optional note, which then shows on Done.
   When a task's line is edited in its source file, the row shows "source changed"
   and its old title for a day (until the portal restarts).
 - **Jobs** (`g j`): every Harnessy job and service, its schedule and next run
