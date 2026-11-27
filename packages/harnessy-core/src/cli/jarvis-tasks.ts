@@ -24,6 +24,7 @@ import {
 	type TaskOutcome,
 	TaskRefused,
 	TasksState,
+	validateCloseoutNote,
 } from "../jarvis/tasks/index.ts";
 import { targetOption } from "./shared.ts";
 
