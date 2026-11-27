@@ -83,7 +83,14 @@ export interface StoredTask {
 
 export interface TasksStore {
 	readonly version: typeof TASKS_STORE_VERSION;
+	/** Per-document revision for optimistic concurrency. Not the schema version. */
+	readonly revision: number;
 	readonly items: readonly StoredTask[];
+}
+
+/** Options shared by store mutations that may be replayed against a remote copy. */
+export interface TaskMutationOptions {
+	readonly expectedRevision?: number;
 }
 
 export interface CloseoutEntry {
@@ -94,6 +101,8 @@ export interface CloseoutEntry {
 
 /** A follow-up to create: the fields `add` accepts for `kind: "followup"`. */
 export interface FollowupInput {
+	/** When set, the new follow-up reuses this UUID so an offline close-out can be replayed. */
+	readonly id?: string;
 	readonly title: string;
 	readonly owner?: string | null;
 	readonly waitingOn?: string | null;
@@ -116,6 +125,8 @@ export interface IngestCandidate {
 	readonly line: number;
 	readonly fingerprint: string;
 	readonly displayRef: string;
+	/** When set, a newly created item reuses this UUID so an offline ingest can be replayed. */
+	readonly id?: string;
 }
 
 export interface TaskSidecarItem {
@@ -270,23 +281,29 @@ const isStoredTask = (value: unknown): value is StoredTask => {
 	return true;
 };
 
+const isRevision = (value: unknown): value is number =>
+	typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER;
+
 const parseStore = (value: unknown): TasksStore | undefined => {
 	if (
 		!isRecord(value) ||
-		Object.keys(value).sort().join(",") !== "items,version" ||
 		value.version !== TASKS_STORE_VERSION ||
 		!Array.isArray(value.items) ||
 		value.items.length > TASKS_MAX
 	)
 		return undefined;
+	const keys = Object.keys(value).sort().join(",");
+	if (keys !== "items,version" && keys !== "items,revision,version") return undefined;
+	const revision = value.revision === undefined ? 0 : value.revision;
+	if (!isRevision(revision)) return undefined;
 	const items = value.items.map(upgradeItem);
 	if (!items.every(isStoredTask)) return undefined;
 	const ids = new Set(items.map((item) => item.id));
 	if (ids.size !== items.length) return undefined;
-	return { version: TASKS_STORE_VERSION, items };
+	return { version: TASKS_STORE_VERSION, revision, items };
 };
 
-const EMPTY: TasksStore = { version: TASKS_STORE_VERSION, items: [] };
+const EMPTY: TasksStore = { version: TASKS_STORE_VERSION, revision: 0, items: [] };
 
 /** Reopening a resolved follow-up clears its resolution. */
 const REOPENED = { resolvedAt: null, resolution: null } as const;
@@ -408,6 +425,7 @@ export class TasksState {
 	readonly file: string;
 	readonly #clock: () => Date;
 	readonly #lockWaitMs: number;
+	#lockDepth = 0;
 
 	constructor(file: string, clock: () => Date = () => new Date(), lockWaitMs: number = TASKS_LOCK_WAIT_MS) {
 		this.file = file;
@@ -453,6 +471,8 @@ export class TasksState {
 		readonly kind?: TaskKind;
 		readonly waitingOn?: string | null;
 		readonly link?: string | null;
+		readonly id?: string;
+		readonly expectedRevision?: number;
 	}): StoredTask {
 		const item = this.#newItem(fields);
 		if (
@@ -462,14 +482,19 @@ export class TasksState {
 			throw new TaskRefused("invalid_index");
 		return this.#locked(() => {
 			const store = this.read();
+			this.#guardRevision(store, fields.expectedRevision);
+			const existing = store.items.find((row) => row.id === item.id);
+			if (existing !== undefined) return existing;
 			if (store.items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
-			this.#write({ version: TASKS_STORE_VERSION, items: placeItem(store.items, item, fields.index) });
+			this.#write(this.#bumped(store, placeItem(store.items, item, fields.index)));
 			return item;
 		});
 	}
 
 	/** Add a follow-up (a native item with `kind: "followup"`). */
-	addFollowup(fields: FollowupInput & { readonly index?: number }): StoredTask {
+	addFollowup(
+		fields: FollowupInput & { readonly index?: number; readonly id?: string; readonly expectedRevision?: number },
+	): StoredTask {
 		return this.add({ ...fields, kind: "followup" });
 	}
 
@@ -484,7 +509,9 @@ export class TasksState {
 		readonly kind?: TaskKind;
 		readonly waitingOn?: string | null;
 		readonly link?: string | null;
+		readonly id?: string;
 	}): StoredTask {
+		if (fields.id !== undefined && !isId(fields.id)) throw new TaskRefused("invalid_id");
 		const title = boundedText(fields.title, TASK_TITLE_MAX);
 		if (title === undefined) throw new TaskRefused("invalid_title");
 		const owner = optionalText(fields.owner, TASK_OWNER_MAX, "invalid_owner");
@@ -499,7 +526,7 @@ export class TasksState {
 		const link = optionalLink(fields.link);
 		const now = this.#clock().toISOString();
 		return {
-			id: randomUUID(),
+			id: fields.id ?? randomUUID(),
 			title,
 			status: fields.status ?? (kind === "followup" && waitingOn !== null ? "waiting" : "todo"),
 			owner,
@@ -521,33 +548,34 @@ export class TasksState {
 	}
 
 	/** Resolve a follow-up (or any task): done, with when and an optional note. Re-resolving with the same note is a no-op. */
-	resolve(id: string, note?: string | null): StoredTask {
+	resolve(id: string, note?: string | null, expectedRevision?: number): StoredTask {
 		const resolution = optionalText(note, TASK_RESOLUTION_MAX, "invalid_resolution");
-		return this.#update(id, (item, updatedAt) => resolvedFields(item, resolution, updatedAt));
+		return this.#update(id, (item, updatedAt) => resolvedFields(item, resolution, updatedAt), expectedRevision);
 	}
 
-	setPriority(id: string, priority: number): StoredTask {
+	setPriority(id: string, priority: number, expectedRevision?: number): StoredTask {
 		if (!Number.isInteger(priority) || priority < 0 || priority > TASK_PRIORITY_MAX)
 			throw new TaskRefused("invalid_priority");
-		return this.#update(id, (item, updatedAt) => ({ ...item, priority, updatedAt }));
+		return this.#update(id, (item, updatedAt) => ({ ...item, priority, updatedAt }), expectedRevision);
 	}
 
 	/** Put every item in `ids` order. `ids` must name each current item exactly once. */
-	reorder(ids: readonly string[]): void {
+	reorder(ids: readonly string[], expectedRevision?: number): void {
 		this.#locked(() => {
 			const store = this.read();
+			this.#guardRevision(store, expectedRevision);
 			const byId = new Map(store.items.map((item) => [item.id, item]));
 			if (ids.length !== byId.size || new Set(ids).size !== ids.length || !ids.every((id) => byId.has(id)))
 				throw new TaskRefused("tasks_changed");
 			const items = ids.map((id) => byId.get(id)!);
-			this.#write({ version: TASKS_STORE_VERSION, items });
+			this.#write(this.#bumped(store, items));
 		});
 	}
 
 	applyOutcome(
 		id: string,
 		outcome: TaskOutcome,
-		options: { readonly owner?: string | null; readonly date?: string } = {},
+		options: { readonly owner?: string | null; readonly date?: string; readonly expectedRevision?: number } = {},
 	): StoredTask {
 		if (!OUTCOMES.has(outcome)) throw new TaskRefused("invalid_outcome");
 		const date = options.date ?? lagosCalendarDate(this.#clock());
@@ -559,17 +587,25 @@ export class TasksState {
 					? undefined
 					: optionalText(options.owner, TASK_OWNER_MAX, "invalid_owner");
 		if (outcome === "delegated" && (owner === null || owner === undefined)) throw new TaskRefused("owner_required");
-		return this.#update(id, (item, updatedAt) => {
-			const next = applyOutcomeFields(item, outcome, owner ?? item.owner, date, updatedAt);
-			return outcomeUnchanged(item, next) ? item : next;
-		});
+		return this.#update(
+			id,
+			(item, updatedAt) => {
+				const next = applyOutcomeFields(item, outcome, owner ?? item.owner, date, updatedAt);
+				return outcomeUnchanged(item, next) ? item : next;
+			},
+			options.expectedRevision,
+		);
 	}
 
 	/** Apply many outcomes in one write. The whole batch is refused if any entry is invalid. */
 	closeout(
 		entries: readonly CloseoutEntry[],
 		date?: string,
-		extras: { readonly followups?: readonly FollowupInput[]; readonly resolve?: readonly ResolveEntry[] } = {},
+		extras: {
+			readonly followups?: readonly FollowupInput[];
+			readonly resolve?: readonly ResolveEntry[];
+			readonly expectedRevision?: number;
+		} = {},
 	): {
 		readonly updated: readonly StoredTask[];
 		readonly unchanged: number;
@@ -588,6 +624,7 @@ export class TasksState {
 		if (!isDay(day)) throw new TaskRefused("invalid_due");
 		return this.#locked(() => {
 			const store = this.read();
+			this.#guardRevision(store, extras.expectedRevision);
 			const byId = new Map(store.items.map((item) => [item.id, item]));
 			const now = this.#clock().toISOString();
 			const updated: StoredTask[] = [];
@@ -635,10 +672,7 @@ export class TasksState {
 			}
 			if (store.items.length + fresh.length > TASKS_MAX) throw new TaskRefused("tasks_full");
 			if (updated.length > 0 || fresh.length > 0)
-				this.#write({
-					version: TASKS_STORE_VERSION,
-					items: [...store.items.map((item) => nextById.get(item.id) ?? item), ...fresh],
-				});
+				this.#write(this.#bumped(store, [...store.items.map((item) => nextById.get(item.id) ?? item), ...fresh]));
 			return { updated, unchanged, created: fresh };
 		});
 	}
@@ -656,6 +690,7 @@ export class TasksState {
 			readonly briefDate: string | null;
 		},
 		sidecar?: { readonly date: string; readonly path: string },
+		expectedRevision?: number,
 	): {
 		readonly items: readonly StoredTask[];
 		readonly created: number;
@@ -665,6 +700,7 @@ export class TasksState {
 		if (source.path.length > 512) throw new TaskRefused("invalid_source");
 		return this.#locked(() => {
 			const store = this.read();
+			this.#guardRevision(store, expectedRevision);
 			let items = [...store.items];
 			const used = new Set<string>();
 			const openByFingerprint = new Map<string, StoredTask[]>();
@@ -757,8 +793,11 @@ export class TasksState {
 				}
 				if (items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
 				created += 1;
+				if (candidate.id !== undefined && !isId(candidate.id)) throw new TaskRefused("invalid_id");
+				if (candidate.id !== undefined && items.some((row) => row.id === candidate.id))
+					throw new TaskRefused("duplicate_id");
 				const item: StoredTask = {
-					id: randomUUID(),
+					id: candidate.id ?? randomUUID(),
 					title: candidate.title.slice(0, TASK_TITLE_MAX),
 					status: candidate.status,
 					owner: candidate.owner,
@@ -792,7 +831,7 @@ export class TasksState {
 					title: item.title,
 				});
 			}
-			this.#write({ version: TASKS_STORE_VERSION, items });
+			this.#write(this.#bumped(store, items));
 			const sidecarDocument: TaskSidecar | undefined =
 				sidecar === undefined ? undefined : { version: 1, date: sidecar.date, items: sidecarItems };
 			if (sidecar !== undefined && sidecarDocument !== undefined) this.#writeSidecar(sidecar.path, sidecarDocument);
@@ -805,19 +844,54 @@ export class TasksState {
 		});
 	}
 
-	#update(id: string, update: (item: StoredTask, updatedAt: string) => StoredTask): StoredTask {
+	#update(
+		id: string,
+		update: (item: StoredTask, updatedAt: string) => StoredTask,
+		expectedRevision?: number,
+	): StoredTask {
 		return this.#locked(() => {
 			const store = this.read();
+			this.#guardRevision(store, expectedRevision);
 			const current = store.items.find((item) => item.id === id);
 			if (current === undefined) throw new TaskRefused("task_missing");
 			const next = update(current, this.#clock().toISOString());
 			if (next === current) return current;
-			this.#write({
-				version: TASKS_STORE_VERSION,
-				items: store.items.map((item) => (item.id === id ? next : item)),
-			});
+			this.#write(
+				this.#bumped(
+					store,
+					store.items.map((item) => (item.id === id ? next : item)),
+				),
+			);
 			return next;
 		});
+	}
+
+	/**
+	 * Write a complete snapshot, including its revision, without bumping.
+	 * Used by the sync client to install the remote primary copy as the local cache.
+	 */
+	installSnapshot(store: TasksStore): void {
+		const parsed = parseStore(JSON.parse(JSON.stringify(store)));
+		if (parsed === undefined) throw new TaskRefused("unwritable");
+		this.#locked(() => {
+			this.#write(parsed);
+		});
+	}
+
+	/**
+	 * Hold the store's cross-process lock for a synchronous action that may also
+	 * update the sync queue. Nested store writes in the same process reuse the lock.
+	 */
+	runExclusive<A>(action: () => A): A {
+		return this.#locked(action);
+	}
+
+	#guardRevision(store: TasksStore, expected?: number): void {
+		if (expected !== undefined && store.revision !== expected) throw new TaskRefused("stale_revision");
+	}
+
+	#bumped(store: TasksStore, items: readonly StoredTask[]): TasksStore {
+		return { version: TASKS_STORE_VERSION, revision: store.revision + 1, items };
 	}
 
 	/**
@@ -827,6 +901,7 @@ export class TasksState {
 	 * record. Refuses `tasks_busy` when another writer holds it past the wait.
 	 */
 	#locked<A>(action: () => A): A {
+		if (this.#lockDepth > 0) return action();
 		const lockPath = `${this.file}.lock`;
 		const prepared = Result.try(() => {
 			mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
@@ -841,9 +916,11 @@ export class TasksState {
 				database.exec("BEGIN EXCLUSIVE");
 			});
 			if (Result.isFailure(locked)) throw new TaskRefused("tasks_busy");
+			this.#lockDepth += 1;
 			try {
 				return action();
 			} finally {
+				this.#lockDepth -= 1;
 				database.exec("ROLLBACK");
 			}
 		} finally {
@@ -856,7 +933,7 @@ export class TasksState {
 	}
 
 	#write(store: TasksStore): void {
-		const payload = { version: TASKS_STORE_VERSION, items: store.items };
+		const payload = { version: TASKS_STORE_VERSION, revision: store.revision, items: store.items };
 		if (parseStore(JSON.parse(JSON.stringify(payload))) === undefined) throw new TaskRefused("unwritable");
 		if (Buffer.byteLength(`${JSON.stringify(payload)}\n`, "utf8") > TASKS_FILE_MAX_BYTES)
 			throw new TaskRefused("unwritable");

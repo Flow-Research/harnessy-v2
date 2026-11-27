@@ -45,7 +45,7 @@ const briefText = `## What Changed
 describe("TasksState", () => {
 	it("adds, lists, inserts and reorders in an owner-only versioned file", () => {
 		const { state, file } = stateFile("crud");
-		expect(state.read()).toEqual({ version: 1, items: [] });
+		expect(state.read()).toEqual({ version: 1, revision: 0, items: [] });
 		const first = state.add({ title: "  Review the brief  ", priority: 10 });
 		const second = state.add({ title: "Call Seyi", index: 0, priority: 0 });
 		expect(first.title).toBe("Review the brief");
@@ -622,5 +622,46 @@ describe("review follow-ups: occurrence and scope matching", () => {
 		// Today's derived brief line (its revision) is overlaid on today's open item, not on yesterday's done one.
 		expect(open[0]!.source.revision).toBe("2026-11-27T05:00:00.000Z");
 		expect(rows.find((item) => item.id === yesterday.id)?.source.revision).not.toBe("2026-11-27T05:00:00.000Z");
+	});
+});
+
+describe("document revision", () => {
+	it("treats a version-1 file without revision as revision 0, then bumps on write", () => {
+		const file = join(temp("rev-compat"), "tasks.json");
+		writeFileSync(file, '{"version":1,"items":[]}\n', { mode: 0o600 });
+		const state = new TasksState(file, () => new Date("2026-11-27T16:00:00.000Z"));
+		expect(state.read().revision).toBe(0);
+		state.add({ title: "First" });
+		const raw = JSON.parse(readFileSync(file, "utf8")) as { revision: number; version: number };
+		expect(raw.version).toBe(1);
+		expect(raw.revision).toBe(1);
+		state.add({ title: "Second" });
+		expect(state.read().revision).toBe(2);
+	});
+
+	it("refuses a stale expected revision and accepts a matching one", () => {
+		const file = join(temp("rev-stale"), "tasks.json");
+		const state = new TasksState(file, () => new Date("2026-11-27T16:00:00.000Z"));
+		state.add({ title: "One" });
+		expect(state.read().revision).toBe(1);
+		expect(() => state.add({ title: "Two", expectedRevision: 0 })).toThrowError(TaskRefused);
+		try {
+			state.add({ title: "Two", expectedRevision: 0 });
+		} catch (error) {
+			expect(error).toBeInstanceOf(TaskRefused);
+			expect((error as TaskRefused).code).toBe("stale_revision");
+		}
+		expect(state.read().items).toHaveLength(1);
+		state.add({ title: "Two", expectedRevision: 1 });
+		expect(state.read().revision).toBe(2);
+		expect(state.read().items).toHaveLength(2);
+	});
+
+	it("installs a snapshot without bumping its revision", () => {
+		const file = join(temp("rev-snap"), "tasks.json");
+		const state = new TasksState(file, () => new Date("2026-11-27T16:00:00.000Z"));
+		state.add({ title: "Local" });
+		state.installSnapshot({ version: 1, revision: 9, items: [] });
+		expect(state.read()).toEqual({ version: 1, revision: 9, items: [] });
 	});
 });

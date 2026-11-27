@@ -1,0 +1,44 @@
+# New Coolify-attached compose project. Deploy only under a new directory
+# (for example /opt/harnessy-tasks). Do not edit the Coolify proxy or
+# existing apps. Put the bearer token in ./tasks.token with mode 0600;
+# that file stays on the host and is not committed.
+services:
+  tasks:
+    image: harnessy-tasks:local
+    platform: linux/amd64
+    # VPS deploy user, so the 0600 token and data volume are accessible.
+    user: "1003:1003"
+    container_name: harnessy-tasks
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8787"
+      TASKS_FILE: /data/tasks.json
+      TASKS_TOKEN_FILE: /run/secrets/tasks-token
+    volumes:
+      - ./data:/data
+      - ./tasks.token:/run/secrets/tasks-token:ro
+    networks:
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
+      - "traefik.http.routers.harnessy-tasks-http.entrypoints=http"
+      - "traefik.http.routers.harnessy-tasks-http.rule=Host(`tasks.187-77-170-118.sslip.io`)"
+      - "traefik.http.routers.harnessy-tasks-http.middlewares=harnessy-tasks-https"
+      - "traefik.http.middlewares.harnessy-tasks-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.harnessy-tasks.entrypoints=https"
+      - "traefik.http.routers.harnessy-tasks.rule=Host(`tasks.187-77-170-118.sslip.io`)"
+      - "traefik.http.routers.harnessy-tasks.tls=true"
+      - "traefik.http.routers.harnessy-tasks.tls.certresolver=letsencrypt"
+      - "traefik.http.services.harnessy-tasks.loadbalancer.server.port=8787"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  coolify:
+    external: true

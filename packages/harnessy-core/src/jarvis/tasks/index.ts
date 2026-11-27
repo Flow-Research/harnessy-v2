@@ -1,4 +1,11 @@
 export {
+	loadTasksAuthToken,
+	startTasksHttpServer,
+	TASKS_SERVICE_PORT,
+	type TasksHttpOptions,
+	type TasksHttpServer,
+} from "./http.ts";
+export {
 	briefTasksSidecarPath,
 	candidatesFromExtracted,
 	ensureStoredTask,
@@ -38,6 +45,7 @@ export {
 	TASKS_MAX,
 	TASKS_STORE_VERSION,
 	type TaskKind,
+	type TaskMutationOptions,
 	type TaskOutcome,
 	TaskRefused,
 	type TaskSidecar,
@@ -47,3 +55,21 @@ export {
 	type TasksStore,
 	taskFingerprint,
 } from "./store.ts";
+export {
+	applyMutation,
+	DEFAULT_SYNC_CONFIG_PATH,
+	DEFAULT_SYNC_TOKEN_PATH,
+	defaultQueuePath,
+	enqueueMutation,
+	fetchTransport,
+	type QueuedMutation,
+	readQueue,
+	readSyncConfigFile,
+	readSyncToken,
+	resolveSyncConfig,
+	syncTasks,
+	type TasksSyncConfig,
+	type TasksTransport,
+	writeQueue,
+	writeSyncConfig,
+} from "./sync.ts";
