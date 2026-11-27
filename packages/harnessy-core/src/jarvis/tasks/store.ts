@@ -101,6 +101,8 @@ export interface CloseoutEntry {
 
 /** A follow-up to create: the fields `add` accepts for `kind: "followup"`. */
 export interface FollowupInput {
+	/** When set, the new follow-up reuses this UUID so an offline close-out can be replayed. */
+	readonly id?: string;
 	readonly title: string;
 	readonly owner?: string | null;
 	readonly waitingOn?: string | null;
