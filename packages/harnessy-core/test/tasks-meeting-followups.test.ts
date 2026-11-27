@@ -14,6 +14,7 @@ import {
 } from "../src/jarvis/tasks/meeting-followups.ts";
 import { TASK_ID, TasksState } from "../src/jarvis/tasks/store.ts";
 import { defaultQueuePath, readQueue } from "../src/jarvis/tasks/sync.ts";
+import { extractBriefTasks } from "../src/read-model/followups.ts";
 
 const roots: string[] = [];
 const servers: TasksHttpServer[] = [];
@@ -143,6 +144,43 @@ describe("brief follow-ups", () => {
 		for (const item of followups)
 			expect(item.source).toMatchObject({ kind: "brief", briefDate: "2026-11-27", displayRef: "brief 2026-11-27" });
 		expect(items.filter((item) => item.kind === "task").map((item) => item.title)).toEqual(["Approve the budget"]);
+	});
+
+	it("reads the owner from 'Name owes', 'owed' or 'owns' and keeps the dash form", () => {
+		const brief = `## Delegated or Waiting
+
+- Ada Obi owes the signed terms by 2026-12-02.
+- Sam owed the dated roadmap milestones; receipt not confirmed.
+- Mr. Eze owns the supplier list; Kemi owns the venue.
+- Your cousin owns the shortlist.
+- Tobi — send the deck.
+- nobody owns this lowercase line.
+- The plan says Ada owns it later in the sentence, and that is fine.
+`;
+		const items = extractBriefTasks(brief);
+		expect(items.map((item) => [item.owner, item.title])).toEqual([
+			["Ada Obi", "Ada Obi owes the signed terms by 2026-12-02."],
+			["Sam", "Sam owed the dated roadmap milestones; receipt not confirmed."],
+			["Mr. Eze", "Mr. Eze owns the supplier list; Kemi owns the venue."],
+			["Your cousin", "Your cousin owns the shortlist."],
+			["Tobi", "send the deck."],
+			[null, "nobody owns this lowercase line."],
+			[null, "The plan says Ada owns it later in the sentence, and that is fine."],
+		]);
+		expect(items.every((item) => item.followup === true && item.status === "waiting")).toBe(true);
+		expect(items[0]!.due).toBe("2026-12-02");
+	});
+
+	it("stores the verb-form owner as waitingOn, once", () => {
+		const root = tempRoot();
+		const tasksFile = join(root, "tasks.json");
+		const brief = writeBrief(root, "27", "## Delegated or Waiting\n\n- Ada Obi owns the venue booking.\n");
+		expect(capturePublishedBrief(root, brief, "2026-11-27", { tasksFile })).toMatchObject({
+			created: 1,
+			followups: 1,
+		});
+		expect(new TasksState(tasksFile).read().items[0]).toMatchObject({ kind: "followup", waitingOn: "Ada Obi" });
+		expect(capturePublishedBrief(root, brief, "2026-11-27", { tasksFile })).toMatchObject({ created: 0 });
 	});
 
 	it("adds nothing for the same brief again or for a restated item the next day", () => {

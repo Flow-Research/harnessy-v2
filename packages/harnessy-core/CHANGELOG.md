@@ -14,7 +14,9 @@
   task store, with the note as source, the recording as link and no due date.
   They are queued for the VPS and replayed once per poll. Re-runs add nothing.
 - A published daily brief's "Delegated or Waiting" items become follow-ups
-  that wait on the person named, and the brief is queued for the VPS.
+  that wait on the person named, and the brief is queued for the VPS. The
+  person is the name before a dash ("Name — action") or before "owes", "owed"
+  or "owns" (at most three words, for example "Name owns the setup").
 - The task store accepts a `meeting` source kind, and the tasks service adds
   `POST /v1/followups/ingest` for one note's follow-ups. Deploy the service
   before you install this version on a Mac with task sync.
