@@ -524,7 +524,7 @@ for (let index = 0; index < 40; index += 1) state.add({ title: ${JSON.stringify(
 			return new Promise<number | null>((resolve) => {
 				const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", script], {
 					cwd: root,
-					env: { HOME: root },
+					env: { HOME: root, PI_AUTH_ENCRYPTION: "off", HSY_AUTH_ENCRYPTION: "off" },
 					stdio: "ignore",
 				});
 				child.on("exit", (code) => resolve(code));
