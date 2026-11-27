@@ -2,6 +2,8 @@
  * `harnessy jarvis tasks` — non-interactive JSON commands for the local task
  * store. The 18:30 Africa/Lagos close-out routine can call `closeout`.
  *
+ * `followup add|list|resolve` serve the 8:00, 13:00 and 18:30 check-ins.
+ *
  * These commands never write brief, reminder, register or status Markdown.
  * `--write-note` is the only way a note file is appended, and only from the CLI.
  */
@@ -20,8 +22,12 @@ import {
 	appendCloseoutNote,
 	type CloseoutEntry,
 	defaultTasksFile,
+	type FollowupInput,
+	type FollowupView,
+	followupsForView,
 	ingestBriefFile,
 	lagosCalendarDate,
+	type ResolveEntry,
 	type TaskOutcome,
 	TaskRefused,
 	TasksState,
@@ -184,14 +190,53 @@ export const jarvisTasksOutcomeCommand = Command.make(
 
 const readCloseoutInput = (
 	input: string,
-): { readonly date?: string; readonly outcomes: CloseoutEntry[]; readonly note?: string } => {
+): {
+	readonly date?: string;
+	readonly outcomes: CloseoutEntry[];
+	readonly followups: FollowupInput[];
+	readonly resolve: ResolveEntry[];
+	readonly note?: string;
+} => {
 	const raw = input === "-" ? readFileSync(0, "utf8") : readFileSync(resolve(input), "utf8");
 	const value: unknown = JSON.parse(raw);
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new TaskRefused("invalid_body");
 	const body = value as Record<string, unknown>;
 	if (body.date !== undefined && (typeof body.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(body.date)))
 		throw new TaskRefused("invalid_due");
+	if (body.outcomes === undefined && (body.followups !== undefined || body.resolve !== undefined)) body.outcomes = [];
 	if (!Array.isArray(body.outcomes)) throw new TaskRefused("invalid_body");
+	if (body.followups !== undefined && !Array.isArray(body.followups)) throw new TaskRefused("invalid_body");
+	if (body.resolve !== undefined && !Array.isArray(body.resolve)) throw new TaskRefused("invalid_body");
+	const text = (row: Record<string, unknown>, key: string): string | null | undefined => {
+		const value = row[key];
+		if (value === undefined || value === null) return value;
+		if (typeof value !== "string") throw new TaskRefused("invalid_body");
+		return value;
+	};
+	const rowOf = (entry: unknown): Record<string, unknown> => {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new TaskRefused("invalid_body");
+		return entry as Record<string, unknown>;
+	};
+	const followups: FollowupInput[] = ((body.followups ?? []) as unknown[]).map((entry) => {
+		const row = rowOf(entry);
+		const title = text(row, "title");
+		if (typeof title !== "string") throw new TaskRefused("invalid_title");
+		if (row.priority !== undefined && !Number.isInteger(row.priority)) throw new TaskRefused("invalid_priority");
+		return {
+			title,
+			owner: text(row, "owner") ?? null,
+			waitingOn: text(row, "waitingOn") ?? null,
+			due: text(row, "due") ?? null,
+			link: text(row, "link") ?? null,
+			project: text(row, "project") ?? null,
+			...(row.priority === undefined ? {} : { priority: row.priority as number }),
+		};
+	});
+	const resolveEntries: ResolveEntry[] = ((body.resolve ?? []) as unknown[]).map((entry) => {
+		const row = rowOf(entry);
+		if (typeof row.id !== "string") throw new TaskRefused("invalid_body");
+		return { id: row.id, note: text(row, "note") ?? null };
+	});
 	const outcomes: CloseoutEntry[] = body.outcomes.map((entry) => {
 		if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new TaskRefused("invalid_body");
 		const row = entry as Record<string, unknown>;
@@ -207,6 +252,8 @@ const readCloseoutInput = (
 	});
 	return {
 		outcomes,
+		followups,
+		resolve: resolveEntries,
 		...(typeof body.date === "string" ? { date: body.date } : {}),
 		...(typeof body.note === "string" ? { note: body.note } : {}),
 	};
@@ -217,7 +264,9 @@ export const jarvisTasksCloseoutCommand = Command.make(
 	{
 		...shared,
 		input: Options.String("input").pipe(
-			Options.withDescription('JSON file of { "outcomes": [...], "date"?, "note"? }. Use - to read stdin.'),
+			Options.withDescription(
+				'JSON file of { "outcomes": [...], "followups"?: [...], "resolve"?: [...], "date"?, "note"? }. Use - to read stdin.',
+			),
 		),
 		writeNote: Options.Boolean("write-note").pipe(
 			Options.withDefault(false),
@@ -246,6 +295,7 @@ export const jarvisTasksCloseoutCommand = Command.make(
 			const result = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).closeout(
 				payload.outcomes,
 				payload.date,
+				{ followups: payload.followups, resolve: payload.resolve },
 			);
 			// Outcomes are already committed here, so a note failure is reported beside
 			// them (ok stays true) rather than as a failed command a retry would hide.
@@ -261,10 +311,112 @@ export const jarvisTasksCloseoutCommand = Command.make(
 			return {
 				updated: result.updated,
 				unchanged: result.unchanged,
+				created: result.created,
 				...(notePath === undefined ? {} : { notePath }),
 				...(noteError === undefined ? {} : { noteError }),
 			};
 		}),
+);
+
+const FOLLOWUP_VIEWS: ReadonlyArray<FollowupView> = ["open", "overdue", "resolved", "all"];
+
+export const jarvisFollowupAddCommand = Command.make(
+	"add",
+	{
+		...shared,
+		title: Options.String("title").pipe(Options.withDescription("What is owed, by or to whom.")),
+		owner: Options.String("owner").pipe(
+			Options.optional,
+			Options.withDescription("Counterparty: the person this follow-up is with."),
+		),
+		waitingOn: Options.String("waiting-on").pipe(
+			Options.optional,
+			Options.withDescription("What or whom it is waiting on. Set, the follow-up starts as waiting."),
+		),
+		due: Options.String("due").pipe(Options.optional, Options.withDescription("Due date (YYYY-MM-DD).")),
+		priority: Options.Int("priority").pipe(
+			Options.optional,
+			Options.withDescription("Sort priority; lower numbers come first (0–10000). Default 100."),
+		),
+		link: Options.String("link").pipe(
+			Options.optional,
+			Options.withDescription("http(s) link to the source (thread, doc, ticket)."),
+		),
+		project: Options.String("project").pipe(Options.optional, Options.withDescription("Optional project name.")),
+	},
+	({ homeRoot, stateDir, tasksFile, title, owner, waitingOn, due, priority, link, project }) =>
+		run(() => {
+			const item = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).addFollowup({
+				title,
+				owner: Option.getOrUndefined(owner) ?? null,
+				waitingOn: Option.getOrUndefined(waitingOn) ?? null,
+				due: Option.getOrUndefined(due) ?? null,
+				link: Option.getOrUndefined(link) ?? null,
+				project: Option.getOrUndefined(project) ?? null,
+				...(Option.isSome(priority) ? { priority: Option.getOrUndefined(priority) } : {}),
+			});
+			return { item };
+		}),
+);
+
+export const jarvisFollowupListCommand = Command.make(
+	"list",
+	{
+		...shared,
+		view: Options.String("view").pipe(
+			Options.withDefault("open"),
+			Options.withDescription("open (default), overdue, resolved, or all. Open views sort by priority, then due."),
+		),
+		today: Options.String("today").pipe(
+			Options.optional,
+			Options.withDescription("Today for the overdue check (YYYY-MM-DD). Defaults to today in Africa/Lagos."),
+		),
+	},
+	({ homeRoot, stateDir, tasksFile, view, today }) =>
+		run(() => {
+			const chosen = FOLLOWUP_VIEWS.find((entry) => entry === view.trim().toLowerCase());
+			if (chosen === undefined) throw new TaskRefused("invalid_view");
+			const day = Option.getOrUndefined(today) ?? lagosCalendarDate(new Date());
+			if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) throw new TaskRefused("invalid_due");
+			const items = followupsForView(
+				new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).read().items,
+				chosen,
+				day,
+			);
+			const overdue = items.filter(
+				(item) => item.status !== "done" && item.status !== "dropped" && item.due !== null && item.due < day,
+			).length;
+			return { view: chosen, today: day, count: items.length, overdue, items };
+		}),
+);
+
+export const jarvisFollowupResolveCommand = Command.make(
+	"resolve",
+	{
+		...shared,
+		id: Options.String("id").pipe(Options.withDescription("Store UUID of the follow-up.")),
+		note: Options.String("note").pipe(
+			Options.optional,
+			Options.withDescription("Resolution note, up to 500 characters."),
+		),
+	},
+	({ homeRoot, stateDir, tasksFile, id, note }) =>
+		run(() => {
+			const item = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).resolve(
+				id,
+				Option.getOrUndefined(note) ?? null,
+			);
+			return { item };
+		}),
+);
+
+export const jarvisFollowupCommand = Command.make("followup").pipe(
+	Command.withDescription("Add, list (open, overdue, resolved) and resolve follow-ups in the local task store."),
+	Command.withSubcommands([
+		jarvisFollowupAddCommand,
+		jarvisFollowupListCommand,
+		jarvisFollowupResolveCommand,
+	] as const),
 );
 
 export const jarvisTasksCommand = Command.make("tasks").pipe(
@@ -277,5 +429,6 @@ export const jarvisTasksCommand = Command.make("tasks").pipe(
 		jarvisTasksAddCommand,
 		jarvisTasksOutcomeCommand,
 		jarvisTasksCloseoutCommand,
+		jarvisFollowupCommand,
 	] as const),
 );

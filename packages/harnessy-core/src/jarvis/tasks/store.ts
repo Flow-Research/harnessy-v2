@@ -31,6 +31,9 @@ export const TASK_TITLE_MAX = 300;
 export const TASK_OWNER_MAX = 64;
 export const TASK_PROJECT_MAX = 64;
 export const TASK_PRIORITY_MAX = 10_000;
+export const TASK_WAITING_ON_MAX = 120;
+export const TASK_LINK_MAX = 2048;
+export const TASK_RESOLUTION_MAX = 500;
 export const TASKS_FILE_MAX_BYTES = 1024 * 1024;
 /** How long a mutation waits for another writer (portal, CLI, brief ingest) before refusing `tasks_busy`. */
 export const TASKS_LOCK_WAIT_MS = 5_000;
@@ -40,6 +43,10 @@ export const TASK_DAY = /^\d{4}-\d{2}-\d{2}$/u;
 
 export type TaskStatus = "todo" | "doing" | "waiting" | "done" | "dropped";
 export type TaskOutcome = "done" | "carried" | "dropped" | "delegated";
+/** A plain task, or a follow-up: something owed by or to someone, tracked until resolved. */
+export type TaskKind = "task" | "followup";
+/** Follow-up views: open (sorted by priority then due), overdue (open and past due), resolved, or all. */
+export type FollowupView = "open" | "overdue" | "resolved" | "all";
 export type StoredTaskSourceKind = "brief" | "reminders" | "register" | "status-md" | "native";
 
 export interface StoredTaskSource {
@@ -64,6 +71,14 @@ export interface StoredTask {
 	readonly source: StoredTaskSource;
 	readonly createdAt: string;
 	readonly updatedAt: string;
+	readonly kind: TaskKind;
+	/** For a follow-up: what or whom it is waiting on (free text). */
+	readonly waitingOn: string | null;
+	/** An http(s) link to where the follow-up came from (thread, doc, ticket). */
+	readonly link: string | null;
+	/** When a follow-up was resolved, and the note recorded with it. */
+	readonly resolvedAt: string | null;
+	readonly resolution: string | null;
 }
 
 export interface TasksStore {
@@ -75,6 +90,22 @@ export interface CloseoutEntry {
 	readonly id: string;
 	readonly outcome: TaskOutcome;
 	readonly owner?: string;
+}
+
+/** A follow-up to create: the fields `add` accepts for `kind: "followup"`. */
+export interface FollowupInput {
+	readonly title: string;
+	readonly owner?: string | null;
+	readonly waitingOn?: string | null;
+	readonly due?: string | null;
+	readonly priority?: number;
+	readonly link?: string | null;
+	readonly project?: string | null;
+}
+
+export interface ResolveEntry {
+	readonly id: string;
+	readonly note?: string | null;
 }
 
 export interface IngestCandidate {
@@ -142,8 +173,13 @@ const STATUSES: ReadonlySet<string> = new Set(["todo", "doing", "waiting", "done
 const OUTCOMES: ReadonlySet<string> = new Set(["done", "carried", "dropped", "delegated"]);
 const KINDS: ReadonlySet<string> = new Set(["brief", "reminders", "register", "status-md", "native"]);
 const SOURCE_KEYS = "briefDate,displayRef,kind,line,path";
-const ITEM_KEYS =
+/** Items written before follow-ups have the base keys; they read as `kind: "task"`. */
+const BASE_ITEM_KEYS =
 	"carriedFrom,createdAt,due,fingerprint,id,outcome,owner,priority,project,source,status,title,updatedAt";
+const ITEM_KEYS =
+	"carriedFrom,createdAt,due,fingerprint,id,kind,link,outcome,owner,priority,project,resolution,resolvedAt,source,status,title,updatedAt,waitingOn";
+const TASK_KINDS: ReadonlySet<string> = new Set(["task", "followup"]);
+const FOLLOWUP_DEFAULTS = { kind: "task", waitingOn: null, link: null, resolvedAt: null, resolution: null } as const;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	!!value && typeof value === "object" && !Array.isArray(value);
@@ -167,6 +203,20 @@ const optionalText = (value: string | null | undefined, max: number, code: strin
 	return text;
 };
 
+const isLink = (value: unknown): value is string => {
+	if (typeof value !== "string" || value.length === 0 || value.length > TASK_LINK_MAX || emptyControl(value))
+		return false;
+	const parsed = URL.canParse(value) ? new URL(value) : undefined;
+	return parsed !== undefined && (parsed.protocol === "https:" || parsed.protocol === "http:");
+};
+
+const optionalLink = (value: string | null | undefined): string | null => {
+	if (value === null || value === undefined || value.trim() === "") return null;
+	const text = value.trim();
+	if (!isLink(text)) throw new TaskRefused("invalid_link");
+	return text;
+};
+
 const optionalDay = (value: string | null | undefined, code: string): string | null => {
 	if (value === null || value === undefined || value.trim() === "") return null;
 	if (!isDay(value)) throw new TaskRefused(code);
@@ -185,8 +235,19 @@ const isSource = (value: unknown): value is StoredTaskSource => {
 	return true;
 };
 
+/** An item with the base keys gains the follow-up fields as a plain task. */
+const upgradeItem = (value: unknown): unknown =>
+	isRecord(value) && Object.keys(value).sort().join(",") === BASE_ITEM_KEYS
+		? { ...value, ...FOLLOWUP_DEFAULTS }
+		: value;
+
 const isStoredTask = (value: unknown): value is StoredTask => {
 	if (!isRecord(value) || Object.keys(value).sort().join(",") !== ITEM_KEYS) return false;
+	if (typeof value.kind !== "string" || !TASK_KINDS.has(value.kind)) return false;
+	if (value.waitingOn !== null && !isText(value.waitingOn, TASK_WAITING_ON_MAX)) return false;
+	if (value.link !== null && !isLink(value.link)) return false;
+	if (value.resolvedAt !== null && !isInstant(value.resolvedAt)) return false;
+	if (value.resolution !== null && !isText(value.resolution, TASK_RESOLUTION_MAX)) return false;
 	if (!isId(value.id) || !isText(value.title, TASK_TITLE_MAX)) return false;
 	if (typeof value.status !== "string" || !STATUSES.has(value.status)) return false;
 	if (value.owner !== null && !isText(value.owner, TASK_OWNER_MAX)) return false;
@@ -215,16 +276,20 @@ const parseStore = (value: unknown): TasksStore | undefined => {
 		Object.keys(value).sort().join(",") !== "items,version" ||
 		value.version !== TASKS_STORE_VERSION ||
 		!Array.isArray(value.items) ||
-		value.items.length > TASKS_MAX ||
-		!value.items.every(isStoredTask)
+		value.items.length > TASKS_MAX
 	)
 		return undefined;
-	const ids = new Set(value.items.map((item) => item.id));
-	if (ids.size !== value.items.length) return undefined;
-	return { version: TASKS_STORE_VERSION, items: value.items };
+	const items = value.items.map(upgradeItem);
+	if (!items.every(isStoredTask)) return undefined;
+	const ids = new Set(items.map((item) => item.id));
+	if (ids.size !== items.length) return undefined;
+	return { version: TASKS_STORE_VERSION, items };
 };
 
 const EMPTY: TasksStore = { version: TASKS_STORE_VERSION, items: [] };
+
+/** Reopening a resolved follow-up clears its resolution. */
+const REOPENED = { resolvedAt: null, resolution: null } as const;
 
 const applyOutcomeFields = (
 	item: StoredTask,
@@ -239,10 +304,10 @@ const applyOutcomeFields = (
 		case "dropped":
 			return { ...item, status: "dropped", outcome: "dropped", carriedFrom: null, updatedAt };
 		case "carried":
-			return { ...item, status: "todo", outcome: "carried", carriedFrom: date, updatedAt };
+			return { ...item, ...REOPENED, status: "todo", outcome: "carried", carriedFrom: date, updatedAt };
 		case "delegated": {
 			if (owner === null) throw new TaskRefused("owner_required");
-			return { ...item, status: "waiting", owner, outcome: "delegated", carriedFrom: null, updatedAt };
+			return { ...item, ...REOPENED, status: "waiting", owner, outcome: "delegated", carriedFrom: null, updatedAt };
 		}
 	}
 };
@@ -251,7 +316,61 @@ const outcomeUnchanged = (item: StoredTask, next: StoredTask): boolean =>
 	item.status === next.status &&
 	item.outcome === next.outcome &&
 	item.owner === next.owner &&
-	item.carriedFrom === next.carriedFrom;
+	item.carriedFrom === next.carriedFrom &&
+	item.resolvedAt === next.resolvedAt &&
+	item.resolution === next.resolution;
+
+const resolvedFields = (item: StoredTask, resolution: string | null, updatedAt: string): StoredTask =>
+	item.status === "done" && item.resolvedAt !== null && item.resolution === resolution
+		? item
+		: {
+				...item,
+				status: "done",
+				outcome: "done",
+				carriedFrom: null,
+				resolvedAt: updatedAt,
+				resolution,
+				updatedAt,
+			};
+
+const isOpen = (item: { readonly status: TaskStatus }): boolean => item.status !== "done" && item.status !== "dropped";
+
+/**
+ * Follow-ups for a view, sorted by priority (lower first), then due date
+ * (earliest first, undated last), then stored order. `today` is a Lagos
+ * calendar date; overdue means open with a due date before today.
+ */
+export const followupsForView = <
+	T extends {
+		readonly kind: TaskKind;
+		readonly status: TaskStatus;
+		readonly priority: number;
+		readonly due: string | null;
+		readonly resolvedAt: string | null;
+	},
+>(
+	items: readonly T[],
+	view: FollowupView,
+	today: string,
+): T[] => {
+	const followups = items.filter((item) => item.kind === "followup");
+	const shown =
+		view === "open"
+			? followups.filter(isOpen)
+			: view === "overdue"
+				? followups.filter((item) => isOpen(item) && item.due !== null && item.due < today)
+				: view === "resolved"
+					? followups.filter((item) => !isOpen(item))
+					: followups;
+	const order = new Map(items.map((item, index) => [item, index] as const));
+	if (view === "resolved") return [...shown].sort((a, b) => (b.resolvedAt ?? "").localeCompare(a.resolvedAt ?? ""));
+	return [...shown].sort(
+		(a, b) =>
+			a.priority - b.priority ||
+			(a.due ?? "9999-12-31").localeCompare(b.due ?? "9999-12-31") ||
+			order.get(a)! - order.get(b)!,
+	);
+};
 
 const placeItem = (items: readonly StoredTask[], item: StoredTask, index: number | undefined): StoredTask[] => {
 	const rest = items.filter((other) => other.id !== item.id);
@@ -306,6 +425,40 @@ export class TasksState {
 		readonly priority?: number;
 		readonly index?: number;
 		readonly status?: TaskStatus;
+		readonly kind?: TaskKind;
+		readonly waitingOn?: string | null;
+		readonly link?: string | null;
+	}): StoredTask {
+		const item = this.#newItem(fields);
+		if (
+			fields.index !== undefined &&
+			(!Number.isInteger(fields.index) || fields.index < 0 || fields.index > TASKS_MAX)
+		)
+			throw new TaskRefused("invalid_index");
+		return this.#locked(() => {
+			const store = this.read();
+			if (store.items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
+			this.#write({ version: TASKS_STORE_VERSION, items: placeItem(store.items, item, fields.index) });
+			return item;
+		});
+	}
+
+	/** Add a follow-up (a native item with `kind: "followup"`). */
+	addFollowup(fields: FollowupInput & { readonly index?: number }): StoredTask {
+		return this.add({ ...fields, kind: "followup" });
+	}
+
+	/** Validate fields and build a new native item (not yet written). */
+	#newItem(fields: {
+		readonly title: string;
+		readonly owner?: string | null;
+		readonly due?: string | null;
+		readonly project?: string | null;
+		readonly priority?: number;
+		readonly status?: TaskStatus;
+		readonly kind?: TaskKind;
+		readonly waitingOn?: string | null;
+		readonly link?: string | null;
 	}): StoredTask {
 		const title = boundedText(fields.title, TASK_TITLE_MAX);
 		if (title === undefined) throw new TaskRefused("invalid_title");
@@ -315,33 +468,37 @@ export class TasksState {
 		const priority = fields.priority ?? 100;
 		if (!Number.isInteger(priority) || priority < 0 || priority > TASK_PRIORITY_MAX)
 			throw new TaskRefused("invalid_priority");
-		if (
-			fields.index !== undefined &&
-			(!Number.isInteger(fields.index) || fields.index < 0 || fields.index > TASKS_MAX)
-		)
-			throw new TaskRefused("invalid_index");
-		return this.#locked(() => {
-			const store = this.read();
-			if (store.items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
-			const now = this.#clock().toISOString();
-			const item: StoredTask = {
-				id: randomUUID(),
-				title,
-				status: fields.status ?? "todo",
-				owner,
-				due,
-				project,
-				priority,
-				outcome: null,
-				carriedFrom: null,
-				fingerprint: null,
-				source: { kind: "native", path: null, line: null, displayRef: "native", briefDate: null },
-				createdAt: now,
-				updatedAt: now,
-			};
-			this.#write({ version: TASKS_STORE_VERSION, items: placeItem(store.items, item, fields.index) });
-			return item;
-		});
+		const kind = fields.kind ?? "task";
+		if (!TASK_KINDS.has(kind)) throw new TaskRefused("invalid_kind");
+		const waitingOn = optionalText(fields.waitingOn, TASK_WAITING_ON_MAX, "invalid_waiting_on");
+		const link = optionalLink(fields.link);
+		const now = this.#clock().toISOString();
+		return {
+			id: randomUUID(),
+			title,
+			status: fields.status ?? (kind === "followup" && waitingOn !== null ? "waiting" : "todo"),
+			owner,
+			due,
+			project,
+			priority,
+			outcome: null,
+			carriedFrom: null,
+			fingerprint: null,
+			source: { kind: "native", path: null, line: null, displayRef: "native", briefDate: null },
+			createdAt: now,
+			updatedAt: now,
+			kind,
+			waitingOn,
+			link,
+			resolvedAt: null,
+			resolution: null,
+		};
+	}
+
+	/** Resolve a follow-up (or any task): done, with when and an optional note. Re-resolving with the same note is a no-op. */
+	resolve(id: string, note?: string | null): StoredTask {
+		const resolution = optionalText(note, TASK_RESOLUTION_MAX, "invalid_resolution");
+		return this.#update(id, (item, updatedAt) => resolvedFields(item, resolution, updatedAt));
 	}
 
 	setPriority(id: string, priority: number): StoredTask {
@@ -387,9 +544,20 @@ export class TasksState {
 	closeout(
 		entries: readonly CloseoutEntry[],
 		date?: string,
-	): { readonly updated: readonly StoredTask[]; readonly unchanged: number } {
-		if (entries.length === 0) return { updated: [], unchanged: 0 };
-		const ids = entries.map((entry) => entry.id);
+		extras: { readonly followups?: readonly FollowupInput[]; readonly resolve?: readonly ResolveEntry[] } = {},
+	): {
+		readonly updated: readonly StoredTask[];
+		readonly unchanged: number;
+		readonly created: readonly StoredTask[];
+	} {
+		const creates = (extras.followups ?? []).map((fields) => this.#newItem({ ...fields, kind: "followup" }));
+		const resolves = (extras.resolve ?? []).map((entry) => ({
+			id: entry.id,
+			resolution: optionalText(entry.note, TASK_RESOLUTION_MAX, "invalid_resolution"),
+		}));
+		if (entries.length === 0 && creates.length === 0 && resolves.length === 0)
+			return { updated: [], unchanged: 0, created: [] };
+		const ids = [...entries.map((entry) => entry.id), ...resolves.map((entry) => entry.id)];
 		if (new Set(ids).size !== ids.length) throw new TaskRefused("duplicate_id");
 		const day = date ?? lagosCalendarDate(this.#clock());
 		if (!isDay(day)) throw new TaskRefused("invalid_due");
@@ -417,12 +585,24 @@ export class TasksState {
 				nextById.set(item.id, next);
 				updated.push(next);
 			}
-			if (updated.length > 0)
+			for (const entry of resolves) {
+				const item = nextById.get(entry.id);
+				if (item === undefined) throw new TaskRefused("task_missing");
+				const next = resolvedFields(item, entry.resolution, now);
+				if (next === item) {
+					unchanged += 1;
+					continue;
+				}
+				nextById.set(item.id, next);
+				updated.push(next);
+			}
+			if (store.items.length + creates.length > TASKS_MAX) throw new TaskRefused("tasks_full");
+			if (updated.length > 0 || creates.length > 0)
 				this.#write({
 					version: TASKS_STORE_VERSION,
-					items: store.items.map((item) => nextById.get(item.id) ?? item),
+					items: [...store.items.map((item) => nextById.get(item.id) ?? item), ...creates],
 				});
-			return { updated, unchanged };
+			return { updated, unchanged, created: creates };
 		});
 	}
 
@@ -560,6 +740,12 @@ export class TasksState {
 					},
 					createdAt: now,
 					updatedAt: now,
+					// Reminders' "Current Follow-Ups" are follow-ups; other sources are tasks.
+					kind: source.kind === "reminders" ? "followup" : "task",
+					waitingOn: null,
+					link: null,
+					resolvedAt: null,
+					resolution: null,
 				};
 				items = [...items, item];
 				sidecarItems.push({
