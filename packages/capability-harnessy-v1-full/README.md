@@ -37,6 +37,21 @@ resource trees are generated.
 
 The manifest checks assert that the key v1 entrypoints are present.
 
+V2 owns new shared skills in this source path. These additions do not belong to
+the original V1 source record. `source.v2Amendments` in `resources/SOURCE.json`
+records each addition or change with its prior tree and exact file hashes.
+The verifier reverses each amendment and verifies its prior tree digest.
+The original V1 repository, selected inputs, and dirty input records stay intact.
+The current tree digest covers the complete artifact, including V2 additions.
+
+After review, use `writeV2SourceAmendment` in
+`scripts/v1-compatibility-lib.mjs` to record an exact amendment.
+Supply an ID, `owner: "harnessy-v2"`, a reason, the prior `baseTree`, and
+`changes` with a path and `before` and `after` file records.
+Each file record contains `size`, `executable`, and `sha256`.
+Use `null` for an absent file. The operation rejects unrecorded changes.
+This record preserves source history. It does not approve installation or release.
+
 Skill registration preserves entries that it does not manage. A conflicting name
 stops registration with the conflicting path. Skill upgrades require a matching
 `.harnessy-install.json` ownership record; `--force` does not bypass this check.

@@ -2521,7 +2521,80 @@
       "fileCount": 706,
       "byteCount": 4862126
     },
-    "mode": "reviewed-dirty-overlay"
+    "mode": "reviewed-dirty-overlay",
+    "v2Amendments": [
+      {
+        "id": "engineering-loop-shared-skill-20261121",
+        "owner": "harnessy-v2",
+        "reason": "Add the user-authorized global engineering-loop skill through the shared Harnessy skill protocol. These files are V2 additions, not original V1 source.",
+        "baseTree": {
+          "algorithm": "sha256",
+          "digest": "8d276cd00b90feb0d26b6036bad89a892a4a155ae875681b333239eaaf984feb",
+          "fileCount": 745,
+          "byteCount": 5270352
+        },
+        "changes": [
+          {
+            "path": ".jarvis/context/skills/_catalog.md",
+            "before": {
+              "size": 26621,
+              "executable": false,
+              "sha256": "099253cc33ee502185a8e028898f20ede465ffc7cb860cd7e1728402a6f3fbe3"
+            },
+            "after": {
+              "size": 27239,
+              "executable": false,
+              "sha256": "f7eb118b16533367cac340f0a8cd28bb02f0c338aba78167640f64885d73ad10"
+            }
+          },
+          {
+            "path": "tools/flow-install/skills/engineering-loop/manifest.yaml",
+            "before": null,
+            "after": {
+              "size": 969,
+              "executable": false,
+              "sha256": "cd02967671df8ea5687d3d7f29cf7a3812c50407d2e4d3ca0dc94871a3daf5c1"
+            }
+          },
+          {
+            "path": "tools/flow-install/skills/engineering-loop/references/attribution.md",
+            "before": null,
+            "after": {
+              "size": 1361,
+              "executable": false,
+              "sha256": "6ce4be462b86ed28d5fe7dba5b1c78653e7e7bccde08ae6aa593cce27af08acb"
+            }
+          },
+          {
+            "path": "tools/flow-install/skills/engineering-loop/references/experiment-record.md",
+            "before": null,
+            "after": {
+              "size": 1667,
+              "executable": false,
+              "sha256": "159b470775bcab0724ebad30b05f0cec49eb72fd04e9b4cfa23dd2197d02d10a"
+            }
+          },
+          {
+            "path": "tools/flow-install/skills/engineering-loop/SKILL.md",
+            "before": null,
+            "after": {
+              "size": 7422,
+              "executable": false,
+              "sha256": "8b6d4741f014772a05d0284cd655703a7b6b789d04dbedc202f3de24961a2c55"
+            }
+          },
+          {
+            "path": "tools/flow-install/skills/engineering-loop/test/verify-skill.test.mjs",
+            "before": null,
+            "after": {
+              "size": 4562,
+              "executable": false,
+              "sha256": "6441ccae6f498c093bfafea210f958c89a7de0fe217078aedc26f4f6c15208f2"
+            }
+          }
+        ]
+      }
+    ]
   },
   "exclusions": [
     "git-metadata",
@@ -2539,8 +2612,8 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "7fd0e3adc470fd3d41937b60e3d560a6f26e92fbe93e3b408df8b34f0e02f8eb",
-    "fileCount": 740,
-    "byteCount": 5163243
+    "digest": "6b8e63bdbeb930a3c8260512b1253d07af6705edc0d5fb11ac00077c040d3085",
+    "fileCount": 750,
+    "byteCount": 5286951
   }
 }
