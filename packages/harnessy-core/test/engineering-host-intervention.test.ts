@@ -400,6 +400,45 @@ describe("engineering intervention transport", () => {
 		expect(state.interventions.pending()?.deliveredAt).toBeNull();
 	});
 
+	it("delivers the next question after a refusal and keeps the refused one for retry", async () => {
+		const state = await fixture();
+		await state.pausedOnLimit();
+		const first = state.interventions.pending()!;
+		const second = state.interventions.raise(state.launch.launchId, "reconciliation_required", start);
+		state.refuse(400);
+		expect((await flushIntervention(state.interventions, state.transport, () => start)).status).toBe("paused");
+		expect(state.interventions.pending()?.intervention.id).toBe(second.intervention.id);
+		expect((await flushIntervention(state.interventions, state.transport, () => start)).status).toBe("confirmed");
+		expect(state.interventions.pending()?.intervention.id).toBe(first.intervention.id);
+	});
+
+	it("retains a valid cancellation in a pull alongside an answer for a different operator", async () => {
+		const state = await fixture();
+		const broker = await state.pausedOnLimit();
+		const pending = state.interventions.pending()!;
+		const answer = state.answerFor(pending, "resume");
+		state.setCommands([
+			{ kind: "answer", answer: { ...answer, operatorId: randomUUID() } },
+			{
+				kind: "cancel",
+				command: {
+					contractVersion: hostContractVersion,
+					commandId: randomUUID(),
+					workspaceId: answer.workspaceId,
+					hostId: answer.hostId,
+					runId: answer.runId,
+					launchId: answer.launchId,
+					grantId: answer.grantId,
+					sourceRevision: answer.sourceRevision,
+					expiresAt: answer.expiresAt,
+				},
+			},
+		]);
+		expect((await broker.poll()).status).toBe("received");
+		expect(state.store.get(answer.runId).state).toBe("cancel_requested");
+		expect(state.interventions.intervention(answer.interventionId)?.status).toBe("open");
+	});
+
 	it("refuses a forged or mismatched answer without any effect", async () => {
 		const state = await fixture();
 		const broker = await state.pausedOnLimit();

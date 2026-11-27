@@ -250,22 +250,23 @@ const exchange = async (
 			const receivedAt = now();
 			if (!Number.isSafeInteger(receivedAt) || receivedAt < signedAt)
 				return protocolError("Invalid or regressed response clock");
-			if (!(await outcomeMatches(body, parsed.data, enrollment, receivedAt)))
+			let outcome = retainCancellations(parsed.data, enrollment, receivedAt);
+			if (!(await outcomeMatches(body, outcome, enrollment, receivedAt)))
 				return protocolError("Garden response differs from requested operation or enrolled scope");
 			const validatedAt = now();
 			if (!Number.isSafeInteger(validatedAt) || validatedAt < receivedAt)
 				return protocolError("Invalid or regressed response clock");
+			outcome = retainCancellations(outcome, enrollment, validatedAt);
 			if (
-				(parsed.data.kind === "authority_current" && parsed.data.expiresAt <= validatedAt) ||
-				(parsed.data.kind === "commands" &&
-					parsed.data.commands.some((entry) => commandExpiry(entry) <= validatedAt))
+				(outcome.kind === "authority_current" && outcome.expiresAt <= validatedAt) ||
+				(outcome.kind === "commands" && outcome.commands.some((entry) => commandExpiry(entry) <= validatedAt))
 			)
 				return protocolError("Garden authority expired during response validation");
 			// Body decoding and asynchronous digest checks also consume the request deadline.
 			if (timedOut || performance.now() >= deadline)
 				return { status: "transport_lost", reason: "timeout", delivery: "unknown", attempts };
 			observeClock(validatedAt);
-			return { status: "received", outcome: parsed.data, attempts };
+			return { status: "received", outcome, attempts };
 		})
 		.catch(
 			(): GardenHostTransportResult => ({
@@ -278,6 +279,22 @@ const exchange = async (
 	clearTimeout(timer);
 	controller.abort();
 	return result;
+};
+
+/** A stale or foreign answer must not hold a valid cancellation hostage. All retained commands still pass normal validation. */
+const retainCancellations = (outcome: HostOutcome, enrollment: HostEnrollment, now: number): HostOutcome => {
+	if (outcome.kind !== "commands" || !outcome.commands.some((entry) => entry.kind === "cancel")) return outcome;
+	return {
+		...outcome,
+		commands: outcome.commands.filter(
+			(entry) =>
+				entry.kind !== "answer" ||
+				(entry.answer.hostId === enrollment.hostId &&
+					entry.answer.workspaceId === enrollment.workspaceId &&
+					entry.answer.operatorId === enrollment.operatorId &&
+					entry.answer.expiresAt > now),
+		),
+	};
 };
 
 const commandExpiry = (entry: Extract<HostOutcome, { kind: "commands" }>["commands"][number]): number =>

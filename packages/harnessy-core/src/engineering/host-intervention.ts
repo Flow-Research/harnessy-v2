@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS interventions (sequence INTEGER PRIMARY KEY AUTOINCRE
  run_id TEXT NOT NULL, reason TEXT NOT NULL, digest TEXT NOT NULL, record TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'open', delivered_at INTEGER);
 CREATE UNIQUE INDEX IF NOT EXISTS one_open_intervention ON interventions (run_id, reason) WHERE status='open';
+CREATE TABLE IF NOT EXISTS delivery_order (id TEXT PRIMARY KEY REFERENCES interventions(id), last_attempt INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS answers (answer_id TEXT PRIMARY KEY, intervention_id TEXT NOT NULL UNIQUE
  REFERENCES interventions(id), digest TEXT NOT NULL, answer TEXT NOT NULL, accepted_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS clock (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value INTEGER NOT NULL);
@@ -159,9 +160,23 @@ PRAGMA user_version=1;`);
 
 	pending(): RetainedIntervention | undefined {
 		const row = this.#database
-			.prepare("SELECT id FROM interventions WHERE delivered_at IS NULL ORDER BY sequence LIMIT 1")
+			.prepare(`SELECT i.id FROM interventions i LEFT JOIN delivery_order d ON i.id=d.id
+WHERE i.delivered_at IS NULL ORDER BY COALESCE(d.last_attempt,0), i.sequence LIMIT 1`)
 			.get();
 		return row === undefined ? undefined : this.intervention(String(row.id));
+	}
+
+	/** Rotate before sending, so even a lost reply followed by a restart lets another question through. */
+	nextDelivery(): RetainedIntervention | undefined {
+		return this.#transaction(() => {
+			const pending = this.pending();
+			if (pending !== undefined)
+				this.#database
+					.prepare(`INSERT OR REPLACE INTO delivery_order (id,last_attempt)
+SELECT ?,COALESCE(MAX(last_attempt),0)+1 FROM delivery_order`)
+					.run(pending.intervention.id);
+			return pending;
+		});
 	}
 
 	/** A receipt marks delivery only. It never answers the intervention. */
@@ -287,7 +302,7 @@ export const flushIntervention = async (
 	transport: GardenHostTransport,
 	now: () => number = Date.now,
 ): Promise<InterventionDeliveryResult> => {
-	const pending = interventions.pending();
+	const pending = interventions.nextDelivery();
 	if (pending === undefined) return { status: "idle", reason: "No pending intervention" };
 	const result = await transport.send({ operation: "intervention", intervention: pending.intervention });
 	if (result.status !== "received")

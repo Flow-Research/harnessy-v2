@@ -33,7 +33,7 @@
   admission checks run again, and `stop` only requests cancellation. An
   answer cannot approve a job or extend a grant. The host contract adds the
   `intervention` operation, the `intervention_recorded` receipt and the
-  `answer` command. Command oracle manifest: reviewed revision r6.
+  `answer` command. Command oracle manifest: reviewed revision r7.
 - `harnessy engineering` inspects and runs the bounded engineering loop for
   one owner machine: `status`, `events`, `approve`, `cancel`, `revoke`,
   `digests`, `confirm-extra-usage-off`, `tick`, `serve` and `benchmark`.

@@ -131,7 +131,7 @@ harnessy engineering clear-provider-pause --confirmed-by julian
 
 ## Interventions for a remote run
 
-An intervention is a request from the loop to a person about one remote run. A remote run is a run that Garden launched through the signed host transport. The local `tick` and `serve` commands do not use interventions.
+An intervention is a request from the loop to a person about one remote run. A remote run is a run that Garden launched through the signed host transport. When the host configuration includes `remoteDelivery`, both `tick` and `serve` deliver interventions for remote runs.
 
 The controller raises an intervention in two cases:
 
@@ -160,7 +160,7 @@ Otherwise the loop refuses the answer and changes nothing. An answer has only tw
 
 An answer cannot approve a job, issue or extend a grant, or start a worker. The same answer can arrive again. The loop applies it once.
 
-Garden does not receive interventions or send answers yet. Until it does, Garden refuses each intervention request, and the intervention stays pending. To stop such a run, use `harnessy engineering cancel --run <run id>`.
+Use a Garden receiver that supports interventions and answers. If Garden refuses a delivery, the intervention stays pending while other questions can still be sent. To stop such a run, use `harnessy engineering cancel --run <run id>`.
 
 ## How a candidate is checked
 
