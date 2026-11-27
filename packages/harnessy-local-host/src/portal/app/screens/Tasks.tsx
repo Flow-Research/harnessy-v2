@@ -237,6 +237,8 @@ const TaskRow = ({
 					<label className="task-priority">
 						<span className="visually-hidden">Priority</span>
 						<input
+							// Remount when the stored priority changes (a move can change it), so the shown value follows.
+							key={task.priority}
 							className="input task-priority-input"
 							type="number"
 							min={0}
@@ -458,16 +460,27 @@ export const TasksScreen = ({ rest, client }: { rest: ReadonlyArray<string>; cli
 	const phone = usePhoneLayout();
 	const tile = tasks.data?.tiles.tasks;
 	const all = tile?.state === "ok" ? (tile.data?.tasks ?? []) : [];
-	const act = (body: Record<string, unknown>) => {
+	/** Send each change in order, stopping at the first refusal; refresh after any success. */
+	const actAll = (bodies: ReadonlyArray<Record<string, unknown>>) => {
 		if (client === undefined) return;
 		setBusy(true);
 		setError(undefined);
-		void client.taskAction(body).then((result) => {
+		const run = async () => {
+			let changed = false;
+			for (const body of bodies) {
+				const result = await client.taskAction(body);
+				if (result.kind === "error") {
+					setError(result.message);
+					break;
+				}
+				changed = true;
+			}
 			setBusy(false);
-			if (result.kind === "error") setError(result.message);
-			else tasks.refresh();
-		});
+			if (changed) tasks.refresh();
+		};
+		void run();
 	};
+	const act = (body: Record<string, unknown>) => actAll([body]);
 	const move = (id: string, direction: -1 | 1) => {
 		const stored = all.filter((task) => task.inStore);
 		const index = stored.findIndex((task) => task.id === id);
@@ -478,7 +491,18 @@ export const TasksScreen = ({ rest, client }: { rest: ReadonlyArray<string>; cli
 		const [item] = ids.splice(index, 1);
 		if (item === undefined) return;
 		ids.splice(next, 0, item);
-		act({ action: "reorder", ids });
+		// The list sorts by priority before stored order, so a move past a task of
+		// another priority takes that task's priority; otherwise it would not show.
+		const moving = stored[index]!;
+		const neighbour = stored[next]!;
+		actAll(
+			moving.priority === neighbour.priority
+				? [{ action: "reorder", ids }]
+				: [
+						{ action: "setPriority", id: moving.id, priority: neighbour.priority },
+						{ action: "reorder", ids },
+					],
+		);
 	};
 	return (
 		<div className="screen">

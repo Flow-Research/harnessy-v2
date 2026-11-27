@@ -262,7 +262,13 @@ it("changes priority on blur only when the value changed, and moves stored rows 
 	await click(downs[downs.length - 1]!); // already last: no request
 	expect(calls).toHaveLength(1);
 	await click(downs[0]!);
-	await waitFor(() => expect(calls).toContainEqual({ action: "reorder", ids: [ID(2), ID(1), ID(3)] }));
+	// Moving past a task of another priority takes its priority first, so the move shows.
+	await waitFor(() =>
+		expect(calls.slice(1)).toEqual([
+			{ action: "setPriority", id: ID(1), priority: 100 },
+			{ action: "reorder", ids: [ID(2), ID(1), ID(3)] },
+		]),
+	);
 });
 
 it("inserts at a position with owner, due and priority, and can cancel the form", async () => {
@@ -365,9 +371,12 @@ it("uses stacked cards on a phone: check off, move, expand and project groups", 
 	await waitFor(() => expect(up!.disabled).toBe(false));
 	await click(up!);
 	await waitFor(() => expect(calls).toContainEqual({ action: "reorder", ids: [ID(2), ID(1), ID(3)] }));
+	expect(calls).toContainEqual({ action: "setPriority", id: ID(2), priority: 5 });
 	await waitFor(() => expect(down!.disabled).toBe(false));
+	const before = calls.length;
 	await click(down!);
-	await waitFor(() => expect(calls).toContainEqual({ action: "reorder", ids: [ID(1), ID(3), ID(2)] }));
+	// Same priority as the next task: only the order changes.
+	await waitFor(() => expect(calls.slice(before)).toEqual([{ action: "reorder", ids: [ID(1), ID(3), ID(2)] }]));
 	await click(button("Carried second"));
 	expect(container.querySelector(".stack-card-detail")?.textContent).toContain("brief.md:4");
 
@@ -395,4 +404,50 @@ it("shows the tile state when the tasks read fails", async () => {
 	await render([], client);
 	await waitFor(() => expect(container.querySelector(".task-toolbar")).not.toBeNull());
 	expect(container.querySelector("table")).toBeNull();
+});
+
+it("stops a move at the first refusal and shows it", async () => {
+	const calls: Record<string, unknown>[] = [];
+	const client = {
+		get: async (path: string): Promise<ApiResult> =>
+			path === "/v1/tasks" ? { kind: "ok", body: envelope(fixtures()) } : { kind: "error", message: path },
+		taskAction: async (payload: Record<string, unknown>): Promise<ApiResult> => {
+			calls.push(payload);
+			return { kind: "error", message: "Priority must be a whole number from 0 to 10000." };
+		},
+	} as unknown as SessionClient;
+	await render([], client);
+	await waitFor(() => expect(container.textContent).toContain("Native first"));
+	await click(container.querySelectorAll<HTMLButtonElement>('button[aria-label="Move down"]')[0]!);
+	await waitFor(() => expect(calls).toEqual([{ action: "setPriority", id: ID(1), priority: 100 }]));
+	await click(button("Native first"));
+	await waitFor(() =>
+		expect(container.querySelector(".task-detail .tone-danger")?.textContent).toContain("whole number"),
+	);
+});
+
+it("shows the new priority after a move changes it", async () => {
+	let tasks = fixtures();
+	const client = {
+		get: async (path: string): Promise<ApiResult> =>
+			path === "/v1/tasks" ? { kind: "ok", body: envelope(tasks) } : { kind: "error", message: path },
+		taskAction: async (payload: Record<string, unknown>): Promise<ApiResult> => {
+			if (payload.action === "setPriority")
+				tasks = tasks.map((entry) =>
+					entry.id === payload.id ? { ...entry, priority: payload.priority as number } : entry,
+				);
+			if (payload.action === "reorder") {
+				const ids = payload.ids as string[];
+				tasks = [...tasks].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+			}
+			return { kind: "ok", body: { ok: true } };
+		},
+	} as unknown as SessionClient;
+	await render([], client);
+	await waitFor(() => expect(container.textContent).toContain("Native first"));
+	await click(container.querySelectorAll<HTMLButtonElement>('button[aria-label="Move down"]')[0]!);
+	await waitFor(() => {
+		const row = [...container.querySelectorAll("tr")].find((entry) => entry.textContent?.includes("Native first"))!;
+		expect(row.querySelector<HTMLInputElement>(".task-priority-input")!.value).toBe("100");
+	});
 });

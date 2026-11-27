@@ -2,7 +2,9 @@
 
 The portal Tasks page and `harnessy jarvis tasks` share a versioned file,
 `~/.harnessy/portal/tasks.json` (schema version 1). Writes are atomic, mode
-`0600`. The page and these commands never write brief, reminder, register or
+`0600`. Each change holds a lock (`tasks.json.lock`) from its read to its write,
+so the page, these commands and brief ingest never lose each other's updates; a
+writer that waits more than 5 seconds is refused with `tasks_busy`. The page and these commands never write brief, reminder, register or
 project `status.md` files. An optional close-out note is written only when the
 CLI is given `--write-note`.
 

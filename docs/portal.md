@@ -29,7 +29,10 @@ It has nine screens. Use `g` and a letter to move between them, and `⌘K` (or
   behind an Other sources filter. The local store (`~/.harnessy/portal/tasks.json`)
   holds stable IDs, priority, order and outcomes. You can check off a task, add
   or insert one, reorder, set priority, and record done, carried, dropped or
-  delegated. The page never writes the source Markdown or your notes files.
+  delegated. The list sorts by priority, then your order, so moving a task
+  past one of another priority gives it that task's priority. Changes made by
+  `harnessy jarvis tasks` show within 5 seconds. The page never writes the
+  source Markdown or your notes files.
   When a task's line is edited in its source file, the row shows "source changed"
   and its old title for a day (until the portal restarts).
 - **Jobs** (`g j`): every Harnessy job and service, its schedule and next run
