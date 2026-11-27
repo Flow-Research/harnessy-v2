@@ -86,7 +86,8 @@ const time = (value: unknown, reason: string): number => {
 async function readJson(source: ReadOnlySource, request: string, requests: CollectionRequest[]): Promise<unknown> {
 	const response = await source(request).catch((cause: unknown) => ({
 		ok: false as const,
-		reason: cause instanceof Error ? cause.message : "read failed",
+		// Transport exceptions may quote request headers. Retain only a known diagnostic.
+		reason: cause instanceof Error && cause.message.includes("ECONNREFUSED") ? "ECONNREFUSED" : "read failed",
 	}));
 	if (!response.ok) return fail(`read_failed:${request}:${response.reason.slice(0, 200)}`);
 	requests.push({ request, digest: sha(response.body) });
@@ -187,9 +188,15 @@ export async function collectPullRequestChecks(input: {
 				"malformed_branch",
 			);
 			const required = new Map<string, { readonly context: string; readonly appId?: number }>();
+			const appScoped = new Set<string>();
 			const add = (context: unknown, appId: unknown) => {
 				const name = text(context, "malformed_required_check");
 				const app = typeof appId === "number" && Number.isSafeInteger(appId) && appId > 0 ? appId : undefined;
+				if (app === undefined && appScoped.has(name)) return;
+				if (app !== undefined) {
+					appScoped.add(name);
+					required.delete(`${name}\0any`);
+				}
 				required.set(`${name}\0${app ?? "any"}`, { context: name, ...(app === undefined ? {} : { appId: app }) });
 			};
 			const protection =
@@ -207,18 +214,23 @@ export async function collectPullRequestChecks(input: {
 				if (checks.length === 0)
 					for (const context of list(status.contexts ?? [], "malformed_required_checks")) add(context, undefined);
 			}
-			const rules = list(
-				await readJson(input.source, `${repo}/rules/branches/${encodeURIComponent(base)}`, requests),
-				"malformed_rules",
-			);
-			for (const rule of rules) {
-				const value = record(rule, "malformed_rule");
-				if (value.type !== "required_status_checks") continue;
-				const parameters = record(value.parameters, "malformed_rule_parameters");
-				for (const check of list(parameters.required_status_checks, "malformed_rule_parameters")) {
-					const entry = record(check, "malformed_rule_check");
-					add(entry.context, entry.integration_id);
+			const rulePath = `${repo}/rules/branches/${encodeURIComponent(base)}`;
+			for (let page = 1; ; page++) {
+				if (page > MAXIMUM_PAGES) throw new CollectionFailure("inconclusive", "branch_rule_page_limit_reached");
+				const rules = list(
+					await readJson(input.source, page === 1 ? rulePath : `${rulePath}?page=${page}`, requests),
+					"malformed_rules",
+				);
+				for (const rule of rules) {
+					const value = record(rule, "malformed_rule");
+					if (value.type !== "required_status_checks") continue;
+					const parameters = record(value.parameters, "malformed_rule_parameters");
+					for (const check of list(parameters.required_status_checks, "malformed_rule_parameters")) {
+						const entry = record(check, "malformed_rule_check");
+						add(entry.context, entry.integration_id);
+					}
 				}
+				if (rules.length < 30) break;
 			}
 			if (required.size === 0)
 				throw new CollectionFailure("unsupported", `base_branch_declares_no_required_checks:${base}`);
