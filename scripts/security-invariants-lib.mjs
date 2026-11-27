@@ -1,3 +1,4 @@
+import { isReviewedSandboxZod, sandboxZodPath } from "./sandbox-zod-scope.mjs";
 import { basename } from "node:path";
 import { satisfies, valid } from "semver";
 
@@ -171,7 +172,6 @@ const isExactSafeVersion = (version, vulnerableRange) =>
 // GHSA-mrhx-c7xc-m3w5 (zod <4.6.6) has no fixed zod 3 release. The
 // root exception covers the sandbox example only. Every Executor resolution must be fixed.
 const zodVulnerableRange = "<4.6.6";
-const rootZodExceptionPaths = new Set(["node_modules/@anthropic-ai/sandbox-runtime/node_modules/zod"]);
 
 export const checkDependencyResolutionContract = (files) => {
 	const findings = [];
@@ -213,7 +213,7 @@ export const checkDependencyResolutionContract = (files) => {
 	}
 
 	const rootZodResolutions = Object.entries(rootLock?.packages ?? {}).filter(
-		([path]) => (path === "node_modules/zod" || path.endsWith("/node_modules/zod")) && !rootZodExceptionPaths.has(path),
+		([path]) => (path === "node_modules/zod" || path.endsWith("/node_modules/zod")) && !(path === sandboxZodPath && isReviewedSandboxZod(rootLock?.packages)),
 	);
 	if (
 		rootZodResolutions.length === 0 ||
