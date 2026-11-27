@@ -14,6 +14,7 @@ import { Console } from "effect";
 import { Command, Flag as Options } from "effect/cli";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 
 import {
 	appendCloseoutNote,
@@ -234,12 +235,13 @@ export const jarvisTasksCloseoutCommand = Command.make(
 			const narrative = Option.getOrUndefined(note) ?? payload.note;
 			let noteBody: string | undefined;
 			if (writeNote) {
-				try {
-					noteBody = validateCloseoutNote(narrative ?? "");
-				} catch (error) {
+				const validated = Result.try(() => validateCloseoutNote(narrative ?? ""));
+				if (Result.isFailure(validated)) {
+					const error = validated.failure;
 					const code = error instanceof Error && error.message === "empty_note" ? "empty_note" : "invalid_note";
 					throw new TaskRefused(code);
 				}
+				noteBody = validated.success;
 			}
 			const result = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).closeout(
 				payload.outcomes,

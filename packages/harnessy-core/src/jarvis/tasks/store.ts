@@ -20,6 +20,8 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
+import * as Result from "effect/Result";
+
 import { normaliseTaskText } from "../../read-model/followups.ts";
 
 export const TASKS_STORE_VERSION = 1;
@@ -266,25 +268,25 @@ export class TasksState {
 
 	/** The store, or an empty version-1 document when the file is absent. */
 	read(): TasksStore {
-		let fd: number;
-		try {
-			fd = openSync(this.file, constants.O_RDONLY | constants.O_NOFOLLOW);
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code === "ENOENT") return EMPTY;
+		const opened = Result.try(() => openSync(this.file, constants.O_RDONLY | constants.O_NOFOLLOW));
+		if (Result.isFailure(opened)) {
+			if ((opened.failure as NodeJS.ErrnoException).code === "ENOENT") return EMPTY;
 			throw new TaskRefused("unreadable");
 		}
-		try {
+		const fd = opened.success;
+		const loaded = Result.try(() => {
 			const stat = fstatSync(fd);
 			if (!stat.isFile() || stat.size > TASKS_FILE_MAX_BYTES) throw new TaskRefused("unreadable");
 			const store = parseStore(JSON.parse(readFileSync(fd, "utf8")));
 			if (store === undefined) throw new TaskRefused("unreadable");
 			return store;
-		} catch (error) {
-			if (error instanceof TaskRefused) throw error;
+		});
+		closeSync(fd);
+		if (Result.isFailure(loaded)) {
+			if (loaded.failure instanceof TaskRefused) throw loaded.failure;
 			throw new TaskRefused("unreadable");
-		} finally {
-			closeSync(fd);
 		}
+		return loaded.success;
 	}
 
 	/**
@@ -583,18 +585,11 @@ export class TasksState {
 	#atomicWrite(file: string, value: unknown): void {
 		mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
 		const temp = `${file}.${randomUUID()}.tmp`;
-		try {
+		const written = Result.try(() => {
 			writeFileSync(temp, `${JSON.stringify(value)}\n`, { mode: 0o600, flag: "wx" });
 			renameSync(temp, file);
-		} catch (error) {
-			if (error instanceof TaskRefused) throw error;
-			throw new TaskRefused("unwritable");
-		} finally {
-			try {
-				unlinkSync(temp);
-			} catch {
-				/* Renamed or not created. */
-			}
-		}
+		});
+		Result.try(() => unlinkSync(temp));
+		if (Result.isFailure(written)) throw new TaskRefused("unwritable");
 	}
 }

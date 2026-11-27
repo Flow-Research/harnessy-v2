@@ -144,11 +144,7 @@ const lifeProviderEnvironment = (settings: LifeOrchestratorSettings) => ({
 
 /** Align the local task store with a published brief. Failures are ignored so a published brief is not rolled back. */
 const ingestDailyTaskStore = (settings: LifeOrchestratorSettings, briefPath: string, date: string): void => {
-	try {
-		ingestPublishedBrief(settings.paths.homeRoot, briefPath, date);
-	} catch {
-		/* The close-out CLI can ingest later. */
-	}
+	Result.try(() => ingestPublishedBrief(settings.paths.homeRoot, briefPath, date));
 };
 
 const commandFailure = (label: string, detail: string) =>
