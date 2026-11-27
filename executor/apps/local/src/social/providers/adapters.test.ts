@@ -2,7 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import type { Envelope } from "../contract";
 import { createLiveProviders } from "./live";
-import { accountKey, type ProviderFetch } from "./transport";
+import { accountKey, ProviderHttp, type ProviderFetch } from "./transport";
 import { WhatsAppProvider } from "./whatsapp";
 import { XProvider } from "./x";
 
@@ -64,7 +64,7 @@ const templated: Envelope = {
   template: { name: "case_update", language: "en_US", parameters: ["ABC"] },
 };
 const timestamp = String(Math.floor(fakeNow / 1000));
-const body = (number = "456") =>
+const body = (number = "456", statusTime = timestamp) =>
   JSON.stringify({
     object: "whatsapp_business_account",
     entry: [
@@ -97,7 +97,7 @@ const body = (number = "456") =>
                 {
                   id: "wamid.out",
                   status: "delivered",
-                  timestamp,
+                  timestamp: statusTime,
                   biz_opaque_callback_data: "harnessy:" + attemptRef,
                 },
                 { id: "wamid.out", status: "read", timestamp },
@@ -231,6 +231,11 @@ describe("X user-context adapter", () => {
     ]);
     expect(queries[1]?.searchParams.get("pagination_token")).toBe("page2");
     expect(queries[2]?.searchParams.get("since_id")).toBe("101");
+    for (const target of ["99", "84-85", "71-71", "84-71-99"]) {
+      await expect(provider.send({ ...dm, recipient: target })).rejects.toMatchObject({
+        code: "invalid_target",
+      });
+    }
     expect(writes).toEqual([]);
     await expect(provider.send(dm)).resolves.toEqual({ providerId: "200" });
     await provider.send({ ...dm, kind: "reply", targetId: "101" });
@@ -243,6 +248,36 @@ describe("X user-context adapter", () => {
       },
       { path: "/2/tweets", body: { text: "Private answer" } },
     ]);
+  });
+  it("passes provider cooldown deadlines to the durable stream scheduler", async () => {
+    const reset = fakeNow + 120000;
+    const request = async () =>
+      new Response(null, {
+        status: 429,
+        headers: { "retry-after": "10", "x-rate-limit-reset": String(reset / 1000) },
+      });
+    const http = new ProviderHttp(request, () => fakeNow);
+    const url = new URL("https://api.x.com/2/dm_events");
+    await expect(http.json(url, {}, "dm")).rejects.toMatchObject({
+      code: "rate_limit",
+      retryAt: reset,
+    });
+    await expect(http.json(url, {}, "dm")).rejects.toMatchObject({
+      code: "rate_limit",
+      retryAt: reset,
+    });
+    const dateRetry = new ProviderHttp(
+      async () =>
+        new Response(null, {
+          status: 503,
+          headers: { "retry-after": new Date(reset).toUTCString() },
+        }),
+      () => fakeNow,
+    );
+    await expect(dateRetry.json(url, {}, "dm")).rejects.toMatchObject({
+      code: "temporary_failure",
+      retryAt: reset,
+    });
   });
   it("refreshes only with offline consent, enforces scopes, and honors a per-stream rate limit", async () => {
     let now = fakeNow;
@@ -319,6 +354,11 @@ describe("Meta Cloud API adapter", () => {
       provider.verifyWebhook(Buffer.from(s), signature);
     expect(() => decode(payload + " ", signed(payload))).toThrow();
     expect(() => decode(body("000"))).toThrow();
+    const slightSkew = body("456", String(Number(timestamp) + 45));
+    expect(decode(slightSkew)[2]).toMatchObject({ type: "status", at: fakeNow, attemptRef });
+    expect(() => decode(body("456", String(Number(timestamp) + 61)))).toThrow(
+      "invalid_webhook_time",
+    );
     const events = decode(payload);
     expect(events).toHaveLength(4);
     expect(events[0]).toMatchObject({
@@ -418,6 +458,11 @@ describe("Meta Cloud API adapter", () => {
   });
   it("requires explicit live configuration and independent write authorization", async () => {
     expect(() => createLiveProviders({})).toThrow();
+    const sendOnly = new WhatsAppProvider({ ...waConfig, reads: false, writes: true });
+    await expect(sendOnly.send(business)).rejects.toMatchObject({ code: "webhook_reads_required" });
+    await expect(sendOnly.send(templated)).rejects.toMatchObject({
+      code: "webhook_reads_required",
+    });
     const { whatsapp } = createLiveProviders({
       WA_PHONE_NUMBER_ID: "456",
       WA_BUSINESS_ACCOUNT_ID: "123",

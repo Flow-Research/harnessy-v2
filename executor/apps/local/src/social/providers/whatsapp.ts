@@ -32,8 +32,16 @@ const callbackRef =
   /^harnessy:([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/;
 const media = new Set(["audio", "document", "image", "sticker", "video"]);
 
+function eventTime(timestamp: unknown, received: number): number {
+  const at = Number(timestamp) * 1000;
+  if (!Number.isSafeInteger(at) || at <= 0 || at > received + 60_000)
+    return fail(400, "invalid_webhook_time");
+  return Math.min(at, received);
+}
+
 export class WhatsAppProvider implements SocialAdapter {
   readonly provider = "whatsapp";
+  readonly pollsNetwork = false;
   readonly id: string;
   readonly label: string;
   readonly streams = ["business"] as const;
@@ -89,6 +97,7 @@ export class WhatsAppProvider implements SocialAdapter {
     const data = parseObject(new TextDecoder().decode(raw));
     if (data.object !== "whatsapp_business_account" || !Array.isArray(data.entry))
       return fail(400, "wrong_webhook_object");
+    const received = this.clock();
     const result: SocialEvent[] = [];
     for (const entry of rows(data.entry)) {
       if (entry.id !== this.config.wabaId) return fail(403, "wrong_business_account");
@@ -106,15 +115,8 @@ export class WhatsAppProvider implements SocialAdapter {
           if (kind !== "text" && !media.has(kind)) continue;
           const from = str(msg.from);
           const id = str(msg.id);
-          const at = Number(msg.timestamp) * 1000;
-          if (
-            !recipient(from) ||
-            !id ||
-            !Number.isSafeInteger(at) ||
-            at <= 0 ||
-            at > this.clock() + 60_000
-          )
-            return fail(400, "invalid_webhook_message");
+          const at = eventTime(msg.timestamp, received);
+          if (!recipient(from) || !id) return fail(400, "invalid_webhook_message");
           const part = record(msg[kind]);
           const text = str(kind === "text" ? part.body : part.caption);
           result.push({
@@ -125,7 +127,7 @@ export class WhatsAppProvider implements SocialAdapter {
             senderId: from,
             sender: "••••" + from.slice(-4),
             text,
-            at: Math.min(at, this.clock()),
+            at,
             visibility: "private",
             direction: "in",
             attachments:
@@ -145,9 +147,8 @@ export class WhatsAppProvider implements SocialAdapter {
           )
             continue;
           const id = str(item.id);
-          const at = Number(item.timestamp) * 1000;
-          if (!id || !Number.isSafeInteger(at) || at <= 0)
-            return fail(400, "invalid_webhook_status");
+          const at = eventTime(item.timestamp, received);
+          if (!id) return fail(400, "invalid_webhook_status");
           const attemptRef = callbackRef.exec(str(item.biz_opaque_callback_data))?.[1];
           result.push({
             type: "status",
@@ -169,6 +170,7 @@ export class WhatsAppProvider implements SocialAdapter {
   }
   eligible(env: Envelope): void {
     if (!this.config.writes) return fail(403, "live_writes_disabled");
+    if (!this.config.reads) return fail(403, "webhook_reads_required");
     if (
       env.accountId !== this.id ||
       !recipient(env.recipient) ||

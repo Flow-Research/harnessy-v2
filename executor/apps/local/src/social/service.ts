@@ -14,6 +14,10 @@ import {
 } from "./contract";
 
 const DAY = 86_400_000;
+// One check reads at most one page per stream. Two immediate checks are available,
+// followed by one check per ten minutes per live polling account.
+const READ_BURST = 2;
+const READ_INTERVAL = 10 * 60_000;
 const prefix = "/api/social/v1/";
 const respond = (value: unknown, status = 200) =>
   Response.json(value, {
@@ -117,10 +121,14 @@ function render(body: string, parameters: string[]) {
   return body.replace(/\{\{(\d+)\}\}/g, (_, n: string) => parameters[Number(n) - 1]!);
 }
 const schema = `
+PRAGMA secure_delete=ON;
+CREATE TABLE IF NOT EXISTS social_connections(account TEXT PRIMARY KEY, connected INTEGER NOT NULL, generation INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS social_scope(workspace TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS social_threads(id TEXT PRIMARY KEY, account TEXT NOT NULL, thread TEXT NOT NULL, family TEXT NOT NULL, last_in INTEGER NOT NULL DEFAULT 0, opted_out INTEGER NOT NULL DEFAULT 0, UNIQUE(account,thread,family));
 CREATE TABLE IF NOT EXISTS social_items(id TEXT PRIMARY KEY, account TEXT NOT NULL, conversation TEXT NOT NULL, family TEXT NOT NULL, stream TEXT NOT NULL, provider_id TEXT NOT NULL, thread TEXT NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, at INTEGER NOT NULL, ingested INTEGER NOT NULL, visibility TEXT NOT NULL, triage TEXT NOT NULL, attachments TEXT NOT NULL, direction TEXT NOT NULL, UNIQUE(account,family,provider_id));
 CREATE INDEX IF NOT EXISTS social_items_order ON social_items(at DESC,id DESC);
+CREATE TABLE IF NOT EXISTS social_read_budget(account TEXT PRIMARY KEY, refill_end INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS social_stream_failures(account TEXT NOT NULL, stream TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY(account,stream));
 CREATE TABLE IF NOT EXISTS social_checks(account TEXT NOT NULL, stream TEXT NOT NULL, cursor TEXT, last_sync INTEGER, error TEXT, retry_at INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(account,stream));
 CREATE TABLE IF NOT EXISTS social_drafts(id TEXT PRIMARY KEY, account TEXT NOT NULL, version INTEGER NOT NULL, fingerprint TEXT NOT NULL, state TEXT NOT NULL, item TEXT, envelope TEXT NOT NULL, category TEXT, attempt TEXT, created INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS social_attempts(id TEXT PRIMARY KEY, draft TEXT NOT NULL UNIQUE, account TEXT NOT NULL, version INTEGER NOT NULL, fingerprint TEXT NOT NULL, actor TEXT NOT NULL, at INTEGER NOT NULL, status TEXT NOT NULL, provider_id TEXT, key TEXT NOT NULL UNIQUE);
@@ -152,17 +160,42 @@ export class SocialService {
           .get();
         if (scope && scope.workspace !== this.workspaceId) fail(409, "workspace_mismatch");
         if (!scope) this.db.run("INSERT INTO social_scope VALUES(?)", [this.workspaceId]);
+        for (const account of this.registry.keys())
+          this.db.run("INSERT OR IGNORE INTO social_connections VALUES(?,1,0)", [account]);
       })
       .immediate();
   }
   accounts() {
     return [...this.registry.keys()];
   }
+  private connection(accountId: string) {
+    this.adapter(accountId);
+    return this.db
+      .query<{ connected: number; generation: number }, [string]>(
+        "SELECT connected,generation FROM social_connections WHERE account=?",
+      )
+      .get(accountId)!;
+  }
+  isConnected(accountId: string) {
+    return !!this.connection(accountId).connected;
+  }
+  setConnected(accountId: string, connected: boolean) {
+    this.adapter(accountId);
+    this.db.run(
+      "UPDATE social_connections SET connected=?,generation=generation+1 WHERE account=? AND connected<>?",
+      [Number(connected), accountId, Number(connected)],
+    );
+  }
+  private connectedGeneration(accountId: string) {
+    const connection = this.connection(accountId);
+    if (!connection.connected) fail(409, "account_disconnected");
+    return connection.generation;
+  }
   /** Only the fixture-mode host calls this method. A cursor prevents replay after restart. */
   async seedFixtures() {
-    for (const id of this.accounts()) await this.check(id);
+    for (const id of this.accounts()) if (this.isConnected(id)) await this.check(id);
   }
-  private prune() {
+  prune() {
     const cutoff = this.now() - 30 * DAY;
     this.db.transaction(() => {
       this.db.run("DELETE FROM social_items WHERE at<=?", [cutoff]);
@@ -269,6 +302,7 @@ export class SocialService {
   ingest(accountId: string, events: readonly SocialEvent[]) {
     const adapter = this.adapter(accountId);
     this.db.transaction(() => {
+      this.connectedGeneration(accountId);
       if (adapter.provider === "whatsapp" && events.length) {
         this.db.run("INSERT OR REPLACE INTO social_webhooks VALUES(?,?)", [accountId, this.now()]);
       }
@@ -315,32 +349,81 @@ export class SocialService {
     })();
   }
   private async sync(adapter: SocialAdapter) {
+    const generation = this.connectedGeneration(adapter.id);
+    let reserved = false;
     for (const stream of adapter.streams) {
+      if (this.connectedGeneration(adapter.id) !== generation) fail(409, "connection_changed");
       const previous = this.db
         .query<{ cursor: string | null; retry_at: number }, [string, string]>(
           "SELECT cursor,retry_at FROM social_checks WHERE account=? AND stream=?",
         )
         .get(adapter.id, stream);
       if ((previous?.retry_at ?? 0) > this.now()) continue;
+      if (adapter.pollsNetwork !== false && !reserved) {
+        const now = this.now();
+        const claim = this.db.run(
+          `INSERT INTO social_read_budget(account,refill_end) VALUES(?,?)
+          ON CONFLICT(account) DO UPDATE SET refill_end=MAX(refill_end,?)+?
+          WHERE refill_end<=?`,
+          [
+            adapter.id,
+            now + READ_INTERVAL,
+            now,
+            READ_INTERVAL,
+            now + (READ_BURST - 1) * READ_INTERVAL,
+          ],
+        );
+        if (!claim.changes) return;
+        reserved = true;
+      }
       // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: record provider transport failures per stream without discarding successful streams.
       try {
         const page = await adapter.check(stream, previous?.cursor ?? null);
         this.db.transaction(() => {
+          if (this.connectedGeneration(adapter.id) !== generation) fail(409, "connection_changed");
           this.ingest(adapter.id, page.events);
+          this.db.run("DELETE FROM social_stream_failures WHERE account=? AND stream=?", [
+            adapter.id,
+            stream,
+          ]);
           this.db.run(
             `INSERT INTO social_checks(account,stream,cursor,last_sync,retry_at) VALUES(?,?,?,?,?)
             ON CONFLICT(account,stream) DO UPDATE SET cursor=excluded.cursor,last_sync=excluded.last_sync,error=NULL,retry_at=excluded.retry_at`,
-            [adapter.id, stream, page.cursor, this.now(), this.now() + 1000],
+            [adapter.id, stream, page.cursor, this.now(), 0],
           );
         })();
       } catch (error) {
+        if (this.connectedGeneration(adapter.id) !== generation) fail(409, "connection_changed");
         const code = isSocialError(error) ? error.code : "provider_unavailable";
-        const delay = isSocialError(error) && error.status === 429 ? 60000 : 5000;
-        this.db.run(
-          `INSERT INTO social_checks(account,stream,error,retry_at) VALUES(?,?,?,?)
-          ON CONFLICT(account,stream) DO UPDATE SET error=excluded.error,retry_at=excluded.retry_at`,
-          [adapter.id, stream, code, this.now() + delay],
-        );
+        this.db.transaction(() => {
+          let retryAt = 0;
+          if (adapter.pollsNetwork !== false) {
+            const transient =
+              !isSocialError(error) ||
+              error.status === 429 ||
+              error.status === 408 ||
+              error.status >= 500;
+            if (transient) {
+              const row = this.db
+                .query<
+                  { count: number },
+                  [string, string]
+                >(`INSERT INTO social_stream_failures VALUES(?,?,1)
+                ON CONFLICT(account,stream) DO UPDATE SET count=MIN(count+1,12) RETURNING count`)
+                .get(adapter.id, stream)!;
+              const initial = isSocialError(error) && error.status === 429 ? 60_000 : 5_000;
+              const base = Math.min(30 * 60_000, initial * 2 ** (row.count - 1));
+              retryAt = this.now() + base + Math.floor((Math.random() * base) / 2);
+              if (isSocialError(error) && Number.isSafeInteger(error.retryAt))
+                retryAt = Math.max(retryAt, error.retryAt!);
+            }
+          }
+          this.db.run(
+            `INSERT INTO social_checks(account,stream,error,retry_at) VALUES(?,?,?,?)
+            ON CONFLICT(account,stream) DO UPDATE SET error=excluded.error,retry_at=excluded.retry_at`,
+            [adapter.id, stream, code, retryAt],
+          );
+        })();
       }
     }
   }
@@ -353,15 +436,34 @@ export class SocialService {
   }
   private account(id: string) {
     const a = this.adapter(id);
+    const end =
+      this.db
+        .query<{ refill_end: number }, [string]>(
+          "SELECT refill_end FROM social_read_budget WHERE account=?",
+        )
+        .get(id)?.refill_end ?? 0;
+    const now = this.now();
+    const remaining = Math.max(0, READ_BURST - Math.ceil(Math.max(0, end - now) / READ_INTERVAL));
+    const budget =
+      a.pollsNetwork === false
+        ? null
+        : {
+            remaining,
+            capacity: READ_BURST,
+            refillMs: READ_INTERVAL,
+            nextAt: remaining === 0 ? end - (READ_BURST - 1) * READ_INTERVAL : now,
+          };
     const health = this.db
-      .query<{ stream: Stream; last_sync: number | null; error: string | null }, [string]>(
-        "SELECT stream,last_sync,error FROM social_checks WHERE account=?",
-      )
+      .query<
+        { stream: Stream; last_sync: number | null; error: string | null; retry_at: number },
+        [string]
+      >("SELECT stream,last_sync,error,retry_at FROM social_checks WHERE account=?")
       .all(id);
     return {
       id,
       provider: a.provider,
       label: a.label,
+      connected: this.isConnected(id),
       streams: a.streams,
       templates: a.templates?.() ?? [],
       lastSync: Math.max(0, ...health.map((row) => row.last_sync ?? 0)) || null,
@@ -373,7 +475,10 @@ export class SocialService {
               )
               .get(id)?.received ?? null)
           : null,
-      error: health.find((row) => row.error)?.error ?? null,
+      error:
+        health.find((row) => row.error)?.error ??
+        (budget?.remaining === 0 ? "read_budget_exhausted" : null),
+      budget,
       health,
     };
   }
@@ -435,10 +540,14 @@ export class SocialService {
     this.scope(p, row.account);
     return row;
   }
-  private draftView(row: DraftRow) {
+  private draftView(p: SocialPrincipal, row: DraftRow, list = false) {
     const envelope = decodeJson(row.envelope) as Envelope;
     return {
       ...envelope,
+      recipient:
+        (p.kind === "agent" || list) && this.adapter(row.account).provider === "whatsapp"
+          ? "Customer ••••" + envelope.recipient.slice(-4)
+          : envelope.recipient,
       id: row.id,
       version: row.version,
       fingerprint: row.fingerprint,
@@ -581,7 +690,7 @@ export class SocialService {
         category,
         this.now(),
       ]);
-    return this.draftView(this.draft(p, id));
+    return this.draftView(p, this.draft(p, id));
   }
   private human(p: SocialPrincipal) {
     if (p.kind !== "human" || p.canApprove !== true) fail(403, "human_approval_required");
@@ -621,6 +730,7 @@ export class SocialService {
         if (draft.attempt) return { attemptId: draft.attempt, envelope: null };
         if (draft.state !== "pending") fail(409, "stale_draft");
         const envelope = decodeJson(draft.envelope) as Envelope;
+        const generation = this.connectedGeneration(envelope.accountId);
         this.dispatchPolicy(envelope, draft);
         const attemptId = randomUUID();
         this.db.run("INSERT INTO social_decisions VALUES(?,?,?,?,?,?,?)", [
@@ -647,20 +757,22 @@ export class SocialService {
           attemptId,
           id,
         ]);
-        return { attemptId, envelope };
+        return { attemptId, envelope, generation };
       })
       .immediate();
     if (claim.envelope) {
       let receipt: { providerId: string };
       const envelope = claim.envelope;
       const recheck = () => {
-        this.human(p);
-        this.scope(p, envelope.accountId);
-        const draft = this.draft(p, id);
-        if (draft.attempt !== claim.attemptId || draft.fingerprint !== body.fingerprint)
-          fail(409, "rejected");
-        // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: a policy change during a provider preflight must prevent its outbound request.
+        // oxlint-disable-next-line executor/no-try-catch-or-throw -- boundary: a failed final authorization check is a definite refusal before provider I/O.
         try {
+          this.human(p);
+          this.scope(p, envelope.accountId);
+          const draft = this.draft(p, id);
+          if (draft.attempt !== claim.attemptId || draft.fingerprint !== body.fingerprint)
+            fail(409, "rejected");
+          if (this.connectedGeneration(envelope.accountId) !== claim.generation)
+            fail(409, "rejected");
           this.dispatchPolicy(envelope, draft);
         } catch {
           fail(409, "rejected");
@@ -766,19 +878,14 @@ export class SocialService {
             limit + 1,
           );
         return respond({
-          items: rows.slice(0, limit).map((row) => {
-            const draft = this.draftView(row);
-            if (this.adapter(row.account).provider === "whatsapp")
-              return { ...draft, recipient: "Customer ••••" + draft.recipient.slice(-4) };
-            return draft;
-          }),
+          items: rows.slice(0, limit).map((row) => this.draftView(p, row, true)),
           nextCursor: rows.length > limit ? rows[limit - 1]!.id : null,
         });
       }
       if (method === "POST" && path === "drafts")
         return respond(this.saveDraft(p, await input(req)), 201);
       if (resource === "drafts" && id && parts.length === 2) {
-        if (method === "GET") return respond(this.draftView(this.draft(p, id)));
+        if (method === "GET") return respond(this.draftView(p, this.draft(p, id)));
         if (method === "PATCH") {
           const body = await input(req);
           return respond(this.saveDraft(p, body, this.draft(p, id)));
@@ -806,7 +913,7 @@ export class SocialService {
               ]);
             })
             .immediate();
-          return respond(this.draftView(this.draft(p, id)));
+          return respond(this.draftView(p, this.draft(p, id)));
         }
       }
       if (method === "GET" && resource === "attempts" && id && parts.length === 2)

@@ -10,9 +10,9 @@ export const record = (value: unknown): RecordValue =>
 export const rows = (value: unknown): RecordValue[] =>
   Array.isArray(value) ? value.map(record) : [];
 export const str = (value: unknown): string => (typeof value === "string" ? value : "");
-export function fail(status: number, code: string): never {
+export function fail(status: number, code: string, retryAt?: number): never {
   // oxlint-disable-next-line executor/no-try-catch-or-throw -- typed HTTP boundary; never expose provider payloads or credentials.
-  throw new SocialError(status, code);
+  throw new SocialError(status, code, retryAt);
 }
 
 /** No message request has been made yet. A failed token or template lookup is a definite no-send. */
@@ -80,8 +80,9 @@ export class ProviderHttp {
     readonly clock: () => number = Date.now,
   ) {}
   async json(url: URL, init: RequestInit, bucket: string, sending = false): Promise<RecordValue> {
-    if ((this.cooldowns.get(bucket) ?? 0) > this.clock())
-      return fail(429, sending ? "rejected" : "rate_limit");
+    const blockedUntil = this.cooldowns.get(bucket) ?? 0;
+    if (blockedUntil > this.clock())
+      return fail(429, sending ? "rejected" : "rate_limit", blockedUntil);
     let response: Response;
     // oxlint-disable-next-line executor/no-try-catch-or-throw -- map transport exceptions into safe, redacted results.
     try {
@@ -93,24 +94,21 @@ export class ProviderHttp {
     } catch {
       return fail(503, sending ? "unknown" : "temporary_failure");
     }
-    if (response.status === 429) {
+    let retryAt: number | undefined;
+    if (response.status === 429 || response.status === 503) {
       const delay = response.headers.get("retry-after");
-      const reset = Number(response.headers.get("x-rate-limit-reset")) * 1000;
-      const retryAt =
-        delay === null
-          ? 0
-          : /^\d+$/.test(delay)
-            ? this.clock() + Number(delay) * 1000
-            : Date.parse(delay);
-      this.cooldowns.set(
-        bucket,
-        Math.max(
-          this.clock() + 1000,
-          Number.isFinite(retryAt) ? retryAt : 0,
-          Number.isFinite(reset) ? reset : 0,
-          !delay && !reset ? this.clock() + 60_000 : 0,
-        ),
+      const resetHeader = response.headers.get("x-rate-limit-reset");
+      const now = this.clock();
+      const until =
+        delay === null ? 0 : /^\d+$/.test(delay) ? now + Number(delay) * 1000 : Date.parse(delay);
+      const reset = resetHeader === null ? 0 : Number(resetHeader) * 1000;
+      // Ignore malformed and past hints. Keep valid provider holds even when they exceed the local backoff cap.
+      const hint = Math.max(
+        Number.isSafeInteger(until) ? until : 0,
+        Number.isSafeInteger(reset) ? reset : 0,
       );
+      retryAt = hint > now ? hint : response.status === 429 ? now + 60_000 : undefined;
+      if (retryAt !== undefined) this.cooldowns.set(bucket, retryAt);
     }
     if (!response.ok) {
       if (sending)
@@ -126,6 +124,7 @@ export class ProviderHttp {
           : response.status >= 500
             ? "temporary_failure"
             : "rejected",
+        retryAt,
       );
     }
     // oxlint-disable-next-line executor/no-try-catch-or-throw -- an unreadable success response is never evidence that a write failed.

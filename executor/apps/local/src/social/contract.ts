@@ -49,6 +49,8 @@ export interface SocialAdapter {
   provider: "x" | "whatsapp";
   label: string;
   streams: readonly Stream[];
+  /** False for fixture data and local webhook-backed checks. Polling adapters use a durable read budget. */
+  pollsNetwork?: boolean;
   check(
     stream: Stream,
     cursor: string | null,
@@ -73,10 +75,12 @@ export class SocialError extends Error {
     return this.#status;
   }
   readonly code: string;
-  constructor(status: number, code: string) {
+  readonly retryAt: number | undefined;
+  constructor(status: number, code: string, retryAt?: number) {
     super(code);
     this.#status = status;
     this.code = code;
+    this.retryAt = retryAt;
   }
 }
 

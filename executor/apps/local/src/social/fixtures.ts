@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { validateXTarget } from "./providers/x";
 import {
   SocialError,
   type Envelope,
@@ -20,9 +21,9 @@ export function createFixtureAdapters(now: () => number = Date.now): SocialAdapt
         type: "item",
         stream: "mention",
         visibility: "public",
-        providerId: "post-m",
-        threadId: "post-m",
-        senderId: "p1",
+        providerId: "101",
+        threadId: "101",
+        senderId: "82",
         sender: "@Ada",
         text: "What time does the workshop start?",
         at: at - 3000,
@@ -33,9 +34,9 @@ export function createFixtureAdapters(now: () => number = Date.now): SocialAdapt
         type: "item",
         stream: "feed",
         visibility: "public",
-        providerId: "post-f",
-        threadId: "post-f",
-        senderId: "p2",
+        providerId: "102",
+        threadId: "102",
+        senderId: "83",
         sender: "@Workshop",
         text: "The new workshop schedule is ready.",
         at: at - 1000,
@@ -45,9 +46,9 @@ export function createFixtureAdapters(now: () => number = Date.now): SocialAdapt
       {
         type: "item",
         stream: "dm",
-        providerId: "dm-1",
-        threadId: "thread-1",
-        senderId: "p3",
+        providerId: "103",
+        threadId: "71-84",
+        senderId: "84",
         sender: "@Emeka",
         text: "Can you send my joining details here?",
         at: at - 2000,
@@ -77,14 +78,20 @@ export function createFixtureAdapters(now: () => number = Date.now): SocialAdapt
       provider: "x",
       label: "Workshop on X",
       streams: ["mention", "dm", "feed"],
+      pollsNetwork: false,
       check,
-      send,
+      eligible: (env) => validateXTarget(env, "x-fixture", "71"),
+      send: async (env, recheck) => {
+        validateXTarget(env, "x-fixture", "71");
+        return send(env, recheck);
+      },
     },
     {
       id: "wa-fixture",
       provider: "whatsapp",
       label: "Workshop business number",
       streams: ["business"],
+      pollsNetwork: false,
       check,
       send,
       templates: () => [

@@ -31,7 +31,23 @@ interface Token {
 }
 const origin = "https://api.x.com";
 const digits = (s: string) => /^\d{1,25}$/.test(s);
-const dmId = (s: string) => /^\d{1,25}(?:-\d{1,25})?$/.test(s);
+function privatePair(thread: string, userId: string) {
+  const ids = thread.split("-");
+  return ids.length === 2 && ids[0] !== ids[1] && ids.every(digits) && ids.includes(userId);
+}
+
+/** The fixture and the live writer accept the same target kinds and private conversation IDs. */
+export function validateXTarget(env: Envelope, accountId: string, userId: string): void {
+  if (
+    env.accountId !== accountId ||
+    !env.text.trim() ||
+    env.template ||
+    !["post", "reply", "dm"].includes(env.kind) ||
+    (env.kind === "reply" && !digits(env.targetId ?? "")) ||
+    (env.kind === "dm" && !privatePair(env.recipient, userId))
+  )
+    fail(400, "invalid_target");
+}
 const largestId = (a: string, b: string): string => (!a || BigInt(b) > BigInt(a) ? b : a);
 const postRead = ["tweet.read", "users.read"];
 const scopesFor = (stream: Stream) => (stream === "dm" ? [...postRead, "dm.read"] : postRead);
@@ -263,6 +279,9 @@ export class XProvider implements SocialAdapter {
         overlap = true;
         continue;
       }
+      // Group DMs have a single numeric conversation ID. This inbox supports private pairs.
+      if (isDm && (!privatePair(thread, this.config.userId) || !thread.split("-").includes(author)))
+        continue;
       const user: RecordValue = users.get(author) ?? {};
       const keys = record(row.attachments).media_keys;
       const attachments: Attachment[] = Array.isArray(keys)
@@ -301,15 +320,7 @@ export class XProvider implements SocialAdapter {
 
   eligible(env: Envelope): void {
     if (!this.config.writes) fail(403, "live_writes_disabled");
-    if (
-      env.accountId !== this.id ||
-      !env.text.trim() ||
-      env.template ||
-      !["post", "reply", "dm"].includes(env.kind) ||
-      (env.kind === "reply" && !digits(env.targetId ?? "")) ||
-      (env.kind === "dm" && !dmId(env.recipient))
-    )
-      fail(400, "invalid_target");
+    validateXTarget(env, this.id, this.config.userId);
     const scopes =
       env.kind === "dm" ? [...scopesFor("dm"), "dm.write"] : [...postRead, "tweet.write"];
     if (!this.token || !scopes.every((s) => this.token?.scopes.has(s))) fail(403, "missing_scope");

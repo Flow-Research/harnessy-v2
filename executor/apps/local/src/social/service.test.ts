@@ -128,8 +128,8 @@ describe("social cockpit", () => {
       {
         type: "item",
         stream: "mention",
-        providerId: "post-f",
-        threadId: "post-f",
+        providerId: "102",
+        threadId: "102",
         sender: "@Workshop",
         senderId: "p2",
         text: "same post",
@@ -162,6 +162,88 @@ describe("social cockpit", () => {
     expect(b.error).toBe("rate_limit");
     expect(read).toHaveBeenCalledTimes(2);
   });
+  it("persists a bounded live read burst and refills at a fixed rate without charging local checks", async () => {
+    const { adapters, get, clock, restart } = await setup();
+    const polling = adapters[0]!;
+    polling.pollsNetwork = true;
+    const spy = vi.fn(polling.check);
+    polling.check = spy;
+    const check = () =>
+      get<{ budget: { remaining: number; nextAt: number }; error: string | null }>(
+        "accounts/x-fixture/check",
+        "POST",
+        {},
+      );
+    expect((await check()).budget.remaining).toBe(1);
+    expect((await check()).budget.remaining).toBe(0);
+    restart();
+    for (let i = 0; i < 5; i++) expect((await check()).error).toBe("read_budget_exhausted");
+    expect(spy).toHaveBeenCalledTimes(6);
+    clock.time += 599999;
+    expect((await check()).budget.nextAt).toBe(base + 600000);
+    expect(spy).toHaveBeenCalledTimes(6);
+    clock.time++;
+    await check();
+    expect(spy).toHaveBeenCalledTimes(9);
+    for (let i = 0; i < 6; i++) {
+      clock.time += 600000;
+      await check();
+      await check();
+    }
+    expect(spy).toHaveBeenCalledTimes(27);
+    const webhook = adapters[1]!;
+    const local = vi.fn(webhook.check);
+    webhook.check = local;
+    for (let i = 0; i < 6; i++)
+      expect(
+        (await get<{ budget: null }>("accounts/wa-fixture/check", "POST", {})).budget,
+      ).toBeNull();
+    expect(local).toHaveBeenCalledTimes(6);
+  });
+  it("backs off a single live stream across restarts, honors provider reset and resets failures after recovery", async () => {
+    const { adapters, get, clock, restart } = await setup();
+    const x = adapters[0]!;
+    x.pollsNetwork = true;
+    const read = vi.fn(x.check);
+    let failure: SocialError | null = new SocialError(429, "rate_limit", base + 3600000);
+    let mentions = 0;
+    x.check = async (stream, cursor) => {
+      if (stream === "mention") {
+        mentions++;
+        // oxlint-disable-next-line executor/no-try-catch-or-throw -- test adapter supplies a synthetic HTTP failure.
+        if (failure) throw failure;
+      }
+      return read(stream, cursor);
+    };
+    const check = async () => {
+      const health = await get<{
+        health: Array<{ stream: string; error: string | null; retry_at: number }>;
+      }>("accounts/x-fixture/check", "POST", {});
+      return health.health.find((item) => item.stream === "mention")!;
+    };
+    expect((await check()).retry_at).toBe(base + 3600000);
+    restart();
+    clock.time += 600000;
+    await check();
+    expect(mentions).toBe(1);
+    expect(read.mock.calls.map((call) => call[0])).toEqual(["dm", "feed", "dm", "feed"]);
+    clock.time = base + 3600000;
+    failure = new SocialError(503, "temporary_failure");
+    const retry = (await check()).retry_at - clock.time;
+    expect(retry).toBeGreaterThanOrEqual(10000);
+    expect(retry).toBeLessThan(15000);
+    clock.time += retry - 1;
+    await check();
+    expect(mentions).toBe(2);
+    clock.time += 600001;
+    failure = null;
+    expect(await check()).toMatchObject({ error: null, retry_at: 0 });
+    clock.time += 600000;
+    failure = new SocialError(503, "temporary_failure");
+    const reset = (await check()).retry_at - clock.time;
+    expect(reset).toBeGreaterThanOrEqual(5000);
+    expect(reset).toBeLessThan(7500);
+  });
   it("returns stable draft pages and masks customer numbers outside the review", async () => {
     const { wa, draft, get, request } = await setup();
     const business = await draft("business", wa);
@@ -182,6 +264,38 @@ describe("social cockpit", () => {
       "Customer ••••0004",
     );
     expect((await request("drafts?limit=4096")).status).toBe(400);
+  });
+  it("masks the WhatsApp destination on every agent draft response and reveals it to the approving human", async () => {
+    const { wa, human, agent, get } = await setup();
+    const scoped = { ...agent, accountIds: ["wa-fixture"] };
+    const create = await get<Draft>(
+      "drafts",
+      "POST",
+      { accountId: "wa-fixture", itemId: wa.id, kind: "business", text: "Hi" },
+      scoped,
+    );
+    expect(create.recipient).toBe("Customer ••••0004");
+    const path = "drafts/" + create.id;
+    const read = await get<Draft>(path, "GET", undefined, scoped);
+    const edit = await get<Draft>(path, "PATCH", { text: "Revised", expectedVersion: 1 }, scoped);
+    const list = await get<{ items: Draft[] }>("drafts", "GET", undefined, scoped);
+    for (const response of [create, read, edit, list.items[0]])
+      expect(JSON.stringify(response)).not.toContain("15550100004");
+    expect((await get<Draft>(path, "GET", undefined, human)).recipient).toBe("15550100004");
+  });
+  it("records a known refusal if the human session expires during preflight", async () => {
+    const { human, draft, get, send, proof } = await setup();
+    const d = await draft();
+    let applied = 0;
+    send.mockImplementationOnce(async (_, recheck) => {
+      human.canApprove = false;
+      recheck?.();
+      applied++;
+      return { providerId: "bad" };
+    });
+    const result = await get<Attempt>("drafts/" + d.id + "/approve-and-send", "POST", proof(d));
+    expect(result).toMatchObject({ status: "failed", providerId: null });
+    expect(applied).toBe(0);
   });
   it("applies grants to IDs, cursors, drafts, tool inputs and direct approval calls", async () => {
     const { agent, human, request, get, wa, draft, dm, proof, calls } = await setup();
@@ -401,6 +515,37 @@ describe("social cockpit", () => {
     ]);
     expect((await request(makePath(edited), "POST", proof(edited))).status).toBe(409);
     expect(calls).toHaveLength(1);
+  });
+  it("persists a disconnect through restart and refuses checks, verified events and sends", async () => {
+    const { wa, service, clock, draft, request, proof, restart, send, get } = await setup();
+    const d = await draft("business", wa);
+    service.setConnected("wa-fixture", false);
+    expect(() =>
+      service.ingest("wa-fixture", [
+        { type: "status", providerId: "wamid.old", at: clock.time, status: "read" },
+      ]),
+    ).toThrow("account_disconnected");
+    restart();
+    expect((await request("accounts/wa-fixture/check", "POST", {})).status).toBe(409);
+    expect((await request("drafts/" + d.id + "/approve-and-send", "POST", proof(d))).status).toBe(
+      409,
+    );
+    const list = await get<{ items: Array<{ id: string; connected: boolean }> }>("accounts");
+    expect(list.items.find((a) => a.id === "wa-fixture")?.connected).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+  });
+  it("refuses a send crossing disconnect and reconnect during network preflight", async () => {
+    const { wa, service, draft, get, send, proof } = await setup();
+    const d = await draft("business", wa);
+    send.mockImplementationOnce(async (_, recheck) => {
+      service.setConnected("wa-fixture", false);
+      service.setConnected("wa-fixture", true);
+      recheck?.();
+      return { providerId: "bad" };
+    });
+    expect(
+      await get<Attempt>("drafts/" + d.id + "/approve-and-send", "POST", proof(d)),
+    ).toMatchObject({ status: "failed", providerId: null });
   });
   it("rechecks policy after asynchronous transport preflight", async () => {
     const { wa, draft, get, send, proof, clock } = await setup();

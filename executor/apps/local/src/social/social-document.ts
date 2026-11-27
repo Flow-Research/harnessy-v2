@@ -521,7 +521,11 @@ export const socialDocument = String.raw`<!doctype html>
               }),
             );
           }
-          if (state.mode === "live" && a.provider === "x")
+          if (state.mode === "live" && a.provider === "whatsapp" && !a.connected)
+            controls.append(button("Reconnect business number",async () => {
+              await api("accounts/" + urlId(a.id) + "/connect","POST",{}); await refresh();
+            }));
+          if (state.mode === "live" && a.connected)
             controls.append(
               button("Disconnect", async () => {
                 if (!window.confirm("Disconnect " + a.label + "?")) return;

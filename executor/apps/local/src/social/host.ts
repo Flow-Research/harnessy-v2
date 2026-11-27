@@ -37,6 +37,7 @@ export function socialHost(
   let service: SocialService | undefined;
   let live: ReturnType<typeof createLiveProviders> | undefined;
   let seeded: Promise<void> | undefined;
+  let retention: ReturnType<typeof setInterval> | undefined;
   const operatorCode = env.HARNESSY_SOCIAL_OPERATOR_CODE ?? "";
   const agentToken = env.HARNESSY_SOCIAL_AGENT_TOKEN ?? "";
   const accounts = (env.HARNESSY_SOCIAL_AGENT_ACCOUNTS ?? "")
@@ -54,6 +55,19 @@ export function socialHost(
         workspaceId,
         adapters: live?.adapters ?? createFixtureAdapters(),
       });
+      service.prune();
+      retention = setInterval(
+        () => {
+          // oxlint-disable-next-line executor/no-try-catch-or-throw -- a transient SQLite maintenance failure must not crash the host. Retry next interval.
+          try {
+            service?.prune();
+          } catch {
+            console.warn("Social retention cleanup could not complete");
+          }
+        },
+        60 * 60 * 1000,
+      );
+      retention.unref();
       if (mode === "fixture") seeded = service.seedFixtures();
     }
     return service;
@@ -66,7 +80,7 @@ export function socialHost(
       if (mode !== "live") return reply({ error: "unavailable" }, 404);
       const store = open();
       const wa = live?.whatsapp;
-      if (!wa) return reply({ error: "unavailable" }, 404);
+      if (!wa || !store.isConnected(wa.id)) return reply({ error: "unavailable" }, 404);
       if (req.method === "GET")
         return new Response(wa.verifyChallenge(url), {
           headers: { "content-type": "text/plain", "cache-control": "no-store" },
@@ -102,6 +116,11 @@ export function socialHost(
         return reply({ error: "oauth_state" }, 403);
       delete signed.state;
       await live.x.completeConnect(url.href);
+      if (session !== signed || signed.expires <= Date.now()) {
+        live.x.disconnect();
+        return reply({ error: "operator_session_required" }, 403);
+      }
+      open().setConnected(live.x.id, true);
       return new Response(null, {
         status: 303,
         headers: {
@@ -169,13 +188,20 @@ export function socialHost(
     if (connection) {
       if (!browser || !signed || req.method !== "POST")
         return reply({ error: "operator_required" }, 403);
-      if (!live?.x || connection[1] !== live.x.id) return reply({ error: "unavailable" }, 404);
+      const id = connection[1]!;
+      if (!live || !store.accounts().includes(id)) return reply({ error: "unavailable" }, 404);
       if (connection[2] === "disconnect") {
-        await live.x.disconnect();
+        store.setConnected(id, false);
+        if (id === live.x?.id) live.x.disconnect();
         delete signed.state;
         return reply({ ok: true });
       }
-      const location = new URL(await live.x.beginConnect());
+      if (id === live.whatsapp?.id) {
+        store.setConnected(id, true);
+        return reply({ ok: true });
+      }
+      if (!live.x || live.x.id !== id) return reply({ error: "unavailable" }, 404);
+      const location = new URL(live.x.beginConnect());
       signed.state = location.searchParams.get("state") ?? undefined;
       return reply({ url: location.href });
     }
@@ -211,6 +237,7 @@ export function socialHost(
     },
     close() {
       session = undefined;
+      clearInterval(retention);
       db?.close();
     },
   };

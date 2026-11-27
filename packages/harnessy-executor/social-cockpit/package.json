@@ -1,7 +1,11 @@
 {
-  "name":"@harnessy/social-cockpit-tools",
-  "version":"0.1.0",
-  "private":true,
-  "type":"module",
-  "pi":{"extensions":["./agent.ts"]}
+  "name": "@harnessy/social-cockpit-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./agent.ts"
+    ]
+  }
 }

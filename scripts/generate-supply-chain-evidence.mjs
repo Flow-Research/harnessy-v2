@@ -270,6 +270,7 @@ const inputPaths = [
 	"packages/harnessy-executor/README.md",
 	"packages/harnessy-executor/bin/harnessy-executor",
 	"packages/harnessy-executor/bin/platform.cjs",
+	...collectRepositoryInputPaths({ repoRoot, relativeRoot: "packages/harnessy-executor/social-cockpit" }),
 	...collectRepositoryInputPaths({ repoRoot, relativeRoot: "executor" }),
 	...descriptors.map((descriptor) => `${descriptor.directory}/package.json`),
 ];
