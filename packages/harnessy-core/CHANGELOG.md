@@ -136,6 +136,10 @@
 
 ### Fixed
 
+- `harnessy engineering tick` admits a proof-only job whose pinned source is an
+  ancestor of the current base. Before, merging the reviewed pull request moved
+  the base, and the controller refused every proof-only successor that pinned
+  the original source, which the runner requires.
 - Skill registration preserves unrelated entries and rejects conflicting names.
   Skill replacement requires a matching Harnessy ownership record, even with
   `--force`. Unmarked older installations must be inspected and moved explicitly

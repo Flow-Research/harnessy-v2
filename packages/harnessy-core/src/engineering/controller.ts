@@ -24,6 +24,12 @@ export interface HostReadiness {
 	readonly sourceRevision: string;
 	readonly evaluatorDigest: string;
 	readonly workloadDigest: string;
+	/**
+	 * For a proof-only job: true when the job's pinned source is an ancestor of the current base.
+	 * Merging the reviewed pull request moves the base, so a proof-only successor can never pin
+	 * the current base. The runner still requires the pinned source of the retained authority.
+	 */
+	readonly pinnedSourceIsAncestor?: boolean;
 }
 
 export type HostProcessObservation =
@@ -199,16 +205,25 @@ export class EngineeringController {
 		if (profile === undefined)
 			return { status: "paused", reason: "Repository has no host profile", code: "admission_paused" };
 		const readiness = await this.#deps.readiness(job, profile);
+		const sourceAdmitted =
+			readiness.sourceRevision === job.sourceRevision ||
+			(job.proofOnlyResume !== undefined && readiness.pinnedSourceIsAncestor === true);
 		if (
 			readiness.status !== "ready" ||
-			readiness.sourceRevision !== job.sourceRevision ||
+			!sourceAdmitted ||
 			readiness.evaluatorDigest !== job.evaluatorDigest ||
 			readiness.workloadDigest !== job.workloadDigest
 		)
 			return {
 				status: "paused",
-				reason: `Host, isolation or pinned source/evaluator/workload unavailable: ${readiness.reason}`,
-				code: readiness.sourceRevision !== job.sourceRevision ? "source_unavailable" : "isolation_unavailable",
+				reason: `Host, isolation or pinned source/evaluator/workload unavailable: ${
+					readiness.status === "ready" && !sourceAdmitted
+						? job.proofOnlyResume === undefined
+							? "the job does not pin the current base"
+							: "the pinned source is not an ancestor of the current base"
+						: readiness.reason
+				}`,
+				code: sourceAdmitted ? "isolation_unavailable" : "source_unavailable",
 			};
 		if (!(await this.#remoteCurrent(launchId)))
 			return { status: "paused", reason: "Remote authority is unavailable or refused", code: "admission_paused" };

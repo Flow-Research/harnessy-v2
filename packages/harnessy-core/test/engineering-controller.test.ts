@@ -16,7 +16,7 @@ const cleanup: Array<() => void> = [];
 afterEach(() => {
 	for (const finish of cleanup.splice(0)) finish();
 });
-const setup = () => {
+const setup = (jobOverrides: Partial<EngineeringJob> = {}) => {
 	const root = realpathSync(mkdtempSync(join(tmpdir(), "engineering-controller-")));
 	const store = new EngineeringStore(join(root, "controller.sqlite"));
 	cleanup.push(() => {
@@ -36,6 +36,7 @@ const setup = () => {
 		sourceRevision: "a".repeat(40),
 		evaluatorDigest: "b".repeat(64),
 		workloadDigest: "c".repeat(64),
+		...jobOverrides,
 	};
 	const grant = engineeringGrant(value, clock, clock + 5_000_000);
 	store.approve(value, grant, clock);
@@ -240,6 +241,56 @@ describe("engineering controller", () => {
 		}).tick();
 		expect(result.state).toBe("paused");
 		expect(store.events()).toEqual([]);
+	});
+	it("admits a proof-only successor whose pinned source is an ancestor of the moved base", async () => {
+		const proofOnlyResume = { previousAuthorityId: randomUUID(), expectedHeadSha: "9".repeat(40) };
+		const moved = (pinnedSourceIsAncestor: boolean | undefined) => async () => ({
+			status: "ready" as const,
+			reason: "Base moved after the merge",
+			sourceRevision: "e".repeat(40),
+			evaluatorDigest: "b".repeat(64),
+			workloadDigest: "c".repeat(64),
+			...(pinnedSourceIsAncestor === undefined ? {} : { pinnedSourceIsAncestor }),
+		});
+		const admitted = setup({ proofOnlyResume });
+		const result = await new EngineeringController(admitted.store, {
+			...admitted.deps,
+			readiness: moved(true),
+		}).tick();
+		expect(result.state).toBe("settled");
+		expect(admitted.commands).toHaveLength(1);
+		expect(admitted.commands[0]?.proofOnlyResume).toEqual(proofOnlyResume);
+		expect(admitted.commands[0]?.sourceRevision).toBe("a".repeat(40));
+
+		for (const ancestor of [false, undefined]) {
+			const refused = setup({ proofOnlyResume });
+			const paused = await new EngineeringController(refused.store, {
+				...refused.deps,
+				readiness: moved(ancestor),
+			}).tick();
+			expect(paused.state).toBe("paused");
+			expect(paused.reason).toContain("not an ancestor of the current base");
+			expect(refused.store.events()).toEqual([]);
+			expect(refused.commands).toEqual([]);
+		}
+	});
+	it("does not let an ordinary job use the ancestor rule of a proof-only successor", async () => {
+		const { store, deps, commands } = setup();
+		const result = await new EngineeringController(store, {
+			...deps,
+			readiness: async () => ({
+				status: "ready",
+				reason: "Base moved",
+				sourceRevision: "e".repeat(40),
+				evaluatorDigest: "b".repeat(64),
+				workloadDigest: "c".repeat(64),
+				pinnedSourceIsAncestor: true,
+			}),
+		}).tick();
+		expect(result.state).toBe("paused");
+		expect(result.reason).toContain("does not pin the current base");
+		expect(store.events()).toEqual([]);
+		expect(commands).toEqual([]);
 	});
 	it("keeps one run across a lost reply, an unknown poll and another controller", async () => {
 		const { store, deps, commands, setObservation } = setup();
