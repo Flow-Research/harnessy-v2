@@ -55,3 +55,36 @@ test("checked-in root audit exceptions are well formed", () => {
 	assert.ok(Array.isArray(npmAuditExceptions));
 	for (const exception of npmAuditExceptions) assert.match(exception.url, /^https:\/\/github\.com\/advisories\/GHSA-/);
 });
+
+test("only the pinned development sandbox copy qualifies before its UTC expiry", () => {
+	const parent = "@anthropic-ai/sandbox-runtime";
+	const owner = `node_modules/${parent}`;
+	const path = `${owner}/node_modules/zod`;
+	const zod = advisory("zod", "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5", "<4.6.6");
+	const packages = {
+		"": { devDependencies: { [parent]: "0.0.26" } },
+		[owner]: { version: "0.0.26", dev: true, dependencies: { zod: "^3.24.1" } },
+		[path]: { version: "3.25.76", dev: true },
+	};
+	const before = Date.parse("2027-02-09T23:59:59.999Z");
+	const run = (nodes, lock, time = before) => evaluateNpmAudit(
+		{ vulnerabilities: { zod: { name: "zod", via: [zod], nodes } } }, npmAuditExceptions, "moderate", time, lock,
+	).ok;
+	assert.equal(run([path], packages), true);
+	assert.equal(run([path], packages, before + 1), false);
+	for (const nodes of [undefined, [], ["node_modules/zod"], [path, "node_modules/other/node_modules/zod"]]) {
+		assert.equal(run(nodes, packages), false);
+	}
+	for (const mutate of [
+		(lock) => { lock[owner].version = "0.0.83"; },
+		(lock) => { lock[owner].dependencies.zod = "^4.6.6"; },
+		(lock) => { lock[path].version = "3.25.75"; },
+		(lock) => { delete lock[path].dev; },
+		(lock) => { delete lock[owner].dev; },
+		(lock) => { lock[""].dependencies = { [parent]: "0.0.26" }; },
+	]) {
+		const lock = structuredClone(packages);
+		mutate(lock);
+		assert.equal(run([path], lock), false);
+	}
+});
