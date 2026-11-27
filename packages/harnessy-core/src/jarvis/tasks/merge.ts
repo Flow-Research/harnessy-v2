@@ -129,12 +129,23 @@ export const mergeTasks = (options: MergeTasksOptions): TaskListData => {
 		push(fromStoreOnly(item, options.now, options.ownerNames, groupOfStored(item, options.today)));
 	}
 	const storeOrder = new Map(options.store.items.map((item, index) => [item.id, index] as const));
-	const tasks = [...sortPrimary(primary, storeOrder), ...other];
-	const extra = Math.max(0, tasks.length - TASKS_MAX);
+	const merged = [...sortPrimary(primary, storeOrder), ...other];
+	// Store IDs always fit in TASKS_MAX. Drop derived-only items first so a
+	// capped response still names every stored id that reorder needs.
+	let storeLeft = merged.reduce((count, task) => count + (task.inStore ? 1 : 0), 0);
+	const tasks: TaskData[] = [];
+	for (const task of merged) {
+		if (task.inStore) {
+			tasks.push(task);
+			storeLeft -= 1;
+			continue;
+		}
+		if (tasks.length + storeLeft < TASKS_MAX) tasks.push(task);
+	}
 	return {
-		tasks: extra > 0 ? tasks.slice(0, TASKS_MAX) : tasks,
+		tasks,
 		sources: options.derived.sources,
-		omitted: options.derived.omitted + extra,
+		omitted: options.derived.omitted + (merged.length - tasks.length),
 		projectsTruncated: options.derived.projectsTruncated,
 	};
 };

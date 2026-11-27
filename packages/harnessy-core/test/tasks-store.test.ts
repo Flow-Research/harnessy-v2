@@ -267,6 +267,32 @@ describe("ingest and fingerprints", () => {
 		expect(result.items[0]!.id).toBe(native.id);
 		expect(state.read().items).toHaveLength(1);
 	});
+
+	it("re-ingests a completed same-brief item when the store is already full", () => {
+		const { state } = stateFile("full-replay");
+		const candidates = candidatesFromExtracted("brief", extractBriefTasks(briefText), "brief").slice(0, 1);
+		const first = state.ingest(candidates, {
+			kind: "brief",
+			path: "/tmp/27-daily-brief.md",
+			displayRef: "brief",
+			briefDate: "2026-11-27",
+		});
+		const id = first.items[0]!.id;
+		for (let i = 0; i < TASKS_MAX - 1; i += 1) state.add({ title: `Filler ${i}` });
+		expect(state.read().items).toHaveLength(TASKS_MAX);
+		state.applyOutcome(id, "done");
+		const replay = state.ingest(candidates, {
+			kind: "brief",
+			path: "/tmp/27-daily-brief.md",
+			displayRef: "brief",
+			briefDate: "2026-11-27",
+		});
+		expect(replay.created).toBe(0);
+		expect(replay.matched).toBe(1);
+		expect(replay.items[0]!.id).toBe(id);
+		expect(state.read().items.find((item) => item.id === id)?.status).toBe("done");
+		expect(state.read().items).toHaveLength(TASKS_MAX);
+	});
 });
 
 const task = (overrides: Partial<TaskData> & Pick<TaskData, "id" | "title" | "source">): TaskData => ({
@@ -378,6 +404,54 @@ describe("mergeTasks", () => {
 				.map((item) => item.id)
 				.sort(),
 		).toEqual([added.id, register.id].sort());
+	});
+
+	it("keeps every stored id when the merged list is capped at 500", () => {
+		const { state } = stateFile("merge-cap");
+		const first = state.add({ title: "Native A", priority: 1 });
+		const second = state.add({ title: "Native B", priority: 2 });
+		const register = state.ingest(
+			candidatesFromExtracted(
+				"register",
+				[{ title: "Closed register", status: "todo", owner: null, due: null, line: 3, raw: false }],
+				"register",
+			),
+			{ kind: "register", path: "/tmp/register.md", displayRef: "register", briefDate: null },
+		).items[0]!;
+		state.applyOutcome(register.id, "done");
+		const derived: TaskListData = {
+			tasks: Array.from({ length: 498 }, (_, index) =>
+				task({
+					id: index.toString(16).padStart(64, "0"),
+					title: `Brief ${index}`,
+					source: {
+						kind: "brief",
+						path: "/tmp/brief.md",
+						line: index + 1,
+						revision: "2026-11-27T05:00:00.000Z",
+						displayRef: "brief",
+					},
+				}),
+			),
+			sources: [],
+			omitted: 0,
+			projectsTruncated: false,
+		};
+		const merged = mergeTasks({
+			derived,
+			store: state.read(),
+			today: "2026-11-27",
+			now: new Date("2026-11-27T13:00:00.000Z"),
+			ownerNames: [],
+		});
+		expect(merged.tasks).toHaveLength(TASKS_MAX);
+		expect(
+			merged.tasks
+				.filter((item) => item.inStore)
+				.map((item) => item.id)
+				.sort(),
+		).toEqual([first.id, second.id, register.id].sort());
+		expect(merged.omitted).toBe(1);
 	});
 });
 

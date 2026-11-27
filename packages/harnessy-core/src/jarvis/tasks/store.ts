@@ -454,11 +454,6 @@ export class TasksState {
 		const sidecarItems: TaskSidecarItem[] = [];
 		let created = 0;
 		let matched = 0;
-		if (
-			items.length + candidates.filter((candidate) => !openByFingerprint.has(candidate.fingerprint)).length >
-			TASKS_MAX
-		)
-			throw new TaskRefused("tasks_full");
 		const sameBrief = (item: StoredTask): boolean =>
 			(source.briefDate !== null && item.source.briefDate === source.briefDate) || item.source.path === source.path;
 		const unused = (item: StoredTask): boolean => !used.has(item.id);

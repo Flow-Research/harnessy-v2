@@ -2619,6 +2619,45 @@
             }
           }
         ]
+      },
+      {
+        "id": "tasks-store-brief-ingest-20261127",
+        "owner": "harnessy-v2",
+        "reason": "The morning brief reads open store tasks and must copy stored titles exactly so ingest can keep stable IDs.",
+        "baseTree": {
+          "algorithm": "sha256",
+          "digest": "8ef7b81d1e228fbbe53117a6f69c39548ab8cebb5ba3cf718e8e7eade4b28917",
+          "fileCount": 750,
+          "byteCount": 5287118
+        },
+        "changes": [
+          {
+            "path": "tools/flow-install/skills/life-orchestrator/scripts/collect-state",
+            "before": {
+              "size": 50634,
+              "executable": true,
+              "sha256": "d12c5ff728aa020532ca8193b81ee3c39911cfa381fadb1431e9d150f1d8b515"
+            },
+            "after": {
+              "size": 51926,
+              "executable": true,
+              "sha256": "1ab7561b4f7723ca81710de93f70c26847ca825414a0e2c2ecb5527c21d9aeeb"
+            }
+          },
+          {
+            "path": "tools/flow-install/skills/life-orchestrator/scripts/daily-brief",
+            "before": {
+              "size": 44997,
+              "executable": true,
+              "sha256": "e00619f816280fe3815ea8c6930aebbe382b3ce8327a55846406f93b54d21fbe"
+            },
+            "after": {
+              "size": 45499,
+              "executable": true,
+              "sha256": "904e5e4aef919703696d2b4836a6432ed65a2fc4916c420879b65ad43ffd01e6"
+            }
+          }
+        ]
       }
     ]
   },
@@ -2638,8 +2677,8 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "8ef7b81d1e228fbbe53117a6f69c39548ab8cebb5ba3cf718e8e7eade4b28917",
+    "digest": "e6e0c496bc2b88d5665106e2e6f4bbf9e2990aa77ee836610f4098ee08ef8c28",
     "fileCount": 750,
-    "byteCount": 5287118
+    "byteCount": 5288912
   }
 }
