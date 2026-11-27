@@ -239,7 +239,7 @@ test("real Executor Bun graph has one component per lock identity and no depende
 	const miniflareDependencies = bom.dependencies.find((row) => row.ref === "bun-lock:miniflare").dependsOn;
 	assert(miniflareDependencies.includes("bun-lock:miniflare%2Fundici"));
 	assert(!miniflareDependencies.includes("bun-lock:undici"));
-	assert.equal(bom.components.find((component) => component["bom-ref"] === "bun-lock:miniflare%2Fundici").version, "7.30.1");
+	assert.equal(bom.components.find((component) => component["bom-ref"] === "bun-lock:miniflare%2Fundici").version, "7.30.2");
 	const proxyCount = Object.values(lock.packages).filter((entry) => String(entry[0]).includes("@workspace:")).length;
 	assert.equal(bom.components.length, Object.keys(lock.packages).length - proxyCount + Object.keys(lock.workspaces).length - 1);
 	assert.equal(new Set(bom.components.map((component) => component["bom-ref"])).size, bom.components.length);
