@@ -153,8 +153,9 @@ describe("Harnessy v1 full compatibility pack", () => {
 			"engineering-loop-shared-skill-20261121",
 			"jarvis-pypdf-6-21-4",
 			"tasks-store-brief-ingest-20261127",
+			"meeting-capture-routing-20261127",
 		]);
-		const [amendment, dependencyAmendment, briefAmendment] = provenance.source.v2Amendments;
+		const [amendment, dependencyAmendment, briefAmendment, meetingAmendment] = provenance.source.v2Amendments;
 		expect(dependencyAmendment).toMatchObject({
 			owner: "harnessy-v2",
 			baseTree: { fileCount: 750 },
@@ -178,6 +179,12 @@ describe("Harnessy v1 full compatibility pack", () => {
 		expect(briefAmendment.changes.map((change: { path: string }) => change.path).sort()).toEqual([
 			"tools/flow-install/skills/life-orchestrator/scripts/collect-state",
 			"tools/flow-install/skills/life-orchestrator/scripts/daily-brief",
+		]);
+		expect(meetingAmendment).toMatchObject({ owner: "harnessy-v2", baseTree: { fileCount: 750 } });
+		expect(meetingAmendment.changes.map((change: { path: string }) => change.path).sort()).toEqual([
+			"tools/flow-install/skills/jarvis/commands/jarvis.md",
+			"tools/flow-install/skills/life-orchestrator/scripts/collect-state",
+			"tools/flow-install/tests/test_life_orchestrator_collect_state.py",
 		]);
 	});
 
@@ -211,7 +218,7 @@ describe("Harnessy v1 full compatibility pack", () => {
 			);
 			expect(alteredSkill.status).toBe(1);
 			expect(JSON.parse(alteredSkill.stdout).issues).toContain(
-				"v2-amendment-base-mismatch: tasks-store-brief-ingest-20261127",
+				"v2-amendment-base-mismatch: meeting-capture-routing-20261127",
 			);
 			cpSync(resolve(v1FullPackRoot, skillPath), resolve(copyRoot, skillPath));
 			writeFileSync(resolve(copyRoot, "resources/source/jarvis-cli/uv.lock"), "unreviewed lock bytes\n");
@@ -223,13 +230,14 @@ describe("Harnessy v1 full compatibility pack", () => {
 			expect(altered.status).toBe(1);
 			// An older file no longer matches the latest amendment's bound prior tree.
 			expect(JSON.parse(altered.stdout).issues).toContain(
-				"v2-amendment-base-mismatch: tasks-store-brief-ingest-20261127",
+				"v2-amendment-base-mismatch: meeting-capture-routing-20261127",
 			);
 			cpSync(
 				resolve(v1FullPackRoot, "resources/source/jarvis-cli/uv.lock"),
 				resolve(copyRoot, "resources/source/jarvis-cli/uv.lock"),
 			);
-			const briefPath = "resources/source/tools/flow-install/skills/life-orchestrator/scripts/daily-brief";
+			// The latest amendment changed collect-state, so altered bytes fail its recorded after-hash.
+			const briefPath = "resources/source/tools/flow-install/skills/life-orchestrator/scripts/collect-state";
 			writeFileSync(resolve(copyRoot, briefPath), "unreviewed brief bytes\n");
 			const alteredBrief = spawnSync(
 				process.execPath,
@@ -238,7 +246,7 @@ describe("Harnessy v1 full compatibility pack", () => {
 			);
 			expect(alteredBrief.status).toBe(1);
 			expect(JSON.parse(alteredBrief.stdout).issues).toContain(
-				"v2-amendment-after-mismatch: tools/flow-install/skills/life-orchestrator/scripts/daily-brief",
+				"v2-amendment-after-mismatch: tools/flow-install/skills/life-orchestrator/scripts/collect-state",
 			);
 			cpSync(resolve(v1FullPackRoot, briefPath), resolve(copyRoot, briefPath));
 			mkdirSync(resolve(copyRoot, "resources/source/private"));

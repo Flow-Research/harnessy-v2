@@ -17,6 +17,7 @@ import * as Result from "effect/Result";
 
 import { extractBriefTasks } from "../../read-model/followups.ts";
 import { candidatesFromExtracted } from "./ingest.ts";
+import { applyMeetingFollowupBatch, type MeetingFollowupBatch } from "./meeting-followups.ts";
 import {
 	defaultTasksFile,
 	type FollowupInput,
@@ -70,6 +71,11 @@ export type QueuedMutation =
 			readonly path?: string;
 			readonly displayRef?: string;
 			readonly allocations?: ReadonlyArray<{ readonly id: string; readonly fingerprint: string }>;
+	  }
+	| {
+			/** Follow-ups from one meeting note's action items. */
+			readonly op: "ingestMeeting";
+			readonly batch: MeetingFollowupBatch;
 	  };
 
 export interface TasksSyncQueue {
@@ -152,6 +158,16 @@ export const resolveSyncConfig = (input: {
 	});
 };
 
+/**
+ * Sync settings for jobs that run for `homeRoot`: `HARNESSY_TASKS_*` first, then
+ * `<homeRoot>/.config/harnessy/tasks-sync.json`. Undefined when sync is not set up.
+ */
+export const homeTasksSyncConfig = (homeRoot: string, env: NodeJS.ProcessEnv = process.env) =>
+	resolveSyncConfig({
+		env,
+		configFile: env.HARNESSY_TASKS_SYNC_CONFIG?.trim() || join(homeRoot, ".config", "harnessy", "tasks-sync.json"),
+	});
+
 export const readSyncToken = (tokenFile: string): string => {
 	const token = readFileSync(tokenFile, "utf8").trim();
 	if (token.length === 0) throw new TaskRefused("missing_token");
@@ -232,7 +248,10 @@ const applyQueuedMutation = (state: TasksState, mutation: QueuedMutation): void 
 				},
 			);
 			state.ingest(candidates, { kind: "brief", path, displayRef, briefDate: mutation.date });
+			return;
 		}
+		case "ingestMeeting":
+			applyMeetingFollowupBatch(state, mutation.batch);
 	}
 };
 
@@ -341,6 +360,8 @@ const pathFor = (mutation: QueuedMutation): { method: string; path: string; body
 					allocations: mutation.allocations,
 				},
 			};
+		case "ingestMeeting":
+			return { method: "POST", path: "/v1/followups/ingest", body: mutation.batch };
 	}
 };
 

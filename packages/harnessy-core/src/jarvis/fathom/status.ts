@@ -10,6 +10,8 @@ import { fathomV2CheckpointPath, readFathomCheckpoint } from "../../read-model/f
 import type { FathomCheckpointData } from "../../read-model/schemas.ts";
 import type { TileResult } from "../../read-model/tile.ts";
 import { resolveJarvisConfigPath } from "../paths.ts";
+import { routeFathomPayload } from "./import-notes.ts";
+import type { MeetingRouteRules } from "./routes.ts";
 
 export interface FathomStatusOptions {
 	/** The home directory that a leading `~` in a configured path expands to. Defaults to the process home. */
@@ -76,6 +78,10 @@ export interface FathomImportCandidate extends FathomInboxItem {
 	readonly scheduledStart: string | null;
 	readonly eligible: boolean;
 	readonly reason: string | null;
+	/** The project folder the poll would write this note to, when route rules were given. */
+	readonly project?: string | null;
+	/** True when no route rule decided `project` and the default project was used. */
+	readonly routeDefaulted?: boolean;
 }
 
 const recordValue = (value: unknown): Record<string, unknown> | null =>
@@ -220,7 +226,7 @@ export const listFathomInbox = (
 
 /** Build a no-write import plan from local webhook envelopes. */
 export const planFathomImport = (
-	options: FathomStatusOptions & { readonly limit?: number } = {},
+	options: FathomStatusOptions & { readonly limit?: number; readonly routing?: MeetingRouteRules } = {},
 ): ReadonlyArray<FathomImportCandidate> =>
 	listFathomInbox(options).map((entry) => {
 		const parsed = Effect.runSync(
@@ -235,8 +241,11 @@ export const planFathomImport = (
 		const title = stringValue(payload?.meeting_title) ?? stringValue(payload?.title);
 		const scheduledStart = stringValue(payload?.scheduled_start_time);
 		const eligible = entry.bucket === "pending" && verified && recordingId !== null && title !== null;
+		const route =
+			options.routing === undefined || payload === null ? undefined : routeFathomPayload(options.routing, payload);
 		return {
 			...entry,
+			...(route === undefined ? {} : { project: route.project, routeDefaulted: route.defaulted }),
 			verified,
 			recordingId,
 			title,

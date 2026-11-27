@@ -47,7 +47,7 @@ export type TaskOutcome = "done" | "carried" | "dropped" | "delegated";
 export type TaskKind = "task" | "followup";
 /** Follow-up views: open (sorted by priority then due), overdue (open and past due), resolved, or all. */
 export type FollowupView = "open" | "overdue" | "resolved" | "all";
-export type StoredTaskSourceKind = "brief" | "reminders" | "register" | "status-md" | "native";
+export type StoredTaskSourceKind = "brief" | "reminders" | "register" | "status-md" | "meeting" | "native";
 
 export interface StoredTaskSource {
 	readonly kind: StoredTaskSourceKind;
@@ -127,6 +127,12 @@ export interface IngestCandidate {
 	readonly displayRef: string;
 	/** When set, a newly created item reuses this UUID so an offline ingest can be replayed. */
 	readonly id?: string;
+	/** Item kind for a new item. Defaults to `followup` for reminders and `task` otherwise. */
+	readonly kind?: TaskKind;
+	readonly waitingOn?: string | null;
+	/** An http(s) link for a new item, such as the meeting recording. */
+	readonly link?: string | null;
+	readonly project?: string | null;
 }
 
 export interface TaskSidecarItem {
@@ -182,7 +188,7 @@ export class TaskRefused extends Error {
 
 const STATUSES: ReadonlySet<string> = new Set(["todo", "doing", "waiting", "done", "dropped"]);
 const OUTCOMES: ReadonlySet<string> = new Set(["done", "carried", "dropped", "delegated"]);
-const KINDS: ReadonlySet<string> = new Set(["brief", "reminders", "register", "status-md", "native"]);
+const KINDS: ReadonlySet<string> = new Set(["brief", "reminders", "register", "status-md", "meeting", "native"]);
 const SOURCE_KEYS = "briefDate,displayRef,kind,line,path";
 /** Items written before follow-ups have the base keys; they read as `kind: "task"`. */
 const BASE_ITEM_KEYS =
@@ -766,6 +772,7 @@ export class TasksState {
 						title: candidate.title.slice(0, TASK_TITLE_MAX),
 						owner: current.owner ?? candidate.owner,
 						due: current.due ?? candidate.due,
+						link: current.link ?? optionalLink(candidate.link),
 						fingerprint: candidate.fingerprint,
 						source: {
 							kind: source.kind,
@@ -796,13 +803,15 @@ export class TasksState {
 				if (candidate.id !== undefined && !isId(candidate.id)) throw new TaskRefused("invalid_id");
 				if (candidate.id !== undefined && items.some((row) => row.id === candidate.id))
 					throw new TaskRefused("duplicate_id");
+				const kind: TaskKind = candidate.kind ?? (source.kind === "reminders" ? "followup" : "task");
+				if (!TASK_KINDS.has(kind)) throw new TaskRefused("invalid_kind");
 				const item: StoredTask = {
 					id: candidate.id ?? randomUUID(),
 					title: candidate.title.slice(0, TASK_TITLE_MAX),
 					status: candidate.status,
 					owner: candidate.owner,
 					due: candidate.due,
-					project: null,
+					project: optionalText(candidate.project, TASK_PROJECT_MAX, "invalid_project"),
 					priority: 100 + sidecarItems.length,
 					outcome: null,
 					carriedFrom: null,
@@ -816,10 +825,10 @@ export class TasksState {
 					},
 					createdAt: now,
 					updatedAt: now,
-					// Reminders' "Current Follow-Ups" are follow-ups; other sources are tasks.
-					kind: source.kind === "reminders" ? "followup" : "task",
-					waitingOn: null,
-					link: null,
+					// Reminders' "Current Follow-Ups" are follow-ups; a candidate may say so too.
+					kind,
+					waitingOn: optionalText(candidate.waitingOn, TASK_WAITING_ON_MAX, "invalid_waiting_on"),
+					link: optionalLink(candidate.link),
 					resolvedAt: null,
 					resolution: null,
 				};

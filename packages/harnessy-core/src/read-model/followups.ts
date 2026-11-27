@@ -43,6 +43,8 @@ export interface ExtractedTask {
 	readonly raw: boolean;
 	/** Short reference, for example `FW-03`. */
 	readonly ref?: string;
+	/** From a brief's "Delegated or Waiting" section: a follow-up, not a plain task. */
+	readonly followup?: boolean;
 }
 
 const DATE = /\b(20\d{2}-\d{2}-\d{2})\b/u;
@@ -174,7 +176,7 @@ export const extractBriefTasks = (text: string): ReadonlyArray<ExtractedTask> =>
 					},
 	);
 	const waiting = listItems(section(text, /^delegated or waiting$/iu) ?? []).map((item): ExtractedTask => {
-		if (item.raw) return rawTask(item);
+		if (item.raw) return { ...rawTask(item), followup: true };
 		const lead = boldLead(item.text) ?? plainText(item.text);
 		const named = OWNER_LEAD.exec(lead);
 		return {
@@ -184,6 +186,7 @@ export const extractBriefTasks = (text: string): ReadonlyArray<ExtractedTask> =>
 			due: dueOf(item.text),
 			line: item.line,
 			raw: false,
+			followup: true,
 		};
 	});
 	return [...mine, ...waiting];
@@ -406,8 +409,8 @@ export const readTasks = (options: TaskReadOptions): TileResult<TaskListData> =>
 					group: file.kind === "brief" ? "primary" : "other",
 					outcome: null,
 					carriedFrom: null,
-					kind: file.kind === "reminders" ? "followup" : "task",
-					waitingOn: null,
+					kind: file.kind === "reminders" || task.followup === true ? "followup" : "task",
+					waitingOn: task.followup === true ? owner : null,
 					link: null,
 					resolvedAt: null,
 					resolution: null,

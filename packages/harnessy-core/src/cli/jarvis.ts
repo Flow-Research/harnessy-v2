@@ -32,7 +32,7 @@ import {
 import { JarvisConfigReader } from "../jarvis/config.ts";
 import { JarvisCredentialResolver } from "../jarvis/credentials.ts";
 import { JarvisDiagnostic } from "../jarvis/diagnostic.ts";
-import { runConfiguredFathomPoll } from "../jarvis/fathom/host.ts";
+import { meetingRouteRulesForInbox, runConfiguredFathomPoll } from "../jarvis/fathom/host.ts";
 import { installFathomSchedule, planFathomSchedule } from "../jarvis/fathom/schedule.ts";
 import { inspectFathomStatus, listFathomInbox, planFathomImport } from "../jarvis/fathom/status.ts";
 import { resolveLifeOrchestratorSettings } from "../jarvis/life-orchestrator/config.ts";
@@ -47,8 +47,10 @@ import {
 	runLifeResearch,
 	runLifeWeekly,
 } from "../jarvis/life-orchestrator/service.ts";
+import { applyMeetingRefile, type MeetingRefilePlan, planMeetingRefile } from "../jarvis/meeting-refile.ts";
 import { JarvisParityReporter } from "../jarvis/parity-report.ts";
 import { JarvisPathResolver } from "../jarvis/paths.ts";
+import { defaultTasksFile, homeTasksSyncConfig } from "../jarvis/tasks/index.ts";
 import { jarvisCalendarCommand } from "./calendar.ts";
 import { communityDraftCommand, communityReviewServeCommand } from "./community-draft.ts";
 import { jarvisTasksCommand } from "./jarvis-tasks.ts";
@@ -1011,26 +1013,47 @@ export const jarvisMeetingFathomImportPlanCommand = Command.make(
 		stateRoot: communityStateRootOption,
 		sourceRoot: fathomSourceRootOption,
 		limit: communityLimitOption,
+		target: targetOption,
 		json: jsonOption,
 	},
-	({ config, stateRoot, sourceRoot, limit, json }) =>
+	({ config, stateRoot, sourceRoot, limit, target, json }) =>
 		Effect.gen(function* () {
-			const entries = planFathomImport({
+			const statusOptions = {
 				configPath: Option.getOrUndefined(config),
 				stateRoot: Option.getOrUndefined(stateRoot),
 				sourceRoot: Option.getOrUndefined(sourceRoot),
-				limit,
-			});
+			};
+			const paths = yield* (yield* JarvisPathResolver).resolve(target);
+			const resolved = yield* (yield* JarvisConfigReader).loadResolved(paths);
+			const routing = meetingRouteRulesForInbox(
+				inspectFathomStatus(statusOptions).inboxPath,
+				resolved.meetingPublication.project,
+			);
+			const entries = planFathomImport({ ...statusOptions, limit, routing });
 			if (json) {
 				yield* Console.log(JSON.stringify({ command: "jarvis meeting fathom import-plan", entries }, null, 2));
 				return;
 			}
 			for (const entry of entries)
 				yield* Console.log(
-					`${entry.account}/${entry.bucket} ${entry.eligible ? "eligible" : "skip"} ${entry.recordingId ?? entry.filename}`,
+					`${entry.account}/${entry.bucket} ${entry.eligible ? "eligible" : "skip"} ${entry.recordingId ?? entry.filename}${entry.project === undefined ? "" : ` -> ${entry.project}${entry.routeDefaulted ? " (default)" : ""}`}${entry.title === null ? "" : ` ${entry.title}`}`,
 				);
 		}),
 ).pipe(Command.withDescription("Plan local Fathom imports without writing state or contacting providers"));
+
+/**
+ * The task store that poll follow-ups go to: `HARNESSY_TASKS_FILE` or
+ * `~/.harnessy/portal/tasks.json`, queued for the VPS when sync is configured.
+ * An unreadable sync configuration keeps follow-ups local rather than failing the poll.
+ */
+const pollFollowupStore = () => {
+	const home = homedir();
+	const syncConfig = Result.try(() => homeTasksSyncConfig(home));
+	return {
+		tasksFile: process.env.HARNESSY_TASKS_FILE?.trim() || defaultTasksFile(home),
+		syncConfig: Result.isSuccess(syncConfig) ? syncConfig.success : undefined,
+	};
+};
 
 export const jarvisMeetingFathomPollCommand = Command.make(
 	"poll",
@@ -1064,6 +1087,7 @@ export const jarvisMeetingFathomPollCommand = Command.make(
 						limit,
 						createdAfter,
 						sourceRoot: config.meetingPublication.sourcePath,
+						followups: pollFollowupStore(),
 						readApiKey: (resolvedConfig, resolvedPaths, account) =>
 							Effect.runPromise(
 								credentials
@@ -1077,12 +1101,30 @@ export const jarvisMeetingFathomPollCommand = Command.make(
 			if (json) {
 				yield* Console.log(JSON.stringify({ command: "jarvis meeting fathom poll", ok, ...result }, null, 2));
 			} else {
+				// One short line per fact: the LaunchAgent log keeps this output, never payloads.
 				yield* Console.log(`Fathom V2 poll: ${result.accounts.join(", ")}`);
 				for (const receipt of result.results) {
 					yield* Console.log(
 						`${receipt.account}: fetched ${receipt.fetched}, imported ${receipt.imported}, duplicates ${receipt.duplicates}${receipt.failure === null ? "" : `, failed (${receipt.failure.code})`}`,
 					);
 				}
+				if (result.importedNotes !== null) {
+					const byProject = new Map<string, number>();
+					for (const note of result.importedNotes.notes)
+						byProject.set(note.project ?? "none", (byProject.get(note.project ?? "none") ?? 0) + 1);
+					const projects = [...byProject.entries()].map(([project, count]) => `${project} ${count}`).join(", ");
+					yield* Console.log(
+						`notes: imported ${result.importedNotes.imported}${projects.length === 0 ? "" : ` (${projects})`}, existing ${result.importedNotes.existing}, skipped ${result.importedNotes.skipped}`,
+					);
+				}
+				if (result.followups !== null)
+					yield* Console.log(
+						`follow-ups: created ${result.followups.created}, existing ${result.followups.existing}, queued ${result.followups.queued}${result.followups.failed === 0 ? "" : `, failed ${result.followups.failed}`}`,
+					);
+				if (result.tasksSync !== null && result.tasksSync.state !== "skipped")
+					yield* Console.log(
+						`tasks sync: ${result.tasksSync.state}${result.tasksSync.state === "failed" ? ` (${result.tasksSync.code})` : ""}, queue ${result.tasksSync.remaining}`,
+					);
 			}
 			if (!ok) yield* Effect.fail(new Error("Fathom poll failed for one or more accounts"));
 		}),
@@ -1133,8 +1175,91 @@ export const jarvisMeetingFathomCommand = Command.make("fathom").pipe(
 	Command.withDescription("Inspect the V2 Fathom boundary"),
 );
 
+const refileManifestOption = Options.String("manifest").pipe(
+	Options.withDescription(
+		"YAML manifest: `version: 1` and `moves` of `{ source, project }`, paths relative to the private root.",
+	),
+);
+const refilePrivateRootOption = Options.String("private-root").pipe(
+	Options.optional,
+	Options.withDescription("Private context root. Defaults to the folder above meeting-inbox/fathom."),
+);
+const refileApplyOption = Options.Boolean("apply").pipe(
+	Options.withDefault(false),
+	Options.withDescription("Run the reviewed moves. Needs --confirm with the dry run's plan id."),
+);
+const refileConfirmOption = Options.String("confirm").pipe(
+	Options.optional,
+	Options.withDescription("Plan id printed by the dry run that was reviewed."),
+);
+
+const refileLines = (plan: MeetingRefilePlan, mode: string): ReadonlyArray<string> => [
+	`Meeting re-file plan ${plan.planId} (${mode}): ${plan.entries.length} entries, ${plan.counts.ready} ready`,
+	`Private root: ${plan.privateRoot}`,
+	...plan.entries.map(
+		(entry) =>
+			`${entry.status.padEnd(18)} ${entry.source.slice(plan.privateRoot.length + 1)} -> ${entry.destination.slice(plan.privateRoot.length + 1)} (Project: ${entry.fromProject ?? "none"} -> ${entry.project}; publication: ${entry.publication ?? "none"})`,
+	),
+];
+
+export const jarvisMeetingRefileCommand = Command.make(
+	"refile",
+	{
+		target: targetOption,
+		manifest: refileManifestOption,
+		privateRoot: refilePrivateRootOption,
+		apply: refileApplyOption,
+		confirm: refileConfirmOption,
+		json: jsonOption,
+	},
+	({ target, manifest, privateRoot, apply, confirm, json }) =>
+		Effect.gen(function* () {
+			const paths = yield* (yield* JarvisPathResolver).resolve(target);
+			const config = yield* (yield* JarvisConfigReader).loadResolved(paths);
+			const inbox = inspectFathomStatus({ configPath: paths.legacyGlobalConfigFile }).inboxPath;
+			const statePath = config.meetingPublication.statePath;
+			const options = {
+				privateRoot: Option.getOrUndefined(privateRoot) ?? resolve(inbox, "..", ".."),
+				manifest,
+				publicationDatabase:
+					statePath === null
+						? undefined
+						: join(statePath.replace(/^~(?=\/|$)/u, homedir()), "meeting-publication.sqlite3"),
+			};
+			if (!apply) {
+				const plan = yield* Effect.try({ try: () => planMeetingRefile(options), catch: (error) => error as Error });
+				if (json)
+					return yield* Console.log(
+						JSON.stringify({ command: "jarvis meeting refile", dryRun: true, ...plan }, null, 2),
+					);
+				for (const line of refileLines(plan, "dry run")) yield* Console.log(line);
+				return yield* Console.log(
+					`Nothing was written. After review, run again with --apply --confirm ${plan.planId}.`,
+				);
+			}
+			const confirmed = Option.getOrUndefined(confirm);
+			if (confirmed === undefined)
+				return yield* Effect.fail(new Error("--apply needs --confirm <plan id> from a reviewed dry run."));
+			const result = yield* Effect.try({
+				try: () => applyMeetingRefile({ ...options, confirm: confirmed }),
+				catch: (error) => error as Error,
+			});
+			if (json)
+				return yield* Console.log(
+					JSON.stringify({ command: "jarvis meeting refile", dryRun: false, ...result }, null, 2),
+				);
+			yield* Console.log(
+				`Meeting re-file ${result.planId}: moved ${result.moved.length}, stubbed ${result.stubbed.length}, skipped ${result.skipped}`,
+			);
+		}),
+).pipe(
+	Command.withDescription(
+		"Plan (default) or run a reviewed re-file of misfiled meeting notes from an explicit manifest, leaving stubs",
+	),
+);
+
 export const jarvisMeetingCommand = Command.make("meeting").pipe(
-	Command.withSubcommands([jarvisMeetingFathomCommand] as const),
+	Command.withSubcommands([jarvisMeetingFathomCommand, jarvisMeetingRefileCommand] as const),
 	Command.withDescription("Inspect migrated meeting capabilities"),
 );
 

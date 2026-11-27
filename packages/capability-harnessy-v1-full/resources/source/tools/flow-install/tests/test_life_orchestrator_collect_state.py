@@ -671,3 +671,69 @@ def test_weekly_plan_prefers_repo_private_priorities_before_legacy_file() -> Non
 
     assert "PRIVATE_PRIORITIES_FILE=" in script
     assert private_index < legacy_index
+
+
+def _meeting(path: Path, title: str, day: datetime.date, project: str, minute: int = 0) -> None:
+    write(
+        path,
+        f"""# {title}
+
+## Metadata
+
+- Date: {day.isoformat()}
+- Project: {project}
+- Fingerprint: fathom:{abs(hash(str(path))) % 10_000_000}:{day.isoformat()}T09:{minute:02d}:00Z
+
+## Executive Summary
+
+- {title} summary.
+""",
+    )
+
+
+def test_recent_meetings_take_newest_forty_across_projects(tmp_path, monkeypatch) -> None:
+    private = tmp_path / ".jarvis" / "context" / "private" / "tester"
+    write(private / "priorities.md", "# Priorities\n")
+    today = datetime.date.today()
+    # 41 meetings inside the 14-day window, most of them in one project.
+    for index in range(38):
+        day = today - datetime.timedelta(days=index % 13)
+        _meeting(private / "flow" / "meetings" / f"flow-{index:02d}.md", f"Flow call {index}", day, "flow", index % 60)
+    _meeting(private / "hiring" / "meetings" / "hiring-a.md", "Hiring panel", today, "hiring", 59)
+    _meeting(private / "acme" / "meetings" / "acme-a.md", "Acme review", today - datetime.timedelta(days=1), "acme")
+    oldest_inside = today - datetime.timedelta(days=13)
+    _meeting(private / "acme" / "meetings" / "acme-old.md", "Acme oldest", oldest_inside, "acme", 0)
+    # Outside the window.
+    _meeting(private / "acme" / "meetings" / "acme-stale.md", "Acme stale", today - datetime.timedelta(days=20), "acme")
+    # A re-file stub is not a meeting.
+    write(private / "flow" / "meetings" / "moved.md", "Moved to [hiring/meetings/x.md](../../hiring/meetings/x.md) on 2026-11-28.\n")
+
+    monkeypatch.setenv("LIFE_ORCHESTRATOR_MEETING_LOOKBACK_DAYS", "14")
+    collect_state = load_collect_state(tmp_path, monkeypatch)
+    monkeypatch.setenv("LIFE_ORCHESTRATOR_MEETING_LOOKBACK_DAYS", "14")
+    meetings = collect_state.collect_recent_meetings()
+
+    assert len(meetings) == 40
+    keys = [(item["date"], collect_state._meeting_recency_key(item)[1], item["path"]) for item in meetings]
+    assert keys == sorted(keys, reverse=True)
+    assert meetings[0]["title"] == "Hiring panel"
+    projects = {item["project"] for item in meetings}
+    assert {"flow", "hiring", "acme"} <= projects
+    titles = {item["title"] for item in meetings}
+    assert "Acme stale" not in titles
+    assert all(not item["path"].endswith("moved.md") for item in meetings)
+    # 41 candidates in the window: the single oldest one is the one dropped.
+    assert "Acme oldest" not in titles
+
+
+def test_recent_meetings_drop_old_notes_even_when_the_list_is_short(tmp_path, monkeypatch) -> None:
+    private = tmp_path / ".jarvis" / "context" / "private" / "tester"
+    write(private / "priorities.md", "# Priorities\n")
+    today = datetime.date.today()
+    _meeting(private / "flow" / "meetings" / "new.md", "New call", today, "flow")
+    _meeting(private / "flow" / "meetings" / "old.md", "Old call", today - datetime.timedelta(days=15), "flow")
+    collect_state = load_collect_state(tmp_path, monkeypatch)
+    monkeypatch.setenv("LIFE_ORCHESTRATOR_MEETING_LOOKBACK_DAYS", "14")
+    monkeypatch.setenv("LIFE_ORCHESTRATOR_RECENT_MEETINGS_LIMIT", "500")
+    meetings = collect_state.collect_recent_meetings()
+    assert [item["title"] for item in meetings] == ["New call"]

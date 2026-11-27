@@ -718,15 +718,25 @@ def collect_notes():
     return notes if notes else None
 
 
+RECENT_MEETINGS_MAX = 40
+
+
 def collect_recent_meetings():
     """Read compact summaries for recent root and project-vault meeting notes.
 
     Meeting folders can contain full transcripts and long Fathom summaries. The
     daily brief only needs enough signal to notice new decisions and action
     items, so keep this date-bounded and section-based.
+
+    The brief gets the most recent meetings in the lookback window (14 days),
+    newest first, from every project together: at most 40, with no per-project
+    cap and no relevance ranking.
     """
     lookback_days = int(os.environ.get("LIFE_ORCHESTRATOR_MEETING_LOOKBACK_DAYS", "14"))
-    limit = int(os.environ.get("LIFE_ORCHESTRATOR_RECENT_MEETINGS_LIMIT", "20"))
+    limit = min(
+        int(os.environ.get("LIFE_ORCHESTRATOR_RECENT_MEETINGS_LIMIT", str(RECENT_MEETINGS_MAX))),
+        RECENT_MEETINGS_MAX,
+    )
     today = datetime.date.today()
     cutoff = today - datetime.timedelta(days=max(lookback_days - 1, 0))
     meetings = []
@@ -761,11 +771,20 @@ def collect_recent_meetings():
             deduped[key] = _merge_meetings(existing, meeting)
 
     meetings = list(deduped.values())
-    meetings.sort(
-        key=lambda item: (_meeting_priority(item), item["date"], item["path"]),
-        reverse=True,
+    meetings.sort(key=_meeting_recency_key, reverse=True)
+    return meetings[: max(limit, 0)]
+
+
+def _meeting_recency_key(meeting):
+    """Newest first: meeting date, then the recording start time, then path."""
+    started = ""
+    match = re.search(
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)$",
+        (meeting.get("fingerprint") or "").strip(),
     )
-    return meetings[:limit]
+    if match:
+        started = match.group(1)
+    return (meeting.get("date") or "", started, meeting.get("path") or "")
 
 
 def _meeting_dedupe_key(meeting):
@@ -851,48 +870,6 @@ def _merge_meetings(first, second):
     return merged
 
 
-def _meeting_priority(meeting):
-    text = " ".join(
-        [
-            meeting.get("title") or "",
-            meeting.get("summary") or "",
-            " ".join(meeting.get("action_items") or []),
-        ]
-    ).lower()
-    score = min(len(meeting.get("action_items") or []), 4)
-    if meeting.get("summary"):
-        score += 1
-    else:
-        score -= 8
-    try:
-        meeting_date = datetime.date.fromisoformat(meeting.get("date") or "")
-        age_days = max((datetime.date.today() - meeting_date).days, 0)
-        score += max(6 - age_days, 0)
-    except ValueError:
-        pass
-    if "julian" in text:
-        score += 2
-    for term in (
-        "co-founder",
-        "cofounder",
-        "board",
-        "investor",
-        "funding",
-        "fundraise",
-        "capital",
-        "partner",
-        "customer",
-        "client",
-        "proposal",
-        "strategy",
-        "3mtt",
-        "decision",
-    ):
-        if term in text:
-            score += 2
-    return score
-
-
 def _collect_meetings_under(context_root, cutoff, default_project="", limit=None):
     meetings = []
     for root, _dirs, filenames in os.walk(context_root):
@@ -904,6 +881,8 @@ def _collect_meetings_under(context_root, cutoff, default_project="", limit=None
                 continue
             path = os.path.join(root, fname)
             text = read_file(path) or ""
+            if _is_refile_stub(text):
+                continue
             meeting_date = _extract_meeting_date(text, path)
             if meeting_date < cutoff:
                 continue
@@ -949,6 +928,14 @@ def _collect_meetings_under(context_root, cutoff, default_project="", limit=None
     if limit is not None:
         return meetings[:limit]
     return meetings
+
+
+_REFILE_STUB = re.compile(r"^Moved to \[[^\]\n]+\]\([^)\n]+\)[^\n]*$")
+
+
+def _is_refile_stub(text):
+    """A one-line stub left where a re-filed meeting note used to be."""
+    return bool(_REFILE_STUB.match(text.strip()))
 
 
 def _extract_markdown_title(text):

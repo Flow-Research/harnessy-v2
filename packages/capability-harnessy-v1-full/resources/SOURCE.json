@@ -2658,6 +2658,58 @@
             }
           }
         ]
+      },
+      {
+        "id": "meeting-capture-routing-20261127",
+        "owner": "harnessy-v2",
+        "reason": "The daily brief takes the 40 most recent meetings of 14 days across projects, newest first, and skips re-file stubs; the Jarvis skill documents V2 meeting routing, follow-ups and re-file.",
+        "baseTree": {
+          "algorithm": "sha256",
+          "digest": "e6e0c496bc2b88d5665106e2e6f4bbf9e2990aa77ee836610f4098ee08ef8c28",
+          "fileCount": 750,
+          "byteCount": 5288912
+        },
+        "changes": [
+          {
+            "path": "tools/flow-install/skills/life-orchestrator/scripts/collect-state",
+            "before": {
+              "size": 51926,
+              "executable": true,
+              "sha256": "1ab7561b4f7723ca81710de93f70c26847ca825414a0e2c2ecb5527c21d9aeeb"
+            },
+            "after": {
+              "size": 51827,
+              "executable": true,
+              "sha256": "522ac97cf5fa379f4afea8f7afc0a229cbafda490c893d296678eef5866f2dd8"
+            }
+          },
+          {
+            "path": "tools/flow-install/tests/test_life_orchestrator_collect_state.py",
+            "before": {
+              "size": 20552,
+              "executable": false,
+              "sha256": "2df74b690c221a0d340205871fdf9f5b92625d7af814ee884ad046c50b8db063"
+            },
+            "after": {
+              "size": 23794,
+              "executable": false,
+              "sha256": "9a70c0196bbfe8299a23920ee03da736238640435b566de4709ba3873a312cfa"
+            }
+          },
+          {
+            "path": "tools/flow-install/skills/jarvis/commands/jarvis.md",
+            "before": {
+              "size": 28036,
+              "executable": false,
+              "sha256": "1b487c1f9bb9eb454218c747188d1c329a593c1ab511ee4124116992c8e446c8"
+            },
+            "after": {
+              "size": 28866,
+              "executable": false,
+              "sha256": "adf6fd18c7b4c48b1f103310f89df3885e4e9e97aca24eff3643be571feb5d64"
+            }
+          }
+        ]
       }
     ]
   },
@@ -2677,8 +2729,8 @@
   ],
   "tree": {
     "algorithm": "sha256",
-    "digest": "e6e0c496bc2b88d5665106e2e6f4bbf9e2990aa77ee836610f4098ee08ef8c28",
+    "digest": "17ae57f3f9970c1f615ca91ff5456859088ce632ae17acde234b91a8489b640d",
     "fileCount": 750,
-    "byteCount": 5288912
+    "byteCount": 5292885
   }
 }
