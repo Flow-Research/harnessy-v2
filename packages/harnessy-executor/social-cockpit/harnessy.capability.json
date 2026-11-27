@@ -2,7 +2,7 @@
   "id": "local:social-cockpit",
   "name": "Harnessy Social Cockpit",
   "version": "0.1.0",
-  "description": "Read scoped social channels and prepare replies for human review.",
+  "description": "Read scoped social channels and propose replies and fixture bookmark changes for human review.",
   "context": ["README.md"],
   "resources": [
     {
@@ -15,5 +15,5 @@
   "permissions": ["social:read", "social:triage", "social:draft"],
   "blastRadius": "medium",
   "egress": ["local Harnessy social API"],
-  "dataCategories": ["private_messages", "public_posts", "drafts"]
+  "dataCategories": ["private_messages", "public_posts", "private_bookmarks", "drafts"]
 }

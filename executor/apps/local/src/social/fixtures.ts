@@ -77,6 +77,11 @@ export function createFixtureAdapters(now: () => number = Date.now): SocialAdapt
       id: "x-fixture",
       provider: "x",
       label: "Workshop on X",
+      fixtureBookmarks: [
+        { id: "201", text: "Notes from the solar workshop.", saved: 1, folder: "Research" },
+        { id: "202", text: "A guide to the reading group.", saved: 1, folder: "Reading" },
+        { id: "102", text: "The new workshop schedule is ready.", saved: 0, folder: null },
+      ],
       streams: ["mention", "dm", "feed"],
       pollsNetwork: false,
       check,

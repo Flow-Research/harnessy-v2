@@ -13,6 +13,8 @@ assert.deepEqual(loaded.errors, []);
 const tools = loaded.extensions[0].tools;
 assert.deepEqual([...tools.keys()].sort(), [
   "social_accounts",
+  "social_bookmark_propose",
+  "social_bookmarks",
   "social_check",
   "social_draft",
   "social_inbox",
@@ -26,6 +28,14 @@ const run = async (name, params = {}) => {
   assert.equal(result.isError, false, name);
   return JSON.parse(result.content[0].text);
 };
+const bookmarks = await run("social_bookmarks", { accountId: "x-fixture" });
+const candidate = bookmarks.available[0];
+await run("social_bookmark_propose", {
+  accountId: "x-fixture",
+  post: candidate.id,
+  version: candidate.version,
+  operation: "add",
+});
 const accounts = await run("social_accounts");
 assert.deepEqual(
   accounts.items.map((a) => a.id),

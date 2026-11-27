@@ -1,3 +1,5 @@
+import type { FixtureBookmark } from "./bookmarks";
+
 export type Stream = "mention" | "feed" | "dm" | "business";
 export type Visibility = "public" | "private" | "protected" | "unknown";
 export interface Attachment {
@@ -51,6 +53,7 @@ export interface SocialAdapter {
   streams: readonly Stream[];
   /** False for fixture data and local webhook-backed checks. Polling adapters use a durable read budget. */
   pollsNetwork?: boolean;
+  fixtureBookmarks?: readonly FixtureBookmark[];
   check(
     stream: Stream,
     cursor: string | null,

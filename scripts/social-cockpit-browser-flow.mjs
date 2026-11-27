@@ -151,6 +151,16 @@ export async function checkSocialInbox({ origin, session, until, agentToken, ope
     "accepted fixture post",
     'document.querySelector("#detail")?.textContent.includes("Provider accepted the message.")',
   );
+  await click('[data-view="bookmarks"]');
+  await waitFor(
+    "agent bookmark proposal",
+    'Array.from(document.querySelectorAll("#entries button")).some(b=>b.textContent==="Approve add")',
+  );
+  await click("#entries button", "Approve add");
+  await waitFor(
+    "approved bookmark visible",
+    'document.querySelector("#entries")?.textContent.includes("fixture-") && document.querySelectorAll("#entries input").length===3',
+  );
   assert.deepEqual(violations().slice(seenViolations), []);
   console.log(
     "Social inbox browser check passed. The scoped agent drafted a private reply. The operator edited and approved it. The same fixture receipt survived reload. The operator also approved a WhatsApp template and a public X post.",

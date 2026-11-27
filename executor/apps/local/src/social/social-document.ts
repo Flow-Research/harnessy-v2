@@ -335,6 +335,7 @@ export const socialDocument = String.raw`<!doctype html>
             <div id="filters" class="filters" aria-label="Inbox views">
               <button type="button" data-view="inbox" aria-pressed="true">Inbox</button
               ><button type="button" data-view="feed" aria-pressed="false">Feed</button
+              ><button type="button" data-view="bookmarks" hidden>Bookmarks</button
               ><button type="button" data-view="drafts" aria-pressed="false">Drafts</button>
             </div>
             <ul id="entries" class="entries"></ul>
@@ -555,8 +556,90 @@ export const socialDocument = String.raw`<!doctype html>
         }
         byId("post").hidden = !state.accounts.some((a) => a.provider === "x");
       }
+      async function loadBookmarks(revision) {
+        const a = state.accounts.find((account) => account.bookmarks);
+        if (!a) return;
+        const base = "accounts/" + urlId(a.id) + "/bookmarks";
+        const data = await api(base);
+        if (revision !== listRevision) return;
+        byId("more").hidden = true;
+        const list = byId("entries");
+        const filter = el("select");
+        filter.append(new Option("All saved posts", "all"), new Option("Available to save", "available"));
+        for (const folder of data.folders)
+          filter.append(new Option("X folder · " + folder, "folder:" + folder));
+        for (const name of new Set(data.items.map((p) => p.collection).filter(Boolean)))
+          filter.append(new Option("Local collection · " + name, "local:" + name));
+        filter.value = state.bookmarkFilter || "all";
+        if (!filter.value) filter.value = "all";
+        async function submit(path, body) {
+          await api(base + "/" + path, "POST", body);
+          if (revision === listRevision) await loadRows();
+        }
+        function draw() {
+          state.bookmarkFilter = filter.value;
+          const header = el("li");
+          header.append(label("Show bookmarks", filter));
+          list.replaceChildren(header);
+          const posts =
+            filter.value === "available"
+              ? data.available
+              : data.items.filter(
+                  (p) =>
+                    filter.value === "all" ||
+                    filter.value === "folder:" + p.folder ||
+                    filter.value === "local:" + p.collection,
+                );
+          for (const post of posts) {
+            const row = el("li");
+            const operation = post.saved ? "remove" : "add";
+            row.append(
+              message(post.text),
+              button(post.saved ? "Propose removal" : "Propose save", () =>
+                submit("proposals", { post: post.id, version: post.version, operation }),
+              ),
+            );
+            if (post.saved) {
+              const field = el("input");
+              field.value = post.collection;
+              field.maxLength = 80;
+              row.append(
+                label("Local collection", field),
+                button("Save collection", () =>
+                  submit("collection", { post: post.id, version: post.version, collection: field.value }),
+                ),
+              );
+            }
+            list.append(row);
+          }
+          for (const proposal of data.proposals) {
+            const post = [...data.items, ...data.available].find((item) => item.id === proposal.post);
+            const row = el("li");
+            row.append(
+              el("strong", a.label + " · " + proposal.operation + " bookmark"),
+              message(post.text),
+            );
+            if (proposal.state === "pending") {
+              const decide = (decision) =>
+                submit("proposals/" + urlId(proposal.id) + "/" + decision, {
+                  post: proposal.post,
+                  version: proposal.version,
+                  operation: proposal.operation,
+                });
+              row.append(
+                button("Approve " + proposal.operation, () => decide("approve")),
+                button("Reject", () => decide("reject")),
+              );
+            } else row.append(el("small", proposal.receipt || proposal.state));
+            list.append(row);
+          }
+        }
+        filter.onchange = draw;
+        draw();
+      }
       async function loadRows(append = false) {
         const revision = ++listRevision;
+        if (state.view === "bookmarks") return loadBookmarks(revision);
         const path = state.view === "drafts" ? "drafts" : "inbox";
         const query = new URLSearchParams({ limit: "30" });
         if (state.view === "feed") query.set("stream", "feed");
@@ -590,6 +673,7 @@ export const socialDocument = String.raw`<!doctype html>
       async function refresh() {
         const { items } = await api("accounts");
         state.accounts = items;
+        document.querySelector('[data-view="bookmarks"]').hidden = !items.some(a=>a.bookmarks);
         showAccounts();
         await loadRows();
       }

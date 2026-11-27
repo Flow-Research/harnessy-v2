@@ -22,6 +22,7 @@ interface XConfig {
   reads: boolean;
   writes: boolean;
   offline: boolean;
+  bookmarkAccess?: "read" | "manage";
 }
 interface Token {
   access: string;
@@ -96,6 +97,8 @@ export class XProvider implements SocialAdapter {
     this.challenge = { verifier, state, expires: this.clock() + 5 * 60_000 };
     const scopes = new Set([...postRead, "dm.read"]);
     if (this.config.writes) for (const scope of ["tweet.write", "dm.write"]) scopes.add(scope);
+    if (this.config.bookmarkAccess) scopes.add("bookmark.read");
+    if (this.config.bookmarkAccess === "manage") scopes.add("bookmark.write");
     if (this.config.offline) scopes.add("offline.access");
     const url = new URL("https://x.com/i/oauth2/authorize");
     url.search = new URLSearchParams({

@@ -141,6 +141,24 @@ function oauth(url: string) {
 }
 
 describe("X user-context adapter", () => {
+  it("requests bookmark scopes only for the selected access level without contacting X", () => {
+    for (const access of [undefined, "read", "manage"] as const) {
+      const provider = new XProvider({
+        clientId: "fixture",
+        userId: "71",
+        redirectUri: "http://localhost/callback",
+        offline: false,
+        reads: true,
+        writes: false,
+        bookmarkAccess: access,
+      });
+      const scopes = new URL(provider.beginConnect()).searchParams.get("scope")!.split(" ");
+      expect(scopes).toContain("tweet.read");
+      expect(scopes).toContain("users.read");
+      expect(scopes.includes("bookmark.read")).toBe(access !== undefined);
+      expect(scopes.includes("bookmark.write")).toBe(access === "manage");
+    }
+  });
   it("uses single-use PKCE, checks the user identity, pages each stream, and sends to the reviewed destination", async () => {
     let exchangeParams = new URLSearchParams();
     const writes: { path: string; body: unknown }[] = [];

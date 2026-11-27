@@ -45,9 +45,10 @@ async function setup() {
   const options = { database: db, workspaceId: "workshop", adapters, now };
   let service = new SocialService(options);
   const restart = () => {
-    const reopened = Database.deserialize(db.serialize());
+    const reopened = Database.deserialize(options.database.serialize());
     databases.push(reopened);
-    service = new SocialService({ ...options, database: reopened });
+    options.database = reopened;
+    service = new SocialService(options);
   };
   const human: SocialPrincipal = {
     id: "operator",
@@ -112,6 +113,57 @@ async function setup() {
   };
 }
 describe("social cockpit", () => {
+  it("keeps private fixture bookmarks separate and requires a human decision for each change", async () => {
+    const { request, get, agent, human, restart, send } = await setup();
+    const base = "accounts/x-fixture/bookmarks";
+    type Feed = {
+      items: { id: string; version: number; collection: string }[];
+      available: { id: string; version: number }[];
+      folders: string[];
+    };
+    const initial = await get<Feed>(base);
+    expect(initial.folders).toEqual(["Research", "Reading"]);
+    expect(
+      (await request(base, "GET", undefined, { ...agent, accountIds: ["wa-fixture"] })).status,
+    ).toBe(404);
+    expect((await request("accounts/wa-fixture/bookmarks")).status).toBe(404);
+    const post = initial.available[0]!;
+    const add = { post: post.id, version: post.version, operation: "add" };
+    const proposal = await get<{ id: string }>(base + "/proposals", "POST", add, agent);
+    const approve = base + "/proposals/" + proposal.id + "/approve";
+    expect((await request(approve, "POST", add, agent)).status).toBe(403);
+    expect((await request(approve, "POST", add, { ...human, canApprove: false })).status).toBe(403);
+    expect((await request(approve, "POST", { ...add, post: "201" })).status).toBe(409);
+    expect((await get<Feed>(base)).items).toEqual(initial.items);
+    restart();
+    const [first, replay] = await Promise.all([
+      get<{ receipt: string }>(approve, "POST", add),
+      get<{ receipt: string }>(approve, "POST", add),
+    ]);
+    expect(first.receipt).toMatch(/^fixture-/);
+    expect(replay).toEqual(first);
+    const saved = (await get<Feed>(base)).items.find((item) => item.id === post.id)!;
+    const remove = { ...add, version: saved.version, operation: "remove" };
+    await get(base + "/collection", "POST", {
+      post: post.id,
+      version: saved.version,
+      collection: "Pilot",
+    });
+    restart();
+    expect((await get<Feed>(base)).items.find((item) => item.id === post.id)?.collection).toBe(
+      "Pilot",
+    );
+    const pending = await get<{ id: string }>(base + "/proposals", "POST", remove, agent);
+    await get(base + "/proposals/" + pending.id + "/reject", "POST", remove);
+    expect(
+      (await request(base + "/proposals/" + pending.id + "/approve", "POST", remove)).status,
+    ).toBe(409);
+    const next = await get<{ id: string }>(base + "/proposals", "POST", remove, agent);
+    await get(base + "/proposals/" + next.id + "/approve", "POST", remove);
+    expect((await get<Feed>(base)).items).toEqual(initial.items);
+    expect((await get<{ items: Item[] }>("inbox")).items).toHaveLength(3);
+    expect(send).not.toHaveBeenCalled();
+  });
   it("merges accounts, separates passive feed and deduplicates overlapping observations", async () => {
     const { service, get, dm, wa } = await setup();
     expect((await get<{ items: Item[] }>("inbox")).items.map((i) => i.stream)).toEqual([

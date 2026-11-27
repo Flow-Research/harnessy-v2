@@ -1,3 +1,4 @@
+import { fixtureBookmarks, seedBookmarks } from "./bookmarks";
 import { Database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -160,6 +161,10 @@ export class SocialService {
           .get();
         if (scope && scope.workspace !== this.workspaceId) fail(409, "workspace_mismatch");
         if (!scope) this.db.run("INSERT INTO social_scope VALUES(?)", [this.workspaceId]);
+        for (const adapter of this.registry.values()) {
+          if (adapter.fixtureBookmarks)
+            seedBookmarks(this.db, adapter.id, adapter.fixtureBookmarks);
+        }
         for (const account of this.registry.keys())
           this.db.run("INSERT OR IGNORE INTO social_connections VALUES(?,1,0)", [account]);
       })
@@ -464,6 +469,7 @@ export class SocialService {
       provider: a.provider,
       label: a.label,
       connected: this.isConnected(id),
+      bookmarks: !!a.fixtureBookmarks,
       streams: a.streams,
       templates: a.templates?.() ?? [],
       lastSync: Math.max(0, ...health.map((row) => row.last_sync ?? 0)) || null,
@@ -812,6 +818,25 @@ export class SocialService {
       const parts = path.split("/");
       const [resource, id, action] = parts;
       const method = req.method;
+      if (resource === "accounts" && id && action === "bookmarks") {
+        const catalog = this.scope(p, id).fixtureBookmarks;
+        if (!catalog) return fail(404, "not_found");
+        const body = method === "POST" ? await input(req) : {};
+        this.connectedGeneration(id);
+        return respond(
+          fixtureBookmarks(
+            this.db,
+            id,
+            method,
+            parts.slice(3),
+            [...new Set(catalog.flatMap((post) => (post.folder ? [post.folder] : [])))],
+            body,
+            () => this.human(p),
+            p.id,
+            this.now,
+          ),
+        );
+      }
       if (method === "GET" && path === "accounts")
         return respond({
           items: this.accounts()
