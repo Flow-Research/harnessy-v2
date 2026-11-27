@@ -285,6 +285,10 @@ Length and continuity:
   needs verification; do not claim that nothing changed.
 - Use the current weekly plan as the active frame. If it is marked stale or not current for this
   week, say so and rely on newer priorities, meetings, notes, and project records.
+- Treat `tracked_tasks` as the open and carried items in Julian's local task store. Each has a
+  stable `id`. When you restate one in Decisions or Delegated, copy the stored title exactly
+  (same wording and punctuation). Do not paraphrase, or the store will mint a new id. Do not invent ids in the brief text. Include every still-open
+  or carried tracked item unless newer evidence has resolved, parked, superseded, or contradicted it.
 - Treat the previous daily brief as unverified carry-forward candidates, not source truth. Keep an
   old item only when it still appears open and newer evidence has not resolved, parked, superseded,
   or contradicted it.
@@ -455,6 +459,7 @@ def compact_state(state):
 
     # Notes: keep as-is (today + yesterday, already small)
     compact["notes"] = state.get("notes") or {}
+    compact["tracked_tasks"] = state.get("tracked_tasks") or []
 
     # Recent meetings: already compact summaries/action items from collect-state
     compact["recent_meetings"] = state.get("recent_meetings") or []

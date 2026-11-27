@@ -24,12 +24,22 @@ It has nine screens. Use `g` and a letter to move between them, and `⌘K` (or
   Worth Reading shows linked article titles with descriptions below. Titles open
   HTTP/HTTPS URLs in a new tab with `noopener noreferrer`. Raw link targets are
   hidden, and HTML entities in titles and descriptions are decoded as text.
-- **Tasks** (`g k`): follow-ups gathered read-only from your brief, the Life
-  reminders file, the founder-office action register and each project's
-  "this week" list. They are derived, not tracked: completion arrives in a
-  later phase, and source files are never edited from here. When a task's line
-  is edited in its source file, the row shows "source changed" and its old
-  title for a day (until the portal restarts), instead of replacing it silently.
+- **Tasks** (`g k`): today's brief items and your own list on top, with
+  reminders, the first-week action register and project "this week" lists
+  behind an Other sources filter. The local store (`~/.harnessy/portal/tasks.json`)
+  holds stable IDs, priority, order and outcomes. You can check off a task, add
+  or insert one, reorder, set priority, and record done, carried, dropped or
+  delegated. The list sorts by priority, then your order, so moving a task
+  past one of another priority gives it that task's priority. Changes made by
+  `harnessy jarvis tasks` show within 5 seconds. The page never writes the
+  source Markdown or your notes files.
+  Follow-ups (things waiting on someone, or owed to someone) have their own
+  Follow-ups and Overdue tabs, sorted by priority then due date, from your list
+  and reminders alike; overdue means due before today in Africa/Lagos. Add one
+  with the Follow-up box in Add task (Waiting on, Link), and resolve it from its
+  detail with an optional note, which then shows on Done.
+  When a task's line is edited in its source file, the row shows "source changed"
+  and its old title for a day (until the portal restarts).
 - **Jobs** (`g j`): every Harnessy job and service, its schedule and next run
   (Africa/Lagos), launchd state, whether its port answers, and the commands
   that control it. "Last activity" is a log file's modified time. A job whose

@@ -20,6 +20,10 @@ export default defineConfig({
 				replacement: fileURLToPath(new URL("../harnessy-core/src/read-model.ts", import.meta.url)),
 			},
 			{
+				find: /^@harnessy\/core\/tasks$/,
+				replacement: fileURLToPath(new URL("../harnessy-core/src/tasks.ts", import.meta.url)),
+			},
+			{
 				find: /^@harnessy\/core\/meeting-publication-inspector$/,
 				replacement: coreSource,
 			},

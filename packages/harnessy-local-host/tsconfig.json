@@ -7,6 +7,7 @@
 			"@harnessy/core/wiki": ["../harnessy-core/src/wiki.ts"],
 			"@harnessy/core/meeting-publication": ["../harnessy-core/src/meeting-publication.ts"],
 			"@harnessy/core/read-model": ["../harnessy-core/src/read-model.ts"],
+			"@harnessy/core/tasks": ["../harnessy-core/src/tasks.ts"],
 			"@harnessy/core/meeting-publication-inspector": [
 				"../harnessy-core/src/meeting-publication-inspector.ts"
 			]

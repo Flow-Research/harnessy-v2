@@ -85,12 +85,16 @@ export const InboxListSchema = Type.Object(
 );
 
 export const TaskStatusSchema = literals(["todo", "doing", "waiting", "done", "dropped"] as const);
-export const TaskSourceKindSchema = literals(["brief", "reminders", "register", "status-md"] as const);
+export const TaskOutcomeSchema = literals(["done", "carried", "dropped", "delegated"] as const);
+export const TaskSourceKindSchema = literals(["brief", "reminders", "register", "status-md", "native"] as const);
+export const TaskGroupSchema = literals(["primary", "other"] as const);
 
 export const TaskSchema = Type.Object(
 	{
-		/** `sha256(kind, path, normalised text)`, plus the occurrence for a repeated line: unique within a response. */
-		id: Type.String({ pattern: "^[a-f0-9]{64}$" }),
+		/** A store UUID, or the derived content hash before a task is ingested. */
+		id: Type.String({
+			pattern: "^([a-f0-9]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$",
+		}),
 		title: Type.String({ maxLength: 300 }),
 		status: TaskStatusSchema,
 		owner: nullable(Type.String({ maxLength: 64 })),
@@ -104,6 +108,24 @@ export const TaskSchema = Type.Object(
 		sourceChanged: Type.Boolean(),
 		/** The task's title before that edit, when `sourceChanged`. */
 		previousTitle: nullable(Type.String({ maxLength: 300 })),
+		/** Lower numbers sort first in the primary list. */
+		priority: Type.Integer({ minimum: 0, maximum: 10_000 }),
+		/** Today's brief and native or open store items are `primary`; reminders, register and status.md are `other`. */
+		group: TaskGroupSchema,
+		outcome: nullable(TaskOutcomeSchema),
+		carriedFrom: nullable(day),
+		/** `followup` for something owed to or by someone else (waiting on, chase, reply); else `task`. */
+		kind: literals(["task", "followup"] as const),
+		/** What the follow-up is waiting on. */
+		waitingOn: nullable(Type.String({ maxLength: 120 })),
+		/** An http(s) link to where the follow-up came from (thread, doc, ticket). */
+		link: nullable(Type.String({ maxLength: 2048 })),
+		/** When a follow-up was resolved, and the note left with it. */
+		resolvedAt: nullable(instant),
+		resolution: nullable(Type.String({ maxLength: 500 })),
+		/** Stable kind+title fingerprint, or null for a native task that has none. */
+		fingerprint: nullable(Type.String({ pattern: "^[a-f0-9]{64}$" })),
+		inStore: Type.Boolean(),
 		source: Type.Object(
 			{
 				kind: TaskSourceKindSchema,

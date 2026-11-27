@@ -18,8 +18,17 @@ import {
 	PortalApiSchemas,
 	portalResponseSchemaId,
 	repairPortalTiles,
+	type TaskListData,
 	type TileResult,
 } from "@harnessy/core/read-model";
+import {
+	ensureStoredTask,
+	lagosCalendarDate,
+	TASK_ID,
+	TASKS_MAX,
+	TaskRefused,
+	type TasksState,
+} from "@harnessy/core/tasks";
 
 import { bearerSecret, PortalSessions } from "./auth.ts";
 import type { createBriefGeneration } from "./brief-generation.ts";
@@ -66,6 +75,8 @@ export interface PortalServerOptions {
 	readonly inboxState?: InboxState;
 	/** The owner's saved links; page-token actions only. */
 	readonly links?: LinksState;
+	/** The owner's local task store; page-token actions only. */
+	readonly tasks?: TasksState;
 	readonly installToken: string;
 	readonly sources: PortalSources;
 	readonly version: string;
@@ -421,6 +432,110 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 				}
 				throw new RequestRefused(400, "invalid_body");
 			}
+			case "tasks": {
+				if (!sessions.isPageToken(bearerSecret(authorization))) throw new RequestRefused(401, "unauthorized");
+				if (!options.tasks) throw new RequestRefused(503, "tasks_unavailable");
+				if (request.headers.origin !== origin) throw new RequestRefused(403, "origin_required");
+				requireJson(request);
+				let value: unknown;
+				try {
+					value = JSON.parse(body.toString("utf8"));
+				} catch {
+					throw new RequestRefused(400, "invalid_body");
+				}
+				if (!value || typeof value !== "object" || Array.isArray(value))
+					throw new RequestRefused(400, "invalid_body");
+				const fields = value as Record<string, unknown>;
+				const keys = Object.keys(fields).sort().join(",");
+				const isTaskRef = (id: unknown): id is string =>
+					typeof id === "string" && (TASK_ID.test(id) || /^[a-f0-9]{64}$/u.test(id));
+				const optionalString = (name: string): string | undefined =>
+					typeof fields[name] === "string" ? (fields[name] as string) : undefined;
+				const tasks = options.tasks;
+				const resolveId = (id: string): string => {
+					if (TASK_ID.test(id)) return id;
+					const tile = (options.sources.tasks() as { tasks: TileResult<TaskListData> }).tasks;
+					if (tile.state !== "ok" || tile.data === undefined || tile.data === null)
+						throw new RequestRefused(503, "tasks_unavailable");
+					const task = tile.data.tasks.find((entry) => entry.id === id);
+					if (task === undefined) throw new TaskRefused("task_missing");
+					return ensureStoredTask(tasks, task, lagosCalendarDate(new Date())).id;
+				};
+				try {
+					if (fields.action === "add" || fields.action === "insert") {
+						if (typeof fields.title !== "string") throw new RequestRefused(400, "invalid_body");
+						const index = fields.index === undefined ? undefined : fields.index;
+						if (fields.action === "insert" && index === undefined) throw new RequestRefused(400, "invalid_index");
+						if (
+							index !== undefined &&
+							(!Number.isInteger(index) || (index as number) < 0 || (index as number) > TASKS_MAX)
+						)
+							throw new RequestRefused(400, "invalid_index");
+						if (fields.priority !== undefined && !Number.isInteger(fields.priority))
+							throw new RequestRefused(400, "invalid_priority");
+						const item = tasks.add({
+							title: fields.title,
+							owner: optionalString("owner") ?? null,
+							due: optionalString("due") ?? null,
+							project: optionalString("project") ?? null,
+							...(fields.kind === undefined ? {} : { kind: fields.kind as "task" }),
+							...(fields.waitingOn === undefined ? {} : { waitingOn: optionalString("waitingOn") ?? null }),
+							...(fields.link === undefined ? {} : { link: optionalString("link") ?? null }),
+							...(fields.priority === undefined ? {} : { priority: fields.priority as number }),
+							...(index === undefined ? {} : { index: index as number }),
+						});
+						cache.clear();
+						return { item };
+					}
+					if (
+						fields.action === "setPriority" &&
+						keys === "action,id,priority" &&
+						isTaskRef(fields.id) &&
+						Number.isInteger(fields.priority)
+					) {
+						const item = tasks.setPriority(resolveId(fields.id), fields.priority as number);
+						cache.clear();
+						return { item };
+					}
+					if (
+						fields.action === "reorder" &&
+						keys === "action,ids" &&
+						Array.isArray(fields.ids) &&
+						fields.ids.length <= TASKS_MAX &&
+						fields.ids.every(isTaskRef)
+					) {
+						tasks.reorder(fields.ids as string[]);
+						cache.clear();
+						return { ok: true };
+					}
+					if (
+						fields.action === "resolve" &&
+						(keys === "action,id" || keys === "action,id,note") &&
+						isTaskRef(fields.id) &&
+						(fields.note === undefined || typeof fields.note === "string")
+					) {
+						const item = tasks.resolve(resolveId(fields.id), optionalString("note") ?? null);
+						cache.clear();
+						return { item };
+					}
+					if ((fields.action === "outcome" || fields.action === "complete") && isTaskRef(fields.id)) {
+						const outcome = fields.action === "complete" ? "done" : fields.outcome;
+						if (outcome !== "done" && outcome !== "carried" && outcome !== "dropped" && outcome !== "delegated")
+							throw new RequestRefused(400, "invalid_outcome");
+						const item = tasks.applyOutcome(resolveId(fields.id), outcome, {
+							owner: optionalString("owner") ?? null,
+							date: optionalString("date"),
+						});
+						cache.clear();
+						return { item };
+					}
+				} catch (error) {
+					if (error instanceof RequestRefused) throw error;
+					if (error instanceof TaskRefused) throw new RequestRefused(400, error.code);
+					throw new RequestRefused(503, "tasks_unwritable");
+				}
+				throw new RequestRefused(400, "invalid_body");
+			}
 			case "none":
 				return route.schema === null
 					? openApi
@@ -678,7 +793,7 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 				? 1024 * 1024
 				: route.auth === "terminal"
 					? 128 * 1024
-					: route.auth === "links"
+					: route.auth === "links" || route.auth === "tasks"
 						? 16 * 1024
 						: PORTAL_MAX_BODY_BYTES,
 		);

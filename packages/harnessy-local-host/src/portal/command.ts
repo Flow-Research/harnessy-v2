@@ -9,6 +9,7 @@ import { request } from "node:http";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { DEFAULT_READ_TIMEOUT_MS, type LaunchdProbe } from "@harnessy/core/read-model";
+import { TasksState } from "@harnessy/core/tasks";
 import * as Result from "effect/Result";
 
 import { isPortalServerProof, portalClientProofHeader } from "./auth.ts";
@@ -234,6 +235,7 @@ export const runPortalCommand = async (
 			const root = preparePortalStateDir(stateDir, { create: explicitStateDir !== undefined });
 			const installToken = readOrCreatePortalInstallToken(root);
 			const workspaceRoot = absolute(values["workspace-root"]);
+			const tasks = new TasksState(join(root, "tasks.json"));
 			const sources = createPortalSources({
 				homeRoot: absolute(values["home-root"]) ?? io.homeDir,
 				...(workspaceRoot === undefined ? {} : { workspaceRoot }),
@@ -242,10 +244,12 @@ export const runPortalCommand = async (
 				timeoutMs: DEFAULT_READ_TIMEOUT_MS,
 				clock: () => new Date(),
 				ownerJobsPath: join(root, OWNER_JOBS_FILE),
+				tasks,
 			});
 			const options: PortalServerOptions = {
 				inboxState: new InboxState(join(root, "inbox-archive.json")),
 				links: new LinksState(join(root, "links.json"), undefined, io.homeDir),
+				tasks,
 				openFile: io.openFile,
 				devices: io.env.HARNESSY_PORTAL_REMOTE_ORIGIN
 					? new DeviceAccess(root, io.env.HARNESSY_PORTAL_REMOTE_ORIGIN)

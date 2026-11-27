@@ -142,7 +142,7 @@ const ScreenView = ({
 		case "today":
 			return <TodayScreen rest={rest} now={now} />;
 		case "tasks":
-			return <TasksScreen rest={rest} />;
+			return <TasksScreen rest={rest} client={client} />;
 		case "jobs":
 			return <JobsScreen rest={rest} now={now} />;
 		case "reviews":

@@ -51,6 +51,7 @@ import { JarvisParityReporter } from "../jarvis/parity-report.ts";
 import { JarvisPathResolver } from "../jarvis/paths.ts";
 import { jarvisCalendarCommand } from "./calendar.ts";
 import { communityDraftCommand, communityReviewServeCommand } from "./community-draft.ts";
+import { jarvisTasksCommand } from "./jarvis-tasks.ts";
 import { jsonOption, targetOption } from "./shared.ts";
 import { runWikiHost, wikiCommand } from "./wiki.ts";
 
@@ -1200,6 +1201,7 @@ export const jarvisCommand = Command.make("jarvis").pipe(
 		jarvisDiagnoseCommand,
 		jarvisParityCommand,
 		jarvisLifeCommand,
+		jarvisTasksCommand,
 		jarvisCommunityCommand,
 		jarvisMeetingCommand,
 		jarvisCalendarCommand,

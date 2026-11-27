@@ -663,6 +663,42 @@ def collect_cron():
     return read_file(CRON_YAML)
 
 
+
+def collect_tracked_tasks():
+    """Open and carried items from the local portal task store (read-only)."""
+    path = os.environ.get("HARNESSY_TASKS_FILE") or os.path.join(
+        os.path.expanduser("~"), ".harnessy", "portal", "tasks.json"
+    )
+    data = read_json(path)
+    if not isinstance(data, dict) or data.get("version") != 1:
+        return []
+    items = data.get("items") or []
+    if not isinstance(items, list):
+        return []
+    tracked = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        status = item.get("status")
+        outcome = item.get("outcome")
+        if status in ("done", "dropped") and outcome != "carried":
+            continue
+        if status in ("todo", "doing", "waiting") or outcome == "carried":
+            tracked.append({
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "status": status,
+                "owner": item.get("owner"),
+                "due": item.get("due"),
+                "priority": item.get("priority"),
+                "outcome": outcome,
+                "carriedFrom": item.get("carriedFrom"),
+            })
+        if len(tracked) >= 500:
+            break
+    return tracked
+
+
 def collect_notes():
     """Read recent daily notes from private/notes/."""
     lookback_days = int(os.environ.get("LIFE_ORCHESTRATOR_NOTES_LOOKBACK_DAYS", "5"))
@@ -1390,6 +1426,7 @@ def main():
         "project_context_vaults": collect_project_context_vaults(),
         "life_context": collect_life_context(),
         "notes": collect_notes(),
+        "tracked_tasks": collect_tracked_tasks(),
         "recent_meetings": collect_recent_meetings(),
         "git": collect_git(),
         "agents": collect_agents(),

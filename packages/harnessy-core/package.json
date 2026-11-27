@@ -55,6 +55,10 @@
 		"./read-model": {
 			"types": "./dist/read-model.d.ts",
 			"import": "./dist/read-model.js"
+		},
+		"./tasks": {
+			"types": "./dist/jarvis/tasks/index.d.ts",
+			"import": "./dist/jarvis/tasks/index.js"
 		}
 	},
 	"files": [

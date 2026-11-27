@@ -17,6 +17,7 @@ import {
 	type ServiceHealthData,
 	type TileResult,
 } from "@harnessy/core/read-model";
+import { TasksState } from "@harnessy/core/tasks";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { isCommunityCompatibilityWriterCommand } from "../../harnessy-core/src/jarvis/community-briefing/operational-runtime.ts";
@@ -965,6 +966,7 @@ describe("server reads for the app routes", () => {
 describe("app routes over a real server", () => {
 	const start = async (home: string) => {
 		const token = newPortalSecret();
+		const tasks = new TasksState(join(home, "tasks.json"));
 		const sources = createPortalSources({
 			homeRoot: home,
 			env: { USER: FIXTURE_USER },
@@ -972,10 +974,12 @@ describe("app routes over a real server", () => {
 			timeoutMs: 250,
 			clock: () => FIXTURE_NOW,
 			probePort: async () => false,
+			tasks,
 		});
 		const server = await startPortalServer({
 			installToken: token,
 			sources,
+			tasks,
 			version: "0.0.3",
 			port: 0,
 			cacheTtlMs: 0,
@@ -1012,23 +1016,29 @@ describe("app routes over a real server", () => {
 				tiles: {
 					tasks: {
 						data: {
-							tasks: Array<{ title: string; mine: boolean; sourceChanged: boolean; source: { kind: string } }>;
+							tasks: Array<{
+								title: string;
+								mine: boolean;
+								sourceChanged: boolean;
+								group: string;
+								source: { kind: string };
+							}>;
 						};
 					};
 				};
 			}
 		).tiles.tasks.data.tasks;
-		expect(taskList.map((task) => [task.source.kind, task.title, task.mine])).toEqual([
-			["reminders", "Call the bank by 2026-10-19", true],
-			["reminders", "Send the deck", true],
-			["reminders", "Loose note line", true],
-			["brief", "Settle the mandate", true],
-			["brief", "Approve the budget", true],
-			["brief", "Garden delivery", false],
-			["register", "Approve the mandate", true],
-			["register", "Publish the register", false],
-			["status-md", "ship the alpha", true],
-			["status-md", "Wait on legal", true],
+		expect(taskList.map((task) => [task.source.kind, task.title, task.mine, task.group])).toEqual([
+			["brief", "Approve the budget", true, "primary"],
+			["brief", "Garden delivery", false, "primary"],
+			["brief", "Settle the mandate", true, "primary"],
+			["reminders", "Call the bank by 2026-10-19", true, "other"],
+			["reminders", "Send the deck", true, "other"],
+			["reminders", "Loose note line", true, "other"],
+			["register", "Approve the mandate", true, "other"],
+			["register", "Publish the register", false, "other"],
+			["status-md", "ship the alpha", true, "other"],
+			["status-md", "Wait on legal", true, "other"],
 		]);
 		const jobs = await get("/v1/jobs");
 		expect(checkPortalValue(PortalApiSchemas.Jobs, jobs.json)).toBe(true);
