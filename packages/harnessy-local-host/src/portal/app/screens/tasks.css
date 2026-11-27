@@ -28,14 +28,14 @@
 	height: var(--control-h-sm);
 	min-width: var(--control-h-sm);
 	min-height: var(--control-h-sm);
-	border: 1px solid var(--border);
+	border: 1px solid var(--hairline);
 	border-radius: 4px;
 	background: transparent;
 	padding: 0;
 }
 .task-check:hover,
 .task-check:focus-visible {
-	border-color: var(--fg);
+	border-color: var(--text);
 }
 .task-check-cell {
 	width: var(--control-h);
