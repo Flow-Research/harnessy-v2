@@ -7,6 +7,7 @@
  * These commands never write brief, reminder, register or status Markdown.
  * `--write-note` is the only way a note file is appended, and only from the CLI.
  */
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -20,6 +21,7 @@ import * as Result from "effect/Result";
 
 import {
 	appendCloseoutNote,
+	applyMutation,
 	type CloseoutEntry,
 	defaultTasksFile,
 	type FollowupInput,
@@ -28,6 +30,8 @@ import {
 	ingestBriefFile,
 	lagosCalendarDate,
 	type ResolveEntry,
+	resolveSyncConfig,
+	syncTasks,
 	type TaskOutcome,
 	TaskRefused,
 	TasksState,
@@ -47,6 +51,22 @@ const tasksFileOption = Options.String("tasks-file").pipe(
 	Options.optional,
 	Options.withDescription("Explicit tasks.json path. Overrides --state-dir and --home-root."),
 );
+const endpointOption = Options.String("endpoint").pipe(
+	Options.optional,
+	Options.withDescription(
+		"Hosted tasks URL. Defaults to HARNESSY_TASKS_ENDPOINT or ~/.config/harnessy/tasks-sync.json.",
+	),
+);
+const tokenFileOption = Options.String("token-file").pipe(
+	Options.optional,
+	Options.withDescription(
+		"Path of the bearer token file (mode 0600). Defaults to HARNESSY_TASKS_TOKEN_FILE or the path in the sync config.",
+	),
+);
+const syncConfigOption = Options.String("sync-config").pipe(
+	Options.optional,
+	Options.withDescription("Path of the sync config JSON (endpoint and tokenFile)."),
+);
 
 const resolveFile = (
 	homeRoot: Option.Option<string>,
@@ -60,6 +80,23 @@ const resolveFile = (
 	return defaultTasksFile(resolve(Option.getOrUndefined(homeRoot) ?? homedir()));
 };
 
+const syncOptions = {
+	endpoint: endpointOption,
+	tokenFile: tokenFileOption,
+	syncConfig: syncConfigOption,
+};
+
+const configFrom = (
+	endpoint: Option.Option<string>,
+	tokenFile: Option.Option<string>,
+	syncConfig: Option.Option<string>,
+) =>
+	resolveSyncConfig({
+		endpoint: Option.getOrUndefined(endpoint),
+		tokenFile: Option.getOrUndefined(tokenFile),
+		configFile: Option.getOrUndefined(syncConfig),
+	});
+
 const print = (value: unknown) => Console.log(JSON.stringify(value, null, 2));
 
 const fail = (error: unknown): Effect.Effect<never> => {
@@ -69,8 +106,8 @@ const fail = (error: unknown): Effect.Effect<never> => {
 	);
 };
 
-const run = <T>(body: () => T): Effect.Effect<void> =>
-	Effect.try({
+const runAsync = <T>(body: () => Promise<T>): Effect.Effect<void> =>
+	Effect.tryPromise({
 		try: () => body(),
 		catch: (cause) => (cause instanceof Error ? cause : new Error("failed")),
 	}).pipe(
@@ -82,6 +119,7 @@ const shared = {
 	homeRoot: homeRootOption,
 	stateDir: stateDirOption,
 	tasksFile: tasksFileOption,
+	...syncOptions,
 };
 
 export const jarvisTasksListCommand = Command.make(
@@ -93,9 +131,18 @@ export const jarvisTasksListCommand = Command.make(
 			Options.withDescription("Include done and dropped tasks."),
 		),
 	},
-	({ homeRoot, stateDir, tasksFile, includeDone }) =>
-		run(() => {
-			const items = new TasksState(resolveFile(homeRoot, stateDir, tasksFile))
+	({ homeRoot, stateDir, tasksFile, includeDone, endpoint, tokenFile, syncConfig }) =>
+		runAsync(async () => {
+			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const config = configFrom(endpoint, tokenFile, syncConfig);
+			if (config !== undefined) {
+				try {
+					await syncTasks({ tasksFile: file, config });
+				} catch {
+					// Offline: list the local cache.
+				}
+			}
+			const items = new TasksState(file)
 				.read()
 				.items.filter((item) => includeDone || (item.status !== "done" && item.status !== "dropped"));
 			return { items };
@@ -112,17 +159,41 @@ export const jarvisTasksIngestCommand = Command.make(
 			Options.withDescription("Brief calendar date (YYYY-MM-DD). Defaults to today in Africa/Lagos."),
 		),
 	},
-	({ homeRoot, stateDir, tasksFile, brief, date }) =>
-		run(() => {
+	({ homeRoot, stateDir, tasksFile, brief, date, endpoint, tokenFile, syncConfig }) =>
+		runAsync(async () => {
 			const day = Option.getOrUndefined(date) ?? lagosCalendarDate(new Date());
-			const result = ingestBriefFile(new TasksState(resolveFile(homeRoot, stateDir, tasksFile)), resolve(brief), {
-				date: day,
+			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const briefPath = resolve(brief);
+			const markdown = readFileSync(briefPath, "utf8");
+			const applied = await applyMutation({
+				tasksFile: file,
+				config: configFrom(endpoint, tokenFile, syncConfig),
+				mutation: { op: "ingest", markdown, date: day, path: briefPath, displayRef: `brief ${day}` },
+				applyLocal: (state) => ingestBriefFile(state, briefPath, { date: day }),
 			});
+			if (applied.mode === "queued") {
+				const result = applied.result as {
+					created: number;
+					matched: number;
+					sidecarPath: string;
+					sidecar: { items: unknown };
+				};
+				return {
+					created: result.created,
+					matched: result.matched,
+					sidecarPath: result.sidecarPath,
+					items: result.sidecar.items,
+					mode: applied.mode,
+					revision: applied.revision,
+				};
+			}
+			// Remote ingest does not write a local sidecar; a later local ingest can.
 			return {
-				created: result.created,
-				matched: result.matched,
-				sidecarPath: result.sidecarPath,
-				items: result.sidecar.items,
+				created: (applied.result as { created?: number }).created ?? 0,
+				matched: (applied.result as { matched?: number }).matched ?? 0,
+				items: (applied.result as { items?: unknown }).items ?? [],
+				mode: applied.mode,
+				revision: applied.revision,
 			};
 		}),
 );
@@ -144,17 +215,29 @@ export const jarvisTasksAddCommand = Command.make(
 			Options.withDescription("Insert at this 0-based position. Omit to append."),
 		),
 	},
-	({ homeRoot, stateDir, tasksFile, title, owner, due, project, priority, index }) =>
-		run(() => {
-			const item = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).add({
+	({ homeRoot, stateDir, tasksFile, title, owner, due, project, priority, index, endpoint, tokenFile, syncConfig }) =>
+		runAsync(async () => {
+			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const fields = {
+				id: randomUUID(),
 				title,
 				owner: Option.getOrUndefined(owner) ?? null,
 				due: Option.getOrUndefined(due) ?? null,
 				project: Option.getOrUndefined(project) ?? null,
 				...(Option.isSome(priority) ? { priority: Option.getOrUndefined(priority) } : {}),
 				...(Option.isSome(index) ? { index: Option.getOrUndefined(index) } : {}),
+			};
+			const applied = await applyMutation({
+				tasksFile: file,
+				config: configFrom(endpoint, tokenFile, syncConfig),
+				mutation: { op: "add", fields },
+				applyLocal: (state) => state.add(fields),
 			});
-			return { item };
+			const item =
+				applied.mode === "queued"
+					? applied.result
+					: new TasksState(file).read().items.find((row) => row.id === fields.id);
+			return { item, mode: applied.mode, revision: applied.revision };
 		}),
 );
 
@@ -175,16 +258,31 @@ export const jarvisTasksOutcomeCommand = Command.make(
 			Options.withDescription("carriedFrom date (YYYY-MM-DD). Defaults to today in Africa/Lagos."),
 		),
 	},
-	({ homeRoot, stateDir, tasksFile, id, outcome, owner, date }) =>
-		run(() => {
+	({ homeRoot, stateDir, tasksFile, id, outcome, owner, date, endpoint, tokenFile, syncConfig }) =>
+		runAsync(async () => {
 			const value = outcome.trim().toLowerCase();
 			if (value !== "done" && value !== "carried" && value !== "dropped" && value !== "delegated")
 				throw new TaskRefused("invalid_outcome");
-			const item = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).applyOutcome(id, value, {
-				owner: Option.getOrUndefined(owner) ?? null,
-				date: Option.getOrUndefined(date),
+			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const applied = await applyMutation({
+				tasksFile: file,
+				config: configFrom(endpoint, tokenFile, syncConfig),
+				mutation: {
+					op: "outcome",
+					id,
+					outcome: value,
+					owner: Option.getOrUndefined(owner) ?? null,
+					date: Option.getOrUndefined(date),
+				},
+				applyLocal: (state) =>
+					state.applyOutcome(id, value, {
+						owner: Option.getOrUndefined(owner) ?? null,
+						date: Option.getOrUndefined(date),
+					}),
 			});
-			return { item };
+			const item =
+				applied.mode === "queued" ? applied.result : new TasksState(file).read().items.find((row) => row.id === id);
+			return { item, mode: applied.mode, revision: applied.revision };
 		}),
 );
 
@@ -278,8 +376,8 @@ export const jarvisTasksCloseoutCommand = Command.make(
 		),
 		target: targetOption,
 	},
-	({ homeRoot, stateDir, tasksFile, input, writeNote, note, target }) =>
-		run(() => {
+	({ homeRoot, stateDir, tasksFile, input, writeNote, note, target, endpoint, tokenFile, syncConfig }) =>
+		runAsync(async () => {
 			const payload = readCloseoutInput(input);
 			const narrative = Option.getOrUndefined(note) ?? payload.note;
 			let noteBody: string | undefined;
@@ -292,11 +390,35 @@ export const jarvisTasksCloseoutCommand = Command.make(
 				}
 				noteBody = validated.success;
 			}
-			const result = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).closeout(
-				payload.outcomes,
-				payload.date,
-				{ followups: payload.followups, resolve: payload.resolve },
-			);
+			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const applied = await applyMutation({
+				tasksFile: file,
+				config: configFrom(endpoint, tokenFile, syncConfig),
+				mutation: {
+					op: "closeout",
+					outcomes: payload.outcomes,
+					followups: payload.followups,
+					resolve: payload.resolve,
+					date: payload.date,
+				},
+				applyLocal: (state) =>
+					state.closeout(payload.outcomes, payload.date, {
+						followups: payload.followups,
+						resolve: payload.resolve,
+					}),
+			});
+			const result =
+				applied.mode === "queued"
+					? (applied.result as {
+							readonly updated: unknown;
+							readonly unchanged: number;
+							readonly created: unknown;
+						})
+					: {
+							updated: (applied.result as { updated?: unknown }).updated ?? [],
+							unchanged: (applied.result as { unchanged?: number }).unchanged ?? 0,
+							created: (applied.result as { created?: unknown }).created ?? [],
+						};
 			// Outcomes are already committed here, so a note failure is reported beside
 			// them (ok stays true) rather than as a failed command a retry would hide.
 			let notePath: string | undefined;
@@ -344,9 +466,25 @@ export const jarvisFollowupAddCommand = Command.make(
 		),
 		project: Options.String("project").pipe(Options.optional, Options.withDescription("Optional project name.")),
 	},
-	({ homeRoot, stateDir, tasksFile, title, owner, waitingOn, due, priority, link, project }) =>
-		run(() => {
-			const item = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).addFollowup({
+	({
+		homeRoot,
+		stateDir,
+		tasksFile,
+		title,
+		owner,
+		waitingOn,
+		due,
+		priority,
+		link,
+		project,
+		endpoint,
+		tokenFile,
+		syncConfig,
+	}) =>
+		runAsync(async () => {
+			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const fields = {
+				id: randomUUID(),
 				title,
 				owner: Option.getOrUndefined(owner) ?? null,
 				waitingOn: Option.getOrUndefined(waitingOn) ?? null,
@@ -354,8 +492,18 @@ export const jarvisFollowupAddCommand = Command.make(
 				link: Option.getOrUndefined(link) ?? null,
 				project: Option.getOrUndefined(project) ?? null,
 				...(Option.isSome(priority) ? { priority: Option.getOrUndefined(priority) } : {}),
+			};
+			const applied = await applyMutation({
+				tasksFile: file,
+				config: configFrom(endpoint, tokenFile, syncConfig),
+				mutation: { op: "addFollowup", fields },
+				applyLocal: (state) => state.addFollowup(fields),
 			});
-			return { item };
+			const item =
+				applied.mode === "queued"
+					? applied.result
+					: new TasksState(file).read().items.find((row) => row.id === fields.id);
+			return { item, mode: applied.mode, revision: applied.revision };
 		}),
 );
 
@@ -372,17 +520,22 @@ export const jarvisFollowupListCommand = Command.make(
 			Options.withDescription("Today for the overdue check (YYYY-MM-DD). Defaults to today in Africa/Lagos."),
 		),
 	},
-	({ homeRoot, stateDir, tasksFile, view, today }) =>
-		run(() => {
+	({ homeRoot, stateDir, tasksFile, view, today, endpoint, tokenFile, syncConfig }) =>
+		runAsync(async () => {
 			const chosen = FOLLOWUP_VIEWS.find((entry) => entry === view.trim().toLowerCase());
 			if (chosen === undefined) throw new TaskRefused("invalid_view");
 			const day = Option.getOrUndefined(today) ?? lagosCalendarDate(new Date());
 			if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) throw new TaskRefused("invalid_due");
-			const items = followupsForView(
-				new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).read().items,
-				chosen,
-				day,
-			);
+			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const config = configFrom(endpoint, tokenFile, syncConfig);
+			if (config !== undefined) {
+				try {
+					await syncTasks({ tasksFile: file, config });
+				} catch {
+					// Offline: list the local cache.
+				}
+			}
+			const items = followupsForView(new TasksState(file).read().items, chosen, day);
 			const overdue = items.filter(
 				(item) => item.status !== "done" && item.status !== "dropped" && item.due !== null && item.due < day,
 			).length;
@@ -400,13 +553,18 @@ export const jarvisFollowupResolveCommand = Command.make(
 			Options.withDescription("Resolution note, up to 500 characters."),
 		),
 	},
-	({ homeRoot, stateDir, tasksFile, id, note }) =>
-		run(() => {
-			const item = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).resolve(
-				id,
-				Option.getOrUndefined(note) ?? null,
-			);
-			return { item };
+	({ homeRoot, stateDir, tasksFile, id, note, endpoint, tokenFile, syncConfig }) =>
+		runAsync(async () => {
+			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const applied = await applyMutation({
+				tasksFile: file,
+				config: configFrom(endpoint, tokenFile, syncConfig),
+				mutation: { op: "resolve", id, note: Option.getOrUndefined(note) ?? null },
+				applyLocal: (state) => state.resolve(id, Option.getOrUndefined(note) ?? null),
+			});
+			const item =
+				applied.mode === "queued" ? applied.result : new TasksState(file).read().items.find((row) => row.id === id);
+			return { item, mode: applied.mode, revision: applied.revision };
 		}),
 );
 
@@ -419,9 +577,21 @@ export const jarvisFollowupCommand = Command.make("followup").pipe(
 	] as const),
 );
 
+export const jarvisTasksSyncCommand = Command.make(
+	"sync",
+	{ ...shared },
+	({ homeRoot, stateDir, tasksFile, endpoint, tokenFile, syncConfig }) =>
+		runAsync(async () => {
+			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const config = configFrom(endpoint, tokenFile, syncConfig);
+			if (config === undefined) throw new TaskRefused("sync_unconfigured");
+			return syncTasks({ tasksFile: file, config });
+		}),
+);
+
 export const jarvisTasksCommand = Command.make("tasks").pipe(
 	Command.withDescription(
-		"List, ingest, add and close out local portal tasks (JSON in/out). Never writes source Markdown.",
+		"List, ingest, add and close out local portal tasks (JSON in/out), and sync them with a hosted primary. Never writes source Markdown.",
 	),
 	Command.withSubcommands([
 		jarvisTasksListCommand,
@@ -430,5 +600,6 @@ export const jarvisTasksCommand = Command.make("tasks").pipe(
 		jarvisTasksOutcomeCommand,
 		jarvisTasksCloseoutCommand,
 		jarvisFollowupCommand,
+		jarvisTasksSyncCommand,
 	] as const),
 );
