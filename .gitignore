@@ -57,3 +57,6 @@ harnessy-v1/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Private local fixture profile for the social cockpit.
+/.social-demo/
