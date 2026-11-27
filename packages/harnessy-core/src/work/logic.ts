@@ -311,7 +311,7 @@ export const gitArgv = {
 		"--get-regexp",
 		"^filter\\.",
 	],
-	worktreeAdd: (repo: string, worktree: string, branch: string, base: string) => [
+	worktreeAdd: (repo: string, worktree: string, branch: string, base: string, sourceRevision?: string) => [
 		"git",
 		"-C",
 		repo,
@@ -321,7 +321,7 @@ export const gitArgv = {
 		worktree,
 		"-b",
 		branch,
-		`origin/${base}`,
+		sourceRevision ?? `origin/${base}`,
 	],
 	status: (worktree: string) => [
 		"git",
@@ -515,6 +515,7 @@ export const ghArgv = {
 		bodyFile,
 	],
 	checksWatch: (pr: number) => ["gh", "pr", "checks", String(pr), "--watch"],
+	checksState: (pr: number) => ["gh", "pr", "checks", String(pr), "--json", "bucket"],
 	/** Returns a PR to draft while a revision is prepared, so the old head cannot be merged. */
 	prDraft: (pr: number) => ["gh", "pr", "ready", String(pr), "--undo"],
 	prComment: (pr: number, bodyFile: string) => ["gh", "pr", "comment", String(pr), "--body-file", bodyFile],
@@ -551,13 +552,13 @@ export const herdrArgv = {
 		"--no-focus",
 	],
 	paneRun: (pane: string, line: string) => ["herdr", "pane", "run", pane, line],
-	waitOutput: (pane: string, timeoutMs: number) => [
+	waitOutput: (pane: string, timeoutMs: number, marker = EXIT_MARKER) => [
 		"herdr",
 		"pane",
 		"wait-output",
 		pane,
 		"--regex",
-		EXIT_MARKER_REGEX,
+		marker === EXIT_MARKER ? EXIT_MARKER_REGEX : `${marker}[0-9]+`,
 		"--timeout",
 		String(timeoutMs),
 	],
@@ -737,14 +738,14 @@ export const SANDBOX_DENY_READ: ReadonlyArray<string> = [
  * excluded, and `autoAllowBashIfSandboxed: false` keeps the allow rules in
  * force.
  */
-export const agentSandbox = () => ({
+export const agentSandbox = (privatePaths: ReadonlyArray<string> = []) => ({
 	enabled: true,
 	failIfUnavailable: true,
 	autoAllowBashIfSandboxed: false,
 	allowUnsandboxedCommands: false,
 	excludedCommands: [],
 	network: { allowedDomains: [], strictAllowlist: true, allowLocalBinding: false, allowAllUnixSockets: false },
-	filesystem: { denyRead: [...SANDBOX_DENY_READ] },
+	filesystem: { denyRead: [...SANDBOX_DENY_READ, ...privatePaths] },
 });
 
 /**
@@ -782,13 +783,17 @@ export const gitDirOf = (gitFile: string): string | undefined => /^gitdir: (.+)$
  * an unrestricted `Bash` grant cannot widen this policy.
  * Whenever commands are allowed, the sandbox block comes with them.
  */
-export const agentSettings = (extraAllowed: ReadonlyArray<string>, protectedRules: ReadonlyArray<string>) => ({
+export const agentSettings = (
+	extraAllowed: ReadonlyArray<string>,
+	protectedRules: ReadonlyArray<string>,
+	privatePaths: ReadonlyArray<string> = [],
+) => ({
 	permissions: {
 		allow: extraAllowed.length === 0 ? [] : [...AGENT_ALLOWED_TOOLS, ...extraAllowed],
 		deny: [...AGENT_DISALLOWED_TOOLS, ...protectedRules],
 		defaultMode: "acceptEdits",
 	},
-	...(extraAllowed.length === 0 ? {} : { sandbox: agentSandbox() }),
+	...(extraAllowed.length === 0 ? {} : { sandbox: agentSandbox(privatePaths) }),
 });
 
 /** The first Claude Code release whose sandbox settings Harnessy was verified against. */
@@ -876,7 +881,10 @@ export const agentRunLine = (
 	budgetUsd: number,
 	paths: AgentPaths,
 	extraAllowed: ReadonlyArray<string> = [],
+	billing?: "included-only",
+	marker = EXIT_MARKER,
 ): string => {
+	if (!/^HSY_WORK_EXIT(?:_[a-f0-9-]+)?=$/.test(marker)) throw new Error("Invalid agent completion marker");
 	const argv = [
 		"env",
 		"-u",
@@ -885,6 +893,21 @@ export const agentRunLine = (
 		"GITHUB_TOKEN",
 		"-u",
 		"SSH_AUTH_SOCK",
+		...(billing === "included-only"
+			? [
+					"ANTHROPIC_API_KEY",
+					"ANTHROPIC_AUTH_TOKEN",
+					"ANTHROPIC_BASE_URL",
+					"ANTHROPIC_CUSTOM_HEADERS",
+					"ANTHROPIC_AWS_API_KEY",
+					"CLAUDE_CODE_USE_BEDROCK",
+					"CLAUDE_CODE_USE_VERTEX",
+					"CLAUDE_CODE_USE_FOUNDRY",
+					"CLAUDE_CODE_OAUTH_TOKEN",
+					"CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
+					"CLAUDE_CONFIG_DIR",
+				].flatMap((name) => ["-u", name])
+			: []),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",
@@ -906,14 +929,31 @@ export const agentRunLine = (
 		agentTools(extraAllowed).join(","),
 		"--permission-prompts",
 		"none",
-		"--max-budget-usd",
-		String(budgetUsd),
+		...(billing === "included-only" ? [] : ["--max-budget-usd", String(budgetUsd)]),
 		"--output-format",
 		"json",
 		"--json-schema",
 		JSON.stringify(AGENT_RESULT_SCHEMA),
 	];
-	return `${argv.map(shellWord).join(" ")} < ${shellWord(paths.prompt)} > ${shellWord(paths.result)}; echo ${EXIT_MARKER}$?`;
+	return `${argv.map(shellWord).join(" ")} < ${shellWord(paths.prompt)} > ${shellWord(paths.result)}; echo ${marker}$?`;
+};
+
+/**
+ * Summary of `gh pr checks --json bucket`. `undefined` when the output is not
+ * a list of checks, so that a caller never reads an error as "nothing failed".
+ */
+export const parseCheckBuckets = (
+	stdout: string,
+): { readonly failed: number; readonly pending: number; readonly total: number } | undefined => {
+	const value = parseJson(stdout.trim());
+	if (!Array.isArray(value)) return undefined;
+	const buckets = value.map((entry) => field(entry, "bucket"));
+	if (buckets.some((bucket) => typeof bucket !== "string")) return undefined;
+	return {
+		failed: buckets.filter((bucket) => bucket === "fail" || bucket === "cancel").length,
+		pending: buckets.filter((bucket) => bucket === "pending").length,
+		total: buckets.length,
+	};
 };
 
 /** Error code from herdr's JSON error on stderr (`{"error":{"code":"timeout"}}`). */
@@ -923,10 +963,11 @@ export const parseHerdrError = (stderr: string): string | undefined => {
 };
 
 /** Exit code from the matched `HSY_WORK_EXIT=<n>` line in herdr's wait-output JSON. */
-export const parseExitMarker = (waitOutputJson: string): number | undefined => {
+export const parseExitMarker = (waitOutputJson: string, marker = EXIT_MARKER): number | undefined => {
+	if (!/^HSY_WORK_EXIT(?:_[a-f0-9-]+)?=$/.test(marker)) return undefined;
 	const value = parseJson(waitOutputJson);
 	const line = field(field(value, "result"), "matched_line");
-	const match = typeof line === "string" ? /HSY_WORK_EXIT=(\d+)/.exec(line) : null;
+	const match = typeof line === "string" ? new RegExp(`${marker}(\\d+)`).exec(line) : null;
 	return match?.[1] === undefined ? undefined : Number(match[1]);
 };
 
@@ -1230,9 +1271,14 @@ export const combinedReports = (earlier: ReadonlyArray<string>, latest: string):
 		: `${earlier[0]}\n\nRevised ${earlier.length} time${earlier.length === 1 ? "" : "s"} after local review; revision reports stay local.`;
 
 /** PR comment for a revision pushed to an open pull request. Notes and revision reports stay private. */
-export const revisionComment = (revision: number, headSha: string, totalCostUsd: number): string =>
+export const revisionComment = (
+	revision: number,
+	headSha: string,
+	totalCostUsd: number,
+	billing?: "included-only",
+): string =>
 	[
-		`Revision ${revision} by \`harnessy work\` after review, pushed as ${headSha}. Total agent cost: ${totalCostUsd.toFixed(2)} USD.`,
+		`Revision ${revision} by \`harnessy work\` after review, pushed as ${headSha}. ${billing === "included-only" ? "Reported usage value" : "Total agent cost"}: ${totalCostUsd.toFixed(2)} USD.${billing === "included-only" ? " Included allowance was required. Actual charge evidence is unavailable." : ""}`,
 		"",
 		"The reviewer's notes and the agent's revision report stay local. Review the new commit's diff.",
 		"",
@@ -1383,6 +1429,7 @@ export const prBody = (
 	template?: string,
 	/** With `--github-app`: `Agent:`, `Operator:` and `WorkStream-Task:` lines for the summary. */
 	provenance: readonly string[] = [],
+	billing?: "included-only",
 ): string => {
 	const taskRef = taskUrl === undefined ? `\`${task.id}\`` : `[${task.id}](${taskUrl})`;
 	const reasonFence = fenceFor(agentReason);
@@ -1392,7 +1439,7 @@ export const prBody = (
 	const pathFence = fenceFor(listed.join("\n"));
 	const filled: Record<string, readonly string[]> = {
 		summary: [
-			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. Agent cost: ${costUsd.toFixed(2)} USD.`,
+			`Automated change by \`harnessy work\` for WorkStream task ${taskRef}. ${billing === "included-only" ? "Reported usage value" : "Agent cost"}: ${costUsd.toFixed(2)} USD.${billing === "included-only" ? " Included allowance was required. Actual charge evidence is unavailable." : ""}`,
 			"",
 			"Opened as a draft and marked ready only after the pushed commit's checks pass. A person reviews and merges; the merge lets the loop submit proof to WorkStream. Sections Harnessy cannot answer are left for the reviewer.",
 			...(provenance.length === 0 ? [] : ["", ...provenance.map((line) => `- ${line}`)]),
@@ -1594,11 +1641,15 @@ export interface WorkProof {
 	readonly repo: string;
 	readonly commit_sha: string;
 	readonly merge_commit_sha: string;
+	readonly source_head_sha?: string;
 	readonly pr_url: string;
 	readonly ci_run_url: string;
 	readonly ci_conclusion: string;
 	readonly merged: true;
-	readonly cost_usd: number;
+	readonly cost_usd?: number;
+	readonly reported_usage_value_usd?: number;
+	readonly actual_charge_usd?: "unavailable";
+	readonly billing?: "included-only";
 	readonly duration_seconds: number;
 }
 
@@ -1608,11 +1659,17 @@ export const buildProof = (input: Omit<WorkProof, "schema" | "merged">): WorkPro
 	repo: input.repo,
 	commit_sha: input.commit_sha,
 	merge_commit_sha: input.merge_commit_sha,
+	...(input.source_head_sha === undefined ? {} : { source_head_sha: input.source_head_sha }),
 	pr_url: input.pr_url,
 	ci_run_url: input.ci_run_url,
 	ci_conclusion: input.ci_conclusion,
 	merged: true,
-	cost_usd: input.cost_usd,
+	...(input.cost_usd === undefined ? {} : { cost_usd: input.cost_usd }),
+	...(input.reported_usage_value_usd === undefined
+		? {}
+		: { reported_usage_value_usd: input.reported_usage_value_usd }),
+	...(input.actual_charge_usd === undefined ? {} : { actual_charge_usd: input.actual_charge_usd }),
+	...(input.billing === undefined ? {} : { billing: input.billing }),
 	duration_seconds: input.duration_seconds,
 });
 
@@ -1624,6 +1681,11 @@ export interface WorkBinding {
 	readonly base: string;
 	readonly workstreamCli: ReadonlyArray<string>;
 	readonly actor: string;
+	/** Included-only policy identity. A resume cannot remove or replace it. */
+	readonly executionPolicy?: string;
+	readonly sourceRevision?: string;
+	readonly taskContentDigest?: string;
+	readonly launchId?: string;
 }
 
 /** Persisted resume state in Harnessy's private state directory, outside the agent's worktree. */
@@ -1650,6 +1712,8 @@ export interface WorkState {
 	};
 	/** Epoch milliseconds when the agent's wall-clock limit ends; survives re-attachment. */
 	readonly agentDeadline?: number;
+	/** Host nonce makes an older terminal completion line ineligible for this invocation. */
+	readonly agentMarker?: string;
 	readonly agent?: { readonly costUsd: number; readonly reason: string };
 	/** Spend of earlier agent runs on this task, before a `--revise`; counts against the budget. */
 	readonly spentUsd?: number;
@@ -1677,6 +1741,15 @@ export interface WorkState {
 	readonly submission?: unknown;
 	/** WorkStream's decision on the submission, recorded once so a re-run does not notify again. */
 	readonly outcome?: SubmissionOutcome;
+	/** Once set, task state can only reconcile merged proof, never run another source worker. */
+	readonly proofOnly?: true;
+	readonly authorityLineage?: ReadonlyArray<{
+		readonly policy: string;
+		readonly authorityId: string;
+		readonly launchId: string;
+		readonly headSha: string;
+		readonly renewedAt: number;
+	}>;
 }
 
 const DEP_COPY_METHODS: ReadonlySet<unknown> = new Set(["clone", "reflink", "copy"]);
@@ -1710,6 +1783,10 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		typeof field(value, "startedAt") !== "number" ||
 		typeof field(value, "gitFile") !== "string" ||
 		!["repo", "worktree", "branch", "base", "actor"].every((key) => typeof field(binding, key) === "string") ||
+		!["undefined", "string"].includes(typeof field(binding, "executionPolicy")) ||
+		!["undefined", "string"].includes(typeof field(binding, "sourceRevision")) ||
+		!["undefined", "string"].includes(typeof field(binding, "taskContentDigest")) ||
+		!["undefined", "string"].includes(typeof field(binding, "launchId")) ||
 		!Array.isArray(cli) ||
 		!cli.every((part) => typeof part === "string") ||
 		!["spentUsd", "revisions"].every((key) => ["undefined", "number"].includes(typeof field(value, key))) ||
@@ -1718,6 +1795,24 @@ export const parseState = (text: string, task: string): WorkState | undefined =>
 		!["undefined", "string"].includes(typeof field(value, "revisedFrom")) ||
 		!["undefined", "string"].includes(typeof field(value, "commentedSha")) ||
 		!["undefined", "string"].includes(typeof field(value, "commitApp")) ||
+		!(field(value, "proofOnly") === undefined || field(value, "proofOnly") === true) ||
+		!(
+			field(value, "authorityLineage") === undefined ||
+			(Array.isArray(field(value, "authorityLineage")) &&
+				(field(value, "authorityLineage") as unknown[]).every(
+					(entry) =>
+						typeof field(entry, "policy") === "string" &&
+						typeof field(entry, "authorityId") === "string" &&
+						typeof field(entry, "launchId") === "string" &&
+						/^[a-f0-9]{40}$/.test(String(field(entry, "headSha"))) &&
+						Number.isSafeInteger(field(entry, "renewedAt")),
+				))
+		) ||
+		!(
+			field(value, "agentMarker") === undefined ||
+			(typeof field(value, "agentMarker") === "string" &&
+				/^HSY_WORK_EXIT_[a-f0-9-]+=$/.test(String(field(value, "agentMarker"))))
+		) ||
 		!(
 			field(value, "outcome") === undefined ||
 			SUBMISSION_OUTCOMES.includes(field(value, "outcome") as SubmissionOutcome)
@@ -1738,6 +1833,10 @@ export const bindingMismatch = (saved: WorkBinding, current: WorkBinding): strin
 	for (const key of ["repo", "worktree", "branch", "base", "actor"] as const)
 		if (saved[key] !== current[key]) return key;
 	if (saved.workstreamCli.join("\u0000") !== current.workstreamCli.join("\u0000")) return "workstreamCli";
+	if (saved.executionPolicy !== current.executionPolicy) return "executionPolicy";
+	if (saved.sourceRevision !== current.sourceRevision) return "sourceRevision";
+	if (saved.taskContentDigest !== current.taskContentDigest) return "taskContentDigest";
+	if (saved.launchId !== current.launchId) return "launchId";
 	return undefined;
 };
 

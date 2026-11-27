@@ -894,6 +894,27 @@ updated: 2026-06-05
 ---
 
 ---
+name: forge-host
+type: opencode
+version: 0.1.0
+install_scope: global
+status: experimental
+owner: julian
+blast_radius: high
+description: "Install and operate a self-hosted Git forge (Forgejo first) with CI runners on a server, and keep a register of each install."
+location: tools/flow-install/skills/forge-host
+invoke: "/forge-host"
+permissions: [read, write, execute, network]
+data_categories: [credentials]
+egress: [codeberg.org, data.forgejo.org, ghcr.io, github.com, api.ipify.org]
+phase: P2
+tags: [forge, forgejo, git, ci, runners, self-hosted, evidence]
+depends_on: [service-deploy]
+created: 2026-11-21
+updated: 2026-11-21
+---
+
+---
 name: catchup
 type: opencode
 version: 0.1.0
@@ -973,6 +994,27 @@ tags: [writing, plain-english, ste, replies, docs]
 depends_on: []
 created: 2026-11-18
 updated: 2026-11-18
+---
+
+---
+name: engineering-loop
+type: opencode
+version: 0.1.0
+install_scope: global
+status: experimental
+owner: julian
+blast_radius: medium
+description: "Prepare and inspect approved engineering experiments through the existing Harnessy controller and task runner."
+location: tools/flow-install/skills/engineering-loop
+invoke: "/engineering-loop"
+permissions: [read-source, read-controller-state, write-private-reports, execute-authorized-cli]
+data_categories: [source_code, task_metadata]
+egress: []
+phase: P4
+tags: [engineering, measurements, native, evidence]
+depends_on: []
+created: 2026-11-21
+updated: 2026-11-21
 ---
 
 ## Notes

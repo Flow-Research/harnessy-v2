@@ -263,6 +263,8 @@ const exactHostInventory = [
 	"dist/portal/open-service.js",
 	"dist/portal/openapi.d.ts",
 	"dist/portal/openapi.js",
+	"dist/portal/owner-jobs.d.ts",
+	"dist/portal/owner-jobs.js",
 	"dist/portal/page-assets.d.ts",
 	"dist/portal/page-assets.js",
 	"dist/portal/process.d.ts",

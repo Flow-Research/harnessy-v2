@@ -30,6 +30,15 @@ import {
 	stripSensitive,
 } from "./deps.ts";
 import {
+	EXECUTION_GUARD_INTERVAL_MS,
+	type ExecutionGuard,
+	ExecutionPolicyError,
+	executionPolicyBinding,
+	type IncludedExecutionPolicy,
+	readExecutionPolicyBinding,
+	requireExecutionPermit,
+} from "./execution-policy.ts";
+import {
 	GitHubAppAuthError,
 	type GitHubAppRun,
 	type GitHubFetch,
@@ -68,6 +77,7 @@ import {
 	parseActor,
 	parseAssignment,
 	parseChangedPaths,
+	parseCheckBuckets,
 	parseDepDirs,
 	parseExitMarker,
 	parseHerdrError,
@@ -104,6 +114,7 @@ import {
 	prReadyNotification,
 	submittedNotification,
 } from "./notifications.ts";
+import { workstreamTaskContentDigest } from "./task-content.ts";
 import { zipSingleFile } from "./zip.ts";
 
 /** Captured result of one argv command. `exitCode` is undefined when it could not start or was killed. */
@@ -143,6 +154,17 @@ export interface WorkDeps {
 	readonly notify: (notification: Notification) => Promise<void>;
 	/** What `--github-app` needs; without it the flag is refused. */
 	readonly githubApp?: GitHubAppDeps;
+	/** Controller-owned current authority and provider billing verifier. Never worker input. */
+	readonly executionGuard?: ExecutionGuard;
+	/** Controller policy, evidence, and state paths outside the worker's write authority. */
+	readonly protectedPaths?: ReadonlyArray<string>;
+	/** Independent host evaluator, bound to the exact candidate before an included-only push. */
+	readonly reviewCandidate?: (candidate: {
+		readonly taskId: string;
+		readonly repository: string;
+		readonly worktree: string;
+		readonly headSha: string;
+	}) => Promise<{ readonly verdict: "pass" | "reject"; readonly headSha: string; readonly evidenceDigest: string }>;
 }
 
 /** Settings and seams for acting as a GitHub App. */
@@ -180,6 +202,13 @@ export interface WorkOptions {
 	/** Push and call `gh` as this GitHub App (its slug) instead of the operator's account. */
 	readonly githubApp?: string;
 	readonly dryRun: boolean;
+	/** Continuous work must set this policy. Omission retains the explicit manual budget path. */
+	readonly executionPolicy?: IncludedExecutionPolicy;
+	/** Exact approved baseline for continuous work. Required with executionPolicy. */
+	readonly sourceRevision?: string;
+	readonly taskContentDigest?: string;
+	/** Fresh proof-only authority after a human merge. It cannot restart or alter source work. */
+	readonly proofOnlyResume?: { readonly previousAuthorityId: string; readonly expectedHeadSha: string };
 }
 
 export interface WorkOutcome {
@@ -199,6 +228,9 @@ const PREPARE_POLL_MS = 10 * 1000;
 const PREPARE_ATTEMPTS = 60;
 const CI_ATTEMPTS = 30;
 const PROBE_TIMEOUT_MS = 30 * 1000;
+/** How long a new pane's shell may take to show its prompt before the agent line is refused. */
+const PANE_READY_POLL_MS = 1000;
+const PANE_READY_ATTEMPTS = 30;
 const MIN_WAIT_MS = 1000;
 const ATTR_BATCH = 200;
 
@@ -270,6 +302,40 @@ export const liveWorkDeps = (notifyMode?: NotifyMode): WorkDeps => {
 export const worktreePath = (repo: string, task: string): string => resolve(repo, "..", ".harnessy-work", task);
 
 /**
+ * Observe the exact saved pane without starting or retrying work. A completion
+ * line proves only that the foreground command returned. Herdr's pane API
+ * cannot prove that detached descendants exited, so this never certifies that.
+ */
+export const inspectWorkProcess = async (
+	task: string,
+	deps: Pick<WorkDeps, "run" | "stateRoot">,
+): Promise<{
+	readonly status: "unknown" | "no-recorded-pane" | "completion-observed";
+	readonly pane?: string;
+	readonly launchId?: string;
+	readonly exitCode?: number;
+	readonly terminationConfirmed: false;
+}> => {
+	if (!isTaskId(task)) throw new Error("task must be a WorkStream task UUID");
+	const statePath = join(deps.stateRoot, task, "state.json");
+	if (!existsSync(statePath)) return { status: "unknown", terminationConfirmed: false };
+	const saved = parseState(readFileSync(statePath, "utf8"), task);
+	if (saved === undefined) return { status: "unknown", terminationConfirmed: false };
+	if (saved.pane === undefined) return { status: "no-recorded-pane", terminationConfirmed: false };
+	// Old non-nonce markers can match prior output and do not qualify this observation.
+	if (saved.agentMarker === undefined) return { status: "unknown", pane: saved.pane, terminationConfirmed: false };
+	const result = await deps.run(herdrArgv.waitOutput(saved.pane, 1000, saved.agentMarker), { timeoutMs: 3000 });
+	const exitCode = result.exitCode === 0 ? parseExitMarker(result.stdout, saved.agentMarker) : undefined;
+	return {
+		status: exitCode === undefined ? "unknown" : "completion-observed",
+		pane: saved.pane,
+		...(saved.binding.launchId === undefined ? {} : { launchId: saved.binding.launchId }),
+		...(exitCode === undefined ? {} : { exitCode }),
+		terminationConfirmed: false,
+	};
+};
+
+/**
  * Send a notification. The live notifier never rejects; this guard keeps
  * that true for any injected one, so a notification can never fail a run.
  */
@@ -284,16 +350,18 @@ export const preflight = async (
 	workstreamCli: ReadonlyArray<string>,
 	/** Paths the sandbox must not be able to write, when the agent may run commands. */
 	needsSandbox: ReadonlyArray<string> | false = false,
+	proofOnly = false,
 ): Promise<ToolCheck[]> => {
 	const checks: ToolCheck[] = [];
 	for (const tool of WORK_TOOLS) {
+		if (proofOnly && (tool.name === "claude" || tool.name === "herdr")) continue;
 		const argv =
 			tool.name === "workstream" ? [...workstreamCli, ...tool.probeArgs] : [tool.executable, ...tool.probeArgs];
 		const probe = await deps.run(argv, { timeoutMs: PROBE_TIMEOUT_MS });
 		const check = checkTool(tool, probe, deps.platform);
 		checks.push(tool.name === "claude" && check.ok ? await claudeIsolationCheck(deps, check) : check);
 	}
-	if (needsSandbox !== false)
+	if (needsSandbox !== false && !proofOnly)
 		checks.push(await sandboxCheck(deps, checks.find((check) => check.name === "claude")?.version, needsSandbox));
 	return checks;
 };
@@ -375,19 +443,36 @@ const errnoCode = (error: unknown): string | undefined =>
 	typeof error === "object" && error !== null && "code" in error ? String(error.code) : undefined;
 
 /** Pid of a live process holding the task lock, or undefined after taking it. */
-const takeTaskLock = (lock: string): number | undefined => {
-	const created = Result.try(() => writeFileSync(lock, `${process.pid}\n`, { flag: "wx", mode: 0o600 }));
+const takeTaskLock = (lock: string, token: string): number | undefined => {
+	const created = Result.try(() => writeFileSync(lock, token, { flag: "wx", mode: 0o600 }));
 	if (Result.isSuccess(created)) return undefined;
 	if (errnoCode(created.failure) !== "EEXIST") throw created.failure;
+	if (!lstatSync(lock).isFile()) throw new Error("Refusing non-file work task lock");
 	const holder = Number.parseInt(readFileSync(lock, "utf8"), 10);
-	if (Number.isInteger(holder) && holder > 0 && holder !== process.pid) {
-		const probe = Result.try(() => process.kill(holder, 0));
-		// EPERM means the process exists but belongs to someone else.
-		if (Result.isSuccess(probe) || errnoCode(probe.failure) === "EPERM") return holder;
+	if (!Number.isInteger(holder) || holder <= 0) throw new Error("Refusing malformed work task lock");
+	const probe = Result.try(() => process.kill(holder, 0));
+	// Same-process concurrent calls count as live too. EPERM also establishes existence.
+	if (Result.isSuccess(probe) || errnoCode(probe.failure) === "EPERM") return holder;
+	if (errnoCode(probe.failure) !== "ESRCH") throw probe.failure;
+	// Serialize stale reclamation. A crash during recovery requires operator inspection.
+	const recovery = `${lock}.recovery`;
+	const reserved = Result.try(() => mkdirSync(recovery, { mode: 0o700 }));
+	if (Result.isFailure(reserved)) {
+		if (errnoCode(reserved.failure) === "EEXIST") return holder;
+		throw reserved.failure;
 	}
-	// A stale lock from a run that died.
-	writeFileSync(lock, `${process.pid}\n`, { mode: 0o600 });
-	return undefined;
+	try {
+		// Another contender can win the first exclusive creation. Never overwrite its lock.
+		if (existsSync(lock) && Number.parseInt(readFileSync(lock, "utf8"), 10) !== holder)
+			return Number.parseInt(readFileSync(lock, "utf8"), 10);
+		rmSync(lock, { force: true });
+		const reclaimed = Result.try(() => writeFileSync(lock, token, { flag: "wx", mode: 0o600 }));
+		if (Result.isSuccess(reclaimed)) return undefined;
+		if (errnoCode(reclaimed.failure) === "EEXIST") return Number.parseInt(readFileSync(lock, "utf8"), 10);
+		throw reclaimed.failure;
+	} finally {
+		rmSync(recovery, { recursive: true });
+	}
 };
 
 /**
@@ -396,6 +481,10 @@ const takeTaskLock = (lock: string): number | undefined => {
  */
 export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> =>
 	runWorkLocked(options, deps).catch(async (error: unknown) => {
+		if (error instanceof ExecutionPolicyError) {
+			// Pre-lock refusal owns no process. It must not interrupt another invocation's pane.
+			return executionPaused(options.task, error);
+		}
 		if (!(error instanceof GitHubAppAuthError)) throw error;
 		// Never a silent fallback to the operator's account: the run stops before the GitHub step.
 		await tell(deps, handoffNotification(options.task, "github_app_auth_failed", undefined));
@@ -411,12 +500,41 @@ export const runWork = async (options: WorkOptions, deps: WorkDeps): Promise<Wor
 		};
 	});
 
+const executionPaused = (task: string, error: ExecutionPolicyError, pane?: string): WorkOutcome => ({
+	exitCode: 2,
+	report: {
+		status: "handoff",
+		reason: "execution_policy_paused",
+		detail: error.message,
+		task_id: task,
+		...(pane === undefined ? {} : { pane, termination: "requested_unconfirmed" }),
+	},
+});
+
 const runWorkLocked = async (options: WorkOptions, deps: WorkDeps): Promise<WorkOutcome> => {
+	if (!isTaskId(options.task)) throw new Error("--task must be a WorkStream task UUID");
+	if (options.executionPolicy !== undefined && !/^[a-f0-9]{40}$/.test(options.sourceRevision ?? ""))
+		throw new ExecutionPolicyError("included-only work requires an exact approved source revision");
+	if (options.executionPolicy !== undefined && !/^[a-f0-9]{64}$/.test(options.taskContentDigest ?? ""))
+		throw new ExecutionPolicyError("included-only work requires an approved task content digest");
+	if (options.executionPolicy !== undefined)
+		await requireExecutionPermit(
+			{
+				policy: options.executionPolicy,
+				taskId: options.task,
+				repository: resolve(options.repo),
+				phase: "preflight",
+				now: deps.now(),
+			},
+			deps.executionGuard,
+			deps.now,
+		);
 	if (options.dryRun || !isTaskId(options.task)) return runWorkUnlocked(options, deps);
 	const stateDir = join(deps.stateRoot, options.task);
 	privateDir(stateDir);
 	const lock = join(stateDir, "run.lock");
-	const holder = takeTaskLock(lock);
+	const token = `${process.pid}\n${randomUUID()}\n`;
+	const holder = takeTaskLock(lock, token);
 	if (holder !== undefined)
 		return {
 			exitCode: 2,
@@ -428,9 +546,21 @@ const runWorkLocked = async (options: WorkOptions, deps: WorkDeps): Promise<Work
 			},
 		};
 	try {
-		return await runWorkUnlocked(options, deps);
+		return await runWorkUnlocked(options, deps).catch(async (error: unknown) => {
+			if (!(error instanceof ExecutionPolicyError)) throw error;
+			const statePath = join(stateDir, "state.json");
+			const saved = existsSync(statePath) ? parseState(readFileSync(statePath, "utf8"), options.task) : undefined;
+			const pane =
+				saved?.binding.repo === resolve(options.repo) &&
+				saved.binding.executionPolicy === executionPolicyBinding(options.executionPolicy)
+					? saved.pane
+					: undefined;
+			// Keep the lock while interrupting the owned pane. Preserve its identity until observed termination.
+			if (pane !== undefined) await deps.run(herdrArgv.interrupt(pane), { timeoutMs: 3000 }).catch(() => undefined);
+			return executionPaused(options.task, error, pane);
+		});
 	} finally {
-		rmSync(lock, { force: true });
+		if (existsSync(lock) && readFileSync(lock, "utf8") === token) rmSync(lock);
 	}
 };
 
@@ -438,6 +568,13 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	// A revised commit is new code: it must stop for review again, never push in the same run.
 	if (options.revise !== undefined && options.approvePush)
 		throw new Error("--revise and --approve-push cannot be used together; review the revised commit first");
+	if (
+		options.proofOnlyResume !== undefined &&
+		(options.executionPolicy === undefined || options.revise !== undefined || options.approvePush)
+	)
+		throw new ExecutionPolicyError(
+			"proof-only resumption requires included authority, no revision, and no push approval",
+		);
 	if (!isTaskId(options.task)) throw new Error("--task must be a WorkStream task UUID");
 	const agentAllow = validateAgentAllow(options.agentAllow);
 	const repo = resolve(options.repo);
@@ -451,6 +588,11 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		settings: join(stateDir, "agent-settings.json"),
 	};
 	const ws = options.workstreamCli;
+	const includedOnly = options.executionPolicy?.billing === "included-only";
+	const usageFields = (value: number): Readonly<Record<string, unknown>> =>
+		includedOnly
+			? { billing: "included-only", reported_usage_value_usd: value, actual_charge_usd: "unavailable" }
+			: { cost_usd: value };
 	if (options.githubApp !== undefined && deps.githubApp === undefined)
 		throw new Error("--github-app is not available in this environment");
 	const appDeps = deps.githubApp;
@@ -459,7 +601,12 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			? undefined
 			: resolveGitHubApp(options.githubApp, appDeps.settings, appDeps.keyFileEnv, deps.platform);
 
-	const tools = await preflight(deps, ws, agentAllow.length > 0 && [repo, resolve(worktree, ".."), stateDir]);
+	const tools = await preflight(
+		deps,
+		ws,
+		agentAllow.length > 0 && [repo, resolve(worktree, ".."), stateDir],
+		options.proofOnlyResume !== undefined,
+	);
 	if (tools.some((tool) => !tool.ok)) return { exitCode: 1, report: { status: "preflight_failed", tools } };
 
 	if (options.dryRun)
@@ -491,9 +638,9 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 					claim: wsArgv.claim(ws, options.task, "<claim-key>"),
 					start: wsArgv.start(ws, options.task, "<start-key>"),
 					fetch: gitArgv.fetch(repo),
-					worktree: gitArgv.worktreeAdd(repo, worktree, branch, options.base),
+					worktree: gitArgv.worktreeAdd(repo, worktree, branch, options.base, options.sourceRevision),
 					herdr: herdrArgv.workspaceCreate(worktree, options.task),
-					agent_line: agentRunLine(options.budgetUsd, paths, agentAllow),
+					agent_line: agentRunLine(options.budgetUsd, paths, agentAllow, options.executionPolicy?.billing),
 					wait: herdrArgv.waitOutput("<pane>", options.maxMinutes * 60_000),
 					commit: gitArgv.commit(worktree, options.task),
 					push: gitArgv.push(worktree, branch, "<reviewed-sha>"),
@@ -508,9 +655,42 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	const filterOff = filterOverrides(filterDrivers);
 	/** Set once the app is ready: every `gh` call then runs with a token only in its own environment. */
 	let app: GitHubAppRun | undefined;
+	const authenticateApp = async () => {
+		if (appConfig === undefined || appDeps === undefined || app !== undefined) return;
+		deps.log(`Authenticating as GitHub App ${appConfig.slug}`);
+		app = await setUpGitHubApp({
+			config: appConfig,
+			repoPath: repo,
+			task: options.task,
+			run: work.run,
+			fetch: appDeps.fetch,
+			readFile: appDeps.readFile,
+			now: deps.now,
+			stateRoot: deps.stateRoot,
+		});
+	};
 	const work: WorkDeps = {
 		...deps,
 		run: async (argv, runOptions) => {
+			if (options.executionPolicy !== undefined)
+				await requireExecutionPermit(
+					{
+						policy: options.executionPolicy,
+						taskId: options.task,
+						repository: repo,
+						phase:
+							argv[0] !== "herdr"
+								? "effect"
+								: argv[2] === "wait-output"
+									? "agent-wait"
+									: argv[2] === "create" || argv[2] === "run"
+										? "agent-launch"
+										: "effect",
+						now: deps.now(),
+					},
+					deps.executionGuard,
+					deps.now,
+				);
 			if (argv[0] === "git") return deps.run(["git", ...filterOff, ...argv.slice(1)], runOptions);
 			if (argv[0] !== "gh" || app === undefined) return deps.run(argv, runOptions);
 			const env = await app.auth.ghEnv(runOptions?.timeoutMs);
@@ -545,12 +725,96 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		base: options.base,
 		workstreamCli: [...ws],
 		actor: await whoami(),
+		...(options.sourceRevision === undefined ? {} : { sourceRevision: options.sourceRevision }),
+		...(options.taskContentDigest === undefined ? {} : { taskContentDigest: options.taskContentDigest }),
+		...(options.executionPolicy === undefined ? {} : { launchId: options.executionPolicy.launchId }),
+		...(options.executionPolicy === undefined
+			? {}
+			: { executionPolicy: executionPolicyBinding(options.executionPolicy) }),
 	};
 
 	const statePath = join(stateDir, "state.json");
-	const saved = existsSync(statePath) ? parseState(readFileSync(statePath, "utf8"), options.task) : undefined;
+	let saved = existsSync(statePath) ? parseState(readFileSync(statePath, "utf8"), options.task) : undefined;
 	if (existsSync(statePath) && saved === undefined)
 		throw new Error(`Refusing to resume: ${statePath} is not a valid state file for task ${options.task}`);
+	if (saved?.proofOnly === true && options.proofOnlyResume === undefined)
+		throw new ExecutionPolicyError("this task is permanently restricted to explicit proof-only resumption");
+	if (options.proofOnlyResume !== undefined) {
+		const oldPolicy = readExecutionPolicyBinding(saved?.binding.executionPolicy);
+		const nextPolicy = options.executionPolicy;
+		const request = options.proofOnlyResume;
+		const samePolicy = saved?.binding.executionPolicy === executionPolicyBinding(nextPolicy);
+		const retainedPrevious = saved?.authorityLineage?.at(-1);
+		if (
+			saved === undefined ||
+			oldPolicy === undefined ||
+			nextPolicy === undefined ||
+			saved.pane !== undefined ||
+			saved.assignmentId === undefined ||
+			saved.started !== true ||
+			saved.pr === undefined ||
+			saved.repoName === undefined ||
+			saved.headSha !== request.expectedHeadSha ||
+			!/^[a-f0-9]{40}$/.test(request.expectedHeadSha) ||
+			saved.pushedSha !== saved.headSha ||
+			saved.binding.sourceRevision === undefined ||
+			saved.binding.sourceRevision !== options.sourceRevision ||
+			oldPolicy.accountId !== nextPolicy.accountId ||
+			oldPolicy.launchId !== saved.binding.launchId ||
+			(samePolicy
+				? !(saved.proofOnly === true && retainedPrevious?.authorityId === request.previousAuthorityId)
+				: oldPolicy.authorityId !== request.previousAuthorityId ||
+					oldPolicy.authorityId === nextPolicy.authorityId ||
+					oldPolicy.launchId === nextPolicy.launchId) ||
+			bindingMismatch(
+				{ ...saved.binding, executionPolicy: binding.executionPolicy, launchId: binding.launchId },
+				binding,
+			) !== undefined
+		)
+			throw new ExecutionPolicyError(
+				"proof-only successor does not match retained authority, source, task, account, and reviewed head",
+			);
+		if (
+			readGitFile(worktree) !== saved.gitFile ||
+			(await must(gitArgv.head(worktree), "git rev-parse")).trim() !== saved.headSha ||
+			(await must(gitArgv.status(worktree), "git status")).trim() !== ""
+		)
+			throw new ExecutionPolicyError("proof-only resumption requires the exact clean retained worktree");
+		await authenticateApp();
+		const merged = parsePrView(await must(ghArgv.prView(saved.pr.number), "gh pr view", worktree));
+		if (
+			merged.state !== "MERGED" ||
+			reviewEvidenceProblem(merged) !== undefined ||
+			prMismatch(merged, {
+				repo: saved.repoName,
+				branch,
+				base: options.base,
+				number: saved.pr.number,
+				headSha: saved.headSha,
+			}) !== undefined
+		)
+			throw new ExecutionPolicyError(
+				"proof-only successor requires an externally merged and reviewed exact-head pull request",
+			);
+		if (!samePolicy) {
+			saved = {
+				...saved,
+				binding,
+				proofOnly: true,
+				authorityLineage: [
+					...(saved.authorityLineage ?? []),
+					{
+						policy: saved.binding.executionPolicy ?? "",
+						authorityId: oldPolicy.authorityId,
+						launchId: oldPolicy.launchId,
+						headSha: saved.headSha,
+						renewedAt: deps.now(),
+					},
+				],
+			};
+			writePrivate(statePath, `${JSON.stringify(saved, null, 2)}\n`);
+		}
+	}
 	if (saved !== undefined) {
 		const mismatch = bindingMismatch(saved.binding, binding);
 		if (mismatch !== undefined)
@@ -558,14 +822,33 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	}
 
 	deps.log(`Reading WorkStream task ${options.task}`);
-	const task = parseTask(await must(wsArgv.show(ws, options.task), "WorkStream task show"), options.task);
+	const assertTaskSnapshot = (json: string) => {
+		if (!includedOnly) return;
+		const observed = Result.try(() => workstreamTaskContentDigest(json, options.task));
+		if (Result.isFailure(observed))
+			throw new ExecutionPolicyError("WorkStream task snapshot is incomplete, malformed, or mismatched");
+		if (observed.success !== options.taskContentDigest)
+			throw new ExecutionPolicyError("WorkStream task content changed from the approved revision");
+	};
+	const assertTaskContent = async () =>
+		assertTaskSnapshot(await must(wsArgv.show(ws, options.task), "WorkStream task show"));
+	const taskJson = await must(wsArgv.show(ws, options.task), "WorkStream task show");
+	assertTaskSnapshot(taskJson);
+	const task = parseTask(taskJson, options.task);
 
 	if (saved === undefined && existsSync(worktree))
 		throw new Error(`Refusing to adopt ${worktree}: it exists but no Harnessy state records it`);
 	if (!existsSync(worktree)) {
 		deps.log(`Creating worktree ${worktree}`);
 		await must(gitArgv.fetch(repo), "git fetch");
-		await must(gitArgv.worktreeAdd(repo, worktree, branch, options.base), "git worktree add");
+		if (options.sourceRevision !== undefined) {
+			const fetched = (
+				await must(["git", "-C", repo, "rev-parse", `origin/${options.base}`], "git rev-parse")
+			).trim();
+			if (fetched !== options.sourceRevision)
+				throw new ExecutionPolicyError("the integration branch moved from the approved source revision");
+		}
+		await must(gitArgv.worktreeAdd(repo, worktree, branch, options.base, options.sourceRevision), "git worktree add");
 	}
 	const gitFile = saved?.gitFile ?? readGitFile(worktree);
 	if (gitFile === undefined) throw new Error(`${worktree} is not a linked git worktree`);
@@ -601,23 +884,14 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				worktree,
 				...(state.pr === undefined ? {} : { pr_url: state.pr.url }),
 				...extra,
+				...(includedOnly && typeof extra.cost_usd === "number"
+					? { cost_usd: undefined, ...usageFields(extra.cost_usd) }
+					: {}),
 			},
 		};
 	};
-	if (appConfig !== undefined && appDeps !== undefined) {
-		// Checked before anything is claimed, so a broken key or installation stops the run here.
-		deps.log(`Authenticating as GitHub App ${appConfig.slug}`);
-		app = await setUpGitHubApp({
-			config: appConfig,
-			repoPath: repo,
-			task: options.task,
-			run: work.run,
-			fetch: appDeps.fetch,
-			readFile: appDeps.readFile,
-			now: deps.now,
-			stateRoot: deps.stateRoot,
-		});
-	}
+	// Checked before anything is claimed. A broken app never falls back to the operator account.
+	await authenticateApp();
 	/** The agent can edit the worktree's `.git` file to point git at a hostile config. */
 	const worktreeIntact = () => readGitFile(worktree) === state.gitFile;
 	/** The same WorkStream actor must run every mutation, including after long waits. */
@@ -743,7 +1017,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			return handoff("revise_without_commit", "there is no local commit to revise; run without --revise");
 		const spent = (state.spentUsd ?? 0) + (state.agent?.costUsd ?? 0);
 		// Check before discarding the reviewed commit, so it can still be pushed as it is.
-		if (spent >= options.budgetUsd)
+		if (!includedOnly && spent >= options.budgetUsd)
 			return handoff("over_budget", `earlier runs spent ${spent} USD of the ${options.budgetUsd} USD budget`);
 		// The revision must start from exactly the reviewed commit, with nothing else in the worktree.
 		if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
@@ -781,6 +1055,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		});
 	}
 	if (state.assignmentId === undefined) {
+		if (includedOnly) await assertTaskContent();
 		await assertActor();
 		deps.log("Claiming task");
 		save({
@@ -791,6 +1066,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	}
 	const assignment = state.assignmentId ?? "";
 	if (state.started !== true) {
+		if (includedOnly) await assertTaskContent();
 		await assertActor();
 		deps.log("Starting task");
 		await must(wsArgv.start(ws, options.task, state.keys.start), "WorkStream task start");
@@ -798,7 +1074,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 	}
 
 	// Earlier runs on this task spend the same budget.
-	const budgetLeft = options.budgetUsd - (state.spentUsd ?? 0);
+	const budgetLeft = includedOnly ? Number.POSITIVE_INFINITY : options.budgetUsd - (state.spentUsd ?? 0);
 	if (state.headSha === undefined) {
 		if (budgetLeft <= 0)
 			return handoff(
@@ -833,9 +1109,20 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			realPath(repo),
 			realPath(commonDirOf(resolve(worktree, gitDir))),
 		);
-		writePrivate(paths.settings, `${JSON.stringify(agentSettings(agentAllow, protectedRules), null, 2)}\n`);
+		const privatePaths = includedOnly ? [realPath(stateDir), ...(deps.protectedPaths ?? []).map(realPath)] : [];
+		const privateRules = privatePaths.flatMap((path) => [
+			`Edit(/${path})`,
+			`Edit(/${path}/**)`,
+			`Read(/${path})`,
+			`Read(/${path}/**)`,
+		]);
+		writePrivate(
+			paths.settings,
+			`${JSON.stringify(agentSettings(agentAllow, [...protectedRules, ...privateRules], privatePaths), null, 2)}\n`,
+		);
 		let pane = state.pane;
 		if (pane === undefined) {
+			if (includedOnly) await assertTaskContent();
 			const created = parseJson(
 				await must(herdrArgv.workspaceCreate(worktree, options.task), "herdr workspace create"),
 			);
@@ -844,13 +1131,50 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			pane = rootPane;
 			// Recorded before the run starts: a re-run re-attaches instead of starting a second agent,
 			// and keeps the original wall-clock deadline.
-			save({ pane, agentDeadline: deps.now() + options.maxMinutes * 60_000 });
+			save({
+				pane,
+				agentDeadline: deps.now() + options.maxMinutes * 60_000,
+				...(options.executionPolicy === undefined ? {} : { agentMarker: `HSY_WORK_EXIT_${deps.uuid()}=` }),
+			});
 			deps.log(`Running agent in herdr pane ${pane}`);
-			await must(herdrArgv.paneRun(pane, agentRunLine(budgetLeft, paths, agentAllow)), "herdr pane run");
+			// A new pane's shell is still starting. Until it shows its prompt, the terminal is in
+			// canonical mode and refuses a line over 1,024 bytes, without typing any of it. Nothing
+			// was sent, so the same line is sent again when the shell is ready.
+			const agentLine = agentRunLine(
+				budgetLeft,
+				paths,
+				agentAllow,
+				options.executionPolicy?.billing,
+				state.agentMarker,
+			);
+			for (let attempt = 0; ; attempt++) {
+				const sent = await work.run(herdrArgv.paneRun(pane, agentLine));
+				if (sent.exitCode === 0) break;
+				const refused = parseHerdrError(sent.stderr) ?? parseHerdrError(sent.stdout);
+				if (refused !== "pane_send_failed" || attempt >= PANE_READY_ATTEMPTS)
+					throw new Error(
+						`herdr pane run failed (exit ${sent.exitCode ?? "none"}): ${redactSecrets((sent.stderr || sent.stdout).trim()).slice(0, 500) || "no output"}`,
+					);
+				await deps.sleep(PANE_READY_POLL_MS);
+			}
 		} else deps.log(`Re-attaching to agent in herdr pane ${pane}`);
 		const deadline = state.agentDeadline ?? deps.now() + options.maxMinutes * 60_000;
 		// herdr checks existing output first, so even an expired deadline still sees a finished run.
-		const waited = await work.run(herdrArgv.waitOutput(pane, Math.max(deadline - deps.now(), MIN_WAIT_MS)));
+		let waited: RunResult;
+		for (;;) {
+			const remaining = Math.max(deadline - deps.now(), MIN_WAIT_MS);
+			const waitMs =
+				options.executionPolicy === undefined
+					? remaining
+					: Math.max(
+							1,
+							Math.min(remaining, EXECUTION_GUARD_INTERVAL_MS, options.executionPolicy.expiresAt - deps.now()),
+						);
+			waited = await work.run(herdrArgv.waitOutput(pane, waitMs, state.agentMarker));
+			const sliceExpired = waited.exitCode !== 0 && parseHerdrError(waited.stderr) === "timeout";
+			if (options.executionPolicy === undefined || !sliceExpired || deps.now() >= deadline) break;
+			// A wait timeout observes no result. Recheck the same pane, never start another worker.
+		}
 		const waitError = waited.exitCode === 0 ? undefined : (parseHerdrError(waited.stderr) ?? "unknown");
 		const timedOut = waitError === "timeout" || (waitError !== undefined && deps.now() >= deadline);
 		if (waitError !== undefined && !timedOut)
@@ -875,7 +1199,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				: (await must(gitArgv.head(worktree), "git rev-parse")).trim() !== revisedFrom;
 		const decision = evaluateStopRule({
 			timedOut,
-			...(timedOut ? {} : { exitCode: parseExitMarker(waited.stdout) }),
+			...(timedOut ? {} : { exitCode: parseExitMarker(waited.stdout, state.agentMarker) }),
 			...(existsSync(paths.result) ? { resultText: readFileSync(paths.result, "utf8") } : {}),
 			budgetUsd: budgetLeft,
 			changes:
@@ -944,6 +1268,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 
 	const pushedSha = state.pushedSha ?? (state.pr === undefined ? undefined : headSha);
 	if (pushedSha !== headSha) {
+		if (includedOnly) await assertTaskContent();
 		if (!worktreeIntact()) return handoff("worktree_tampered", "the worktree's .git file changed");
 		const changed = parseChangedPaths(await must(gitArgv.changedPaths(worktree, options.base, headSha), "git diff"));
 		const ci = ciConfigPaths(changed);
@@ -966,7 +1291,13 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 					review: ["git", "-C", worktree, "diff", `origin/${options.base}...${headSha}`],
 				},
 			);
+		if (options.executionPolicy !== undefined) {
+			const review = await deps.reviewCandidate?.({ taskId: options.task, repository: repo, worktree, headSha });
+			if (review?.verdict !== "pass" || review.headSha !== headSha || !/^[a-f0-9]{64}$/.test(review.evidenceDigest))
+				throw new ExecutionPolicyError("the exact candidate lacks independent trusted evaluation and review");
+		}
 		deps.log(`Pushing ${headSha} to ${branch}`);
+		if (includedOnly) await assertTaskContent();
 		// As the app: a fresh token in the push's own environment, minted before git starts.
 		await must(
 			gitArgv.push(worktree, branch, headSha, app?.auth.pushUrl),
@@ -977,9 +1308,17 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		save({ pushedSha: headSha, readyMarked: undefined });
 	}
 	// A revision pushed to an open PR gets one comment saying what changed; retried until posted.
-	if (state.pr !== undefined && state.revisions !== undefined && state.commentedSha !== headSha) {
+	if (
+		state.proofOnly !== true &&
+		state.pr !== undefined &&
+		state.revisions !== undefined &&
+		state.commentedSha !== headSha
+	) {
 		const commentFile = join(stateDir, "pr-revision.md");
-		writePrivate(commentFile, revisionComment(state.revisions, headSha, totalCostUsd));
+		writePrivate(
+			commentFile,
+			revisionComment(state.revisions, headSha, totalCostUsd, options.executionPolicy?.billing),
+		);
 		await must(ghArgv.prComment(state.pr.number, commentFile), "gh pr comment", worktree);
 		save({ commentedSha: headSha });
 	}
@@ -1022,6 +1361,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 					changed,
 					template,
 					app?.provenance,
+					options.executionPolicy?.billing,
 				),
 			);
 			const created = parsePrUrl(
@@ -1047,7 +1387,21 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			for (;;) {
 				const timeoutMs = app === undefined ? CHECKS_TIMEOUT_MS : Math.min(APP_CHECKS_SLICE_MS, until - deps.now());
 				const result = await work.run(ghArgv.checksWatch(pr.number), { cwd: worktree, timeoutMs });
-				if (app === undefined || result.timedOut !== true || deps.now() >= until) return result;
+				if (result.exitCode === 0 || deps.now() >= until) return result;
+				if (result.timedOut === true) {
+					if (app === undefined) return result;
+					continue;
+				}
+				// The watch can end with an error while no check has failed, for example on a failed
+				// request. That is not a verdict. Keep waiting only when the checks themselves say
+				// that none failed and some are still pending.
+				if (NO_CHECKS_YET.test(`${result.stdout}\n${result.stderr}`)) return result;
+				const buckets = parseCheckBuckets(
+					(await work.run(ghArgv.checksState(pr.number), { cwd: worktree, timeoutMs: PROBE_TIMEOUT_MS })).stdout,
+				);
+				if (buckets === undefined || buckets.failed > 0 || buckets.pending === 0) return result;
+				deps.log(`The checks watch ended early (gh exit ${result.exitCode ?? "none"}); none failed, waiting again`);
+				await deps.sleep(CHECKS_APPEAR_POLL_MS);
 			}
 		};
 		let checks = await watch();
@@ -1065,6 +1419,8 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			return handoff(
 				"checks_not_passed",
 				`checks on PR #${pr.number} have not passed (gh exit ${checks.exitCode}); it stays a draft. Re-run once they pass, or close the PR.`,
+				// The last lines of the command, so that an early stop can be told from a failed check.
+				{ checks_output: redactSecrets(`${checks.stdout}\n${checks.stderr}`.trim()).slice(-600) },
 			);
 		// Mark ready only the reviewed commit: the branch could have moved while checks ran.
 		const current = parsePrView(await must(ghArgv.prView(pr.number), "gh pr view", worktree));
@@ -1075,6 +1431,17 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 				: `PR #${pr.number} head is ${current.headSha}, not the pushed ${headSha}`);
 		if (moved !== undefined) return handoff("pr_mismatch", moved);
 		if (current.state === "OPEN") {
+			if (options.executionPolicy !== undefined)
+				return {
+					exitCode: 0,
+					report: {
+						status: "draft_ready",
+						task_id: options.task,
+						pr_url: pr.url,
+						head_sha: headSha,
+						...usageFields(totalCostUsd),
+					},
+				};
 			const ready = await work.run(ghArgv.prReady(pr.number), { cwd: worktree });
 			// Not recorded as requested, so a re-run tries again.
 			if (ready.exitCode !== 0)
@@ -1133,13 +1500,21 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 		const proof = buildProof({
 			task_id: options.task,
 			repo: repoName,
-			commit_sha: merged.headSha,
+			// WorkStream's landed-work checker judges the commit on the integration branch.
+			commit_sha: merged.mergeCommitSha,
 			merge_commit_sha: merged.mergeCommitSha,
+			source_head_sha: merged.headSha,
 			pr_url: merged.url,
 			ci_run_url: ci.url,
 			ci_conclusion: ci.conclusion,
 			// Reported by the Claude Code process itself; the only cost source there is.
-			cost_usd: totalCostUsd,
+			...(includedOnly
+				? {
+						reported_usage_value_usd: totalCostUsd,
+						actual_charge_usd: "unavailable" as const,
+						billing: "included-only" as const,
+					}
+				: { cost_usd: totalCostUsd }),
 			duration_seconds: Math.round((deps.now() - state.startedAt) / 1000),
 		});
 		const json = Buffer.from(`${JSON.stringify(proof, null, 2)}\n`);
@@ -1157,6 +1532,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			key: state.keys.prepare,
 		});
 		for (let attempt = 1; state.admissionId === undefined; attempt++) {
+			if (includedOnly) await assertTaskContent();
 			await assertActor();
 			deps.log(`Preparing submission (attempt ${attempt})`);
 			const preparation = parsePreparation(await must(argv, "WorkStream task prepare"));
@@ -1174,6 +1550,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 
 	const submittedNow = state.submission === undefined;
 	if (state.submission === undefined) {
+		if (includedOnly) await assertTaskContent();
 		await assertActor();
 		deps.log("Submitting");
 		const receipt = await must(
@@ -1221,7 +1598,7 @@ const runWorkUnlocked = async (options: WorkOptions, deps: WorkDeps): Promise<Wo
 			admission_id: state.admissionId,
 			submission: state.submission,
 			proof: proofZip,
-			cost_usd: totalCostUsd,
+			...usageFields(totalCostUsd),
 		},
 	};
 };
