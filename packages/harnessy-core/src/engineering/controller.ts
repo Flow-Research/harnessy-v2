@@ -403,6 +403,21 @@ export class EngineeringController {
 			this.#store.markUncertain(run.id, "Host process identity changed", this.#deps.now());
 			return { state: "occupied", reason: "Host process identity changed", runId: run.id };
 		}
+		if (
+			run.state === "cancel_requested" &&
+			run.processIdentity === null &&
+			run.ownerPid === null &&
+			run.ownerToken === null &&
+			observation.state === "stopped" &&
+			observation.evidence.length > 0 &&
+			this.#deps.interventions?.hasStopAnswer(run.id)
+		) {
+			this.#store.settle(run.id, "cancelled", "Reservation cancelled before worker start", this.#deps.now(), {
+				identity: null,
+				terminationEvidence: observation.evidence,
+			});
+			return { state: "settled", reason: "Cancellation confirmed before worker start", runId: run.id };
+		}
 		if (run.processIdentity === null)
 			return { state: "occupied", reason: "Launch generation has not been acknowledged", runId: run.id };
 		if (observation.state === "active") {
