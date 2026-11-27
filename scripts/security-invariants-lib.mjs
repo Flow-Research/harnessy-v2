@@ -1,3 +1,4 @@
+import { isReviewedSandboxZod, sandboxZodPath } from "./sandbox-zod-scope.mjs";
 import { basename } from "node:path";
 import { satisfies, valid } from "semver";
 
@@ -172,7 +173,6 @@ const isExactSafeVersion = (version, vulnerableRange) =>
 // exceptions cover only these owners' pinned copies, whose schemas validate local
 // configuration; every other zod resolution must be a fixed release.
 const zodVulnerableRange = "<4.6.6";
-const rootZodExceptionPaths = new Set(["node_modules/@anthropic-ai/sandbox-runtime/node_modules/zod"]);
 const executorZodExceptionKeys = new Set(["@cloudflare/vitest-pool-workers/zod", "@tanstack/router-plugin/zod"]);
 
 export const checkDependencyResolutionContract = (files) => {
@@ -215,7 +215,7 @@ export const checkDependencyResolutionContract = (files) => {
 	}
 
 	const rootZodResolutions = Object.entries(rootLock?.packages ?? {}).filter(
-		([path]) => (path === "node_modules/zod" || path.endsWith("/node_modules/zod")) && !rootZodExceptionPaths.has(path),
+		([path]) => (path === "node_modules/zod" || path.endsWith("/node_modules/zod")) && !(path === sandboxZodPath && isReviewedSandboxZod(rootLock?.packages)),
 	);
 	if (
 		rootZodResolutions.length === 0 ||

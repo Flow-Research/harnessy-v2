@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { isReviewedSandboxZod, sandboxZodAdvisory, sandboxZodPath } from "./sandbox-zod-scope.mjs";
 import { spawnSync } from "node:child_process";
 
 import { exceptionApplies, parseAuditExceptions } from "./audit-executor-lib.mjs";
@@ -18,12 +21,13 @@ export const npmAuditExceptions = parseAuditExceptions(rootAuditExceptions);
  * Evaluate `npm audit --json` output. Each advisory is matched against exact,
  * unexpired exceptions; anything else at or above the threshold blocks.
  */
-export const evaluateNpmAudit = (report, exceptions = npmAuditExceptions, threshold = "moderate", now = Date.now()) => {
+export const evaluateNpmAudit = (report, exceptions = npmAuditExceptions, threshold = "moderate", now = Date.now(), packages) => {
 	if (!report || typeof report !== "object" || typeof report.vulnerabilities !== "object" || report.vulnerabilities === null)
 		throw new Error("npm audit JSON must contain vulnerabilities");
 	const thresholdRank = SEVERITY_ORDER.get(threshold);
 	if (thresholdRank === undefined) throw new Error(`Unknown audit threshold: ${threshold}`);
 	const advisories = new Map();
+	let sandboxNodesReviewed = true;
 	for (const entry of Object.values(report.vulnerabilities)) {
 		for (const via of entry?.via ?? []) {
 			if (typeof via !== "object" || via === null) continue;
@@ -36,6 +40,10 @@ export const evaluateNpmAudit = (report, exceptions = npmAuditExceptions, thresh
 				title: typeof via.title === "string" ? via.title : "",
 				vulnerableVersions: typeof via.range === "string" ? via.range : "",
 			};
+			if (finding.url === sandboxZodAdvisory) {
+				sandboxNodesReviewed &&= entry.name === "zod" && Array.isArray(entry.nodes) &&
+					entry.nodes.length === 1 && entry.nodes[0] === sandboxZodPath;
+			}
 			advisories.set(`${finding.package}\n${finding.url}\n${finding.vulnerableVersions}`, finding);
 		}
 	}
@@ -43,6 +51,7 @@ export const evaluateNpmAudit = (report, exceptions = npmAuditExceptions, thresh
 		(left, right) => left.package.localeCompare(right.package) || left.url.localeCompare(right.url),
 	);
 	for (const finding of findings) {
+		if (finding.url === sandboxZodAdvisory && !(sandboxNodesReviewed && isReviewedSandboxZod(packages))) continue;
 		if (exceptions.some((exception) => exceptionApplies(exception, finding, now))) finding.excepted = true;
 	}
 	const blocking = findings.filter(
@@ -69,7 +78,10 @@ export const runNpmAudit = ({ cwd, omitDev = false, npm = process.platform === "
 	if (result.error) throw result.error;
 	// npm audit exits 1 when it reports vulnerabilities; the JSON decides.
 	if (result.status !== 0 && result.status !== 1) throw new Error(`npm audit exited with ${result.status}`);
-	return evaluateNpmAudit(JSON.parse(result.stdout));
+	const report = JSON.parse(result.stdout);
+	if (omitDev) return evaluateNpmAudit(report, []);
+	const lock = JSON.parse(readFileSync(join(cwd, "package-lock.json"), "utf8"));
+	return evaluateNpmAudit(report, npmAuditExceptions, "moderate", Date.now(), lock.packages);
 };
 
 export const formatNpmAuditReport = (report) =>
