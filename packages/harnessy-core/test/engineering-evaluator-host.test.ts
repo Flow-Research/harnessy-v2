@@ -180,7 +180,9 @@ describe("actual source identity observation", () => {
 		const timer = setInterval(() => {
 			void readFile(pidFile, "utf8")
 				.then((value) => {
-					pid = Number(value);
+					const observed = Number(value);
+					if (!Number.isSafeInteger(observed) || observed < 1) return;
+					pid = observed;
 					signal.abort();
 				})
 				.catch(() => undefined);
