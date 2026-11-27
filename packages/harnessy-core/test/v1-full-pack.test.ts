@@ -149,8 +149,16 @@ describe("Harnessy v1 full compatibility pack", () => {
 		expect(report.tree.digest).toMatch(/^[a-f0-9]{64}$/);
 		const provenance = JSON.parse(readFileSync(resolve(v1FullPackRoot, "resources/SOURCE.json"), "utf8"));
 		expect(provenance.source.repository).toBe("https://github.com/Flow-Research/harnessy.git");
-		expect(provenance.source.v2Amendments).toHaveLength(1);
-		const amendment = provenance.source.v2Amendments[0];
+		expect(provenance.source.v2Amendments.map((entry: { id: string }) => entry.id)).toEqual([
+			"engineering-loop-shared-skill-20261121",
+			"jarvis-pypdf-6-21-4",
+		]);
+		const [amendment, dependencyAmendment] = provenance.source.v2Amendments;
+		expect(dependencyAmendment).toMatchObject({
+			owner: "harnessy-v2",
+			baseTree: { fileCount: 750 },
+			changes: [{ path: "jarvis-cli/uv.lock", before: { size: 273501 }, after: { size: 273668 } }],
+		});
 		expect(amendment.owner).toBe("harnessy-v2");
 		// The base tree changes whenever the V1 source changes. The compatibility check above proves
 		// that the amendment binds the tree that precedes it, so only its shape is fixed here.
@@ -185,19 +193,24 @@ describe("Harnessy v1 full compatibility pack", () => {
 				expect.arrayContaining(["source-digest-mismatch", "source-file-count-mismatch"]),
 			);
 			rmSync(resolve(copyRoot, "resources/source/TAMPERED.txt"));
-			writeFileSync(
-				resolve(copyRoot, "resources/source/tools/flow-install/skills/engineering-loop/SKILL.md"),
-				"unreviewed skill bytes\n",
+			const skillPath = "resources/source/tools/flow-install/skills/engineering-loop/SKILL.md";
+			writeFileSync(resolve(copyRoot, skillPath), "unreviewed skill bytes\n");
+			const alteredSkill = spawnSync(
+				process.execPath,
+				[resolve(repositoryRoot, "scripts/verify-v1-compatibility.mjs"), copyRoot],
+				{ encoding: "utf8" },
 			);
+			expect(alteredSkill.status).toBe(1);
+			expect(JSON.parse(alteredSkill.stdout).issues).toContain("v2-amendment-base-mismatch: jarvis-pypdf-6-21-4");
+			cpSync(resolve(v1FullPackRoot, skillPath), resolve(copyRoot, skillPath));
+			writeFileSync(resolve(copyRoot, "resources/source/jarvis-cli/uv.lock"), "unreviewed lock bytes\n");
 			const altered = spawnSync(
 				process.execPath,
 				[resolve(repositoryRoot, "scripts/verify-v1-compatibility.mjs"), copyRoot],
 				{ encoding: "utf8" },
 			);
 			expect(altered.status).toBe(1);
-			expect(JSON.parse(altered.stdout).issues).toContain(
-				"v2-amendment-after-mismatch: tools/flow-install/skills/engineering-loop/SKILL.md",
-			);
+			expect(JSON.parse(altered.stdout).issues).toContain("v2-amendment-after-mismatch: jarvis-cli/uv.lock");
 			mkdirSync(resolve(copyRoot, "resources/source/private"));
 			writeFileSync(resolve(copyRoot, "resources/source/private/secret.md"), "synthetic private fixture\n");
 			const privateBytes = spawnSync(
