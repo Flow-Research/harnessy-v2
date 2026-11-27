@@ -10,6 +10,7 @@ export { type MergeTasksOptions, mergeTasks } from "./merge.ts";
 export {
 	appendCloseoutNote,
 	closeoutNotePath,
+	validateCloseoutNote,
 } from "./notes.ts";
 export {
 	type CloseoutEntry,

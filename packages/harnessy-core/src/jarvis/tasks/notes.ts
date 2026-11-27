@@ -15,10 +15,15 @@ export const closeoutNotePath = (contextRoot: string, user: string, date: Date):
 };
 
 /** Append one follow-up note. Creates today's file with a heading when it does not exist. */
-export const appendCloseoutNote = (contextRoot: string, user: string, text: string, now: Date = new Date()): string => {
+export const validateCloseoutNote = (text: string): string => {
 	const body = text.trim();
 	if (body.length === 0) throw new Error("empty_note");
 	if (body.length > 4000 || /[\p{Cc}\p{Cf}]/u.test(body)) throw new Error("invalid_note");
+	return body;
+};
+
+export const appendCloseoutNote = (contextRoot: string, user: string, text: string, now: Date = new Date()): string => {
+	const body = validateCloseoutNote(text);
 	const file = closeoutNotePath(contextRoot, user, now);
 	mkdirSync(join(file, ".."), { recursive: true, mode: 0o700 });
 	if (!existsSync(file)) {

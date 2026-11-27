@@ -62,4 +62,15 @@ describe("harnessy jarvis tasks CLI", () => {
 		expect(new TasksState(file).read().items[0]).toMatchObject({ status: "todo", outcome: null });
 		expect(JSON.parse(readFileSync(file, "utf8")).items[0].status).toBe("todo");
 	});
+
+	it("refuses --write-note with no narrative before recording outcomes", async () => {
+		const root = mkdtempSync(join(tmpdir(), "harnessy-tasks-cli-note-"));
+		const file = join(root, "tasks.json");
+		await run(["add", "--tasks-file", file, "--title", "Ship the close-out"]);
+		const id = new TasksState(file).read().items[0]!.id;
+		const input = join(root, "outcomes.json");
+		writeFileSync(input, JSON.stringify({ outcomes: [{ id, outcome: "done" }] }));
+		await expect(run(["closeout", "--tasks-file", file, "--input", input, "--write-note"])).rejects.toThrow();
+		expect(new TasksState(file).read().items[0]).toMatchObject({ status: "todo", outcome: null });
+	});
 });

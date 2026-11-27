@@ -286,8 +286,8 @@ Length and continuity:
 - Use the current weekly plan as the active frame. If it is marked stale or not current for this
   week, say so and rely on newer priorities, meetings, notes, and project records.
 - Treat `tracked_tasks` as the open and carried items in Julian's local task store. Each has a
-  stable `id`. When you restate one in Decisions or Delegated, keep the title close to the stored
-  title so the store can keep that id. Do not invent ids in the brief text. Include every still-open
+  stable `id`. When you restate one in Decisions or Delegated, copy the stored title exactly
+  (same wording and punctuation). Do not paraphrase, or the store will mint a new id. Do not invent ids in the brief text. Include every still-open
   or carried tracked item unless newer evidence has resolved, parked, superseded, or contradicted it.
 - Treat the previous daily brief as unverified carry-forward candidates, not source truth. Keep an
   old item only when it still appears open and newer evidence has not resolved, parked, superseded,

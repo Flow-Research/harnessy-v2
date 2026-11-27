@@ -112,10 +112,17 @@ export const defaultTasksFile = (homeRoot: string): string => join(homeRoot, ".h
  * normalised title, plus the occurrence for a repeated title. The source path is
  * left out so a new day's brief can keep the same id.
  */
-export const taskFingerprint = (kind: StoredTaskSourceKind, text: string, occurrence = 0): string =>
-	createHash("sha256")
-		.update(`${kind}\0${normaliseTaskText(text)}${occurrence === 0 ? "" : `\0${occurrence}`}`)
+export const taskFingerprint = (
+	kind: StoredTaskSourceKind,
+	text: string,
+	occurrence = 0,
+	scope: string | null = null,
+): string => {
+	const scoped = scope === null || scope === "" ? "" : `\0${normaliseTaskText(scope)}`;
+	return createHash("sha256")
+		.update(`${kind}\0${normaliseTaskText(text)}${occurrence === 0 ? "" : `\0${occurrence}`}${scoped}`)
 		.digest("hex");
+};
 
 export class TaskRefused extends Error {
 	readonly code: string;
@@ -422,15 +429,18 @@ export class TasksState {
 		readonly matched: number;
 		readonly sidecar?: TaskSidecar;
 	} {
+		if (source.path.length > 512) throw new TaskRefused("invalid_source");
 		const store = this.read();
 		let items = [...store.items];
+		const used = new Set<string>();
 		const openByFingerprint = new Map<string, StoredTask[]>();
+		const closedByFingerprint = new Map<string, StoredTask[]>();
 		for (const item of items) {
 			if (item.fingerprint === null) continue;
-			if (item.status === "done" || item.status === "dropped") continue;
-			const list = openByFingerprint.get(item.fingerprint) ?? [];
+			const target = item.status === "done" || item.status === "dropped" ? closedByFingerprint : openByFingerprint;
+			const list = target.get(item.fingerprint) ?? [];
 			list.push(item);
-			openByFingerprint.set(item.fingerprint, list);
+			target.set(item.fingerprint, list);
 		}
 		const titleIndex = new Map<string, StoredTask[]>();
 		for (const item of items) {
@@ -449,14 +459,36 @@ export class TasksState {
 			TASKS_MAX
 		)
 			throw new TaskRefused("tasks_full");
+		const sameBrief = (item: StoredTask): boolean =>
+			(source.briefDate !== null && item.source.briefDate === source.briefDate) || item.source.path === source.path;
+		const unused = (item: StoredTask): boolean => !used.has(item.id);
 		for (const candidate of candidates) {
-			const existing = (openByFingerprint.get(candidate.fingerprint) ?? []).find((item) =>
-				items.some((current) => current.id === item.id),
+			const closedSame = (closedByFingerprint.get(candidate.fingerprint) ?? []).find(
+				(item) => unused(item) && sameBrief(item),
 			);
-			const titleMatches = titleIndex.get(`${source.kind}\0${normaliseTaskText(candidate.title)}`) ?? [];
-			const uniqueTitle = existing === undefined && titleMatches.length === 1 ? titleMatches[0]! : undefined;
-			const current = existing ?? uniqueTitle;
+			if (closedSame !== undefined) {
+				used.add(closedSame.id);
+				matched += 1;
+				sidecarItems.push({
+					id: closedSame.id,
+					fingerprint: candidate.fingerprint,
+					line: candidate.line,
+					title: closedSame.title,
+				});
+				continue;
+			}
+			const existing = (openByFingerprint.get(candidate.fingerprint) ?? []).find(unused);
+			const titleKey = `${source.kind}\0${normaliseTaskText(candidate.title)}`;
+			const titleMatches = (titleIndex.get(titleKey) ?? []).filter(unused);
+			const uniqueTitle = existing === undefined && titleMatches.length === 1 ? titleMatches[0] : undefined;
+			const nativeMatches =
+				existing === undefined && uniqueTitle === undefined && source.kind === "brief"
+					? (titleIndex.get(`native\0${normaliseTaskText(candidate.title)}`) ?? []).filter(unused)
+					: [];
+			const uniqueNative = nativeMatches.length === 1 ? nativeMatches[0] : undefined;
+			const current = existing ?? uniqueTitle ?? uniqueNative;
 			if (current !== undefined) {
+				used.add(current.id);
 				matched += 1;
 				const next: StoredTask = {
 					...current,
@@ -546,7 +578,11 @@ export class TasksState {
 	}
 
 	#write(store: TasksStore): void {
-		this.#atomicWrite(this.file, { version: TASKS_STORE_VERSION, items: store.items });
+		const payload = { version: TASKS_STORE_VERSION, items: store.items };
+		if (parseStore(JSON.parse(JSON.stringify(payload))) === undefined) throw new TaskRefused("unwritable");
+		if (Buffer.byteLength(`${JSON.stringify(payload)}\n`, "utf8") > TASKS_FILE_MAX_BYTES)
+			throw new TaskRefused("unwritable");
+		this.#atomicWrite(this.file, payload);
 	}
 
 	#atomicWrite(file: string, value: unknown): void {

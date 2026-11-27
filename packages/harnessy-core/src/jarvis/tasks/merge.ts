@@ -5,16 +5,15 @@
  * Reminders, the first-week register and project status.md items are `other`.
  */
 import type { TaskData, TaskListData } from "../../read-model/app-schemas.ts";
-import { type StoredTask, type TasksStore, taskFingerprint } from "./store.ts";
+import { type StoredTask, TASKS_MAX, type TasksStore, taskFingerprint } from "./store.ts";
 
 const derivedFingerprint = (task: TaskData, occurrence: number): string => {
 	const kind = task.source.kind === "native" ? "native" : task.source.kind;
 	const ref = task.source.kind === "register" ? task.source.displayRef.replace(/^register\s+/u, "") : "";
 	const text = task.source.kind === "register" && ref !== "" ? `${ref} ${task.title}` : task.title;
-	return taskFingerprint(kind, text, occurrence);
+	const scope = task.source.kind === "status-md" ? (task.project ?? task.source.displayRef) : null;
+	return taskFingerprint(kind, text, occurrence, scope);
 };
-
-const isClosed = (item: StoredTask): boolean => item.status === "done" || item.status === "dropped";
 
 const groupOfDerived = (task: TaskData): "primary" | "other" => (task.source.kind === "brief" ? "primary" : "other");
 
@@ -81,8 +80,14 @@ const fromStoreOnly = (
 	};
 };
 
-const sortPrimary = (tasks: readonly TaskData[]): TaskData[] =>
-	[...tasks].sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
+const sortPrimary = (tasks: readonly TaskData[], storeOrder: ReadonlyMap<string, number>): TaskData[] =>
+	[...tasks].sort(
+		(a, b) =>
+			a.priority - b.priority ||
+			(storeOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (storeOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER) ||
+			a.title.localeCompare(b.title) ||
+			a.id.localeCompare(b.id),
+	);
 
 export interface MergeTasksOptions {
 	readonly derived: TaskListData;
@@ -94,7 +99,8 @@ export interface MergeTasksOptions {
 
 /**
  * Combine derived tasks with the store. The primary group is sorted by priority
- * (lower first), then title. Other-source items keep derived order after that.
+ * (lower first), then the stored list order, then title. Other-source items keep
+ * derived order after that. The result is capped at `TASKS_MAX`.
  */
 export const mergeTasks = (options: MergeTasksOptions): TaskListData => {
 	const used = new Set<string>();
@@ -105,7 +111,7 @@ export const mergeTasks = (options: MergeTasksOptions): TaskListData => {
 		(task.group === "primary" ? primary : other).push(task);
 	};
 	for (const task of options.derived.tasks) {
-		const kindKey = `${task.source.kind}:${task.title.toLowerCase()}`;
+		const kindKey = `${task.source.kind}:${task.project ?? ""}:${task.title.toLowerCase()}`;
 		const occurrence = seen.get(kindKey) ?? 0;
 		seen.set(kindKey, occurrence + 1);
 		const fingerprint = derivedFingerprint(task, occurrence);
@@ -120,20 +126,15 @@ export const mergeTasks = (options: MergeTasksOptions): TaskListData => {
 	}
 	for (const item of options.store.items) {
 		if (used.has(item.id)) continue;
-		const group = groupOfStored(item, options.today);
-		// Native and restated brief items that are no longer in today's scrape still belong on the page.
-		if (
-			item.source.kind === "native" ||
-			item.source.kind === "brief" ||
-			!isClosed(item) ||
-			item.outcome === "carried"
-		)
-			push(fromStoreOnly(item, options.now, options.ownerNames, group));
+		push(fromStoreOnly(item, options.now, options.ownerNames, groupOfStored(item, options.today)));
 	}
+	const storeOrder = new Map(options.store.items.map((item, index) => [item.id, index] as const));
+	const tasks = [...sortPrimary(primary, storeOrder), ...other];
+	const extra = Math.max(0, tasks.length - TASKS_MAX);
 	return {
-		tasks: [...sortPrimary(primary), ...other],
+		tasks: extra > 0 ? tasks.slice(0, TASKS_MAX) : tasks,
 		sources: options.derived.sources,
-		omitted: options.derived.omitted,
+		omitted: options.derived.omitted + extra,
 		projectsTruncated: options.derived.projectsTruncated,
 	};
 };

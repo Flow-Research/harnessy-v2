@@ -230,16 +230,24 @@ export const jarvisTasksCloseoutCommand = Command.make(
 	({ homeRoot, stateDir, tasksFile, input, writeNote, note, target }) =>
 		run(() => {
 			const payload = readCloseoutInput(input);
+			const narrative = Option.getOrUndefined(note) ?? payload.note;
+			let noteBody: string | undefined;
+			if (writeNote) {
+				try {
+					noteBody = validateCloseoutNote(narrative ?? "");
+				} catch (error) {
+					const code = error instanceof Error && error.message === "empty_note" ? "empty_note" : "invalid_note";
+					throw new TaskRefused(code);
+				}
+			}
 			const result = new TasksState(resolveFile(homeRoot, stateDir, tasksFile)).closeout(
 				payload.outcomes,
 				payload.date,
 			);
-			const narrative = Option.getOrUndefined(note) ?? payload.note;
 			let notePath: string | undefined;
-			if (writeNote) {
-				if (narrative === undefined || narrative.trim() === "") throw new TaskRefused("empty_note");
+			if (writeNote && noteBody !== undefined) {
 				const user = process.env.FLOW_USER ?? process.env.USER ?? "default";
-				notePath = appendCloseoutNote(resolve(target, ".jarvis/context"), user, narrative);
+				notePath = appendCloseoutNote(resolve(target, ".jarvis/context"), user, noteBody);
 			}
 			return {
 				updated: result.updated,

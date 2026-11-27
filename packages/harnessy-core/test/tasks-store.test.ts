@@ -195,6 +195,78 @@ describe("ingest and fingerprints", () => {
 		expect(again.created).toBe(1);
 		expect(again.items[0]!.id).not.toBe(first.items[0]!.id);
 	});
+
+	it("keeps a completed item when the same brief is ingested again", () => {
+		const { state } = stateFile("replay");
+		const candidates = candidatesFromExtracted("brief", extractBriefTasks(briefText), "brief");
+		const first = state.ingest(candidates.slice(0, 1), {
+			kind: "brief",
+			path: "/tmp/27-daily-brief.md",
+			displayRef: "brief",
+			briefDate: "2026-11-27",
+		});
+		const id = first.items[0]!.id;
+		state.applyOutcome(id, "done");
+		const replay = state.ingest(candidates.slice(0, 1), {
+			kind: "brief",
+			path: "/tmp/27-daily-brief.md",
+			displayRef: "brief",
+			briefDate: "2026-11-27",
+		});
+		expect(replay.created).toBe(0);
+		expect(replay.matched).toBe(1);
+		expect(replay.items[0]!.id).toBe(id);
+		const stored = state.read().items.filter((item) => item.title === first.items[0]!.title);
+		expect(stored).toHaveLength(1);
+		expect(stored[0]).toMatchObject({ id, status: "done", outcome: "done" });
+	});
+
+	it("does not give two same-title occurrences the same id in one batch", () => {
+		const { state } = stateFile("dup-batch");
+		const one = candidatesFromExtracted(
+			"brief",
+			extractBriefTasks("## Decisions and Actions for You\n\n1. **Same title.**\n"),
+			"brief",
+		);
+		state.ingest(one, {
+			kind: "brief",
+			path: "/tmp/26-daily-brief.md",
+			displayRef: "brief",
+			briefDate: "2026-11-26",
+		});
+		const two = candidatesFromExtracted(
+			"brief",
+			extractBriefTasks("## Decisions and Actions for You\n\n1. **Same title.**\n2. **Same title.**\n"),
+			"brief",
+		);
+		const result = state.ingest(two, {
+			kind: "brief",
+			path: "/tmp/27-daily-brief.md",
+			displayRef: "brief",
+			briefDate: "2026-11-27",
+		});
+		expect(new Set(result.items.map((item) => item.id)).size).toBe(2);
+	});
+
+	it("matches a unique open native task when the brief restates its title", () => {
+		const { state } = stateFile("native-restatement");
+		const native = state.add({ title: "Ship the close-out" });
+		const candidates = candidatesFromExtracted(
+			"brief",
+			extractBriefTasks("## Decisions and Actions for You\n\n1. **Ship the close-out.**\n"),
+			"brief",
+		);
+		const result = state.ingest(candidates, {
+			kind: "brief",
+			path: "/tmp/27-daily-brief.md",
+			displayRef: "brief",
+			briefDate: "2026-11-27",
+		});
+		expect(result.created).toBe(0);
+		expect(result.matched).toBe(1);
+		expect(result.items[0]!.id).toBe(native.id);
+		expect(state.read().items).toHaveLength(1);
+	});
 });
 
 const task = (overrides: Partial<TaskData> & Pick<TaskData, "id" | "title" | "source">): TaskData => ({
@@ -265,6 +337,48 @@ describe("mergeTasks", () => {
 		expect(merged.tasks[0]!.id).toBe(native.id);
 		expect(merged.tasks[2]!.id).toBe("b".repeat(64));
 	});
+
+	it("keeps stored order among equal-priority native tasks after a reorder", () => {
+		const { state } = stateFile("merge-order");
+		const a = state.add({ title: "Alpha" });
+		const b = state.add({ title: "Zulu" });
+		state.reorder([b.id, a.id]);
+		const merged = mergeTasks({
+			derived: { tasks: [], sources: [], omitted: 0, projectsTruncated: false },
+			store: state.read(),
+			today: "2026-11-27",
+			now: new Date("2026-11-27T13:00:00.000Z"),
+			ownerNames: [],
+		});
+		expect(merged.tasks.map((item) => item.title)).toEqual(["Zulu", "Alpha"]);
+	});
+
+	it("still lists a closed register item so reorder can name every stored id", () => {
+		const { state } = stateFile("merge-closed-register");
+		const added = state.add({ title: "Open native", priority: 1 });
+		const register = state.ingest(
+			candidatesFromExtracted(
+				"register",
+				[{ title: "Closed register", status: "todo", owner: null, due: null, line: 3, raw: false }],
+				"register",
+			),
+			{ kind: "register", path: "/tmp/register.md", displayRef: "register", briefDate: null },
+		).items[0]!;
+		state.applyOutcome(register.id, "done");
+		const merged = mergeTasks({
+			derived: { tasks: [], sources: [], omitted: 0, projectsTruncated: false },
+			store: state.read(),
+			today: "2026-11-27",
+			now: new Date("2026-11-27T13:00:00.000Z"),
+			ownerNames: [],
+		});
+		expect(
+			merged.tasks
+				.filter((item) => item.inStore)
+				.map((item) => item.id)
+				.sort(),
+		).toEqual([added.id, register.id].sort());
+	});
 });
 
 describe("appendCloseoutNote", () => {
@@ -293,5 +407,8 @@ describe("taskFingerprint", () => {
 	it("is stable across paths and splits repeats", () => {
 		expect(taskFingerprint("brief", "Settle the plan")).toBe(taskFingerprint("brief", "**Settle the plan**"));
 		expect(taskFingerprint("brief", "Same", 0)).not.toBe(taskFingerprint("brief", "Same", 1));
+		expect(taskFingerprint("status-md", "Ship the alpha", 0, "alpha")).not.toBe(
+			taskFingerprint("status-md", "Ship the alpha", 0, "beta"),
+		);
 	});
 });
