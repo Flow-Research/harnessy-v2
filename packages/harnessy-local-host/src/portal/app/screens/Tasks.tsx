@@ -380,7 +380,12 @@ const AddForm = ({
 			}
 		}
 		onAdd(body);
+		// Start the next add clean, so an owner, due date or position is never reused unseen.
 		setTitle("");
+		setOwner("");
+		setDue("");
+		setPriority("0");
+		setIndex("");
 		setOpen(false);
 	};
 	if (!openForm)

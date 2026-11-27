@@ -191,6 +191,7 @@ describe("session action requests", () => {
 			["tasks_full", "full (500)"],
 			["task_missing", "no longer in the list"],
 			["tasks_changed", "changed in another view"],
+			["tasks_busy", "still saving"],
 			["invalid_outcome", "done, carried, dropped or delegated"],
 			["unwritable", "could not be saved"],
 			["private internal detail", "Could not update the task"],
@@ -201,6 +202,11 @@ describe("session action requests", () => {
 				message: expect.stringContaining(message),
 			});
 		}
+		fetch.mockResolvedValueOnce({ status: 503, json: async () => Promise.reject(new Error("not json")) });
+		expect(await client.taskAction({ action: "add", title: "x" })).toEqual({
+			kind: "error",
+			message: expect.stringContaining("Could not update the task"),
+		});
 	});
 
 	it("forgets refused credentials and never sends a later write until signed in again", async () => {

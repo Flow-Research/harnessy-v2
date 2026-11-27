@@ -19,6 +19,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import * as Result from "effect/Result";
 
@@ -31,6 +32,8 @@ export const TASK_OWNER_MAX = 64;
 export const TASK_PROJECT_MAX = 64;
 export const TASK_PRIORITY_MAX = 10_000;
 export const TASKS_FILE_MAX_BYTES = 1024 * 1024;
+/** How long a mutation waits for another writer (portal, CLI, brief ingest) before refusing `tasks_busy`. */
+export const TASKS_LOCK_WAIT_MS = 5_000;
 export const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 export const TASK_FINGERPRINT = /^[a-f0-9]{64}$/u;
 export const TASK_DAY = /^\d{4}-\d{2}-\d{2}$/u;
@@ -260,10 +263,12 @@ const placeItem = (items: readonly StoredTask[], item: StoredTask, index: number
 export class TasksState {
 	readonly file: string;
 	readonly #clock: () => Date;
+	readonly #lockWaitMs: number;
 
-	constructor(file: string, clock: () => Date = () => new Date()) {
+	constructor(file: string, clock: () => Date = () => new Date(), lockWaitMs: number = TASKS_LOCK_WAIT_MS) {
 		this.file = file;
 		this.#clock = clock;
+		this.#lockWaitMs = Math.max(0, Math.trunc(lockWaitMs));
 	}
 
 	/** The store, or an empty version-1 document when the file is absent. */
@@ -315,26 +320,28 @@ export class TasksState {
 			(!Number.isInteger(fields.index) || fields.index < 0 || fields.index > TASKS_MAX)
 		)
 			throw new TaskRefused("invalid_index");
-		const store = this.read();
-		if (store.items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
-		const now = this.#clock().toISOString();
-		const item: StoredTask = {
-			id: randomUUID(),
-			title,
-			status: fields.status ?? "todo",
-			owner,
-			due,
-			project,
-			priority,
-			outcome: null,
-			carriedFrom: null,
-			fingerprint: null,
-			source: { kind: "native", path: null, line: null, displayRef: "native", briefDate: null },
-			createdAt: now,
-			updatedAt: now,
-		};
-		this.#write({ version: TASKS_STORE_VERSION, items: placeItem(store.items, item, fields.index) });
-		return item;
+		return this.#locked(() => {
+			const store = this.read();
+			if (store.items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
+			const now = this.#clock().toISOString();
+			const item: StoredTask = {
+				id: randomUUID(),
+				title,
+				status: fields.status ?? "todo",
+				owner,
+				due,
+				project,
+				priority,
+				outcome: null,
+				carriedFrom: null,
+				fingerprint: null,
+				source: { kind: "native", path: null, line: null, displayRef: "native", briefDate: null },
+				createdAt: now,
+				updatedAt: now,
+			};
+			this.#write({ version: TASKS_STORE_VERSION, items: placeItem(store.items, item, fields.index) });
+			return item;
+		});
 	}
 
 	setPriority(id: string, priority: number): StoredTask {
@@ -345,12 +352,14 @@ export class TasksState {
 
 	/** Put every item in `ids` order. `ids` must name each current item exactly once. */
 	reorder(ids: readonly string[]): void {
-		const store = this.read();
-		const byId = new Map(store.items.map((item) => [item.id, item]));
-		if (ids.length !== byId.size || new Set(ids).size !== ids.length || !ids.every((id) => byId.has(id)))
-			throw new TaskRefused("tasks_changed");
-		const items = ids.map((id) => byId.get(id)!);
-		this.#write({ version: TASKS_STORE_VERSION, items });
+		this.#locked(() => {
+			const store = this.read();
+			const byId = new Map(store.items.map((item) => [item.id, item]));
+			if (ids.length !== byId.size || new Set(ids).size !== ids.length || !ids.every((id) => byId.has(id)))
+				throw new TaskRefused("tasks_changed");
+			const items = ids.map((id) => byId.get(id)!);
+			this.#write({ version: TASKS_STORE_VERSION, items });
+		});
 	}
 
 	applyOutcome(
@@ -384,32 +393,37 @@ export class TasksState {
 		if (new Set(ids).size !== ids.length) throw new TaskRefused("duplicate_id");
 		const day = date ?? lagosCalendarDate(this.#clock());
 		if (!isDay(day)) throw new TaskRefused("invalid_due");
-		const store = this.read();
-		const byId = new Map(store.items.map((item) => [item.id, item]));
-		const now = this.#clock().toISOString();
-		const updated: StoredTask[] = [];
-		let unchanged = 0;
-		const nextById = new Map(byId);
-		for (const entry of entries) {
-			if (!OUTCOMES.has(entry.outcome)) throw new TaskRefused("invalid_outcome");
-			const item = nextById.get(entry.id);
-			if (item === undefined) throw new TaskRefused("task_missing");
-			const owner =
-				entry.outcome === "delegated"
-					? optionalText(entry.owner, TASK_OWNER_MAX, "invalid_owner")
-					: optionalText(entry.owner, TASK_OWNER_MAX, "invalid_owner");
-			if (entry.outcome === "delegated" && owner === null) throw new TaskRefused("owner_required");
-			const next = applyOutcomeFields(item, entry.outcome, owner ?? item.owner, day, now);
-			if (outcomeUnchanged(item, next)) {
-				unchanged += 1;
-				continue;
+		return this.#locked(() => {
+			const store = this.read();
+			const byId = new Map(store.items.map((item) => [item.id, item]));
+			const now = this.#clock().toISOString();
+			const updated: StoredTask[] = [];
+			let unchanged = 0;
+			const nextById = new Map(byId);
+			for (const entry of entries) {
+				if (!OUTCOMES.has(entry.outcome)) throw new TaskRefused("invalid_outcome");
+				const item = nextById.get(entry.id);
+				if (item === undefined) throw new TaskRefused("task_missing");
+				const owner =
+					entry.outcome === "delegated"
+						? optionalText(entry.owner, TASK_OWNER_MAX, "invalid_owner")
+						: optionalText(entry.owner, TASK_OWNER_MAX, "invalid_owner");
+				if (entry.outcome === "delegated" && owner === null) throw new TaskRefused("owner_required");
+				const next = applyOutcomeFields(item, entry.outcome, owner ?? item.owner, day, now);
+				if (outcomeUnchanged(item, next)) {
+					unchanged += 1;
+					continue;
+				}
+				nextById.set(item.id, next);
+				updated.push(next);
 			}
-			nextById.set(item.id, next);
-			updated.push(next);
-		}
-		if (updated.length > 0)
-			this.#write({ version: TASKS_STORE_VERSION, items: store.items.map((item) => nextById.get(item.id) ?? item) });
-		return { updated, unchanged };
+			if (updated.length > 0)
+				this.#write({
+					version: TASKS_STORE_VERSION,
+					items: store.items.map((item) => nextById.get(item.id) ?? item),
+				});
+			return { updated, unchanged };
+		});
 	}
 
 	/**
@@ -432,66 +446,106 @@ export class TasksState {
 		readonly sidecar?: TaskSidecar;
 	} {
 		if (source.path.length > 512) throw new TaskRefused("invalid_source");
-		const store = this.read();
-		let items = [...store.items];
-		const used = new Set<string>();
-		const openByFingerprint = new Map<string, StoredTask[]>();
-		const closedByFingerprint = new Map<string, StoredTask[]>();
-		for (const item of items) {
-			if (item.fingerprint === null) continue;
-			const target = item.status === "done" || item.status === "dropped" ? closedByFingerprint : openByFingerprint;
-			const list = target.get(item.fingerprint) ?? [];
-			list.push(item);
-			target.set(item.fingerprint, list);
-		}
-		const titleIndex = new Map<string, StoredTask[]>();
-		for (const item of items) {
-			if (item.status === "done" || item.status === "dropped") continue;
-			const key = `${item.source.kind}\0${normaliseTaskText(item.title)}`;
-			const list = titleIndex.get(key) ?? [];
-			list.push(item);
-			titleIndex.set(key, list);
-		}
-		const now = this.#clock().toISOString();
-		const sidecarItems: TaskSidecarItem[] = [];
-		let created = 0;
-		let matched = 0;
-		const sameBrief = (item: StoredTask): boolean =>
-			(source.briefDate !== null && item.source.briefDate === source.briefDate) || item.source.path === source.path;
-		const unused = (item: StoredTask): boolean => !used.has(item.id);
-		for (const candidate of candidates) {
-			const closedSame = (closedByFingerprint.get(candidate.fingerprint) ?? []).find(
-				(item) => unused(item) && sameBrief(item),
-			);
-			if (closedSame !== undefined) {
-				used.add(closedSame.id);
-				matched += 1;
-				sidecarItems.push({
-					id: closedSame.id,
-					fingerprint: candidate.fingerprint,
-					line: candidate.line,
-					title: closedSame.title,
-				});
-				continue;
+		return this.#locked(() => {
+			const store = this.read();
+			let items = [...store.items];
+			const used = new Set<string>();
+			const openByFingerprint = new Map<string, StoredTask[]>();
+			const closedByFingerprint = new Map<string, StoredTask[]>();
+			for (const item of items) {
+				if (item.fingerprint === null) continue;
+				const target =
+					item.status === "done" || item.status === "dropped" ? closedByFingerprint : openByFingerprint;
+				const list = target.get(item.fingerprint) ?? [];
+				list.push(item);
+				target.set(item.fingerprint, list);
 			}
-			const existing = (openByFingerprint.get(candidate.fingerprint) ?? []).find(unused);
-			const titleKey = `${source.kind}\0${normaliseTaskText(candidate.title)}`;
-			const titleMatches = (titleIndex.get(titleKey) ?? []).filter(unused);
-			const uniqueTitle = existing === undefined && titleMatches.length === 1 ? titleMatches[0] : undefined;
-			const nativeMatches =
-				existing === undefined && uniqueTitle === undefined && source.kind === "brief"
-					? (titleIndex.get(`native\0${normaliseTaskText(candidate.title)}`) ?? []).filter(unused)
-					: [];
-			const uniqueNative = nativeMatches.length === 1 ? nativeMatches[0] : undefined;
-			const current = existing ?? uniqueTitle ?? uniqueNative;
-			if (current !== undefined) {
-				used.add(current.id);
-				matched += 1;
-				const next: StoredTask = {
-					...current,
+			const titleIndex = new Map<string, StoredTask[]>();
+			for (const item of items) {
+				if (item.status === "done" || item.status === "dropped") continue;
+				const key = `${item.source.kind}\0${normaliseTaskText(item.title)}`;
+				const list = titleIndex.get(key) ?? [];
+				list.push(item);
+				titleIndex.set(key, list);
+			}
+			const now = this.#clock().toISOString();
+			const sidecarItems: TaskSidecarItem[] = [];
+			let created = 0;
+			let matched = 0;
+			const sameBrief = (item: StoredTask): boolean =>
+				(source.briefDate !== null && item.source.briefDate === source.briefDate) ||
+				item.source.path === source.path;
+			const unused = (item: StoredTask): boolean => !used.has(item.id);
+			for (const candidate of candidates) {
+				const closedSame = (closedByFingerprint.get(candidate.fingerprint) ?? []).find(
+					(item) => unused(item) && sameBrief(item),
+				);
+				if (closedSame !== undefined) {
+					used.add(closedSame.id);
+					matched += 1;
+					sidecarItems.push({
+						id: closedSame.id,
+						fingerprint: candidate.fingerprint,
+						line: candidate.line,
+						title: closedSame.title,
+					});
+					continue;
+				}
+				const existing = (openByFingerprint.get(candidate.fingerprint) ?? []).find(unused);
+				const titleKey = `${source.kind}\0${normaliseTaskText(candidate.title)}`;
+				const titleMatches = (titleIndex.get(titleKey) ?? []).filter(unused);
+				const uniqueTitle = existing === undefined && titleMatches.length === 1 ? titleMatches[0] : undefined;
+				const nativeMatches =
+					existing === undefined && uniqueTitle === undefined && source.kind === "brief"
+						? (titleIndex.get(`native\0${normaliseTaskText(candidate.title)}`) ?? []).filter(unused)
+						: [];
+				const uniqueNative = nativeMatches.length === 1 ? nativeMatches[0] : undefined;
+				const current = existing ?? uniqueTitle ?? uniqueNative;
+				if (current !== undefined) {
+					used.add(current.id);
+					matched += 1;
+					const next: StoredTask = {
+						...current,
+						title: candidate.title.slice(0, TASK_TITLE_MAX),
+						owner: current.owner ?? candidate.owner,
+						due: current.due ?? candidate.due,
+						fingerprint: candidate.fingerprint,
+						source: {
+							kind: source.kind,
+							path: source.path,
+							line: candidate.line,
+							displayRef: candidate.displayRef.slice(0, 96),
+							briefDate: source.briefDate,
+						},
+						updatedAt: now,
+					};
+					items = items.map((item) => (item.id === current.id ? next : item));
+					sidecarItems.push({
+						id: current.id,
+						fingerprint: candidate.fingerprint,
+						line: candidate.line,
+						title: next.title,
+					});
+					const list = openByFingerprint.get(candidate.fingerprint);
+					if (list)
+						openByFingerprint.set(
+							candidate.fingerprint,
+							list.filter((item) => item.id !== current.id),
+						);
+					continue;
+				}
+				if (items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
+				created += 1;
+				const item: StoredTask = {
+					id: randomUUID(),
 					title: candidate.title.slice(0, TASK_TITLE_MAX),
-					owner: current.owner ?? candidate.owner,
-					due: current.due ?? candidate.due,
+					status: candidate.status,
+					owner: candidate.owner,
+					due: candidate.due,
+					project: null,
+					priority: 100 + sidecarItems.length,
+					outcome: null,
+					carriedFrom: null,
 					fingerprint: candidate.fingerprint,
 					source: {
 						kind: source.kind,
@@ -500,74 +554,74 @@ export class TasksState {
 						displayRef: candidate.displayRef.slice(0, 96),
 						briefDate: source.briefDate,
 					},
+					createdAt: now,
 					updatedAt: now,
 				};
-				items = items.map((item) => (item.id === current.id ? next : item));
+				items = [...items, item];
 				sidecarItems.push({
-					id: current.id,
+					id: item.id,
 					fingerprint: candidate.fingerprint,
 					line: candidate.line,
-					title: next.title,
+					title: item.title,
 				});
-				const list = openByFingerprint.get(candidate.fingerprint);
-				if (list)
-					openByFingerprint.set(
-						candidate.fingerprint,
-						list.filter((item) => item.id !== current.id),
-					);
-				continue;
 			}
-			if (items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
-			created += 1;
-			const item: StoredTask = {
-				id: randomUUID(),
-				title: candidate.title.slice(0, TASK_TITLE_MAX),
-				status: candidate.status,
-				owner: candidate.owner,
-				due: candidate.due,
-				project: null,
-				priority: 100 + sidecarItems.length,
-				outcome: null,
-				carriedFrom: null,
-				fingerprint: candidate.fingerprint,
-				source: {
-					kind: source.kind,
-					path: source.path,
-					line: candidate.line,
-					displayRef: candidate.displayRef.slice(0, 96),
-					briefDate: source.briefDate,
-				},
-				createdAt: now,
-				updatedAt: now,
+			this.#write({ version: TASKS_STORE_VERSION, items });
+			const sidecarDocument: TaskSidecar | undefined =
+				sidecar === undefined ? undefined : { version: 1, date: sidecar.date, items: sidecarItems };
+			if (sidecar !== undefined && sidecarDocument !== undefined) this.#writeSidecar(sidecar.path, sidecarDocument);
+			return {
+				items: sidecarItems.map((entry) => items.find((item) => item.id === entry.id)!),
+				created,
+				matched,
+				sidecar: sidecarDocument,
 			};
-			items = [...items, item];
-			sidecarItems.push({
-				id: item.id,
-				fingerprint: candidate.fingerprint,
-				line: candidate.line,
-				title: item.title,
-			});
-		}
-		this.#write({ version: TASKS_STORE_VERSION, items });
-		const sidecarDocument: TaskSidecar | undefined =
-			sidecar === undefined ? undefined : { version: 1, date: sidecar.date, items: sidecarItems };
-		if (sidecar !== undefined && sidecarDocument !== undefined) this.#writeSidecar(sidecar.path, sidecarDocument);
-		return {
-			items: sidecarItems.map((entry) => items.find((item) => item.id === entry.id)!),
-			created,
-			matched,
-			sidecar: sidecarDocument,
-		};
+		});
 	}
 
 	#update(id: string, update: (item: StoredTask, updatedAt: string) => StoredTask): StoredTask {
-		const store = this.read();
-		const current = store.items.find((item) => item.id === id);
-		if (current === undefined) throw new TaskRefused("task_missing");
-		const next = update(current, this.#clock().toISOString());
-		if (next === current) return current;
-		this.#write({ version: TASKS_STORE_VERSION, items: store.items.map((item) => (item.id === id ? next : item)) });
-		return next;
+		return this.#locked(() => {
+			const store = this.read();
+			const current = store.items.find((item) => item.id === id);
+			if (current === undefined) throw new TaskRefused("task_missing");
+			const next = update(current, this.#clock().toISOString());
+			if (next === current) return current;
+			this.#write({
+				version: TASKS_STORE_VERSION,
+				items: store.items.map((item) => (item.id === id ? next : item)),
+			});
+			return next;
+		});
+	}
+
+	/**
+	 * Run one read-modify-write holding the store's cross-process lock, so the
+	 * portal, the CLI and brief ingest never lose each other's updates. Uses the
+	 * same SQLite `BEGIN EXCLUSIVE` lock file pattern as the community generation
+	 * record. Refuses `tasks_busy` when another writer holds it past the wait.
+	 */
+	#locked<A>(action: () => A): A {
+		const lockPath = `${this.file}.lock`;
+		const prepared = Result.try(() => {
+			mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+			closeSync(openSync(lockPath, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600));
+			return new DatabaseSync(lockPath, { allowExtension: false });
+		});
+		if (Result.isFailure(prepared)) throw new TaskRefused("unwritable");
+		const database = prepared.success;
+		try {
+			const locked = Result.try(() => {
+				database.exec(`PRAGMA busy_timeout=${this.#lockWaitMs}`);
+				database.exec("BEGIN EXCLUSIVE");
+			});
+			if (Result.isFailure(locked)) throw new TaskRefused("tasks_busy");
+			try {
+				return action();
+			} finally {
+				database.exec("ROLLBACK");
+			}
+		} finally {
+			database.close();
+		}
 	}
 
 	#writeSidecar(path: string, sidecar: TaskSidecar): void {

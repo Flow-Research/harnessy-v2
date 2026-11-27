@@ -1,6 +1,8 @@
+import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { candidatesFromExtracted, ingestBriefFile } from "../src/jarvis/tasks/ingest.ts";
@@ -485,4 +487,53 @@ describe("taskFingerprint", () => {
 			taskFingerprint("status-md", "Ship the alpha", 0, "beta"),
 		);
 	});
+});
+
+describe("cross-process store lock", () => {
+	it("refuses tasks_busy while another writer holds the lock, and writes nothing", () => {
+		const file = join(temp("busy"), "tasks.json");
+		const first = new TasksState(file, () => new Date("2026-11-27T13:00:00.000Z"), 20);
+		first.add({ title: "Before the lock" });
+		const holder = new DatabaseSync(`${file}.lock`);
+		holder.exec("BEGIN EXCLUSIVE");
+		try {
+			expect(() => first.add({ title: "Blocked" })).toThrow(expect.objectContaining({ code: "tasks_busy" }));
+		} finally {
+			holder.exec("ROLLBACK");
+			holder.close();
+		}
+		expect(first.read().items.map((item) => item.title)).toEqual(["Before the lock"]);
+		first.add({ title: "After the lock" });
+		expect(first.read().items.map((item) => item.title)).toEqual(["Before the lock", "After the lock"]);
+	});
+
+	it("keeps every accepted mutation when two processes write at the same time", async () => {
+		const root = temp("race");
+		const file = join(root, "tasks.json");
+		const store = new URL("../src/jarvis/tasks/store.ts", import.meta.url).href;
+		const writer = (name: string) => {
+			const script = join(root, `${name}.mjs`);
+			writeFileSync(
+				script,
+				`import { TasksState } from ${JSON.stringify(store)};
+const state = new TasksState(${JSON.stringify(file)});
+for (let index = 0; index < 40; index += 1) state.add({ title: ${JSON.stringify(name)} + " " + index });
+`,
+				{ mode: 0o600 },
+			);
+			return new Promise<number | null>((resolve) => {
+				const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", script], {
+					cwd: root,
+					env: { HOME: root },
+					stdio: "ignore",
+				});
+				child.on("exit", (code) => resolve(code));
+			});
+		};
+		expect(await Promise.all([writer("left"), writer("right")])).toEqual([0, 0]);
+		const titles = new TasksState(file).read().items.map((item) => item.title);
+		expect(titles).toHaveLength(80);
+		expect(titles.filter((title) => title.startsWith("left "))).toHaveLength(40);
+		expect(titles.filter((title) => title.startsWith("right "))).toHaveLength(40);
+	}, 30_000);
 });

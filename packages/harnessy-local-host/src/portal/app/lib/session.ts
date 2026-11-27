@@ -300,6 +300,7 @@ export class SessionClient {
 						tasks_full: "The task store is full (500). Close or drop one before adding another.",
 						task_missing: "That task is no longer in the list. Refresh and try again.",
 						tasks_changed: "The list changed in another view. It was refreshed; try again.",
+						tasks_busy: "Another update to the task store is still saving. Try again in a moment.",
 						invalid_outcome: "Choose done, carried, dropped or delegated.",
 						duplicate_id: "Each task can appear only once in a close-out.",
 						unreadable: "The task store could not be read. The Markdown sources were not changed.",
