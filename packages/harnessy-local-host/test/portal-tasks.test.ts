@@ -1,6 +1,15 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { TasksState } from "@harnessy/core/tasks";
+import { fileURLToPath } from "node:url";
+import {
+	defaultQueuePath,
+	fetchTransport,
+	startTasksHttpServer,
+	syncTasks,
+	TasksState,
+	type TasksSyncConfig,
+	writeQueue,
+} from "@harnessy/core/tasks";
 import { afterEach, describe, expect, it } from "vitest";
 import { startPortalServer } from "../src/portal/server.ts";
 import { createPortalSources } from "../src/portal/sources.ts";
@@ -9,11 +18,12 @@ import { installProof, rawRequest } from "./support/portal-http.ts";
 
 afterEach(cleanupPortalFixtures);
 
-const start = async (home: string, tasks: TasksState) => {
+const start = async (home: string, tasks: TasksState, prioritySync?: () => TasksSyncConfig | undefined) => {
 	const token = "e".repeat(43);
 	const server = await startPortalServer({
 		installToken: token,
 		port: 0,
+		prioritySync,
 		version: "test",
 		tasks,
 		sources: createPortalSources({
@@ -61,7 +71,7 @@ const titles = async (list: () => ReturnType<typeof rawRequest>) => {
 };
 
 describe("tasks routes", () => {
-	it("adds, inserts, reorders, sets priority and records outcomes only with a page token and the portal origin", async () => {
+	it("protects task actions, refuses unsynced priority edits and records outcomes", async () => {
 		const fixture = await buildPortalHome("tasks-routes");
 		const tasks = new TasksState(join(fixture.home, "tasks.json"), () => FIXTURE_NOW);
 		const { server, post, list, auth, token } = await start(fixture.home, tasks);
@@ -97,11 +107,11 @@ describe("tasks routes", () => {
 			const insertedId = (inserted.json as { item: { id: string } }).item.id;
 			expect(tasks.read().items.map((item) => item.title)).toEqual(["First in line", "Ship the close-out"]);
 
-			expect((await post({ action: "reorder", ids: [firstId, insertedId] })).status).toBe(200);
-			expect(tasks.read().items.map((item) => item.id)).toEqual([firstId, insertedId]);
-			expect((await post({ action: "reorder", ids: [firstId] })).json).toEqual({ error: "tasks_changed" });
-
-			expect((await post({ action: "setPriority", id: firstId, priority: 1 })).status).toBe(200);
+			expect((await post({ action: "reorder", ids: [firstId, insertedId] })).status).toBe(503);
+			expect((await post({ action: "setPriority", id: firstId, priority: 1 })).json).toEqual({
+				error: "priority_sync_unconfigured",
+			});
+			expect(tasks.read().items.map((item) => item.id)).toEqual([insertedId, firstId]);
 			expect((await post({ action: "complete", id: firstId })).status).toBe(200);
 			expect(tasks.read().items.find((item) => item.id === firstId)).toMatchObject({
 				status: "done",
@@ -191,4 +201,67 @@ describe("tasks routes", () => {
 			await server.close();
 		}
 	});
+});
+
+it("keeps portal priority and order through sync and reports stale, queued, and offline edits", async () => {
+	const fixture = await buildPortalHome("priority-sync");
+	const dir = mkdtempSync(fileURLToPath(new URL("./priority-service-", import.meta.url)));
+	const remote = new TasksState(join(dir, "primary.json"));
+	const cache = new TasksState(join(dir, "cache.json"));
+	const one = remote.add({ title: "First", priority: 100 });
+	const two = remote.add({ title: "Second", priority: 101 });
+	cache.installSnapshot(remote.read());
+	const token = "fixture-credential";
+	const service = await startTasksHttpServer({ file: remote.file, token, enablePriorityBatch: true });
+	const config = { endpoint: service.url, tokenFile: join(dir, "credential") };
+	writeFileSync(config.tokenFile, token, { mode: 0o600 });
+	const { server, post, list } = await start(fixture.home, cache, () => config);
+	try {
+		expect((await post({ action: "setPriority", id: two.id, priority: 7 })).json).toMatchObject({
+			item: { id: two.id, priority: 7 },
+		});
+		expect((await post({ action: "reorder", ids: [two.id, one.id] })).status).toBe(200);
+		await syncTasks({ tasksFile: cache.file, config });
+		expect(cache.read()).toEqual(remote.read());
+		expect(cache.read().items.map((t) => [t.title, t.priority])).toEqual([
+			["Second", 7],
+			["First", 100],
+		]);
+		expect((await titles(list)).find((r) => r.id === two.id)).toMatchObject({ priority: 7 });
+		// Hold the final GET response until a newer portal edit has committed.
+		let gets = 0;
+		await syncTasks({
+			tasksFile: cache.file,
+			config,
+			transport: {
+				request: async (input) => {
+					const response = await fetchTransport.request(input);
+					if (++gets === 2)
+						expect((await post({ action: "setPriority", id: two.id, priority: 5 })).status).toBe(200);
+					return response;
+				},
+			},
+		});
+		expect(cache.read()).toEqual(remote.read());
+		expect(cache.read().items[0]?.priority).toBe(5);
+		const baseline = readFileSync(cache.file);
+		remote.setPriority(one.id, 99);
+		expect(await post({ action: "setPriority", id: one.id, priority: 2 })).toMatchObject({
+			status: 409,
+			json: { error: "stale_revision" },
+		});
+		writeQueue(defaultQueuePath(cache.file), { version: 1, items: [{ op: "resolve", id: one.id }] });
+		expect(await post({ action: "setPriority", id: one.id, priority: 2 })).toMatchObject({
+			status: 409,
+			json: { error: "sync_pending_edits_first" },
+		});
+		writeQueue(defaultQueuePath(cache.file), { version: 1, items: [] });
+		await service.close();
+		expect((await post({ action: "setPriority", id: two.id, priority: 8 })).status).toBe(503);
+		expect(readFileSync(cache.file)).toEqual(baseline);
+	} finally {
+		await server.close();
+		await service.close().catch(() => undefined);
+		rmSync(dir, { recursive: true, force: true });
+	}
 });

@@ -1,10 +1,12 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-
 import { startTasksHttpServer, type TasksHttpServer } from "../src/jarvis/tasks/http.ts";
+import { finishPriorityRun } from "../src/jarvis/tasks/priority-apply.ts";
+import { rankSnapshot } from "../src/jarvis/tasks/priority-shadow.ts";
 import { TasksState } from "../src/jarvis/tasks/store.ts";
 
 const servers: TasksHttpServer[] = [];
@@ -100,4 +102,82 @@ describe("tasks HTTP service", () => {
 		const listedBody = (await listed.json()) as { items: Array<{ title: string }> };
 		expect(listedBody.items.map((item) => item.title)).toEqual(["B", "A"]);
 	});
+});
+
+describe("hosted priority batch on a scratch task store", () => {
+	for (const enabled of [false, true]) {
+		it(
+			enabled
+				? "requires auth and a current baseline, commits exact scores and skips no-op writes"
+				: "refuses the route by default",
+			async () => {
+				const dir = mkdtempSync(fileURLToPath(new URL("./priority-store-", import.meta.url)));
+				try {
+					const file = join(dir, "tasks.json");
+					const state = new TasksState(file);
+					const first = state.add({ title: "First", priority: 100 });
+					const second = state.add({ title: "Second", priority: 109 });
+					const server = await startTasksHttpServer({
+						file,
+						token,
+						...(enabled ? { enablePriorityBatch: true } : {}),
+					});
+					servers.push(server);
+					const fileSnapshot = () => [
+						statSync(file, { bigint: true }).ino,
+						statSync(file, { bigint: true }).mtimeNs,
+						readFileSync(file),
+					];
+					const initial = fileSnapshot();
+					const rev = state.read().revision;
+					const snap = await rankSnapshot(
+						state.read(),
+						{ version: 1, tasks: [] },
+						new Date("2026-11-28T12:00:00Z"),
+					);
+					await finishPriorityRun(snap, false, undefined, {
+						request: () => {
+							throw Error("shadow called writer");
+						},
+					});
+					expect(fileSnapshot()).toEqual(initial);
+					const rows = [
+						{ id: first.id, oldPriority: 100, priority: 10000 },
+						{ id: second.id, oldPriority: 109, priority: 0 },
+					];
+					const oldOrder = state.read().items.map((t) => t.id);
+					const body = {
+						action: "batch",
+						setPriority: rows,
+						reorder: { previousOrder: oldOrder, ids: [second.id, first.id] },
+					};
+					const post = (revision?: number, auth?: null) =>
+						request(server, "/v1/tasks/priority-batch", { method: "POST", body, revision, token: auth });
+					if (!enabled) {
+						expect((await post(rev)).status).toBe(404);
+						expect(fileSnapshot()).toEqual(initial);
+						return;
+					}
+					expect((await post(rev, null)).status).toBe(401);
+					expect((await post()).status).toBe(400);
+					expect((await post(rev - 1)).status).toBe(409);
+					expect(fileSnapshot()).toEqual(initial);
+					const response = await post(rev);
+					expect(response.status).toBe(200);
+					expect(await response.json()).toEqual({ ok: true, revision: rev + 1 });
+					expect(state.read().items.map((t) => [t.id, t.priority])).toEqual([
+						[second.id, 0],
+						[first.id, 10000],
+					]);
+					const committed = fileSnapshot();
+					for (const row of rows) row.oldPriority = row.priority;
+					body.reorder.previousOrder = body.reorder.ids;
+					expect(await (await post(rev + 1)).json()).toEqual({ ok: true, revision: rev + 1 });
+					expect(fileSnapshot()).toEqual(committed);
+				} finally {
+					rmSync(dir, { recursive: true, force: true });
+				}
+			},
+		);
+	}
 });

@@ -1,9 +1,10 @@
 /** `harnessy-portal` commands, run in-process against a real server and real state files. */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 
 import { checkPortalValue, PortalApiSchemas } from "@harnessy/core/read-model";
+import { startTasksHttpServer, TasksState, writeSyncConfig } from "@harnessy/core/tasks";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { PORTAL_OPEN_ROUTES, PORTAL_USAGE, type PortalCommandIo, runPortalCommand } from "../src/portal/command.ts";
@@ -77,6 +78,48 @@ describe("harnessy-portal commands", () => {
 		expect(checkPortalValue(PortalApiSchemas.Health, printed.health)).toBe(true);
 		const token = readFileSync(join(stateDir, PORTAL_TOKEN_FILE), "utf8").trim();
 		expect(status.output.join("")).not.toContain(token);
+	});
+
+	it("serve loads the home sync configuration and reports a disabled hosted priority route without changing either store", async () => {
+		const home = tempDir("disabled-priority");
+		const stateDir = join(home, "portal");
+		const primary = new TasksState(join(home, "primary.json"));
+		const item = primary.add({ title: "Scratch task", priority: 108 });
+		const credential = "loopback-test-only";
+		const tokenFile = join(home, "sync-credential");
+		writeFileSync(tokenFile, credential, { mode: 0o600 });
+		const service = await startTasksHttpServer({ file: primary.file, token: credential });
+		try {
+			const configDir = join(home, ".config", "harnessy");
+			writeSyncConfig(join(configDir, "tasks-sync.json"), { endpoint: service.url, tokenFile });
+			const { server } = await serve(home, stateDir);
+			const cache = new TasksState(join(stateDir, "tasks.json"));
+			cache.installSnapshot(primary.read());
+			const oldCache = readFileSync(cache.file);
+			const oldPrimary = readFileSync(primary.file);
+			const opener = io(home);
+			await runPortalCommand(["open", "--port", String(server.port), "--state-dir", stateDir, "--print"], opener.io);
+			const headers = { Origin: server.origin, "Content-Type": "application/json" };
+			const exchange = await rawRequest(server.port, {
+				method: "POST",
+				path: "/v1/session/exchange",
+				headers,
+				body: JSON.stringify({ code: new URLSearchParams(new URL(opener.output[0]!).hash.slice(1)).get("code") }),
+			});
+			expect(exchange.status).toBe(200);
+			const response = await rawRequest(server.port, {
+				method: "POST",
+				path: "/v1/tasks/action",
+				headers: { ...headers, Authorization: `Bearer ${(exchange.json as { token: string }).token}` },
+				body: JSON.stringify({ action: "setPriority", id: item.id, priority: 41 }),
+			});
+			expect(response.status).toBe(503);
+			expect(response.json).toEqual({ error: "priority_service_disabled" });
+			expect(readFileSync(cache.file)).toEqual(oldCache);
+			expect(readFileSync(primary.file)).toEqual(oldPrimary);
+		} finally {
+			await service.close();
+		}
 	});
 
 	it("open mints a one-time code into a URL fragment, printed or handed to the opener", async () => {

@@ -259,11 +259,16 @@ const commitReplay = (
 	state: TasksState,
 	queuePath: string,
 	snapshot: TasksStore,
+	revisionBeforePull: number,
 	replayed: ReadonlyArray<QueuedMutation>,
 ): void => {
 	state.runExclusive(() => {
 		const replayedKeys = new Set(replayed.map(mutationKey));
-		const remaining = readQueue(queuePath).items.filter((item) => !replayedKeys.has(mutationKey(item)));
+		const pending = readQueue(queuePath).items;
+		const localRevision = state.read().revision;
+		// A concurrent online edit can commit locally while the older GET response is in flight.
+		if (!pending.length && localRevision !== revisionBeforePull && localRevision > snapshot.revision) return;
+		const remaining = pending.filter((item) => !replayedKeys.has(mutationKey(item)));
 		state.installSnapshot(snapshot);
 		for (const mutation of remaining) applyQueuedMutation(state, mutation);
 		writeQueue(queuePath, { version: 1, items: remaining });
@@ -427,8 +432,15 @@ export const syncTasks = async (input: {
 		revision = result.revision;
 		replayedItems.push(mutation);
 	}
+	const revisionBeforePull = state.read().revision;
 	const latest = await getStore(transport, input.config, token);
-	commitReplay(state, queuePath, { version: 1, revision: latest.revision, items: latest.items }, replayedItems);
+	commitReplay(
+		state,
+		queuePath,
+		{ version: 1, revision: latest.revision, items: latest.items },
+		revisionBeforePull,
+		replayedItems,
+	);
 	const remaining = readQueue(queuePath).items.length;
 	return {
 		ok: true,
@@ -470,11 +482,15 @@ export const applyMutation = async (input: {
 					replayedItems.push(pending);
 				}
 				const applied = await replayOne(transport, input.config!, token, input.mutation, revision);
+				const revisionBeforePull = state.read().revision;
 				const latest = await getStore(transport, input.config!, token);
-				commitReplay(state, queuePath, { version: 1, revision: latest.revision, items: latest.items }, [
-					...replayedItems,
-					input.mutation,
-				]);
+				commitReplay(
+					state,
+					queuePath,
+					{ version: 1, revision: latest.revision, items: latest.items },
+					revisionBeforePull,
+					[...replayedItems, input.mutation],
+				);
 				return { revision: applied.revision, result: applied.body };
 			},
 			catch: (error) => error,

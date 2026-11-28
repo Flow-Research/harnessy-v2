@@ -12,6 +12,7 @@ import * as Result from "effect/Result";
 import { extractBriefTasks } from "../../read-model/followups.ts";
 import { candidatesFromExtracted } from "./ingest.ts";
 import { applyMeetingFollowupBatch, parseMeetingFollowupBatch } from "./meeting-followups.ts";
+import { commitPriorityBatch } from "./priority-apply.ts";
 import {
 	type FollowupInput,
 	type FollowupView,
@@ -28,6 +29,7 @@ export const TASKS_SERVICE_PORT = 8787;
 
 export interface TasksHttpOptions {
 	readonly file: string;
+	readonly enablePriorityBatch?: boolean;
 	readonly token: string;
 	readonly host?: string;
 	readonly port?: number;
@@ -158,7 +160,13 @@ const followupInput = (value: unknown): FollowupInput & { id?: string; index?: n
 
 const snapshot = (state: TasksState): TasksStore => state.read();
 
-const handle = async (state: TasksState, token: string, req: IncomingMessage, res: ServerResponse): Promise<void> => {
+const handle = async (
+	state: TasksState,
+	token: string,
+	enablePriorityBatch: boolean,
+	req: IncomingMessage,
+	res: ServerResponse,
+): Promise<void> => {
 	const host = req.headers.host ?? "localhost";
 	const url = new URL(req.url ?? "/", `http://${host}`);
 	const method = req.method ?? "GET";
@@ -193,6 +201,12 @@ const handle = async (state: TasksState, token: string, req: IncomingMessage, re
 			{ ok: true, revision: store.revision, view, today, count: items.length, overdue, items },
 			store.revision,
 		);
+		return;
+	}
+	if (enablePriorityBatch && method === "POST" && url.pathname === "/v1/tasks/priority-batch") {
+		const body = await readBody(req);
+		const revision = commitPriorityBatch(state, requireRevision(req, body), body);
+		send(res, 200, { ok: true, revision }, revision);
 		return;
 	}
 	if (method === "POST" && url.pathname === "/v1/tasks") {
@@ -334,7 +348,7 @@ export const startTasksHttpServer = (options: TasksHttpOptions): Promise<TasksHt
 		}
 		const state = new TasksState(options.file);
 		const server: Server = createServer((req, res) => {
-			void handle(state, token, req, res).catch((error: unknown) => {
+			void handle(state, token, options.enablePriorityBatch === true, req, res).catch((error: unknown) => {
 				const code = error instanceof TaskRefused ? error.code : "failed";
 				const revision = code === "stale_revision" ? state.read().revision : undefined;
 				send(

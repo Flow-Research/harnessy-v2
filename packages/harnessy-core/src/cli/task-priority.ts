@@ -1,0 +1,65 @@
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
+import { Console, Effect, Option } from "effect";
+import { Command, Flag } from "effect/cli";
+import { z } from "zod";
+import { finishPriorityRun } from "../jarvis/tasks/priority-apply.ts";
+import { priorityEvidence } from "../jarvis/tasks/priority-evidence.ts";
+import { formatPriorityTable, rankSnapshot, readPriorityStore } from "../jarvis/tasks/priority-shadow.ts";
+import { defaultTasksFile } from "../jarvis/tasks/store.ts";
+
+export const taskPriorityCommand = Command.make(
+	"priority",
+	{
+		tasksFile: Flag.String("tasks-file").pipe(Flag.optional),
+		evidence: Flag.String("evidence").pipe(Flag.optional),
+		at: Flag.String("at").pipe(Flag.optional),
+		view: Flag.String("view").pipe(
+			Flag.optional,
+			Flag.withDescription("Filter the shadow view: all, mine, waiting, or candidates."),
+		),
+		shadow: Flag.Boolean("shadow").pipe(Flag.withDefault(false)),
+		json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
+		apply: Flag.Boolean("apply").pipe(Flag.withDefault(false)),
+		confirm: Flag.String("confirm").pipe(Flag.optional),
+	},
+	(flags) =>
+		Effect.tryPromise(async () => {
+			if (flags.shadow && flags.apply) throw new Error("Choose either shadow or apply");
+			const cache = defaultTasksFile(homedir());
+			const file = resolve(Option.getOrElse(flags.tasksFile, () => cache));
+			const evidenceFile = Option.getOrUndefined(flags.evidence);
+			const evidence = evidenceFile
+				? priorityEvidence.parse(JSON.parse(readFileSync(evidenceFile, "utf8")))
+				: { version: 1 as const, tasks: [] };
+			const instant = Option.getOrUndefined(flags.at);
+			const at = instant === undefined ? new Date() : new Date(z.iso.datetime({ offset: true }).parse(instant));
+			const store = readPriorityStore(file);
+			const snapshot = await rankSnapshot(store, evidence, at);
+			const view = z.enum(["all", "mine", "waiting", "candidates"]).parse(Option.getOrElse(flags.view, () => "all"));
+			if (view !== "all" && flags.apply) throw new Error("Write-back requires the full preview");
+			if (view === "candidates")
+				return flags.json
+					? JSON.stringify(snapshot.candidates, null, 2)
+					: [
+							"ID\tTask\tState\tSummary",
+							...snapshot.candidates.map((c) =>
+								[c.id, c.taskId, c.state, c.summary].map((s) => s.replace(/[\p{Cc}\p{Cf}]/gu, " ")).join("\t"),
+							),
+						].join("\n");
+			if (view === "mine" || view === "waiting") {
+				const rows = snapshot.rows.filter((r) => r[view]);
+				return flags.json ? JSON.stringify(rows, null, 2) : formatPriorityTable({ ...snapshot, rows });
+			}
+			const result = await finishPriorityRun(snapshot, flags.apply, Option.getOrUndefined(flags.confirm));
+			if (flags.json) return JSON.stringify(result, null, 2);
+			return "propagation" in result
+				? `${formatPriorityTable(result)}\n${result.propagation}`
+				: formatPriorityTable(result);
+		}).pipe(Effect.flatMap(Console.log)),
+).pipe(
+	Command.withDescription(
+		"Preview action priorities from a local task store. Calendar and mail are offline by default. Write-back requires a service with priority batches enabled, --apply, and --confirm with the preview snapshot ID. The Mac cache updates on the next successful sync.",
+	),
+);

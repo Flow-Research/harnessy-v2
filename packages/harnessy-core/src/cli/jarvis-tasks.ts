@@ -39,6 +39,8 @@ import {
 } from "../jarvis/tasks/index.ts";
 import { targetOption } from "./shared.ts";
 
+import { taskPriorityCommand } from "./task-priority.ts";
+
 const homeRootOption = Options.String("home-root").pipe(
 	Options.optional,
 	Options.withDescription("Home-like root that holds ~/.harnessy/portal/tasks.json. Defaults to the user home."),
@@ -613,5 +615,6 @@ export const jarvisTasksCommand = Command.make("tasks").pipe(
 		jarvisTasksCloseoutCommand,
 		jarvisFollowupCommand,
 		jarvisTasksSyncCommand,
+		taskPriorityCommand,
 	] as const),
 );
