@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "revision": 7,
+  "items": [
+    {
+      "id": "10000000-0000-4000-8000-000000000001",
+      "title": "Review proposal",
+      "status": "waiting",
+      "owner": null,
+      "due": null,
+      "project": null,
+      "priority": 100,
+      "outcome": null,
+      "carriedFrom": null,
+      "fingerprint": null,
+      "source": {
+        "kind": "native",
+        "path": null,
+        "line": null,
+        "displayRef": "list",
+        "briefDate": null
+      },
+      "createdAt": "2026-11-28T10:00:00.000Z",
+      "updatedAt": "2026-11-28T10:00:00.000Z",
+      "kind": "task",
+      "waitingOn": null,
+      "link": null,
+      "resolvedAt": null,
+      "resolution": null
+    },
+    {
+      "id": "20000000-0000-4000-8000-000000000002",
+      "title": "Confirm handoff",
+      "status": "todo",
+      "owner": null,
+      "due": null,
+      "project": null,
+      "priority": 101,
+      "outcome": null,
+      "carriedFrom": null,
+      "fingerprint": null,
+      "source": {
+        "kind": "native",
+        "path": null,
+        "line": null,
+        "displayRef": "list",
+        "briefDate": null
+      },
+      "createdAt": "2026-11-28T10:00:00.000Z",
+      "updatedAt": "2026-11-28T10:00:00.000Z",
+      "kind": "task",
+      "waitingOn": null,
+      "link": null,
+      "resolvedAt": null,
+      "resolution": null
+    },
+    {
+      "id": "30000000-0000-4000-8000-000000000003",
+      "title": "Completed example",
+      "status": "done",
+      "owner": null,
+      "due": null,
+      "project": null,
+      "priority": 102,
+      "outcome": null,
+      "carriedFrom": null,
+      "fingerprint": null,
+      "source": {
+        "kind": "native",
+        "path": null,
+        "line": null,
+        "displayRef": "list",
+        "briefDate": null
+      },
+      "createdAt": "2026-11-28T10:00:00.000Z",
+      "updatedAt": "2026-11-28T10:00:00.000Z",
+      "kind": "task",
+      "waitingOn": null,
+      "link": null,
+      "resolvedAt": null,
+      "resolution": null
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "taskId": "10000000-0000-4000-8000-000000000001",
+      "actions": [
+        {
+          "id": "example-0",
+          "kind": "decision",
+          "owner": "other",
+          "importance": {
+            "rule": "I1",
+            "source": "approved-plan"
+          },
+          "source": "approved-plan",
+          "dates": [
+            {
+              "kind": "plan",
+              "authority": "approved-plan",
+              "source": "approved-plan",
+              "confidence": "high",
+              "day": "2026-11-28"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "taskId": "20000000-0000-4000-8000-000000000002",
+      "actions": [
+        {
+          "id": "example-1",
+          "kind": "decision",
+          "owner": "self",
+          "importance": {
+            "rule": "I1",
+            "source": "approved-plan"
+          },
+          "source": "approved-plan",
+          "dates": [
+            {
+              "kind": "plan",
+              "authority": "approved-plan",
+              "source": "approved-plan",
+              "confidence": "high",
+              "day": "2026-11-28"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
