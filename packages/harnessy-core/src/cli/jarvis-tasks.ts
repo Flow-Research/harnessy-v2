@@ -37,6 +37,7 @@ import {
 	TasksState,
 	validateCloseoutNote,
 } from "../jarvis/tasks/index.ts";
+import { defaultLocalMeetingFile, isLocalMeetingStore } from "../jarvis/tasks/sync.ts";
 import { targetOption } from "./shared.ts";
 
 const homeRootOption = Options.String("home-root").pipe(
@@ -453,6 +454,24 @@ export const jarvisTasksCloseoutCommand = Command.make(
 
 const FOLLOWUP_VIEWS: ReadonlyArray<FollowupView> = ["open", "overdue", "resolved", "all"];
 
+const localMeetingsOption = Options.Boolean("local-meetings").pipe(
+	Options.withDefault(false),
+	Options.withDescription(
+		"Use the local-only meeting store beside the task store (tasks.meeting-local.json). It never syncs: no request, no queue.",
+	),
+);
+
+/** The follow-up store for a command: the local meeting store with `--local-meetings`. */
+const followupFile = (
+	homeRoot: Option.Option<string>,
+	stateDir: Option.Option<string>,
+	tasksFile: Option.Option<string>,
+	localMeetings: boolean,
+): string => {
+	const file = resolveFile(homeRoot, stateDir, tasksFile);
+	return localMeetings && !isLocalMeetingStore(file) ? defaultLocalMeetingFile(file) : file;
+};
+
 export const jarvisFollowupAddCommand = Command.make(
 	"add",
 	{
@@ -530,16 +549,18 @@ export const jarvisFollowupListCommand = Command.make(
 			Options.optional,
 			Options.withDescription("Today for the overdue check (YYYY-MM-DD). Defaults to today in Africa/Lagos."),
 		),
+		localMeetings: localMeetingsOption,
 	},
-	({ homeRoot, stateDir, tasksFile, view, today, endpoint, tokenFile, syncConfig }) =>
+	({ homeRoot, stateDir, tasksFile, view, today, localMeetings, endpoint, tokenFile, syncConfig }) =>
 		runAsync(async () => {
 			const chosen = FOLLOWUP_VIEWS.find((entry) => entry === view.trim().toLowerCase());
 			if (chosen === undefined) throw new TaskRefused("invalid_view");
 			const day = Option.getOrUndefined(today) ?? lagosCalendarDate(new Date());
 			if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) throw new TaskRefused("invalid_due");
-			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			const file = followupFile(homeRoot, stateDir, tasksFile, localMeetings);
 			const config = configFrom(endpoint, tokenFile, syncConfig);
-			if (config !== undefined) {
+			// A pull would replace the local-only meeting store, so it is read as it is.
+			if (config !== undefined && !isLocalMeetingStore(file)) {
 				await Effect.runPromise(
 					Effect.tryPromise({
 						try: () => syncTasks({ tasksFile: file, config }),
@@ -564,10 +585,12 @@ export const jarvisFollowupResolveCommand = Command.make(
 			Options.optional,
 			Options.withDescription("Resolution note, up to 500 characters."),
 		),
+		localMeetings: localMeetingsOption,
 	},
-	({ homeRoot, stateDir, tasksFile, id, note, endpoint, tokenFile, syncConfig }) =>
+	({ homeRoot, stateDir, tasksFile, id, note, localMeetings, endpoint, tokenFile, syncConfig }) =>
 		runAsync(async () => {
-			const file = resolveFile(homeRoot, stateDir, tasksFile);
+			// `applyMutation` never syncs or queues the local-only meeting store.
+			const file = followupFile(homeRoot, stateDir, tasksFile, localMeetings);
 			const applied = await applyMutation({
 				tasksFile: file,
 				config: configFrom(endpoint, tokenFile, syncConfig),

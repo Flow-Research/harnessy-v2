@@ -32,7 +32,7 @@ import {
 import { JarvisConfigReader } from "../jarvis/config.ts";
 import { JarvisCredentialResolver } from "../jarvis/credentials.ts";
 import { JarvisDiagnostic } from "../jarvis/diagnostic.ts";
-import { meetingRouteRulesForInbox, runConfiguredFathomPoll } from "../jarvis/fathom/host.ts";
+import { fathomPollCreatedAfter, meetingRouteRulesForInbox, runConfiguredFathomPoll } from "../jarvis/fathom/host.ts";
 import { installFathomSchedule, planFathomSchedule } from "../jarvis/fathom/schedule.ts";
 import { inspectFathomStatus, listFathomInbox, planFathomImport } from "../jarvis/fathom/status.ts";
 import { resolveLifeOrchestratorSettings } from "../jarvis/life-orchestrator/config.ts";
@@ -141,6 +141,26 @@ const communityLimitOption = Options.Int("limit").pipe(
 const fathomAccountOption = Options.String("account").pipe(
 	Options.atLeast(0),
 	Options.withDescription("Fathom account label to poll (repeatable; defaults to the approved V2 scope)."),
+);
+const fathomDryRunOption = Options.Boolean("dry-run").pipe(
+	Options.withDefault(false),
+	Options.withDescription(
+		"Report the follow-ups the poll would capture; write no task, queue or capture state and do not contact the task VPS.",
+	),
+);
+const fathomFlushOption = Options.Boolean("flush").pipe(
+	Options.withDefault(true),
+	Options.withDescription("Replay the task queue to the VPS after capture (--no-flush keeps the queue local)."),
+);
+const fathomSyncExtractedOption = Options.Boolean("sync-extracted").pipe(
+	Options.withDefault(false),
+	Options.withDescription(
+		"Also send follow-ups found in the summary or transcript to the task VPS. Off by default: they stay in the local meeting store.",
+	),
+);
+const fathomRecaptureDaysOption = Options.Int("recapture-days").pipe(
+	Options.withDefault(14),
+	Options.withDescription("Check existing notes of meetings in the last N days again (0 turns it off, at most 60)."),
 );
 const lifeSettings = (target: string, homeRoot: Option.Option<string>, compatibilityRoot: Option.Option<string>) =>
 	resolveLifeOrchestratorSettings({
@@ -1061,13 +1081,20 @@ export const jarvisMeetingFathomPollCommand = Command.make(
 		sourceRoot: fathomSourceRootOption,
 		limit: communityLimitOption,
 		accounts: fathomAccountOption,
+		dryRun: fathomDryRunOption,
+		flush: fathomFlushOption,
+		recaptureDays: fathomRecaptureDaysOption,
+		syncExtracted: fathomSyncExtractedOption,
 		json: jsonOption,
 	},
-	({ target, sourceRoot, limit, accounts, json }) =>
+	({ target, sourceRoot, limit, accounts, dryRun, flush, recaptureDays, syncExtracted, json }) =>
 		Effect.gen(function* () {
-			// Start a recent window with idempotent overlap. Ingest resumes any
-			// unfinished window with its saved filter before starting this new one.
-			const createdAfter = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+			// Start a recent window with idempotent overlap: 72 hours, or the recapture
+			// window when that is longer, so a meeting that Fathom changes later is
+			// listed again. Ingest pages through it and resumes an unfinished window
+			// with its saved filter before starting this new one.
+			const windowDays = Math.max(0, Math.min(60, recaptureDays));
+			const createdAfter = fathomPollCreatedAfter(new Date(), windowDays);
 			const paths = yield* (yield* JarvisPathResolver).resolve(target);
 			const config = yield* (yield* JarvisConfigReader).loadResolved(paths);
 			const status = inspectFathomStatus({
@@ -1086,7 +1113,8 @@ export const jarvisMeetingFathomPollCommand = Command.make(
 						limit,
 						createdAfter,
 						sourceRoot: config.meetingPublication.sourcePath,
-						followups: pollFollowupStore(),
+						followups: { ...pollFollowupStore(), dryRun, noFlush: !flush, syncExtracted },
+						recaptureDays: windowDays,
 						readApiKey: (resolvedConfig, resolvedPaths, account) =>
 							Effect.runPromise(
 								credentials
@@ -1118,7 +1146,7 @@ export const jarvisMeetingFathomPollCommand = Command.make(
 				}
 				if (result.followups !== null)
 					yield* Console.log(
-						`follow-ups: created ${result.followups.created}, existing ${result.followups.existing}, queued ${result.followups.queued}${result.followups.failed === 0 ? "" : `, failed ${result.followups.failed}`}`,
+						`follow-ups${result.followups.dryRun ? " (dry run)" : ""}: notes ${result.followups.captured} captured, ${result.followups.unchanged} unchanged; created ${result.followups.created} (local only ${result.followups.local}), existing ${result.followups.existing}, similar ${result.followups.similar}, queued ${result.followups.queued}${result.followups.failed === 0 ? "" : `, failed ${result.followups.failed}`}`,
 					);
 				if (result.tasksSync !== null && result.tasksSync.state !== "skipped")
 					yield* Console.log(

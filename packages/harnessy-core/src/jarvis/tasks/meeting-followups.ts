@@ -5,8 +5,9 @@
  * the archive. Identity is the note fingerprint plus the normalised action text
  * (and its occurrence when a meeting repeats an action), so a second poll, a
  * queued replay or the VPS copy all reach the same item. A follow-up keeps the
- * note path as its source and the recording as its link. Nothing here sets a
- * due date or closes an item.
+ * note path as its source and the recording (or the moment in it) as its link.
+ * An item can carry a due date that its source text stated. Nothing here closes
+ * an item.
  */
 import { createHash } from "node:crypto";
 
@@ -14,6 +15,7 @@ import { normaliseTaskText } from "../../read-model/followups.ts";
 import {
 	type IngestCandidate,
 	type StoredTask,
+	TASK_DAY,
 	TASK_FINGERPRINT,
 	TASK_ID,
 	TASK_LINK_MAX,
@@ -35,12 +37,21 @@ export interface MeetingFollowupNote {
 	/** The note's `Fingerprint:` metadata, for example `fathom:123:2026-11-27T09:00:00Z`. */
 	readonly fingerprint: string;
 	readonly shareUrl: string | null;
+	/** Fathom action items and the commitments extracted from the summary or transcript. */
 	readonly actionItems: ReadonlyArray<{
 		readonly text: string;
 		readonly owner: string | null;
 		readonly completed: boolean;
 		/** 1-based line of the item in the note. */
 		readonly line: number;
+		/**
+		 * The text the fingerprint hashes, when it is not `text`. Fathom action items
+		 * leave it out, so their ids are the same as before extraction existed.
+		 */
+		readonly key?: string;
+		readonly due?: string | null;
+		/** A link to the moment in the recording; the note's share URL otherwise. */
+		readonly link?: string | null;
 	}>;
 }
 
@@ -52,6 +63,8 @@ export interface MeetingFollowupItem {
 	readonly fingerprint: string;
 	readonly link: string | null;
 	readonly project: string | null;
+	/** Present only when the source stated a date. */
+	readonly due?: string;
 }
 
 /** One note's follow-ups: the unit that is applied locally, queued and sent to the VPS. */
@@ -79,20 +92,23 @@ export const meetingFollowupBatch = (note: MeetingFollowupNote): MeetingFollowup
 	const seen = new Map<string, number>();
 	const items: MeetingFollowupItem[] = [];
 	for (const action of note.actionItems) {
-		const key = normaliseTaskText(action.text);
-		if (key.length === 0) continue;
+		const keyText = action.key ?? action.text;
+		const key = normaliseTaskText(keyText);
+		if (key.length === 0 || normaliseTaskText(action.text).length === 0) continue;
 		const occurrence = seen.get(key) ?? 0;
 		seen.set(key, occurrence + 1);
 		if (action.completed) continue;
-		const fingerprint = taskFingerprint("meeting", action.text, occurrence, note.fingerprint);
+		const fingerprint = taskFingerprint("meeting", keyText, occurrence, note.fingerprint);
+		const due = action.due != null && TASK_DAY.test(action.due) ? action.due : null;
 		items.push({
 			id: meetingFollowupId(fingerprint),
 			title: action.text.slice(0, TASK_TITLE_MAX),
 			owner: action.owner === null ? null : action.owner.slice(0, TASK_OWNER_MAX),
 			line: action.line,
 			fingerprint,
-			link: note.shareUrl,
+			link: action.link ?? note.shareUrl,
 			project: note.project === null ? null : note.project.slice(0, TASK_PROJECT_MAX),
+			...(due === null ? {} : { due }),
 		});
 		if (items.length >= MEETING_FOLLOWUP_BATCH_MAX) break;
 	}
@@ -124,6 +140,8 @@ export const parseMeetingFollowupBatch = (value: unknown): MeetingFollowupBatch 
 		if (raw.id !== meetingFollowupId(raw.fingerprint)) throw new TaskRefused("invalid_id");
 		if (!text(raw.title, TASK_TITLE_MAX)) throw new TaskRefused("invalid_title");
 		if (!Number.isInteger(raw.line) || (raw.line as number) < 1) throw new TaskRefused("invalid_line");
+		if (raw.due != null && (typeof raw.due !== "string" || !TASK_DAY.test(raw.due)))
+			throw new TaskRefused("invalid_due");
 		return {
 			id: raw.id,
 			title: raw.title.trim(),
@@ -132,6 +150,7 @@ export const parseMeetingFollowupBatch = (value: unknown): MeetingFollowupBatch 
 			fingerprint: raw.fingerprint,
 			link: optional(raw.link, TASK_LINK_MAX, "invalid_link"),
 			project: optional(raw.project, TASK_PROJECT_MAX, "invalid_project"),
+			...(typeof raw.due === "string" ? { due: raw.due } : {}),
 		};
 	});
 	return { path: value.path, displayRef: value.displayRef, items };
@@ -163,7 +182,7 @@ export const applyMeetingFollowupBatch = (
 			title: item.title,
 			status: "todo",
 			owner: item.owner,
-			due: null,
+			due: item.due ?? null,
 			line: item.line,
 			fingerprint: item.fingerprint,
 			displayRef: batch.displayRef,

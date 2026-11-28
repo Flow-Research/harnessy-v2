@@ -28,6 +28,18 @@ import {
 } from "./store.ts";
 
 export const DEFAULT_SYNC_CONFIG_PATH = join(homedir(), ".config", "harnessy", "tasks-sync.json");
+
+/**
+ * The local-only meeting store beside a task store: `tasks.json` gives
+ * `tasks.meeting-local.json`. Its follow-ups came from meeting summaries and
+ * transcripts and must stay on this machine, so no sync reads, replaces or
+ * queues it.
+ */
+export const LOCAL_MEETING_STORE_SUFFIX = ".meeting-local.json";
+export const isLocalMeetingStore = (tasksFile: string): boolean =>
+	basename(tasksFile).endsWith(LOCAL_MEETING_STORE_SUFFIX);
+export const defaultLocalMeetingFile = (tasksFile: string): string =>
+	join(dirname(tasksFile), `${basename(tasksFile).replace(/\.json$/u, "")}${LOCAL_MEETING_STORE_SUFFIX}`);
 export const DEFAULT_SYNC_TOKEN_PATH = join(homedir(), ".config", "harnessy", "tasks-sync.token");
 export const DEFAULT_SYNC_QUEUE_NAME = "tasks-sync-queue.json";
 
@@ -414,6 +426,8 @@ export const syncTasks = async (input: {
 	readonly remaining: number;
 	readonly pulled: number;
 }> => {
+	// A pull replaces the local items, so the local-only meeting store is never a sync destination.
+	if (isLocalMeetingStore(input.tasksFile)) throw new TaskRefused("local_meeting_store");
 	const transport = input.transport ?? fetchTransport;
 	const token = input.token ?? readSyncToken(input.config.tokenFile);
 	const queuePath = input.queuePath ?? defaultQueuePath(input.tasksFile);
@@ -449,7 +463,8 @@ export const applyMutation = async (input: {
 	readonly mutationForQueue?: (result: unknown) => QueuedMutation;
 }): Promise<{ readonly mode: "remote" | "queued"; readonly revision: number; readonly result: unknown }> => {
 	const state = new TasksState(input.tasksFile);
-	if (input.config === undefined) {
+	// The local-only meeting store changes here and nowhere else: no request, no queue.
+	if (input.config === undefined || isLocalMeetingStore(input.tasksFile)) {
 		const result = input.applyLocal(state);
 		return { mode: "remote", revision: state.read().revision, result };
 	}

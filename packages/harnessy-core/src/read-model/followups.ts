@@ -18,6 +18,7 @@ import { join, relative } from "node:path";
 import * as Result from "effect/Result";
 import type { TaskData, TaskListData, TaskSourceData } from "./app-schemas.ts";
 import { readBoundedDirectory, readBoundedFile } from "./files.ts";
+import { OWNER_LEAD, OWNER_VERB } from "./owner-due.ts";
 import { guardTile, okTile, ReadModelStateError, type TileResult } from "./tile.ts";
 
 export type TaskSourceKind = TaskData["source"]["kind"];
@@ -51,15 +52,6 @@ const DATE = /\b(20\d{2}-\d{2}-\d{2})\b/u;
 const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/u;
 const BULLET = /^(?:[-*+]|\d{1,3}[.)])\s+(.*)$/u;
 const CHECKBOX = /^\[([ xX])\]\s+(.*)$/u;
-const OWNER_LEAD = /^([A-Z][\p{L}.,'&+ ]{0,48}?)\s+[—–]\s+(.+)$/u;
-/**
- * "Name owes …", "Name owed …" or "Name owns …" in a brief's "Delegated or Waiting"
- * list. The owner is at most three words, so a verb later in a sentence does not
- * make the sentence's start an owner. The first name is the owner. The title keeps the whole sentence, because the
- * verb is part of the commitment.
- */
-const OWNER_VERB = /^([A-Z][\p{L}.'&+-]*(?:\s+[\p{L}.'&+-]+){0,2})\s+(?:owes|owed|owns)\s+\S/u;
-
 /** Plain text from one Markdown line: emphasis, code ticks and link targets removed. */
 export const plainText = (value: string): string =>
 	value
