@@ -1,21 +1,24 @@
 import { z } from "zod";
-import { readOwnerFile } from "./owner-file.ts";
+import { readOwnerJson } from "./owner-file.ts";
 
 /**
- * The stored calendar observations. Only opaque keys, derived flags, Jarvis IDs
- * and timestamps are allowed here. Titles, descriptions, locations, attendees and
- * addresses never enter this shape, so they cannot reach storage, logs or sync.
+ * The stored calendar observations. Only opaque keys, derived flags and
+ * timestamps are allowed here. Titles, descriptions, locations, attendees,
+ * addresses, folder names and raw marker values never enter this shape, so they
+ * cannot reach storage, logs or sync.
  */
 const key = z.string().regex(/^[a-f0-9]{64}$/u);
 const instant = z.iso.datetime({ offset: true });
 const marker = z.strictObject({
 	kind: z.enum(["action", "task"]),
-	id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u),
+	key,
 	relation: z.enum(["preparation", "agenda"]).optional(),
 });
 export const storedEvent = z.strictObject({
 	key,
 	account: key,
+	/** Same meeting and occurrence seen through more than one account. The provider keeps one signal per group. */
+	copyGroup: key,
 	series: key.nullable(),
 	occurrence: instant.nullable(),
 	start: instant,
@@ -25,15 +28,16 @@ export const storedEvent = z.strictObject({
 	response: z.enum(["accepted", "tentative", "declined", "needsAction", "unknown"]),
 	organizerSelf: z.boolean(),
 	jarvisBlock: z.boolean(),
-	duplicateOf: key.nullable(),
 	relation: z.enum(["preparation", "agenda", "none"]),
-	markers: z.array(marker),
-	candidates: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u)),
+	markers: z.array(marker).max(8),
+	/** Keyed hashes of the action IDs that the local heuristic proposed. */
+	candidates: z.array(key).max(8),
 });
 export type StoredEvent = z.infer<typeof storedEvent>;
 
 export const accountReasons = [
 	"no-consent",
+	"unbound",
 	"auth",
 	"scope",
 	"failed",
@@ -50,7 +54,7 @@ export const storedAccount = z.strictObject({
 export type StoredAccount = z.infer<typeof storedAccount>;
 
 export const observationStore = z.strictObject({
-	version: z.literal(1),
+	version: z.literal(2),
 	importedAt: instant,
 	window: z.strictObject({ from: instant, to: instant }),
 	fingerprint: key,
@@ -60,8 +64,7 @@ export const observationStore = z.strictObject({
 export type ObservationStore = z.infer<typeof observationStore>;
 
 export function readObservations(path: string): ObservationStore | undefined {
-	const text = readOwnerFile(path);
-	return text === undefined ? undefined : observationStore.parse(JSON.parse(text));
+	return readOwnerJson(path, "observations file", (value) => observationStore.parse(value));
 }
 
 /**
@@ -83,6 +86,5 @@ export type LinkDecision = z.output<typeof linkDecision>;
 const decisionsFile = z.strictObject({ version: z.literal(1), decisions: z.array(linkDecision) });
 
 export function readDecisions(path: string): readonly LinkDecision[] {
-	const text = readOwnerFile(path);
-	return text === undefined ? [] : decisionsFile.parse(JSON.parse(text)).decisions;
+	return readOwnerJson(path, "decisions file", (value) => decisionsFile.parse(value).decisions) ?? [];
 }

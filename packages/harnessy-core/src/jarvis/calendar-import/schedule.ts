@@ -1,4 +1,5 @@
 import { isAbsolute, join } from "node:path";
+import { CalendarImportError } from "./keys.ts";
 
 export const CALENDAR_IMPORT_LAUNCH_AGENT_LABEL = "com.flow-harness.calendar-import" as const;
 /** Thirty minutes keeps observations well inside the provider's two-hour freshness limit. */
@@ -8,6 +9,8 @@ export interface CalendarImportScheduleOptions {
 	readonly nodePath: string;
 	readonly cliPath: string;
 	readonly googleExecutable: string;
+	/** The digest a person approved at install time. Every run compares the binary with it. */
+	readonly googleExecutableSha256: string;
 	readonly home: string;
 }
 
@@ -31,7 +34,9 @@ export function renderCalendarImportPlist(options: CalendarImportScheduleOptions
 		["Google executable", options.googleExecutable],
 		["home", options.home],
 	] as const)
-		if (!isAbsolute(value)) throw new Error(`${label} path must be absolute`);
+		if (!isAbsolute(value)) throw new CalendarImportError(`${label} path must be absolute`);
+	if (!/^[a-f0-9]{64}$/u.test(options.googleExecutableSha256))
+		throw new CalendarImportError("The approved Google executable SHA-256 must be 64 lowercase hex characters");
 	const log = join(options.home, ".harnessy", "logs", `${CALENDAR_IMPORT_LAUNCH_AGENT_LABEL}.log`);
 	const argumentsList = [
 		options.nodePath,
@@ -41,6 +46,8 @@ export function renderCalendarImportPlist(options: CalendarImportScheduleOptions
 		"import",
 		"--google-executable",
 		options.googleExecutable,
+		"--google-executable-sha256",
+		options.googleExecutableSha256,
 	];
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

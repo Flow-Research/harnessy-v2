@@ -1,23 +1,30 @@
 /**
  * Local, deterministic event classification. The input text stays in memory.
- * Only the derived relation and the parsed Jarvis ID markers leave this module.
+ * Only the derived relation and keyed hashes of marker values leave this module.
  * No outside model or network classifier is used.
  */
+import { actionKey, taskKey } from "./keys.ts";
 
 export type EventRelation = "preparation" | "agenda" | "none";
 
-/** An explicit link that a person wrote into the event. IDs are Jarvis action or task IDs. */
+/** An explicit link written into the event. The value is stored only as a keyed hash. */
 export interface LinkMarker {
 	readonly kind: "action" | "task";
-	readonly id: string;
-	/** Set only when the marker itself names the relation (`Jarvis-Prep`, `Jarvis-Agenda`). */
+	readonly key: string;
+	/** Set only when the marker label names the relation (`Jarvis-Prep`, `Jarvis-Agenda`). */
 	readonly relation?: "preparation" | "agenda";
 }
 
+/** At most this many markers per event are kept. Others are ignored. */
+export const MAX_MARKERS = 8;
+
 const ACTION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const MARKER =
-	/(?:^|[\s>([])(jarvis-prep|jarvis-agenda|jarvis-action|action id|jarvis-task|task id)\s*:\s*([A-Za-z0-9][A-Za-z0-9._:-]{0,127})/giu;
+// A complete marker token: a label at a word start, a colon, and one value token
+// that ends at whitespace, punctuation or the end of the text.
+const MARKER_SOURCE =
+	"(?:^|(?<=[\\s>(\\[]))(jarvis-prep|jarvis-agenda|jarvis-action|action id|jarvis-task|task id)\\s*:\\s*([A-Za-z0-9][A-Za-z0-9._:-]{0,127})(?=$|[\\s,;)\\]<\"'])";
+const marker = () => new RegExp(MARKER_SOURCE, "giu");
 
 /** Google stores some descriptions as HTML. Reduce them to plain text before matching. */
 export function plainText(value: string): string {
@@ -32,27 +39,33 @@ export function plainText(value: string): string {
 		.replace(/&amp;/gu, "&");
 }
 
-/** Parse explicit link markers. Text that does not form a valid Jarvis ID is ignored. */
-export function parseMarkers(text: string): LinkMarker[] {
+/** Parse explicit link markers and return keyed hashes of their values. */
+export function parseMarkers(text: string, salt: Buffer): LinkMarker[] {
 	const markers: LinkMarker[] = [];
 	const seen = new Set<string>();
-	for (const match of plainText(text).matchAll(MARKER)) {
+	for (const match of plainText(text).matchAll(marker())) {
 		const label = (match[1] ?? "").toLowerCase();
 		const id = (match[2] ?? "").replace(/[.:]+$/u, "");
 		const kind = label === "jarvis-task" || label === "task id" ? "task" : "action";
 		if (kind === "task" ? !TASK_ID.test(id) : !ACTION_ID.test(id)) continue;
 		const relation = label === "jarvis-prep" ? "preparation" : label === "jarvis-agenda" ? "agenda" : undefined;
-		const marker: LinkMarker = {
+		const value: LinkMarker = {
 			kind,
-			id: kind === "task" ? id.toLowerCase() : id,
+			key: kind === "task" ? taskKey(salt, id) : actionKey(salt, id),
 			...(relation ? { relation } : {}),
 		};
-		const key = `${marker.kind}|${marker.id.toLowerCase()}|${marker.relation ?? ""}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		markers.push(marker);
+		const dedupe = `${value.kind}|${value.key}|${value.relation ?? ""}`;
+		if (seen.has(dedupe)) continue;
+		seen.add(dedupe);
+		markers.push(value);
+		if (markers.length === MAX_MARKERS) break;
 	}
 	return markers;
+}
+
+/** Remove marker spans, so an ID such as `board-report` cannot act as a preparation word. */
+export function withoutMarkers(text: string): string {
+	return plainText(text).replace(marker(), " ");
 }
 
 const PREPARATION =
@@ -60,9 +73,9 @@ const PREPARATION =
 const AGENDA =
 	/\b(agenda|discuss|discussion|sync|stand-?up|check-?in|catch-?up|1:1|one-on-one|weekly|retro|update)\b/iu;
 
-/** Preparation-needed, agenda mention, or neither. Preparation cues win over agenda cues. */
+/** Preparation-needed, agenda mention, or neither, from natural-language text only. */
 export function classifyEvent(title: string, description: string): EventRelation {
-	const text = `${title}\n${plainText(description)}`;
+	const text = withoutMarkers(`${title}\n${description}`);
 	if (PREPARATION.test(text)) return "preparation";
 	return AGENDA.test(text) ? "agenda" : "none";
 }

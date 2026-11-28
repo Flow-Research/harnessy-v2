@@ -55,14 +55,19 @@
 
 - `harnessy jarvis calendar import` reads the primary Google Calendar of each
   consented gws account, read-only, for the window from 1 day back to 8 days
-  ahead. It stores only opaque HMAC keys, derived flags, Jarvis IDs and
-  timestamps under `~/.harnessy/calendar-import/` (0700 folder, 0600 files).
-  Titles and descriptions stay in memory for local classification and are
-  never stored or printed. `--dry-run` prints counts and writes nothing.
-  `import-consent` records per-account consent, and `import-schedule` prints
-  a launchd job definition without writing or loading it. The calendar
-  provider gives the task priority engine only explicitly linked or
-  human-accepted, confirmed, accepted and future events.
+  ahead. An account is read only when its primary calendar matches the
+  identity approved at consent, and only through a native gws binary that
+  matches the SHA-256 given with `--google-executable-sha256`. The importer
+  stores only opaque HMAC keys, derived flags and timestamps under
+  `~/.harnessy/calendar-import/` (0700 folder, 0600 files). Account folder
+  names, titles, descriptions and marker values are never stored or printed.
+  `--dry-run` prints counts and writes nothing. `--account` is allowed only
+  with `--dry-run`. `import-consent` records per-account consent and, with
+  `--approved-identity-sha256-prefix`, binds the approved identity.
+  `import-schedule` prints a launchd job definition without writing or
+  loading it. The calendar provider gives the task priority engine only
+  explicitly linked or human-accepted, confirmed, accepted and future events,
+  with one signal per meeting copy.
 - The engineering loop raises a durable intervention for a remote run when
   provider admission pauses an acknowledged run or when the run needs
   reconciliation. It delivers the intervention to Garden through the signed

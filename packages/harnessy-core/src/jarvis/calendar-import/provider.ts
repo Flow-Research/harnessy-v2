@@ -1,5 +1,4 @@
-import { isEligible } from "./importer.ts";
-import { type EvidenceState, resolveLink } from "./match.ts";
+import { type EvidenceState, isEligible, keyDecisions, resolveLink, subjectOf, type TasksOfAction } from "./match.ts";
 import type { LinkDecision, ObservationStore } from "./observations.ts";
 
 // Structurally identical to `CalendarSignal`, `Availability` and the calendar half
@@ -18,10 +17,12 @@ export interface CalendarPriorityProvider {
 export const OBSERVATIONS_MAX_AGE_MS = 2 * 3_600_000;
 
 export interface CalendarProviderOptions {
+	/** The importer salt. Action and task IDs are compared as keyed hashes. */
+	readonly salt: Buffer;
 	/** Read the latest stored observations. Called once per query, so a new import is seen. */
 	readonly observations: () => ObservationStore | undefined;
 	readonly decisions: () => readonly LinkDecision[];
-	readonly actionsOfTask?: (taskId: string) => readonly string[];
+	readonly tasksOfAction?: TasksOfAction;
 	readonly maxAgeMs?: number;
 }
 
@@ -30,24 +31,36 @@ export interface CalendarEvidence {
 	readonly signals: readonly CalendarSignal[];
 }
 
-/** Evidence for one action at one instant. Only verified, eligible events become signals. */
+/**
+ * Evidence for one action at one instant. Only verified, eligible events become
+ * signals. Copies of one meeting seen through several accounts give at most one
+ * signal, chosen after matching, so a declined copy cannot hide an accepted one.
+ */
 export function calendarEvidence(options: CalendarProviderOptions, actionId: string, at: Date): CalendarEvidence {
 	const store = options.observations();
 	const age = store ? at.getTime() - Date.parse(store.importedAt) : Number.NaN;
 	if (!store || !(age >= 0 && age <= (options.maxAgeMs ?? OBSERVATIONS_MAX_AGE_MS)))
 		return { state: "unavailable", signals: [] };
-	const decisions = options.decisions();
-	const signals: CalendarSignal[] = [];
+	// No account read means nothing was checked, even when no account failed.
+	if (!store.accounts.some((account) => account.state === "read")) return { state: "unavailable", signals: [] };
+	const subject = subjectOf(options.salt, actionId, options.tasksOfAction ?? (() => []));
+	const decisions = keyDecisions(options.salt, options.decisions());
+	const byGroup = new Map<string, CalendarSignal>();
 	let candidate = false;
 	let conflict = false;
 	for (const event of store.events) {
-		const link = resolveLink(event, actionId, decisions, options.actionsOfTask);
+		const link = resolveLink(event, subject, decisions);
 		if (link.state === "candidate") candidate = true;
 		if (link.state === "conflict") conflict = true;
 		if (link.state !== "verified" || !isEligible(event, at) || !link.relation) continue;
-		signals.push({ start: event.start, relation: link.relation });
+		const signal = { start: event.start, relation: link.relation };
+		const held = byGroup.get(event.copyGroup);
+		if (!held || (held.relation === "agenda" && signal.relation === "preparation"))
+			byGroup.set(event.copyGroup, signal);
 	}
-	signals.sort((a, b) => Date.parse(a.start) - Date.parse(b.start) || (a.relation < b.relation ? -1 : 1));
+	const signals = [...byGroup.values()].sort(
+		(a, b) => Date.parse(a.start) - Date.parse(b.start) || (a.relation < b.relation ? -1 : 1),
+	);
 	if (signals.length > 0) return { state: "verified", signals };
 	// Absence is proven only when every consented account was read. A duplicate slug
 	// is the same Google account as one already read, so it does not block proof.

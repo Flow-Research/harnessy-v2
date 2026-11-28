@@ -1,12 +1,14 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { readConsent } from "./consent.ts";
-import { gwsCalendarReader } from "./gws-reader.ts";
-import { type AccountSummary, importCalendars } from "./importer.ts";
+import { ACCOUNT_SLUG, type ConsentRecord, readConsent, recordConsent } from "./consent.ts";
+import { type CalendarRead, gwsCalendarReader } from "./gws-reader.ts";
+import { type AccountSummary, type ImportAccount, importCalendars } from "./importer.ts";
+import { accountKey, accountLabel, CalendarImportError, identityKey } from "./keys.ts";
 import type { ActionDescriptor } from "./match.ts";
 import { observationStore, readDecisions, readObservations } from "./observations.ts";
-import { readOrCreateSalt, readOwnerFile, writeOwnerFile } from "./owner-file.ts";
+import { readOrCreateSalt, readOwnerJson, readSalt, writeOwnerFile } from "./owner-file.ts";
 
 /** Every importer file lives under `<home>/.harnessy/calendar-import/` (0700 folder, 0600 files). */
 export function calendarImportPaths(home: string) {
@@ -15,28 +17,42 @@ export function calendarImportPaths(home: string) {
 		root,
 		salt: join(root, "salt"),
 		consent: join(root, "consent.json"),
-		bindings: join(root, "bindings.json"),
 		observations: join(root, "observations.json"),
 		decisions: join(root, "decisions.json"),
 	};
 }
 
-const bindingsFile = z.strictObject({
-	version: z.literal(1),
-	accounts: z.record(z.string(), z.string().regex(/^[a-f0-9]{64}$/u)),
-});
+/** The gws account folders on this Mac, keyed in memory. Folder names never leave this function's result. */
+export function gwsAccounts(home: string, salt: Buffer): ImportAccount[] {
+	let names: string[];
+	try {
+		names = readdirSync(join(home, ".config"));
+	} catch {
+		return [];
+	}
+	return names
+		.filter((name) => name.startsWith("gws-") && ACCOUNT_SLUG.test(name.slice(4)))
+		.map((name) => ({ key: accountKey(salt, name.slice(4)), slug: name.slice(4) }))
+		.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
 const descriptorsFile = z.array(
 	z.strictObject({
 		actionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u),
+		taskIds: z.array(z.uuid()).max(20).optional(),
 		deliverable: z.array(z.string().min(1).max(80)).max(20),
 		actorOrProject: z.array(z.string().min(1).max(80)).max(20),
 	}),
 );
+export const readDescriptors = (path: string): ActionDescriptor[] =>
+	readOwnerJson(path, "action descriptors file", (value) => descriptorsFile.parse(value)) ?? [];
 
 export interface CalendarImportRunOptions {
 	readonly home: string;
 	readonly googleExecutable: string;
-	/** Slugs to read. Default: every slug in the consent file. */
+	/** SHA-256 of the native gws binary that a person approved. */
+	readonly googleExecutableSha256: string;
+	/** Opaque account labels to read. Allowed only with `dryRun`, so a stored import always covers every account. */
 	readonly accounts?: readonly string[];
 	/** Read and count only. Nothing is written; a missing salt is replaced by a throwaway one. */
 	readonly dryRun: boolean;
@@ -58,35 +74,54 @@ export interface CalendarImportReport {
 	};
 }
 
-/** One import pass against the real files. The report holds counts and flags only. */
+/** One import pass against the real files. The report holds counts, flags and opaque labels only. */
 export async function runCalendarImport(options: CalendarImportRunOptions): Promise<CalendarImportReport> {
+	if (options.accounts !== undefined && options.accounts.length > 0 && !options.dryRun)
+		throw new CalendarImportError("A partial calendar import is allowed only with --dry-run");
 	const paths = calendarImportPaths(options.home);
-	const consent = readConsent(paths.consent);
-	const existingSalt = readOwnerFile(paths.salt);
+	const existingSalt = readSalt(paths.salt);
 	const salt = options.dryRun && existingSalt === undefined ? randomBytes(32) : readOrCreateSalt(paths.salt);
-	const bindingsText = readOwnerFile(paths.bindings);
-	const bindings = bindingsText === undefined ? {} : bindingsFile.parse(JSON.parse(bindingsText)).accounts;
-	const descriptors: ActionDescriptor[] =
-		options.descriptorsPath === undefined
-			? []
-			: descriptorsFile.parse(JSON.parse(readOwnerFile(options.descriptorsPath) ?? "[]"));
-	const previous = readObservations(paths.observations);
+	const consent = readConsent(paths.consent);
+	const descriptors = options.descriptorsPath === undefined ? [] : readDescriptors(options.descriptorsPath);
+	let previousFingerprint: string | undefined;
+	try {
+		previousFingerprint = readObservations(paths.observations)?.fingerprint;
+	} catch {
+		// A damaged or oversized earlier store must not block the next run; it is replaced below.
+		previousFingerprint = undefined;
+	}
+	// Every consented account, plus folders without consent so they are reported as refused.
+	const present = gwsAccounts(options.home, salt);
+	const known = new Set(present.map((account) => account.key));
+	const all: ImportAccount[] = [
+		...present,
+		...[...consent.keys()].filter((key) => !known.has(key)).map((key) => ({ key, slug: "" })),
+	];
+	const wanted = options.accounts?.length ? new Set(options.accounts) : undefined;
+	const accounts = wanted ? all.filter((account) => wanted.has(accountLabel(account.key))) : all;
 	const result = await importCalendars({
-		accounts: options.accounts ?? [...consent.keys()].sort(),
+		accounts,
 		consent,
-		readerFor: (slug) => gwsCalendarReader(options.googleExecutable, join(options.home, ".config", `gws-${slug}`)),
+		readerFor: (slug) => {
+			if (!slug) throw new CalendarImportError("Consented account folder is missing");
+			return gwsCalendarReader(
+				options.googleExecutable,
+				options.googleExecutableSha256,
+				join(options.home, ".config", `gws-${slug}`),
+			);
+		},
 		salt,
-		bindings,
 		decisions: readDecisions(paths.decisions),
 		descriptors,
-		...(previous ? { previousFingerprint: previous.fingerprint } : {}),
+		...(previousFingerprint ? { previousFingerprint } : {}),
 		now: options.now ?? new Date(),
 	});
-	if (!options.dryRun) {
-		observationStore.parse(result.store);
-		writeOwnerFile(paths.bindings, `${JSON.stringify({ version: 1, accounts: result.bindings }, null, 2)}\n`);
-		writeOwnerFile(paths.observations, `${JSON.stringify(result.store)}\n`);
-	}
+	if (!options.dryRun)
+		writeOwnerFile(
+			paths.observations,
+			`${JSON.stringify(observationStore.parse(result.store))}\n`,
+			"observations file",
+		);
 	const links = { verified: 0, candidate: 0, conflict: 0, checked_no_match: 0 };
 	for (const account of result.accounts)
 		for (const state of Object.keys(links) as (keyof typeof links)[]) links[state] += account.links[state];
@@ -103,4 +138,51 @@ export async function runCalendarImport(options: CalendarImportRunOptions): Prom
 			links,
 		},
 	};
+}
+
+export interface ConsentInput {
+	readonly consentedAt: string;
+	readonly consentedBy: string;
+	readonly method: ConsentRecord["method"];
+}
+
+/**
+ * Record consent for one folder. With `approvedIdentityPrefix`, the primary
+ * calendar ID is read once (metadata only) and bound only if its SHA-256 starts
+ * with the prefix that a person approved from the read-permission check. The
+ * stored identity is a keyed hash. Without a prefix the account stays unbound.
+ */
+export async function recordAccountConsent(
+	home: string,
+	slug: string,
+	input: ConsentInput,
+	approval?: { readonly read: CalendarRead; readonly approvedIdentityPrefix: string },
+): Promise<{ readonly account: string; readonly bound: boolean }> {
+	if (!ACCOUNT_SLUG.test(slug)) throw new CalendarImportError("Account folder name is not valid");
+	const paths = calendarImportPaths(home);
+	const salt = readOrCreateSalt(paths.salt);
+	let identity: string | null = null;
+	if (approval) {
+		if (!/^[a-f0-9]{8,64}$/u.test(approval.approvedIdentityPrefix))
+			throw new CalendarImportError("The approved identity prefix must be 8 to 64 lowercase hex characters");
+		const primary = await approval.read([
+			"calendar",
+			"calendars",
+			"get",
+			"--params",
+			JSON.stringify({ calendarId: "primary", fields: "id" }),
+		]);
+		const id = typeof primary.id === "string" ? primary.id : "";
+		if (
+			!id ||
+			!createHash("sha256").update(id.toLowerCase()).digest("hex").startsWith(approval.approvedIdentityPrefix)
+		)
+			throw new CalendarImportError(
+				"The primary calendar does not match the approved identity; nothing was recorded",
+			);
+		identity = identityKey(salt, id);
+	}
+	const account = accountKey(salt, slug);
+	recordConsent(paths.consent, [{ account, identity, scope: "calendar.read", ...input }]);
+	return { account: accountLabel(account), bound: identity !== null };
 }

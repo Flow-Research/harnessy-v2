@@ -22,6 +22,11 @@ for path in "$node_path" "$cli_path" "$gws_path"; do
 	fi
 done
 
+# The person running this script approves the binary that is there now. Every
+# scheduled run refuses a binary with a different digest.
+gws_sha256="$(shasum -a 256 "$gws_path" | cut -d' ' -f1)"
+echo "approved gws SHA-256: $gws_sha256"
+
 label="com.flow-harness.calendar-import"
 agents="$HOME/Library/LaunchAgents"
 target="$agents/$label.plist"
@@ -31,7 +36,8 @@ mkdir -p "$agents" "$HOME/.harnessy/logs"
 temporary="$(mktemp "$agents/.$label.XXXXXX")"
 trap 'rm -f "$temporary"' EXIT
 "$node_path" "$cli_path" jarvis calendar import-schedule \
-	--node "$node_path" --cli "$cli_path" --google-executable "$gws_path" >"$temporary"
+	--node "$node_path" --cli "$cli_path" --google-executable "$gws_path" \
+	--google-executable-sha256 "$gws_sha256" >"$temporary"
 plutil -lint "$temporary" >/dev/null
 
 if [[ -e "$target" ]]; then

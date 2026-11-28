@@ -1,8 +1,20 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import { classifyEvent, isJarvisBlock, parseMarkers } from "./classify.ts";
 import type { ConsentRecord } from "./consent.ts";
 import { type CalendarRead, CalendarReadError } from "./gws-reader.ts";
-import { type ActionDescriptor, heuristicCandidates, resolveLink } from "./match.ts";
+import { accountLabel, actionKey, identityKey, keyed } from "./keys.ts";
+import {
+	type ActionDescriptor,
+	heuristicCandidates,
+	isEligible,
+	type KeyedDecision,
+	keyDecisions,
+	type LinkSubject,
+	resolveLink,
+	subjectOf,
+	type TasksOfAction,
+	tasksFromDescriptors,
+} from "./match.ts";
 import type { AccountReason, LinkDecision, ObservationStore, StoredAccount, StoredEvent } from "./observations.ts";
 
 const hour = 3_600_000;
@@ -16,15 +28,19 @@ const MAX_PAGES = 8;
 const EVENT_FIELDS =
 	"nextPageToken,items(id,iCalUID,status,summary,description,start,end,recurringEventId,originalStartTime,organizer/self,attendees(self,responseStatus),eventType)";
 
+/** One account to read. `slug` is the gws folder name and stays in memory only. */
+export interface ImportAccount {
+	readonly key: string;
+	readonly slug: string;
+}
+
 export interface ImportOptions {
-	/** Slugs to read, in order. A slug without consent is refused before any call. */
-	readonly accounts: readonly string[];
+	readonly accounts: readonly ImportAccount[];
+	/** Consent keyed by account key. Only an account with an approved identity is read. */
 	readonly consent: ReadonlyMap<string, ConsentRecord>;
-	/** Build the read-only reader for one slug. It is called only for consented slugs. */
+	/** Build the read-only reader for one folder name. It is called only for consented, bound accounts. */
 	readonly readerFor: (slug: string) => CalendarRead;
 	readonly salt: Buffer;
-	/** Keyed identity per slug from earlier runs. A changed primary calendar is refused. */
-	readonly bindings: Readonly<Record<string, string>>;
 	readonly decisions?: readonly LinkDecision[];
 	readonly descriptors?: readonly ActionDescriptor[];
 	readonly previousFingerprint?: string;
@@ -32,7 +48,8 @@ export interface ImportOptions {
 }
 
 export interface AccountSummary {
-	readonly slug: string;
+	/** First 12 hex characters of the opaque account key. */
+	readonly account: string;
 	readonly state: "read" | "unavailable";
 	readonly reason?: AccountReason;
 	readonly events: number;
@@ -46,7 +63,7 @@ export interface AccountSummary {
 		readonly recurring: number;
 		readonly organizerSelf: number;
 		readonly jarvisBlocks: number;
-		readonly duplicates: number;
+		readonly copies: number;
 		readonly actionMarkers: number;
 		readonly taskMarkers: number;
 	};
@@ -55,13 +72,9 @@ export interface AccountSummary {
 
 export interface ImportResult {
 	readonly store: ObservationStore;
-	readonly bindings: Record<string, string>;
 	readonly changed: boolean;
 	readonly accounts: readonly AccountSummary[];
 }
-
-const keyed = (salt: Buffer, ...parts: string[]) =>
-	createHmac("sha256", salt).update(parts.join("\u0000")).digest("hex");
 
 interface GoogleTime {
 	readonly dateTime?: unknown;
@@ -96,8 +109,8 @@ function responseOf(item: Record<string, unknown>, organizerSelf: boolean): Stor
 	return organizerSelf ? "accepted" : "unknown";
 }
 
-const emptySummary = (slug: string, state: AccountSummary["state"], reason?: AccountReason): AccountSummary => ({
-	slug,
+const emptySummary = (account: string, state: AccountSummary["state"], reason?: AccountReason): AccountSummary => ({
+	account: accountLabel(account),
 	state,
 	...(reason ? { reason } : {}),
 	events: 0,
@@ -111,23 +124,14 @@ const emptySummary = (slug: string, state: AccountSummary["state"], reason?: Acc
 		recurring: 0,
 		organizerSelf: 0,
 		jarvisBlocks: 0,
-		duplicates: 0,
+		copies: 0,
 		actionMarkers: 0,
 		taskMarkers: 0,
 	},
 	links: { verified: 0, candidate: 0, conflict: 0, checked_no_match: 0 },
 });
 
-/** An event can feed the engine only when it is confirmed, accepted by Julian, not a copy, and not past. */
-export function isEligible(event: StoredEvent, at: Date): boolean {
-	return (
-		event.status === "confirmed" &&
-		event.response === "accepted" &&
-		!event.jarvisBlock &&
-		event.duplicateOf === null &&
-		Date.parse(event.start) >= at.getTime()
-	);
-}
+class TooManyEvents extends Error {}
 
 async function readEvents(read: CalendarRead, from: string, to: string): Promise<Record<string, unknown>[]> {
 	const items: Record<string, unknown>[] = [];
@@ -156,31 +160,36 @@ async function readEvents(read: CalendarRead, from: string, to: string): Promise
 	}
 	throw new TooManyEvents();
 }
-class TooManyEvents extends Error {}
 
 /**
- * Read each consented account once, keep only opaque keys, flags, Jarvis IDs and
- * timestamps, and drop every title and description when the function returns.
+ * Read each consented, bound account once. Keep only opaque keys, flags and
+ * timestamps; every title and description is dropped when the function returns.
+ * The primary calendar must match the approved identity before events are listed.
  */
 export async function importCalendars(options: ImportOptions): Promise<ImportResult> {
 	const { salt, now } = options;
 	const from = new Date(now.getTime() - IMPORT_WINDOW.backHours * hour).toISOString();
 	const to = new Date(now.getTime() + IMPORT_WINDOW.aheadHours * hour).toISOString();
-	const bindings: Record<string, string> = { ...options.bindings };
 	const identities = new Set<string>();
-	const seen = new Map<string, string>();
+	const groups = new Set<string>();
 	const accounts: StoredAccount[] = [];
 	const events: StoredEvent[] = [];
 	const summaries: AccountSummary[] = [];
-	const decisions = options.decisions ?? [];
-	for (const slug of options.accounts) {
-		const account = keyed(salt, "account", slug);
+	const decisions = keyDecisions(salt, options.decisions ?? []);
+	const descriptors = options.descriptors ?? [];
+	const tasksOfAction = tasksFromDescriptors(descriptors);
+	for (const { key: account, slug } of options.accounts) {
 		const refuse = (reason: AccountReason) => {
 			accounts.push({ account, state: "unavailable", reason });
-			summaries.push(emptySummary(slug, "unavailable", reason));
+			summaries.push(emptySummary(account, "unavailable", reason));
 		};
-		if (!options.consent.has(slug)) {
+		const consent = options.consent.get(account);
+		if (!consent) {
 			refuse("no-consent");
+			continue;
+		}
+		if (consent.identity === null) {
+			refuse("unbound");
 			continue;
 		}
 		let items: Record<string, unknown>[];
@@ -194,9 +203,8 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 				JSON.stringify({ calendarId: "primary", fields: "id" }),
 			]);
 			if (!text(primary.id)) throw new CalendarReadError("failed");
-			const identity = keyed(salt, "identity", text(primary.id).toLowerCase());
-			const bound = bindings[slug];
-			if (bound !== undefined && bound !== identity) {
+			const identity = identityKey(salt, text(primary.id));
+			if (identity !== consent.identity) {
 				refuse("identity-changed");
 				continue;
 			}
@@ -205,7 +213,6 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 				continue;
 			}
 			identities.add(identity);
-			bindings[slug] = identity;
 			items = await readEvents(read, from, to);
 		} catch (cause) {
 			refuse(
@@ -217,8 +224,8 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 			);
 			continue;
 		}
-		const summary = emptySummary(slug, "read");
 		const accountEvents: StoredEvent[] = [];
+		let copies = 0;
 		for (const item of items) {
 			const id = text(item.id);
 			const start = instantOf(item.start);
@@ -232,13 +239,13 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 			const organizerSelf = record(item.organizer).self === true;
 			const recurring = text(item.recurringEventId);
 			const original = recurring ? instantOf(item.originalStartTime) : undefined;
-			const key = keyed(salt, "event", account, id);
-			const dedupe = keyed(salt, "ical", text(item.iCalUID) || id, original?.iso ?? start.iso);
-			const first = status === "cancelled" ? undefined : seen.get(dedupe);
-			if (status !== "cancelled" && first === undefined) seen.set(dedupe, key);
+			const copyGroup = keyed(salt, "ical", text(item.iCalUID) || `${account}:${id}`, original?.iso ?? start.iso);
+			if (groups.has(copyGroup)) copies++;
+			groups.add(copyGroup);
 			accountEvents.push({
-				key,
+				key: keyed(salt, "event", account, id),
 				account,
+				copyGroup,
 				series: recurring ? keyed(salt, "series", account, recurring) : null,
 				occurrence: original?.iso ?? null,
 				start: start.iso,
@@ -248,37 +255,55 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 				response: responseOf(item, organizerSelf),
 				organizerSelf,
 				jarvisBlock: organizerSelf && isJarvisBlock(title, description),
-				duplicateOf: first ?? null,
 				relation: classifyEvent(title, description),
-				markers: parseMarkers(`${title}\n${description}`),
-				candidates: heuristicCandidates(title, description, options.descriptors ?? []),
+				markers: parseMarkers(`${title}\n${description}`, salt),
+				candidates: heuristicCandidates(title, description, descriptors).map((actionId) =>
+					actionKey(salt, actionId),
+				),
 			});
 		}
 		accounts.push({ account, state: "read" });
 		events.push(...accountEvents);
-		summaries.push(summarise(summary, accountEvents, decisions, now));
+		summaries.push(summarise(account, accountEvents, copies, { salt, decisions, descriptors, tasksOfAction }, now));
 	}
 	const body = { accounts, events };
 	const fingerprint = createHash("sha256").update(JSON.stringify(body)).digest("hex");
 	return {
-		store: { version: 1, importedAt: now.toISOString(), window: { from, to }, fingerprint, ...body },
-		bindings,
+		store: { version: 2, importedAt: now.toISOString(), window: { from, to }, fingerprint, ...body },
 		changed: fingerprint !== options.previousFingerprint,
 		accounts: summaries,
 	};
 }
 
+interface SummaryLookups {
+	readonly salt: Buffer;
+	readonly decisions: readonly KeyedDecision[];
+	readonly descriptors: readonly ActionDescriptor[];
+	readonly tasksOfAction: TasksOfAction;
+}
+
+/**
+ * Count link states with the same lookups as the provider: known actions resolve
+ * their task markers, and every other subject is an action key seen in the data.
+ */
 function summarise(
-	base: AccountSummary,
+	account: string,
 	events: readonly StoredEvent[],
-	decisions: readonly LinkDecision[],
+	copies: number,
+	lookups: SummaryLookups,
 	now: Date,
 ): AccountSummary {
+	const base = emptySummary(account, "read");
 	const status = { ...base.status };
 	const response = { ...base.response };
 	const relation = { ...base.relation };
-	const flags = { ...base.flags };
+	const flags = { ...base.flags, copies };
 	const links = { ...base.links };
+	const known = new Map<string, LinkSubject>();
+	for (const descriptor of lookups.descriptors) {
+		const subject = subjectOf(lookups.salt, descriptor.actionId, lookups.tasksOfAction);
+		known.set(subject.action, subject);
+	}
 	for (const event of events) {
 		status[event.status]++;
 		response[event.response]++;
@@ -289,18 +314,18 @@ function summarise(
 		if (event.series) flags.recurring++;
 		if (event.organizerSelf) flags.organizerSelf++;
 		if (event.jarvisBlock) flags.jarvisBlocks++;
-		if (event.duplicateOf) flags.duplicates++;
 		flags.actionMarkers += event.markers.filter((marker) => marker.kind === "action").length;
 		flags.taskMarkers += event.markers.filter((marker) => marker.kind === "task").length;
-		const actions = new Set(
-			[
-				...event.markers.filter((marker) => marker.kind === "action").map((marker) => marker.id),
-				...event.candidates,
-				...decisions.map((decision) => decision.actionId),
-			].map((id) => id.toLowerCase()),
-		);
-		const states = [...actions].map((actionId) => resolveLink(event, actionId, decisions).state);
-		const linked = states.filter((state) => state !== "checked_no_match");
+		const subjects = new Map(known);
+		for (const key of [
+			...event.markers.filter((marker) => marker.kind === "action").map((marker) => marker.key),
+			...event.candidates,
+			...lookups.decisions.map((decision) => decision.action),
+		])
+			if (!subjects.has(key)) subjects.set(key, { action: key, tasks: [] });
+		const linked = [...subjects.values()]
+			.map((subject) => resolveLink(event, subject, lookups.decisions).state)
+			.filter((state) => state !== "checked_no_match");
 		if (linked.length === 0) links.checked_no_match++;
 		for (const state of linked) links[state]++;
 	}
