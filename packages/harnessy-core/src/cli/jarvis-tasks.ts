@@ -37,7 +37,7 @@ import {
 	TasksState,
 	validateCloseoutNote,
 } from "../jarvis/tasks/index.ts";
-import { lastSuccessfulSync, type TasksSyncConfig } from "../jarvis/tasks/sync.ts";
+import { defaultQueuePath, lastSuccessfulSync, readQueue, type TasksSyncConfig } from "../jarvis/tasks/sync.ts";
 import { targetOption } from "./shared.ts";
 
 const homeRootOption = Options.String("home-root").pipe(
@@ -145,12 +145,19 @@ const syncBeforeList = async (file: string, config: TasksSyncConfig | undefined)
 		(result): SyncFailureKind | undefined => (result.remaining > 0 ? "queue pending" : undefined),
 		classifySyncFailure,
 	);
-	if (kind === undefined || process.env.HARNESSY_TASKS_SHOW_SYNC_FAILURE !== "1") return {};
+	if (kind === undefined) return {};
+	const override = process.env.HARNESSY_TASKS_SHOW_SYNC_FAILURE;
+	const enabled = override === "0" || override === "1" ? override === "1" : config.showSyncFailure === true;
+	if (!enabled) return {};
+	const pending = Result.getOrUndefined(Result.try(() => readQueue(defaultQueuePath(file)).items.length));
+	if (kind === "queue pending" && pending === 0) return {};
+	const hasPending = pending !== undefined && pending > 0;
+	const queueMessage = hasPending ? ` ${pending} local change${pending === 1 ? "" : "s"} not yet synced.` : "";
 	const lastSuccessfulSyncAt = lastSuccessfulSync(file);
 	console.warn(
-		`Warning: task sync failed (${kind}). Showing local cache. Last successful sync: ${lastSuccessfulSyncAt ?? "unknown"}.`,
+		`Warning: task sync failed (${kind}). Showing local cache.${queueMessage} Last successful sync: ${lastSuccessfulSyncAt ?? "unknown"}.`,
 	);
-	return { syncWarning: { kind, lastSuccessfulSyncAt } };
+	return { syncWarning: { kind, ...(hasPending ? { pending } : {}), lastSuccessfulSyncAt } };
 };
 
 const shared = {

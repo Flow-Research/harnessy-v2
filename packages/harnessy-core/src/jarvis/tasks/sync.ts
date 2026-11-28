@@ -34,6 +34,7 @@ export const DEFAULT_SYNC_QUEUE_NAME = "tasks-sync-queue.json";
 export interface TasksSyncConfig {
 	readonly endpoint: string;
 	readonly tokenFile: string;
+	readonly showSyncFailure?: boolean;
 }
 
 export type QueuedMutation =
@@ -123,7 +124,11 @@ export const parseSyncConfig = (value: unknown): TasksSyncConfig => {
 	const endpoint = value.endpoint.trim().replace(/\/$/, "");
 	const tokenFile = value.tokenFile.trim();
 	if (!/^https?:\/\//u.test(endpoint) || tokenFile.length === 0) throw new TaskRefused("invalid_sync_config");
-	return { endpoint, tokenFile };
+	if (value.showSyncFailure !== undefined && typeof value.showSyncFailure !== "boolean")
+		throw new TaskRefused("invalid_sync_config");
+	return value.showSyncFailure === undefined
+		? { endpoint, tokenFile }
+		: { endpoint, tokenFile, showSyncFailure: value.showSyncFailure };
 };
 
 const isEnoent = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -148,13 +153,17 @@ export const resolveSyncConfig = (input: {
 	const env = input.env ?? process.env;
 	const endpoint = input.endpoint?.trim() || env.HARNESSY_TASKS_ENDPOINT?.trim() || "";
 	const tokenFile = input.tokenFile?.trim() || env.HARNESSY_TASKS_TOKEN_FILE?.trim() || "";
-	if (endpoint !== "" && tokenFile !== "") return parseSyncConfig({ endpoint, tokenFile });
-	const fromFile = readSyncConfigFile(input.configFile ?? env.HARNESSY_TASKS_SYNC_CONFIG ?? DEFAULT_SYNC_CONFIG_PATH);
-	if (fromFile === undefined)
-		return endpoint === "" && tokenFile === "" ? undefined : parseSyncConfig({ endpoint, tokenFile });
+	const path = input.configFile ?? env.HARNESSY_TASKS_SYNC_CONFIG ?? DEFAULT_SYNC_CONFIG_PATH;
+	// Complete connection overrides can work even without a usable config file.
+	const fromFile =
+		endpoint && tokenFile
+			? Result.getOrUndefined(Result.try(() => readSyncConfigFile(path)))
+			: readSyncConfigFile(path);
+	if (!fromFile && !endpoint && !tokenFile) return undefined;
 	return parseSyncConfig({
-		endpoint: endpoint || fromFile.endpoint,
-		tokenFile: tokenFile || fromFile.tokenFile,
+		endpoint: endpoint || fromFile?.endpoint,
+		tokenFile: tokenFile || fromFile?.tokenFile,
+		showSyncFailure: fromFile?.showSyncFailure,
 	});
 };
 
@@ -503,10 +512,14 @@ export const applyMutation = async (input: {
 
 export const writeSyncConfig = (path: string, config: TasksSyncConfig): void => {
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-	writeFileSync(path, `${JSON.stringify({ endpoint: config.endpoint, tokenFile: config.tokenFile }, null, 2)}\n`, {
-		mode: 0o600,
-		flag: "w",
-	});
+	writeFileSync(
+		path,
+		`${JSON.stringify({ endpoint: config.endpoint, tokenFile: config.tokenFile, showSyncFailure: config.showSyncFailure }, null, 2)}\n`,
+		{
+			mode: 0o600,
+			flag: "w",
+		},
+	);
 	chmodSync(path, 0o600);
 };
 

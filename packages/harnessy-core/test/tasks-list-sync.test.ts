@@ -1,11 +1,12 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NodeServices } from "@effect/platform-node";
 import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { jarvisFollowupCommand, jarvisTasksCommand } from "../src/cli/jarvis-tasks.ts";
+import { jarvisTasksCommand } from "../src/cli/jarvis-tasks.ts";
 import { defaultQueuePath, TasksState, writeQueue } from "../src/jarvis/tasks/index.ts";
 
 describe("list sync diagnostics", () => {
@@ -29,10 +30,95 @@ describe("list sync diagnostics", () => {
 		vi.unstubAllEnvs();
 		vi.unstubAllGlobals();
 	});
-	const list = (run = Command.runWith(jarvisTasksCommand, { version: "test" })) =>
+	const list = (args = ["list"]) =>
 		Effect.runPromise(
-			run(["list", "--tasks-file", file, "--sync-config", config]).pipe(Effect.provide(NodeServices.layer)),
+			Command.runWith(jarvisTasksCommand, { version: "test" })([
+				...args,
+				"--tasks-file",
+				file,
+				"--sync-config",
+				config,
+			]).pipe(Effect.provide(NodeServices.layer)),
 		);
+
+	it.each([
+		[true, undefined, true],
+		[true, "0", false],
+		[false, "1", true],
+		[false, undefined, false],
+		[true, "yes", true],
+		[false, " 1", false],
+	] as const)("uses config %s and override %s", async (showSyncFailure, override, enabled) => {
+		const connection = JSON.parse(readFileSync(config, "utf8"));
+		writeFileSync(config, JSON.stringify({ ...connection, showSyncFailure }));
+		vi.stubEnv("HARNESSY_TASKS_SHOW_SYNC_FAILURE", override);
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({}, { status: 401 })));
+		await list();
+		const result = JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0]));
+		expect(result.syncWarning?.kind).toBe(enabled ? "401" : undefined);
+		expect(console.warn).toHaveBeenCalledTimes(enabled ? 1 : 0);
+	});
+
+	it.each(["closed port", "401"])("keeps legacy follow-up output on %s", async (failure) => {
+		vi.stubEnv("HARNESSY_TASKS_SHOW_SYNC_FAILURE", undefined);
+		if (failure === "closed port") {
+			const server = createServer();
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const address = server.address();
+			if (!address || typeof address === "string") throw new Error("expected a TCP listener");
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+			const connection = JSON.parse(readFileSync(config, "utf8"));
+			writeFileSync(config, JSON.stringify({ ...connection, endpoint: `http://127.0.0.1:${address.port}` }));
+		} else {
+			vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({}, { status: 401 })));
+		}
+		const state = new TasksState(file);
+		state.addFollowup({ title: "Cached follow-up" });
+		await list(["followup", "list", "--today", "2026-11-28"]);
+		expect(console.log).toHaveBeenCalledExactlyOnceWith(
+			JSON.stringify(
+				{ ok: true, view: "open", today: "2026-11-28", count: 1, overdue: 0, items: state.read().items },
+				null,
+				2,
+			),
+		);
+		expect(console.warn).not.toHaveBeenCalled();
+	});
+
+	it("keeps exact task list output on a 401 when off", async () => {
+		vi.stubEnv("HARNESSY_TASKS_SHOW_SYNC_FAILURE", "0");
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({}, { status: 401 })));
+		await list();
+		expect(console.log).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ ok: true, items: [] }, null, 2));
+		expect(console.warn).not.toHaveBeenCalled();
+	});
+
+	it("reports the primary failure and counts waiting local changes", async () => {
+		const titles = ["First", "Second"];
+		writeQueue(defaultQueuePath(file), {
+			version: 1,
+			items: titles.map((title) => ({ op: "add", fields: { title } })),
+		});
+		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
+		await list();
+		expect(JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0])).syncWarning).toEqual({
+			kind: "unreachable",
+			pending: 2,
+			lastSuccessfulSyncAt: null,
+		});
+		expect(console.warn).toHaveBeenCalledExactlyOnceWith(
+			"Warning: task sync failed (unreachable). Showing local cache. 2 local changes not yet synced. Last successful sync: unknown.",
+		);
+	});
+
+	it("still shows the cache when the queue cannot be read", async () => {
+		writeFileSync(defaultQueuePath(file), "{invalid");
+		await list();
+		expect(JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0])).syncWarning).toEqual({
+			kind: "sync_failed",
+			lastSuccessfulSyncAt: null,
+		});
+	});
 
 	it.each([undefined, "0"])("keeps exact stdout and stderr when the switch is %s", async (value) => {
 		vi.stubEnv("HARNESSY_TASKS_SHOW_SYNC_FAILURE", value);
@@ -52,6 +138,7 @@ describe("list sync diagnostics", () => {
 			"timeout",
 			new TypeError("fetch failed", { cause: Object.assign(new Error(), { code: "UND_ERR_CONNECT_TIMEOUT" }) }),
 		],
+		["timeout", new DOMException("deadline", "TimeoutError")],
 		["sync_failed", new Error("private details")],
 	] as const)("reports %s with an unknown time and keeps cached tasks", async (kind, error) => {
 		vi.stubGlobal("fetch", vi.fn().mockRejectedValue(error));
@@ -73,7 +160,7 @@ describe("list sync diagnostics", () => {
 		expect(console.log).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ ok: true, items: [] }, null, 2));
 		expect(console.warn).not.toHaveBeenCalled();
 		request.mockResolvedValueOnce(Response.json({}, { status: 401 }));
-		await list(Command.runWith(jarvisFollowupCommand, { version: "test" }));
+		await list(["followup", "list"]);
 		const warning = JSON.parse(String(vi.mocked(console.log).mock.calls.at(-1)?.[0])).syncWarning;
 		expect(warning).toEqual({ kind: "401", lastSuccessfulSyncAt: expect.stringMatching(/^\d{4}-.*Z$/u) });
 		expect(console.warn).toHaveBeenCalledExactlyOnceWith(
@@ -89,7 +176,11 @@ describe("list sync diagnostics", () => {
 		await list();
 		expect(JSON.parse(String(vi.mocked(console.log).mock.calls[0]?.[0]))).toMatchObject({
 			items: [{ title: "Pending" }],
-			syncWarning: { kind: "queue pending", lastSuccessfulSyncAt: null },
+			syncWarning: { kind: "queue pending", pending: 1, lastSuccessfulSyncAt: null },
 		});
+		expect(existsSync(`${file}.last-sync.json`)).toBe(false);
+		expect(console.warn).toHaveBeenCalledExactlyOnceWith(
+			"Warning: task sync failed (queue pending). Showing local cache. 1 local change not yet synced. Last successful sync: unknown.",
+		);
 	});
 });

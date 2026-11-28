@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,6 +11,7 @@ import {
 	defaultQueuePath,
 	enqueueMutation,
 	fetchTransport,
+	lastSuccessfulSync,
 	readQueue,
 	syncTasks,
 } from "../src/jarvis/tasks/sync.ts";
@@ -56,6 +57,56 @@ describe("tasks sync client", () => {
 		expect(applied.revision).toBe(1);
 		expect(new TasksState(localFile).read().items[0]?.title).toBe("From the Mac");
 		expect(new TasksState(remoteFile).read().items[0]?.title).toBe("From the Mac");
+	});
+
+	it("keeps the timestamp private and ignores invalid contents", async () => {
+		const { localFile, tokenFile, server } = await start();
+		await syncTasks({ tasksFile: localFile, config: { endpoint: server.url, tokenFile } });
+		const sidecar = `${localFile}.last-sync.json`;
+		expect(statSync(sidecar).mode & 0o777).toBe(0o600);
+		expect(lastSuccessfulSync(localFile)).toMatch(/^\d{4}-.*Z$/u);
+		for (const invalid of ["bad json", '"invalid"', "{}", '"2026-01-01"']) {
+			writeFileSync(sidecar, invalid);
+			expect(lastSuccessfulSync(localFile)).toBeNull();
+		}
+	});
+
+	it("keeps a committed mutation when the timestamp cannot be written", async () => {
+		const { localFile, remoteFile, tokenFile, server } = await start();
+		mkdirSync(`${localFile}.last-sync.json`);
+		const result = await applyMutation({
+			tasksFile: localFile,
+			config: { endpoint: server.url, tokenFile },
+			mutation: { op: "add", fields: { title: "Committed" } },
+			applyLocal: () => {
+				throw new Error("unexpected local fallback");
+			},
+		});
+		expect(result.mode).toBe("remote");
+		expect(new TasksState(localFile).read()).toEqual(new TasksState(remoteFile).read());
+		expect(new TasksState(localFile).read().items[0]?.title).toBe("Committed");
+		expect(lastSuccessfulSync(localFile)).toBeNull();
+	});
+
+	it("recognizes a 401 on the replay retry after a stale revision", async () => {
+		const { localFile, tokenFile, server } = await start();
+		const calls: string[] = [];
+		enqueueMutation(
+			defaultQueuePath(localFile),
+			{ op: "add", fields: { title: "Queued" } },
+			new TasksState(localFile),
+		);
+		const transport = {
+			request: async ({ method }: { method: string }) => {
+				calls.push(method);
+				if (method === "GET") return { status: 200, body: { ok: true, revision: 1, items: [] } };
+				return { status: calls.length === 2 ? 409 : 401, body: { ok: false } };
+			},
+		};
+		await expect(
+			syncTasks({ tasksFile: localFile, config: { endpoint: server.url, tokenFile }, transport }),
+		).rejects.toMatchObject({ code: "unauthorized" });
+		expect(calls).toEqual(["GET", "POST", "GET", "POST"]);
 	});
 
 	it("queues a mutation when the primary is offline and replays it on sync", async () => {
