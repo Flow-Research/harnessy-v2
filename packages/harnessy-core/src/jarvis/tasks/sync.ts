@@ -198,6 +198,14 @@ const atomicWrite = (file: string, value: unknown): void => {
 	if (Result.isFailure(written)) throw written.failure;
 };
 
+// This local timestamp belongs to the cache, outside the hosted store schema.
+export const lastSuccessfulSync = (file: string): string | null => {
+	const value = Result.try((): unknown => JSON.parse(readFileSync(`${file}.last-sync.json`, "utf8")));
+	if (Result.isFailure(value) || typeof value.success !== "string") return null;
+	const time = new Date(value.success);
+	return Number.isFinite(time.getTime()) && time.toISOString() === value.success ? value.success : null;
+};
+
 export const writeQueue = (path: string, queue: TasksSyncQueue): void => {
 	if (queue.items.length === 0) {
 		if (!existsSync(path)) return;
@@ -267,6 +275,9 @@ const commitReplay = (
 		state.installSnapshot(snapshot);
 		for (const mutation of remaining) applyQueuedMutation(state, mutation);
 		writeQueue(queuePath, { version: 1, items: remaining });
+		// Diagnostic metadata must never turn a committed sync into a failed mutation.
+		if (remaining.length === 0)
+			Result.try(() => atomicWrite(`${state.file}.last-sync.json`, new Date().toISOString()));
 	});
 };
 
@@ -394,6 +405,7 @@ const replayOne = async (
 			token,
 			endpoint: config.endpoint,
 		});
+		if (retry.status === 401) throw new TaskRefused("unauthorized");
 		if (retry.body.ok && retry.body.revision !== undefined)
 			return { status: retry.status, revision: retry.body.revision, body: retry.body };
 		throw new TaskRefused(retry.body.error ?? "sync_conflict");

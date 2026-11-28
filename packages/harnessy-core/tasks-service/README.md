@@ -16,6 +16,20 @@ repository. The Mac reads `~/.config/harnessy/tasks-sync.token`. The sync
 config at `~/.config/harnessy/tasks-sync.json` holds the endpoint URL and
 the token file path only.
 
+## Show sync warnings in lists
+
+Run `HARNESSY_TASKS_SHOW_SYNC_FAILURE=1 harnessy jarvis tasks list` to show a warning when sync fails.
+The same switch works with `harnessy jarvis tasks followup list`.
+Use `0` or omit the switch to keep warnings off.
+
+If sync fails, the list still shows cached items.
+With warnings on, the command prints one line to standard error and adds `syncWarning` to the JSON output.
+Its `kind` is `unreachable`, `401`, `timeout`, `queue pending`, or `sync_failed` for other errors.
+A pending queue means that local changes still need to reach the server after a pull.
+The local file `<tasksFile>.last-sync.json` records the UTC time of the last complete sync.
+If the time is unavailable, `lastSuccessfulSyncAt` is `null`.
+A complete sync prints the usual list.
+
 ## Deploy
 
 Build the image for `linux/amd64` (the VPS architecture) from the repository root, load it on the VPS, and start this
