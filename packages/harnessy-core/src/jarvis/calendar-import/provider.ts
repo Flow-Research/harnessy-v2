@@ -62,9 +62,15 @@ export function calendarEvidence(options: CalendarProviderOptions, actionId: str
 		(a, b) => Date.parse(a.start) - Date.parse(b.start) || (a.relation < b.relation ? -1 : 1),
 	);
 	if (signals.length > 0) return { state: "verified", signals };
-	// Absence is proven only when every consented account was read. A duplicate slug
-	// is the same Google account as one already read, so it does not block proof.
-	if (store.accounts.some((account) => account.state !== "read" && account.reason !== "duplicate-account"))
+	// Absence is proven only when every approved account was read. A duplicate folder
+	// is an identity that another folder read. A folder without consent is outside the
+	// approved set; at least one account was read (checked above), so it does not block proof.
+	if (
+		store.accounts.some(
+			(account) =>
+				account.state !== "read" && account.reason !== "duplicate-account" && account.reason !== "no-consent",
+		)
+	)
 		return { state: "unavailable", signals: [] };
 	return { state: conflict ? "conflict" : candidate ? "candidate" : "checked_no_match", signals: [] };
 }

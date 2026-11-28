@@ -1,10 +1,10 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import * as Result from "effect/Result";
 import { z } from "zod";
 import { ACCOUNT_SLUG, type ConsentRecord, readConsent, recordConsent } from "./consent.ts";
-import { type CalendarRead, gwsCalendarReader } from "./gws-reader.ts";
+import { type CalendarRead, childProcessDebugEnabled, gwsCalendarReader } from "./gws-reader.ts";
 import { type AccountSummary, type ImportAccount, importCalendars } from "./importer.ts";
 import { accountKey, accountLabel, CalendarImportError, identityKey } from "./keys.ts";
 import type { ActionDescriptor } from "./match.ts";
@@ -20,6 +20,8 @@ export function calendarImportPaths(home: string) {
 		consent: join(root, "consent.json"),
 		observations: join(root, "observations.json"),
 		decisions: join(root, "decisions.json"),
+		/** Action descriptors. The manual command and the scheduled job both read this file by default. */
+		actions: join(root, "actions.json"),
 	};
 }
 
@@ -55,6 +57,8 @@ export interface CalendarImportRunOptions {
 	readonly dryRun: boolean;
 	readonly descriptorsPath?: string;
 	readonly now?: Date;
+	/** Tests only, passed to `gwsCalendarReader`. No command sets it. */
+	readonly testPreload?: readonly string[];
 }
 
 export interface CalendarImportReport {
@@ -73,13 +77,16 @@ export interface CalendarImportReport {
 
 /** One import pass against the real files. The report holds counts, flags and opaque labels only. */
 export async function runCalendarImport(options: CalendarImportRunOptions): Promise<CalendarImportReport> {
+	refuseWhenSpawnIsLogged();
 	if (options.accounts !== undefined && options.accounts.length > 0 && !options.dryRun)
 		throw new CalendarImportError("A partial calendar import is allowed only with --dry-run");
 	const paths = calendarImportPaths(options.home);
 	const existingSalt = readSalt(paths.salt);
 	const salt = options.dryRun && existingSalt === undefined ? randomBytes(32) : readOrCreateSalt(paths.salt);
 	const consent = readConsent(paths.consent);
-	const descriptors = options.descriptorsPath === undefined ? [] : readDescriptors(options.descriptorsPath);
+	// The scheduled job passes no path, so it reads the same file as a manual run.
+	// A refresh therefore keeps the candidates of a manual import.
+	const descriptors = readDescriptors(options.descriptorsPath ?? paths.actions);
 	// A damaged or oversized earlier store must not block the next run; it is replaced below.
 	const previous = Result.try(() => readObservations(paths.observations)?.fingerprint);
 	const previousFingerprint = Result.isSuccess(previous) ? previous.success : undefined;
@@ -101,6 +108,7 @@ export async function runCalendarImport(options: CalendarImportRunOptions): Prom
 				options.googleExecutable,
 				options.googleExecutableSha256,
 				join(options.home, ".config", `gws-${slug}`),
+				options.testPreload,
 			);
 		},
 		salt,
@@ -140,42 +148,58 @@ export interface ConsentInput {
 }
 
 /**
- * Record consent for one folder. With `approvedIdentityPrefix`, the primary
- * calendar ID is read once (metadata only) and bound only if its SHA-256 starts
- * with the prefix that a person approved from the read-permission check. The
- * stored identity is a keyed hash. Without a prefix the account stays unbound.
+ * The read-permission check for one folder: one metadata call for the primary
+ * calendar ID, nothing else. It returns the full keyed identity digest, never the
+ * ID. A person reviews the result and passes the digest to `recordAccountConsent`.
  */
-export async function recordAccountConsent(
+export async function checkPrimaryIdentity(
+	home: string,
+	slug: string,
+	read: CalendarRead,
+): Promise<{ readonly account: string; readonly identity: string }> {
+	if (!ACCOUNT_SLUG.test(slug)) throw new CalendarImportError("Account folder name is not valid");
+	refuseWhenSpawnIsLogged();
+	const salt = readOrCreateSalt(calendarImportPaths(home).salt);
+	const primary = await read([
+		"calendar",
+		"calendars",
+		"get",
+		"--params",
+		JSON.stringify({ calendarId: "primary", fields: "id" }),
+	]);
+	const id = typeof primary.id === "string" ? primary.id : "";
+	if (!id) throw new CalendarImportError("The primary calendar has no ID; nothing was checked");
+	return { account: accountLabel(accountKey(salt, slug)), identity: identityKey(salt, id) };
+}
+
+/** Refuse before any file or account is touched when Node would log spawn arguments and environment. */
+function refuseWhenSpawnIsLogged(): void {
+	if (childProcessDebugEnabled())
+		throw new CalendarImportError("Refused: Node child-process debugging is enabled; gws was not started");
+}
+
+const FULL_DIGEST = /^[a-f0-9]{64}$/u;
+
+/**
+ * Record consent for one folder. `approvedIdentity` is the full keyed digest from
+ * the read-permission check that a person approved. It is stored as given and the
+ * importer compares it exactly on every read. Nothing is read here, and a short or
+ * malformed value is refused. Without it the account stays unbound and is never read.
+ */
+export function recordAccountConsent(
 	home: string,
 	slug: string,
 	input: ConsentInput,
-	approval?: { readonly read: CalendarRead; readonly approvedIdentityPrefix: string },
-): Promise<{ readonly account: string; readonly bound: boolean }> {
+	approvedIdentity?: string,
+): { readonly account: string; readonly bound: boolean } {
 	if (!ACCOUNT_SLUG.test(slug)) throw new CalendarImportError("Account folder name is not valid");
+	if (approvedIdentity !== undefined && !FULL_DIGEST.test(approvedIdentity))
+		throw new CalendarImportError(
+			"The approved identity must be the full 64-character keyed digest; nothing was recorded",
+		);
 	const paths = calendarImportPaths(home);
 	const salt = readOrCreateSalt(paths.salt);
-	let identity: string | null = null;
-	if (approval) {
-		if (!/^[a-f0-9]{8,64}$/u.test(approval.approvedIdentityPrefix))
-			throw new CalendarImportError("The approved identity prefix must be 8 to 64 lowercase hex characters");
-		const primary = await approval.read([
-			"calendar",
-			"calendars",
-			"get",
-			"--params",
-			JSON.stringify({ calendarId: "primary", fields: "id" }),
-		]);
-		const id = typeof primary.id === "string" ? primary.id : "";
-		if (
-			!id ||
-			!createHash("sha256").update(id.toLowerCase()).digest("hex").startsWith(approval.approvedIdentityPrefix)
-		)
-			throw new CalendarImportError(
-				"The primary calendar does not match the approved identity; nothing was recorded",
-			);
-		identity = identityKey(salt, id);
-	}
 	const account = accountKey(salt, slug);
-	recordConsent(paths.consent, [{ account, identity, scope: "calendar.read", ...input }]);
-	return { account: accountLabel(account), bound: identity !== null };
+	recordConsent(paths.consent, [{ account, identity: approvedIdentity ?? null, scope: "calendar.read", ...input }]);
+	return { account: accountLabel(account), bound: approvedIdentity !== undefined };
 }

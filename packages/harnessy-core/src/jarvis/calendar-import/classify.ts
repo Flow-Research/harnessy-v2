@@ -15,8 +15,12 @@ export interface LinkMarker {
 	readonly relation?: "preparation" | "agenda";
 }
 
-/** At most this many markers per event are kept. Others are ignored. */
-export const MAX_MARKERS = 8;
+/**
+ * At most this many distinct markers, and this many candidates, are stored per
+ * event. An event with more is stored as incomplete and never verifies a link:
+ * dropping the rest could hide a contradicting marker.
+ */
+export const MAX_LINKS_PER_EVENT = 64;
 
 const ACTION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -39,7 +43,7 @@ export function plainText(value: string): string {
 		.replace(/&amp;/gu, "&");
 }
 
-/** Parse explicit link markers and return keyed hashes of their values. */
+/** Parse every distinct explicit link marker and return keyed hashes of their values. */
 export function parseMarkers(text: string, salt: Buffer): LinkMarker[] {
 	const markers: LinkMarker[] = [];
 	const seen = new Set<string>();
@@ -58,7 +62,6 @@ export function parseMarkers(text: string, salt: Buffer): LinkMarker[] {
 		if (seen.has(dedupe)) continue;
 		seen.add(dedupe);
 		markers.push(value);
-		if (markers.length === MAX_MARKERS) break;
 	}
 	return markers;
 }

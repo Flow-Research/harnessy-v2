@@ -19,7 +19,11 @@ import { NodeServices } from "@effect/platform-node";
 import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { calendarConsentCommand, calendarImportCommand } from "../src/cli/calendar-import.ts";
+import {
+	calendarConsentCommand,
+	calendarIdentityCheckCommand,
+	calendarImportCommand,
+} from "../src/cli/calendar-import.ts";
 import { classifyEvent, isJarvisBlock, parseMarkers } from "../src/jarvis/calendar-import/classify.ts";
 import { type ConsentRecord, readConsent, recordConsent } from "../src/jarvis/calendar-import/consent.ts";
 import { assertReadOnlyCall, type CalendarRead, gwsCalendarReader } from "../src/jarvis/calendar-import/gws-reader.ts";
@@ -38,8 +42,25 @@ import {
 	calendarEvidence,
 	calendarImportProvider,
 } from "../src/jarvis/calendar-import/provider.ts";
-import { calendarImportPaths, recordAccountConsent, runCalendarImport } from "../src/jarvis/calendar-import/run.ts";
+import {
+	calendarImportPaths,
+	checkPrimaryIdentity,
+	recordAccountConsent,
+	runCalendarImport,
+} from "../src/jarvis/calendar-import/run.ts";
 import { renderCalendarImportPlist } from "../src/jarvis/calendar-import/schedule.ts";
+
+// The CLI builds its own reader. In tests it gets the fake's preload paths, which
+// the minimal child environment would otherwise drop. No command can set them.
+const preload = vi.hoisted(() => ({ paths: undefined as string[] | undefined }));
+vi.mock("../src/jarvis/calendar-import/gws-reader.ts", async (importOriginal) => {
+	const real = await importOriginal<typeof import("../src/jarvis/calendar-import/gws-reader.ts")>();
+	return {
+		...real,
+		gwsCalendarReader: (executable: string, digest: string, config: string, paths?: readonly string[]) =>
+			real.gwsCalendarReader(executable, digest, config, paths ?? preload.paths),
+	};
+});
 
 const hour = 3_600_000;
 const at = new Date("2026-11-28T12:00:00.000Z");
@@ -182,8 +203,11 @@ const networkGuard = fileURLToPath(
 const FAKE_GWS = `import { readFileSync, writeFileSync } from 'node:fs';
 const args = ['calendar', ...process.argv.slice(2)];
 const config = process.env.GOOGLE_WORKSPACE_CLI_CONFIG_DIR;
-writeFileSync(config + '/request.json', JSON.stringify({ args, token: Boolean(process.env.GOOGLE_WORKSPACE_CLI_TOKEN), credentials: Boolean(process.env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE) }));
+// Only the names of the environment entries are recorded, never their values.
+writeFileSync(config + '/request.json', JSON.stringify({ args, envKeys: Object.keys(process.env).sort(), cwd: process.cwd() }));
 const fixture = JSON.parse(readFileSync(config + '/fixture.json', 'utf8'));
+if (fixture.raw !== undefined) { console.log(fixture.raw); process.exit(fixture.rawExit ?? 0); }
+if (fixture.failEvents && args[1] === 'events') process.exit(3);
 if (fixture.exit) { console.log(JSON.stringify({ error: { code: fixture.code, message: 'PRIVATE_PROVIDER_DETAIL ${OWNER}' } })); console.error('PRIVATE_PROVIDER_DETAIL'); process.exit(fixture.exit); }
 console.log(JSON.stringify(args[1] === 'calendars' ? { id: fixture.identity } : { items: fixture.items }));
 process.exit(0);
@@ -202,22 +226,29 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		vi.stubEnv("HOME", root);
 		vi.stubEnv("GOOGLE_WORKSPACE_CLI_TOKEN", "ambient-token");
 		vi.stubEnv("GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE", "/ambient/credentials.json");
-		vi.stubEnv("NODE_OPTIONS", `--import=${networkGuard} --import=${join(root, "fake-gws.mjs")}`);
+		vi.stubEnv("SYNTHETIC_UNRELATED_SECRET", "synthetic-secret-value-5f2");
+		vi.stubEnv("NODE_DEBUG", "");
+		preload.paths = [networkGuard, join(root, "fake-gws.mjs")];
 	});
 	afterEach(() => {
 		vi.unstubAllEnvs();
 		vi.restoreAllMocks();
+		preload.paths = undefined;
 		rmSync(root, { recursive: true, force: true });
 	});
 	const fixture = (value: unknown) => writeFileSync(join(config, "fixture.json"), JSON.stringify(value));
 	const reader = () => gwsCalendarReader(nodeBinary, nodeDigest, config);
-	const bind = () =>
-		recordAccountConsent(
-			root,
-			slug,
-			{ consentedAt: "2026-11-28T18:47:00+01:00", consentedBy: "julian", method: "voice" },
-			{ read: reader(), approvedIdentityPrefix: createHash("sha256").update(OWNER).digest("hex").slice(0, 8) },
-		);
+	const input = { consentedAt: "2026-11-28T18:47:00+01:00", consentedBy: "julian", method: "voice" } as const;
+	/** Step 1 (metadata only), then consent with the full digest that step returned. */
+	const bind = async () => {
+		const checked = await checkPrimaryIdentity(root, slug, reader());
+		return recordAccountConsent(root, slug, input, checked.identity);
+	};
+	const runOptions = {
+		googleExecutable: nodeBinary,
+		googleExecutableSha256: nodeDigest,
+		now: at,
+	};
 	/** Run one CLI command and capture everything it writes to stdout and stderr. */
 	const cli = async (run: (args: string[]) => Effect.Effect<void, unknown, never>, args: string[]) => {
 		const output: string[] = [];
@@ -243,15 +274,51 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		Command.runWith(calendarImportCommand, { version: "test" })(args).pipe(Effect.provide(NodeServices.layer));
 	const consentCli = (args: string[]) =>
 		Command.runWith(calendarConsentCommand, { version: "test" })(args).pipe(Effect.provide(NodeServices.layer));
+	const identityCli = (args: string[]) =>
+		Command.runWith(calendarIdentityCheckCommand, { version: "test" })(args).pipe(Effect.provide(NodeServices.layer));
 	const importArgs = ["--google-executable", nodeBinary, "--google-executable-sha256", nodeDigest];
 
-	it("strips ambient credentials and asks for JSON output", async () => {
+	it("passes gws only the entries it needs and asks for JSON output", async () => {
 		fixture({ identity: OWNER, items: [] });
 		await reader()(["calendar", "events", "list", "--params", JSON.stringify({ calendarId: "primary" })]);
 		const request = JSON.parse(readFileSync(join(config, "request.json"), "utf8"));
-		expect(request).toMatchObject({ token: false, credentials: false });
+		// NODE_OPTIONS is the test preload; the real commands never set it.
+		const allowed = [
+			"GOOGLE_WORKSPACE_CLI_CONFIG_DIR",
+			"GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND",
+			"HOME",
+			"NODE_OPTIONS",
+			"PATH",
+			"TMPDIR",
+		];
+		// macOS adds __CF_USER_TEXT_ENCODING to every new process itself.
+		for (const key of request.envKeys) if (key !== "__CF_USER_TEXT_ENCODING") expect(allowed).toContain(key);
+		expect(request.envKeys).not.toContain("GOOGLE_WORKSPACE_CLI_TOKEN");
+		expect(request.envKeys).not.toContain("SYNTHETIC_UNRELATED_SECRET");
+		expect(realpathSync(request.cwd)).toBe(config);
 		expect(request.args.slice(-2)).toEqual(["--format", "json"]);
 	});
+	it.each(["child_process", "CHILD_PROCESS", "net,child*", "*"])(
+		"refuses to start gws when NODE_DEBUG is %s, and prints no folder name or secret",
+		async (sections) => {
+			fixture({ identity: OWNER, items: [event("one", 3)] });
+			await bind();
+			rmSync(join(config, "request.json"));
+			vi.stubEnv("NODE_DEBUG", sections);
+			const runs = [
+				await cli(importCli, [...importArgs, "--dry-run"]),
+				await cli(identityCli, ["--slug", slug, ...importArgs]),
+			];
+			await expect(
+				reader()(["calendar", "calendars", "get", "--params", '{"calendarId":"primary"}']),
+			).rejects.toThrow(/child-process debugging/);
+			for (const run of runs) {
+				expect(run.failure).toContain("child-process debugging");
+				expect(`${run.output}\n${run.failure}`).not.toMatch(/sentinel\.owner|synthetic-secret-value|ambient-token/);
+			}
+			expect(existsSync(join(config, "request.json"))).toBe(false);
+		},
+	);
 	it.each([
 		[401, "auth"],
 		[403, "scope"],
@@ -263,6 +330,17 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		);
 		expect(failure).toMatchObject({ reason });
 		expect(String(failure)).not.toMatch(/PRIVATE_PROVIDER_DETAIL|owner@example/);
+	});
+	it.each([
+		["success", 0],
+		["failure", 2],
+	])("classifies a null provider error on %s exit as a plain failure", async (_label, rawExit) => {
+		fixture({ raw: JSON.stringify({ error: null }), rawExit });
+		const failure = await reader()(["calendar", "calendars", "get", "--params", '{"calendarId":"primary"}']).catch(
+			(cause: unknown) => cause,
+		);
+		expect(failure).toMatchObject({ reason: "failed" });
+		expect(failure).not.toBeInstanceOf(TypeError);
 	});
 	it("refuses scripts of any interpreter, a wrong digest, a shared folder and a write", () => {
 		for (const line of ["#!/usr/bin/env node\n", `#!${process.execPath}\n`, "#!/bin/sh\n"]) {
@@ -314,6 +392,10 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		const live = Date.now();
 		const soon = (hours: number) => new Date(live + hours * hour).toISOString();
 		fixture({ identity: OWNER, items: [] });
+		const checkRun = await cli(identityCli, ["--slug", slug, ...importArgs]);
+		expect(checkRun.failure).toBe("");
+		const checked = JSON.parse(checkRun.output);
+		expect(checked.identity).toMatch(/^[a-f0-9]{64}$/);
 		const consentRun = await cli(consentCli, [
 			"--slug",
 			slug,
@@ -323,9 +405,8 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 			"julian",
 			"--method",
 			"voice",
-			"--approved-identity-sha256-prefix",
-			createHash("sha256").update(OWNER).digest("hex").slice(0, 8),
-			...importArgs,
+			"--approved-identity",
+			checked.identity,
 		]);
 		expect(consentRun.failure).toBe("");
 		expect(consentRun.output).toContain('"bound": true');
@@ -359,19 +440,26 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 			],
 		});
 		writeFileSync(
-			join(root, "descriptors.json"),
+			calendarImportPaths(root).actions,
 			JSON.stringify([{ actionId: "beta", deliverable: ["board review"], actorOrProject: ["SENTINEL_TITLE_9d1"] }]),
 			{ mode: 0o600 },
 		);
-		const dry = await cli(importCli, [...importArgs, "--dry-run", "--actions", join(root, "descriptors.json")]);
-		const real = await cli(importCli, [...importArgs, "--actions", join(root, "descriptors.json")]);
+		const dry = await cli(importCli, [...importArgs, "--dry-run"]);
+		// The dry run must have worked before its streams prove anything.
+		expect(dry.failure).toBe("");
+		const dryReport = JSON.parse(dry.output);
+		expect(dryReport).toMatchObject({ dryRun: true });
+		expect(dryReport.totals).toMatchObject({ accountsRead: 1, events: 2 });
+		const real = await cli(importCli, [...importArgs]);
 		expect(real.failure).toBe("");
 		const report = JSON.parse(real.output);
 		expect(report.totals).toMatchObject({ accountsRead: 1, events: 2, eligible: 2 });
 		expect(report.totals.links).toMatchObject({ verified: 3, candidate: 2 });
 		const paths = calendarImportPaths(root);
-		const outputs = [consentRun.output, dry.output, dry.failure, real.output, real.failure];
-		for (const name of readdirSync(paths.root)) outputs.push(readFileSync(join(paths.root, name), "utf8"));
+		const outputs = [checkRun.output, consentRun.output, dry.output, dry.failure, real.output, real.failure];
+		// actions.json is the person's own input; every file the importer writes is scanned.
+		for (const name of readdirSync(paths.root))
+			if (name !== "actions.json") outputs.push(readFileSync(join(paths.root, name), "utf8"));
 		for (const output of outputs) for (const sentinel of sentinels) expect(output).not.toContain(sentinel);
 		const store = JSON.parse(readOwnerFile(paths.observations, "observations file") ?? "");
 		const provider = calendarImportProvider({
@@ -418,17 +506,59 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		expect((await runCalendarImport({ ...options, dryRun: true, accounts: [label] })).totals.accountsRead).toBe(1);
 	});
 
-	it("binds the approved identity only when the step-1 prefix matches, and reads nothing else", async () => {
-		fixture({ identity: "someone-else@example.test", items: [] });
-		await expect(bind()).rejects.toThrow(/does not match the approved identity/);
+	it("binds only a full approved digest, checked exactly on every read", async () => {
+		fixture({ identity: OWNER, items: [event("one", 3)] });
+		const checked = await checkPrimaryIdentity(root, slug, reader());
+		const request = JSON.parse(readFileSync(join(config, "request.json"), "utf8"));
+		expect(request.args.slice(0, 3)).toEqual(["calendar", "calendars", "get"]);
+		expect(JSON.stringify(checked)).not.toContain(OWNER);
+		rmSync(join(config, "request.json"));
+		// A short or malformed approval is refused before anything is read or written.
+		for (const short of [checked.identity.slice(0, 8), checked.identity.slice(0, 63), checked.identity.toUpperCase()])
+			expect(() => recordAccountConsent(root, slug, input, short)).toThrow(/full 64-character/);
 		expect(readConsent(calendarImportPaths(root).consent).size).toBe(0);
-		expect(JSON.parse(readFileSync(join(config, "request.json"), "utf8")).args.slice(0, 3)).toEqual([
-			"calendar",
-			"calendars",
-			"get",
-		]);
-		fixture({ identity: OWNER, items: [] });
-		expect(await bind()).toMatchObject({ bound: true });
+		expect(existsSync(join(config, "request.json"))).toBe(false);
+		// A full digest of a different ID with the same leading characters does not match.
+		const lookalike = `${checked.identity.slice(0, 8)}${"0".repeat(56)}`;
+		expect(recordAccountConsent(root, slug, input, lookalike)).toMatchObject({ bound: true });
+		const refused = await runCalendarImport({ ...runOptions, home: root, dryRun: true });
+		expect(refused.accounts[0]).toMatchObject({ state: "unavailable", reason: "identity-changed" });
+		expect(JSON.parse(readFileSync(join(config, "request.json"), "utf8")).args[1]).toBe("calendars");
+		expect(recordAccountConsent(root, slug, input, checked.identity)).toMatchObject({ bound: true });
+		expect((await runCalendarImport({ ...runOptions, home: root, dryRun: true })).totals.accountsRead).toBe(1);
+	});
+
+	it("keeps manual candidates on a scheduled refresh, which reads the same actions file", async () => {
+		fixture({
+			identity: OWNER,
+			items: [event("review", 5, { summary: "Board review with Acme" })],
+		});
+		await bind();
+		const paths = calendarImportPaths(root);
+		writeFileSync(
+			paths.actions,
+			JSON.stringify([{ actionId: "gamma", deliverable: ["board review"], actorOrProject: ["acme"] }]),
+			{ mode: 0o600 },
+		);
+		const manual = await runCalendarImport({ ...runOptions, home: root, dryRun: false });
+		expect(manual.totals.links).toMatchObject({ candidate: 1 });
+		const store = () => JSON.parse(readOwnerFile(paths.observations, "observations file") ?? "") as ObservationStore;
+		const storedSalt = readSalt(paths.salt) ?? Buffer.alloc(0);
+		const state = () =>
+			calendarEvidence({ salt: storedSalt, observations: store, decisions: () => [] }, "gamma", at).state;
+		expect(state()).toBe("candidate");
+		// The scheduled job passes no actions path, exactly as the plist below does.
+		const plist = renderCalendarImportPlist({
+			nodePath: nodeBinary,
+			cliPath: join(root, "cli.js"),
+			googleExecutable: nodeBinary,
+			googleExecutableSha256: nodeDigest,
+			home: root,
+		});
+		expect(plist).not.toContain("--actions");
+		const scheduled = await runCalendarImport({ ...runOptions, home: root, dryRun: false });
+		expect(scheduled.totals.links).toMatchObject({ candidate: 1 });
+		expect(state()).toBe("candidate");
 	});
 
 	it("recovers from an oversized earlier store", async () => {
@@ -489,6 +619,43 @@ describe("consent and identity", () => {
 		});
 		expect(result.accounts.map((summary) => summary.reason)).toEqual([undefined, "duplicate-account"]);
 	});
+	it.each([
+		["the failed folder first", ["broken", "alias"]],
+		["the working folder first", ["alias", "broken"]],
+	])("covers an identity by the folder that actually read it, with %s", async (_label, order) => {
+		const failing: CalendarRead = async (args) => {
+			assertReadOnlyCall(args);
+			if (args[1] === "calendars") return { id: OWNER };
+			throw new Error("listing failed");
+		};
+		const result = await importCalendars({
+			accounts: order.map(account),
+			consent: consentFor({ broken: OWNER, alias: OWNER }),
+			readerFor: (slug) => (slug === "broken" ? failing : fakeReader(OWNER, [event("e", 5)])),
+			salt,
+			now: at,
+		});
+		const bySlug = Object.fromEntries(order.map((slug, index) => [slug, result.accounts[index]]));
+		expect(bySlug.alias).toMatchObject({ state: "read", events: 1 });
+		expect(bySlug.broken).toMatchObject({ state: "unavailable", reason: "duplicate-account" });
+		expect(evidenceFor(result.store, "unseen").state).toBe("checked_no_match");
+		// Without an alias the failed identity still blocks proof of absence.
+		const alone = await importCalendars({
+			accounts: [account("broken"), account("work")],
+			consent: consentFor({ broken: "broken@example.test", work: OWNER }),
+			readerFor: (slug) =>
+				slug === "broken"
+					? async (args) => {
+							if (args[1] === "calendars") return { id: "broken@example.test" };
+							throw new Error("listing failed");
+						}
+					: fakeReader(OWNER, []),
+			salt,
+			now: at,
+		});
+		expect(alone.accounts[0]).toMatchObject({ reason: "failed" });
+		expect(evidenceFor(alone.store, "unseen").state).toBe("unavailable");
+	});
 	it("stores consent owner-only with opaque keys and reads it back", () => {
 		const root = realpathSync(mkdtempSync(join(tmpdir(), "harnessy-calendar-consent-")));
 		try {
@@ -520,6 +687,31 @@ describe("local classification", () => {
 		]);
 		expect(JSON.stringify(store)).not.toContain("PRIVATE_DESCRIPTION_123");
 		expect(store.events.map((stored) => stored.markers.length)).toEqual([1, 1]);
+	});
+	it("resolves a contradicting ninth marker as a conflict and a ninth candidate as a candidate", async () => {
+		const others = Array.from({ length: 7 }, (_, index) => `Jarvis-Action: filler-${index}`).join("\n");
+		const { store } = await importOne([
+			event("many", 3, { description: `Jarvis-Prep: zeta\n${others}\nJarvis-Agenda: zeta` }),
+		]);
+		expect(store.events[0]?.markers).toHaveLength(9);
+		expect(evidenceFor(store, "zeta").state).toBe("conflict");
+		expect(points(await providerFor(store).calendar("zeta", at))).toBe(0);
+		const descriptors = Array.from({ length: 9 }, (_, index) => ({
+			actionId: `cand-${index}`,
+			deliverable: ["board review"],
+			actorOrProject: ["acme"],
+		}));
+		const candidates = await importOne([event("c", 3, { summary: "Board review with Acme" })], { descriptors });
+		expect(evidenceFor(candidates.store, "cand-8").state).toBe("candidate");
+	});
+	it("marks an event with more links than are stored as incomplete, never verified or absent", async () => {
+		const many = Array.from({ length: 70 }, (_, index) => `Jarvis-Action: bulk-${index}`).join("\n");
+		const { store } = await importOne([event("bulk", 3, { description: `Jarvis-Prep: eta\n${many}` })]);
+		expect(store.events[0]).toMatchObject({ incomplete: true });
+		expect(store.events[0]?.markers).toHaveLength(64);
+		expect(evidenceFor(store, "eta").state).toBe("conflict");
+		expect(evidenceFor(store, "bulk-69").state).toBe("conflict");
+		expect(points(await providerFor(store).calendar("eta", at))).toBe(0);
 	});
 	it("classifies natural-language text only, not marker values", async () => {
 		expect(classifyEvent("Investor demo", "")).toBe("preparation");
@@ -602,6 +794,35 @@ describe("matcher states", () => {
 		expect(await providerFor(store, [accepted]).calendar("delta", at)).toEqual([
 			{ start: second.start, relation: "agenda" },
 		]);
+	});
+	it.each([
+		["missing", {}],
+		["malformed", { originalStartTime: { dateTime: "not-a-time" } }],
+	])("uses no series evidence when the original start is %s", async (_label, extra) => {
+		const moved = event("moved", 30, {
+			recurringEventId: "series-2",
+			originalStartTime: { dateTime: iso(10) },
+			summary: "Investor prep",
+		});
+		const odd = event("odd", 10, { recurringEventId: "series-2", summary: "Investor prep", ...extra });
+		const open = event("open", 50, {
+			recurringEventId: "series-2",
+			originalStartTime: { dateTime: iso(50) },
+			summary: "Investor prep",
+		});
+		const { store } = await importOne([moved, odd, open]);
+		const [storedMoved, storedOdd, storedOpen] = store.events as [StoredEvent, StoredEvent, StoredEvent];
+		expect(storedOdd.occurrence).toBeNull();
+		const accepted: LinkDecision = {
+			...accept("eps", ""),
+			target: { kind: "series", key: storedMoved.series ?? "" },
+			closedOccurrences: [iso(10)],
+		};
+		const keyed = keyDecisions(salt, [accepted]);
+		expect(resolveLink(storedOdd, subject("eps"), keyed).state).toBe("checked_no_match");
+		expect(resolveLink(storedMoved, subject("eps"), keyed).state).toBe("checked_no_match");
+		expect(resolveLink(storedOpen, subject("eps"), keyed)).toEqual({ state: "verified", relation: "preparation" });
+		expect(points(await providerFor(store, [accepted]).calendar("eps", at))).toBe(300);
 	});
 	it("gives the summary and the provider the same task lookup", async () => {
 		const item = event("task", 30, { description: `Task ID: ${TASK}`, summary: "Pitch" });
@@ -731,6 +952,25 @@ describe("availability", () => {
 		expect(partial.accounts.map((summary) => summary.reason)).toEqual([undefined, "failed"]);
 		expect(await providerFor(partial.store).calendar("unseen", at)).toBe("unavailable");
 		expect(points(await providerFor(partial.store).calendar("seen", at))).toBe(450);
+	});
+	it("ignores folders outside the consent set once an approved account was read", async () => {
+		const result = await importCalendars({
+			accounts: [account("work"), account("stranger")],
+			consent: consentFor({ work: OWNER }),
+			readerFor: () => fakeReader(OWNER, []),
+			salt,
+			now: at,
+		});
+		expect(result.accounts.map((summary) => summary.reason)).toEqual([undefined, "no-consent"]);
+		expect(evidenceFor(result.store, "x").state).toBe("checked_no_match");
+		const unbound = await importCalendars({
+			accounts: [account("work"), account("pending")],
+			consent: consentFor({ work: OWNER, pending: null }),
+			readerFor: () => fakeReader(OWNER, []),
+			salt,
+			now: at,
+		});
+		expect(evidenceFor(unbound.store, "x").state).toBe("unavailable");
 	});
 	it("is unavailable when no account was checked", async () => {
 		const empty = await importCalendars({

@@ -62,9 +62,14 @@
   `~/.harnessy/calendar-import/` (0700 folder, 0600 files). Account folder
   names, titles, descriptions and marker values are never stored or printed.
   `--dry-run` prints counts and writes nothing. `--account` is allowed only
-  with `--dry-run`. `import-consent` records per-account consent and, with
-  `--approved-identity-sha256-prefix`, binds the approved identity.
-  `import-schedule` prints a launchd job definition without writing or
+  with `--dry-run`. `import-identity-check` makes one metadata call and
+  prints the full keyed digest of the primary calendar ID, never the ID.
+  `import-consent --approved-identity` records per-account consent bound to
+  that full digest, which every import compares exactly. Action descriptors
+  come from the owner-only `actions.json` in the state folder, for manual and
+  scheduled runs alike. gws receives only the environment entries it needs,
+  and the importer refuses to start it when Node child-process debugging is
+  enabled. `import-schedule` prints a launchd job definition without writing or
   loading it. The calendar provider gives the task priority engine only
   explicitly linked or human-accepted, confirmed, accepted and future events,
   with one signal per meeting copy.

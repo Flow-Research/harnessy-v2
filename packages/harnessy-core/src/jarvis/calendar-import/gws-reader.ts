@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { promisify } from "node:util";
+import { debuglog, promisify } from "node:util";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { CalendarImportError } from "./keys.ts";
@@ -48,12 +48,37 @@ export function assertReadOnlyCall(args: readonly string[]): void {
 const failureOf = (stdout: unknown): ReadFailure => {
 	const parsed = Result.try(() => JSON.parse(String(stdout ?? "")) as unknown);
 	const value = Result.isSuccess(parsed) ? parsed.success : undefined;
-	const code =
-		typeof value === "object" && value !== null && "error" in value
-			? (value.error as { code?: unknown }).code
-			: undefined;
+	const error = typeof value === "object" && value !== null && "error" in value ? value.error : undefined;
+	// The nested value must be an object; `{"error": null}` is a plain failure.
+	const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
 	return code === 401 ? "auth" : code === 403 ? "scope" : "failed";
 };
+
+/**
+ * True when Node would log child-process spawns. Node then writes the spawn
+ * arguments and the child environment to this process's standard error, before
+ * the importer can withhold anything, so the importer refuses to spawn.
+ */
+export function childProcessDebugEnabled(): boolean {
+	const sections = (process.env.NODE_DEBUG ?? "").toLowerCase();
+	return debuglog("child_process").enabled || /child|\*/u.test(sections);
+}
+
+/**
+ * The only environment gws receives. Nothing else is inherited: an unrelated
+ * variable can hold a token. Values are never logged.
+ */
+export function gwsChildEnvironment(config: string, preload?: readonly string[]): NodeJS.ProcessEnv {
+	const keyring = process.env.GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND;
+	return {
+		PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+		...(process.env.HOME ? { HOME: process.env.HOME } : {}),
+		...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
+		GOOGLE_WORKSPACE_CLI_CONFIG_DIR: config,
+		GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: keyring === "keyring" ? "keyring" : "file",
+		...(preload && preload.length > 0 ? { NODE_OPTIONS: preload.map((path) => `--import=${path}`).join(" ") } : {}),
+	};
+}
 
 // Mach-O (thin and fat, both byte orders) and ELF headers. A script of any kind
 // starts another program that the digest does not cover, so it is refused.
@@ -71,7 +96,18 @@ const digestOf = (path: string) => {
  * installed. The file is compared with that digest when the reader is built and
  * again before every execution, so a replacement between runs is refused.
  */
-export function gwsCalendarReader(executable: string, approvedSha256: string, configDirectory: string): CalendarRead {
+export function gwsCalendarReader(
+	executable: string,
+	approvedSha256: string,
+	configDirectory: string,
+	/**
+	 * Tests only: absolute module paths that a Node-based fake gws preloads. No
+	 * command passes this, and the real gws binary ignores it.
+	 */
+	testPreload?: readonly string[],
+): CalendarRead {
+	if (testPreload?.some((path) => !isAbsolute(path) || /\s/u.test(path)))
+		throw new CalendarImportError("Test preload paths must be absolute without spaces");
 	if (!isAbsolute(executable) || !isAbsolute(configDirectory))
 		throw new CalendarImportError("Explicit absolute Google executable and configuration directory required");
 	if (!SHA256.test(approvedSha256))
@@ -96,19 +132,17 @@ export function gwsCalendarReader(executable: string, approvedSha256: string, co
 		assertReadOnlyCall(args);
 		if (digestOf(command).digest !== approvedSha256)
 			throw new CalendarImportError("Google executable does not match the approved SHA-256");
-		const env: NodeJS.ProcessEnv = {
-			...process.env,
-			GOOGLE_WORKSPACE_CLI_CONFIG_DIR: config,
-			GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND: process.env.GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND ?? "file",
-		};
-		delete env.GOOGLE_WORKSPACE_CLI_TOKEN;
-		delete env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE;
+		if (childProcessDebugEnabled())
+			throw new CalendarImportError("Refused: Node child-process debugging is enabled; gws was not started");
+		const env = gwsChildEnvironment(config, testPreload);
 		const stdout = await Effect.runPromise(
 			Effect.tryPromise({
 				try: async () =>
 					(
 						await execute(command, [...args, "--format", "json"], {
 							env,
+							// The config folder is owner-only; nothing else is visible to gws as its working folder.
+							cwd: config,
 							timeout: 60_000,
 							maxBuffer: 16 * 1024 * 1024,
 							encoding: "utf8",

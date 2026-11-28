@@ -27,7 +27,6 @@ export const tasksFromDescriptors =
 			.flatMap((descriptor) => descriptor.taskIds ?? []);
 
 const MIN_TERM = 4;
-const MAX_CANDIDATES = 8;
 const wordsOf = (text: string) =>
 	plainText(text)
 		.toLowerCase()
@@ -57,8 +56,7 @@ export function heuristicCandidates(
 				descriptor.deliverable.some((term) => hasTerm(bag, term)) &&
 				descriptor.actorOrProject.some((term) => hasTerm(bag, term)),
 		)
-		.map((descriptor) => descriptor.actionId)
-		.slice(0, MAX_CANDIDATES);
+		.map((descriptor) => descriptor.actionId);
 }
 
 /** An action as the stored data sees it: keyed hashes only. */
@@ -89,6 +87,8 @@ export function resolveLink(
 	subject: LinkSubject,
 	decisions: readonly KeyedDecision[],
 ): LinkResolution {
+	// Some links were not stored, and one of them could contradict the rest.
+	if (event.incomplete) return { state: "conflict" };
 	const marked = event.markers.filter((marker) =>
 		marker.kind === "action" ? marker.key === subject.action : subject.tasks.includes(marker.key),
 	);
@@ -99,7 +99,11 @@ export function resolveLink(
 		(decision) =>
 			decision.action === subject.action &&
 			((decision.target.kind === "event" && decision.target.key === event.key) ||
-				(decision.target.kind === "series" && event.series !== null && decision.target.key === event.series)),
+				// Series evidence needs a valid original start, or a closed occurrence could not be recognised.
+				(decision.target.kind === "series" &&
+					event.series !== null &&
+					event.occurrence !== null &&
+					decision.target.key === event.series)),
 	);
 	// A closed occurrence of an accepted series is done. Later occurrences stay open.
 	if (

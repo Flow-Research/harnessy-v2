@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
-import { classifyEvent, isJarvisBlock, parseMarkers } from "./classify.ts";
+import { classifyEvent, isJarvisBlock, MAX_LINKS_PER_EVENT, parseMarkers } from "./classify.ts";
 import type { ConsentRecord } from "./consent.ts";
 import { type CalendarRead, CalendarReadError } from "./gws-reader.ts";
 import { accountLabel, actionKey, identityKey, keyed } from "./keys.ts";
@@ -168,6 +168,9 @@ async function readEvents(read: CalendarRead, from: string, to: string): Promise
  * timestamps; every title and description is dropped when the function returns.
  * The primary calendar must match the approved identity before events are listed.
  */
+/** Failures that another folder for the same approved identity can cover. */
+const RETRYABLE: ReadonlySet<AccountReason> = new Set(["auth", "scope", "failed", "too-many-events"]);
+
 export async function importCalendars(options: ImportOptions): Promise<ImportResult> {
 	const { salt, now } = options;
 	const from = new Date(now.getTime() - IMPORT_WINDOW.backHours * hour).toISOString();
@@ -180,12 +183,17 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 	const decisions = keyDecisions(salt, options.decisions ?? []);
 	const descriptors = options.descriptors ?? [];
 	const tasksOfAction = tasksFromDescriptors(descriptors);
+	// Failed reads of an approved identity. A later folder that reads the same
+	// identity covers them; the rest stay unavailable.
+	const failed: { readonly index: number; readonly account: string; readonly identity: string }[] = [];
 	for (const { key: account, slug } of options.accounts) {
+		const consent = options.consent.get(account);
 		const refuse = (reason: AccountReason) => {
+			if (RETRYABLE.has(reason) && consent?.identity)
+				failed.push({ index: accounts.length, account, identity: consent.identity });
 			accounts.push({ account, state: "unavailable", reason });
 			summaries.push(emptySummary(account, "unavailable", reason));
 		};
-		const consent = options.consent.get(account);
 		if (!consent) {
 			refuse("no-consent");
 			continue;
@@ -210,8 +218,11 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 					// The approved identity is checked before any event is listed.
 					if (identity !== consent.identity) return "identity-changed";
 					if (identities.has(identity)) return "duplicate-account";
+					// The identity counts as read only after the last page succeeds, so a
+					// failed listing does not hide a later folder for the same account.
+					const listed = await readEvents(read, from, to);
 					identities.add(identity);
-					return await readEvents(read, from, to);
+					return listed;
 				},
 				catch: (cause): AccountReason =>
 					cause instanceof TooManyEvents
@@ -243,6 +254,8 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 			const title = text(item.summary);
 			const description = text(item.description);
 			const organizerSelf = record(item.organizer).self === true;
+			const markers = parseMarkers(`${title}\n${description}`, salt);
+			const candidates = heuristicCandidates(title, description, descriptors);
 			const recurring = text(item.recurringEventId);
 			const original = recurring ? instantOf(item.originalStartTime) : undefined;
 			const copyGroup = keyed(salt, "ical", text(item.iCalUID) || `${account}:${id}`, original?.iso ?? start.iso);
@@ -262,15 +275,19 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 				organizerSelf,
 				jarvisBlock: organizerSelf && isJarvisBlock(title, description),
 				relation: classifyEvent(title, description),
-				markers: parseMarkers(`${title}\n${description}`, salt),
-				candidates: heuristicCandidates(title, description, descriptors).map((actionId) =>
-					actionKey(salt, actionId),
-				),
+				incomplete: markers.length > MAX_LINKS_PER_EVENT || candidates.length > MAX_LINKS_PER_EVENT,
+				markers: markers.slice(0, MAX_LINKS_PER_EVENT),
+				candidates: candidates.slice(0, MAX_LINKS_PER_EVENT).map((actionId) => actionKey(salt, actionId)),
 			});
 		}
 		accounts.push({ account, state: "read" });
 		events.push(...accountEvents);
 		summaries.push(summarise(account, accountEvents, copies, { salt, decisions, descriptors, tasksOfAction }, now));
+	}
+	for (const { index, account, identity } of failed) {
+		if (!identities.has(identity)) continue;
+		accounts[index] = { account, state: "unavailable", reason: "duplicate-account" };
+		summaries[index] = emptySummary(account, "unavailable", "duplicate-account");
 	}
 	const body = { accounts, events };
 	const fingerprint = createHash("sha256").update(JSON.stringify(body)).digest("hex");

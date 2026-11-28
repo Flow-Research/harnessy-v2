@@ -29,9 +29,11 @@ export const storedEvent = z.strictObject({
 	organizerSelf: z.boolean(),
 	jarvisBlock: z.boolean(),
 	relation: z.enum(["preparation", "agenda", "none"]),
-	markers: z.array(marker).max(8),
+	/** True when the event had more links than are stored. Such an event resolves to `conflict`. */
+	incomplete: z.boolean(),
+	markers: z.array(marker).max(64),
 	/** Keyed hashes of the action IDs that the local heuristic proposed. */
-	candidates: z.array(key).max(8),
+	candidates: z.array(key).max(64),
 });
 export type StoredEvent = z.infer<typeof storedEvent>;
 

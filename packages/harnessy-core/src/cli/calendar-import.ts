@@ -5,7 +5,7 @@ import { Command, Flag } from "effect/cli";
 import * as Effect from "effect/Effect";
 import { gwsCalendarReader } from "../jarvis/calendar-import/gws-reader.ts";
 import { CalendarImportError } from "../jarvis/calendar-import/keys.ts";
-import { recordAccountConsent, runCalendarImport } from "../jarvis/calendar-import/run.ts";
+import { checkPrimaryIdentity, recordAccountConsent, runCalendarImport } from "../jarvis/calendar-import/run.ts";
 import { renderCalendarImportPlist } from "../jarvis/calendar-import/schedule.ts";
 
 /**
@@ -37,12 +37,10 @@ export const calendarImportCommand = Command.make(
 			Flag.withDefault(false),
 			Flag.withDescription("Read and print counts only. Write no importer state."),
 		),
-		actions: Flag.String("actions").pipe(
-			Flag.optional,
-			Flag.withDescription("Owner-only JSON of action descriptors for candidates and task links."),
-		),
 	},
-	({ googleExecutable, googleExecutableSha256, accounts, dryRun, actions }) =>
+	// Action descriptors always come from the owner-only `actions.json` in the state
+	// folder, so a scheduled refresh uses the same input as a manual run.
+	({ googleExecutable, googleExecutableSha256, accounts, dryRun }) =>
 		Effect.tryPromise({
 			try: () =>
 				runCalendarImport({
@@ -51,7 +49,6 @@ export const calendarImportCommand = Command.make(
 					googleExecutableSha256,
 					...(accounts.length > 0 ? { accounts } : {}),
 					dryRun,
-					...(Option.isSome(actions) ? { descriptorsPath: actions.value } : {}),
 				}),
 			catch: safeFailure("Calendar import failed"),
 		}).pipe(
@@ -65,6 +62,37 @@ export const calendarImportCommand = Command.make(
 	),
 );
 
+export const calendarIdentityCheckCommand = Command.make(
+	"import-identity-check",
+	{
+		slug: Flag.String("slug").pipe(Flag.withDescription("gws folder name. It is never printed.")),
+		...executableFlags,
+	},
+	// One metadata call (`calendars get`, field `id`). Event contents are not read.
+	// It prints the opaque account label and the full keyed identity digest, never the ID.
+	({ slug, googleExecutable, googleExecutableSha256 }) =>
+		Effect.tryPromise({
+			try: () => {
+				const home = homedir();
+				const read = gwsCalendarReader(
+					googleExecutable,
+					googleExecutableSha256,
+					join(home, ".config", `gws-${slug}`),
+				);
+				return checkPrimaryIdentity(home, slug, read);
+			},
+			catch: safeFailure("Calendar identity check failed"),
+		}).pipe(
+			Effect.flatMap((result) =>
+				Console.log(JSON.stringify({ command: "jarvis calendar import-identity-check", ...result }, null, 2)),
+			),
+		),
+).pipe(
+	Command.withDescription(
+		"Read only the primary calendar ID of one account and print its keyed digest for a person to approve",
+	),
+);
+
 export const calendarConsentCommand = Command.make(
 	"import-consent",
 	{
@@ -72,40 +100,23 @@ export const calendarConsentCommand = Command.make(
 		consentedAt: Flag.String("consented-at"),
 		consentedBy: Flag.Literals("consented-by", ["julian"]),
 		method: Flag.Literals("method", ["voice", "written"]),
-		approvedIdentityPrefix: Flag.String("approved-identity-sha256-prefix").pipe(
+		approvedIdentity: Flag.String("approved-identity").pipe(
 			Flag.optional,
 			Flag.withDescription(
-				"SHA-256 prefix of the primary calendar ID from the approved read-permission check. Without it the account stays unbound.",
+				"Full 64-character keyed identity digest from import-identity-check, approved by a person. Without it the account stays unbound.",
 			),
 		),
-		googleExecutable: executableFlags.googleExecutable.pipe(Flag.optional),
-		googleExecutableSha256: executableFlags.googleExecutableSha256.pipe(Flag.optional),
 	},
-	({ slug, consentedAt, consentedBy, method, approvedIdentityPrefix, googleExecutable, googleExecutableSha256 }) =>
-		Effect.tryPromise({
-			try: () => {
-				const home = homedir();
-				if (Option.isNone(approvedIdentityPrefix))
-					return recordAccountConsent(home, slug, { consentedAt, consentedBy, method });
-				if (Option.isNone(googleExecutable) || Option.isNone(googleExecutableSha256))
-					throw new CalendarImportError(
-						"Binding an identity needs --google-executable and --google-executable-sha256",
-					);
-				const read = gwsCalendarReader(
-					googleExecutable.value,
-					googleExecutableSha256.value,
-					join(home, ".config", `gws-${slug}`),
-				);
-				return recordAccountConsent(
-					home,
+	// Nothing is read here: the digest is compared exactly on every import.
+	({ slug, consentedAt, consentedBy, method, approvedIdentity }) =>
+		Effect.try({
+			try: () =>
+				recordAccountConsent(
+					homedir(),
 					slug,
 					{ consentedAt, consentedBy, method },
-					{
-						read,
-						approvedIdentityPrefix: approvedIdentityPrefix.value,
-					},
-				);
-			},
+					Option.getOrUndefined(approvedIdentity),
+				),
 			catch: safeFailure("Calendar consent could not be recorded"),
 		}).pipe(
 			Effect.flatMap((result) =>
