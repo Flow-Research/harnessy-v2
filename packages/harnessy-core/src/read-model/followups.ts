@@ -45,6 +45,8 @@ export interface ExtractedTask {
 	readonly ref?: string;
 	/** From a brief's "Delegated or Waiting" section: a follow-up, not a plain task. */
 	readonly followup?: boolean;
+	/** A stored task UUID the brief line carries as `<!-- task:<uuid> -->`. */
+	readonly taskId?: string;
 }
 
 const DATE = /\b(20\d{2}-\d{2}-\d{2})\b/u;
@@ -164,40 +166,68 @@ export const extractReminderTasks = (text: string): ReadonlyArray<ExtractedTask>
 		};
 	});
 
+const TASK_MARKER = /\s*<!--\s*task:\s*([^\s>]*)\s*-->\s*/giu;
+const TASK_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+/**
+ * Remove `<!-- task:<uuid> -->` markers from a list item. The marker is invisible
+ * when the brief renders, and the title and fingerprint never include it. Only
+ * one well-formed UUID is kept; several different markers on one item keep none.
+ */
+const withTaskMarker = <T extends { readonly text: string }>(
+	item: T,
+): T & { readonly taskId: { readonly taskId?: string } } => {
+	const found = new Set<string>();
+	const text = item.text.replace(TASK_MARKER, (_marker, id: string) => {
+		found.add(id.toLowerCase());
+		return " ";
+	});
+	const [only] = found;
+	const taskId = found.size === 1 && only !== undefined && TASK_UUID.test(only) ? { taskId: only } : {};
+	return { ...item, text: text.trim(), taskId };
+};
+
 /**
  * The brief's two action sections. "Decisions and Actions for You" items are the
  * owner's own; "Delegated or Waiting" items wait on the person named before the dash
  * or before "owes", "owed" or "owns".
  */
 export const extractBriefTasks = (text: string): ReadonlyArray<ExtractedTask> => {
-	const mine = listItems(section(text, /^decisions and actions for you$/iu) ?? []).map(
-		(item): ExtractedTask =>
-			item.raw
-				? rawTask(item)
-				: {
-						title: bounded(boldLead(item.text) ?? plainText(item.text)),
-						status: "todo",
-						owner: null,
-						due: dueOf(item.text),
-						line: item.line,
-						raw: false,
-					},
-	);
-	const waiting = listItems(section(text, /^delegated or waiting$/iu) ?? []).map((item): ExtractedTask => {
-		if (item.raw) return { ...rawTask(item), followup: true };
-		const lead = boldLead(item.text) ?? plainText(item.text);
-		const named = OWNER_LEAD.exec(lead);
-		const verb = named === null ? OWNER_VERB.exec(lead) : null;
-		return {
-			title: bounded(named?.[2] ?? lead),
-			status: "waiting",
-			owner: named?.[1] ?? verb?.[1] ?? null,
-			due: dueOf(item.text),
-			line: item.line,
-			raw: false,
-			followup: true,
-		};
-	});
+	const mine = listItems(section(text, /^decisions and actions for you$/iu) ?? [])
+		.map(withTaskMarker)
+		.map(
+			({ taskId, ...item }): ExtractedTask => ({
+				...(item.raw
+					? rawTask(item)
+					: {
+							title: bounded(boldLead(item.text) ?? plainText(item.text)),
+							status: "todo",
+							owner: null,
+							due: dueOf(item.text),
+							line: item.line,
+							raw: false,
+						}),
+				...taskId,
+			}),
+		);
+	const waiting = listItems(section(text, /^delegated or waiting$/iu) ?? [])
+		.map(withTaskMarker)
+		.map(({ taskId, ...item }): ExtractedTask => {
+			if (item.raw) return { ...rawTask(item), followup: true, ...taskId };
+			const lead = boldLead(item.text) ?? plainText(item.text);
+			const named = OWNER_LEAD.exec(lead);
+			const verb = named === null ? OWNER_VERB.exec(lead) : null;
+			return {
+				title: bounded(named?.[2] ?? lead),
+				status: "waiting",
+				owner: named?.[1] ?? verb?.[1] ?? null,
+				due: dueOf(item.text),
+				line: item.line,
+				raw: false,
+				followup: true,
+				...taskId,
+			};
+		});
 	return [...mine, ...waiting];
 };
 

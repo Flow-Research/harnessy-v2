@@ -5,6 +5,7 @@
  * Reminders, the first-week register and project status.md items are `other`.
  */
 import type { TaskData, TaskListData } from "../../read-model/app-schemas.ts";
+import { titleIdentityKey } from "./similarity.ts";
 import { type StoredTask, TASKS_MAX, type TasksStore, taskFingerprint } from "./store.ts";
 
 const derivedFingerprint = (task: TaskData, occurrence: number): string => {
@@ -120,7 +121,14 @@ export const mergeTasks = (options: MergeTasksOptions): TaskListData => {
 	const push = (task: TaskData): void => {
 		(task.group === "primary" ? primary : other).push(task);
 	};
+	const briefLines = new Set<string>();
 	for (const task of options.derived.tasks) {
+		// Ingest collapses a repeated brief line into one task; show it once as well.
+		if (task.source.kind === "brief") {
+			const lineKey = `${task.source.path}\0${task.kind}\0${titleIdentityKey(task.title)}`;
+			if (briefLines.has(lineKey)) continue;
+			briefLines.add(lineKey);
+		}
 		const kindKey = `${task.source.kind}:${task.project ?? ""}:${task.title.toLowerCase()}`;
 		const occurrence = seen.get(kindKey) ?? 0;
 		seen.set(kindKey, occurrence + 1);

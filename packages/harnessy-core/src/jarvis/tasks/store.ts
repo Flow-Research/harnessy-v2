@@ -24,6 +24,7 @@ import { DatabaseSync } from "node:sqlite";
 import * as Result from "effect/Result";
 
 import { normaliseTaskText } from "../../read-model/followups.ts";
+import { uniqueFuzzyMatch } from "./similarity.ts";
 
 export const TASKS_STORE_VERSION = 1;
 export const TASKS_MAX = 500;
@@ -735,19 +736,27 @@ export class TasksState {
 				(source.briefDate !== null && item.source.briefDate === source.briefDate) ||
 				item.source.path === source.path;
 			const unused = (item: StoredTask): boolean => !used.has(item.id);
-			for (const candidate of candidates) {
+			const byId = new Map(items.map((item) => [item.id, item] as const));
+			// What each candidate resolves to: an existing item, or undefined to create one.
+			const plans: Array<StoredTask | undefined> = candidates.map(() => undefined);
+			const claim = (index: number, item: StoredTask): void => {
+				used.add(item.id);
+				plans[index] = item;
+			};
+			// Pass 1, exact identity. A task id the candidate carries (a brief marker or a
+			// replayed allocation) comes first, then a closed item of this same brief, then
+			// an open fingerprint, a unique open title and a unique open native title.
+			for (const [index, candidate] of candidates.entries()) {
+				const carried = candidate.id === undefined ? undefined : byId.get(candidate.id);
+				if (carried !== undefined && unused(carried)) {
+					claim(index, carried);
+					continue;
+				}
 				const closedSame = (closedByFingerprint.get(candidate.fingerprint) ?? []).find(
 					(item) => unused(item) && sameBrief(item),
 				);
 				if (closedSame !== undefined) {
-					used.add(closedSame.id);
-					matched += 1;
-					sidecarItems.push({
-						id: closedSame.id,
-						fingerprint: candidate.fingerprint,
-						line: candidate.line,
-						title: closedSame.title,
-					});
+					claim(index, closedSame);
 					continue;
 				}
 				const existing = (openByFingerprint.get(candidate.fingerprint) ?? []).find(unused);
@@ -764,8 +773,48 @@ export class TasksState {
 						: [];
 				const uniqueNative = nativeMatches.length === 1 ? nativeMatches[0] : undefined;
 				const current = existing ?? uniqueTitle ?? uniqueNative;
+				if (current !== undefined) claim(index, current);
+			}
+			// Pass 2, fuzzy fallback for brief items with no exact match and no carried id.
+			// Only open brief items of the same kind and owner are considered, and a match
+			// must be unique both ways: one item for the candidate, one candidate for the item.
+			if (source.kind === "brief") {
+				const fuzzy = new Map<number, StoredTask>();
+				const claims = new Map<string, number>();
+				for (const [index, candidate] of candidates.entries()) {
+					if (plans[index] !== undefined || candidate.id !== undefined) continue;
+					const kind: TaskKind = candidate.kind ?? "task";
+					const pool = items.filter(
+						(item) =>
+							isOpen(item) &&
+							unused(item) &&
+							item.source.kind === "brief" &&
+							item.kind === kind &&
+							(item.owner === null ||
+								candidate.owner === null ||
+								item.owner.toLowerCase() === candidate.owner.toLowerCase()),
+					);
+					const hit = uniqueFuzzyMatch(candidate.title, pool);
+					if (hit === undefined) continue;
+					fuzzy.set(index, hit);
+					claims.set(hit.id, (claims.get(hit.id) ?? 0) + 1);
+				}
+				for (const [index, hit] of fuzzy) if (claims.get(hit.id) === 1) claim(index, hit);
+			}
+			// Pass 3, apply in brief order. A closed item stays closed and unchanged.
+			for (const [index, candidate] of candidates.entries()) {
+				const current = plans[index];
+				if (current !== undefined && !isOpen(current)) {
+					matched += 1;
+					sidecarItems.push({
+						id: current.id,
+						fingerprint: candidate.fingerprint,
+						line: candidate.line,
+						title: current.title,
+					});
+					continue;
+				}
 				if (current !== undefined) {
-					used.add(current.id);
 					matched += 1;
 					const next: StoredTask = {
 						...current,
@@ -790,23 +839,19 @@ export class TasksState {
 						line: candidate.line,
 						title: next.title,
 					});
-					const list = openByFingerprint.get(candidate.fingerprint);
-					if (list)
-						openByFingerprint.set(
-							candidate.fingerprint,
-							list.filter((item) => item.id !== current.id),
-						);
 					continue;
 				}
 				if (items.length >= TASKS_MAX) throw new TaskRefused("tasks_full");
 				created += 1;
 				if (candidate.id !== undefined && !isId(candidate.id)) throw new TaskRefused("invalid_id");
-				if (candidate.id !== undefined && items.some((row) => row.id === candidate.id))
-					throw new TaskRefused("duplicate_id");
+				// A carried id that an earlier line of this batch already took (a copied
+				// marker) is not reused; the new item gets a fresh UUID.
+				const carriedId =
+					candidate.id !== undefined && !items.some((row) => row.id === candidate.id) ? candidate.id : undefined;
 				const kind: TaskKind = candidate.kind ?? (source.kind === "reminders" ? "followup" : "task");
 				if (!TASK_KINDS.has(kind)) throw new TaskRefused("invalid_kind");
 				const item: StoredTask = {
-					id: candidate.id ?? randomUUID(),
+					id: carriedId ?? randomUUID(),
 					title: candidate.title.slice(0, TASK_TITLE_MAX),
 					status: candidate.status,
 					owner: candidate.owner,

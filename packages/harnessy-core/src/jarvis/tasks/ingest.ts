@@ -9,6 +9,7 @@ import process from "node:process";
 
 import type { TaskData } from "../../read-model/app-schemas.ts";
 import { type ExtractedTask, extractBriefTasks } from "../../read-model/followups.ts";
+import { titleIdentityKey } from "./similarity.ts";
 import {
 	defaultTasksFile,
 	type IngestCandidate,
@@ -24,19 +25,35 @@ const MAX_BRIEF_BYTES = 256 * 1024;
 
 const textOf = (task: ExtractedTask): string => `${task.ref ?? ""} ${task.title}`.trim();
 
-/** Candidates for `TasksState.ingest`, with fingerprints unique within the batch. */
+/**
+ * Candidates for `TasksState.ingest`, with fingerprints unique within the batch.
+ * In a brief, a line whose kind and identity key (case, Markdown, punctuation and
+ * whitespace removed) repeat an earlier line is the same task and is dropped.
+ * Other sources keep repeats as separate tasks with an occurrence number.
+ */
 export const candidatesFromExtracted = (
 	kind: Exclude<StoredTaskSourceKind, "native">,
 	extracted: ReadonlyArray<ExtractedTask>,
 	displayRef: string,
 ): ReadonlyArray<IngestCandidate> => {
 	const seen = new Map<string, number>();
-	return extracted.map((task) => {
+	const collapsed = new Set<string>();
+	const unique =
+		kind === "brief"
+			? extracted.filter((task) => {
+					const key = `${task.followup === true ? "followup" : "task"}\0${titleIdentityKey(textOf(task))}`;
+					if (collapsed.has(key)) return false;
+					collapsed.add(key);
+					return true;
+				})
+			: extracted;
+	return unique.map((task) => {
 		const text = textOf(task);
 		const normalised = text.toLowerCase();
 		const occurrence = seen.get(normalised) ?? 0;
 		seen.set(normalised, occurrence + 1);
 		return {
+			...(task.taskId === undefined ? {} : { id: task.taskId }),
 			title: task.title,
 			status: task.status,
 			owner: task.owner,
