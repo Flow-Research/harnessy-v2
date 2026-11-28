@@ -48,34 +48,44 @@ publication are separate steps.
 
 ## Where a new note goes
 
-The poll routes each new note to a project folder when the inbox is at
-`<private root>/meeting-inbox/fathom`. The router reads
-`<private root>/meeting-routes.yaml` and the project folders in the private root:
+The poll writes every new note to one folder: the configured
+`meeting_publication.source_path` (`<private root>/flow/meetings`). The path is
+`<source path>/YYYY/Mmm/DD-<title>-<id>.md`. The poll does not write notes to
+other project folders.
 
-- Each folder that has a `status.md` file or a `meetings/` folder is a route.
+When the inbox is at `<private root>/meeting-inbox/fathom`, the poll sets the
+`Project:` line of the note from `<private root>/meeting-routes.yaml` and the
+project folders in the private root:
+
+- Each folder that has a `status.md` file or a `meetings/` folder is a project.
   Its keyword is the folder name.
 - `routes` in the file add keywords to a project.
-- `project_aliases` move a project into a different project. For example,
-  `garden: flow` sends Garden matches to Flow and adds the tag `garden`.
+- `project_aliases` fold a project into a different project. For example,
+  `garden: flow` gives Garden matches `Project: flow` and adds the tag `garden`.
 
 The router scores the title, the participants, the summary and the action
 items. It does not score the transcript. A keyword counts only as a full word,
 and a keyword with more words counts more. The project with the highest score
-gets the note at `<private root>/<project>/meetings/YYYY/Mmm/DD-<title>-<id>.md`,
-and `Project:` in the note is that project. The note goes to the configured
-default (`meeting_publication.project` and `meeting_publication.source_path`)
-when:
+goes in `Project:`. The note gets the configured default
+(`meeting_publication.project`) when:
 
 - no keyword matches, or
 - two projects have the same score, or
 - the winning project has no folder.
 
-The router never makes a new project name. If a note for the same recording is
-already in the default folder, the poll does not import it again in a project
-folder. A re-file stub has the same effect.
+The router never makes a new project name.
+
+The `Project:` line is important for privacy. Meeting publication publishes a
+note only when `Project:` is the configured project (`flow`). A hiring or
+client meeting that gets its own project tag stays out of the Flow publication
+queue. Do not change `meeting-routes.yaml` to one rule that matches every
+meeting.
+
+The daily brief (`collect-state`) reads the project from the `Project:` line
+first, so the brief shows the project although all notes are in one folder.
 
 Inspect the result before a poll: `harnessy jarvis meeting fathom import-plan`
-shows the project for each inbox envelope, and `(default)` when no route
+shows the project tag for each inbox envelope, and `(default)` when no route
 decided it.
 
 ## Action items and follow-ups
@@ -89,7 +99,7 @@ follow-up in the task store (`~/.harnessy/portal/tasks.json`, or
 
 - `source.kind: meeting` and `source.path` set to the note,
 - `link` set to the Fathom recording,
-- `project` set to the routed project,
+- `project` set to the `Project:` tag of the note,
 - no due date.
 
 The identity of a follow-up is the note fingerprint and the normalized action
@@ -104,37 +114,10 @@ available, the queue keeps the changes for the next poll or for
 before you install this version on the Mac.
 
 When the daily brief is published, its "Delegated or Waiting" items become
-follow-ups that wait on the person named before the dash. Its "Decisions and
+follow-ups that wait on the person named before the dash ("Name — action") or
+before "owes", "owed" or "owns" ("Name owns the setup"). Its "Decisions and
 Actions for You" items stay tasks. A brief item that the previous brief already
 had does not make a new follow-up.
-
-## Re-file misfiled notes
-
-`harnessy jarvis meeting refile` moves notes that are in the wrong project
-folder. It reads an explicit manifest:
-
-```yaml
-version: 1
-moves:
-  - source: flow/meetings/2026/Oct/22-example-call-123.md
-    project: example-project
-```
-
-The paths are relative to the private root. By default the command is a dry
-run. It shows each move, its status and the publication state of the note, and
-it writes nothing. It also shows a plan id.
-
-To do the moves, review the dry run, then run the command again with
-`--apply --confirm <plan id>`. If the manifest, a note or a destination changed
-after the dry run, the plan id changes and the command stops. For each move,
-the command:
-
-1. Writes the note to `<private root>/<project>/meetings/` with `Project:` set to
-   the new project. It does not overwrite a file.
-2. Replaces the old file with a one-line stub that links to the new path.
-
-The command does not move a note that is queued for publication
-(`pending_review`, `approved`, `publishing` or `blocked`).
 
 ## Upgrading an existing installation
 

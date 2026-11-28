@@ -17,19 +17,19 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
 import type { FathomImportEnvelope } from "./ingest.ts";
-import { type MeetingRoute, type MeetingRouteRules, projectMeetingsRoot, routeMeeting } from "./routes.ts";
+import { type MeetingRoute, type MeetingRouteRules, routeMeeting } from "./routes.ts";
 
 export interface FathomNoteImportOptions {
 	readonly accounts?: ReadonlyArray<string>;
 	/** `Project:` for every note when `routing` is absent. */
 	readonly project?: string | null;
 	readonly inboxRoot: string;
-	/** Destination for the default project (and for every note when `routing` is absent). */
+	/** The one meetings folder (`flow/meetings`). Every note is written here. */
 	readonly sourceRoot: string;
 	/**
-	 * Route each note to `<private root>/<project>/meetings`. The default project
-	 * keeps `sourceRoot`. A note already present under the default root is never
-	 * imported again elsewhere, so a re-filed note's stub still blocks it.
+	 * Set each note's `Project:` tag (and alias tags) from the route rules. The
+	 * folder never changes: publication reads only `sourceRoot` and publishes a
+	 * note only when its `Project:` tag is the configured project.
 	 */
 	readonly routing?: MeetingRouteRules;
 	readonly now?: Date;
@@ -243,15 +243,9 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 		const actionItems = fathomActionItems(payload);
 		const route = options.routing === undefined ? null : routeFathomPayload(options.routing, payload);
 		const project = route === null ? (options.project ?? null) : route.project;
-		const root =
-			route === null || options.routing === undefined || route.project === options.routing.defaultProject
-				? sourceRoot
-				: resolve(projectMeetingsRoot(options.routing, route.project));
-		const directory = join(root, date.slice(0, 4), month);
+		const directory = join(sourceRoot, date.slice(0, 4), month);
 		const destination = join(directory, filename);
-		// The default root is checked too: a note imported there before routing,
-		// or a re-file stub, keeps the recording from being imported twice.
-		if (existsSync(destination) || existsSync(join(sourceRoot, date.slice(0, 4), month, filename))) {
+		if (existsSync(destination)) {
 			existing += 1;
 			continue;
 		}

@@ -257,9 +257,8 @@ jarvis android run ./builds/demo.apk --avd Medium_Phone_API_36.1 --reinstall
 | Pull Fathom meeting by ID | `jarvis meeting fathom ingest` |
 | Pull today's/recent/unpulled Fathom meetings as a fallback | `jarvis meeting fathom ingest-today` |
 | Incrementally poll configured Fathom accounts | `jarvis meeting fathom poll` |
-| V2 poll: route new notes by `meeting-routes.yaml` and add follow-ups | `harnessy jarvis meeting fathom poll` |
-| V2: see the routed project for each inbox envelope | `harnessy jarvis meeting fathom import-plan` |
-| V2: dry run of a re-file of misfiled notes from a manifest | `harnessy jarvis meeting refile --manifest <file>`; after review, `--apply --confirm <plan id>` |
+| V2 poll: write new notes to `flow/meetings`, tag `Project:` by `meeting-routes.yaml`, and add follow-ups | `harnessy jarvis meeting fathom poll` |
+| V2: see the project tag for each inbox envelope | `harnessy jarvis meeting fathom import-plan` |
 | Create/delete/check Fathom webhooks | `jarvis meeting fathom webhook create/delete/status` |
 | Launch Fathom webhook + tunnel tmux stack | `jarvis meeting fathom start` |
 | Run Fathom webhook receiver | `jarvis meeting fathom webhook serve` |
@@ -305,10 +304,13 @@ Meeting project aliases live in
 explicit `--project garden` ingests to the Flow meeting folder, combines
 Garden and Flow route scores, and retains `garden` once in the note tags.
 
-The V2 Fathom poll uses the same file. It writes each new note to
-`private/<user>/<project>/meetings/YYYY/Mmm/`, writes Fathom action items to
+The V2 Fathom poll uses the same file, but only to set the note's `Project:`
+line and alias tags. It writes every new note to one folder,
+`private/<user>/flow/meetings/YYYY/Mmm/`, writes Fathom action items to
 `## Action Items`, and adds each open action item as a follow-up in the task
-store. A note with no match, or with a tie, goes to Flow. Canonical notes keep
+store. A note with no match, or with a tie, is tagged `Project: flow`. Meeting
+publication publishes only notes tagged with its configured project, so a note
+tagged with a different project stays out of the Flow queue. Canonical notes keep
 the summary only. The full transcript stays in the envelope under
 `meeting-inbox/fathom/<account>/pending/`. See `docs/fathom-polling.md` in
 Harnessy V2.

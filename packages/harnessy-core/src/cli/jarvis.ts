@@ -47,7 +47,6 @@ import {
 	runLifeResearch,
 	runLifeWeekly,
 } from "../jarvis/life-orchestrator/service.ts";
-import { applyMeetingRefile, type MeetingRefilePlan, planMeetingRefile } from "../jarvis/meeting-refile.ts";
 import { JarvisParityReporter } from "../jarvis/parity-report.ts";
 import { JarvisPathResolver } from "../jarvis/paths.ts";
 import { defaultTasksFile, homeTasksSyncConfig } from "../jarvis/tasks/index.ts";
@@ -1175,91 +1174,8 @@ export const jarvisMeetingFathomCommand = Command.make("fathom").pipe(
 	Command.withDescription("Inspect the V2 Fathom boundary"),
 );
 
-const refileManifestOption = Options.String("manifest").pipe(
-	Options.withDescription(
-		"YAML manifest: `version: 1` and `moves` of `{ source, project }`, paths relative to the private root.",
-	),
-);
-const refilePrivateRootOption = Options.String("private-root").pipe(
-	Options.optional,
-	Options.withDescription("Private context root. Defaults to the folder above meeting-inbox/fathom."),
-);
-const refileApplyOption = Options.Boolean("apply").pipe(
-	Options.withDefault(false),
-	Options.withDescription("Run the reviewed moves. Needs --confirm with the dry run's plan id."),
-);
-const refileConfirmOption = Options.String("confirm").pipe(
-	Options.optional,
-	Options.withDescription("Plan id printed by the dry run that was reviewed."),
-);
-
-const refileLines = (plan: MeetingRefilePlan, mode: string): ReadonlyArray<string> => [
-	`Meeting re-file plan ${plan.planId} (${mode}): ${plan.entries.length} entries, ${plan.counts.ready} ready`,
-	`Private root: ${plan.privateRoot}`,
-	...plan.entries.map(
-		(entry) =>
-			`${entry.status.padEnd(18)} ${entry.source.slice(plan.privateRoot.length + 1)} -> ${entry.destination.slice(plan.privateRoot.length + 1)} (Project: ${entry.fromProject ?? "none"} -> ${entry.project}; publication: ${entry.publication ?? "none"})`,
-	),
-];
-
-export const jarvisMeetingRefileCommand = Command.make(
-	"refile",
-	{
-		target: targetOption,
-		manifest: refileManifestOption,
-		privateRoot: refilePrivateRootOption,
-		apply: refileApplyOption,
-		confirm: refileConfirmOption,
-		json: jsonOption,
-	},
-	({ target, manifest, privateRoot, apply, confirm, json }) =>
-		Effect.gen(function* () {
-			const paths = yield* (yield* JarvisPathResolver).resolve(target);
-			const config = yield* (yield* JarvisConfigReader).loadResolved(paths);
-			const inbox = inspectFathomStatus({ configPath: paths.legacyGlobalConfigFile }).inboxPath;
-			const statePath = config.meetingPublication.statePath;
-			const options = {
-				privateRoot: Option.getOrUndefined(privateRoot) ?? resolve(inbox, "..", ".."),
-				manifest,
-				publicationDatabase:
-					statePath === null
-						? undefined
-						: join(statePath.replace(/^~(?=\/|$)/u, homedir()), "meeting-publication.sqlite3"),
-			};
-			if (!apply) {
-				const plan = yield* Effect.try({ try: () => planMeetingRefile(options), catch: (error) => error as Error });
-				if (json)
-					return yield* Console.log(
-						JSON.stringify({ command: "jarvis meeting refile", dryRun: true, ...plan }, null, 2),
-					);
-				for (const line of refileLines(plan, "dry run")) yield* Console.log(line);
-				return yield* Console.log(
-					`Nothing was written. After review, run again with --apply --confirm ${plan.planId}.`,
-				);
-			}
-			const confirmed = Option.getOrUndefined(confirm);
-			if (confirmed === undefined)
-				return yield* Effect.fail(new Error("--apply needs --confirm <plan id> from a reviewed dry run."));
-			const result = yield* Effect.try({
-				try: () => applyMeetingRefile({ ...options, confirm: confirmed }),
-				catch: (error) => error as Error,
-			});
-			if (json)
-				return yield* Console.log(
-					JSON.stringify({ command: "jarvis meeting refile", dryRun: false, ...result }, null, 2),
-				);
-			yield* Console.log(
-				`Meeting re-file ${result.planId}: moved ${result.moved.length}, stubbed ${result.stubbed.length}, skipped ${result.skipped}`,
-			);
-		}),
-).pipe(
-	Command.withDescription(
-		"Plan (default) or run a reviewed re-file of misfiled meeting notes from an explicit manifest, leaving stubs",
-	),
-);
-
 export const jarvisMeetingCommand = Command.make("meeting").pipe(
-	Command.withSubcommands([jarvisMeetingFathomCommand, jarvisMeetingRefileCommand] as const),
+	Command.withSubcommands([jarvisMeetingFathomCommand] as const),
 	Command.withDescription("Inspect migrated meeting capabilities"),
 );
 

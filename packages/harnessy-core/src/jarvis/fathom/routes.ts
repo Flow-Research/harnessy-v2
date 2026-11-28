@@ -1,5 +1,10 @@
 /**
- * Route a meeting to a private-context project folder.
+ * Choose the project tag for a meeting note.
+ *
+ * Every note is written to one folder (`flow/meetings`). The route only sets the
+ * note's `Project:` line and its alias tags. Meeting publication publishes a note
+ * only when that tag is the configured project, so a hiring or client meeting
+ * tagged with its own project stays out of the Flow publication queue.
  *
  * This is the V2 port of the Jarvis `--auto-route` rules
  * (`jarvis-cli/src/jarvis/meetings/service.py`). It reads
@@ -13,7 +18,7 @@
  *
  * A keyword scores only on a whole-word match, weighted by its word count. The
  * highest-scoring project wins. A tie, no match, or a winner without a project
- * folder falls back to the default project, so the router never invents a slug.
+ * folder falls back to the default project, so the router never invents a tag.
  */
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -192,7 +197,3 @@ export const routeMeeting = (rules: MeetingRouteRules, meeting: MeetingRouteInpu
 	if (winner[0] !== rules.defaultProject && !(existsSync(folder) && lstatSync(folder).isDirectory())) return fallback;
 	return { project: winner[0], aliasTags: tags.get(winner[0]) ?? [], defaulted: false, score: winner[1] };
 };
-
-/** `<private root>/<project>/meetings`. */
-export const projectMeetingsRoot = (rules: MeetingRouteRules, project: string): string =>
-	join(rules.privateRoot, project, "meetings");
