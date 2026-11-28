@@ -152,7 +152,9 @@ describe("runConfiguredFathomPoll", () => {
 		expect(polled).toEqual(["research"]);
 		expect(first.importedNotes?.notes.map((note) => note.project)).toEqual(["acme"]);
 		const path = first.importedNotes!.paths[0]!;
-		expect(path.startsWith(join(privateRoot, "flow", "meetings", "2026"))).toBe(true);
+		// The importer files by the recording's UTC date, so take the year from it.
+		const year = String(new Date(recorded).getUTCFullYear());
+		expect(path.startsWith(join(privateRoot, "flow", "meetings", year))).toBe(true);
 		expect(readFileSync(path, "utf8")).toContain("- Project: acme\n");
 		expect(readFileSync(path, "utf8")).toContain("- [ ] Draft the pilot terms (owner: Ada)");
 		expect(first.followups).toMatchObject({ created: 1, existing: 0, queued: 0 });
