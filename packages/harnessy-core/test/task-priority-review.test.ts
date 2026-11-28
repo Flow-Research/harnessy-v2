@@ -43,7 +43,12 @@ function replay() {
 					observedAt: i === 0 || i === 4 ? "2026-10-24T23:00:00Z" : undefined,
 					progress:
 						i === 9
-							? { at: "2026-11-19T23:00:00Z", source: "fixture", kind: "accepted-material-scope-change" }
+							? {
+									at: "2026-11-19T23:00:00Z",
+									source: "fixture",
+									kind: "accepted-material-scope-change",
+									basis: "human-flagged",
+								}
 							: undefined,
 					dependency: i === 3 ? edge(8) : undefined,
 				},
@@ -53,6 +58,37 @@ function replay() {
 	return { store, evidence, actions: evidence.tasks.map((t) => t.actions[0]!) };
 }
 describe("scoring review", () => {
+	it("lists review candidates separately, includes the waiting decision in both views and puts reopened last", async () => {
+		const { store, evidence, actions } = replay();
+		evidence.candidates = [{ id: "c", taskId: store.items[0]!.id, summary: "Review proposal", source: "fixture" }];
+		actions[0]!.state = "pending_reverification";
+		const genuine = actions[8]!;
+		delete genuine.importance;
+		const snap = await rankSnapshot(store, evidence, at);
+		expect(snap.rows.find((r) => r.current === 109)).toMatchObject({ mine: true, waiting: true });
+		expect(snap.rows.find((r) => r.current === 105)).toMatchObject({ mine: false, waiting: true });
+		expect(snap.candidates[0]).toMatchObject({ state: "review" });
+		expect(snap.rows.map((r) => r.winner.actionId)).not.toContain("c");
+		expect(snap.rows.slice(-2).map((r) => [r.current, r.effective, r.reason])).toEqual([
+			[108, 10000, "watch-only"],
+			[100, 10000, "pending_reverification"],
+		]);
+	});
+	it("accepts explicit material resets at most once per rolling week", async () => {
+		const { store, evidence, actions } = replay();
+		const action = actions[0]!;
+		action.scopeHistory = [
+			{ at: "2026-11-01T11:00:00Z", basis: "human-flagged", source: "fixture" },
+			{ at: "2026-11-06T11:00:00Z", basis: "owner-change", source: "fixture" },
+			{ at: "2026-11-08T11:00:00Z", basis: "deliverable-change", source: "fixture" },
+		];
+		action.progress = { at: "2026-11-27T11:00:00Z", kind: "accepted-material-scope-change", source: "unverified" };
+		const points = async () =>
+			(await rankSnapshot(store, evidence, at)).rows.find((r) => r.current === 100)!.winner.points.age;
+		expect(await points()).toBe(20);
+		action.scopeHistory.pop();
+		expect(await points()).toBe(30);
+	});
 	it("replays the ten synthetic v3 rows", async () => {
 		const { store, evidence } = replay();
 		const snap = await rankSnapshot(store, evidence, at);
@@ -143,6 +179,15 @@ describe("scoring review", () => {
 	});
 });
 describe("confirmed priority batch with a memory-only task client", () => {
+	it("restricts a full-store manual request to one score change or one reorder", async () => {
+		const { store, evidence } = replay();
+		const snap = await rankSnapshot(store, evidence, at);
+		const batch = { ...priorityActionBatch(snap.plan), scope: "all" };
+		expect(() => applyPriorityBatch(store, store.revision, batch)).toThrow(/invalid_body/);
+		const [first, ...others] = batch.setPriority;
+		batch.setPriority = [first!, ...others.map((r) => ({ ...r, priority: r.oldPriority }))];
+		expect(() => applyPriorityBatch(store, store.revision, batch)).toThrow(/invalid_body/);
+	});
 	const config = () => ({ endpoint: "fixture", token: "" });
 	it("submits one revision-guarded action, preserves timestamps and includes rollback data", async () => {
 		const { store, evidence } = replay();

@@ -1,5 +1,6 @@
 import { type DueDateDeriver, deriveV3DueDates } from "./due-date-deriver.ts";
 import type { Availability, CalendarSignal, EmailSignal, PriorityAction } from "./priority-evidence.ts";
+import { priorityPolicy } from "./priority-policy.ts";
 import { lagosCalendarDate } from "./store.ts";
 
 const hour = 3_600_000;
@@ -43,6 +44,7 @@ export function scoreAction(
 	calendar: Availability<CalendarSignal> = "unavailable",
 	email: Availability<EmailSignal> = "unavailable",
 	deriveDueDates: DueDateDeriver = deriveV3DueDates,
+	createdAt?: string,
 ) {
 	const now = at.getTime();
 	const today = Date.parse(lagosCalendarDate(at));
@@ -82,7 +84,21 @@ export function scoreAction(
 			points.context = 300;
 		else if (action.context === "request" || action.context === "accepted") points.context = 180;
 		else if (action.context === "plan") points.context = 80;
-		const anchor = Math.max(Date.parse(action.observedAt ?? "") || 0, Date.parse(action.progress?.at ?? "") || 0);
+		const progress = action.progress;
+		const scopeTimes = (action.scopeHistory ?? []).map((change) => Date.parse(change.at));
+		if (progress?.kind === "accepted-material-scope-change" && progress.basis)
+			scopeTimes.push(Date.parse(progress.at));
+		let scopeReset = -Infinity;
+		for (const time of scopeTimes.sort((a, b) => a - b)) {
+			if (time <= now && time - scopeReset >= priorityPolicy.scopeResetDays * day) scopeReset = time;
+		}
+		const progressTime = progress && progress.kind !== "accepted-material-scope-change" ? Date.parse(progress.at) : 0;
+		const evidenceAnchor = Math.max(
+			Date.parse(action.observedAt ?? "") || 0,
+			scopeReset,
+			progressTime <= now ? progressTime : 0,
+		);
+		const anchor = evidenceAnchor || Date.parse(createdAt ?? "");
 		if (anchor > 0) points.age = Math.max(0, Math.min(100, 10 * Math.floor((now - anchor) / (7 * day))));
 		urgent ||= points.calendar >= 300;
 	}
@@ -114,7 +130,7 @@ export function scoreAction(
 			!action.estimate ? "effort" : "",
 			action.owner === "unknown" ? "ownership" : "",
 			!action.context ? "context" : "",
-			!action.progress && !action.observedAt ? "age" : "",
+			!action.progress && !action.observedAt && !createdAt && !action.scopeHistory?.length ? "age" : "",
 		].filter(Boolean),
 		disposition: actionable
 			? "actionable"
@@ -161,6 +177,9 @@ export interface RankedTask {
 }
 export const compareTasks = (a: RankedTask, b: RankedTask) =>
 	a.effective - b.effective ||
+	(priorityPolicy.reopenedLastOnTie
+		? Number(a.winner.state === "pending_reverification") - Number(b.winner.state === "pending_reverification")
+		: 0) ||
 	Number(b.pinned) - Number(a.pinned) ||
 	(a.pinned && b.pinned ? (a.position ?? Number.MAX_SAFE_INTEGER) - (b.position ?? Number.MAX_SAFE_INTEGER) : 0) ||
 	ascii(a.winner.due ?? "~", b.winner.due ?? "~") ||

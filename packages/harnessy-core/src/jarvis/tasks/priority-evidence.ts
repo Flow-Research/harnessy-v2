@@ -15,6 +15,7 @@ const dateEvidence = z.strictObject({
 // events, withdrawn messages, resolved threads, outgoing mail and self-mail.
 const calendarSignal = z.strictObject({ start: instant, relation: z.enum(["preparation", "agenda"]) });
 const emailSignal = z.strictObject({ receivedAt: instant, relation: z.enum(["direct", "followup"]) });
+const scopeBasis = z.enum(["human-flagged", "deliverable-change", "owner-change"]);
 export const actionEvidence = z.strictObject({
 	id: source,
 	kind: z.enum(["delivery", "decision", "chase"]),
@@ -30,10 +31,12 @@ export const actionEvidence = z.strictObject({
 	dependency: z.strictObject({ dependentActionId: source, verifiedBy: source, source }).optional(),
 	estimate: z.strictObject({ minutes: z.number().int().positive(), estimatedBy: source }).optional(),
 	observedAt: instant.optional(),
+	scopeHistory: z.array(z.strictObject({ at: instant, source, basis: scopeBasis })).optional(),
 	progress: z
 		.strictObject({
 			at: instant,
 			kind: z.enum(["delivery", "verified-partial", "accepted-material-scope-change"]),
+			basis: scopeBasis.optional(),
 			source,
 		})
 		.optional(),
@@ -49,6 +52,7 @@ export type PriorityPin = z.infer<typeof pinEvidence>;
 export const priorityEvidence = z
 	.strictObject({
 		version: z.literal(1),
+		candidates: z.array(z.strictObject({ id: source, taskId: z.uuid(), summary: source, source })).optional(),
 		tasks: z.array(
 			z.strictObject({ taskId: z.uuid(), actions: z.array(actionEvidence).min(1), pin: pinEvidence.optional() }),
 		),
@@ -65,6 +69,11 @@ export const priorityEvidence = z
 				if (actions.has(id)) ctx.addIssue({ code: "custom", message: "Duplicate action ID" });
 				actions.add(id);
 			}
+		}
+		for (const candidate of input.candidates ?? []) {
+			const id = candidate.id.toLowerCase();
+			if (actions.has(id)) ctx.addIssue({ code: "custom", message: "Ambiguous candidate or action ID" });
+			actions.add(id);
 		}
 	});
 export type PriorityEvidence = z.output<typeof priorityEvidence>;

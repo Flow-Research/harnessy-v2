@@ -24,10 +24,12 @@ import {
 import {
 	ensureStoredTask,
 	lagosCalendarDate,
+	savePortalPriority,
 	TASK_ID,
 	TASKS_MAX,
 	TaskRefused,
 	type TasksState,
+	type TasksSyncConfig,
 } from "@harnessy/core/tasks";
 
 import { bearerSecret, PortalSessions } from "./auth.ts";
@@ -77,6 +79,7 @@ export interface PortalServerOptions {
 	readonly links?: LinksState;
 	/** The owner's local task store; page-token actions only. */
 	readonly tasks?: TasksState;
+	readonly prioritySync?: () => TasksSyncConfig | undefined;
 	readonly installToken: string;
 	readonly sources: PortalSources;
 	readonly version: string;
@@ -493,7 +496,12 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 						isTaskRef(fields.id) &&
 						Number.isInteger(fields.priority)
 					) {
-						const item = tasks.setPriority(resolveId(fields.id), fields.priority as number);
+						const item = await savePortalPriority(
+							tasks,
+							{ id: fields.id, priority: fields.priority as number },
+							options.prioritySync?.(),
+						);
+						await Promise.allSettled(inFlight.values());
 						cache.clear();
 						return { item };
 					}
@@ -504,7 +512,8 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 						fields.ids.length <= TASKS_MAX &&
 						fields.ids.every(isTaskRef)
 					) {
-						tasks.reorder(fields.ids as string[]);
+						await savePortalPriority(tasks, { ids: fields.ids as string[] }, options.prioritySync?.());
+						await Promise.allSettled(inFlight.values());
 						cache.clear();
 						return { ok: true };
 					}
@@ -531,7 +540,15 @@ export const startPortalServer = async (options: PortalServerOptions): Promise<P
 					}
 				} catch (error) {
 					if (error instanceof RequestRefused) throw error;
-					if (error instanceof TaskRefused) throw new RequestRefused(400, error.code);
+					if (error instanceof TaskRefused) {
+						const conflict = [
+							"stale_revision",
+							"sync_task_first",
+							"sync_pending_edits_first",
+							"priority_saved_remotely_sync_required",
+						].includes(error.code);
+						throw new RequestRefused(conflict ? 409 : error.code.startsWith("priority_") ? 503 : 400, error.code);
+					}
 					throw new RequestRefused(503, "tasks_unwritable");
 				}
 				throw new RequestRefused(400, "invalid_body");

@@ -15,6 +15,10 @@ export const taskPriorityCommand = Command.make(
 		tasksFile: Flag.String("tasks-file").pipe(Flag.optional),
 		evidence: Flag.String("evidence").pipe(Flag.optional),
 		at: Flag.String("at").pipe(Flag.optional),
+		view: Flag.String("view").pipe(
+			Flag.optional,
+			Flag.withDescription("Filter the shadow view: all, mine, waiting, or candidates."),
+		),
 		shadow: Flag.Boolean("shadow").pipe(Flag.withDefault(false)),
 		json: Flag.Boolean("json").pipe(Flag.withDefault(false)),
 		apply: Flag.Boolean("apply").pipe(Flag.withDefault(false)),
@@ -33,6 +37,21 @@ export const taskPriorityCommand = Command.make(
 			const at = instant === undefined ? new Date() : new Date(z.iso.datetime({ offset: true }).parse(instant));
 			const store = readPriorityStore(file);
 			const snapshot = await rankSnapshot(store, evidence, at);
+			const view = z.enum(["all", "mine", "waiting", "candidates"]).parse(Option.getOrElse(flags.view, () => "all"));
+			if (view !== "all" && flags.apply) throw new Error("Write-back requires the full preview");
+			if (view === "candidates")
+				return flags.json
+					? JSON.stringify(snapshot.candidates, null, 2)
+					: [
+							"ID\tTask\tState\tSummary",
+							...snapshot.candidates.map((c) =>
+								[c.id, c.taskId, c.state, c.summary].map((s) => s.replace(/[\p{Cc}\p{Cf}]/gu, " ")).join("\t"),
+							),
+						].join("\n");
+			if (view === "mine" || view === "waiting") {
+				const rows = snapshot.rows.filter((r) => r[view]);
+				return flags.json ? JSON.stringify(rows, null, 2) : formatPriorityTable({ ...snapshot, rows });
+			}
 			const result = await finishPriorityRun(snapshot, flags.apply, Option.getOrUndefined(flags.confirm));
 			if (flags.json) return JSON.stringify(result, null, 2);
 			return "propagation" in result

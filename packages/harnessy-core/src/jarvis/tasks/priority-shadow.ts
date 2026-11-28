@@ -15,6 +15,7 @@ import {
 	type PriorityEvidence,
 	type PriorityProviders,
 } from "./priority-evidence.ts";
+import { priorityPolicy } from "./priority-policy.ts";
 import { TasksState, type TasksStore } from "./store.ts";
 
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -65,13 +66,7 @@ export async function rankSnapshot(
 			const calendar = cal.status === "fulfilled" ? cal.value : "unavailable";
 			const email = mail.status === "fulfilled" ? mail.value : "unavailable";
 			observations.push([key, calendar, email]);
-			const score = scoreAction(
-				action.observedAt || action.progress ? action : { ...action, observedAt: task.createdAt },
-				at,
-				calendar,
-				email,
-				deriveDueDates,
-			);
+			const score = scoreAction(action, at, calendar, email, deriveDueDates, task.createdAt);
 			independent.set(key, score);
 			if (action.dependency) edges.set(key, action.dependency.dependentActionId.toLowerCase());
 		}
@@ -126,6 +121,11 @@ export async function rankSnapshot(
 	const rows = ranked.sort(compareTasks).map((row, i) => ({
 		...row,
 		change: original.get(row.id)! - i,
+		mine:
+			row.winner.disposition === "actionable" &&
+			(row.status !== "waiting" ||
+				(priorityPolicy.waitingDecisionInMine && row.winner.quadrant === "Q1" && row.winner.kind === "decision")),
+		waiting: row.status === "waiting" || row.winner.disposition === "watch-only",
 		reason:
 			row.winner.disposition !== "actionable"
 				? row.winner.disposition
@@ -135,7 +135,7 @@ export async function rankSnapshot(
 						.join(" ") || "no actionable signals",
 	}));
 	const versions = {
-		policy: "eisenhower-v3/r3",
+		policy: "eisenhower-v3/r4",
 		duePolicy: deriveDueDates.version,
 		evidence: digest(evidence),
 		observations: digest(observations),
@@ -148,7 +148,21 @@ export async function rankSnapshot(
 	if (open.some((t) => !inputs.has(t.id.toLowerCase()))) blockers.push("missing reviewed evidence");
 	if (evidence.tasks.some((t) => t.pin)) blockers.push("unverified file pin");
 	const snapshotId = digest([store.revision, evaluatedAt, versions, plan, blockers, rows]);
-	return { revision: store.revision, evaluatedAt, versions, plan, blockers, snapshotId, rows };
+	const candidates = (evidence.candidates ?? []).map((candidate) => ({
+		...candidate,
+		state: priorityPolicy.candidateState,
+	}));
+	return {
+		confirmation: { engine: priorityPolicy.batchConfirmation, manual: priorityPolicy.manualConfirmation },
+		candidates,
+		revision: store.revision,
+		evaluatedAt,
+		versions,
+		plan,
+		blockers,
+		snapshotId,
+		rows,
+	};
 }
 
 export type PrioritySnapshot = Awaited<ReturnType<typeof rankSnapshot>>;

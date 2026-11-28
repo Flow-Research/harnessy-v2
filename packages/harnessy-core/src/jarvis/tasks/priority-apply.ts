@@ -7,6 +7,7 @@ const priority = z.number().int().min(0).max(TASK_PRIORITY_MAX);
 const uuid = z.uuid().transform((id) => id.toLowerCase());
 const batchSchema = z.strictObject({
 	action: z.literal("batch"),
+	scope: z.literal("all").optional(),
 	setPriority: z.array(z.strictObject({ id: uuid, oldPriority: priority, priority })).max(TASKS_MAX),
 	reorder: z.strictObject({ previousOrder: z.array(uuid).max(TASKS_MAX), ids: z.array(uuid).max(TASKS_MAX) }),
 });
@@ -25,20 +26,27 @@ export function applyPriorityBatch(store: TasksStore, expected: number, body: un
 	const parsed = batchSchema.safeParse(body);
 	if (!parsed.success) throw new TaskRefused("invalid_body");
 	const { setPriority, reorder } = parsed.data;
-	const open = store.items.filter((t) => t.status !== "done" && t.status !== "dropped");
-	const byId = new Map(open.map((t) => [t.id.toLowerCase(), t]));
+	// The full-store form is only for a single manual edit or a pure reorder.
+	if (parsed.data.scope === "all") {
+		const changed = setPriority.filter((row) => row.oldPriority !== row.priority).length;
+		if (changed > 1 || (changed && reorder.ids.some((id, i) => id !== reorder.previousOrder[i])))
+			throw new TaskRefused("invalid_body");
+	}
+	const all = parsed.data.scope === "all";
+	const targets = all ? store.items : store.items.filter((t) => t.status !== "done" && t.status !== "dropped");
+	const byId = new Map(targets.map((t) => [t.id.toLowerCase(), t]));
 	const changes = new Map(setPriority.map((r) => [r.id, r]));
 	if (
-		open.length !== byId.size ||
-		open.length !== changes.size ||
+		targets.length !== byId.size ||
+		targets.length !== changes.size ||
 		changes.size !== setPriority.length ||
-		reorder.ids.length !== open.length ||
-		new Set(reorder.ids).size !== open.length ||
-		reorder.previousOrder.length !== open.length
+		reorder.ids.length !== targets.length ||
+		new Set(reorder.ids).size !== targets.length ||
+		reorder.previousOrder.length !== targets.length
 	)
 		throw new TaskRefused("invalid_body");
 	if (
-		open.some(
+		targets.some(
 			(t, i) =>
 				reorder.previousOrder[i] !== t.id.toLowerCase() ||
 				changes.get(t.id.toLowerCase())?.oldPriority !== t.priority,
@@ -52,12 +60,14 @@ export function applyPriorityBatch(store: TasksStore, expected: number, body: un
 		const value = changes.get(id)!.priority;
 		return value === t.priority ? t : { ...t, priority: value };
 	});
-	if (ordered.every((t, i) => t === open[i])) return store;
+	if (ordered.every((t, i) => t === targets[i])) return store;
 	let index = 0;
 	return {
 		...store,
 		revision: store.revision + 1,
-		items: store.items.map((t) => (t.status === "done" || t.status === "dropped" ? t : ordered[index++]!)),
+		items: all
+			? ordered
+			: store.items.map((t) => (t.status === "done" || t.status === "dropped" ? t : ordered[index++]!)),
 	};
 }
 

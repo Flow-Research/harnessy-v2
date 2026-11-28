@@ -38,6 +38,7 @@ export {
 	closeoutNotePath,
 	validateCloseoutNote,
 } from "./notes.ts";
+export { type PortalPriorityEdit, savePortalPriority } from "./portal-priority.ts";
 export {
 	type CloseoutEntry,
 	defaultTasksFile,

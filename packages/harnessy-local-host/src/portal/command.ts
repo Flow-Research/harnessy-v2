@@ -9,7 +9,7 @@ import { request } from "node:http";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { DEFAULT_READ_TIMEOUT_MS, type LaunchdProbe } from "@harnessy/core/read-model";
-import { TasksState } from "@harnessy/core/tasks";
+import { homeTasksSyncConfig, TasksState } from "@harnessy/core/tasks";
 import * as Result from "effect/Result";
 
 import { isPortalServerProof, portalClientProofHeader } from "./auth.ts";
@@ -247,6 +247,7 @@ export const runPortalCommand = async (
 				tasks,
 			});
 			const options: PortalServerOptions = {
+				prioritySync: () => homeTasksSyncConfig(absolute(values["home-root"]) ?? io.homeDir, io.env),
 				inboxState: new InboxState(join(root, "inbox-archive.json")),
 				links: new LinksState(join(root, "links.json"), undefined, io.homeDir),
 				tasks,
