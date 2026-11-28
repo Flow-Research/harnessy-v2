@@ -5,6 +5,7 @@
  * Reminders, the first-week register and project status.md items are `other`.
  */
 import type { TaskData, TaskListData } from "../../read-model/app-schemas.ts";
+import { titleIdentityKey } from "./similarity.ts";
 import { type StoredTask, TASKS_MAX, type TasksStore, taskFingerprint } from "./store.ts";
 
 const derivedFingerprint = (task: TaskData, occurrence: number): string => {
@@ -120,16 +121,47 @@ export const mergeTasks = (options: MergeTasksOptions): TaskListData => {
 	const push = (task: TaskData): void => {
 		(task.group === "primary" ? primary : other).push(task);
 	};
+	// A brief line's task marker becomes its derived id. Reserve every such stored id
+	// before any fingerprint match, so an earlier unmarked line cannot take it.
+	// Ids compare without case: a stored id may be uppercase, a brief marker is lowercased.
+	const storedIds = new Map(options.store.items.map((item) => [item.id.toLowerCase(), item.id] as const));
+	const storedIdOf = (task: TaskData): string | undefined =>
+		task.source.kind === "brief" ? storedIds.get(task.id.toLowerCase()) : undefined;
+	const reserved = new Set(options.derived.tasks.map(storedIdOf).filter((id): id is string => id !== undefined));
+	const briefLines = new Map<string, string[]>();
 	for (const task of options.derived.tasks) {
+		// Count every line, as ingest does, so a kept repeat gets the same fingerprint.
 		const kindKey = `${task.source.kind}:${task.project ?? ""}:${task.title.toLowerCase()}`;
 		const occurrence = seen.get(kindKey) ?? 0;
 		seen.set(kindKey, occurrence + 1);
+		// Ingest collapses a repeated commitment in one brief; show it once as well.
+		const carried = storedIdOf(task);
+		if (task.source.kind === "brief") {
+			const lineKey = [
+				task.source.path,
+				task.kind,
+				titleIdentityKey(task.title),
+				(task.owner ?? "").toLowerCase(),
+				task.due ?? "",
+			].join("\0");
+			const ids = briefLines.get(lineKey);
+			const ownId = /^[0-9a-f]{8}-/u.test(task.id) ? task.id : undefined;
+			if (ids !== undefined && (ownId === undefined || ids.includes(ownId))) continue;
+			briefLines.set(lineKey, [...(ids ?? []), ownId ?? ""]);
+		}
 		const fingerprint = derivedFingerprint(task, occurrence);
 		const derived: TaskData = { ...task, fingerprint, group: groupOfDerived(task), inStore: false };
 		// The fingerprint has no date: prefer the occurrence from this same source
 		// file (today's brief, even when completed), then an open one, then any.
-		const matches = options.store.items.filter((item) => !used.has(item.id) && item.fingerprint === fingerprint);
+		const matches = options.store.items.filter(
+			(item) => !used.has(item.id) && !reserved.has(item.id) && item.fingerprint === fingerprint,
+		);
+		const byId =
+			carried === undefined || used.has(carried)
+				? undefined
+				: options.store.items.find((item) => item.id === carried);
 		const stored =
+			byId ??
 			matches.find((item) => item.source.path === task.source.path) ??
 			matches.find((item) => item.status !== "done" && item.status !== "dropped") ??
 			matches[0];

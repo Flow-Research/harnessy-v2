@@ -223,7 +223,7 @@ describe("ingest and fingerprints", () => {
 		expect(stored[0]).toMatchObject({ id, status: "done", outcome: "done" });
 	});
 
-	it("does not give two same-title occurrences the same id in one batch", () => {
+	it("collapses a title repeated in one brief into the existing task", () => {
 		const { state } = stateFile("dup-batch");
 		const one = candidatesFromExtracted(
 			"brief",
@@ -241,13 +241,15 @@ describe("ingest and fingerprints", () => {
 			extractBriefTasks("## Decisions and Actions for You\n\n1. **Same title.**\n2. **Same title.**\n"),
 			"brief",
 		);
+		expect(two).toHaveLength(1);
 		const result = state.ingest(two, {
 			kind: "brief",
 			path: "/tmp/27-daily-brief.md",
 			displayRef: "brief",
 			briefDate: "2026-11-27",
 		});
-		expect(new Set(result.items.map((item) => item.id)).size).toBe(2);
+		expect(result).toMatchObject({ created: 0, matched: 1 });
+		expect(state.read().items).toHaveLength(1);
 	});
 
 	it("matches a unique open native task when the brief restates its title", () => {

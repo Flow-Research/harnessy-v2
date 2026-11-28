@@ -9,13 +9,16 @@ import process from "node:process";
 
 import type { TaskData } from "../../read-model/app-schemas.ts";
 import { type ExtractedTask, extractBriefTasks } from "../../read-model/followups.ts";
+import { titleIdentityKey } from "./similarity.ts";
 import {
 	defaultTasksFile,
 	type IngestCandidate,
 	type StoredTask,
 	type StoredTaskSourceKind,
+	TASK_ID,
 	TaskRefused,
 	type TaskSidecar,
+	type TaskSidecarItem,
 	TasksState,
 	taskFingerprint,
 } from "./store.ts";
@@ -24,32 +27,93 @@ const MAX_BRIEF_BYTES = 256 * 1024;
 
 const textOf = (task: ExtractedTask): string => `${task.ref ?? ""} ${task.title}`.trim();
 
-/** Candidates for `TasksState.ingest`, with fingerprints unique within the batch. */
+/** The same commitment within one brief: kind, identity key, assignee and due date. */
+const commitmentKey = (task: ExtractedTask): string =>
+	[
+		task.followup === true ? "followup" : "task",
+		titleIdentityKey(textOf(task)),
+		(task.owner ?? "").toLowerCase(),
+		task.due ?? "",
+	].join("\0");
+
+/**
+ * Candidates for `TasksState.ingest`, with fingerprints unique within the batch.
+ *
+ * Each line keeps the fingerprint it always had (text plus occurrence number), so
+ * ids that an earlier version allocated still apply. `carried` maps a fingerprint
+ * to an id allocated or matched by the capturing side; it wins over a marker.
+ *
+ * In a brief, a line that repeats an earlier line's commitment key is dropped,
+ * unless it carries its own id (a marker or a replayed allocation) that no kept
+ * line with that key has. Other sources keep repeats as separate tasks.
+ */
 export const candidatesFromExtracted = (
 	kind: Exclude<StoredTaskSourceKind, "native">,
 	extracted: ReadonlyArray<ExtractedTask>,
 	displayRef: string,
+	carried?: ReadonlyMap<string, string>,
 ): ReadonlyArray<IngestCandidate> => {
 	const seen = new Map<string, number>();
-	return extracted.map((task) => {
+	const kept = new Map<string, Array<string | undefined>>();
+	const result: IngestCandidate[] = [];
+	for (const task of extracted) {
 		const text = textOf(task);
 		const normalised = text.toLowerCase();
 		const occurrence = seen.get(normalised) ?? 0;
 		seen.set(normalised, occurrence + 1);
-		return {
+		const fingerprint = taskFingerprint(kind, text, occurrence);
+		const id = carried?.get(fingerprint) ?? task.taskId;
+		if (kind === "brief") {
+			const key = commitmentKey(task);
+			const ids = kept.get(key);
+			if (ids !== undefined && (id === undefined || ids.includes(id))) continue;
+			kept.set(key, [...(ids ?? []), id]);
+		}
+		result.push({
+			...(id === undefined ? {} : { id }),
 			title: task.title,
 			status: task.status,
 			owner: task.owner,
 			due: task.due,
 			line: task.line,
-			fingerprint: taskFingerprint(kind, text, occurrence),
+			fingerprint,
 			displayRef: task.ref === undefined ? displayRef : `${displayRef} ${task.ref}`.slice(0, 96),
 			// A brief's "Delegated or Waiting" items are follow-ups that wait on the person named.
 			...(kind === "brief" && task.followup === true
 				? { kind: "followup" as const, waitingOn: task.owner === null ? null : task.owner.slice(0, 120) }
 				: {}),
-		};
-	});
+		});
+	}
+	return result;
+};
+
+/** Fingerprint-to-id map from a queued or posted brief ingest: matches first, then allocations. */
+export const carriedIdsOf = (
+	allocations: ReadonlyArray<{ readonly id: string; readonly fingerprint: string }> | undefined,
+	matches: ReadonlyArray<{ readonly id: string; readonly fingerprint: string }> | undefined,
+): ReadonlyMap<string, string> =>
+	new Map([...(allocations ?? []), ...(matches ?? [])].map((entry) => [entry.fingerprint, entry.id] as const));
+
+/**
+ * The ids a local brief ingest assigned, per line, for the queue. `allocations`
+ * holds only ids this ingest created, so a primary on the earlier version can
+ * create them without `duplicate_id`. `matches` holds lines that reuse an
+ * existing task; a primary on the earlier version ignores the field.
+ * Both use each line's own fingerprint, never the stored row's.
+ */
+export const briefIngestIds = (result: {
+	readonly lines: ReadonlyArray<{ readonly id: string; readonly fingerprint: string }>;
+	readonly createdIds: ReadonlyArray<string>;
+}): {
+	readonly allocations: ReadonlyArray<{ readonly id: string; readonly fingerprint: string }>;
+	readonly matches: ReadonlyArray<{ readonly id: string; readonly fingerprint: string }>;
+} => {
+	const created = new Set(result.createdIds);
+	const entries = result.lines.map((line) => ({ id: line.id, fingerprint: line.fingerprint }));
+	return {
+		allocations: entries.filter((entry) => created.has(entry.id)),
+		matches: entries.filter((entry) => !created.has(entry.id)),
+	};
 };
 
 /** Sidecar path beside a daily brief: `DD-daily-brief.tasks.json`. */
@@ -64,6 +128,10 @@ export interface IngestBriefResult {
 	readonly matched: number;
 	readonly sidecar: TaskSidecar;
 	readonly sidecarPath: string;
+	/** One entry per brief line, with that line's own fingerprint. */
+	readonly lines: ReadonlyArray<TaskSidecarItem>;
+	/** Ids this ingest created. */
+	readonly createdIds: ReadonlyArray<string>;
 }
 
 /** Read a brief, ingest its action items, and write the sidecar next to it. */
@@ -90,6 +158,8 @@ export const ingestBriefFile = (
 		matched: result.matched,
 		sidecar: result.sidecar!,
 		sidecarPath,
+		lines: result.lines,
+		createdIds: result.createdIds,
 	};
 };
 
@@ -127,6 +197,8 @@ export const ensureStoredTask = (state: TasksState, task: TaskData, briefDate: s
 	const result = state.ingest(
 		[
 			{
+				// A brief line's marker is its derived id; keep it for the new item.
+				...(TASK_ID.test(task.id) ? { id: task.id } : {}),
 				title: task.title,
 				status: task.status,
 				owner: task.owner,

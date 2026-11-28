@@ -10,7 +10,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import * as Result from "effect/Result";
 import { extractBriefTasks } from "../../read-model/followups.ts";
-import { candidatesFromExtracted } from "./ingest.ts";
+import { candidatesFromExtracted, carriedIdsOf } from "./ingest.ts";
 import { applyMeetingFollowupBatch, parseMeetingFollowupBatch } from "./meeting-followups.ts";
 import {
 	type FollowupInput,
@@ -23,6 +23,7 @@ import {
 	TasksState,
 	type TasksStore,
 } from "./store.ts";
+import { BRIEF_MATCHES_FEATURE } from "./sync.ts";
 
 export const TASKS_SERVICE_PORT = 8787;
 
@@ -158,6 +159,15 @@ const followupInput = (value: unknown): FollowupInput & { id?: string; index?: n
 
 const snapshot = (state: TasksState): TasksStore => state.read();
 
+/** `{ id, fingerprint }` entries of a posted `allocations` or `matches` field. */
+const idEntries = (value: unknown): Array<{ id: string; fingerprint: string }> =>
+	Array.isArray(value)
+		? value.filter(
+				(entry): entry is { id: string; fingerprint: string } =>
+					isRecord(entry) && typeof entry.id === "string" && typeof entry.fingerprint === "string",
+			)
+		: [];
+
 const handle = async (state: TasksState, token: string, req: IncomingMessage, res: ServerResponse): Promise<void> => {
 	const host = req.headers.host ?? "localhost";
 	const url = new URL(req.url ?? "/", `http://${host}`);
@@ -174,7 +184,7 @@ const handle = async (state: TasksState, token: string, req: IncomingMessage, re
 		const includeDone = url.searchParams.get("includeDone") === "1" || url.searchParams.get("includeDone") === "true";
 		const store = snapshot(state);
 		const items = store.items.filter((item) => includeDone || (item.status !== "done" && item.status !== "dropped"));
-		send(res, 200, { ok: true, revision: store.revision, items }, store.revision);
+		send(res, 200, { ok: true, revision: store.revision, features: [BRIEF_MATCHES_FEATURE], items }, store.revision);
 		return;
 	}
 	if (method === "GET" && url.pathname === "/v1/followups") {
@@ -257,20 +267,12 @@ const handle = async (state: TasksState, token: string, req: IncomingMessage, re
 		const path = typeof body.path === "string" ? body.path : `remote-brief/${body.date}.md`;
 		const displayRef = typeof body.displayRef === "string" ? body.displayRef : `brief ${body.date}`;
 		const extracted = extractBriefTasks(body.markdown);
-		const allocations = Array.isArray(body.allocations)
-			? body.allocations.filter(
-					(entry): entry is { id: string; fingerprint: string } =>
-						!!entry &&
-						typeof entry === "object" &&
-						typeof (entry as { id?: unknown }).id === "string" &&
-						typeof (entry as { fingerprint?: unknown }).fingerprint === "string",
-				)
-			: [];
-		const ids = new Map(allocations.map((entry) => [entry.fingerprint, entry.id]));
-		const candidates = candidatesFromExtracted("brief", extracted, displayRef).map((candidate) => {
-			const id = ids.get(candidate.fingerprint);
-			return id === undefined ? candidate : { ...candidate, id };
-		});
+		const candidates = candidatesFromExtracted(
+			"brief",
+			extracted,
+			displayRef,
+			carriedIdsOf(idEntries(body.allocations), idEntries(body.matches)),
+		);
 		const result = state.ingest(
 			candidates,
 			{ kind: "brief", path, displayRef, briefDate: body.date },

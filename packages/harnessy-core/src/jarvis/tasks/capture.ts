@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
-import { ingestPublishedBrief } from "./ingest.ts";
+import { briefIngestIds, ingestPublishedBrief } from "./ingest.ts";
 import { applyMeetingFollowupBatch, type MeetingFollowupNote, meetingFollowupBatch } from "./meeting-followups.ts";
 import { TaskRefused, TasksState } from "./store.ts";
 import {
@@ -91,7 +91,8 @@ export interface BriefCaptureResult {
 /**
  * Ingest a published brief: its "Decisions and Actions for You" stay tasks and
  * its "Delegated or Waiting" items become follow-ups. The brief markdown and the
- * ids just allocated are queued so the VPS copy mints the same items.
+ * id each line got (created or matched, keyed by that line's fingerprint) are
+ * queued so the VPS copy resolves every line to the same item.
  */
 export const capturePublishedBrief = (
 	homeRoot: string,
@@ -113,9 +114,7 @@ export const capturePublishedBrief = (
 			date,
 			path: result.path,
 			displayRef: `brief ${date}`,
-			allocations: result.items
-				.filter((item) => item.fingerprint !== null)
-				.map((item) => ({ id: item.id, fingerprint: item.fingerprint as string })),
+			...briefIngestIds(result),
 		},
 		state,
 	);

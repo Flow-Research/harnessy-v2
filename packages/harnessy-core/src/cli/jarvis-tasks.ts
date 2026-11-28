@@ -22,11 +22,13 @@ import * as Result from "effect/Result";
 import {
 	appendCloseoutNote,
 	applyMutation,
+	briefIngestIds,
 	type CloseoutEntry,
 	defaultTasksFile,
 	type FollowupInput,
 	type FollowupView,
 	followupsForView,
+	type IngestBriefResult,
 	ingestBriefFile,
 	lagosCalendarDate,
 	type ResolveEntry,
@@ -172,14 +174,7 @@ export const jarvisTasksIngestCommand = Command.make(
 				config: configFrom(endpoint, tokenFile, syncConfig),
 				mutation,
 				applyLocal: (state) => ingestBriefFile(state, briefPath, { date: day }),
-				mutationForQueue: (result) => ({
-					...mutation,
-					allocations: (
-						(result as { items?: ReadonlyArray<{ id: string; fingerprint: string | null }> }).items ?? []
-					)
-						.filter((item) => item.fingerprint !== null)
-						.map((item) => ({ id: item.id, fingerprint: item.fingerprint as string })),
-				}),
+				mutationForQueue: (result) => ({ ...mutation, ...briefIngestIds(result as IngestBriefResult) }),
 			});
 			if (applied.mode === "queued") {
 				const result = applied.result as {
