@@ -224,7 +224,7 @@ console.log(JSON.stringify(process.argv[3] === 'calendars' ? { id: fixture.ident
 					location: "SENTINEL_LOCATION_77a",
 					start: { dateTime: iso(5) },
 					end: { dateTime: iso(6) },
-					organizer: { self: false, email: "sentinel-organizer@example.test" },
+					organizer: { self: true, email: "sentinel-organizer@example.test" },
 					attendees: [
 						{ email: "sentinel-attendee@example.test", responseStatus: "accepted" },
 						{ email: "owner@example.test", self: true, responseStatus: "accepted" },
@@ -488,6 +488,14 @@ describe("exact points through the v3 calendar buckets", () => {
 	] as const)("%s gives %i", async (actionId, item, points) => {
 		const { store } = await importOne([item]);
 		expect(engineCalendarPoints(await providerFor(store).calendar(actionId, at))).toBe(points);
+	});
+	it("treats a marker in someone else's invite as a candidate scored 0", async () => {
+		const { store } = await importOne([
+			event("invite", 5, { organizer: { self: false }, description: "Jarvis-Prep: outside" }),
+		]);
+		const evidence = calendarEvidence({ observations: () => store, decisions: () => [] }, "outside", at);
+		expect(evidence).toEqual({ state: "candidate", signals: [] });
+		expect(engineCalendarPoints(await providerFor(store).calendar("outside", at))).toBe(0);
 	});
 	it("gives a heuristic candidate 0 until accepted", async () => {
 		const { store } = await importOne([event("x", 5, { summary: "Acme budget review" })], {

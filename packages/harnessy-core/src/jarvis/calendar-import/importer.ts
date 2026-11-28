@@ -247,7 +247,7 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 				status,
 				response: responseOf(item, organizerSelf),
 				organizerSelf,
-				jarvisBlock: isJarvisBlock(title, description),
+				jarvisBlock: organizerSelf && isJarvisBlock(title, description),
 				duplicateOf: first ?? null,
 				relation: classifyEvent(title, description),
 				markers: parseMarkers(`${title}\n${description}`),

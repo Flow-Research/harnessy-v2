@@ -68,11 +68,14 @@ export function resolveLink(
 	decisions: readonly LinkDecision[],
 	actionsOfTask: (taskId: string) => readonly string[] = () => [],
 ): LinkResolution {
-	const explicit = event.markers.filter((marker) =>
+	const marked = event.markers.filter((marker) =>
 		marker.kind === "action"
 			? same(marker.id, actionId)
 			: actionsOfTask(marker.id).some((linked) => same(linked, actionId)),
 	);
+	// Anyone who invites Julian can write a marker into the invite. A marker is an
+	// explicit link only on an event Julian organised; otherwise it is a candidate.
+	const explicit = event.organizerSelf ? marked : [];
 	const relevant = decisions.filter(
 		(decision) =>
 			same(decision.actionId, actionId) &&
@@ -104,7 +107,7 @@ export function resolveLink(
 		return { state: "verified", relation };
 	}
 	if (rejected) return { state: "checked_no_match" };
-	return event.candidates.some((candidate) => same(candidate, actionId))
+	return marked.length > 0 || event.candidates.some((candidate) => same(candidate, actionId))
 		? { state: "candidate" }
 		: { state: "checked_no_match" };
 }
