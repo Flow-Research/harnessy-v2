@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -150,7 +150,7 @@ describe("importRecentFathomNotes", () => {
 		});
 		expect(second.existing).toBe(1);
 	});
-	it("routes a note to its project folder with Project, alias tags and Action Items", () => {
+	it("writes every note to the one meetings folder and sets Project, alias tags and Action Items", () => {
 		const fixture = routedFixture();
 		try {
 			fixture.envelope("acme", {
@@ -179,17 +179,12 @@ describe("importRecentFathomNotes", () => {
 			});
 			const result = importRecentFathomNotes(fixture.options);
 			expect(result.imported).toBe(3);
-			const acme = join(
-				fixture.privateRoot,
-				"acme-health",
-				"meetings",
-				"2026",
-				"Nov",
-				"27-acme-product-review-501.md",
-			);
+			const acme = join(fixture.privateRoot, "flow", "meetings", "2026", "Nov", "27-acme-product-review-501.md");
 			const coach = join(fixture.privateRoot, "flow", "meetings", "2026", "Nov", "27-coach-agent-sync-502.md");
 			const other = join(fixture.privateRoot, "flow", "meetings", "2026", "Nov", "27-impromptu-call-503.md");
 			expect([...result.paths].sort()).toEqual([acme, coach, other].sort());
+			// The route sets only the tag: no note is written under a project folder.
+			expect(existsSync(join(fixture.privateRoot, "acme-health", "meetings", "2026"))).toBe(false);
 			const acmeNote = readFileSync(acme, "utf8");
 			expect(acmeNote).toContain("- Project: acme-health\n");
 			expect(acmeNote).toContain(
@@ -210,7 +205,7 @@ describe("importRecentFathomNotes", () => {
 			rmSync(fixture.root, { recursive: true, force: true });
 		}
 	});
-	it("never imports a recording again when a Flow note or stub already holds it", () => {
+	it("never imports a recording again or overwrites a note that is already in the folder", () => {
 		const fixture = routedFixture();
 		try {
 			fixture.envelope("acme", {
@@ -219,16 +214,14 @@ describe("importRecentFathomNotes", () => {
 				recording_start_time: "2026-11-27T09:00:00Z",
 				created_at: "2026-11-27T09:40:00Z",
 			});
-			const flowCopy = join(fixture.privateRoot, "flow", "meetings", "2026", "Nov", "27-acme-kickoff-601.md");
-			mkdirSync(join(flowCopy, ".."), { recursive: true });
-			writeFileSync(flowCopy, "Moved to [x](x.md) on 2026-11-28.\n");
+			const first = importRecentFathomNotes(fixture.options);
+			expect(first).toMatchObject({ imported: 1, existing: 0 });
+			const note = join(fixture.privateRoot, "flow", "meetings", "2026", "Nov", "27-acme-kickoff-601.md");
+			expect(first.paths).toEqual([note]);
+			expect(readFileSync(note, "utf8")).toContain("- Project: acme-health\n");
+			writeFileSync(note, "owner edits");
 			expect(importRecentFathomNotes(fixture.options)).toMatchObject({ imported: 0, existing: 1, notes: [] });
-			const routed = join(fixture.privateRoot, "acme-health", "meetings", "2026", "Nov", "27-acme-kickoff-601.md");
-			rmSync(flowCopy);
-			mkdirSync(join(routed, ".."), { recursive: true });
-			writeFileSync(routed, "owner edits");
-			expect(importRecentFathomNotes(fixture.options)).toMatchObject({ imported: 0, existing: 1 });
-			expect(readFileSync(routed, "utf8")).toBe("owner edits");
+			expect(readFileSync(note, "utf8")).toBe("owner edits");
 		} finally {
 			rmSync(fixture.root, { recursive: true, force: true });
 		}

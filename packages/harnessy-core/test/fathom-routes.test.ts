@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { loadMeetingRouteRules, projectMeetingsRoot, routeMeeting } from "../src/jarvis/fathom/routes.ts";
+import { loadMeetingRouteRules, routeMeeting } from "../src/jarvis/fathom/routes.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -53,12 +53,10 @@ describe("meeting routes", () => {
 		expect(rules.routes.has("notes")).toBe(false);
 	});
 
-	it("routes a keyword hit to its project and its meetings folder", () => {
-		const root = privateRoot();
-		const rules = loadMeetingRouteRules(root, "flow");
+	it("tags a keyword hit with its project", () => {
+		const rules = loadMeetingRouteRules(privateRoot(), "flow");
 		const route = routeMeeting(rules, { title: "Acme Health Hub Demo", participants: ["Ada"] });
 		expect(route).toMatchObject({ project: "acme-health", defaulted: false, aliasTags: [] });
-		expect(projectMeetingsRoot(rules, route.project)).toBe(join(root, "acme-health", "meetings"));
 		expect(routeMeeting(rules, { title: "Orchard planning" }).project).toBe("orchard");
 	});
 

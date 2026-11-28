@@ -106,7 +106,7 @@ describe("runConfiguredFathomPoll", () => {
 			expect(existsSync(setup.stateRoot)).toBe(false);
 		}
 	});
-	it("routes new notes by meeting-routes.yaml, creates follow-ups once, and never polls an unselected account", async () => {
+	it("tags new notes by meeting-routes.yaml in the one folder, creates follow-ups once, and never polls an unselected account", async () => {
 		const setup = fixture(["research"]);
 		const privateRoot = join(setup.paths.targetDir, "private");
 		for (const project of ["flow", "acme"]) mkdirSync(join(privateRoot, project, "meetings"), { recursive: true });
@@ -152,7 +152,8 @@ describe("runConfiguredFathomPoll", () => {
 		expect(polled).toEqual(["research"]);
 		expect(first.importedNotes?.notes.map((note) => note.project)).toEqual(["acme"]);
 		const path = first.importedNotes!.paths[0]!;
-		expect(path.startsWith(join(privateRoot, "acme", "meetings"))).toBe(true);
+		expect(path.startsWith(join(privateRoot, "flow", "meetings", "2026"))).toBe(true);
+		expect(readFileSync(path, "utf8")).toContain("- Project: acme\n");
 		expect(readFileSync(path, "utf8")).toContain("- [ ] Draft the pilot terms (owner: Ada)");
 		expect(first.followups).toMatchObject({ created: 1, existing: 0, queued: 0 });
 		expect(first.tasksSync).toEqual({ state: "skipped", remaining: 0 });
