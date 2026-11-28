@@ -92,11 +92,27 @@ export function withoutNegatedPreparation(text: string): string {
 	return text.replace(NEGATED_PREPARATION, " ");
 }
 
-/** Preparation-needed, agenda mention, or neither, from natural-language text only. */
+// An explicit instruction that the meeting needs no preparation work.
+const AGENDA_ONLY =
+	/\b(?:agenda\s+(?:mention\s+|item\s+)?only|for\s+(?:your\s+)?information\s+only|fyi\s+only|no\s+action\s+(?:is\s+)?(?:needed|required))\b/iu;
+// A separate, affirmative instruction to prepare. It is tested only after the
+// negated spans are removed, so "no preparation required" cannot match it.
+const AFFIRMATIVE_PREPARATION =
+	/\b(?:please\s+(?:prep|prepare|review|bring|read)|(?:prep|preparation)\s+(?:is\s+)?(?:needed|required|necessary)|(?:need|needs)\s+to\s+(?:prep|prepare)|come\s+prepared|prepare\s+(?:the|a|an|your|for|slides|notes)|bring\s+(?:the|your)\b)/iu;
+
+/**
+ * Preparation-needed, agenda mention, or neither, from natural-language text only.
+ * An explicit agenda-only or no-preparation instruction wins over topic words such
+ * as "board" or "deck". Only a separate affirmative instruction overrides it.
+ */
 export function classifyEvent(title: string, description: string): EventRelation {
-	const text = withoutNegatedPreparation(withoutMarkers(`${title}\n${description}`));
-	if (PREPARATION.test(text)) return "preparation";
-	return AGENDA.test(text) ? "agenda" : "none";
+	const text = withoutMarkers(`${title}\n${description}`);
+	const kept = withoutNegatedPreparation(text);
+	const affirmative = AFFIRMATIVE_PREPARATION.test(kept);
+	const restricted = AGENDA_ONLY.test(text) || new RegExp(NEGATED_PREPARATION.source, "iu").test(text);
+	if (restricted) return affirmative ? "preparation" : "agenda";
+	if (affirmative || PREPARATION.test(kept)) return "preparation";
+	return AGENDA.test(kept) ? "agenda" : "none";
 }
 
 /** Jarvis's own scheduled work blocks (`calendar/gws-provider.ts`). They are excluded as self-made copies of tasks. */

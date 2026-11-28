@@ -788,6 +788,18 @@ describe("local classification", () => {
 		]);
 		expect(points(await providerFor(store).calendar("kappa", at))).toBe(expected);
 	});
+	// Review round 5 regressions: an explicit instruction wins over topic words.
+	it.each([
+		["Weekly call", "Agenda mention only. No preparation required.", 50],
+		["Weekly call", "Please prepare the deck before the call.", 450],
+		["Board review", "Agenda mention only. No preparation required.", 50],
+		["Weekly call", "Agenda mention only. No need to prepare the deck.", 50],
+		["Board review", "No preparation required. Please prepare the slides for the investor.", 450],
+		["Investor deck review", "FYI only.", 50],
+	])("scores title %j with %j at %i points", async (summary, text, expected) => {
+		const { store } = await importOne([event("rule", 1, { summary, description: `${text}\nJarvis-Action: lambda` })]);
+		expect(points(await providerFor(store).calendar("lambda", at))).toBe(expected);
+	});
 	it("classifies natural-language text only, not marker values", async () => {
 		expect(classifyEvent("Investor demo", "")).toBe("preparation");
 		expect(classifyEvent("Weekly sync", "")).toBe("agenda");

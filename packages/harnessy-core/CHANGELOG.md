@@ -70,7 +70,9 @@
   exactly. Consent is now version 3. A version 2 binding, which predates the
   enrollment comparison, is read as unbound until `import-enroll` runs, so it
   lists no events. Negated preparation cues such as "no preparation required"
-  do not count as preparation. Event, series and copy keys come from the verified identity, so a
+  do not count as preparation, and an explicit agenda-only or no-preparation
+  instruction wins over topic words unless a separate affirmative instruction
+  (such as "please prepare") is present. Event, series and copy keys come from the verified identity, so a
   decision survives a change of folder. A task marker shared by several actions
   gives only candidates until an action marker or an accepted decision picks one. Action descriptors
   come from the owner-only `actions.json` in the state folder, for manual and
