@@ -5,6 +5,7 @@ const instant = z.iso.datetime({ offset: true });
 const day = z.iso.date();
 const dateEvidence = z.strictObject({
 	day,
+	actionId: source.optional(),
 	kind: z.enum(["manual", "plan", "promise", "chase"]),
 	authority: z.enum(["human", "approved-plan", "direct-speaker", "generated"]),
 	confidence: z.enum(["high", "medium", "low", "conflict"]),
@@ -26,7 +27,7 @@ export const actionEvidence = z.strictObject({
 	email: z.array(emailSignal).optional(),
 	context: z.enum(["accepted", "request", "plan"]).optional(),
 	contextAuthority: z.enum(["direct-speaker", "human", "generated"]).optional(),
-	dependency: z.strictObject({ level: z.enum(["active", "independent-Q1"]), verifiedBy: source, source }).optional(),
+	dependency: z.strictObject({ dependentActionId: source, verifiedBy: source, source }).optional(),
 	estimate: z.strictObject({ minutes: z.number().int().positive(), estimatedBy: source }).optional(),
 	observedAt: instant.optional(),
 	progress: z

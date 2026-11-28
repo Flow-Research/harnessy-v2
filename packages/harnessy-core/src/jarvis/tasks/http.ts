@@ -12,6 +12,7 @@ import * as Result from "effect/Result";
 import { extractBriefTasks } from "../../read-model/followups.ts";
 import { candidatesFromExtracted } from "./ingest.ts";
 import { applyMeetingFollowupBatch, parseMeetingFollowupBatch } from "./meeting-followups.ts";
+import { commitPriorityBatch } from "./priority-apply.ts";
 import {
 	type FollowupInput,
 	type FollowupView,
@@ -193,6 +194,12 @@ const handle = async (state: TasksState, token: string, req: IncomingMessage, re
 			{ ok: true, revision: store.revision, view, today, count: items.length, overdue, items },
 			store.revision,
 		);
+		return;
+	}
+	if (method === "POST" && url.pathname === "/v1/tasks/action") {
+		const body = await readBody(req);
+		const revision = commitPriorityBatch(state, requireRevision(req, body), body);
+		send(res, 200, { ok: true, revision }, revision);
 		return;
 	}
 	if (method === "POST" && url.pathname === "/v1/tasks") {

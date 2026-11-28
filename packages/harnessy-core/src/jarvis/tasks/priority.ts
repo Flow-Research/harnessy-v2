@@ -28,6 +28,7 @@ export function calendarPoints(event: CalendarSignal, now: number) {
 }
 
 export function emailPoints(message: EmailSignal, now: number) {
+	if (Date.parse(message.receivedAt) > now) throw new Error("Future email timestamp");
 	const bucket = Math.floor((now - Date.parse(message.receivedAt)) / day);
 	return Math.floor(((message.relation === "direct" ? 200 : 100) * (decay[bucket] ?? 0)) / 100);
 }
@@ -50,7 +51,9 @@ export function scoreAction(
 	let urgent = false;
 	let due: string | null = null;
 	let strongestDate: string | null = null;
-	const dateEvidence = deriveDueDates({ action, at, calendar });
+	if (email !== "unavailable" && email.some((message) => Date.parse(message.receivedAt) > now))
+		throw new Error("Future email timestamp");
+	const dateEvidence = deriveDueDates.derive({ action, at, calendar });
 	if (actionable) {
 		const verified =
 			action.verifiedOverdueAt && Date.parse(action.verifiedOverdueAt) <= now
@@ -70,7 +73,7 @@ export function scoreAction(
 			points.calendar = Math.max(points.calendar, calendarPoints(event, now));
 		for (const message of email === "unavailable" ? [] : email)
 			points.email = Math.max(points.email, emailPoints(message, now));
-		if (action.dependency) points.dependency = action.dependency.level === "independent-Q1" ? 350 : 175;
+
 		if (action.estimate) points.effort = action.estimate.minutes <= 15 ? 150 : action.estimate.minutes <= 60 ? 75 : 0;
 		points.ownership = action.kind === "chase" ? 100 : 250;
 		if (
@@ -82,10 +85,10 @@ export function scoreAction(
 		else if (action.context === "plan") points.context = 80;
 		const anchor = Math.max(Date.parse(action.observedAt ?? "") || 0, Date.parse(action.progress?.at ?? "") || 0);
 		if (anchor > 0) points.age = Math.max(0, Math.min(100, 10 * Math.floor((now - anchor) / (7 * day))));
-		urgent ||= points.calendar >= 300 || points.dependency === 350;
+		urgent ||= points.calendar >= 300;
 	}
 	const important = action.importance !== undefined && action.state !== "pending_reverification";
-	const quadrant = urgent ? (important ? "Q1" : "Q3") : important ? "Q2" : "Q4";
+	const quadrant: keyof typeof bands = urgent ? (important ? "Q1" : "Q3") : important ? "Q2" : "Q4";
 	const computed = priorityInBand(
 		quadrant,
 		Object.values(points).reduce((sum, p) => sum + p, 0),
@@ -124,6 +127,22 @@ export function scoreAction(
 }
 
 export type ActionScore = ReturnType<typeof scoreAction>;
+/** The target must be its independent first-pass score, before any edge is applied. */
+export function scoreDependency(base: ActionScore, target: ActionScore | undefined): ActionScore {
+	if (base.disposition !== "actionable" || target?.state !== "open") return base;
+	const dependency = target.quadrant === "Q1" ? 350 : 175;
+	const quadrant = dependency === 350 ? (base.importanceRule ? "Q1" : "Q3") : base.quadrant;
+	const points = { ...base.points, dependency };
+	return {
+		...base,
+		points,
+		quadrant,
+		computed: priorityInBand(
+			quadrant,
+			Object.values(points).reduce((a, b) => a + b, 0),
+		),
+	};
+}
 export const compareActions = (a: ActionScore, b: ActionScore) =>
 	a.computed - b.computed ||
 	ascii(a.due ?? "~", b.due ?? "~") ||

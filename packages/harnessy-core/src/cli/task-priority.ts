@@ -1,17 +1,12 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { Console, Effect, Option } from "effect";
 import { Command, Flag } from "effect/cli";
 import { z } from "zod";
+import { finishPriorityRun } from "../jarvis/tasks/priority-apply.ts";
 import { priorityEvidence } from "../jarvis/tasks/priority-evidence.ts";
-import {
-	finishPriorityRun,
-	formatPriorityTable,
-	localPriorityWriter,
-	rankSnapshot,
-	readPriorityStore,
-} from "../jarvis/tasks/priority-shadow.ts";
+import { formatPriorityTable, rankSnapshot, readPriorityStore } from "../jarvis/tasks/priority-shadow.ts";
 import { defaultTasksFile } from "../jarvis/tasks/store.ts";
 
 export const taskPriorityCommand = Command.make(
@@ -38,27 +33,11 @@ export const taskPriorityCommand = Command.make(
 			const at = instant === undefined ? new Date() : new Date(z.iso.datetime({ offset: true }).parse(instant));
 			const store = readPriorityStore(file);
 			const snapshot = await rankSnapshot(store, evidence, at);
-			if (
-				flags.apply &&
-				(!evidenceFile || Option.isNone(flags.tasksFile) || realpathSync(file) === resolve(cache))
-			) {
-				throw new Error("Apply requires evidence and an explicit standalone task store");
-			}
-			if (flags.apply) {
-				const ids = new Set(evidence.tasks.map((task) => task.taskId.toLowerCase()));
-				if (
-					store.items.some(
-						(task) => task.status !== "done" && task.status !== "dropped" && !ids.has(task.id.toLowerCase()),
-					)
-				) {
-					throw new Error("Apply requires reviewed evidence for every open task");
-				}
-			}
-			finishPriorityRun(snapshot, flags.apply, Option.getOrUndefined(flags.confirm), localPriorityWriter(file));
-			return flags.json ? JSON.stringify(snapshot, null, 2) : formatPriorityTable(snapshot);
+			const result = await finishPriorityRun(snapshot, flags.apply, Option.getOrUndefined(flags.confirm));
+			return flags.json ? JSON.stringify(result, null, 2) : formatPriorityTable(result);
 		}).pipe(Effect.flatMap(Console.log)),
 ).pipe(
 	Command.withDescription(
-		"Preview action priorities from a local task store. Calendar and mail are offline by default. To update a standalone store, supply --apply and --confirm with its preview snapshot ID.",
+		"Preview action priorities from a local task store. Calendar and mail are offline by default. To submit a revision-checked batch through the configured task service, supply --apply and --confirm with its preview snapshot ID.",
 	),
 );

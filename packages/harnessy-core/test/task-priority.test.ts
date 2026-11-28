@@ -14,8 +14,9 @@ import {
 	priorityInBand,
 	scoreAction,
 } from "../src/jarvis/tasks/priority.ts";
+import { finishPriorityRun } from "../src/jarvis/tasks/priority-apply.ts";
 import { actionEvidence, offlineProviders, priorityEvidence } from "../src/jarvis/tasks/priority-evidence.ts";
-import { finishPriorityRun, rankSnapshot, readPriorityStore } from "../src/jarvis/tasks/priority-shadow.ts";
+import { rankSnapshot, readPriorityStore } from "../src/jarvis/tasks/priority-shadow.ts";
 
 const at = new Date("2026-11-28T11:00:00Z");
 const hour = 3600000;
@@ -92,9 +93,10 @@ describe("priority scoring", () => {
 				expect(emailPoints({ receivedAt: fromNow(-h), relation: "followup" }, at.getTime())).toBe(p);
 				expect(emailPoints({ receivedAt: fromNow(-h), relation: "direct" }, at.getTime())).toBe(2 * p);
 			}
-		for (const h of [-336, 1])
-			expect(emailPoints({ receivedAt: fromNow(h), relation: "direct" }, at.getTime())).toBe(0);
+		for (const h of [-336]) expect(emailPoints({ receivedAt: fromNow(h), relation: "direct" }, at.getTime())).toBe(0);
 	});
+	it("rejects future mail", () =>
+		expect(() => emailPoints({ receivedAt: fromNow(1), relation: "direct" }, at.getTime())).toThrow(/Future/));
 	it("uses WAT midnight for deadlines and elapsed hours for meetings", () => {
 		const action = { ...base, importance: important, dates: [{ ...date, day: "2026-12-02" }] };
 		const events = [{ relation: "preparation" as const, start: "2026-11-30T00:00:00+01:00" }];
@@ -123,7 +125,7 @@ describe("priority scoring", () => {
 			dates: [date],
 			context: "accepted" as const,
 			contextAuthority: "human" as const,
-			dependency: { level: "independent-Q1" as const, verifiedBy: "owner", source: "register" },
+			dependency: { dependentActionId: "dependent", verifiedBy: "owner", source: "register" },
 			estimate: { minutes: 15, estimatedBy: "owner" },
 			observedAt: fromNow(-1680),
 		};
@@ -131,8 +133,8 @@ describe("priority scoring", () => {
 			[{ start: fromNow(1), relation: "preparation" }],
 			[{ receivedAt: fromNow(-1), relation: "direct" }],
 		] as const;
-		expect(scoreAction(full, at, ...args).computed).toBe(0);
-		expect(scoreAction({ ...full, importance: undefined }, at, ...args).computed).toBe(5000);
+		expect(scoreAction(full, at, ...args).computed).toBe(349);
+		expect(scoreAction({ ...full, importance: undefined }, at, ...args).computed).toBe(5349);
 		expect(scoreAction({ ...base, owner: "unknown", importance: important }, at).computed).toBe(4999);
 	});
 	it("keeps tentative dates empty, caps generated commitments, and honors manual dates", () => {
@@ -188,14 +190,14 @@ describe("priority scoring", () => {
 				{
 					...base,
 					kind: "chase",
-					dependency: { level: "active", verifiedBy: "owner", source: "plan" },
+					dependency: { dependentActionId: "dependent", verifiedBy: "owner", source: "plan" },
 					context: "plan",
 					observedAt: fromNow(-1680),
 					progress: { at: fromNow(-168), kind: "verified-partial", source: "register" },
 				},
 				at,
 			).points,
-		).toMatchObject({ ownership: 100, dependency: 175, context: 80, age: 10 });
+		).toMatchObject({ ownership: 100, dependency: 0, context: 80, age: 10 });
 		expect(scoreAction({ ...base, observedAt: fromNow(-167.99) }, at).points.age).toBe(0);
 	});
 });
@@ -208,18 +210,15 @@ describe("priority shadow", () => {
 		action.calendar = [{ start: fromNow(2), relation: "agenda" }];
 		const original = await rankSnapshot(store(), evidence, at);
 		expect(original.rows[0]?.winner).toMatchObject({ due: null, points: { deadline: 0, calendar: 50 } });
-		const custom = await rankSnapshot(
-			store(),
-			evidence,
-			at,
-			offlineProviders,
-			({ action: candidate, at: instant, calendar }) => {
+		const custom = await rankSnapshot(store(), evidence, at, offlineProviders, {
+			version: "test/1",
+			derive: ({ action: candidate, at: instant, calendar }) => {
 				if (candidate.id !== action.id) return { days: [], hasEvidence: false };
 				expect(instant).toEqual(at);
 				expect(calendar).toEqual(action.calendar);
 				return { days: ["2026-11-29"], hasEvidence: true };
 			},
-		);
+		});
 		expect(custom.rows[0]?.winner).toMatchObject({
 			due: "2026-11-29",
 			strongestDate: "2026-11-29",
@@ -284,18 +283,22 @@ describe("priority shadow", () => {
 		const files = readdirSync(dir);
 		const snapshot = await rankSnapshot(store(), inputs(), at);
 		const writer = {
-			apply: vi.fn(() => {
+			request: vi.fn(() => {
 				throw new Error("unexpected write");
 			}),
 		};
 		expect(
-			finishPriorityRun(snapshot, false, undefined, writer).rows.map((r) => [r.current, r.effective, r.change]),
+			(await finishPriorityRun(snapshot, false, undefined, writer)).rows.map((r) => [
+				r.current,
+				r.effective,
+				r.change,
+			]),
 		).toEqual([
 			[101, 1549, 1],
 			[100, 4999, -1],
 		]);
-		expect(() => finishPriorityRun(snapshot, true, "wrong", writer)).toThrow(/Confirm/);
-		expect(writer.apply).not.toHaveBeenCalled();
+		await expect(finishPriorityRun(snapshot, true, "wrong", writer)).rejects.toThrow(/Confirm/);
+		expect(writer.request).not.toHaveBeenCalled();
 		expect(readFileSync(`${dir}tasks.json`)).toEqual(before);
 		expect(readdirSync(dir)).toEqual(files);
 	});
