@@ -27,19 +27,32 @@
 - The daily brief takes the 40 most recent meetings of the last 14 days, from
   every project together and newest first, with no relevance ranking.
 - The Fathom poll also finds follow-ups in the summary's "Next Steps" bullets
-  (confidence 0.8) and, when a meeting has no action items and no Next Steps,
-  in first-person commitments of the transcript (confidence 0.5, at most 8).
-  Extraction runs on this machine only. An item that restates an action item
-  is dropped. Owners and due dates ("by Friday", "5 December") use the shared
-  parser in `read-model/owner-due.ts`. Action item ids do not change.
+  (confidence 0.8) and in direct first-person promises of the transcript
+  (confidence 0.5, at most 8 kept). Conditional, possible and reported speech
+  is skipped. Extraction runs on this machine only. An item that restates an
+  action item is dropped; owners, negation, numbers and recipients must agree
+  for two items to count as the same. These summary and transcript items stay
+  on this machine in `tasks.meeting-local.json` beside the task store: they
+  are never queued for the task VPS, and a sync never replaces that file.
+  `--sync-extracted` (off by default) sends them like action items. Action
+  items are queued before the local write, so a stop between the two writes
+  is replayed. Owners and due dates ("by Friday", "5 December",
+  "5 December 2027") use the shared parser in `read-model/owner-due.ts`.
+  Action item ids do not change.
 - The poll checks notes of the last 14 days again (`--recapture-days`, 0 turns
   it off) when Fathom changes their action items, summary or transcript, or
   when the last capture failed. It adds only new items. A closed follow-up, or
   a reworded copy of one, is never reopened. The changed Fathom envelope
-  replaces the pending one. Per-note state, with each item's quote, timestamp
-  and confidence, is in `state/fathom/meeting-capture-state-v1.json`.
+  replaces the pending one, under a per-account lock, and keeps the stored
+  transcript, summary and highlights when a later listing leaves them out.
+  The provider window is 72 hours or the recapture window, when longer. A
+  meeting whose title changes keeps its first note. Per-note state, with
+  each item's quote, timestamp and confidence, is in `state/fathom/meeting-capture-state-v1.json`. It is
+  merged under a lock, limited to 8 MB, and a damaged copy is kept as
+  `.damaged-<time>`.
 - `harnessy jarvis meeting fathom poll` takes `--dry-run` (write no task,
-  queue or capture state) and `--no-flush` (do not contact the task VPS).
+  queue or capture state), `--no-flush` (do not contact the task VPS) and
+  `--sync-extracted`.
 
 
 - `harnessy engineering benchmark` runs 32,768 iterations of the 16 cases in
@@ -190,7 +203,7 @@
 ### Fixed
 
 - A brief's "Delegated or Waiting" line "Ada and Sam own …" now names the
-  owners. "Their own …" does not.
+  owners. "Their own …" and "Use your own …" do not.
 - `harnessy engineering tick` admits a proof-only job whose pinned source is an
   ancestor of the current base. Before, merging the reviewed pull request moved
   the base, and the controller refused every proof-only successor that pinned

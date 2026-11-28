@@ -8,6 +8,7 @@ import {
 	openSync,
 	readFileSync,
 	renameSync,
+	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -16,9 +17,38 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import type { FathomImportEnvelope, FathomIngestCheckpoint, FathomIngestStore } from "./ingest.ts";
+import {
+	type FathomImportEnvelope,
+	type FathomIngestCheckpoint,
+	type FathomIngestStore,
+	type FathomMeetingPayload,
+	fathomPayloadHash,
+} from "./ingest.ts";
 
 const STATE_FILE = "poll-state-v2.json";
+const POLL_LOCK_STALE_MS = 30 * 60 * 1000;
+const SOURCE_FIELDS = ["action_items", "default_summary", "transcript", "highlights"] as const;
+
+const emptySource = (value: unknown): boolean =>
+	value === undefined ||
+	value === null ||
+	value === "" ||
+	(Array.isArray(value) && value.length === 0) ||
+	(typeof value === "object" &&
+		!Array.isArray(value) &&
+		(Object.keys(value).length === 0 ||
+			("markdown_formatted" in value && !(value as { markdown_formatted?: unknown }).markdown_formatted)));
+
+/** The newer payload, with each source field it leaves empty taken from the stored one. */
+export const mergeSourceFields = (
+	stored: FathomMeetingPayload,
+	incoming: FathomMeetingPayload,
+): FathomMeetingPayload => {
+	const merged: Record<string, unknown> = { ...incoming };
+	for (const field of SOURCE_FIELDS)
+		if (emptySource(incoming[field]) && !emptySource(stored[field])) merged[field] = stored[field];
+	return merged as FathomMeetingPayload;
+};
 
 export interface FathomPersistedPollState {
 	readonly version: 1;
@@ -116,25 +146,34 @@ export class FathomFileStore implements FathomIngestStore {
 		}
 	}
 
-	async refreshPending(
+	/**
+	 * Replace the pending envelope with the newer listing, keeping any source
+	 * field (`action_items`, `default_summary`, `transcript`, `highlights`) that
+	 * the new payload leaves empty. A processed or missing envelope is left to
+	 * its owner. Callers hold `lockAccount`, so no other poll writes meanwhile.
+	 */
+	async reconcilePending(
 		account: string,
 		recordingId: string,
 		envelope: FathomImportEnvelope,
-	): Promise<"refreshed" | "unchanged"> {
+	): Promise<{ readonly outcome: "refreshed" | "unchanged" | "missing"; readonly payloadHash: string | null }> {
 		if (!/^[A-Za-z0-9_-]+$/.test(account)) throw new Error("invalid Fathom account path");
 		const destination = join(this.#inboxRoot, account, "pending", `${recordingKey(recordingId)}.json`);
-		// Only a pending envelope is replaced; a processed or missing one is left to its owner.
-		if (!existsSync(destination)) return "unchanged";
-		const current = readFileSync(destination, "utf8");
+		if (!existsSync(destination)) return { outcome: "missing", payloadHash: null };
 		const parsed = Effect.runSyncExit(
-			Effect.try({ try: () => JSON.parse(current) as FathomImportEnvelope, catch: () => null }),
+			Effect.try({
+				try: () => JSON.parse(readFileSync(destination, "utf8")) as FathomImportEnvelope,
+				catch: () => null,
+			}),
 		);
-		if (Exit.isSuccess(parsed) && JSON.stringify(parsed.value.payload) === JSON.stringify(envelope.payload))
-			return "unchanged";
+		const stored = Exit.isSuccess(parsed) && parsed.value?.payload ? parsed.value.payload : null;
+		const payload = stored === null ? envelope.payload : mergeSourceFields(stored, envelope.payload);
+		if (stored !== null && JSON.stringify(stored) === JSON.stringify(payload))
+			return { outcome: "unchanged", payloadHash: fathomPayloadHash(stored) };
 		const temporary = `${destination}.${randomUUID()}.tmp`;
 		const fd = openSync(temporary, "wx", 0o600);
 		try {
-			writeFileSync(fd, `${JSON.stringify(envelope)}\n`);
+			writeFileSync(fd, `${JSON.stringify({ ...envelope, payload })}\n`);
 			fsyncSync(fd);
 		} finally {
 			closeSync(fd);
@@ -146,7 +185,34 @@ export class FathomFileStore implements FathomIngestStore {
 			unlinkSync(temporary);
 			throw Cause.squash(renamed.cause);
 		}
-		return "refreshed";
+		return { outcome: "refreshed", payloadHash: fathomPayloadHash(payload) };
+	}
+
+	/**
+	 * One poll at a time for each account (`poll-<account key>.lock`, 0600). A lock
+	 * older than 30 minutes is from a crashed poll and is replaced.
+	 */
+	async lockAccount(account: string): Promise<() => void> {
+		const stateRoot = join(this.#statePath, "..");
+		mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+		const lockPath = join(stateRoot, `poll-${fathomAccountKey(account)}.lock`);
+		const take = () => {
+			const fd = openSync(lockPath, "wx", 0o600);
+			writeFileSync(fd, `${new Date().toISOString()}\n`);
+			closeSync(fd);
+		};
+		const first = Effect.runSyncExit(Effect.try({ try: take, catch: (error) => error }));
+		if (Exit.isFailure(first)) {
+			const error = Cause.squash(first.cause) as NodeJS.ErrnoException;
+			if (error.code !== "EEXIST") throw error;
+			const age = Date.now() - statSync(lockPath).mtimeMs;
+			if (age < POLL_LOCK_STALE_MS) throw new Error("Fathom poll already running for this account");
+			unlinkSync(lockPath);
+			take();
+		}
+		return () => {
+			if (existsSync(lockPath)) unlinkSync(lockPath);
+		};
 	}
 
 	async saveCheckpoint(account: string, checkpoint: FathomIngestCheckpoint): Promise<void> {

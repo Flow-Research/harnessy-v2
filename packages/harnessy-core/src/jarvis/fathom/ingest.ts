@@ -62,15 +62,22 @@ export interface FathomIngestStore {
 		envelope: FathomImportEnvelope,
 	) => Promise<"imported" | "duplicate">;
 	/**
-	 * Replace a stored envelope whose payload changed (for example Fathom added
-	 * action items after the first poll). Optional: a store without it keeps the
-	 * first envelope, as before.
+	 * Bring a stored envelope up to date with a newer listing of the same meeting
+	 * (for example Fathom added action items after the first poll). Source fields
+	 * that the new payload leaves empty keep their stored value. Returns the hash
+	 * of the payload now stored, which the checkpoint records. Optional: a store
+	 * without it keeps the first envelope, as before.
 	 */
-	readonly refreshPending?: (
+	readonly reconcilePending?: (
 		account: string,
 		recordingId: string,
 		envelope: FathomImportEnvelope,
-	) => Promise<"refreshed" | "unchanged">;
+	) => Promise<{ readonly outcome: "refreshed" | "unchanged" | "missing"; readonly payloadHash: string | null }>;
+	/**
+	 * Hold the account for one whole page (refresh and checkpoint), so two polls
+	 * never interleave. Returns the release function. Optional.
+	 */
+	readonly lockAccount?: (account: string) => Promise<() => void>;
 	readonly saveCheckpoint: (account: string, checkpoint: FathomIngestCheckpoint) => Promise<void>;
 }
 
@@ -142,8 +149,36 @@ const settleSync = <A>(thunk: () => A): { readonly value?: A; readonly error?: u
 	return Exit.isSuccess(exit) ? { value: exit.value } : { error: Cause.squash(exit.cause) };
 };
 
-/** One bounded page. A failed page never advances the checkpoint, so retrying is safe. */
+/** The hash a checkpoint records for one payload. */
+export const fathomPayloadHash = (payload: FathomMeetingPayload): string =>
+	createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+
+/**
+ * One bounded page. A failed page never advances the checkpoint, so retrying is
+ * safe. When the store can lock an account, the whole page runs under the lock;
+ * a held lock fails the page as retryable.
+ */
 export const ingestFathomPage = async (options: FathomIngestOptions): Promise<FathomIngestReceipt> => {
+	if (options.store.lockAccount === undefined) return ingestUnlocked(options);
+	const locked = await settlePromise(options.store.lockAccount(options.account));
+	if (locked.error !== undefined)
+		return {
+			account: options.account,
+			fetched: 0,
+			imported: 0,
+			duplicates: 0,
+			nextCursor: null,
+			checkpointAdvanced: false,
+			failure: { code: "checkpoint", retryable: true, message: "Fathom checkpoint operation failed" },
+		};
+	const release = locked.value as () => void;
+	const result = await settlePromise(ingestUnlocked(options));
+	release();
+	if (result.error !== undefined) throw result.error;
+	return result.value as FathomIngestReceipt;
+};
+
+const ingestUnlocked = async (options: FathomIngestOptions): Promise<FathomIngestReceipt> => {
 	const limit = boundedLimit(options.limit);
 	const now = options.now ?? (() => new Date().toISOString());
 	const checkpointResult = await settlePromise(options.store.loadCheckpoint(options.account));
@@ -218,19 +253,24 @@ export const ingestFathomPage = async (options: FathomIngestOptions): Promise<Fa
 			fetchedAt: now(),
 			payload,
 		};
-		const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
 		const store = options.store;
-		const putResult =
+		let storedHash = fathomPayloadHash(payload);
+		// A recording already on disk is reconciled every time, also when the
+		// checkpoint never saw it (a page that failed after its envelope was written).
+		const reconcile = async (): Promise<"duplicate"> => {
+			if (store.reconcilePending === undefined) return "duplicate";
+			const reconciled = await store.reconcilePending(options.account, id, envelope);
+			if (reconciled.outcome === "refreshed") refreshed += 1;
+			if (reconciled.payloadHash !== null) storedHash = reconciled.payloadHash;
+			return "duplicate";
+		};
+		const putResult = await settlePromise(
 			seen[id] === undefined
-				? await settlePromise(options.store.putPending(options.account, id, envelope))
-				: seen[id] !== hash && store.refreshPending !== undefined
-					? await settlePromise(
-							store.refreshPending(options.account, id, envelope).then((outcome) => {
-								if (outcome === "refreshed") refreshed += 1;
-								return "duplicate" as const;
-							}),
-						)
-					: { value: "duplicate" as const };
+				? store
+						.putPending(options.account, id, envelope)
+						.then((outcome) => (outcome === "duplicate" ? reconcile() : outcome))
+				: reconcile(),
+		);
 		if (putResult.error !== undefined) {
 			return {
 				account: options.account,
@@ -245,7 +285,7 @@ export const ingestFathomPage = async (options: FathomIngestOptions): Promise<Fa
 		const result = putResult.value as "imported" | "duplicate";
 		if (result === "imported") imported += 1;
 		else duplicates += 1;
-		seen[id] = hash;
+		seen[id] = storedHash;
 	}
 	const nextCheckpoint: FathomIngestCheckpoint = {
 		cursor: page.nextCursor,

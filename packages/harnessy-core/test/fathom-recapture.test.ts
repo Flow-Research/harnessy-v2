@@ -1,14 +1,32 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Effect, Schema } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { JarvisLegacyConfig, resolveJarvisConfig } from "../src/jarvis/config-model.ts";
-import { readMeetingCaptureState } from "../src/jarvis/fathom/capture-state.ts";
-import { runConfiguredFathomPoll } from "../src/jarvis/fathom/host.ts";
+import {
+	type NoteCaptureRecord,
+	readMeetingCaptureState,
+	updateMeetingCaptureState,
+} from "../src/jarvis/fathom/capture-state.ts";
+import { FathomFileStore, fathomAccountKey } from "../src/jarvis/fathom/file-store.ts";
+import { defaultLocalMeetingFile } from "../src/jarvis/fathom/followup-capture.ts";
+import { fathomPollCreatedAfter, runConfiguredFathomPoll } from "../src/jarvis/fathom/host.ts";
+import { fathomPayloadHash } from "../src/jarvis/fathom/ingest.ts";
 import { JarvisPaths } from "../src/jarvis/paths.ts";
+import { applyMeetingFollowupBatch, parseMeetingFollowupBatch } from "../src/jarvis/tasks/meeting-followups.ts";
 import { TasksState } from "../src/jarvis/tasks/store.ts";
+import { defaultQueuePath, readQueue, syncTasks, type TasksTransport, writeQueue } from "../src/jarvis/tasks/sync.ts";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -18,6 +36,8 @@ afterEach(() => {
 const NOW = new Date("2026-11-28T18:00:00.000Z");
 const RECORDED = "2026-11-27T09:00:00Z";
 const SHARE = "https://fathom.video/share/fixture";
+/** A synthetic endpoint that no test ever reaches: every request goes to a fake transport. */
+const ENDPOINT = "https://tasks.invalid";
 
 const setup = () => {
 	const root = mkdtempSync(join(tmpdir(), "harnessy-fathom-recapture-"));
@@ -45,6 +65,9 @@ const setup = () => {
 	const privateRoot = join(root, "private");
 	const inboxRoot = join(privateRoot, "meeting-inbox", "fathom");
 	mkdirSync(inboxRoot, { recursive: true });
+	const tokenFile = join(root, "sync.token");
+	writeFileSync(tokenFile, "synthetic-sync-token\n", { mode: 0o600 });
+	const tasksFile = join(root, "tasks.json");
 	return {
 		root,
 		config,
@@ -53,8 +76,34 @@ const setup = () => {
 		inboxRoot,
 		stateRoot: join(root, "state"),
 		sourceRoot: join(privateRoot, "flow", "meetings"),
-		tasksFile: join(root, "tasks.json"),
+		tasksFile,
+		localFile: defaultLocalMeetingFile(tasksFile),
+		queuePath: defaultQueuePath(tasksFile),
+		syncConfig: { endpoint: ENDPOINT, tokenFile },
 	};
+};
+type Env = ReturnType<typeof setup>;
+
+/** An in-memory task server: it records every request and serves one task store. */
+const fakeTaskServer = (root: string) => {
+	const store = new TasksState(join(root, "server-tasks.json"));
+	const requests: Array<{ method: string; path: string; body: unknown }> = [];
+	const transport: TasksTransport = {
+		request: async ({ method, path, body }) => {
+			requests.push({ method, path, body });
+			if (method === "GET" && path.startsWith("/v1/tasks"))
+				return { status: 200, body: { ok: true, revision: store.read().revision, items: store.read().items } };
+			if (method === "POST" && path === "/v1/followups/ingest") {
+				const result = applyMeetingFollowupBatch(store, parseMeetingFollowupBatch(body));
+				return {
+					status: 200,
+					body: { ok: true, revision: store.read().revision, created: result.created, items: result.items },
+				};
+			}
+			return { status: 404, body: { ok: false, error: "not_found" } };
+		},
+	};
+	return { store, requests, transport };
 };
 
 type Meeting = Record<string, unknown>;
@@ -67,104 +116,220 @@ const meeting = (id: number, extra: Meeting): Meeting => ({
 	...extra,
 });
 
-const run = (
-	env: ReturnType<typeof setup>,
-	items: ReadonlyArray<Meeting>,
-	followups: { dryRun?: boolean; noFlush?: boolean } = {},
-) =>
+interface RunOptions {
+	readonly dryRun?: boolean;
+	readonly noFlush?: boolean;
+	readonly syncExtracted?: boolean;
+	readonly sync?: ReturnType<typeof fakeTaskServer>;
+	readonly now?: Date;
+	readonly createdAfter?: string;
+	readonly recaptureDays?: number;
+	/** A provider that applies `created_after` as Fathom does. */
+	readonly enforceWindow?: boolean;
+}
+
+const run = (env: Env, items: ReadonlyArray<Meeting>, options: RunOptions = {}) =>
 	runConfiguredFathomPoll({
 		config: env.config,
 		paths: env.paths,
 		inboxRoot: env.inboxRoot,
 		stateRoot: env.stateRoot,
 		sourceRoot: env.sourceRoot,
-		createdAfter: "2026-11-25T00:00:00.000Z",
-		now: NOW,
-		followups: { tasksFile: env.tasksFile, clock: () => NOW, ...followups },
+		createdAfter: options.createdAfter ?? "2026-11-25T00:00:00.000Z",
+		now: options.now ?? NOW,
+		recaptureDays: options.recaptureDays,
+		followups: {
+			tasksFile: env.tasksFile,
+			clock: () => options.now ?? NOW,
+			dryRun: options.dryRun,
+			noFlush: options.noFlush,
+			syncExtracted: options.syncExtracted,
+			...(options.sync === undefined ? {} : { syncConfig: env.syncConfig, transport: options.sync.transport }),
+		},
 		readApiKey: async () => "synthetic",
-		fetch: async () =>
-			new Response(JSON.stringify({ items, next_cursor: null }), {
+		fetch: async (input) => {
+			const after = new URL(String(input)).searchParams.get("created_after");
+			const listed =
+				options.enforceWindow === true && after !== null
+					? items.filter((item) => Date.parse(String(item.created_at)) >= Date.parse(after))
+					: items;
+			return new Response(JSON.stringify({ items: listed, next_cursor: null }), {
 				status: 200,
 				headers: { "content-type": "application/json" },
-			}),
+			});
+		},
 	});
 
 const nextSteps = (lines: ReadonlyArray<string>) => ({
 	markdown_formatted: `## Meeting Purpose\n\nFixture.\n\n## Next Steps\n\n${lines.join("\n")}\n`,
 });
+const titles = (file: string) =>
+	existsSync(file)
+		? new TasksState(file)
+				.read()
+				.items.map((item) => item.title)
+				.sort()
+		: [];
+const statePath = (env: Env) => join(env.stateRoot, "meeting-capture-state-v1.json");
+
+const threeSources = () => [
+	meeting(1, {
+		action_items: [{ description: "Draft the pilot terms", assignee: { name: "Ada" }, completed: false }],
+		default_summary: nextSteps([`  - [**Ada:** Draft pilot terms.](${SHARE}-1?timestamp=60)`]),
+	}),
+	meeting(2, {
+		default_summary: nextSteps([`  - [**Sam:** Send the venue shortlist by Friday.](${SHARE}-2?timestamp=90.0)`]),
+	}),
+	meeting(3, {
+		transcript: [
+			{
+				speaker: { display_name: "Tunde" },
+				text: "I'll prepare the budget sheet for the board.",
+				timestamp: "00:02:03",
+			},
+		],
+	}),
+];
 
 describe("Fathom poll follow-up capture and recapture", () => {
-	it("captures action items, summary steps and transcript commitments once each", async () => {
+	it("keeps action items in the shared store and summary or transcript items in the local store, once", async () => {
 		const env = setup();
-		const first = await run(env, [
-			meeting(1, {
-				action_items: [{ description: "Draft the pilot terms", assignee: { name: "Ada" }, completed: false }],
-				default_summary: nextSteps([`  - [**Ada:** Draft pilot terms.](${SHARE}-1?timestamp=60)`]),
-			}),
-			meeting(2, {
-				default_summary: nextSteps([
-					`  - [**Sam:** Send the venue shortlist by Friday.](${SHARE}-2?timestamp=90.0)`,
-				]),
-			}),
-			meeting(3, {
-				transcript: [
-					{
-						speaker: { display_name: "Tunde" },
-						text: "I'll prepare the budget sheet for the board.",
-						timestamp: "00:02:03",
-					},
-				],
-			}),
-		]);
+		const first = await run(env, threeSources());
 		expect(first.importedNotes).toMatchObject({ imported: 3 });
-		expect(first.followups).toMatchObject({ captured: 3, created: 3, existing: 0, similar: 0, failed: 0 });
-		expect(first.tasksSync).toEqual({ state: "skipped", remaining: 0 });
-		const items = new TasksState(env.tasksFile).read().items;
-		const byTitle = [...items].sort((a, b) => a.title.localeCompare(b.title));
+		expect(first.followups).toMatchObject({ captured: 3, created: 3, local: 2, existing: 0, similar: 0, failed: 0 });
+		expect(titles(env.tasksFile)).toEqual(["Draft the pilot terms"]);
+		expect(titles(env.localFile)).toEqual([
+			"Prepare the budget sheet for the board",
+			"Send the venue shortlist by Friday",
+		]);
+		const local = new TasksState(env.localFile).read().items;
 		// The meeting is on Friday 27 November, so "by Friday" is the next Friday.
-		expect(byTitle.map((item) => [item.title, item.owner, item.due])).toEqual([
-			["Draft the pilot terms", "Ada", null],
-			["Prepare the budget sheet for the board", "Tunde", null],
-			["Send the venue shortlist by Friday", "Sam", "2026-12-04"],
+		expect(local.find((item) => item.title.startsWith("Send"))).toMatchObject({
+			owner: "Sam",
+			due: "2026-12-04",
+			link: `${SHARE}-2?timestamp=90.0`,
+		});
+		expect(statSync(statePath(env)).mode & 0o777).toBe(0o600);
+		const records = Object.values(readMeetingCaptureState(statePath(env)).notes).sort((a, b) =>
+			a.path.localeCompare(b.path),
+		);
+		expect(records.map((record) => record.items.map((item) => [item.source, item.confidence, item.store]))).toEqual([
+			[["action_items", 1, "shared"]],
+			[["summary", 0.8, "local"]],
+			[["transcript", 0.5, "local"]],
 		]);
-		expect(byTitle[2]!.link).toBe(`${SHARE}-2?timestamp=90.0`);
-		expect(byTitle[1]!.link).toBe(`${SHARE}-3`);
-		const statePath = join(env.stateRoot, "meeting-capture-state-v1.json");
-		expect(statSync(statePath).mode & 0o777).toBe(0o600);
-		const state = readMeetingCaptureState(statePath);
-		const records = Object.values(state.notes).sort((a, b) => a.path.localeCompare(b.path));
-		expect(records.map((record) => record.items.map((item) => [item.source, item.confidence]))).toEqual([
-			[["action_items", 1]],
-			[["summary", 0.8]],
-			[["transcript", 0.5]],
-		]);
-		const transcriptRecord = records[2]!;
-		expect(transcriptRecord.items[0]).toMatchObject({
+		expect(records[2]!.items[0]).toMatchObject({
 			quote: "Tunde: I'll prepare the budget sheet for the board.",
 			timestamp: "00:02:03",
 			outcome: "created",
 		});
-		const second = await run(env, [
-			meeting(1, {
-				action_items: [{ description: "Draft the pilot terms", assignee: { name: "Ada" }, completed: false }],
-				default_summary: nextSteps([`  - [**Ada:** Draft pilot terms.](${SHARE}-1?timestamp=60)`]),
-			}),
-		]);
+		const second = await run(env, threeSources());
 		expect(second.followups).toMatchObject({ captured: 0, unchanged: 3, created: 0 });
-		expect(new TasksState(env.tasksFile).read().items).toHaveLength(3);
+		expect(titles(env.tasksFile)).toHaveLength(1);
+		expect(titles(env.localFile)).toHaveLength(2);
+	});
+
+	it("sends only action items to the task server by default, also on later syncs", async () => {
+		const env = setup();
+		const server = fakeTaskServer(env.root);
+		const first = await run(env, threeSources(), { sync: server });
+		expect(first.followups).toMatchObject({ created: 3, local: 2, queued: 1 });
+		expect(first.tasksSync).toMatchObject({ state: "synced", replayed: 1, remaining: 0 });
+		const sent = JSON.stringify(server.requests);
+		expect(sent).toContain("Draft the pilot terms");
+		for (const word of ["venue shortlist", "budget sheet", "Tunde", "Fixture meeting 2", "Fixture meeting 3"])
+			expect(sent).not.toContain(word);
+		expect(server.requests.filter((request) => request.method === "POST")).toHaveLength(1);
+		expect(titles(join(env.root, "server-tasks.json"))).toEqual(["Draft the pilot terms"]);
+		// A later sync installs the server copy over tasks.json; the local store is untouched.
+		await syncTasks({ tasksFile: env.tasksFile, config: env.syncConfig, transport: server.transport });
+		expect(titles(env.tasksFile)).toEqual(["Draft the pilot terms"]);
+		expect(titles(env.localFile)).toEqual([
+			"Prepare the budget sheet for the board",
+			"Send the venue shortlist by Friday",
+		]);
+		expect(JSON.stringify(server.requests)).not.toContain("budget sheet");
+	});
+
+	it("sends summary and transcript items only with syncExtracted", async () => {
+		const env = setup();
+		const server = fakeTaskServer(env.root);
+		const result = await run(env, threeSources(), { sync: server, syncExtracted: true });
+		expect(result.followups).toMatchObject({ created: 3, local: 0, queued: 3 });
+		expect(titles(join(env.root, "server-tasks.json"))).toHaveLength(3);
+		expect(existsSync(env.localFile)).toBe(false);
+	});
+
+	it("queues before the local write, so an interrupted queue write is retried and synced exactly once", async () => {
+		const env = setup();
+		const server = fakeTaskServer(env.root);
+		const items = [
+			meeting(21, {
+				action_items: [{ description: "Ship the pilot build", assignee: { name: "Ada" }, completed: false }],
+			}),
+		];
+		// A directory where the queue file goes makes the queue write fail.
+		mkdirSync(env.queuePath);
+		const first = await run(env, items, { sync: server, noFlush: true });
+		expect(first.followups).toMatchObject({ failed: 1, created: 0, queued: 0 });
+		expect(titles(env.tasksFile)).toEqual([]);
+		rmSync(env.queuePath, { recursive: true });
+		const second = await run(env, items, { sync: server });
+		expect(second.followups).toMatchObject({ failed: 0, created: 1, queued: 1 });
+		expect(second.followups!.outcomes[0]!.reason).toBe("retry");
+		expect(second.tasksSync).toMatchObject({ state: "synced", remaining: 0 });
+		const remote = server.store.read().items;
+		expect(remote.map((item) => item.title)).toEqual(["Ship the pilot build"]);
+		server.store.resolve(remote[0]!.id, "done on the server");
+		await syncTasks({ tasksFile: env.tasksFile, config: env.syncConfig, transport: server.transport });
+		expect(new TasksState(env.tasksFile).read().items.map((item) => [item.title, item.status])).toEqual([
+			["Ship the pilot build", "done"],
+		]);
+		const third = await run(env, items, { sync: server });
+		expect(third.followups).toMatchObject({ created: 0, queued: 0 });
+		expect(server.store.read().items).toHaveLength(1);
+		expect(server.store.read().items[0]!.status).toBe("done");
+	});
+
+	it("contacts no task server and keeps the queue in a dry run or with noFlush", async () => {
+		const env = setup();
+		const server = fakeTaskServer(env.root);
+		const pending = { op: "resolve" as const, id: "00000000-0000-4000-8000-000000000001", note: "fixture" };
+		writeQueue(env.queuePath, { version: 1, items: [pending] });
+		const items = [
+			meeting(31, {
+				action_items: [{ description: "Draft the plan", assignee: { name: "Ada" }, completed: false }],
+				default_summary: nextSteps(["  - **Sam:** Book the venue."]),
+			}),
+		];
+		const dry = await run(env, items, { sync: server, dryRun: true });
+		expect(dry.followups).toMatchObject({ dryRun: true, captured: 1, created: 2, queued: 0 });
+		expect(dry.tasksSync).toBeNull();
+		expect(server.requests).toEqual([]);
+		expect(readQueue(env.queuePath).items).toEqual([pending]);
+		expect(existsSync(env.tasksFile)).toBe(false);
+		expect(existsSync(env.localFile)).toBe(false);
+		expect(existsSync(statePath(env))).toBe(false);
+
+		const kept = await run(env, items, { sync: server, noFlush: true });
+		expect(kept.followups).toMatchObject({ created: 2, local: 1, queued: 1 });
+		expect(kept.tasksSync).toBeNull();
+		expect(server.requests).toEqual([]);
+		const queue = readQueue(env.queuePath).items;
+		expect(queue).toHaveLength(2);
+		expect(queue[0]).toEqual(pending);
+		expect(queue[1]).toMatchObject({ op: "ingestMeeting" });
+		expect(JSON.stringify(queue)).toContain("Draft the plan");
+		expect(JSON.stringify(queue)).not.toContain("Book the venue");
 	});
 
 	it("recaptures a note when Fathom adds action items later: new items only, closed never reopened", async () => {
 		const env = setup();
-		const early = meeting(7, {
-			default_summary: nextSteps(["  - **Ada:** Book the launch venue."]),
-		});
+		const early = meeting(7, { default_summary: nextSteps(["  - **Ada:** Book the launch venue."]) });
 		const first = await run(env, [early]);
-		expect(first.followups).toMatchObject({ created: 1 });
-		const tasks = new TasksState(env.tasksFile);
-		const venue = tasks.read().items[0]!;
-		tasks.resolve(venue.id, "booked");
-		expect(tasks.read().items[0]!.status).toBe("done");
+		expect(first.followups).toMatchObject({ created: 1, local: 1 });
+		const local = new TasksState(env.localFile);
+		local.resolve(local.read().items[0]!.id, "booked");
 
 		const late = {
 			...early,
@@ -176,39 +341,74 @@ describe("Fathom poll follow-up capture and recapture", () => {
 		};
 		const second = await run(env, [late]);
 		expect(second.results[0]).toMatchObject({ duplicates: 1, refreshed: 1 });
-		const pending = join(env.inboxRoot, "research", "pending");
-		const envelope = JSON.parse(readFileSync(join(pending, readdirSync(pending)[0]!), "utf8"));
+		const pendingDir = join(env.inboxRoot, "research", "pending");
+		const envelope = JSON.parse(readFileSync(join(pendingDir, readdirSync(pendingDir)[0]!), "utf8"));
 		expect(envelope.payload.action_items).toHaveLength(3);
-		expect(second.importedNotes).toMatchObject({ imported: 0, existing: 1 });
 		expect(second.followups).toMatchObject({ captured: 1, created: 1, similar: 1, existing: 0 });
 		expect(second.followups!.outcomes[0]!.reason).toBe("changed");
-		const after = new TasksState(env.tasksFile).read().items;
-		expect(after.map((item) => [item.title, item.status])).toEqual([
+		expect(titles(env.tasksFile)).toEqual(["Send the press list to Sam"]);
+		expect(new TasksState(env.localFile).read().items.map((item) => [item.title, item.status])).toEqual([
 			["Book the launch venue", "done"],
-			["Send the press list to Sam", "todo"],
 		]);
-
 		const third = await run(env, [late]);
 		expect(third.results[0]).toMatchObject({ refreshed: 0 });
 		expect(third.followups).toMatchObject({ captured: 0, unchanged: 1, created: 0 });
-		expect(new TasksState(env.tasksFile).read().items).toHaveLength(2);
 	});
 
-	it("writes nothing in a dry run", async () => {
+	it("keeps the first note of a renamed meeting and compares with its stored follow-ups", async () => {
 		const env = setup();
-		const result = await run(env, [meeting(9, { default_summary: nextSteps(["  - **Ada:** Draft the plan."]) })], {
-			dryRun: true,
+		const early = meeting(8, {
+			meeting_title: "Pilot sync",
+			default_summary: nextSteps(["  - **Ada:** Book the launch venue."]),
 		});
-		expect(result.followups).toMatchObject({ dryRun: true, captured: 1, created: 1 });
-		expect(result.tasksSync).toBeNull();
-		expect(() => statSync(env.tasksFile)).toThrow();
-		expect(() => statSync(join(env.stateRoot, "meeting-capture-state-v1.json"))).toThrow();
+		const first = await run(env, [early]);
+		const notePath = first.importedNotes!.paths[0]!;
+		const local = new TasksState(env.localFile);
+		local.resolve(local.read().items[0]!.id, "booked");
+		const renamed = {
+			...early,
+			meeting_title: "Pilot sync with the venue team",
+			action_items: [{ description: "Book the venue for the launch", assignee: { name: "Ada" }, completed: false }],
+		};
+		const second = await run(env, [renamed]);
+		expect(second.importedNotes).toMatchObject({ imported: 0, existing: 1 });
+		expect(second.importedNotes!.recent.map((note) => note.path)).toEqual([notePath]);
+		expect(readdirSync(join(env.sourceRoot, "2026", "Nov"))).toHaveLength(1);
+		expect(second.followups).toMatchObject({ created: 0, similar: 1 });
+		expect(titles(env.tasksFile)).toEqual([]);
+	});
+
+	it("keeps a different person's commitment with the same title", async () => {
+		const env = setup();
+		const early = meeting(9, {
+			action_items: [{ description: "Send the signed form", assignee: { name: "Ada" }, completed: false }],
+		});
+		await run(env, [early]);
+		const shared = new TasksState(env.tasksFile);
+		shared.resolve(shared.read().items[0]!.id, "sent");
+		const later = {
+			...early,
+			action_items: [
+				{ description: "Send the signed form", assignee: { name: "Ada" }, completed: false },
+				{ description: "Send the signed form", assignee: { name: "Sam" }, completed: false },
+			],
+		};
+		const second = await run(env, [later]);
+		expect(second.followups).toMatchObject({ created: 1, existing: 1, similar: 0 });
+		expect(new TasksState(env.tasksFile).read().items.map((item) => [item.owner, item.status])).toEqual([
+			["Ada", "done"],
+			["Sam", "todo"],
+		]);
 	});
 
 	it("retries a failed capture on the next poll", async () => {
 		const env = setup();
 		writeFileSync(env.tasksFile, "{not json");
-		const items = [meeting(11, { default_summary: nextSteps(["  - **Ada:** Draft the plan."]) })];
+		const items = [
+			meeting(11, {
+				action_items: [{ description: "Draft the plan", assignee: { name: "Ada" }, completed: false }],
+			}),
+		];
 		const first = await run(env, items);
 		expect(first.followups).toMatchObject({ failed: 1, created: 0 });
 		expect(first.followups!.outcomes[0]!.record).toMatchObject({ status: "failed", error: "unreadable" });
@@ -218,12 +418,15 @@ describe("Fathom poll follow-up capture and recapture", () => {
 		expect(second.followups!.outcomes[0]!.reason).toBe("retry");
 	});
 
-	it("finds an existing note in an older project meetings folder and never re-imports it", async () => {
+	it("finds an existing note in an older project meetings folder by its recording identity", async () => {
 		const env = setup();
 		const older = join(env.privateRoot, "acme", "meetings", "2026", "Nov");
 		mkdirSync(older, { recursive: true });
-		const notePath = join(older, "27-fixture-meeting-12-12.md");
-		writeFileSync(notePath, "# Fixture meeting 12\n\n## Action Items\n\n- [ ] Ship the pilot build (owner: Ada)\n");
+		const notePath = join(older, "27-an-older-title-12.md");
+		writeFileSync(
+			notePath,
+			"# An older title\n\n## Metadata\n\n- Source Ref: fathom:12\n\n## Action Items\n\n- [ ] Ship the pilot build (owner: Ada)\n",
+		);
 		const result = await run(env, [
 			meeting(12, {
 				action_items: [{ description: "Ship the pilot build", assignee: { name: "Ada" }, completed: false }],
@@ -231,39 +434,169 @@ describe("Fathom poll follow-up capture and recapture", () => {
 		]);
 		expect(result.importedNotes).toMatchObject({ imported: 0, existing: 1 });
 		expect(result.importedNotes!.recent.map((note) => note.path)).toEqual([notePath]);
-		const items = new TasksState(env.tasksFile).read().items;
-		expect(items).toHaveLength(1);
-		expect(items[0]!.source).toMatchObject({ kind: "meeting", path: notePath, line: 5 });
+		expect(new TasksState(env.tasksFile).read().items[0]!.source).toMatchObject({
+			kind: "meeting",
+			path: notePath,
+			line: 9,
+		});
 	});
 
-	it("leaves notes outside the recapture window alone", async () => {
+	it("lists the whole recapture window, so a five-day-old meeting that gains action items is refreshed", async () => {
 		const env = setup();
-		const items = [meeting(13, { default_summary: nextSteps(["  - **Ada:** Draft the plan."]) })];
-		await runConfiguredFathomPoll({
-			config: env.config,
-			paths: env.paths,
-			inboxRoot: env.inboxRoot,
-			stateRoot: env.stateRoot,
-			sourceRoot: env.sourceRoot,
-			now: NOW,
-			followups: { tasksFile: env.tasksFile, clock: () => NOW },
-			readApiKey: async () => "synthetic",
-			fetch: async () => new Response(JSON.stringify({ items, next_cursor: null }), { status: 200 }),
+		const fiveDaysAgo = new Date(NOW.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString();
+		const early = meeting(13, {
+			recording_start_time: fiveDaysAgo,
+			created_at: fiveDaysAgo,
+			default_summary: nextSteps(["  - **Ada:** Draft the plan."]),
 		});
-		rmSync(env.tasksFile);
-		rmSync(join(env.stateRoot, "meeting-capture-state-v1.json"));
-		const later = await runConfiguredFathomPoll({
-			config: env.config,
-			paths: env.paths,
-			inboxRoot: env.inboxRoot,
-			stateRoot: env.stateRoot,
-			sourceRoot: env.sourceRoot,
-			now: new Date("2026-12-20T00:00:00.000Z"),
-			followups: { tasksFile: env.tasksFile },
-			readApiKey: async () => "synthetic",
-			fetch: async () => new Response(JSON.stringify({ items: [], next_cursor: null }), { status: 200 }),
+		const window = fathomPollCreatedAfter(NOW, 14);
+		expect(window).toBe("2026-11-14T18:00:00.000Z");
+		expect(fathomPollCreatedAfter(NOW, 0)).toBe("2026-11-25T18:00:00.000Z");
+		// Import it while it is new (an earlier poll, three days before NOW).
+		await run(env, [early], { now: new Date(NOW.getTime() - 3 * 24 * 60 * 60 * 1000), createdAfter: window });
+		const late = {
+			...early,
+			action_items: [{ description: "Send the deck to Sam", assignee: { name: "Ada" }, completed: false }],
+		};
+		const narrow = await run(env, [late], { createdAfter: fathomPollCreatedAfter(NOW, 0), enforceWindow: true });
+		expect(narrow.results[0]).toMatchObject({ fetched: 0 });
+		const wide = await run(env, [late], { createdAfter: window, enforceWindow: true });
+		expect(wide.results[0]).toMatchObject({ fetched: 1, refreshed: 1 });
+		expect(wide.followups).toMatchObject({ created: 1 });
+		expect(titles(env.tasksFile)).toEqual(["Send the deck to Sam"]);
+	});
+
+	it("checks meeting start times against an inclusive window that ends now", async () => {
+		const env = setup();
+		const at = (offsetMs: number) => new Date(NOW.getTime() + offsetMs).toISOString();
+		const floor = -14 * 24 * 60 * 60 * 1000;
+		const items = [
+			meeting(41, { recording_start_time: at(floor), created_at: at(floor) }),
+			meeting(42, { recording_start_time: at(floor - 1), created_at: at(floor - 1) }),
+			meeting(43, { recording_start_time: at(60_000), created_at: at(60_000) }),
+		].map((item): Meeting => ({ ...item, default_summary: nextSteps(["  - **Ada:** Draft the plan."]) }));
+		// Write the notes as existing, as an earlier poll would have.
+		for (const item of items) {
+			const date = String(item.recording_start_time).slice(0, 10);
+			const month = new Date(`${date}T00:00:00Z`).toLocaleString("en-US", { month: "short", timeZone: "UTC" });
+			const dir = join(env.sourceRoot, date.slice(0, 4), month);
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(
+				join(dir, `${date.slice(8)}-fixture-meeting-${item.recording_id}-${item.recording_id}.md`),
+				`# x\n\n- Source Ref: fathom:${item.recording_id}\n`,
+			);
+		}
+		const result = await run(env, items, { createdAfter: "2026-11-01T00:00:00.000Z" });
+		expect(result.importedNotes!.recent.map((note) => note.fingerprint.split(":")[1])).toEqual(["41"]);
+		const none = await run(setup(), items, { createdAfter: "2026-11-01T00:00:00.000Z", recaptureDays: 0 });
+		expect(none.importedNotes!.recent).toEqual([]);
+	});
+
+	it("serialises polls of one account and keeps source fields a partial listing leaves out", async () => {
+		const env = setup();
+		const full = meeting(51, {
+			transcript: [{ speaker: { display_name: "Ada" }, text: "Hello.", timestamp: "00:00:01" }],
+			default_summary: nextSteps(["  - **Ada:** Draft the plan."]),
 		});
-		expect(later.importedNotes).toMatchObject({ imported: 0, existing: 0, skipped: 1 });
-		expect(later.followups).toMatchObject({ notes: 0, created: 0 });
+		await run(env, [full]);
+		const store = new FathomFileStore({ inboxRoot: env.inboxRoot, stateRoot: env.stateRoot });
+		const release = await store.lockAccount("research");
+		const busy = await run(env, [{ ...full, title: "changed" }]);
+		expect(busy.results[0]!.failure).toMatchObject({ code: "checkpoint", retryable: true });
+		release();
+		const partial = {
+			...full,
+			transcript: undefined,
+			default_summary: null,
+			action_items: [{ description: "Send the deck", assignee: { name: "Ada" }, completed: false }],
+		};
+		const after = await run(env, [partial]);
+		expect(after.results[0]).toMatchObject({ refreshed: 1, failure: null });
+		const pendingDir = join(env.inboxRoot, "research", "pending");
+		const stored = JSON.parse(readFileSync(join(pendingDir, readdirSync(pendingDir)[0]!), "utf8")).payload;
+		expect(stored.transcript).toHaveLength(1);
+		expect(stored.default_summary.markdown_formatted).toContain("Draft the plan");
+		expect(stored.action_items).toHaveLength(1);
+		const checkpoint = JSON.parse(readFileSync(join(env.stateRoot, "poll-state-v2.json"), "utf8"));
+		expect(Object.values(checkpoint.accounts[fathomAccountKey("research")].seen)).toEqual([
+			fathomPayloadHash(stored),
+		]);
+	});
+
+	it("reconciles an envelope written by a page that failed before its checkpoint", async () => {
+		const env = setup();
+		const first = meeting(61, { default_summary: nextSteps(["  - **Ada:** Draft the plan."]) });
+		// The envelope is on disk, but no checkpoint records it.
+		const store = new FathomFileStore({ inboxRoot: env.inboxRoot, stateRoot: env.stateRoot });
+		await store.putPending("research", "61", {
+			version: 1,
+			verified: true,
+			account: "research",
+			source: "fathom-api",
+			fetchedAt: RECORDED,
+			payload: first as { recording_id: number },
+		});
+		const late = {
+			...first,
+			action_items: [{ description: "Send the deck", assignee: { name: "Ada" }, completed: false }],
+		};
+		const result = await run(env, [late]);
+		expect(result.results[0]).toMatchObject({ duplicates: 1, refreshed: 1 });
+		expect(titles(env.tasksFile)).toEqual(["Send the deck"]);
+	});
+
+	it("merges capture state under a lock and keeps a damaged state file", async () => {
+		const env = setup();
+		const other: NoteCaptureRecord = {
+			path: "/notes/other.md",
+			sourceHash: "x",
+			status: "captured",
+			error: null,
+			capturedAt: NOW.toISOString(),
+			items: [],
+		};
+		mkdirSync(env.stateRoot, { recursive: true });
+		updateMeetingCaptureState(statePath(env), { "fathom:other:account": other }, NOW);
+		await run(env, threeSources());
+		const merged = readMeetingCaptureState(statePath(env)).notes;
+		expect(Object.keys(merged)).toHaveLength(4);
+		expect(merged["fathom:other:account"]).toEqual(other);
+
+		writeFileSync(statePath(env), "{damaged");
+		const again = await run(env, threeSources());
+		expect(again.followups).toMatchObject({ captured: 3, created: 0 });
+		const kept = readdirSync(env.stateRoot).filter((name) => name.includes(".damaged-"));
+		expect(kept).toHaveLength(1);
+		expect(readFileSync(join(env.stateRoot, kept[0]!), "utf8")).toBe("{damaged");
+		expect(Object.keys(readMeetingCaptureState(statePath(env)).notes)).toHaveLength(3);
+	});
+
+	it("drops the oldest capture records when the state would pass its size limit", () => {
+		const env = setup();
+		const quote = "q".repeat(200);
+		const records: Record<string, NoteCaptureRecord> = {};
+		for (let index = 0; index < 900; index += 1)
+			records[`fathom:${index}:x`] = {
+				path: `/notes/${index}.md`,
+				sourceHash: "h",
+				status: "captured",
+				error: null,
+				capturedAt: new Date(NOW.getTime() - index * 60_000).toISOString(),
+				items: Array.from({ length: 50 }, (_unused, item) => ({
+					id: `00000000-0000-4000-8000-${String(item).padStart(12, "0")}`,
+					fingerprint: "f".repeat(64),
+					source: "summary" as const,
+					confidence: 0.8,
+					quote,
+					timestamp: null,
+					line: 1,
+					outcome: "created" as const,
+				})),
+			};
+		const written = updateMeetingCaptureState(statePath(env), records, NOW);
+		expect(statSync(statePath(env)).size).toBeLessThanOrEqual(8 * 1024 * 1024);
+		expect(Object.keys(written.notes).length).toBeLessThan(900);
+		expect(written.notes["fathom:0:x"]).toBeDefined();
+		expect(readMeetingCaptureState(statePath(env)).notes["fathom:0:x"]).toBeDefined();
 	});
 });

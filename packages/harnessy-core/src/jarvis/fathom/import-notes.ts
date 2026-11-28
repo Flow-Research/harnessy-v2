@@ -187,14 +187,48 @@ const itemLines = (content: string, items: ReadonlyArray<ExtractedMeetingItem>):
 
 const MAX_NOTE_BYTES = 1024 * 1024;
 
-/** The note at `destination`, or the same file under one of `roots`; null when none exists. */
-const existingNote = (destination: string, roots: ReadonlyArray<string>, relativePath: string): string | null => {
+/**
+ * The note of this recording, written earlier under `destination` or in the
+ * same month folder of any root. The match is the recording identity, not the
+ * title: the filename ends with `-<recording id>.md` and the note's
+ * `Source Ref:` names the recording. A renamed meeting keeps its first note.
+ */
+const existingNote = (
+	destination: string,
+	roots: ReadonlyArray<string>,
+	monthPath: string,
+	dayPrefix: string,
+	recordingId: string,
+	sourceRef: string,
+): string | null => {
 	if (existsSync(destination)) return destination;
+	const suffix = `-${recordingId}.md`;
 	for (const root of roots) {
-		const candidate = join(root, relativePath);
-		if (existsSync(candidate)) return candidate;
+		const directory = join(root, monthPath);
+		if (!existsSync(directory)) continue;
+		const names = readdirSync(directory)
+			.filter((name) => name.startsWith(dayPrefix) && name.endsWith(suffix))
+			.sort();
+		for (const name of names) {
+			const path = join(directory, name);
+			const head = Effect.runSyncExit(
+				Effect.try({ try: () => readFileSync(path, "utf8").slice(0, 4096), catch: () => null }),
+			);
+			if (Exit.isSuccess(head) && head.value.includes(`- Source Ref: ${sourceRef}\n`)) return path;
+		}
 	}
 	return null;
+};
+
+/** The meeting's start in milliseconds, from the first valid timestamp field. */
+const startedAt = (payload: Record<string, unknown>): number => {
+	for (const key of ["recording_start_time", "scheduled_start_time", "created_at"]) {
+		const value = payload[key];
+		if (typeof value !== "string") continue;
+		const time = Date.parse(value);
+		if (Number.isFinite(time)) return time;
+	}
+	return Number.NaN;
 };
 
 /** The route for one Fathom payload, scored on the same fields the import writes. */
@@ -283,7 +317,9 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 		const date = isoDate(envelope.payload as Record<string, unknown>);
 		const started = date === null ? Number.NaN : new Date(`${date}T00:00:00.000Z`).getTime();
 		const importable = started >= floor - 24 * 60 * 60 * 1000;
-		const recapturable = recaptureDays > 0 && started >= recaptureFloor - 24 * 60 * 60 * 1000;
+		// Recapture compares the real start time with an inclusive window that ends now.
+		const startTime = startedAt(envelope.payload as Record<string, unknown>);
+		const recapturable = recaptureDays > 0 && startTime >= recaptureFloor && startTime <= now.getTime();
 		if (date === null || !(importable || recapturable)) {
 			skipped += 1;
 			continue;
@@ -321,7 +357,14 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 				state,
 			};
 		};
-		const found = existingNote(destination, noteRoots, join(date.slice(0, 4), month, filename));
+		const found = existingNote(
+			destination,
+			[sourceRoot, ...noteRoots],
+			join(date.slice(0, 4), month),
+			`${date.slice(8)}-`,
+			recordingId,
+			`fathom:${payload.recording_id}`,
+		);
 		if (found !== null) {
 			existing += 1;
 			if (recapturable) {

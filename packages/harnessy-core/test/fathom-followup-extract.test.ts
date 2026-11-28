@@ -162,7 +162,7 @@ describe("extractMeetingItems", () => {
 		expect(wordOverlapSimilarity("Book the venue", "")).toBe(0);
 	});
 
-	it("reads the transcript only when nothing else gave items, with the speaker as owner", () => {
+	it("reads spoken commitments with the speaker as owner, and in fallback mode only when nothing else gave items", () => {
 		const transcript = [
 			{
 				speaker: { display_name: "Ada Obi" },
@@ -193,7 +193,7 @@ describe("extractMeetingItems", () => {
 		expect(only[0]!.quote).toBe("Ada Obi: I'll send the revised deck to Sam by Friday.");
 		const withSummary = extractMeetingItems(
 			{ transcript, default_summary: summary("  - **Ada:** Send the revised deck.") },
-			{ meetingDate: "2026-11-26" },
+			{ meetingDate: "2026-11-26", transcript: "fallback" },
 		);
 		expect(withSummary.map((item) => item.source)).toEqual(["summary"]);
 		expect(extractMeetingItems({ transcript }, { meetingDate: "2026-11-26", transcript: "off" })).toEqual([]);
@@ -208,6 +208,67 @@ describe("extractMeetingItems", () => {
 		expect(extractMeetingItems({ transcript }, { meetingDate: "2026-11-26", similarity: () => 0 })).toHaveLength(
 			TRANSCRIPT_ITEMS_MAX,
 		);
+	});
+
+	it("finds no owner in a possessive inside an imperative (finding 10)", () => {
+		expect(ownerByVerb("Use your own account for the demo")).toBeNull();
+		expect(ownerByVerb("Bring their own laptops")).toBeNull();
+		expect(ownerByVerb("Ada and Sam own the rollout")).toBe("Ada and Sam");
+	});
+
+	it("uses an explicit year and refuses invalid dates in both month orders (finding 11)", () => {
+		expect(dueFromText("Send by 5 December 2027", "2026-11-28")).toBe("2027-12-05");
+		expect(dueFromText("Send by December 5, 2027", "2026-11-28")).toBe("2027-12-05");
+		expect(dueFromText("Send by 5 December", "2026-11-28")).toBe("2026-12-05");
+		expect(dueFromText("Send by 5 November", "2026-11-28")).toBe("2027-11-05");
+		expect(dueFromText("Send by 31 February 2027", "2026-11-28")).toBeNull();
+		expect(dueFromText("Send by February 30", "2026-11-28")).toBeNull();
+	});
+
+	it("keeps negation, numbers and recipients apart, and needs compatible owners for exact titles (finding 7)", () => {
+		expect(wordOverlapSimilarity("Approve the pilot release", "Do not approve the pilot release")).toBe(0);
+		expect(wordOverlapSimilarity("Send report 3 to the board", "Send report 4 to the board")).toBe(0);
+		expect(wordOverlapSimilarity("Send the deck to Sam", "Send the deck to Ada")).toBe(0);
+		expect(wordOverlapSimilarity("Book the launch venue", "Book the venue for the launch")).toBeGreaterThanOrEqual(
+			0.6,
+		);
+		const same = (a: string, ownerA: string | null, b: string, ownerB: string | null) =>
+			sameCommitment({ text: a, owner: ownerA }, { text: b, owner: ownerB }, wordOverlapSimilarity, 0.6);
+		expect(same("Send the signed form", "Ada", "Send the signed form", "Sam")).toBe(false);
+		expect(same("Send the signed form", "Ada", "Send the signed form", "Ada")).toBe(true);
+	});
+
+	it("keeps a spoken commitment beside a completed action item (finding 9)", () => {
+		const items = extractMeetingItems(
+			{
+				action_items: [{ description: "Confirm the caterer", assignee: { name: "Sam" }, completed: true }],
+				transcript: [
+					{ speaker: { display_name: "Ada" }, text: "I will send the budget tomorrow.", timestamp: "00:01:00" },
+				],
+			},
+			{ meetingDate: "2026-11-26" },
+		);
+		expect(items.map((item) => [item.source, item.completed, item.text, item.due])).toEqual([
+			["action_items", true, "Confirm the caterer", null],
+			["transcript", false, "Send the budget tomorrow", "2026-11-27"],
+		]);
+	});
+
+	it("skips conditional, possible and reported speech but keeps a direct promise (finding 12)", () => {
+		const said = (text: string) => ({ speaker: { display_name: "Ada" }, text, timestamp: "00:02:00" });
+		const items = extractMeetingItems(
+			{
+				transcript: [
+					said("If I can send the file, Sam can review it."),
+					said("Maybe I'll send the notes later."),
+					said("He said I'll send the slides."),
+					said("I will send the file if Sam agrees."),
+					said("I'll send the file to Sam today."),
+				],
+			},
+			{ meetingDate: "2026-11-26" },
+		);
+		expect(items.map((item) => [item.owner, item.text])).toEqual([["Ada", "Send the file to Sam today"]]);
 	});
 
 	it("hashes only the follow-up sources", () => {

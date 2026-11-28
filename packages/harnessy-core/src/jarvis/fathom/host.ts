@@ -9,7 +9,7 @@ import {
 	type TasksFlushResult,
 	type TasksTransport,
 } from "../tasks/index.ts";
-import { meetingCaptureStatePath, readMeetingCaptureState, writeMeetingCaptureState } from "./capture-state.ts";
+import { meetingCaptureStatePath, readMeetingCaptureState, updateMeetingCaptureState } from "./capture-state.ts";
 import { FathomFileStore } from "./file-store.ts";
 import { captureFathomFollowups, type FollowupCaptureOptions, type FollowupCaptureResult } from "./followup-capture.ts";
 import type { MeetingExtractOptions } from "./followup-extract.ts";
@@ -34,7 +34,10 @@ export interface ConfiguredFathomPollOptions {
 	 * changed or whose last capture failed) go to this store.
 	 */
 	readonly followups?: CaptureStoreOptions &
-		Pick<FollowupCaptureOptions, "dryRun" | "minConfidence" | "similarity" | "threshold" | "clock"> & {
+		Pick<
+			FollowupCaptureOptions,
+			"dryRun" | "syncExtracted" | "localTasksFile" | "minConfidence" | "similarity" | "threshold" | "clock"
+		> & {
 			readonly transport?: TasksTransport;
 			/** Capture and queue, but do not contact the VPS. */
 			readonly noFlush?: boolean;
@@ -48,11 +51,21 @@ export interface ConfiguredFathomPollOptions {
 /** Default recapture window: notes of meetings in the last 14 days. */
 export const MEETING_RECAPTURE_DAYS = 14;
 
+/**
+ * The provider's `created_after` for one poll: 72 hours back, or the recapture
+ * window when that is longer (at most 60 days), so a meeting that Fathom
+ * changes after three days is listed again. Ingest pages through the window.
+ */
+export const fathomPollCreatedAfter = (now: Date, recaptureDays: number): string => {
+	const days = Math.max(0, Math.min(60, Math.trunc(recaptureDays)));
+	return new Date(now.getTime() - Math.max(72, days * 24) * 60 * 60 * 1000).toISOString();
+};
+
 export interface ConfiguredFathomPollReceipt {
 	readonly accounts: ReadonlyArray<string>;
 	readonly results: ReadonlyArray<FathomIngestReceipt>;
 	readonly importedNotes: FathomNoteImportReceipt | null;
-	readonly followups: Omit<FollowupCaptureResult, "state"> | null;
+	readonly followups: Omit<FollowupCaptureResult, "records"> | null;
 	readonly tasksSync: TasksFlushResult | null;
 }
 
@@ -124,15 +137,16 @@ export const runConfiguredFathomPoll = async (
 				now: options.now,
 			})
 		: null;
-	let followups: Omit<FollowupCaptureResult, "state"> | null = null;
+	let followups: Omit<FollowupCaptureResult, "records"> | null = null;
 	if (options.followups !== undefined && importedNotes !== null) {
 		const statePath = meetingCaptureStatePath(options.stateRoot);
-		const { state, ...receipt } = captureFathomFollowups(
+		const { records, ...receipt } = captureFathomFollowups(
 			[...importedNotes.notes, ...importedNotes.recent],
 			readMeetingCaptureState(statePath),
 			options.followups,
 		);
-		if (!receipt.dryRun && receipt.captured > 0) writeMeetingCaptureState(statePath, state, options.now);
+		// Merge under a lock: another poll's records for other notes stay.
+		if (!receipt.dryRun && receipt.captured > 0) updateMeetingCaptureState(statePath, records, options.now);
 		followups = receipt;
 	}
 	const tasksSync =
