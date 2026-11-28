@@ -37,6 +37,7 @@ import {
 	TasksState,
 	validateCloseoutNote,
 } from "../jarvis/tasks/index.ts";
+import { defaultQueuePath, lastSuccessfulSync, readQueue, type TasksSyncConfig } from "../jarvis/tasks/sync.ts";
 import { targetOption } from "./shared.ts";
 
 const homeRootOption = Options.String("home-root").pipe(
@@ -115,6 +116,51 @@ const runAsync = <T>(body: () => Promise<T>): Effect.Effect<void> =>
 		Effect.catch((error) => fail(error)),
 	);
 
+type SyncFailureKind = "401" | "timeout" | "unreachable" | "queue pending" | "sync_failed";
+
+const classifySyncFailure = (error: unknown): SyncFailureKind => {
+	if (error instanceof TaskRefused) return error.code === "unauthorized" ? "401" : "sync_failed";
+	// Node fetch wraps connection and timeout errors in a TypeError with a cause.
+	const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+	if (!(cause instanceof Error)) return "sync_failed";
+	const code = "code" in cause ? cause.code : undefined;
+	if (
+		cause.name === "TimeoutError" ||
+		code === "ETIMEDOUT" ||
+		(typeof code === "string" && /^UND_ERR_(CONNECT|HEADERS|BODY)_TIMEOUT$/u.test(code))
+	)
+		return "timeout";
+	if (
+		(error instanceof TypeError && error.message === "fetch failed") ||
+		(typeof code === "string" &&
+			["ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENETUNREACH", "ENOTFOUND", "EAI_AGAIN"].includes(code))
+	)
+		return "unreachable";
+	return "sync_failed";
+};
+
+const syncBeforeList = async (file: string, config: TasksSyncConfig | undefined) => {
+	if (config === undefined) return {};
+	const kind = await syncTasks({ tasksFile: file, config }).then(
+		(result): SyncFailureKind | undefined => (result.remaining > 0 ? "queue pending" : undefined),
+		classifySyncFailure,
+	);
+	if (kind === undefined) return {};
+	const override = process.env.HARNESSY_TASKS_SHOW_SYNC_FAILURE;
+	const enabled = override === "0" || override === "1" ? override === "1" : config.showSyncFailure === true;
+	if (!enabled) return {};
+	const pending = Result.getOrUndefined(Result.try(() => readQueue(defaultQueuePath(file)).items.length));
+	if (kind === "queue pending" && pending === 0) return {};
+	const hasPending = pending !== undefined && pending > 0;
+	const queueMessage = hasPending ? ` ${pending} local change${pending === 1 ? "" : "s"} not yet synced.` : "";
+	const status = kind === "queue pending" ? "incomplete" : "failed";
+	const lastSuccessfulSyncAt = lastSuccessfulSync(file);
+	console.warn(
+		`Warning: task sync ${status} (${kind}). Showing local cache.${queueMessage} Last successful sync: ${lastSuccessfulSyncAt ?? "unknown"}.`,
+	);
+	return { syncWarning: { kind, ...(hasPending ? { pending } : {}), lastSuccessfulSyncAt } };
+};
+
 const shared = {
 	homeRoot: homeRootOption,
 	stateDir: stateDirOption,
@@ -135,18 +181,11 @@ export const jarvisTasksListCommand = Command.make(
 		runAsync(async () => {
 			const file = resolveFile(homeRoot, stateDir, tasksFile);
 			const config = configFrom(endpoint, tokenFile, syncConfig);
-			if (config !== undefined) {
-				await Effect.runPromise(
-					Effect.tryPromise({
-						try: () => syncTasks({ tasksFile: file, config }),
-						catch: (error) => error,
-					}).pipe(Effect.result, Effect.asVoid),
-				);
-			}
+			const warning = await syncBeforeList(file, config);
 			const items = new TasksState(file)
 				.read()
 				.items.filter((item) => includeDone || (item.status !== "done" && item.status !== "dropped"));
-			return { items };
+			return { items, ...warning };
 		}),
 );
 
@@ -539,19 +578,12 @@ export const jarvisFollowupListCommand = Command.make(
 			if (!/^\d{4}-\d{2}-\d{2}$/u.test(day)) throw new TaskRefused("invalid_due");
 			const file = resolveFile(homeRoot, stateDir, tasksFile);
 			const config = configFrom(endpoint, tokenFile, syncConfig);
-			if (config !== undefined) {
-				await Effect.runPromise(
-					Effect.tryPromise({
-						try: () => syncTasks({ tasksFile: file, config }),
-						catch: (error) => error,
-					}).pipe(Effect.result, Effect.asVoid),
-				);
-			}
+			const warning = await syncBeforeList(file, config);
 			const items = followupsForView(new TasksState(file).read().items, chosen, day);
 			const overdue = items.filter(
 				(item) => item.status !== "done" && item.status !== "dropped" && item.due !== null && item.due < day,
 			).length;
-			return { view: chosen, today: day, count: items.length, overdue, items };
+			return { view: chosen, today: day, count: items.length, overdue, items, ...warning };
 		}),
 );
 
