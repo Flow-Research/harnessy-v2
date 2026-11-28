@@ -493,7 +493,7 @@ describe("consent and identity", () => {
 		const root = realpathSync(mkdtempSync(join(tmpdir(), "harnessy-calendar-consent-")));
 		try {
 			const path = join(root, "state", "consent.json");
-			recordConsent(path, [...consentFor({ "julian.duru@example.test": OWNER }).values()]);
+			recordConsent(path, [...consentFor({ "person.name@example.test": OWNER }).values()]);
 			expect(readFileSync(path, "utf8")).not.toContain("@");
 			expect(readConsent(path).size).toBe(1);
 			chmodSync(path, 0o644);
