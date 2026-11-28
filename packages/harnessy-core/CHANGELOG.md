@@ -33,8 +33,15 @@
   action item is dropped; owners, negation, numbers and recipients must agree
   for two items to count as the same. These summary and transcript items stay
   on this machine in `tasks.meeting-local.json` beside the task store: they
-  are never queued for the task VPS, and a sync never replaces that file.
-  `--sync-extracted` (off by default) sends them like action items. Action
+  are never queued for the task VPS. `syncTasks` refuses that file
+  (`local_meeting_store`), and `applyMutation` changes it only locally.
+  `harnessy jarvis tasks followup list --local-meetings` and
+  `followup resolve --local-meetings` read and close these items without a
+  request. `--sync-extracted` (off by default) sends them like action items.
+  An action item that restates a local item replaces it in the task store
+  with its own id, and stays closed when the local item was closed.
+  Extracted item ids include the owner, so a step reassigned from Ada to
+  Sam is a new item; two different full names never match. Action
   items are queued before the local write, so a stop between the two writes
   is replayed. Owners and due dates ("by Friday", "5 December",
   "5 December 2027") use the shared parser in `read-model/owner-due.ts`.
@@ -43,13 +50,16 @@
   it off) when Fathom changes their action items, summary or transcript, or
   when the last capture failed. It adds only new items. A closed follow-up, or
   a reworded copy of one, is never reopened. The changed Fathom envelope
-  replaces the pending one, under a per-account lock, and keeps the stored
+  replaces the pending one, under a per-account lock that belongs to the
+  polling process (it is free only when that process has exited), and keeps the stored
   transcript, summary and highlights when a later listing leaves them out.
   The provider window is 72 hours or the recapture window, when longer. A
   meeting whose title changes keeps its first note. Per-note state, with
   each item's quote, timestamp and confidence, is in `state/fathom/meeting-capture-state-v1.json`. It is
-  merged under a lock, limited to 8 MB, and a damaged copy is kept as
-  `.damaged-<time>`.
+  merged under the same kind of process lock, limited to 8 MB, and checked
+  item by item; a damaged copy is kept as `.damaged-<time>`. A first
+  import also compares the real meeting start time with a window that ends
+  now.
 - `harnessy jarvis meeting fathom poll` takes `--dry-run` (write no task,
   queue or capture state), `--no-flush` (do not contact the task VPS) and
   `--sync-extracted`.

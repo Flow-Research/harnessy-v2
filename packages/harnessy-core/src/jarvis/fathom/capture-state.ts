@@ -17,7 +17,6 @@ import {
 	openSync,
 	readFileSync,
 	renameSync,
-	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -26,6 +25,7 @@ import { dirname, join } from "node:path";
 import * as Result from "effect/Result";
 
 import type { MeetingItemSource } from "./followup-extract.ts";
+import { tryProcessLock } from "./process-lock.ts";
 
 export const MEETING_CAPTURE_STATE_FILE = "meeting-capture-state-v1.json";
 /** Records older than this are dropped when the file is written. */
@@ -33,7 +33,6 @@ export const MEETING_CAPTURE_STATE_RETENTION_DAYS = 90;
 /** The largest state file that is read or written. */
 export const MEETING_CAPTURE_STATE_MAX_BYTES = 8 * 1024 * 1024;
 const LOCK_WAIT_MS = 5_000;
-const LOCK_STALE_MS = 10 * 60 * 1000;
 
 export type NoteCaptureStatus = "captured" | "empty" | "failed";
 
@@ -49,6 +48,8 @@ export interface CapturedItemRecord {
 	readonly outcome: "created" | "existing" | "similar";
 	/** `shared`: the task store that syncs with the VPS. `local`: the local-only meeting store. */
 	readonly store?: "shared" | "local";
+	/** The id of the local item that this shared item replaced. */
+	readonly replaced?: string;
 }
 
 export interface NoteCaptureRecord {
@@ -76,6 +77,33 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 type ParsedState = { readonly state: MeetingCaptureState; readonly damaged: boolean };
 
+const ITEM_SOURCES: ReadonlyArray<unknown> = ["action_items", "summary", "transcript"];
+const ITEM_OUTCOMES: ReadonlyArray<unknown> = ["created", "existing", "similar"];
+
+const isItemRecord = (item: unknown): item is CapturedItemRecord =>
+	isRecord(item) &&
+	typeof item.id === "string" &&
+	typeof item.fingerprint === "string" &&
+	ITEM_SOURCES.includes(item.source) &&
+	typeof item.confidence === "number" &&
+	typeof item.quote === "string" &&
+	(item.timestamp === null || typeof item.timestamp === "string") &&
+	typeof item.line === "number" &&
+	ITEM_OUTCOMES.includes(item.outcome) &&
+	(item.store === undefined || item.store === "shared" || item.store === "local") &&
+	(item.replaced === undefined || typeof item.replaced === "string");
+
+const isNoteRecord = (record: unknown): record is NoteCaptureRecord =>
+	isRecord(record) &&
+	typeof record.path === "string" &&
+	typeof record.sourceHash === "string" &&
+	(record.status === "captured" || record.status === "empty" || record.status === "failed") &&
+	(record.error === null || typeof record.error === "string") &&
+	typeof record.capturedAt === "string" &&
+	!Number.isNaN(Date.parse(record.capturedAt)) &&
+	Array.isArray(record.items) &&
+	record.items.every(isItemRecord);
+
 const parseState = (path: string): ParsedState => {
 	if (!existsSync(path)) return { state: empty(), damaged: false };
 	const parsed = Result.try(() => {
@@ -86,19 +114,15 @@ const parseState = (path: string): ParsedState => {
 	if (Result.isFailure(parsed)) return { state: empty(), damaged: true };
 	const value = parsed.success;
 	if (!isRecord(value) || value.version !== 1 || !isRecord(value.notes)) return { state: empty(), damaged: true };
+	// A record that fails the check is left out, so its note is captured again,
+	// and the file counts as damaged, so the next write keeps a copy of it.
 	const notes: Record<string, NoteCaptureRecord> = {};
+	let damaged = false;
 	for (const [key, record] of Object.entries(value.notes)) {
-		if (
-			isRecord(record) &&
-			typeof record.path === "string" &&
-			typeof record.sourceHash === "string" &&
-			(record.status === "captured" || record.status === "empty" || record.status === "failed") &&
-			typeof record.capturedAt === "string" &&
-			Array.isArray(record.items)
-		)
-			notes[key] = record as unknown as NoteCaptureRecord;
+		if (isNoteRecord(record)) notes[key] = record;
+		else damaged = true;
 	}
-	return { state: { version: 1, notes }, damaged: false };
+	return { state: { version: 1, notes }, damaged };
 };
 
 /**
@@ -112,27 +136,24 @@ const sleepSync = (ms: number): void => {
 	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
-/** Hold `<path>.lock` while `run` reads, merges and writes. A lock older than 10 minutes is from a crash. */
+/**
+ * Hold `<path>.lock` while `run` reads, merges and writes. The lock belongs to
+ * this process (`tryProcessLock`); another process waits up to 5 seconds.
+ */
 const withStateLock = <A>(path: string, run: () => A): A => {
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 	const lockPath = `${path}.lock`;
 	const deadline = Date.now() + LOCK_WAIT_MS;
-	for (;;) {
-		const taken = Result.try(() => closeSync(openSync(lockPath, "wx", 0o600)));
-		if (Result.isSuccess(taken)) break;
-		if ((taken.failure as NodeJS.ErrnoException).code !== "EEXIST") throw taken.failure;
-		const age = Result.try(() => Date.now() - statSync(lockPath).mtimeMs);
-		if (Result.isSuccess(age) && age.success > LOCK_STALE_MS) {
-			Result.try(() => unlinkSync(lockPath));
-			continue;
-		}
+	let release = tryProcessLock(lockPath);
+	while (release === null) {
 		if (Date.now() > deadline) throw new Error("capture_state_busy");
 		sleepSync(50);
+		release = tryProcessLock(lockPath);
 	}
 	try {
 		return run();
 	} finally {
-		Result.try(() => unlinkSync(lockPath));
+		release();
 	}
 };
 

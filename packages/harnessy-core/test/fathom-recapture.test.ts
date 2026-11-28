@@ -11,8 +11,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { NodeServices } from "@effect/platform-node";
 import { Effect, Schema } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { Command } from "effect/cli";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { jarvisTasksCommand } from "../src/cli/jarvis-tasks.ts";
 import { JarvisLegacyConfig, resolveJarvisConfig } from "../src/jarvis/config-model.ts";
 import {
 	type NoteCaptureRecord,
@@ -99,6 +102,11 @@ const fakeTaskServer = (root: string) => {
 					status: 200,
 					body: { ok: true, revision: store.read().revision, created: result.created, items: result.items },
 				};
+			}
+			if (method === "POST" && path === "/v1/followups/resolve") {
+				const { id, note } = body as { id: string; note: string | null };
+				store.resolve(id, note);
+				return { status: 200, body: { ok: true, revision: store.read().revision } };
 			}
 			return { status: 404, body: { ok: false, error: "not_found" } };
 		},
@@ -344,12 +352,19 @@ describe("Fathom poll follow-up capture and recapture", () => {
 		const pendingDir = join(env.inboxRoot, "research", "pending");
 		const envelope = JSON.parse(readFileSync(join(pendingDir, readdirSync(pendingDir)[0]!), "utf8"));
 		expect(envelope.payload.action_items).toHaveLength(3);
-		expect(second.followups).toMatchObject({ captured: 1, created: 1, similar: 1, existing: 0 });
+		// The official item replaces the closed local summary item and stays closed.
+		expect(second.followups).toMatchObject({ captured: 1, created: 2, replaced: 1, similar: 0, existing: 0 });
 		expect(second.followups!.outcomes[0]!.reason).toBe("changed");
-		expect(titles(env.tasksFile)).toEqual(["Send the press list to Sam"]);
-		expect(new TasksState(env.localFile).read().items.map((item) => [item.title, item.status])).toEqual([
-			["Book the launch venue", "done"],
+		expect(
+			new TasksState(env.tasksFile)
+				.read()
+				.items.map((item) => [item.title, item.status])
+				.sort(),
+		).toEqual([
+			["Book the venue for the launch", "done"],
+			["Send the press list to Sam", "todo"],
 		]);
+		expect(titles(env.localFile)).toEqual([]);
 		const third = await run(env, [late]);
 		expect(third.results[0]).toMatchObject({ refreshed: 0 });
 		expect(third.followups).toMatchObject({ captured: 0, unchanged: 1, created: 0 });
@@ -374,8 +389,11 @@ describe("Fathom poll follow-up capture and recapture", () => {
 		expect(second.importedNotes).toMatchObject({ imported: 0, existing: 1 });
 		expect(second.importedNotes!.recent.map((note) => note.path)).toEqual([notePath]);
 		expect(readdirSync(join(env.sourceRoot, "2026", "Nov"))).toHaveLength(1);
-		expect(second.followups).toMatchObject({ created: 0, similar: 1 });
-		expect(titles(env.tasksFile)).toEqual([]);
+		expect(second.followups).toMatchObject({ created: 1, replaced: 1, similar: 0 });
+		expect(new TasksState(env.tasksFile).read().items.map((item) => [item.title, item.status])).toEqual([
+			["Book the venue for the launch", "done"],
+		]);
+		expect(titles(env.localFile)).toEqual([]);
 	});
 
 	it("keeps a different person's commitment with the same title", async () => {
@@ -598,5 +616,194 @@ describe("Fathom poll follow-up capture and recapture", () => {
 		expect(Object.keys(written.notes).length).toBeLessThan(900);
 		expect(written.notes["fathom:0:x"]).toBeDefined();
 		expect(readMeetingCaptureState(statePath(env)).notes["fathom:0:x"]).toBeDefined();
+	});
+
+	it("lists and resolves local follow-ups through the CLI without any task request, and keeps them (R2 finding 1)", async () => {
+		const env = setup();
+		const server = fakeTaskServer(env.root);
+		await run(env, threeSources(), { sync: server });
+		const before = new TasksState(env.localFile).read().items;
+		expect(before).toHaveLength(2);
+		const requestsBefore = server.requests.length;
+		vi.stubEnv("HARNESSY_TASKS_SYNC_CONFIG", join(env.root, "missing-sync.json"));
+		const fetches: string[] = [];
+		vi.stubGlobal("fetch", async (input: unknown) => {
+			fetches.push(String(input));
+			return new Response("{}", { status: 500 });
+		});
+		const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+		const cli = (args: ReadonlyArray<string>) =>
+			Effect.runPromise(
+				Command.runWith(jarvisTasksCommand, { version: "test" })(args).pipe(Effect.provide(NodeServices.layer)),
+			);
+		const sync = ["--endpoint", ENDPOINT, "--token-file", env.syncConfig.tokenFile];
+		try {
+			await cli(["followup", "list", "--tasks-file", env.tasksFile, "--local-meetings", "--view", "all", ...sync]);
+			await cli(["followup", "list", "--tasks-file", env.localFile, "--view", "all", ...sync]);
+			await cli([
+				"followup",
+				"resolve",
+				"--tasks-file",
+				env.tasksFile,
+				"--local-meetings",
+				"--id",
+				before[0]!.id,
+				"--note",
+				"done locally",
+				...sync,
+			]);
+			await expect(cli(["sync", "--tasks-file", env.localFile, ...sync])).rejects.toThrow();
+			const listed = log.mock.calls.map((call) => String(call[0])).join("\n");
+			expect(listed).toContain(before[1]!.title);
+			expect(listed).toContain("local_meeting_store");
+		} finally {
+			log.mockRestore();
+			vi.unstubAllGlobals();
+			vi.unstubAllEnvs();
+		}
+		expect(fetches).toEqual([]);
+		expect(server.requests.length).toBe(requestsBefore);
+		expect(existsSync(defaultQueuePath(env.localFile))).toBe(false);
+		const after = new TasksState(env.localFile).read().items;
+		expect(after.map((item) => item.id).sort()).toEqual(before.map((item) => item.id).sort());
+		expect(after.find((item) => item.id === before[0]!.id)!.status).toBe("done");
+		// The next poll, with sync, keeps every local item.
+		const next = await run(env, threeSources(), { sync: server });
+		expect(next.followups).toMatchObject({ captured: 0, unchanged: 3 });
+		expect(new TasksState(env.localFile).read().items).toEqual(after);
+		expect(JSON.stringify(server.requests)).not.toContain(before[1]!.title);
+	});
+
+	it("skips a damaged item record, keeps the file, and still captures another meeting (R2 finding 2)", async () => {
+		const env = setup();
+		const early = meeting(71, { default_summary: nextSteps(["  - **Ada:** Draft the plan."]) });
+		await run(env, [early]);
+		const state = JSON.parse(readFileSync(statePath(env), "utf8"));
+		const key = Object.keys(state.notes)[0]!;
+		state.notes[key].items = [null];
+		writeFileSync(statePath(env), JSON.stringify(state));
+		const other = meeting(72, {
+			action_items: [{ description: "Ship the pilot build", assignee: { name: "Sam" }, completed: false }],
+		});
+		const changed = {
+			...early,
+			action_items: [{ description: "Send the deck", assignee: { name: "Ada" }, completed: false }],
+		};
+		const result = await run(env, [changed, other]);
+		expect(result.followups).toMatchObject({ failed: 0, captured: 2 });
+		expect(titles(env.tasksFile)).toEqual(["Send the deck", "Ship the pilot build"]);
+		const kept = readdirSync(env.stateRoot).filter((name) => name.includes(".damaged-"));
+		expect(kept).toHaveLength(1);
+		expect(JSON.parse(readFileSync(join(env.stateRoot, kept[0]!), "utf8")).notes[key].items).toEqual([null]);
+		expect(Object.keys(readMeetingCaptureState(statePath(env)).notes)).toHaveLength(2);
+	});
+
+	it("gives a reassigned summary step its own open item after the first was closed (R2 finding 3)", async () => {
+		const env = setup();
+		const early = meeting(73, { default_summary: nextSteps(["  - **Ada:** Send the form."]) });
+		await run(env, [early]);
+		const local = new TasksState(env.localFile);
+		const ada = local.read().items[0]!;
+		local.resolve(ada.id, "sent");
+		const reassigned = { ...early, default_summary: nextSteps(["  - **Sam:** Send the form."]) };
+		const second = await run(env, [reassigned]);
+		expect(second.followups).toMatchObject({ created: 1, existing: 0, similar: 0 });
+		const items = new TasksState(env.localFile).read().items;
+		expect(items.map((item) => [item.owner, item.status])).toEqual([
+			["Ada", "done"],
+			["Sam", "todo"],
+		]);
+		expect(items[1]!.id).not.toBe(ada.id);
+	});
+
+	it("keeps two people with the same surname apart (R2 finding 3)", async () => {
+		const env = setup();
+		const early = meeting(74, {
+			action_items: [{ description: "Send the signed form", assignee: { name: "Ada Obi" }, completed: false }],
+		});
+		await run(env, [early]);
+		const shared = new TasksState(env.tasksFile);
+		shared.resolve(shared.read().items[0]!.id, "sent");
+		const later = {
+			...early,
+			default_summary: nextSteps(["  - **Sam Obi:** Send the signed form."]),
+		};
+		const second = await run(env, [later]);
+		expect(second.followups).toMatchObject({ created: 1, similar: 0 });
+		expect(titles(env.localFile)).toEqual(["Send the signed form"]);
+		expect(new TasksState(env.localFile).read().items[0]!.owner).toBe("Sam Obi");
+	});
+
+	it("sends an official action item that restates an open local item, in either arrival order (R2 finding 4)", async () => {
+		const summaryFirst = setup();
+		const server = fakeTaskServer(summaryFirst.root);
+		const step = nextSteps(["  - **Ada:** Book the launch venue."]);
+		const official = [{ description: "Book the venue for the launch", assignee: { name: "Ada" }, completed: false }];
+		await run(summaryFirst, [meeting(75, { default_summary: step })], { sync: server });
+		expect(titles(summaryFirst.localFile)).toEqual(["Book the launch venue"]);
+		const late = await run(summaryFirst, [meeting(75, { default_summary: step, action_items: official })], {
+			sync: server,
+		});
+		expect(late.followups).toMatchObject({ created: 1, replaced: 1, similar: 0, queued: 1 });
+		expect(server.store.read().items.map((item) => [item.title, item.status])).toEqual([
+			["Book the venue for the launch", "todo"],
+		]);
+		expect(titles(summaryFirst.localFile)).toEqual([]);
+
+		const officialFirst = setup();
+		const other = fakeTaskServer(officialFirst.root);
+		await run(officialFirst, [meeting(75, { action_items: official })], { sync: other });
+		const after = await run(officialFirst, [meeting(75, { default_summary: step, action_items: official })], {
+			sync: other,
+		});
+		expect(after.followups).toMatchObject({ created: 0 });
+		expect(other.store.read().items.map((item) => [item.title, item.status])).toEqual([
+			["Book the venue for the launch", "todo"],
+		]);
+		expect(titles(officialFirst.localFile)).toEqual([]);
+		// Both orders leave the same official item on the server.
+		expect(other.store.read().items[0]!.id).toBe(server.store.read().items[0]!.id);
+	});
+
+	it("keeps the closed status when the official item replaces a closed local item, on the server too (R2 finding 4)", async () => {
+		const env = setup();
+		const server = fakeTaskServer(env.root);
+		const step = nextSteps(["  - **Ada:** Book the launch venue."]);
+		await run(env, [meeting(76, { default_summary: step })], { sync: server });
+		const local = new TasksState(env.localFile);
+		local.resolve(local.read().items[0]!.id, "booked");
+		const late = await run(
+			env,
+			[
+				meeting(76, {
+					default_summary: step,
+					action_items: [
+						{ description: "Book the venue for the launch", assignee: { name: "Ada" }, completed: false },
+					],
+				}),
+			],
+			{ sync: server },
+		);
+		expect(late.followups).toMatchObject({ created: 1, replaced: 1, queued: 2 });
+		expect(late.tasksSync).toMatchObject({ state: "synced", remaining: 0 });
+		expect(server.store.read().items.map((item) => [item.title, item.status])).toEqual([
+			["Book the venue for the launch", "done"],
+		]);
+		expect(titles(env.localFile)).toEqual([]);
+	});
+
+	it("imports first notes only for real start times inside an inclusive window that ends now (R2 finding 6)", async () => {
+		const env = setup();
+		const at = (offsetMs: number) => new Date(NOW.getTime() + offsetMs).toISOString();
+		const floor = -72 * 60 * 60 * 1000;
+		const items = [
+			meeting(81, { recording_start_time: at(floor), created_at: at(floor) }),
+			meeting(82, { recording_start_time: at(floor - 1), created_at: at(floor - 1) }),
+			meeting(83, { recording_start_time: at(60_000), created_at: at(60_000) }),
+			meeting(84, { recording_start_time: at(0), created_at: at(0) }),
+		];
+		const result = await run(env, items, { createdAfter: "2026-11-01T00:00:00.000Z", recaptureDays: 0 });
+		expect(result.importedNotes).toMatchObject({ imported: 2 });
+		expect(result.importedNotes!.notes.map((note) => note.fingerprint.split(":")[1]).sort()).toEqual(["81", "84"]);
 	});
 });

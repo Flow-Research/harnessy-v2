@@ -4,6 +4,7 @@ import {
 	extractMeetingItems,
 	MEETING_ITEM_CONFIDENCE,
 	meetingSourceHash,
+	ownersCompatible,
 	sameCommitment,
 	TRANSCRIPT_ITEMS_MAX,
 	wordOverlapSimilarity,
@@ -114,7 +115,7 @@ describe("extractMeetingItems", () => {
 		expect(
 			items.every((item) => item.source === "summary" && item.confidence === MEETING_ITEM_CONFIDENCE.summary),
 		).toBe(true);
-		expect(items[0]!.key).toBe("summary\0Share the company documents with Sam");
+		expect(items[0]!.key).toBe("summary\0ada obi\0Share the company documents with Sam");
 		expect(items[0]!.quote).toBe("Ada Obi: Share the company documents with Sam.");
 	});
 
@@ -269,6 +270,25 @@ describe("extractMeetingItems", () => {
 			{ meetingDate: "2026-11-26" },
 		);
 		expect(items.map((item) => [item.owner, item.text])).toEqual([["Ada", "Send the file to Sam today"]]);
+	});
+
+	it("tells full names apart and keys extracted items by owner (R2 finding 3)", () => {
+		expect(ownersCompatible("Ada Obi", "Sam Obi")).toBe(false);
+		expect(ownersCompatible("Ada", "Ada Obi")).toBe(true);
+		expect(ownersCompatible("ada obi", "Ada Obi")).toBe(true);
+		expect(ownersCompatible("Ada", "Sam")).toBe(false);
+		expect(ownersCompatible(null, "Sam")).toBe(true);
+		const keyFor = (owner: string) =>
+			extractMeetingItems(
+				{ default_summary: summary(`  - **${owner}:** Send the form.`) },
+				{ meetingDate: "2026-11-26" },
+			)[0]!.key;
+		expect(keyFor("Ada")).not.toBe(keyFor("Sam"));
+		const legacy = extractMeetingItems(
+			{ action_items: [{ description: "Send the form", assignee: { name: "Ada" }, completed: false }] },
+			{ meetingDate: "2026-11-26" },
+		);
+		expect(legacy[0]!.key).toBe("Send the form");
 	});
 
 	it("hashes only the follow-up sources", () => {

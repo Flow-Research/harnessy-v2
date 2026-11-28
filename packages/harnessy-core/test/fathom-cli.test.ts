@@ -1,10 +1,21 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+
+import { defaultLocalMeetingFile, defaultQueuePath } from "../src/jarvis/tasks/sync.ts";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const suppliedCli = process.env.HARNESSY_FATHOM_TEST_CLI;
@@ -156,5 +167,163 @@ describe("actual Fathom CLI aggregate exit status", () => {
 		expect(result.code).toBe(1);
 		expect(result.stdout + result.stderr).toContain("Fathom poll host operation failed");
 		expect(result.stdout + result.stderr).not.toContain("PRIVATE_HOST_ERROR_SENTINEL");
+	});
+});
+
+// The poll command with task sync configured (a synthetic config under HOME) and a
+// local fake task server that counts every request. The Fathom fixture lists one
+// meeting with an action item and a summary step.
+const runWithSync = async (flags: readonly string[]) => {
+	const root = realpathSync(mkdtempSync(join(tmpdir(), "harnessy-fathom-cli-sync-")));
+	const source = join(root, "source");
+	mkdirSync(join(root, ".jarvis"), { recursive: true });
+	mkdirSync(source);
+	writeFileSync(
+		join(root, ".jarvis", "config.yaml"),
+		`fathom:\n  poll_accounts: [personal]\n  accounts:\n    personal:\n      api_key_env_var: SYNTHETIC_PERSONAL\nmeeting_publication:\n  source_path: ${source}\n`,
+	);
+	const tasksFile = join(root, ".harnessy", "portal", "tasks.json");
+	const queuePath = defaultQueuePath(tasksFile);
+	mkdirSync(join(root, ".harnessy", "portal"), { recursive: true });
+	const pending = { op: "resolve", id: "00000000-0000-4000-8000-000000000001", note: "pre-filled" };
+	writeFileSync(queuePath, JSON.stringify({ version: 1, items: [pending] }));
+	const tokenFile = join(root, "tasks.token");
+	writeFileSync(tokenFile, "synthetic-task-token\n", { mode: 0o600 });
+	let taskRequests = 0;
+	const tasks = createServer((_request, response) => {
+		taskRequests++;
+		response.writeHead(500).end("{}");
+	});
+	await new Promise<void>((resolve) => tasks.listen(0, "127.0.0.1", resolve));
+	const taskAddress = tasks.address();
+	if (taskAddress === null || typeof taskAddress === "string") throw new Error("missing server address");
+	const taskOrigin = `http://127.0.0.1:${taskAddress.port}`;
+	mkdirSync(join(root, ".config", "harnessy"), { recursive: true });
+	writeFileSync(
+		join(root, ".config", "harnessy", "tasks-sync.json"),
+		JSON.stringify({ endpoint: taskOrigin, tokenFile }),
+	);
+	const started = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+	const fathom = createServer((_request, response) =>
+		response.end(
+			JSON.stringify({
+				items: [
+					{
+						recording_id: 77,
+						meeting_title: "Sync fixture",
+						recording_start_time: started,
+						created_at: started,
+						share_url: "https://fathom.video/share/sync-fixture",
+						action_items: [{ description: "Draft the pilot terms", assignee: { name: "Ada" }, completed: false }],
+						default_summary: {
+							markdown_formatted: "## Next Steps\n\n  - **Sam:** Book the venue for the offsite.\n",
+						},
+					},
+				],
+				limit: 20,
+				next_cursor: "",
+			}),
+		),
+	);
+	await new Promise<void>((resolve) => fathom.listen(0, "127.0.0.1", resolve));
+	const fathomAddress = fathom.address();
+	if (fathomAddress === null || typeof fathomAddress === "string") throw new Error("missing server address");
+	const fathomOrigin = `http://127.0.0.1:${fathomAddress.port}`;
+	const code = `
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = (input, init) => {
+  const url = new URL(input instanceof Request ? input.url : input);
+  if (url.origin === ${JSON.stringify(taskOrigin)}) return nativeFetch(input, init);
+  if (url.origin !== "https://api.fathom.ai") throw new Error("unexpected fixture destination");
+  return nativeFetch(${JSON.stringify(fathomOrigin)} + url.pathname + url.search, init);
+};`;
+	try {
+		const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+			const child = spawn(
+				process.execPath,
+				[
+					"--experimental-strip-types",
+					"--import",
+					`data:text/javascript,${encodeURIComponent(code)}`,
+					cliEntry,
+					"jarvis",
+					"meeting",
+					"fathom",
+					"poll",
+					"--target",
+					root,
+					"--source-root",
+					source,
+					"--json",
+					...flags,
+				],
+				{
+					cwd: packageRoot,
+					env: {
+						PI_AUTH_ENCRYPTION: "off",
+						HSY_AUTH_ENCRYPTION: "off",
+						HOME: root,
+						NODE_NO_WARNINGS: "1",
+						SYNTHETIC_PERSONAL: "synthetic-personal",
+					},
+					stdio: ["ignore", "pipe", "pipe"],
+					timeout: 15000,
+				},
+			);
+			let stdout = "";
+			let stderr = "";
+			child.stdout.on("data", (chunk: Buffer) => {
+				stdout += chunk.toString();
+			});
+			child.stderr.on("data", (chunk: Buffer) => {
+				stderr += chunk.toString();
+			});
+			child.once("error", reject);
+			child.once("exit", (exitCode, signal) =>
+				signal ? reject(new Error(`child interrupted: ${signal}`)) : resolve({ code: exitCode, stdout, stderr }),
+			);
+		});
+		const queue = JSON.parse(readFileSync(queuePath, "utf8")) as { items: unknown[] };
+		const local = defaultLocalMeetingFile(tasksFile);
+		return {
+			...result,
+			taskRequests,
+			queue: queue.items,
+			pending,
+			tasksWritten: existsSync(tasksFile),
+			localTitles: existsSync(local)
+				? (JSON.parse(readFileSync(local, "utf8")) as { items: Array<{ title: string }> }).items.map(
+						(item) => item.title,
+					)
+				: [],
+		};
+	} finally {
+		for (const server of [tasks, fathom]) {
+			server.closeAllConnections();
+			await new Promise<void>((resolve) => server.close(() => resolve()));
+		}
+		rmSync(root, { recursive: true, force: true });
+	}
+};
+
+describe("actual Fathom CLI with task sync configured", () => {
+	it("--dry-run sends no task request and leaves the queue as it was", async () => {
+		const result = await runWithSync(["--dry-run"]);
+		expect(result.code, result.stderr).toBe(0);
+		expect(result.taskRequests).toBe(0);
+		expect(result.queue).toEqual([result.pending]);
+		expect(result.tasksWritten).toBe(false);
+		expect(JSON.parse(result.stdout).followups).toMatchObject({ dryRun: true, created: 2, queued: 0 });
+	});
+	it("--no-flush sends no task request and queues only the action item", async () => {
+		const result = await runWithSync(["--no-flush"]);
+		expect(result.code, result.stderr).toBe(0);
+		expect(result.taskRequests).toBe(0);
+		expect(result.queue).toHaveLength(2);
+		expect(result.queue[0]).toEqual(result.pending);
+		expect(result.queue[1]).toMatchObject({ op: "ingestMeeting" });
+		expect(JSON.stringify(result.queue)).toContain("Draft the pilot terms");
+		expect(JSON.stringify(result.queue)).not.toContain("Book the venue");
+		expect(result.localTitles).toEqual(["Book the venue for the offsite"]);
 	});
 });

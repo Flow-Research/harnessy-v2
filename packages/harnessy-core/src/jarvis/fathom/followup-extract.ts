@@ -133,20 +133,34 @@ export const wordOverlapSimilarity: TitleSimilarity = (a, b) => {
 /** Default threshold for `wordOverlapSimilarity`. */
 export const MEETING_DUPLICATE_THRESHOLD = 0.6;
 
-/** Two owners can be one person when either is unknown or they share a word ("Ada" and "Ada Obi"). */
-const ownersCompatible = (a: string | null, b: string | null): boolean => {
-	if (a === null || b === null) return true;
-	const left = new Set(
-		a
-			.toLowerCase()
-			.split(/[^\p{L}]+/u)
-			.filter(Boolean),
-	);
-	return b
+const nameWords = (value: string): ReadonlyArray<string> =>
+	value
 		.toLowerCase()
 		.split(/[^\p{L}]+/u)
-		.some((word) => word.length > 0 && left.has(word));
+		.filter(Boolean);
+
+/**
+ * Two owners can be one person when either is unknown, the names are the same,
+ * or one is a single first name that starts the other ("Ada" and "Ada Obi").
+ * Two different full names are two people, also with the same surname
+ * ("Ada Obi" and "Sam Obi").
+ */
+export const ownersCompatible = (a: string | null, b: string | null): boolean => {
+	if (a === null || b === null) return true;
+	const left = nameWords(a);
+	const right = nameWords(b);
+	if (left.length === 0 || right.length === 0) return true;
+	if (left.join(" ") === right.join(" ")) return true;
+	if (left.length === 1) return right[0] === left[0];
+	if (right.length === 1) return left[0] === right[0];
+	return false;
 };
+
+/**
+ * The owner part of an extracted item's key, so the same words owed by two
+ * people get two ids. Action items keep their legacy key (the text alone).
+ */
+const ownerKey = (owner: string | null): string => (owner === null ? "" : nameWords(owner).join(" "));
 
 /**
  * True when `item` restates `other`: compatible owners (one unknown, or a shared
@@ -291,7 +305,7 @@ const summaryItemsOf = (payload: Record<string, unknown>, meetingDate: string | 
 			quote: oneLine(plainText(inner), QUOTE_MAX),
 			timestamp: seconds == null ? null : clock(Number(seconds)),
 			link: httpsLink(link),
-			key: `summary\0${text}`,
+			key: `summary\0${ownerKey(owner)}\0${text}`,
 		});
 		if (items.length >= MEETING_ITEMS_MAX) break;
 	}
@@ -350,7 +364,7 @@ const transcriptItemsOf = (payload: Record<string, unknown>, meetingDate: string
 				quote: oneLine(`${speaker.length > 0 ? `${speaker}: ` : ""}${sentence}`, QUOTE_MAX),
 				timestamp,
 				link: null,
-				key: `transcript\0${timestamp ?? ""}\0${text}`,
+				key: `transcript\0${timestamp ?? ""}\0${ownerKey(owner)}\0${text}`,
 			});
 		}
 	}

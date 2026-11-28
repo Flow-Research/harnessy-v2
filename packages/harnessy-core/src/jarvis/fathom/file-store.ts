@@ -8,7 +8,6 @@ import {
 	openSync,
 	readFileSync,
 	renameSync,
-	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -24,9 +23,9 @@ import {
 	type FathomMeetingPayload,
 	fathomPayloadHash,
 } from "./ingest.ts";
+import { tryProcessLock } from "./process-lock.ts";
 
 const STATE_FILE = "poll-state-v2.json";
-const POLL_LOCK_STALE_MS = 30 * 60 * 1000;
 const SOURCE_FIELDS = ["action_items", "default_summary", "transcript", "highlights"] as const;
 
 const emptySource = (value: unknown): boolean =>
@@ -189,30 +188,15 @@ export class FathomFileStore implements FathomIngestStore {
 	}
 
 	/**
-	 * One poll at a time for each account (`poll-<account key>.lock`, 0600). A lock
-	 * older than 30 minutes is from a crashed poll and is replaced.
+	 * One poll at a time for each account (`poll-<account key>.lock`, 0600). The
+	 * lock belongs to the polling process (`tryProcessLock`): it is free again
+	 * only when that process has exited, never because of its age.
 	 */
 	async lockAccount(account: string): Promise<() => void> {
 		const stateRoot = join(this.#statePath, "..");
-		mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
-		const lockPath = join(stateRoot, `poll-${fathomAccountKey(account)}.lock`);
-		const take = () => {
-			const fd = openSync(lockPath, "wx", 0o600);
-			writeFileSync(fd, `${new Date().toISOString()}\n`);
-			closeSync(fd);
-		};
-		const first = Effect.runSyncExit(Effect.try({ try: take, catch: (error) => error }));
-		if (Exit.isFailure(first)) {
-			const error = Cause.squash(first.cause) as NodeJS.ErrnoException;
-			if (error.code !== "EEXIST") throw error;
-			const age = Date.now() - statSync(lockPath).mtimeMs;
-			if (age < POLL_LOCK_STALE_MS) throw new Error("Fathom poll already running for this account");
-			unlinkSync(lockPath);
-			take();
-		}
-		return () => {
-			if (existsSync(lockPath)) unlinkSync(lockPath);
-		};
+		const release = tryProcessLock(join(stateRoot, `poll-${fathomAccountKey(account)}.lock`));
+		if (release === null) throw new Error("Fathom poll already running for this account");
+		return release;
 	}
 
 	async saveCheckpoint(account: string, checkpoint: FathomIngestCheckpoint): Promise<void> {

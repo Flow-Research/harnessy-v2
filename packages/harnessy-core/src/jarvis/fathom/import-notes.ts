@@ -315,10 +315,9 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 			continue;
 		}
 		const date = isoDate(envelope.payload as Record<string, unknown>);
-		const started = date === null ? Number.NaN : new Date(`${date}T00:00:00.000Z`).getTime();
-		const importable = started >= floor - 24 * 60 * 60 * 1000;
-		// Recapture compares the real start time with an inclusive window that ends now.
+		// Both windows compare the real start time with an inclusive range that ends now.
 		const startTime = startedAt(envelope.payload as Record<string, unknown>);
+		const importable = startTime >= floor && startTime <= now.getTime();
 		const recapturable = recaptureDays > 0 && startTime >= recaptureFloor && startTime <= now.getTime();
 		if (date === null || !(importable || recapturable)) {
 			skipped += 1;
