@@ -24,7 +24,7 @@ import { DatabaseSync } from "node:sqlite";
 import * as Result from "effect/Result";
 
 import { normaliseTaskText } from "../../read-model/followups.ts";
-import { uniqueFuzzyMatch } from "./similarity.ts";
+import { fuzzyMatches } from "./similarity.ts";
 
 export const TASKS_STORE_VERSION = 1;
 export const TASKS_MAX = 500;
@@ -740,7 +740,9 @@ export class TasksState {
 				(source.briefDate !== null && item.source.briefDate === source.briefDate) ||
 				item.source.path === source.path;
 			const unused = (item: StoredTask): boolean => !used.has(item.id);
-			const byId = new Map(items.map((item) => [item.id, item] as const));
+			// Ids compare without case: `isId` accepts uppercase, a brief marker is lowercased.
+			const byId = new Map(items.map((item) => [item.id.toLowerCase(), item] as const));
+			const carriedKey = (candidate: IngestCandidate): string | undefined => candidate.id?.toLowerCase();
 			// What each candidate resolves to: an existing item, or undefined to create one.
 			const plans: Array<StoredTask | undefined> = candidates.map(() => undefined);
 			const claim = (index: number, item: StoredTask): void => {
@@ -752,11 +754,14 @@ export class TasksState {
 			// fingerprint or title match. An id that several candidates carry is unsure and
 			// reserved for none of them.
 			const carriers = new Map<string, number>();
-			for (const candidate of candidates)
-				if (candidate.id !== undefined && byId.has(candidate.id))
-					carriers.set(candidate.id, (carriers.get(candidate.id) ?? 0) + 1);
-			for (const [index, candidate] of candidates.entries())
-				if (candidate.id !== undefined && carriers.get(candidate.id) === 1) claim(index, byId.get(candidate.id)!);
+			for (const candidate of candidates) {
+				const key = carriedKey(candidate);
+				if (key !== undefined && byId.has(key)) carriers.set(key, (carriers.get(key) ?? 0) + 1);
+			}
+			for (const [index, candidate] of candidates.entries()) {
+				const key = carriedKey(candidate);
+				if (key !== undefined && carriers.get(key) === 1) claim(index, byId.get(key)!);
+			}
 			// Pass 1, exact identity: a closed item of this same brief, then an open
 			// fingerprint, a unique open title and a unique open native title.
 			for (const [index, candidate] of candidates.entries()) {
@@ -787,6 +792,8 @@ export class TasksState {
 			// Pass 2, fuzzy fallback for brief items with no exact match and no carried id.
 			// Only open brief items of the same kind and owner are considered, and a match
 			// must be unique both ways: one item for the candidate, one candidate for the item.
+			// Every qualifying pair counts, so a line that is ambiguous itself still makes
+			// the items it qualifies for unsure for the other lines.
 			if (source.kind === "brief") {
 				const fuzzy = new Map<number, StoredTask>();
 				const claims = new Map<string, number>();
@@ -804,10 +811,9 @@ export class TasksState {
 								candidate.owner === null ||
 								item.owner.toLowerCase() === candidate.owner.toLowerCase()),
 					);
-					const hit = uniqueFuzzyMatch(candidate.title, pool);
-					if (hit === undefined) continue;
-					fuzzy.set(index, hit);
-					claims.set(hit.id, (claims.get(hit.id) ?? 0) + 1);
+					const hits = fuzzyMatches(candidate.title, pool);
+					for (const hit of hits) claims.set(hit.id, (claims.get(hit.id) ?? 0) + 1);
+					if (hits.length === 1) fuzzy.set(index, hits[0]!);
 				}
 				for (const [index, hit] of fuzzy) if (claims.get(hit.id) === 1) claim(index, hit);
 			}
@@ -865,7 +871,9 @@ export class TasksState {
 				// A carried id that an earlier line of this batch already took (a copied
 				// marker) is not reused; the new item gets a fresh UUID.
 				const carriedId =
-					candidate.id !== undefined && !items.some((row) => row.id === candidate.id) ? candidate.id : undefined;
+					candidate.id !== undefined && !items.some((row) => row.id.toLowerCase() === carriedKey(candidate))
+						? candidate.id
+						: undefined;
 				const kind: TaskKind = candidate.kind ?? (source.kind === "reminders" ? "followup" : "task");
 				if (!TASK_KINDS.has(kind)) throw new TaskRefused("invalid_kind");
 				const item: StoredTask = {

@@ -158,11 +158,15 @@ export const titleSimilarity = (a: string, b: string): number => {
 	return (2 * shared) / (left.content.size + right.content.size);
 };
 
+/** Every item whose title scores at or above the threshold. */
+export const fuzzyMatches = <T extends { readonly title: string }>(title: string, pool: ReadonlyArray<T>): T[] =>
+	pool.filter((item) => titleSimilarity(title, item.title) >= FUZZY_THRESHOLD);
+
 /** The one item whose title scores at or above the threshold, or undefined when none or several do. */
 export const uniqueFuzzyMatch = <T extends { readonly title: string }>(
 	title: string,
 	pool: ReadonlyArray<T>,
 ): T | undefined => {
-	const hits = pool.filter((item) => titleSimilarity(title, item.title) >= FUZZY_THRESHOLD);
+	const hits = fuzzyMatches(title, pool);
 	return hits.length === 1 ? hits[0] : undefined;
 };
