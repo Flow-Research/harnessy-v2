@@ -53,6 +53,11 @@ describe("V2 Fathom schedule", () => {
 		expect(planned.content).toContain("<string>fathom</string>");
 		expect(planned.content).toContain("<string>poll</string>");
 		expect(planned.content).not.toContain("--account");
+		// The log keeps stdout; the short text receipt replaces the JSON receipt.
+		expect(planned.content).not.toContain("--json");
+		expect(planned.content).toMatch(
+			/<string>poll<\/string>\s*<string>--target<\/string>\s*<string>[^<]+<\/string>\s*<\/array>/u,
+		);
 	});
 
 	it("backs up only the Fathom plist and leaves unrelated jobs untouched", async () => {

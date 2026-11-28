@@ -4,6 +4,28 @@
 
 ### Changed
 
+- The Fathom poll routes each new note to `<private root>/<project>/meetings/`
+  by `meeting-routes.yaml` and the project folders, with aliases (for example
+  `garden: flow`). A note with no match, a tie or an unknown project stays in
+  the default project. `Project:` is the routed project, and Fathom action
+  items are kept in a new `## Action Items` section. `import-plan` shows the
+  routed project for each envelope.
+- Open action items of each newly imported note become open follow-ups in the
+  task store, with the note as source, the recording as link and no due date.
+  They are queued for the VPS and replayed once per poll. Re-runs add nothing.
+- A published daily brief's "Delegated or Waiting" items become follow-ups
+  that wait on the person named, and the brief is queued for the VPS. The
+  person is the name before a dash ("Name — action") or before "owes", "owed"
+  or "owns" (at most three words, for example "Name owns the setup").
+- The task store accepts a `meeting` source kind, and the tasks service adds
+  `POST /v1/followups/ingest` for one note's follow-ups. Deploy the service
+  before you install this version on a Mac with task sync.
+- The Fathom poll LaunchAgent no longer passes `--json`, so its log keeps only
+  short count lines.
+- The daily brief takes the 40 most recent meetings of the last 14 days, from
+  every project together and newest first, with no relevance ranking.
+
+
 - `harnessy engineering benchmark` runs 32,768 iterations of the 16 cases in
   each sample of the `pure-task-operations` profile (64 before). One sample
   now runs for about one second, so process startup no longer hides the
@@ -29,6 +51,11 @@
 
 ### Added
 
+- `harnessy jarvis meeting refile --manifest <file>` plans a re-file of
+  misfiled meeting notes and writes nothing. `--apply --confirm <plan id>`
+  runs the reviewed plan: it writes each note to its project folder without
+  overwriting, sets `Project:`, and leaves a one-line stub that links to the
+  new path.
 - The engineering loop raises a durable intervention for a remote run when
   provider admission pauses an acknowledged run or when the run needs
   reconciliation. It delivers the intervention to Garden through the signed

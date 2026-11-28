@@ -43,6 +43,8 @@ export interface ExtractedTask {
 	readonly raw: boolean;
 	/** Short reference, for example `FW-03`. */
 	readonly ref?: string;
+	/** From a brief's "Delegated or Waiting" section: a follow-up, not a plain task. */
+	readonly followup?: boolean;
 }
 
 const DATE = /\b(20\d{2}-\d{2}-\d{2})\b/u;
@@ -50,6 +52,13 @@ const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/u;
 const BULLET = /^(?:[-*+]|\d{1,3}[.)])\s+(.*)$/u;
 const CHECKBOX = /^\[([ xX])\]\s+(.*)$/u;
 const OWNER_LEAD = /^([A-Z][\p{L}.,'&+ ]{0,48}?)\s+[—–]\s+(.+)$/u;
+/**
+ * "Name owes …", "Name owed …" or "Name owns …" in a brief's "Delegated or Waiting"
+ * list. The owner is at most three words, so a verb later in a sentence does not
+ * make the sentence's start an owner. The first name is the owner. The title keeps the whole sentence, because the
+ * verb is part of the commitment.
+ */
+const OWNER_VERB = /^([A-Z][\p{L}.'&+-]*(?:\s+[\p{L}.'&+-]+){0,2})\s+(?:owes|owed|owns)\s+\S/u;
 
 /** Plain text from one Markdown line: emphasis, code ticks and link targets removed. */
 export const plainText = (value: string): string =>
@@ -157,7 +166,8 @@ export const extractReminderTasks = (text: string): ReadonlyArray<ExtractedTask>
 
 /**
  * The brief's two action sections. "Decisions and Actions for You" items are the
- * owner's own; "Delegated or Waiting" items wait on the people named before the dash.
+ * owner's own; "Delegated or Waiting" items wait on the person named before the dash
+ * or before "owes", "owed" or "owns".
  */
 export const extractBriefTasks = (text: string): ReadonlyArray<ExtractedTask> => {
 	const mine = listItems(section(text, /^decisions and actions for you$/iu) ?? []).map(
@@ -174,16 +184,18 @@ export const extractBriefTasks = (text: string): ReadonlyArray<ExtractedTask> =>
 					},
 	);
 	const waiting = listItems(section(text, /^delegated or waiting$/iu) ?? []).map((item): ExtractedTask => {
-		if (item.raw) return rawTask(item);
+		if (item.raw) return { ...rawTask(item), followup: true };
 		const lead = boldLead(item.text) ?? plainText(item.text);
 		const named = OWNER_LEAD.exec(lead);
+		const verb = named === null ? OWNER_VERB.exec(lead) : null;
 		return {
 			title: bounded(named?.[2] ?? lead),
 			status: "waiting",
-			owner: named?.[1] ?? null,
+			owner: named?.[1] ?? verb?.[1] ?? null,
 			due: dueOf(item.text),
 			line: item.line,
 			raw: false,
+			followup: true,
 		};
 	});
 	return [...mine, ...waiting];
@@ -406,8 +418,8 @@ export const readTasks = (options: TaskReadOptions): TileResult<TaskListData> =>
 					group: file.kind === "brief" ? "primary" : "other",
 					outcome: null,
 					carriedFrom: null,
-					kind: file.kind === "reminders" ? "followup" : "task",
-					waitingOn: null,
+					kind: file.kind === "reminders" || task.followup === true ? "followup" : "task",
+					waitingOn: task.followup === true ? owner : null,
 					link: null,
 					resolvedAt: null,
 					resolution: null,

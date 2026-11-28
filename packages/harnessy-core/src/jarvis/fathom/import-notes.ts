@@ -17,15 +17,44 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
 import type { FathomImportEnvelope } from "./ingest.ts";
+import { type MeetingRoute, type MeetingRouteRules, projectMeetingsRoot, routeMeeting } from "./routes.ts";
 
 export interface FathomNoteImportOptions {
 	readonly accounts?: ReadonlyArray<string>;
+	/** `Project:` for every note when `routing` is absent. */
 	readonly project?: string | null;
 	readonly inboxRoot: string;
+	/** Destination for the default project (and for every note when `routing` is absent). */
 	readonly sourceRoot: string;
+	/**
+	 * Route each note to `<private root>/<project>/meetings`. The default project
+	 * keeps `sourceRoot`. A note already present under the default root is never
+	 * imported again elsewhere, so a re-filed note's stub still blocks it.
+	 */
+	readonly routing?: MeetingRouteRules;
 	readonly now?: Date;
 	readonly lookbackHours?: number;
 	readonly limit?: number;
+}
+
+/** One open or completed Fathom action item, as written to `## Action Items`. */
+export interface FathomActionItem {
+	readonly text: string;
+	readonly owner: string | null;
+	readonly completed: boolean;
+}
+
+/** A note written by this import, with what follow-up ingest needs. */
+export interface ImportedFathomNote {
+	readonly path: string;
+	readonly project: string | null;
+	readonly route: MeetingRoute | null;
+	readonly title: string;
+	readonly date: string;
+	readonly fingerprint: string;
+	readonly shareUrl: string | null;
+	/** With the 1-based line of each item in the written note. */
+	readonly actionItems: ReadonlyArray<FathomActionItem & { readonly line: number }>;
 }
 
 export interface FathomNoteImportReceipt {
@@ -33,6 +62,7 @@ export interface FathomNoteImportReceipt {
 	readonly existing: number;
 	readonly skipped: number;
 	readonly paths: ReadonlyArray<string>;
+	readonly notes: ReadonlyArray<ImportedFathomNote>;
 }
 
 const safeSlug = (value: string) =>
@@ -53,26 +83,94 @@ const isoDate = (payload: Record<string, unknown>): string | null => {
 	return null;
 };
 
-const markdownFor = (envelope: FathomImportEnvelope, date: string, source: string, project?: string | null): string => {
-	const payload = envelope.payload as Record<string, unknown>;
-	const title = String(payload.meeting_title ?? payload.title ?? `Fathom Meeting ${payload.recording_id}`).trim();
-	const summary =
-		payload.default_summary && typeof payload.default_summary === "object"
-			? String((payload.default_summary as Record<string, unknown>).markdown_formatted ?? "").trim()
-			: "";
-	const participants = Array.isArray(payload.calendar_invitees)
+const oneLine = (value: string, max: number): string =>
+	value
+		.replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+		.replace(/\s+/gu, " ")
+		.trim()
+		.slice(0, max);
+
+const titleOf = (payload: Record<string, unknown>): string =>
+	String(payload.meeting_title ?? payload.title ?? `Fathom Meeting ${payload.recording_id}`).trim();
+
+const participantsOf = (payload: Record<string, unknown>): ReadonlyArray<string> =>
+	Array.isArray(payload.calendar_invitees)
 		? payload.calendar_invitees
 				.map((item) =>
 					item && typeof item === "object" ? String((item as Record<string, unknown>).name ?? "").trim() : "",
 				)
 				.filter(Boolean)
-				.join(", ")
+		: [];
+
+const summaryOf = (payload: Record<string, unknown>): string =>
+	payload.default_summary && typeof payload.default_summary === "object"
+		? String((payload.default_summary as Record<string, unknown>).markdown_formatted ?? "").trim()
 		: "";
-	const fingerprint = `fathom:${payload.recording_id}:${String(payload.created_at ?? "")}`;
+
+const httpsUrl = (value: unknown): string | null => {
+	if (typeof value !== "string" || value.length > 2048 || !URL.canParse(value)) return null;
+	return new URL(value).protocol === "https:" ? value : null;
+};
+
+/** Fathom `action_items`, bounded: at most 50 items of 300 characters. */
+export const fathomActionItems = (payload: Record<string, unknown>): ReadonlyArray<FathomActionItem> => {
+	if (!Array.isArray(payload.action_items)) return [];
+	const items: FathomActionItem[] = [];
+	for (const raw of payload.action_items) {
+		if (!raw || typeof raw !== "object") continue;
+		const item = raw as Record<string, unknown>;
+		const text = oneLine(String(item.description ?? ""), 300);
+		if (text.length === 0) continue;
+		const assignee =
+			item.assignee && typeof item.assignee === "object" ? (item.assignee as Record<string, unknown>) : {};
+		const owner = typeof assignee.name === "string" ? oneLine(assignee.name, 64) : "";
+		items.push({ text, owner: owner.length > 0 ? owner : null, completed: item.completed === true });
+		if (items.length >= 50) break;
+	}
+	return items;
+};
+
+const actionItemLine = (item: FathomActionItem): string =>
+	`- [${item.completed ? "x" : " "}] ${item.text}${item.owner === null ? "" : ` (owner: ${item.owner})`}`;
+
+const actionItemsMarkdown = (items: ReadonlyArray<FathomActionItem>): string =>
+	items.length === 0 ? "" : `## Action Items\n\n${items.map(actionItemLine).join("\n")}\n\n`;
+
+/** Lines of the `## Action Items` bullets in `content`, in item order. */
+const actionItemLines = (content: string, items: ReadonlyArray<FathomActionItem>): ReadonlyArray<number> => {
+	const lines = content.split("\n");
+	const start = lines.indexOf("## Action Items");
+	return items.map((_item, index) => start + 3 + index);
+};
+
+/** The route for one Fathom payload, scored on the same fields the import writes. */
+export const routeFathomPayload = (rules: MeetingRouteRules, payload: Record<string, unknown>): MeetingRoute =>
+	routeMeeting(rules, {
+		title: titleOf(payload),
+		participants: participantsOf(payload),
+		summary: summaryOf(payload),
+		actionItems: fathomActionItems(payload).map((item) => item.text),
+	});
+
+const fingerprintOf = (payload: Record<string, unknown>): string =>
+	`fathom:${payload.recording_id}:${String(payload.created_at ?? "")}`;
+
+const markdownFor = (
+	envelope: FathomImportEnvelope,
+	date: string,
+	source: string,
+	project: string | null | undefined,
+	tags: ReadonlyArray<string>,
+	actionItems: ReadonlyArray<FathomActionItem>,
+): string => {
+	const payload = envelope.payload as Record<string, unknown>;
+	const title = titleOf(payload);
+	const summary = summaryOf(payload);
+	const participants = participantsOf(payload).join(", ");
 	const executiveSummary =
 		summary.length > 0 ? summary.replace(/^## /gmu, "### ") : `Imported Fathom meeting: ${title}.`;
 	const projectLine = project?.trim() ? `- Project: ${project.trim().replace(/[\r\n]+/gu, " ")}\n` : "";
-	return `# ${title}\n\n## Metadata\n\n- Date: ${date}\n- Source Type: fathom\n- Source Ref: fathom:${payload.recording_id}\n${projectLine}- Participants: ${participants || "Unknown"}\n- Tags: fathom\n- Fingerprint: ${fingerprint}\n\n## Executive Summary\n\n${executiveSummary}\n\n<!-- Imported by Harnessy V2 from ${source}. -->\n`;
+	return `# ${title}\n\n## Metadata\n\n- Date: ${date}\n- Source Type: fathom\n- Source Ref: fathom:${payload.recording_id}\n${projectLine}- Participants: ${participants || "Unknown"}\n- Tags: ${["fathom", ...tags].join(", ")}\n- Fingerprint: ${fingerprintOf(payload)}\n\n## Executive Summary\n\n${executiveSummary}\n\n${actionItemsMarkdown(actionItems)}<!-- Imported by Harnessy V2 from ${source}. -->\n`;
 };
 
 const pendingFiles = (root: string, accounts?: ReadonlyArray<string>): string[] => {
@@ -107,6 +205,7 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 	const lookbackHours = Math.max(1, Math.min(168, Math.trunc(options.lookbackHours ?? 72)));
 	const floor = now.getTime() - lookbackHours * 60 * 60 * 1000;
 	const paths: string[] = [];
+	const notes: ImportedFathomNote[] = [];
 	let imported = 0;
 	let existing = 0;
 	let skipped = 0;
@@ -130,7 +229,7 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 			continue;
 		}
 		const payload = envelope.payload as Record<string, unknown>;
-		const title = String(payload.meeting_title ?? payload.title ?? "fathom-meeting");
+		const title = titleOf(payload);
 		const rawId = String(payload.recording_id);
 		// Preserve existing safe filenames; provider IDs must never introduce paths.
 		const recordingId = /^[A-Za-z0-9_-]{1,128}$/.test(rawId)
@@ -138,14 +237,33 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 			: `~${createHash("sha256").update(rawId).digest("hex")}`;
 		const dateObject = new Date(`${date}T00:00:00.000Z`);
 		const month = dateObject.toLocaleString("en-US", { month: "short", timeZone: "UTC" });
-		const directory = join(sourceRoot, date.slice(0, 4), month);
-		const destination = join(directory, `${date.slice(8)}-${safeSlug(title)}-${recordingId}.md`);
-		if (existsSync(destination)) {
+		// Keep the original filename rule: changing it would re-import old notes.
+		const slugTitle = String(payload.meeting_title ?? payload.title ?? "fathom-meeting");
+		const filename = `${date.slice(8)}-${safeSlug(slugTitle)}-${recordingId}.md`;
+		const actionItems = fathomActionItems(payload);
+		const route = options.routing === undefined ? null : routeFathomPayload(options.routing, payload);
+		const project = route === null ? (options.project ?? null) : route.project;
+		const root =
+			route === null || options.routing === undefined || route.project === options.routing.defaultProject
+				? sourceRoot
+				: resolve(projectMeetingsRoot(options.routing, route.project));
+		const directory = join(root, date.slice(0, 4), month);
+		const destination = join(directory, filename);
+		// The default root is checked too: a note imported there before routing,
+		// or a re-file stub, keeps the recording from being imported twice.
+		if (existsSync(destination) || existsSync(join(sourceRoot, date.slice(0, 4), month, filename))) {
 			existing += 1;
 			continue;
 		}
 		mkdirSync(directory, { recursive: true, mode: 0o700 });
-		const content = markdownFor(envelope, date, relative(inboxRoot, file), options.project);
+		const content = markdownFor(
+			envelope,
+			date,
+			relative(inboxRoot, file),
+			project,
+			route?.aliasTags ?? [],
+			actionItems,
+		);
 		const temporary = `${destination}.${randomUUID()}.tmp`;
 		const fd = openSync(temporary, "wx", 0o600);
 		try {
@@ -165,8 +283,19 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 			unlinkSync(temporary);
 		}
 		paths.push(destination);
+		const lines = actionItemLines(content, actionItems);
+		notes.push({
+			path: destination,
+			project,
+			route,
+			title,
+			date,
+			fingerprint: fingerprintOf(payload),
+			shareUrl: httpsUrl(payload.share_url) ?? httpsUrl(payload.url),
+			actionItems: actionItems.map((item, index) => ({ ...item, line: lines[index]! })),
+		});
 		imported += 1;
 		if (imported >= Math.max(1, Math.min(100, options.limit ?? 100))) break;
 	}
-	return { imported, existing, skipped, paths };
+	return { imported, existing, skipped, paths, notes };
 };

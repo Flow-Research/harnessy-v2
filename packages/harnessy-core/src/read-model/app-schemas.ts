@@ -86,7 +86,14 @@ export const InboxListSchema = Type.Object(
 
 export const TaskStatusSchema = literals(["todo", "doing", "waiting", "done", "dropped"] as const);
 export const TaskOutcomeSchema = literals(["done", "carried", "dropped", "delegated"] as const);
-export const TaskSourceKindSchema = literals(["brief", "reminders", "register", "status-md", "native"] as const);
+export const TaskSourceKindSchema = literals([
+	"brief",
+	"reminders",
+	"register",
+	"status-md",
+	"meeting",
+	"native",
+] as const);
 export const TaskGroupSchema = literals(["primary", "other"] as const);
 
 export const TaskSchema = Type.Object(

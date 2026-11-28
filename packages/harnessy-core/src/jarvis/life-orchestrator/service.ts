@@ -12,7 +12,7 @@ import { codexProviderFailureCode } from "../../ai/codex-failure.ts";
 import type { HarnessError } from "../../errors.ts";
 import { CommandRunner, type CommandRunResult, type ExternalCommand } from "../../runtime/command-runner.ts";
 import { prepareWorkspaceLifeCommand } from "../../workspace-life.ts";
-import { defaultTasksFile, ingestPublishedBrief } from "../tasks/index.ts";
+import { capturePublishedBrief, defaultTasksFile, homeTasksSyncConfig } from "../tasks/index.ts";
 import { replaceWorthReadingSection, validateWorthReadingSection } from "./artifact.ts";
 import type { LifeOrchestratorSettings } from "./config.ts";
 import { nextLifeCurriculumReadings } from "./curriculum.ts";
@@ -142,9 +142,16 @@ const lifeProviderEnvironment = (settings: LifeOrchestratorSettings) => ({
 	HARNESSY_TASKS_FILE: process.env.HARNESSY_TASKS_FILE ?? defaultTasksFile(settings.paths.homeRoot),
 });
 
-/** Align the local task store with a published brief. Failures are ignored so a published brief is not rolled back. */
+/**
+ * Align the task store with a published brief and queue it for the VPS when
+ * sync is configured. Failures are ignored so a published brief is not rolled back.
+ */
 const ingestDailyTaskStore = (settings: LifeOrchestratorSettings, briefPath: string, date: string): void => {
-	Result.try(() => ingestPublishedBrief(settings.paths.homeRoot, briefPath, date));
+	Result.try(() =>
+		capturePublishedBrief(settings.paths.homeRoot, briefPath, date, {
+			syncConfig: homeTasksSyncConfig(settings.paths.homeRoot),
+		}),
+	);
 };
 
 const commandFailure = (label: string, detail: string) =>

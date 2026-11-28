@@ -37,7 +37,8 @@
 		"owner": "Ada and Ben",
 		"due": null,
 		"line": 21,
-		"raw": false
+		"raw": false,
+		"followup": true
 	},
 	{
 		"title": "data room index",
@@ -45,7 +46,8 @@
 		"owner": "Chidi",
 		"due": "2026-10-24",
 		"line": 22,
-		"raw": false
+		"raw": false,
+		"followup": true
 	},
 	{
 		"title": "No dash lead",
@@ -53,6 +55,7 @@
 		"owner": null,
 		"due": null,
 		"line": 23,
-		"raw": false
+		"raw": false,
+		"followup": true
 	}
 ]

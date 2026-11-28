@@ -1,4 +1,13 @@
 export {
+	type BriefCaptureResult,
+	type CaptureStoreOptions,
+	captureMeetingFollowups,
+	capturePublishedBrief,
+	flushTasksQueue,
+	type MeetingCaptureResult,
+	type TasksFlushResult,
+} from "./capture.ts";
+export {
 	loadTasksAuthToken,
 	startTasksHttpServer,
 	TASKS_SERVICE_PORT,
@@ -13,6 +22,16 @@ export {
 	ingestBriefFile,
 	ingestPublishedBrief,
 } from "./ingest.ts";
+export {
+	applyMeetingFollowupBatch,
+	MEETING_FOLLOWUP_BATCH_MAX,
+	type MeetingFollowupBatch,
+	type MeetingFollowupItem,
+	type MeetingFollowupNote,
+	meetingFollowupBatch,
+	meetingFollowupId,
+	parseMeetingFollowupBatch,
+} from "./meeting-followups.ts";
 export { type MergeTasksOptions, mergeTasks } from "./merge.ts";
 export {
 	appendCloseoutNote,
@@ -62,6 +81,7 @@ export {
 	defaultQueuePath,
 	enqueueMutation,
 	fetchTransport,
+	homeTasksSyncConfig,
 	type QueuedMutation,
 	readQueue,
 	readSyncConfigFile,

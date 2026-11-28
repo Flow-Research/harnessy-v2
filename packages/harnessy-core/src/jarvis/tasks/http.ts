@@ -11,6 +11,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import * as Result from "effect/Result";
 import { extractBriefTasks } from "../../read-model/followups.ts";
 import { candidatesFromExtracted } from "./ingest.ts";
+import { applyMeetingFollowupBatch, parseMeetingFollowupBatch } from "./meeting-followups.ts";
 import {
 	type FollowupInput,
 	type FollowupView,
@@ -291,6 +292,25 @@ const handle = async (state: TasksState, token: string, req: IncomingMessage, re
 		const item = state.addFollowup({ ...followupInput(body), expectedRevision: expected });
 		const store = snapshot(state);
 		send(res, 201, { ok: true, revision: store.revision, item }, store.revision);
+		return;
+	}
+	if (method === "POST" && url.pathname === "/v1/followups/ingest") {
+		const body = await readBody(req);
+		const expected = requireRevision(req, body);
+		const result = applyMeetingFollowupBatch(state, parseMeetingFollowupBatch(body), expected);
+		const store = snapshot(state);
+		send(
+			res,
+			200,
+			{
+				ok: true,
+				revision: store.revision,
+				created: result.created,
+				unchanged: result.existing,
+				items: result.items,
+			},
+			store.revision,
+		);
 		return;
 	}
 	if (method === "POST" && url.pathname === "/v1/followups/resolve") {

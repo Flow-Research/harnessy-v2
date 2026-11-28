@@ -44,6 +44,10 @@ export const candidatesFromExtracted = (
 			line: task.line,
 			fingerprint: taskFingerprint(kind, text, occurrence),
 			displayRef: task.ref === undefined ? displayRef : `${displayRef} ${task.ref}`.slice(0, 96),
+			// A brief's "Delegated or Waiting" items are follow-ups that wait on the person named.
+			...(kind === "brief" && task.followup === true
+				? { kind: "followup" as const, waitingOn: task.owner === null ? null : task.owner.slice(0, 120) }
+				: {}),
 		};
 	});
 };
@@ -95,11 +99,14 @@ export const ingestPublishedBrief = (
 	briefPath: string,
 	date: string,
 	clock?: () => Date,
-): IngestBriefResult | null => {
+	tasksFile?: string,
+): (IngestBriefResult & { readonly tasksFile: string; readonly path: string; readonly markdown: string }) | null => {
 	if (!existsSync(briefPath)) return null;
-	const file = process.env.HARNESSY_TASKS_FILE?.trim() || defaultTasksFile(homeRoot);
+	const file = tasksFile ?? (process.env.HARNESSY_TASKS_FILE?.trim() || defaultTasksFile(homeRoot));
 	const state = new TasksState(file, clock);
-	return ingestBriefFile(state, briefPath, { date });
+	const result = ingestBriefFile(state, briefPath, { date });
+	const path = realpathSync(briefPath);
+	return { ...result, tasksFile: file, path, markdown: readFileSync(path, "utf8") };
 };
 
 /** Find or ingest one derived task so an action can use a stable UUID. */

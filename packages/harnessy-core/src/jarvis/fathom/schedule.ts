@@ -37,6 +37,9 @@ const xml = (value: string) =>
 
 const renderPlist = (paths: JarvisPaths, options: FathomScheduleOptions): string => {
 	const log = join(paths.canonicalGlobalRoot, "logs", `${FATHOM_LAUNCH_AGENT_LABEL}.log`);
+	// No `--json`: the log keeps every run's stdout, and the JSON receipt carries
+	// note paths and counts that grow the log without bound. Text output is a few
+	// count and state lines per run.
 	const argumentsList = [
 		options.nodePath,
 		options.cliPath,
@@ -46,7 +49,6 @@ const renderPlist = (paths: JarvisPaths, options: FathomScheduleOptions): string
 		"poll",
 		"--target",
 		paths.targetDir,
-		"--json",
 	];
 	return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

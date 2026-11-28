@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { JarvisLegacyConfig, resolveJarvisConfig } from "../src/jarvis/config-model.ts";
 import { runConfiguredFathomPoll } from "../src/jarvis/fathom/host.ts";
 import { JarvisPaths } from "../src/jarvis/paths.ts";
+import { TasksState } from "../src/jarvis/tasks/store.ts";
 
 const roots: string[] = [];
 const fixture = (selection?: ReadonlyArray<string>) => {
@@ -104,5 +105,67 @@ describe("runConfiguredFathomPoll", () => {
 			expect(existsSync(setup.inboxRoot)).toBe(false);
 			expect(existsSync(setup.stateRoot)).toBe(false);
 		}
+	});
+	it("routes new notes by meeting-routes.yaml, creates follow-ups once, and never polls an unselected account", async () => {
+		const setup = fixture(["research"]);
+		const privateRoot = join(setup.paths.targetDir, "private");
+		for (const project of ["flow", "acme"]) mkdirSync(join(privateRoot, project, "meetings"), { recursive: true });
+		writeFileSync(
+			join(privateRoot, "meeting-routes.yaml"),
+			"routes:\n  - project: acme\n    keywords: [acme pilot]\n",
+		);
+		const inboxRoot = join(privateRoot, "meeting-inbox", "fathom");
+		const tasksFile = join(setup.paths.targetDir, "tasks.json");
+		const recorded = new Date(Date.now() - 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/u, "Z");
+		const polled: string[] = [];
+		const poll = () =>
+			runConfiguredFathomPoll({
+				...setup,
+				inboxRoot,
+				sourceRoot: join(privateRoot, "flow", "meetings"),
+				followups: { tasksFile },
+				readApiKey: async (_config, _paths, account) => {
+					polled.push(account);
+					return "synthetic";
+				},
+				fetch: async () =>
+					new Response(
+						JSON.stringify({
+							items: [
+								{
+									recording_id: 701,
+									meeting_title: "Acme pilot review",
+									recording_start_time: recorded,
+									created_at: recorded,
+									share_url: "https://fathom.video/share/example-701",
+									action_items: [
+										{ description: "Draft the pilot terms", completed: false, assignee: { name: "Ada" } },
+									],
+								},
+							],
+							next_cursor: null,
+						}),
+						{ status: 200, headers: { "content-type": "application/json" } },
+					),
+			});
+		const first = await poll();
+		expect(polled).toEqual(["research"]);
+		expect(first.importedNotes?.notes.map((note) => note.project)).toEqual(["acme"]);
+		const path = first.importedNotes!.paths[0]!;
+		expect(path.startsWith(join(privateRoot, "acme", "meetings"))).toBe(true);
+		expect(readFileSync(path, "utf8")).toContain("- [ ] Draft the pilot terms (owner: Ada)");
+		expect(first.followups).toMatchObject({ created: 1, existing: 0, queued: 0 });
+		expect(first.tasksSync).toEqual({ state: "skipped", remaining: 0 });
+		const second = await poll();
+		expect(second.importedNotes).toMatchObject({ imported: 0, existing: 1 });
+		expect(second.followups).toMatchObject({ created: 0, notes: 0 });
+		const items = new TasksState(tasksFile).read().items;
+		expect(items).toHaveLength(1);
+		expect(items[0]).toMatchObject({
+			kind: "followup",
+			project: "acme",
+			due: null,
+			source: { kind: "meeting", path },
+		});
 	});
 });
