@@ -13,7 +13,7 @@ import { gwsCalendarProvider } from "../jarvis/calendar/gws-provider.ts";
 import { inspectCalendarPlan } from "../jarvis/calendar/plan.ts";
 import {
 	calendarConsentCommand,
-	calendarIdentityCheckCommand,
+	calendarEnrollCommand,
 	calendarImportCommand,
 	calendarImportScheduleCommand,
 } from "./calendar-import.ts";
@@ -22,7 +22,7 @@ export const jarvisCalendarCommand = Command.make("calendar").pipe(
 	Command.withSubcommands([
 		calendarImportCommand,
 		calendarConsentCommand,
-		calendarIdentityCheckCommand,
+		calendarEnrollCommand,
 		calendarImportScheduleCommand,
 		Command.make("inspect", { plan: Flag.String("plan") }, ({ plan }) =>
 			Effect.try(() => inspectCalendarPlan(plan)).pipe(

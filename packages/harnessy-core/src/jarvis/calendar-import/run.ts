@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as Result from "effect/Result";
 import { z } from "zod";
@@ -9,7 +9,7 @@ import { type AccountSummary, type ImportAccount, importCalendars } from "./impo
 import { accountKey, accountLabel, CalendarImportError, identityKey } from "./keys.ts";
 import type { ActionDescriptor } from "./match.ts";
 import { observationStore, readDecisions, readObservations } from "./observations.ts";
-import { readOrCreateSalt, readOwnerJson, readSalt, writeOwnerFile } from "./owner-file.ts";
+import { readOrCreateSalt, readOwnerFile, readOwnerJson, readSalt, writeOwnerFile } from "./owner-file.ts";
 
 /** Every importer file lives under `<home>/.harnessy/calendar-import/` (0700 folder, 0600 files). */
 export function calendarImportPaths(home: string) {
@@ -147,19 +147,51 @@ export interface ConsentInput {
 	readonly method: ConsentRecord["method"];
 }
 
+const EXPECTED_ID = /^[^\s]{3,254}$/u;
+const EXPECTED_ID_MAX_BYTES = 1024;
+
 /**
- * The read-permission check for one folder: one metadata call for the primary
- * calendar ID, nothing else. It returns the full keyed identity digest, never the
- * ID. A person reviews the result and passes the digest to `recordAccountConsent`.
+ * Read the intended primary calendar ID that the operator supplies. `-` reads
+ * standard input; any other value is an owner-only (0600) file. The value is
+ * never taken from argv, never printed and never stored: only the comparison
+ * result leaves `enrollAccount`.
  */
-export async function checkPrimaryIdentity(
+export function readExpectedPrimaryId(source: string): string {
+	const raw =
+		source === "-"
+			? Result.try(() => readFileSync(0, "utf8"))
+			: Result.try(() => readOwnerFile(source, "expected identity file"));
+	if (Result.isFailure(raw)) {
+		if (raw.failure instanceof CalendarImportError) throw raw.failure;
+		throw new CalendarImportError("The expected identity input could not be read");
+	}
+	const text = raw.success ?? "";
+	if (Buffer.byteLength(text, "utf8") > EXPECTED_ID_MAX_BYTES)
+		throw new CalendarImportError("The expected identity input is too large");
+	const value = text.trim();
+	if (!EXPECTED_ID.test(value))
+		throw new CalendarImportError("The expected identity input must be one primary calendar ID on one line");
+	return value;
+}
+
+/**
+ * First enrollment for one folder. One metadata call reads the primary calendar
+ * ID, which is compared in memory with the ID the operator intended. Consent is
+ * bound to the keyed identity only on equality. On a mismatch nothing is written,
+ * so a folder that already opens the wrong login cannot be enrolled.
+ */
+export async function enrollAccount(
 	home: string,
 	slug: string,
+	input: ConsentInput,
 	read: CalendarRead,
-): Promise<{ readonly account: string; readonly identity: string }> {
+	expectedPrimaryId: string,
+): Promise<{ readonly account: string; readonly matches: boolean; readonly bound: boolean }> {
 	if (!ACCOUNT_SLUG.test(slug)) throw new CalendarImportError("Account folder name is not valid");
 	refuseWhenSpawnIsLogged();
-	const salt = readOrCreateSalt(calendarImportPaths(home).salt);
+	const paths = calendarImportPaths(home);
+	const salt = readOrCreateSalt(paths.salt);
+	const account = accountKey(salt, slug);
 	const primary = await read([
 		"calendar",
 		"calendars",
@@ -168,38 +200,31 @@ export async function checkPrimaryIdentity(
 		JSON.stringify({ calendarId: "primary", fields: "id" }),
 	]);
 	const id = typeof primary.id === "string" ? primary.id : "";
-	if (!id) throw new CalendarImportError("The primary calendar has no ID; nothing was checked");
-	return { account: accountLabel(accountKey(salt, slug)), identity: identityKey(salt, id) };
+	const matches = id !== "" && id.toLowerCase() === expectedPrimaryId.trim().toLowerCase();
+	if (!matches) return { account: accountLabel(account), matches: false, bound: false };
+	recordConsent(paths.consent, [{ account, identity: identityKey(salt, id), scope: "calendar.read", ...input }]);
+	return { account: accountLabel(account), matches: true, bound: true };
+}
+
+/**
+ * Record consent for one folder without an identity. The account stays unbound
+ * and is never read until `enrollAccount` binds it.
+ */
+export function recordAccountConsent(
+	home: string,
+	slug: string,
+	input: ConsentInput,
+): { readonly account: string; readonly bound: boolean } {
+	if (!ACCOUNT_SLUG.test(slug)) throw new CalendarImportError("Account folder name is not valid");
+	const paths = calendarImportPaths(home);
+	const salt = readOrCreateSalt(paths.salt);
+	const account = accountKey(salt, slug);
+	recordConsent(paths.consent, [{ account, identity: null, scope: "calendar.read", ...input }]);
+	return { account: accountLabel(account), bound: false };
 }
 
 /** Refuse before any file or account is touched when Node would log spawn arguments and environment. */
 function refuseWhenSpawnIsLogged(): void {
 	if (childProcessDebugEnabled())
 		throw new CalendarImportError("Refused: Node child-process debugging is enabled; gws was not started");
-}
-
-const FULL_DIGEST = /^[a-f0-9]{64}$/u;
-
-/**
- * Record consent for one folder. `approvedIdentity` is the full keyed digest from
- * the read-permission check that a person approved. It is stored as given and the
- * importer compares it exactly on every read. Nothing is read here, and a short or
- * malformed value is refused. Without it the account stays unbound and is never read.
- */
-export function recordAccountConsent(
-	home: string,
-	slug: string,
-	input: ConsentInput,
-	approvedIdentity?: string,
-): { readonly account: string; readonly bound: boolean } {
-	if (!ACCOUNT_SLUG.test(slug)) throw new CalendarImportError("Account folder name is not valid");
-	if (approvedIdentity !== undefined && !FULL_DIGEST.test(approvedIdentity))
-		throw new CalendarImportError(
-			"The approved identity must be the full 64-character keyed digest; nothing was recorded",
-		);
-	const paths = calendarImportPaths(home);
-	const salt = readOrCreateSalt(paths.salt);
-	const account = accountKey(salt, slug);
-	recordConsent(paths.consent, [{ account, identity: approvedIdentity ?? null, scope: "calendar.read", ...input }]);
-	return { account: accountLabel(account), bound: approvedIdentity !== undefined };
 }

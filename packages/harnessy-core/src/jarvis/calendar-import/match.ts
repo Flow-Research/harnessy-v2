@@ -17,14 +17,28 @@ export interface ActionDescriptor {
 	readonly actorOrProject: readonly string[];
 }
 
-/** One task-to-action lookup, shared by the import summary and the provider. */
-export type TasksOfAction = (actionId: string) => readonly string[];
-export const tasksFromDescriptors =
-	(descriptors: readonly ActionDescriptor[]): TasksOfAction =>
-	(actionId) =>
+/**
+ * One task-and-action lookup, shared by the import summary and the provider.
+ * `actionsOf` tells whether a task marker names one action or several.
+ */
+export interface TaskLookup {
+	readonly tasksOf: (actionId: string) => readonly string[];
+	readonly actionsOf: (taskId: string) => readonly string[];
+}
+export const NO_TASKS: TaskLookup = { tasksOf: () => [], actionsOf: () => [] };
+export const tasksFromDescriptors = (descriptors: readonly ActionDescriptor[]): TaskLookup => ({
+	tasksOf: (actionId) =>
 		descriptors
 			.filter((descriptor) => descriptor.actionId.toLowerCase() === actionId.toLowerCase())
-			.flatMap((descriptor) => descriptor.taskIds ?? []);
+			.flatMap((descriptor) => descriptor.taskIds ?? []),
+	actionsOf: (taskId) => [
+		...new Set(
+			descriptors
+				.filter((descriptor) => (descriptor.taskIds ?? []).some((id) => id.toLowerCase() === taskId.toLowerCase()))
+				.map((descriptor) => descriptor.actionId.toLowerCase()),
+		),
+	],
+});
 
 const MIN_TERM = 4;
 const wordsOf = (text: string) =>
@@ -59,15 +73,25 @@ export function heuristicCandidates(
 		.map((descriptor) => descriptor.actionId);
 }
 
-/** An action as the stored data sees it: keyed hashes only. */
+/**
+ * An action as the stored data sees it: keyed hashes only. `tasks` are tasks
+ * whose marker names only this action. `sharedTasks` belong to several actions:
+ * their marker cannot say which work the meeting needs, so it gives a candidate.
+ */
 export interface LinkSubject {
 	readonly action: string;
 	readonly tasks: readonly string[];
+	readonly sharedTasks: readonly string[];
 }
-export const subjectOf = (salt: Buffer, actionId: string, tasksOfAction: TasksOfAction): LinkSubject => ({
-	action: actionKey(salt, actionId),
-	tasks: tasksOfAction(actionId).map((taskId) => taskKey(salt, taskId)),
-});
+export const subjectOf = (salt: Buffer, actionId: string, lookup: TaskLookup): LinkSubject => {
+	const tasks = lookup.tasksOf(actionId);
+	const shared = (taskId: string) => lookup.actionsOf(taskId).length > 1;
+	return {
+		action: actionKey(salt, actionId),
+		tasks: tasks.filter((taskId) => !shared(taskId)).map((taskId) => taskKey(salt, taskId)),
+		sharedTasks: tasks.filter(shared).map((taskId) => taskKey(salt, taskId)),
+	};
+};
 
 /** A human decision with its action ID replaced by the keyed hash. */
 export interface KeyedDecision extends Omit<LinkDecision, "actionId"> {
@@ -130,7 +154,10 @@ export function resolveLink(
 		return { state: "verified", relation };
 	}
 	if (rejected) return { state: "checked_no_match" };
-	return marked.length > 0 || event.candidates.includes(subject.action)
+	const sharedMarked = event.markers.some(
+		(marker) => marker.kind === "task" && subject.sharedTasks.includes(marker.key),
+	);
+	return marked.length > 0 || sharedMarked || event.candidates.includes(subject.action)
 		? { state: "candidate" }
 		: { state: "checked_no_match" };
 }

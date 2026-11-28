@@ -1,4 +1,12 @@
-import { type EvidenceState, isEligible, keyDecisions, resolveLink, subjectOf, type TasksOfAction } from "./match.ts";
+import {
+	type EvidenceState,
+	isEligible,
+	keyDecisions,
+	NO_TASKS,
+	resolveLink,
+	subjectOf,
+	type TaskLookup,
+} from "./match.ts";
 import type { LinkDecision, ObservationStore } from "./observations.ts";
 
 // Structurally identical to `CalendarSignal`, `Availability` and the calendar half
@@ -22,7 +30,7 @@ export interface CalendarProviderOptions {
 	/** Read the latest stored observations. Called once per query, so a new import is seen. */
 	readonly observations: () => ObservationStore | undefined;
 	readonly decisions: () => readonly LinkDecision[];
-	readonly tasksOfAction?: TasksOfAction;
+	readonly taskLookup?: TaskLookup;
 	readonly maxAgeMs?: number;
 }
 
@@ -43,7 +51,7 @@ export function calendarEvidence(options: CalendarProviderOptions, actionId: str
 		return { state: "unavailable", signals: [] };
 	// No account read means nothing was checked, even when no account failed.
 	if (!store.accounts.some((account) => account.state === "read")) return { state: "unavailable", signals: [] };
-	const subject = subjectOf(options.salt, actionId, options.tasksOfAction ?? (() => []));
+	const subject = subjectOf(options.salt, actionId, options.taskLookup ?? NO_TASKS);
 	const decisions = keyDecisions(options.salt, options.decisions());
 	const byGroup = new Map<string, CalendarSignal>();
 	let candidate = false;

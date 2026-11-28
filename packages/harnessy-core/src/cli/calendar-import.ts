@@ -1,11 +1,16 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { Console, Option } from "effect";
+import { Console } from "effect";
 import { Command, Flag } from "effect/cli";
 import * as Effect from "effect/Effect";
 import { gwsCalendarReader } from "../jarvis/calendar-import/gws-reader.ts";
 import { CalendarImportError } from "../jarvis/calendar-import/keys.ts";
-import { checkPrimaryIdentity, recordAccountConsent, runCalendarImport } from "../jarvis/calendar-import/run.ts";
+import {
+	enrollAccount,
+	readExpectedPrimaryId,
+	recordAccountConsent,
+	runCalendarImport,
+} from "../jarvis/calendar-import/run.ts";
 import { renderCalendarImportPlist } from "../jarvis/calendar-import/schedule.ts";
 
 /**
@@ -62,61 +67,64 @@ export const calendarImportCommand = Command.make(
 	),
 );
 
-export const calendarIdentityCheckCommand = Command.make(
-	"import-identity-check",
+const consentFlags = {
+	slug: Flag.String("slug").pipe(Flag.withDescription("gws folder name. It is stored only as a keyed hash.")),
+	consentedAt: Flag.String("consented-at"),
+	consentedBy: Flag.Literals("consented-by", ["julian"]),
+	method: Flag.Literals("method", ["voice", "written"]),
+};
+
+export const calendarEnrollCommand = Command.make(
+	"import-enroll",
 	{
-		slug: Flag.String("slug").pipe(Flag.withDescription("gws folder name. It is never printed.")),
+		...consentFlags,
+		expectedIdFile: Flag.String("expected-id-file").pipe(
+			Flag.withDescription(
+				"Owner-only (0600) file with the intended primary calendar ID, or - for standard input. Never pass the ID itself as an argument.",
+			),
+		),
 		...executableFlags,
 	},
-	// One metadata call (`calendars get`, field `id`). Event contents are not read.
-	// It prints the opaque account label and the full keyed identity digest, never the ID.
-	({ slug, googleExecutable, googleExecutableSha256 }) =>
+	// One metadata call. The ID read from Google is compared in memory with the
+	// intended ID; consent is bound only on equality. Neither ID is printed or stored.
+	({ slug, consentedAt, consentedBy, method, expectedIdFile, googleExecutable, googleExecutableSha256 }) =>
 		Effect.tryPromise({
 			try: () => {
 				const home = homedir();
+				const expected = readExpectedPrimaryId(expectedIdFile);
 				const read = gwsCalendarReader(
 					googleExecutable,
 					googleExecutableSha256,
 					join(home, ".config", `gws-${slug}`),
 				);
-				return checkPrimaryIdentity(home, slug, read);
+				return enrollAccount(home, slug, { consentedAt, consentedBy, method }, read, expected);
 			},
-			catch: safeFailure("Calendar identity check failed"),
+			catch: safeFailure("Calendar enrollment failed"),
 		}).pipe(
 			Effect.flatMap((result) =>
-				Console.log(JSON.stringify({ command: "jarvis calendar import-identity-check", ...result }, null, 2)),
+				result.matches
+					? Console.log(JSON.stringify({ command: "jarvis calendar import-enroll", ...result }, null, 2))
+					: Effect.fail(
+							new CalendarImportError(
+								`The primary calendar does not match the intended ID; nothing was recorded (account ${result.account})`,
+							),
+						),
 			),
 		),
 ).pipe(
 	Command.withDescription(
-		"Read only the primary calendar ID of one account and print its keyed digest for a person to approve",
+		"Bind consent to an account only when its primary calendar equals the intended ID that the operator supplies privately",
 	),
 );
 
 export const calendarConsentCommand = Command.make(
 	"import-consent",
-	{
-		slug: Flag.String("slug").pipe(Flag.withDescription("gws folder name. It is stored only as a keyed hash.")),
-		consentedAt: Flag.String("consented-at"),
-		consentedBy: Flag.Literals("consented-by", ["julian"]),
-		method: Flag.Literals("method", ["voice", "written"]),
-		approvedIdentity: Flag.String("approved-identity").pipe(
-			Flag.optional,
-			Flag.withDescription(
-				"Full 64-character keyed identity digest from import-identity-check, approved by a person. Without it the account stays unbound.",
-			),
-		),
-	},
-	// Nothing is read here: the digest is compared exactly on every import.
-	({ slug, consentedAt, consentedBy, method, approvedIdentity }) =>
+	consentFlags,
+	// Records consent without an identity. The account stays unbound, and is never
+	// read, until import-enroll binds it.
+	({ slug, consentedAt, consentedBy, method }) =>
 		Effect.try({
-			try: () =>
-				recordAccountConsent(
-					homedir(),
-					slug,
-					{ consentedAt, consentedBy, method },
-					Option.getOrUndefined(approvedIdentity),
-				),
+			try: () => recordAccountConsent(homedir(), slug, { consentedAt, consentedBy, method }),
 			catch: safeFailure("Calendar consent could not be recorded"),
 		}).pipe(
 			Effect.flatMap((result) =>

@@ -14,7 +14,7 @@ import {
 	type LinkSubject,
 	resolveLink,
 	subjectOf,
-	type TasksOfAction,
+	type TaskLookup,
 	tasksFromDescriptors,
 } from "./match.ts";
 import type { AccountReason, LinkDecision, ObservationStore, StoredAccount, StoredEvent } from "./observations.ts";
@@ -182,7 +182,7 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 	const summaries: AccountSummary[] = [];
 	const decisions = keyDecisions(salt, options.decisions ?? []);
 	const descriptors = options.descriptors ?? [];
-	const tasksOfAction = tasksFromDescriptors(descriptors);
+	const taskLookup = tasksFromDescriptors(descriptors);
 	// Failed reads of an approved identity. A later folder that reads the same
 	// identity covers them; the rest stay unavailable.
 	const failed: { readonly index: number; readonly account: string; readonly identity: string }[] = [];
@@ -241,6 +241,8 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 			continue;
 		}
 		const items = outcome.success;
+		// Not null here: an unbound account was refused above, and a mismatch stopped the read.
+		const identity = consent.identity;
 		const accountEvents: StoredEvent[] = [];
 		let copies = 0;
 		for (const item of items) {
@@ -258,14 +260,16 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 			const candidates = heuristicCandidates(title, description, descriptors);
 			const recurring = text(item.recurringEventId);
 			const original = recurring ? instantOf(item.originalStartTime) : undefined;
-			const copyGroup = keyed(salt, "ical", text(item.iCalUID) || `${account}:${id}`, original?.iso ?? start.iso);
+			// Event, series and copy keys come from the verified primary identity, not the
+			// folder, so a decision still applies when another folder reads the same calendar.
+			const copyGroup = keyed(salt, "ical", text(item.iCalUID) || `${identity}:${id}`, original?.iso ?? start.iso);
 			if (groups.has(copyGroup)) copies++;
 			groups.add(copyGroup);
 			accountEvents.push({
-				key: keyed(salt, "event", account, id),
+				key: keyed(salt, "event", identity, id),
 				account,
 				copyGroup,
-				series: recurring ? keyed(salt, "series", account, recurring) : null,
+				series: recurring ? keyed(salt, "series", identity, recurring) : null,
 				occurrence: original?.iso ?? null,
 				start: start.iso,
 				end: end.iso,
@@ -282,7 +286,7 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 		}
 		accounts.push({ account, state: "read" });
 		events.push(...accountEvents);
-		summaries.push(summarise(account, accountEvents, copies, { salt, decisions, descriptors, tasksOfAction }, now));
+		summaries.push(summarise(account, accountEvents, copies, { salt, decisions, descriptors, taskLookup }, now));
 	}
 	for (const { index, account, identity } of failed) {
 		if (!identities.has(identity)) continue;
@@ -302,7 +306,7 @@ interface SummaryLookups {
 	readonly salt: Buffer;
 	readonly decisions: readonly KeyedDecision[];
 	readonly descriptors: readonly ActionDescriptor[];
-	readonly tasksOfAction: TasksOfAction;
+	readonly taskLookup: TaskLookup;
 }
 
 /**
@@ -324,7 +328,7 @@ function summarise(
 	const links = { ...base.links };
 	const known = new Map<string, LinkSubject>();
 	for (const descriptor of lookups.descriptors) {
-		const subject = subjectOf(lookups.salt, descriptor.actionId, lookups.tasksOfAction);
+		const subject = subjectOf(lookups.salt, descriptor.actionId, lookups.taskLookup);
 		known.set(subject.action, subject);
 	}
 	for (const event of events) {
@@ -345,7 +349,7 @@ function summarise(
 			...event.candidates,
 			...lookups.decisions.map((decision) => decision.action),
 		])
-			if (!subjects.has(key)) subjects.set(key, { action: key, tasks: [] });
+			if (!subjects.has(key)) subjects.set(key, { action: key, tasks: [], sharedTasks: [] });
 		const linked = [...subjects.values()]
 			.map((subject) => resolveLink(event, subject, lookups.decisions).state)
 			.filter((state) => state !== "checked_no_match");

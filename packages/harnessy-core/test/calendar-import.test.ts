@@ -19,17 +19,19 @@ import { NodeServices } from "@effect/platform-node";
 import { Command } from "effect/cli";
 import * as Effect from "effect/Effect";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-	calendarConsentCommand,
-	calendarIdentityCheckCommand,
-	calendarImportCommand,
-} from "../src/cli/calendar-import.ts";
+import { calendarConsentCommand, calendarEnrollCommand, calendarImportCommand } from "../src/cli/calendar-import.ts";
 import { classifyEvent, isJarvisBlock, parseMarkers } from "../src/jarvis/calendar-import/classify.ts";
 import { type ConsentRecord, readConsent, recordConsent } from "../src/jarvis/calendar-import/consent.ts";
 import { assertReadOnlyCall, type CalendarRead, gwsCalendarReader } from "../src/jarvis/calendar-import/gws-reader.ts";
 import { type ImportAccount, importCalendars } from "../src/jarvis/calendar-import/importer.ts";
 import { accountKey, accountLabel, actionKey, identityKey, taskKey } from "../src/jarvis/calendar-import/keys.ts";
-import { type ActionDescriptor, keyDecisions, resolveLink } from "../src/jarvis/calendar-import/match.ts";
+import {
+	type ActionDescriptor,
+	keyDecisions,
+	resolveLink,
+	type TaskLookup,
+	tasksFromDescriptors,
+} from "../src/jarvis/calendar-import/match.ts";
 import type { LinkDecision, ObservationStore, StoredEvent } from "../src/jarvis/calendar-import/observations.ts";
 import {
 	OWNER_FILE_MAX_BYTES,
@@ -44,8 +46,8 @@ import {
 } from "../src/jarvis/calendar-import/provider.ts";
 import {
 	calendarImportPaths,
-	checkPrimaryIdentity,
-	recordAccountConsent,
+	enrollAccount,
+	readExpectedPrimaryId,
 	runCalendarImport,
 } from "../src/jarvis/calendar-import/run.ts";
 import { renderCalendarImportPlist } from "../src/jarvis/calendar-import/schedule.ts";
@@ -135,16 +137,12 @@ const importOne = async (
 		...options,
 	});
 
-const providerFor = (
-	store: ObservationStore,
-	decisions: LinkDecision[] = [],
-	tasksOfAction?: (actionId: string) => readonly string[],
-) =>
+const providerFor = (store: ObservationStore, decisions: LinkDecision[] = [], taskLookup?: TaskLookup) =>
 	calendarImportProvider({
 		salt,
 		observations: () => store,
 		decisions: () => decisions,
-		...(tasksOfAction ? { tasksOfAction } : {}),
+		...(taskLookup ? { taskLookup } : {}),
 	});
 const evidenceFor = (store: ObservationStore, actionId: string, decisions: LinkDecision[] = []) =>
 	calendarEvidence({ salt, observations: () => store, decisions: () => decisions }, actionId, at);
@@ -159,6 +157,7 @@ const accept = (actionId: string, key: string, kind: "accept" | "reject" = "acce
 const subject = (actionId: string, tasks: string[] = []) => ({
 	action: actionKey(salt, actionId),
 	tasks: tasks.map((task) => taskKey(salt, task)),
+	sharedTasks: [],
 });
 
 describe("read-only boundary", () => {
@@ -239,11 +238,15 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 	const fixture = (value: unknown) => writeFileSync(join(config, "fixture.json"), JSON.stringify(value));
 	const reader = () => gwsCalendarReader(nodeBinary, nodeDigest, config);
 	const input = { consentedAt: "2026-11-28T18:47:00+01:00", consentedBy: "julian", method: "voice" } as const;
-	/** Step 1 (metadata only), then consent with the full digest that step returned. */
-	const bind = async () => {
-		const checked = await checkPrimaryIdentity(root, slug, reader());
-		return recordAccountConsent(root, slug, input, checked.identity);
+	/** The intended primary ID, supplied the private way: an owner-only file, never argv. */
+	const intended = (id: string) => {
+		const path = join(root, "intended-id");
+		writeFileSync(path, `${id}\n`, { mode: 0o600 });
+		chmodSync(path, 0o600);
+		return path;
 	};
+	/** Enrollment: one metadata call, bound only when the folder opens the intended calendar. */
+	const bind = () => enrollAccount(root, slug, input, reader(), readExpectedPrimaryId(intended(OWNER)));
 	const runOptions = {
 		googleExecutable: nodeBinary,
 		googleExecutableSha256: nodeDigest,
@@ -274,8 +277,21 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		Command.runWith(calendarImportCommand, { version: "test" })(args).pipe(Effect.provide(NodeServices.layer));
 	const consentCli = (args: string[]) =>
 		Command.runWith(calendarConsentCommand, { version: "test" })(args).pipe(Effect.provide(NodeServices.layer));
-	const identityCli = (args: string[]) =>
-		Command.runWith(calendarIdentityCheckCommand, { version: "test" })(args).pipe(Effect.provide(NodeServices.layer));
+	const enrollCli = (args: string[]) =>
+		Command.runWith(calendarEnrollCommand, { version: "test" })(args).pipe(Effect.provide(NodeServices.layer));
+	const enrollArgs = (path: string) => [
+		"--slug",
+		slug,
+		"--consented-at",
+		"2026-11-28T18:47:00+01:00",
+		"--consented-by",
+		"julian",
+		"--method",
+		"voice",
+		"--expected-id-file",
+		path,
+		...importArgs,
+	];
 	const importArgs = ["--google-executable", nodeBinary, "--google-executable-sha256", nodeDigest];
 
 	it("passes gws only the entries it needs and asks for JSON output", async () => {
@@ -307,7 +323,7 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 			vi.stubEnv("NODE_DEBUG", sections);
 			const runs = [
 				await cli(importCli, [...importArgs, "--dry-run"]),
-				await cli(identityCli, ["--slug", slug, ...importArgs]),
+				await cli(enrollCli, enrollArgs(intended(OWNER))),
 			];
 			await expect(
 				reader()(["calendar", "calendars", "get", "--params", '{"calendarId":"primary"}']),
@@ -392,22 +408,7 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		const live = Date.now();
 		const soon = (hours: number) => new Date(live + hours * hour).toISOString();
 		fixture({ identity: OWNER, items: [] });
-		const checkRun = await cli(identityCli, ["--slug", slug, ...importArgs]);
-		expect(checkRun.failure).toBe("");
-		const checked = JSON.parse(checkRun.output);
-		expect(checked.identity).toMatch(/^[a-f0-9]{64}$/);
-		const consentRun = await cli(consentCli, [
-			"--slug",
-			slug,
-			"--consented-at",
-			"2026-11-28T18:47:00+01:00",
-			"--consented-by",
-			"julian",
-			"--method",
-			"voice",
-			"--approved-identity",
-			checked.identity,
-		]);
+		const consentRun = await cli(enrollCli, enrollArgs(intended(OWNER)));
 		expect(consentRun.failure).toBe("");
 		expect(consentRun.output).toContain('"bound": true');
 		fixture({
@@ -456,7 +457,7 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		expect(report.totals).toMatchObject({ accountsRead: 1, events: 2, eligible: 2 });
 		expect(report.totals.links).toMatchObject({ verified: 3, candidate: 2 });
 		const paths = calendarImportPaths(root);
-		const outputs = [checkRun.output, consentRun.output, dry.output, dry.failure, real.output, real.failure];
+		const outputs = [consentRun.output, dry.output, dry.failure, real.output, real.failure];
 		// actions.json is the person's own input; every file the importer writes is scanned.
 		for (const name of readdirSync(paths.root))
 			if (name !== "actions.json") outputs.push(readFileSync(join(paths.root, name), "utf8"));
@@ -506,26 +507,49 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		expect((await runCalendarImport({ ...options, dryRun: true, accounts: [label] })).totals.accountsRead).toBe(1);
 	});
 
-	it("binds only a full approved digest, checked exactly on every read", async () => {
-		fixture({ identity: OWNER, items: [event("one", 3)] });
-		const checked = await checkPrimaryIdentity(root, slug, reader());
-		const request = JSON.parse(readFileSync(join(config, "request.json"), "utf8"));
-		expect(request.args.slice(0, 3)).toEqual(["calendar", "calendars", "get"]);
-		expect(JSON.stringify(checked)).not.toContain(OWNER);
-		rmSync(join(config, "request.json"));
-		// A short or malformed approval is refused before anything is read or written.
-		for (const short of [checked.identity.slice(0, 8), checked.identity.slice(0, 63), checked.identity.toUpperCase()])
-			expect(() => recordAccountConsent(root, slug, input, short)).toThrow(/full 64-character/);
+	it("does not enroll a folder that already opens a different login", async () => {
+		fixture({ identity: "someone-else@example.test", items: [event("one", 3)] });
+		// The folder was approved, but it opens another calendar before enrollment.
+		const mismatch = await cli(enrollCli, enrollArgs(intended(OWNER)));
+		expect(mismatch.failure).toContain("does not match the intended ID; nothing was recorded");
+		expect(`${mismatch.output}\n${mismatch.failure}`).not.toMatch(/owner@example|someone-else|sentinel\.owner/);
 		expect(readConsent(calendarImportPaths(root).consent).size).toBe(0);
+		expect(JSON.parse(readFileSync(join(config, "request.json"), "utf8")).args.slice(0, 3)).toEqual([
+			"calendar",
+			"calendars",
+			"get",
+		]);
+		// Consent alone leaves the account unbound, and an unbound account is never read.
+		const consentOnly = await cli(consentCli, enrollArgs("unused").slice(0, 8));
+		expect(consentOnly.failure).toBe("");
+		expect(consentOnly.output).toContain('"bound": false');
+		rmSync(join(config, "request.json"));
+		const unbound = await runCalendarImport({ ...runOptions, home: root, dryRun: true });
+		expect(unbound.accounts[0]).toMatchObject({ state: "unavailable", reason: "unbound" });
 		expect(existsSync(join(config, "request.json"))).toBe(false);
-		// A full digest of a different ID with the same leading characters does not match.
-		const lookalike = `${checked.identity.slice(0, 8)}${"0".repeat(56)}`;
-		expect(recordAccountConsent(root, slug, input, lookalike)).toMatchObject({ bound: true });
-		const refused = await runCalendarImport({ ...runOptions, home: root, dryRun: true });
-		expect(refused.accounts[0]).toMatchObject({ state: "unavailable", reason: "identity-changed" });
-		expect(JSON.parse(readFileSync(join(config, "request.json"), "utf8")).args[1]).toBe("calendars");
-		expect(recordAccountConsent(root, slug, input, checked.identity)).toMatchObject({ bound: true });
+		// Equality (case-insensitive) binds, and the import then reads.
+		fixture({ identity: OWNER, items: [event("one", 3)] });
+		expect(
+			await enrollAccount(root, slug, input, reader(), readExpectedPrimaryId(intended(OWNER.toUpperCase()))),
+		).toEqual({ account: expect.stringMatching(/^[a-f0-9]{12}$/), matches: true, bound: true });
 		expect((await runCalendarImport({ ...runOptions, home: root, dryRun: true })).totals.accountsRead).toBe(1);
+		expect(readFileSync(calendarImportPaths(root).consent, "utf8")).not.toContain("@");
+	});
+	it("takes the intended ID only from a private input", () => {
+		const path = intended(OWNER);
+		chmodSync(path, 0o644);
+		expect(() => readExpectedPrimaryId(path)).toThrow(/owner-only/);
+		writeFileSync(path, `${OWNER}\nsecond@example.test\n`, { mode: 0o600 });
+		chmodSync(path, 0o600);
+		expect(() => readExpectedPrimaryId(path)).toThrow(/one primary calendar ID on one line/);
+		try {
+			readExpectedPrimaryId(path);
+		} catch (cause) {
+			expect(String(cause)).not.toContain(OWNER);
+		}
+		expect(() => readExpectedPrimaryId(join(root, "absent"))).toThrow(/one primary calendar ID/);
+		// The CLI has no flag that takes the ID itself.
+		expect(enrollArgs("FILE")).not.toContain(OWNER);
 	});
 
 	it("keeps manual candidates on a scheduled refresh, which reads the same actions file", async () => {
@@ -824,6 +848,82 @@ describe("matcher states", () => {
 		expect(resolveLink(storedOpen, subject("eps"), keyed)).toEqual({ state: "verified", relation: "preparation" });
 		expect(points(await providerFor(store, [accepted]).calendar("eps", at))).toBe(300);
 	});
+	it("keeps event decisions and occurrence closures when another folder reads the same calendar", async () => {
+		const items = [
+			event("one-off", 3, { summary: "Investor prep" }),
+			event("weekly-1", 5, {
+				recurringEventId: "weekly",
+				originalStartTime: { dateTime: iso(5) },
+				summary: "Investor prep",
+			}),
+		];
+		const failing: CalendarRead = async () => {
+			throw new Error("folder unavailable");
+		};
+		const run = (working: string) =>
+			importCalendars({
+				accounts: [account("first"), account("second")],
+				consent: consentFor({ first: OWNER, second: OWNER }),
+				readerFor: (slug) => (slug === working ? fakeReader(OWNER, items) : failing),
+				salt,
+				now: at,
+			});
+		const before = await run("first");
+		const after = await run("second");
+		expect(after.store.events.map((stored) => [stored.key, stored.series, stored.copyGroup])).toEqual(
+			before.store.events.map((stored) => [stored.key, stored.series, stored.copyGroup]),
+		);
+		expect(after.store.events[0]?.account).not.toBe(before.store.events[0]?.account);
+		const [oneOff, weekly] = before.store.events as [StoredEvent, StoredEvent];
+		const decisions: LinkDecision[] = [
+			accept("theta", oneOff.key),
+			{
+				...accept("iota", ""),
+				target: { kind: "series", key: weekly.series ?? "" },
+				closedOccurrences: [weekly.occurrence ?? ""],
+			},
+		];
+		for (const { store } of [before, after]) {
+			expect(points(await providerFor(store, decisions).calendar("theta", at))).toBe(450);
+			expect(await providerFor(store, decisions).calendar("iota", at)).toEqual([]);
+		}
+	});
+	it("gives candidates for a task marker shared by several actions until one is picked", async () => {
+		const shared = "6ba7b810-9dad-41d1-80b4-00c04fd430c8";
+		const lookup = tasksFromDescriptors([
+			{ actionId: "prepare-deck", taskIds: [shared], deliverable: [], actorOrProject: [] },
+			{ actionId: "file-receipt", taskIds: [shared], deliverable: [], actorOrProject: [] },
+			{ actionId: "solo", taskIds: [TASK], deliverable: [], actorOrProject: [] },
+		]);
+		const { store } = await importOne([
+			event("task", 1, { summary: "Deck prep", description: `Jarvis-Task: ${shared}\nJarvis-Task: ${TASK}` }),
+		]);
+		const evidence = (actionId: string, decisions: LinkDecision[] = []) =>
+			calendarEvidence(
+				{ salt, observations: () => store, decisions: () => decisions, taskLookup: lookup },
+				actionId,
+				at,
+			);
+		// Ambiguous: neither action is named, so both are candidates worth 0.
+		expect(evidence("prepare-deck").state).toBe("candidate");
+		expect(evidence("file-receipt").state).toBe("candidate");
+		expect(points(await providerFor(store, [], lookup).calendar("prepare-deck", at))).toBe(0);
+		// A task that belongs to one action still verifies directly.
+		expect(points(await providerFor(store, [], lookup).calendar("solo", at))).toBe(450);
+		// An accepted mapping picks one action; the other stays a candidate.
+		const picked = [accept("prepare-deck", store.events[0]?.key ?? "")];
+		expect(points(await providerFor(store, picked, lookup).calendar("prepare-deck", at))).toBe(450);
+		expect(evidence("file-receipt", picked).state).toBe("candidate");
+		// An action marker picks one as well.
+		const marked = await importOne([
+			event("marked", 1, {
+				summary: "Deck prep",
+				description: `Jarvis-Task: ${shared}\nJarvis-Action: file-receipt`,
+			}),
+		]);
+		expect(points(await providerFor(marked.store, [], lookup).calendar("file-receipt", at))).toBe(450);
+		expect(points(await providerFor(marked.store, [], lookup).calendar("prepare-deck", at))).toBe(0);
+	});
 	it("gives the summary and the provider the same task lookup", async () => {
 		const item = event("task", 30, { description: `Task ID: ${TASK}`, summary: "Pitch" });
 		const descriptorsWithTask: ActionDescriptor[] = [
@@ -831,7 +931,11 @@ describe("matcher states", () => {
 		];
 		const result = await importOne([item], { descriptors: descriptorsWithTask });
 		expect(result.accounts[0]?.links).toMatchObject({ verified: 1, checked_no_match: 0 });
-		const provider = providerFor(result.store, [], (actionId) => (actionId === "epsilon" ? [TASK] : []));
+		const provider = providerFor(
+			result.store,
+			[],
+			tasksFromDescriptors([{ actionId: "epsilon", taskIds: [TASK], deliverable: [], actorOrProject: [] }]),
+		);
 		expect(points(await provider.calendar("epsilon", at))).toBe(300);
 		const unknown = await importOne([item]);
 		expect(unknown.accounts[0]?.links).toMatchObject({ verified: 0, checked_no_match: 1 });
