@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import { type DueDateDeriver, deriveV3DueDates } from "./due-date-deriver.ts";
 import { compareActions, compareTasks, type RankedTask, scoreAction } from "./priority.ts";
 import { offlineProviders, type PriorityEvidence, type PriorityProviders } from "./priority-evidence.ts";
 import { TasksState, type TasksStore } from "./store.ts";
@@ -14,6 +15,7 @@ export async function rankSnapshot(
 	evidence: PriorityEvidence,
 	at: Date,
 	providers: PriorityProviders = offlineProviders,
+	deriveDueDates: DueDateDeriver = deriveV3DueDates,
 ) {
 	const evaluatedAt = at.toISOString();
 	const open = store.items
@@ -47,6 +49,7 @@ export async function rankSnapshot(
 						at,
 						calendar.status === "fulfilled" ? calendar.value : "unavailable",
 						email.status === "fulfilled" ? email.value : "unavailable",
+						deriveDueDates,
 					);
 				}),
 		);

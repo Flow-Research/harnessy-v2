@@ -1,3 +1,4 @@
+import { type DueDateDeriver, deriveV3DueDates } from "./due-date-deriver.ts";
 import type { Availability, CalendarSignal, EmailSignal, PriorityAction } from "./priority-evidence.ts";
 import { lagosCalendarDate } from "./store.ts";
 
@@ -40,6 +41,7 @@ export function scoreAction(
 	at: Date,
 	calendar: Availability<CalendarSignal> = "unavailable",
 	email: Availability<EmailSignal> = "unavailable",
+	deriveDueDates: DueDateDeriver = deriveV3DueDates,
 ) {
 	const now = at.getTime();
 	const today = Date.parse(lagosCalendarDate(at));
@@ -48,36 +50,21 @@ export function scoreAction(
 	let urgent = false;
 	let due: string | null = null;
 	let strongestDate: string | null = null;
+	const dateEvidence = deriveDueDates({ action, at, calendar });
 	if (actionable) {
-		const valid = action.dates.filter((d) => {
-			if (d.confidence !== "high") return false;
-			if (d.kind === "promise") return d.authority === "direct-speaker" || d.authority === "human";
-			if (d.kind === "manual") return d.authority === "human";
-			if (d.kind === "chase" && action.kind !== "chase") return false;
-			return d.authority === "human" || d.authority === "approved-plan";
-		});
-		const manual = valid.filter((d) => d.kind === "manual");
-		// Inputs describe current facts. Different active dates for the same role
-		// require reconciliation, unless a manual date overrides the role.
-		const candidates = manual.length ? manual : valid;
-		const dates = candidates.filter(
-			(d) =>
-				!action.dates.some((other) => other.kind === d.kind && other.confidence === "conflict") &&
-				!candidates.some((other) => other.kind === d.kind && other.day !== d.day),
-		);
 		const verified =
 			action.verifiedOverdueAt && Date.parse(action.verifiedOverdueAt) <= now
 				? (today - Date.parse(lagosCalendarDate(new Date(action.verifiedOverdueAt)))) / day
 				: Infinity;
-		for (const date of dates) {
-			const days = (Date.parse(date.day) - today) / day;
+		for (const dayValue of dateEvidence.days) {
+			const days = (Date.parse(dayValue) - today) / day;
 			const value = deadlinePoints(days);
-			if (value > points.deadline || (value === points.deadline && value > 0 && date.day < (strongestDate ?? "~"))) {
+			if (value > points.deadline || (value === points.deadline && value > 0 && dayValue < (strongestDate ?? "~"))) {
 				points.deadline = value;
-				strongestDate = date.day;
+				strongestDate = dayValue;
 			}
 			if (days <= 3 && (days >= -14 || verified < 3)) urgent = true;
-			if (due === null || date.day < due) due = date.day;
+			if (due === null || dayValue < due) due = dayValue;
 		}
 		for (const event of calendar === "unavailable" ? [] : calendar)
 			points.calendar = Math.max(points.calendar, calendarPoints(event, now));
@@ -117,7 +104,7 @@ export function scoreAction(
 			Boolean,
 		),
 		empty: [
-			!action.dates.length ? "deadline" : "",
+			!dateEvidence.hasEvidence ? "deadline" : "",
 			calendar !== "unavailable" && !calendar.length ? "calendar" : "",
 			email !== "unavailable" && !email.length ? "email" : "",
 			!action.dependency ? "dependency" : "",

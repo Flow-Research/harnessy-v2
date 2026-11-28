@@ -201,6 +201,33 @@ describe("priority scoring", () => {
 });
 
 describe("priority shadow", () => {
+	it("keeps a linked calendar event separate from due under v3; accepts an injected date policy", async () => {
+		const evidence = inputs();
+		const action = evidence.tasks[1]!.actions[0]!;
+		action.dates = [];
+		action.calendar = [{ start: fromNow(2), relation: "agenda" }];
+		const original = await rankSnapshot(store(), evidence, at);
+		expect(original.rows[0]?.winner).toMatchObject({ due: null, points: { deadline: 0, calendar: 50 } });
+		const custom = await rankSnapshot(
+			store(),
+			evidence,
+			at,
+			offlineProviders,
+			({ action: candidate, at: instant, calendar }) => {
+				if (candidate.id !== action.id) return { days: [], hasEvidence: false };
+				expect(instant).toEqual(at);
+				expect(calendar).toEqual(action.calendar);
+				return { days: ["2026-11-29"], hasEvidence: true };
+			},
+		);
+		expect(custom.rows[0]?.winner).toMatchObject({
+			due: "2026-11-29",
+			strongestDate: "2026-11-29",
+			quadrant: "Q1",
+			points: { deadline: 700, calendar: 50 },
+		});
+		expect(custom.rows[0]?.winner.empty).not.toContain("deadline");
+	});
 	it("defaults to preview at the registered CLI entry with no network or file mutation", async () => {
 		const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unexpected network call"));
 		const output = vi.spyOn(console, "log").mockImplementation(() => {});
