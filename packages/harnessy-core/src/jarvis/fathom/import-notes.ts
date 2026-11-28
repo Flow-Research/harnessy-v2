@@ -16,6 +16,13 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
+import { plainText } from "../../read-model/followups.ts";
+import {
+	type ExtractedMeetingItem,
+	extractMeetingItems,
+	type MeetingExtractOptions,
+	meetingSourceHash,
+} from "./followup-extract.ts";
 import type { FathomImportEnvelope } from "./ingest.ts";
 import { type MeetingRoute, type MeetingRouteRules, routeMeeting } from "./routes.ts";
 
@@ -35,6 +42,18 @@ export interface FathomNoteImportOptions {
 	readonly now?: Date;
 	readonly lookbackHours?: number;
 	readonly limit?: number;
+	/**
+	 * Also return notes that exist already and whose meeting is at most this many
+	 * days old, for the recapture pass. 0 (the default) returns none; at most 60.
+	 */
+	readonly recaptureDays?: number;
+	/**
+	 * Other meetings folders (`<root>/YYYY/Mmm/<file>`) where an earlier release may
+	 * have written the same note. A note found there is existing, not new.
+	 */
+	readonly noteRoots?: ReadonlyArray<string>;
+	/** Follow-up extraction settings; the meeting date is added for each note. */
+	readonly extract?: Omit<MeetingExtractOptions, "meetingDate">;
 }
 
 /** One open or completed Fathom action item, as written to `## Action Items`. */
@@ -53,8 +72,15 @@ export interface ImportedFathomNote {
 	readonly date: string;
 	readonly fingerprint: string;
 	readonly shareUrl: string | null;
-	/** With the 1-based line of each item in the written note. */
-	readonly actionItems: ReadonlyArray<FathomActionItem & { readonly line: number }>;
+	/**
+	 * Follow-up candidates from action items, summary and transcript, with the
+	 * 1-based line of each item in the note (1 when the note does not show it).
+	 */
+	readonly actionItems: ReadonlyArray<ExtractedMeetingItem & { readonly line: number }>;
+	/** `meetingSourceHash` of the envelope: changes when Fathom adds action items or text. */
+	readonly sourceHash: string;
+	/** `new`: written by this import. `existing`: written earlier, returned for recapture. */
+	readonly state: "new" | "existing";
 }
 
 export interface FathomNoteImportReceipt {
@@ -63,6 +89,8 @@ export interface FathomNoteImportReceipt {
 	readonly skipped: number;
 	readonly paths: ReadonlyArray<string>;
 	readonly notes: ReadonlyArray<ImportedFathomNote>;
+	/** Existing notes inside the recapture window, newest import rules applied. */
+	readonly recent: ReadonlyArray<ImportedFathomNote>;
 }
 
 const safeSlug = (value: string) =>
@@ -136,11 +164,37 @@ const actionItemLine = (item: FathomActionItem): string =>
 const actionItemsMarkdown = (items: ReadonlyArray<FathomActionItem>): string =>
 	items.length === 0 ? "" : `## Action Items\n\n${items.map(actionItemLine).join("\n")}\n\n`;
 
-/** Lines of the `## Action Items` bullets in `content`, in item order. */
-const actionItemLines = (content: string, items: ReadonlyArray<FathomActionItem>): ReadonlyArray<number> => {
+/**
+ * The 1-based note line of each item: the `## Action Items` bullet for an action
+ * item, else the first line whose plain text holds the item text, else 1.
+ */
+const itemLines = (content: string, items: ReadonlyArray<ExtractedMeetingItem>): ReadonlyArray<number> => {
 	const lines = content.split("\n");
-	const start = lines.indexOf("## Action Items");
-	return items.map((_item, index) => start + 3 + index);
+	const plain = lines.map((line) => plainText(line).toLowerCase());
+	const used = new Set<number>();
+	return items.map((item) => {
+		const bullets = item.source === "action_items" ? [`- [ ] ${item.text}`, `- [x] ${item.text}`] : ([] as string[]);
+		let index = lines.findIndex((line, at) => !used.has(at) && bullets.some((bullet) => line.startsWith(bullet)));
+		if (index < 0 && item.source !== "transcript") {
+			const needle = item.text.toLowerCase().slice(0, 60);
+			index = plain.findIndex((line, at) => !used.has(at) && line.includes(needle));
+		}
+		if (index < 0) return 1;
+		used.add(index);
+		return index + 1;
+	});
+};
+
+const MAX_NOTE_BYTES = 1024 * 1024;
+
+/** The note at `destination`, or the same file under one of `roots`; null when none exists. */
+const existingNote = (destination: string, roots: ReadonlyArray<string>, relativePath: string): string | null => {
+	if (existsSync(destination)) return destination;
+	for (const root of roots) {
+		const candidate = join(root, relativePath);
+		if (existsSync(candidate)) return candidate;
+	}
+	return null;
 };
 
 /** The route for one Fathom payload, scored on the same fields the import writes. */
@@ -204,8 +258,12 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 	const now = options.now ?? new Date();
 	const lookbackHours = Math.max(1, Math.min(168, Math.trunc(options.lookbackHours ?? 72)));
 	const floor = now.getTime() - lookbackHours * 60 * 60 * 1000;
+	const recaptureDays = Math.max(0, Math.min(60, Math.trunc(options.recaptureDays ?? 0)));
+	const recaptureFloor = now.getTime() - recaptureDays * 24 * 60 * 60 * 1000;
+	const noteRoots = (options.noteRoots ?? []).map((root) => resolve(root)).filter((root) => root !== sourceRoot);
 	const paths: string[] = [];
 	const notes: ImportedFathomNote[] = [];
+	const recent: ImportedFathomNote[] = [];
 	let imported = 0;
 	let existing = 0;
 	let skipped = 0;
@@ -224,7 +282,9 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 		}
 		const date = isoDate(envelope.payload as Record<string, unknown>);
 		const started = date === null ? Number.NaN : new Date(`${date}T00:00:00.000Z`).getTime();
-		if (date === null || started < floor - 24 * 60 * 60 * 1000) {
+		const importable = started >= floor - 24 * 60 * 60 * 1000;
+		const recapturable = recaptureDays > 0 && started >= recaptureFloor - 24 * 60 * 60 * 1000;
+		if (date === null || !(importable || recapturable)) {
 			skipped += 1;
 			continue;
 		}
@@ -245,8 +305,41 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 		const project = route === null ? (options.project ?? null) : route.project;
 		const directory = join(sourceRoot, date.slice(0, 4), month);
 		const destination = join(directory, filename);
-		if (existsSync(destination)) {
+		const extracted = extractMeetingItems(payload, { ...options.extract, meetingDate: date });
+		const noteFor = (path: string, content: string, state: ImportedFathomNote["state"]): ImportedFathomNote => {
+			const lines = itemLines(content, extracted);
+			return {
+				path,
+				project,
+				route,
+				title,
+				date,
+				fingerprint: fingerprintOf(payload),
+				shareUrl: httpsUrl(payload.share_url) ?? httpsUrl(payload.url),
+				actionItems: extracted.map((item, index) => ({ ...item, line: lines[index]! })),
+				sourceHash: meetingSourceHash(payload),
+				state,
+			};
+		};
+		const found = existingNote(destination, noteRoots, join(date.slice(0, 4), month, filename));
+		if (found !== null) {
 			existing += 1;
+			if (recapturable) {
+				const content = Effect.runSyncExit(
+					Effect.try({
+						try: () => {
+							const bytes = readFileSync(found);
+							return bytes.byteLength > MAX_NOTE_BYTES ? "" : bytes.toString("utf8");
+						},
+						catch: () => null,
+					}),
+				);
+				recent.push(noteFor(found, Exit.isSuccess(content) ? content.value : "", "existing"));
+			}
+			continue;
+		}
+		if (!importable) {
+			skipped += 1;
 			continue;
 		}
 		mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -277,19 +370,9 @@ export const importRecentFathomNotes = (options: FathomNoteImportOptions): Fatho
 			unlinkSync(temporary);
 		}
 		paths.push(destination);
-		const lines = actionItemLines(content, actionItems);
-		notes.push({
-			path: destination,
-			project,
-			route,
-			title,
-			date,
-			fingerprint: fingerprintOf(payload),
-			shareUrl: httpsUrl(payload.share_url) ?? httpsUrl(payload.url),
-			actionItems: actionItems.map((item, index) => ({ ...item, line: lines[index]! })),
-		});
+		notes.push(noteFor(destination, content, "new"));
 		imported += 1;
 		if (imported >= Math.max(1, Math.min(100, options.limit ?? 100))) break;
 	}
-	return { imported, existing, skipped, paths, notes };
+	return { imported, existing, skipped, paths, notes, recent };
 };

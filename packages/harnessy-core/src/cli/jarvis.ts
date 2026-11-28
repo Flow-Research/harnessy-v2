@@ -142,6 +142,20 @@ const fathomAccountOption = Options.String("account").pipe(
 	Options.atLeast(0),
 	Options.withDescription("Fathom account label to poll (repeatable; defaults to the approved V2 scope)."),
 );
+const fathomDryRunOption = Options.Boolean("dry-run").pipe(
+	Options.withDefault(false),
+	Options.withDescription(
+		"Report the follow-ups the poll would capture; write no task, queue or capture state and do not contact the task VPS.",
+	),
+);
+const fathomFlushOption = Options.Boolean("flush").pipe(
+	Options.withDefault(true),
+	Options.withDescription("Replay the task queue to the VPS after capture (--no-flush keeps the queue local)."),
+);
+const fathomRecaptureDaysOption = Options.Int("recapture-days").pipe(
+	Options.withDefault(14),
+	Options.withDescription("Check existing notes of meetings in the last N days again (0 turns it off, at most 60)."),
+);
 const lifeSettings = (target: string, homeRoot: Option.Option<string>, compatibilityRoot: Option.Option<string>) =>
 	resolveLifeOrchestratorSettings({
 		projectRoot: resolve(target),
@@ -1061,9 +1075,12 @@ export const jarvisMeetingFathomPollCommand = Command.make(
 		sourceRoot: fathomSourceRootOption,
 		limit: communityLimitOption,
 		accounts: fathomAccountOption,
+		dryRun: fathomDryRunOption,
+		flush: fathomFlushOption,
+		recaptureDays: fathomRecaptureDaysOption,
 		json: jsonOption,
 	},
-	({ target, sourceRoot, limit, accounts, json }) =>
+	({ target, sourceRoot, limit, accounts, dryRun, flush, recaptureDays, json }) =>
 		Effect.gen(function* () {
 			// Start a recent window with idempotent overlap. Ingest resumes any
 			// unfinished window with its saved filter before starting this new one.
@@ -1086,7 +1103,8 @@ export const jarvisMeetingFathomPollCommand = Command.make(
 						limit,
 						createdAfter,
 						sourceRoot: config.meetingPublication.sourcePath,
-						followups: pollFollowupStore(),
+						followups: { ...pollFollowupStore(), dryRun, noFlush: !flush },
+						recaptureDays: Math.max(0, Math.min(60, recaptureDays)),
 						readApiKey: (resolvedConfig, resolvedPaths, account) =>
 							Effect.runPromise(
 								credentials
@@ -1118,7 +1136,7 @@ export const jarvisMeetingFathomPollCommand = Command.make(
 				}
 				if (result.followups !== null)
 					yield* Console.log(
-						`follow-ups: created ${result.followups.created}, existing ${result.followups.existing}, queued ${result.followups.queued}${result.followups.failed === 0 ? "" : `, failed ${result.followups.failed}`}`,
+						`follow-ups${result.followups.dryRun ? " (dry run)" : ""}: notes ${result.followups.captured} captured, ${result.followups.unchanged} unchanged; created ${result.followups.created}, existing ${result.followups.existing}, similar ${result.followups.similar}, queued ${result.followups.queued}${result.followups.failed === 0 ? "" : `, failed ${result.followups.failed}`}`,
 					);
 				if (result.tasksSync !== null && result.tasksSync.state !== "skipped")
 					yield* Console.log(

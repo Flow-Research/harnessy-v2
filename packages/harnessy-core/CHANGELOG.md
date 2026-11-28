@@ -26,6 +26,20 @@
   short count lines.
 - The daily brief takes the 40 most recent meetings of the last 14 days, from
   every project together and newest first, with no relevance ranking.
+- The Fathom poll also finds follow-ups in the summary's "Next Steps" bullets
+  (confidence 0.8) and, when a meeting has no action items and no Next Steps,
+  in first-person commitments of the transcript (confidence 0.5, at most 8).
+  Extraction runs on this machine only. An item that restates an action item
+  is dropped. Owners and due dates ("by Friday", "5 December") use the shared
+  parser in `read-model/owner-due.ts`. Action item ids do not change.
+- The poll checks notes of the last 14 days again (`--recapture-days`, 0 turns
+  it off) when Fathom changes their action items, summary or transcript, or
+  when the last capture failed. It adds only new items. A closed follow-up, or
+  a reworded copy of one, is never reopened. The changed Fathom envelope
+  replaces the pending one. Per-note state, with each item's quote, timestamp
+  and confidence, is in `state/fathom/meeting-capture-state-v1.json`.
+- `harnessy jarvis meeting fathom poll` takes `--dry-run` (write no task,
+  queue or capture state) and `--no-flush` (do not contact the task VPS).
 
 
 - `harnessy engineering benchmark` runs 32,768 iterations of the 16 cases in
@@ -175,6 +189,8 @@
 
 ### Fixed
 
+- A brief's "Delegated or Waiting" line "Ada and Sam own …" now names the
+  owners. "Their own …" does not.
 - `harnessy engineering tick` admits a proof-only job whose pinned source is an
   ancestor of the current base. Before, merging the reviewed pull request moved
   the base, and the controller refused every proof-only successor that pinned

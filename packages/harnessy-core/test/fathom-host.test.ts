@@ -161,7 +161,7 @@ describe("runConfiguredFathomPoll", () => {
 		expect(first.tasksSync).toEqual({ state: "skipped", remaining: 0 });
 		const second = await poll();
 		expect(second.importedNotes).toMatchObject({ imported: 0, existing: 1 });
-		expect(second.followups).toMatchObject({ created: 0, notes: 0 });
+		expect(second.followups).toMatchObject({ created: 0, notes: 1, captured: 0, unchanged: 1 });
 		const items = new TasksState(tasksFile).read().items;
 		expect(items).toHaveLength(1);
 		expect(items[0]).toMatchObject({

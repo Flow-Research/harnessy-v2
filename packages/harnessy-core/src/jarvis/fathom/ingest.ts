@@ -61,6 +61,16 @@ export interface FathomIngestStore {
 		recordingId: string,
 		envelope: FathomImportEnvelope,
 	) => Promise<"imported" | "duplicate">;
+	/**
+	 * Replace a stored envelope whose payload changed (for example Fathom added
+	 * action items after the first poll). Optional: a store without it keeps the
+	 * first envelope, as before.
+	 */
+	readonly refreshPending?: (
+		account: string,
+		recordingId: string,
+		envelope: FathomImportEnvelope,
+	) => Promise<"refreshed" | "unchanged">;
 	readonly saveCheckpoint: (account: string, checkpoint: FathomIngestCheckpoint) => Promise<void>;
 }
 
@@ -79,6 +89,8 @@ export interface FathomIngestReceipt {
 	readonly fetched: number;
 	readonly imported: number;
 	readonly duplicates: number;
+	/** Stored envelopes replaced because the meeting changed at Fathom. Counted in `duplicates` too. */
+	readonly refreshed?: number;
 	readonly nextCursor: string | null;
 	readonly checkpointAdvanced: boolean;
 	readonly failure: FathomIngestFailure | null;
@@ -193,6 +205,7 @@ export const ingestFathomPage = async (options: FathomIngestOptions): Promise<Fa
 	page = pageResult.value as FathomPage;
 	let imported = 0;
 	let duplicates = 0;
+	let refreshed = 0;
 	const seen = { ...checkpoint.seen };
 	for (const payload of page.items) {
 		const id = recordingId(payload.recording_id);
@@ -205,10 +218,19 @@ export const ingestFathomPage = async (options: FathomIngestOptions): Promise<Fa
 			fetchedAt: now(),
 			payload,
 		};
+		const hash = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+		const store = options.store;
 		const putResult =
 			seen[id] === undefined
 				? await settlePromise(options.store.putPending(options.account, id, envelope))
-				: { value: "duplicate" as const };
+				: seen[id] !== hash && store.refreshPending !== undefined
+					? await settlePromise(
+							store.refreshPending(options.account, id, envelope).then((outcome) => {
+								if (outcome === "refreshed") refreshed += 1;
+								return "duplicate" as const;
+							}),
+						)
+					: { value: "duplicate" as const };
 		if (putResult.error !== undefined) {
 			return {
 				account: options.account,
@@ -223,7 +245,7 @@ export const ingestFathomPage = async (options: FathomIngestOptions): Promise<Fa
 		const result = putResult.value as "imported" | "duplicate";
 		if (result === "imported") imported += 1;
 		else duplicates += 1;
-		seen[id] = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+		seen[id] = hash;
 	}
 	const nextCheckpoint: FathomIngestCheckpoint = {
 		cursor: page.nextCursor,
@@ -248,6 +270,7 @@ export const ingestFathomPage = async (options: FathomIngestOptions): Promise<Fa
 		fetched: page.items.length,
 		imported,
 		duplicates,
+		refreshed,
 		nextCursor: page.nextCursor,
 		checkpointAdvanced: true,
 		failure: null,

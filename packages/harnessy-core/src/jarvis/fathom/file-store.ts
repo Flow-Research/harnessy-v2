@@ -116,6 +116,39 @@ export class FathomFileStore implements FathomIngestStore {
 		}
 	}
 
+	async refreshPending(
+		account: string,
+		recordingId: string,
+		envelope: FathomImportEnvelope,
+	): Promise<"refreshed" | "unchanged"> {
+		if (!/^[A-Za-z0-9_-]+$/.test(account)) throw new Error("invalid Fathom account path");
+		const destination = join(this.#inboxRoot, account, "pending", `${recordingKey(recordingId)}.json`);
+		// Only a pending envelope is replaced; a processed or missing one is left to its owner.
+		if (!existsSync(destination)) return "unchanged";
+		const current = readFileSync(destination, "utf8");
+		const parsed = Effect.runSyncExit(
+			Effect.try({ try: () => JSON.parse(current) as FathomImportEnvelope, catch: () => null }),
+		);
+		if (Exit.isSuccess(parsed) && JSON.stringify(parsed.value.payload) === JSON.stringify(envelope.payload))
+			return "unchanged";
+		const temporary = `${destination}.${randomUUID()}.tmp`;
+		const fd = openSync(temporary, "wx", 0o600);
+		try {
+			writeFileSync(fd, `${JSON.stringify(envelope)}\n`);
+			fsyncSync(fd);
+		} finally {
+			closeSync(fd);
+		}
+		const renamed = Effect.runSyncExit(
+			Effect.try({ try: () => renameSync(temporary, destination), catch: (error) => error }),
+		);
+		if (Exit.isFailure(renamed)) {
+			unlinkSync(temporary);
+			throw Cause.squash(renamed.cause);
+		}
+		return "refreshed";
+	}
+
 	async saveCheckpoint(account: string, checkpoint: FathomIngestCheckpoint): Promise<void> {
 		validateCheckpoint(checkpoint);
 		const stateRoot = join(this.#statePath, "..");
