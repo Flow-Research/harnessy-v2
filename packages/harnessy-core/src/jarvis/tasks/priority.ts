@@ -51,8 +51,7 @@ export function scoreAction(
 	let urgent = false;
 	let due: string | null = null;
 	let strongestDate: string | null = null;
-	if (email !== "unavailable" && email.some((message) => Date.parse(message.receivedAt) > now))
-		throw new Error("Future email timestamp");
+	const invalidEmail = email !== "unavailable" && email.some((message) => Date.parse(message.receivedAt) > now);
 	const dateEvidence = deriveDueDates.derive({ action, at, calendar });
 	if (actionable) {
 		const verified =
@@ -71,7 +70,7 @@ export function scoreAction(
 		}
 		for (const event of calendar === "unavailable" ? [] : calendar)
 			points.calendar = Math.max(points.calendar, calendarPoints(event, now));
-		for (const message of email === "unavailable" ? [] : email)
+		for (const message of email === "unavailable" || invalidEmail ? [] : email)
 			points.email = Math.max(points.email, emailPoints(message, now));
 
 		if (action.estimate) points.effort = action.estimate.minutes <= 15 ? 150 : action.estimate.minutes <= 60 ? 75 : 0;
@@ -103,6 +102,7 @@ export function scoreAction(
 		strongestDate,
 		importanceRule: important ? action.importance?.rule : undefined,
 		points,
+		invalid: invalidEmail ? ["email"] : [],
 		unavailable: [calendar === "unavailable" ? "calendar" : "", email === "unavailable" ? "email" : ""].filter(
 			Boolean,
 		),

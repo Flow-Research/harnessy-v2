@@ -19,5 +19,11 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 const token = loadTasksAuthToken();
-const server = await startTasksHttpServer({ file, token, host, port });
+const server = await startTasksHttpServer({
+	file,
+	token,
+	host,
+	port,
+	enablePriorityBatch: process.env.TASKS_ENABLE_PRIORITY_BATCH === "1",
+});
 console.log(`tasks-service listening on ${server.url}`);

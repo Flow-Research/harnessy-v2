@@ -48,6 +48,7 @@ export function applyPriorityBatch(store: TasksStore, expected: number, body: un
 	const ordered = reorder.ids.map((id) => {
 		const t = byId.get(id);
 		if (!t) throw new TaskRefused("invalid_body");
+		// Julian approved storing the computed integer directly in legacy priority.
 		const value = changes.get(id)!.priority;
 		return value === t.priority ? t : { ...t, priority: value };
 	});
@@ -88,7 +89,7 @@ export async function finishPriorityRun(
 		.request({
 			...credentials,
 			method: "POST",
-			path: "/v1/tasks/action",
+			path: "/v1/tasks/priority-batch",
 			revision: snapshot.revision,
 			body: priorityActionBatch(snapshot.plan),
 		})
@@ -97,9 +98,15 @@ export async function finishPriorityRun(
 				"Task service response unavailable. Check the authoritative order and revision before a new preview. The batch commits all changes or none.",
 			);
 		});
+	if (response.status === 404) throw new Error("Priority batch unavailable or disabled on the task service");
 	if (response.status === 409)
 		throw new Error("Stale task revision. Refresh the evidence and preview the current revision.");
 	if (response.status !== 200 || !response.body.ok || response.body.revision === undefined)
 		throw new Error("Task service did not confirm the batch. Verify its revision before retrying.");
-	return { ...snapshot, appliedRevision: response.body.revision };
+	return {
+		...snapshot,
+		appliedRevision: response.body.revision,
+		propagation:
+			"The service confirmed the priorities. The Mac cache and portal update after the next successful task sync.",
+	};
 }

@@ -135,7 +135,7 @@ export async function rankSnapshot(
 						.join(" ") || "no actionable signals",
 	}));
 	const versions = {
-		policy: "eisenhower-v3/r2",
+		policy: "eisenhower-v3/r3",
 		duePolicy: deriveDueDates.version,
 		evidence: digest(evidence),
 		observations: digest(observations),
@@ -154,7 +154,7 @@ export async function rankSnapshot(
 export type PrioritySnapshot = Awaited<ReturnType<typeof rankSnapshot>>;
 
 export function formatPriorityTable(snapshot: PrioritySnapshot) {
-	const lines = ["ID\tTitle\tCurrent\tShadow\tQuadrant\tChange\tReason\tEmpty\tUnavailable"];
+	const lines = ["ID\tTitle\tCurrent\tShadow\tQuadrant\tChange\tReason\tEmpty\tUnavailable\tInvalid"];
 	for (const r of snapshot.rows)
 		lines.push(
 			[
@@ -167,6 +167,7 @@ export function formatPriorityTable(snapshot: PrioritySnapshot) {
 				r.reason,
 				r.winner.empty.join(","),
 				r.winner.unavailable.join(","),
+				r.winner.invalid.join(","),
 			].join("\t"),
 		);
 	return [`${snapshot.evaluatedAt} revision ${snapshot.revision}`, ...lines, `Snapshot ${snapshot.snapshotId}`].join(

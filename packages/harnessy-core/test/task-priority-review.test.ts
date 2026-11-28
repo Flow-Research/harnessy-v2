@@ -117,10 +117,17 @@ describe("scoring review", () => {
 		});
 		expect(snap.rows.slice(0, 2).map((r) => r.current)).toEqual([103, 102]);
 	});
-	it("refuses future mail from the evidence file at the injected clock", async () => {
+	it("flags future mail on one action and continues scoring the other signals", async () => {
 		const { store, evidence, actions } = replay();
 		actions[1]!.email = [{ receivedAt: "2026-11-28T11:00:01Z", relation: "direct" }];
-		await expect(rankSnapshot(store, evidence, at)).rejects.toThrow(/Future email/);
+		const snap = await rankSnapshot(store, evidence, at);
+		expect(snap.rows).toHaveLength(10);
+		expect(snap.rows.find((r) => r.current === 101)?.winner).toMatchObject({
+			invalid: ["email"],
+			computed: 4569,
+			points: { email: 0, ownership: 250 },
+		});
+		expect(snap.rows.filter((r) => r.winner.invalid.length)).toHaveLength(1);
 	});
 	it("binds policy identity and evidence even when scores match", async () => {
 		const { store, evidence, actions } = replay();
@@ -142,13 +149,21 @@ describe("confirmed priority batch with a memory-only task client", () => {
 		const snap = await rankSnapshot(store, evidence, at);
 		let saved = store.items;
 		const request: TasksTransport["request"] = vi.fn(async (input) => {
-			expect(input).toMatchObject({ method: "POST", path: "/v1/tasks/action", revision: 2 });
+			expect(input).toMatchObject({ method: "POST", path: "/v1/tasks/priority-batch", revision: 2 });
+			expect(input.body).toMatchObject({
+				setPriority: snap.rows.map((r) => ({
+					id: r.id,
+					priority: r.winner.computed,
+					oldPriority: store.items.find((t) => t.id === r.id)!.priority,
+				})),
+			});
 			const next = applyPriorityBatch(store, input.revision!, input.body);
 			saved = [...next.items] as typeof saved;
 			return { status: 200, body: { ok: true, revision: next.revision } };
 		});
 		const result = await finishPriorityRun(snap, true, snap.snapshotId, { request }, config);
 		expect(result).toHaveProperty("appliedRevision", 3);
+		expect(result).toHaveProperty("propagation", expect.stringContaining("next successful task sync"));
 		expect(request).toHaveBeenCalledTimes(1);
 		expect(saved.map((t) => t.id)).toEqual(snap.plan.rows.map((t) => t.id));
 		expect(saved.map((t) => t.priority)).toEqual(snap.rows.map((r) => r.effective));

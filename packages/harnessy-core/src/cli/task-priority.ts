@@ -34,10 +34,13 @@ export const taskPriorityCommand = Command.make(
 			const store = readPriorityStore(file);
 			const snapshot = await rankSnapshot(store, evidence, at);
 			const result = await finishPriorityRun(snapshot, flags.apply, Option.getOrUndefined(flags.confirm));
-			return flags.json ? JSON.stringify(result, null, 2) : formatPriorityTable(result);
+			if (flags.json) return JSON.stringify(result, null, 2);
+			return "propagation" in result
+				? `${formatPriorityTable(result)}\n${result.propagation}`
+				: formatPriorityTable(result);
 		}).pipe(Effect.flatMap(Console.log)),
 ).pipe(
 	Command.withDescription(
-		"Preview action priorities from a local task store. Calendar and mail are offline by default. To submit a revision-checked batch through the configured task service, supply --apply and --confirm with its preview snapshot ID.",
+		"Preview action priorities from a local task store. Calendar and mail are offline by default. Write-back requires a service with priority batches enabled, --apply, and --confirm with the preview snapshot ID. The Mac cache updates on the next successful sync.",
 	),
 );
