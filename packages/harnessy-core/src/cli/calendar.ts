@@ -11,9 +11,19 @@ import {
 } from "../jarvis/calendar/apply.ts";
 import { gwsCalendarProvider } from "../jarvis/calendar/gws-provider.ts";
 import { inspectCalendarPlan } from "../jarvis/calendar/plan.ts";
+import {
+	calendarConsentCommand,
+	calendarEnrollCommand,
+	calendarImportCommand,
+	calendarImportScheduleCommand,
+} from "./calendar-import.ts";
 
 export const jarvisCalendarCommand = Command.make("calendar").pipe(
 	Command.withSubcommands([
+		calendarImportCommand,
+		calendarConsentCommand,
+		calendarEnrollCommand,
+		calendarImportScheduleCommand,
 		Command.make("inspect", { plan: Flag.String("plan") }, ({ plan }) =>
 			Effect.try(() => inspectCalendarPlan(plan)).pipe(
 				Effect.flatMap((result) => Console.log(JSON.stringify(result, null, 2))),

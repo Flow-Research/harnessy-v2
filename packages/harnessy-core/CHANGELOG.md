@@ -53,6 +53,35 @@
 
 ### Added
 
+- `harnessy jarvis calendar import` reads the primary Google Calendar of each
+  consented gws account, read-only, for the window from 1 day back to 8 days
+  ahead. An account is read only when its primary calendar matches the
+  identity approved at consent, and only through a native gws binary that
+  matches the SHA-256 given with `--google-executable-sha256`. The importer
+  stores only opaque HMAC keys, derived flags and timestamps under
+  `~/.harnessy/calendar-import/` (0700 folder, 0600 files). Account folder
+  names, titles, descriptions and marker values are never stored or printed.
+  `--dry-run` prints counts and writes nothing. `--account` is allowed only
+  with `--dry-run`. `import-consent` records per-account consent without
+  an identity, and an unbound account is never read. `import-enroll` takes the
+  intended primary calendar ID from an owner-only file or standard input (never
+  argv), compares it in memory with the ID from one metadata call, and binds
+  consent to its keyed hash only on equality. Every import compares that hash
+  exactly. Consent is now version 3. A version 2 binding, which predates the
+  enrollment comparison, is read as unbound until `import-enroll` runs, so it
+  lists no events. Negated preparation cues such as "no preparation required"
+  do not count as preparation, and an explicit agenda-only or no-preparation
+  instruction wins over topic words unless a separate affirmative instruction
+  (such as "please prepare") is present. Event, series and copy keys come from the verified identity, so a
+  decision survives a change of folder. A task marker shared by several actions
+  gives only candidates until an action marker or an accepted decision picks one. Action descriptors
+  come from the owner-only `actions.json` in the state folder, for manual and
+  scheduled runs alike. gws receives only the environment entries it needs,
+  and the importer refuses to start it when Node child-process debugging is
+  enabled. `import-schedule` prints a launchd job definition without writing or
+  loading it. The calendar provider gives the task priority engine only
+  explicitly linked or human-accepted, confirmed, accepted and future events,
+  with one signal per meeting copy.
 - The engineering loop raises a durable intervention for a remote run when
   provider admission pauses an acknowledged run or when the run needs
   reconciliation. It delivers the intervention to Garden through the signed
