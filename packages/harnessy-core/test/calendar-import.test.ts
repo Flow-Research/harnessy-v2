@@ -35,6 +35,7 @@ import {
 import type { LinkDecision, ObservationStore, StoredEvent } from "../src/jarvis/calendar-import/observations.ts";
 import {
 	OWNER_FILE_MAX_BYTES,
+	readOrCreateSalt,
 	readOwnerFile,
 	readSalt,
 	writeOwnerFile,
@@ -93,6 +94,7 @@ const consentFor = (bound: Record<string, string | null>): ReadonlyMap<string, C
 				{
 					account: key,
 					identity: identity === null ? null : identityKey(salt, identity),
+					binding: identity === null ? ("none" as const) : ("enrolled" as const),
 					scope: "calendar.read",
 					consentedAt: "2026-11-28T18:47:00+01:00",
 					consentedBy: "julian",
@@ -535,6 +537,41 @@ describe.runIf(process.platform !== "win32")("gws process boundary", () => {
 		expect((await runCalendarImport({ ...runOptions, home: root, dryRun: true })).totals.accountsRead).toBe(1);
 		expect(readFileSync(calendarImportPaths(root).consent, "utf8")).not.toContain("@");
 	});
+	it("treats a binding written before enrollment existed as unbound, with no event-list call", async () => {
+		fixture({ identity: OWNER, items: [event("one", 3)] });
+		const paths = calendarImportPaths(root);
+		mkdirSync(paths.root, { recursive: true, mode: 0o700 });
+		const stateSalt = readOrCreateSalt(paths.salt);
+		const legacy = `${JSON.stringify(
+			{
+				version: 2,
+				accounts: [
+					{
+						account: accountKey(stateSalt, slug),
+						identity: identityKey(stateSalt, OWNER),
+						scope: "calendar.read",
+						consentedAt: "2026-11-28T18:47:00+01:00",
+						consentedBy: "julian",
+						method: "voice",
+					},
+				],
+			},
+			null,
+			2,
+		)}\n`;
+		writeFileSync(paths.consent, legacy, { mode: 0o600 });
+		chmodSync(paths.consent, 0o600);
+		const before = await runCalendarImport({ ...runOptions, home: root, dryRun: false });
+		expect(before.accounts[0]).toMatchObject({ state: "unavailable", reason: "unbound", events: 0 });
+		expect(existsSync(join(config, "request.json"))).toBe(false);
+		expect(readFileSync(paths.consent, "utf8")).toBe(legacy);
+		expect(evidenceFor(JSON.parse(readFileSync(paths.observations, "utf8")), "x").state).toBe("unavailable");
+		// The operator enrolls with the intended ID; only then are events listed.
+		expect(await bind()).toMatchObject({ matches: true, bound: true });
+		const after = await runCalendarImport({ ...runOptions, home: root, dryRun: true });
+		expect(after.accounts[0]).toMatchObject({ state: "read", events: 1 });
+		expect(JSON.parse(readFileSync(paths.consent, "utf8")).version).toBe(3);
+	});
 	it("takes the intended ID only from a private input", () => {
 		const path = intended(OWNER);
 		chmodSync(path, 0o644);
@@ -736,6 +773,20 @@ describe("local classification", () => {
 		expect(evidenceFor(store, "eta").state).toBe("conflict");
 		expect(evidenceFor(store, "bulk-69").state).toBe("conflict");
 		expect(points(await providerFor(store).calendar("eta", at))).toBe(0);
+	});
+	it.each([
+		["Agenda mention only. No preparation required.", 50],
+		["No prep needed, just a status sync", 50],
+		["Nothing to prepare for this one", 50],
+		["Preparation is not required", 50],
+		["We don't need to prepare anything", 50],
+		["Please prepare the deck before the call", 450],
+		["Preparation required: bring the figures", 450],
+	])("classifies %j with a linked marker at one hour as %i points", async (text, expected) => {
+		const { store } = await importOne([
+			event("cue", 1, { summary: "Weekly call", description: `${text}\nJarvis-Action: kappa` }),
+		]);
+		expect(points(await providerFor(store).calendar("kappa", at))).toBe(expected);
 	});
 	it("classifies natural-language text only, not marker values", async () => {
 		expect(classifyEvent("Investor demo", "")).toBe("preparation");

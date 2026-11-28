@@ -76,9 +76,25 @@ const PREPARATION =
 const AGENDA =
 	/\b(agenda|discuss|discussion|sync|stand-?up|check-?in|catch-?up|1:1|one-on-one|weekly|retro|update)\b/iu;
 
+// A preparation cue that the text itself negates, such as "no preparation
+// required", "no prep needed", "nothing to prepare" or "preparation is not
+// needed". These spans are removed before the preparation rule runs.
+const NEGATED_PREPARATION = new RegExp(
+	[
+		"\\b(?:no|not|without|nothing\\s+to|no\\s+need\\s+to|(?:do|does|did)\\s*(?:n['\u2019]?t|\\s+not)\\s+need\\s+to)\\s+(?:any\\s+|further\\s+|special\\s+)?(?:prep|prepare|preparation)\\b(?:\\s+(?:is\\s+)?(?:required|needed|necessary))?",
+		"\\b(?:prep|preparation)\\s+(?:is\\s+|are\\s+)?(?:not|n['\u2019]t|never)\\s+(?:required|needed|necessary)\\b",
+	].join("|"),
+	"giu",
+);
+
+/** Remove negated preparation cues, so "no preparation required" stays an agenda mention. */
+export function withoutNegatedPreparation(text: string): string {
+	return text.replace(NEGATED_PREPARATION, " ");
+}
+
 /** Preparation-needed, agenda mention, or neither, from natural-language text only. */
 export function classifyEvent(title: string, description: string): EventRelation {
-	const text = withoutMarkers(`${title}\n${description}`);
+	const text = withoutNegatedPreparation(withoutMarkers(`${title}\n${description}`));
 	if (PREPARATION.test(text)) return "preparation";
 	return AGENDA.test(text) ? "agenda" : "none";
 }

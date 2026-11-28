@@ -198,7 +198,8 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 			refuse("no-consent");
 			continue;
 		}
-		if (consent.identity === null) {
+		// Only an identity bound by the enrollment comparison is trusted.
+		if (consent.identity === null || consent.binding !== "enrolled") {
 			refuse("unbound");
 			continue;
 		}

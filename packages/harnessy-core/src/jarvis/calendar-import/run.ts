@@ -202,7 +202,9 @@ export async function enrollAccount(
 	const id = typeof primary.id === "string" ? primary.id : "";
 	const matches = id !== "" && id.toLowerCase() === expectedPrimaryId.trim().toLowerCase();
 	if (!matches) return { account: accountLabel(account), matches: false, bound: false };
-	recordConsent(paths.consent, [{ account, identity: identityKey(salt, id), scope: "calendar.read", ...input }]);
+	recordConsent(paths.consent, [
+		{ account, identity: identityKey(salt, id), binding: "enrolled", scope: "calendar.read", ...input },
+	]);
 	return { account: accountLabel(account), matches: true, bound: true };
 }
 
@@ -219,7 +221,7 @@ export function recordAccountConsent(
 	const paths = calendarImportPaths(home);
 	const salt = readOrCreateSalt(paths.salt);
 	const account = accountKey(salt, slug);
-	recordConsent(paths.consent, [{ account, identity: null, scope: "calendar.read", ...input }]);
+	recordConsent(paths.consent, [{ account, identity: null, binding: "none", scope: "calendar.read", ...input }]);
 	return { account: accountLabel(account), bound: false };
 }
 
