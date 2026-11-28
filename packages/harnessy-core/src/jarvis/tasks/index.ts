@@ -15,6 +15,7 @@ export {
 	type TasksHttpServer,
 } from "./http.ts";
 export {
+	briefIngestIds,
 	briefTasksSidecarPath,
 	candidatesFromExtracted,
 	ensureStoredTask,

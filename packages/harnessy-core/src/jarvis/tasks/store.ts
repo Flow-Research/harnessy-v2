@@ -703,6 +703,10 @@ export class TasksState {
 		readonly created: number;
 		readonly matched: number;
 		readonly sidecar?: TaskSidecar;
+		/** One entry per candidate, in order, with the candidate's own fingerprint. */
+		readonly lines: readonly TaskSidecarItem[];
+		/** Ids this ingest created. */
+		readonly createdIds: readonly string[];
 	} {
 		if (source.path.length > 512) throw new TaskRefused("invalid_source");
 		return this.#locked(() => {
@@ -743,15 +747,20 @@ export class TasksState {
 				used.add(item.id);
 				plans[index] = item;
 			};
-			// Pass 1, exact identity. A task id the candidate carries (a brief marker or a
-			// replayed allocation) comes first, then a closed item of this same brief, then
-			// an open fingerprint, a unique open title and a unique open native title.
+			// Pass 0, carried ids. A stored id that exactly one candidate carries (a brief
+			// marker or a replayed allocation) is reserved for that candidate before any
+			// fingerprint or title match. An id that several candidates carry is unsure and
+			// reserved for none of them.
+			const carriers = new Map<string, number>();
+			for (const candidate of candidates)
+				if (candidate.id !== undefined && byId.has(candidate.id))
+					carriers.set(candidate.id, (carriers.get(candidate.id) ?? 0) + 1);
+			for (const [index, candidate] of candidates.entries())
+				if (candidate.id !== undefined && carriers.get(candidate.id) === 1) claim(index, byId.get(candidate.id)!);
+			// Pass 1, exact identity: a closed item of this same brief, then an open
+			// fingerprint, a unique open title and a unique open native title.
 			for (const [index, candidate] of candidates.entries()) {
-				const carried = candidate.id === undefined ? undefined : byId.get(candidate.id);
-				if (carried !== undefined && unused(carried)) {
-					claim(index, carried);
-					continue;
-				}
+				if (plans[index] !== undefined) continue;
 				const closedSame = (closedByFingerprint.get(candidate.fingerprint) ?? []).find(
 					(item) => unused(item) && sameBrief(item),
 				);
@@ -790,6 +799,7 @@ export class TasksState {
 							unused(item) &&
 							item.source.kind === "brief" &&
 							item.kind === kind &&
+							(item.due === null || candidate.due === null || item.due === candidate.due) &&
 							(item.owner === null ||
 								candidate.owner === null ||
 								item.owner.toLowerCase() === candidate.owner.toLowerCase()),
@@ -801,10 +811,18 @@ export class TasksState {
 				}
 				for (const [index, hit] of fuzzy) if (claims.get(hit.id) === 1) claim(index, hit);
 			}
-			// Pass 3, apply in brief order. A closed item stays closed and unchanged.
+			// Pass 3, apply in brief order. A closed item stays closed and unchanged. An
+			// item that a newer brief already updated keeps that update: an older queued
+			// brief that reaches the primary late never rolls it back.
+			const createdIds: string[] = [];
 			for (const [index, candidate] of candidates.entries()) {
 				const current = plans[index];
-				if (current !== undefined && !isOpen(current)) {
+				const newer =
+					current !== undefined &&
+					current.source.briefDate !== null &&
+					source.briefDate !== null &&
+					current.source.briefDate > source.briefDate;
+				if (current !== undefined && (!isOpen(current) || newer)) {
 					matched += 1;
 					sidecarItems.push({
 						id: current.id,
@@ -878,6 +896,7 @@ export class TasksState {
 					resolution: null,
 				};
 				items = [...items, item];
+				createdIds.push(item.id);
 				sidecarItems.push({
 					id: item.id,
 					fingerprint: candidate.fingerprint,
@@ -894,6 +913,8 @@ export class TasksState {
 				created,
 				matched,
 				sidecar: sidecarDocument,
+				lines: sidecarItems,
+				createdIds,
 			};
 		});
 	}

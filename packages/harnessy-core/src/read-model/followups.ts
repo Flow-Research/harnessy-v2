@@ -195,6 +195,8 @@ const withTaskMarker = <T extends { readonly text: string }>(
 export const extractBriefTasks = (text: string): ReadonlyArray<ExtractedTask> => {
 	const mine = listItems(section(text, /^decisions and actions for you$/iu) ?? [])
 		.map(withTaskMarker)
+		// A bullet that held only a marker has no task.
+		.filter((item) => item.text !== "")
 		.map(
 			({ taskId, ...item }): ExtractedTask => ({
 				...(item.raw
@@ -212,6 +214,8 @@ export const extractBriefTasks = (text: string): ReadonlyArray<ExtractedTask> =>
 		);
 	const waiting = listItems(section(text, /^delegated or waiting$/iu) ?? [])
 		.map(withTaskMarker)
+		// A bullet that held only a marker has no task.
+		.filter((item) => item.text !== "")
 		.map(({ taskId, ...item }): ExtractedTask => {
 			if (item.raw) return { ...rawTask(item), followup: true, ...taskId };
 			const lead = boldLead(item.text) ?? plainText(item.text);
@@ -423,6 +427,8 @@ export const readTasks = (options: TaskReadOptions): TileResult<TaskListData> =>
 				truncated: read.success.truncated,
 			});
 			const seen = new Map<string, number>();
+			// A brief line's task marker is its id, once per file, so the merge can find a reworded stored task.
+			const carriedIds = new Set<string>();
 			for (const task of extracted) {
 				const text = `${task.ref ?? ""} ${task.title}`;
 				const normalised = normaliseTaskText(text);
@@ -432,9 +438,11 @@ export const readTasks = (options: TaskReadOptions): TileResult<TaskListData> =>
 					omitted += 1;
 					continue;
 				}
+				const carried = task.taskId !== undefined && !carriedIds.has(task.taskId) ? task.taskId : undefined;
+				if (carried !== undefined) carriedIds.add(carried);
 				const owner = task.owner === null ? null : task.owner.slice(0, 64);
 				tasks.push({
-					id: taskId(file.kind, file.path, text, occurrence),
+					id: carried ?? taskId(file.kind, file.path, text, occurrence),
 					title: task.title,
 					status: task.status,
 					owner,

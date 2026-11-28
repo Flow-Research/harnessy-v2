@@ -16,7 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 
 import { extractBriefTasks } from "../../read-model/followups.ts";
-import { candidatesFromExtracted } from "./ingest.ts";
+import { candidatesFromExtracted, carriedIdsOf } from "./ingest.ts";
 import { applyMeetingFollowupBatch, type MeetingFollowupBatch } from "./meeting-followups.ts";
 import {
 	defaultTasksFile,
@@ -70,7 +70,13 @@ export type QueuedMutation =
 			readonly date: string;
 			readonly path?: string;
 			readonly displayRef?: string;
+			/** Ids this capture created, keyed by each line's fingerprint. */
 			readonly allocations?: ReadonlyArray<{ readonly id: string; readonly fingerprint: string }>;
+			/**
+			 * Lines that reused an existing task, keyed by each line's fingerprint. Present
+			 * (possibly empty) only on captures from this version; see `BRIEF_MATCHES_FEATURE`.
+			 */
+			readonly matches?: ReadonlyArray<{ readonly id: string; readonly fingerprint: string }>;
 	  }
 	| {
 			/** Follow-ups from one meeting note's action items. */
@@ -83,8 +89,16 @@ export interface TasksSyncQueue {
 	readonly items: readonly QueuedMutation[];
 }
 
+/**
+ * Advertised by a primary whose brief ingest honours `matches` and the
+ * allocation-aware collapse. A primary that does not advertise it receives a
+ * queued capture from this version as plain creates of the ids it allocated.
+ */
+export const BRIEF_MATCHES_FEATURE = "brief-ingest-matches";
+
 export interface TasksRemoteResult {
 	readonly ok: boolean;
+	readonly features?: readonly string[];
 	readonly revision?: number;
 	readonly error?: string;
 	readonly item?: unknown;
@@ -240,12 +254,11 @@ const applyQueuedMutation = (state: TasksState, mutation: QueuedMutation): void 
 		case "ingest": {
 			const displayRef = mutation.displayRef ?? `brief ${mutation.date}`;
 			const path = mutation.path ?? `remote-brief/${mutation.date}.md`;
-			const ids = new Map((mutation.allocations ?? []).map((entry) => [entry.fingerprint, entry.id]));
-			const candidates = candidatesFromExtracted("brief", extractBriefTasks(mutation.markdown), displayRef).map(
-				(candidate) => {
-					const id = ids.get(candidate.fingerprint);
-					return id === undefined ? candidate : { ...candidate, id };
-				},
+			const candidates = candidatesFromExtracted(
+				"brief",
+				extractBriefTasks(mutation.markdown),
+				displayRef,
+				carriedIdsOf(mutation.allocations, mutation.matches),
 			);
 			state.ingest(candidates, { kind: "brief", path, displayRef, briefDate: mutation.date });
 			return;
@@ -299,6 +312,9 @@ export const fetchTransport: TasksTransport = {
 				items: record.items,
 				created,
 				matched: typeof record.matched === "number" ? record.matched : undefined,
+				...(Array.isArray(record.features)
+					? { features: record.features.filter((entry): entry is string => typeof entry === "string") }
+					: {}),
 				updated: record.updated,
 				unchanged: typeof record.unchanged === "number" ? record.unchanged : undefined,
 			},
@@ -310,7 +326,7 @@ const getStore = async (
 	transport: TasksTransport,
 	config: TasksSyncConfig,
 	token: string,
-): Promise<{ revision: number; items: TasksStore["items"] }> => {
+): Promise<{ revision: number; items: TasksStore["items"]; features: readonly string[] }> => {
 	const response = await transport.request({
 		method: "GET",
 		path: "/v1/tasks?includeDone=1",
@@ -320,7 +336,11 @@ const getStore = async (
 	if (response.status === 401) throw new TaskRefused("unauthorized");
 	if (!response.body.ok || response.body.revision === undefined || !Array.isArray(response.body.items))
 		throw new TaskRefused(response.body.error ?? "sync_failed");
-	return { revision: response.body.revision, items: response.body.items as TasksStore["items"] };
+	return {
+		revision: response.body.revision,
+		items: response.body.items as TasksStore["items"],
+		features: response.body.features ?? [],
+	};
 };
 
 const pathFor = (mutation: QueuedMutation): { method: string; path: string; body: unknown } => {
@@ -358,6 +378,7 @@ const pathFor = (mutation: QueuedMutation): { method: string; path: string; body
 					path: mutation.path,
 					displayRef: mutation.displayRef,
 					allocations: mutation.allocations,
+					...(mutation.matches === undefined ? {} : { matches: mutation.matches }),
 				},
 			};
 		case "ingestMeeting":
@@ -401,6 +422,54 @@ const replayOne = async (
 	throw new TaskRefused(response.body.error ?? "sync_failed");
 };
 
+/**
+ * A capture from this version sent to a primary on the earlier version. That
+ * primary would run its own matching and could match a line to a different row,
+ * dropping the id this capture created, or refuse `duplicate_id` for a reused id.
+ * So only the ids this capture created are sent, as plain creates, and each is
+ * skipped when the primary already has it. Reused tasks are left as they are.
+ */
+const legacyBriefCreates = (
+	mutation: Extract<QueuedMutation, { op: "ingest" }>,
+	present: ReadonlySet<string>,
+): QueuedMutation[] => {
+	const displayRef = mutation.displayRef ?? `brief ${mutation.date}`;
+	const created = new Map((mutation.allocations ?? []).map((entry) => [entry.fingerprint, entry.id] as const));
+	return candidatesFromExtracted("brief", extractBriefTasks(mutation.markdown), displayRef, created)
+		.filter((candidate) => candidate.id !== undefined && created.get(candidate.fingerprint) === candidate.id)
+		.filter((candidate) => !present.has(candidate.id!))
+		.map(
+			(candidate): QueuedMutation => ({
+				op: candidate.kind === "followup" ? "addFollowup" : "add",
+				fields: {
+					id: candidate.id!,
+					title: candidate.title,
+					owner: candidate.owner,
+					due: candidate.due,
+					...(candidate.kind === "followup" ? { waitingOn: candidate.waitingOn ?? null } : {}),
+				},
+			}),
+		);
+};
+
+/** Replay one queued mutation and return the new revision. */
+const replayQueued = async (
+	transport: TasksTransport,
+	config: TasksSyncConfig,
+	token: string,
+	mutation: QueuedMutation,
+	revision: number,
+	features: readonly string[],
+): Promise<number> => {
+	if (mutation.op !== "ingest" || mutation.matches === undefined || features.includes(BRIEF_MATCHES_FEATURE))
+		return (await replayOne(transport, config, token, mutation, revision)).revision;
+	const latest = await getStore(transport, config, token);
+	let next = latest.revision;
+	for (const create of legacyBriefCreates(mutation, new Set(latest.items.map((item) => item.id))))
+		next = (await replayOne(transport, config, token, create, next)).revision;
+	return next;
+};
+
 export const syncTasks = async (input: {
 	readonly tasksFile: string;
 	readonly config: TasksSyncConfig;
@@ -423,8 +492,7 @@ export const syncTasks = async (input: {
 	let revision = remote.revision;
 	const replayedItems: QueuedMutation[] = [];
 	for (const mutation of queue.items) {
-		const result = await replayOne(transport, input.config, token, mutation, revision);
-		revision = result.revision;
+		revision = await replayQueued(transport, input.config, token, mutation, revision, remote.features);
 		replayedItems.push(mutation);
 	}
 	const latest = await getStore(transport, input.config, token);
@@ -465,8 +533,7 @@ export const applyMutation = async (input: {
 				const queue = readQueue(queuePath);
 				const replayedItems: QueuedMutation[] = [];
 				for (const pending of queue.items) {
-					const result = await replayOne(transport, input.config!, token, pending, revision);
-					revision = result.revision;
+					revision = await replayQueued(transport, input.config!, token, pending, revision, remote.features);
 					replayedItems.push(pending);
 				}
 				const applied = await replayOne(transport, input.config!, token, input.mutation, revision);
