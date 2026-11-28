@@ -4,6 +4,7 @@
  * Environment:
  * - TASKS_FILE (default: /data/tasks.json)
  * - TASKS_AUTH_TOKEN or TASKS_TOKEN_FILE (mode 0600; the value is never logged)
+ * - TASKS_ENABLE_PRIORITY_BATCH (default: off). Only 1 enables hosted priority batches.
  * - PORT (default: 8787)
  * - HOST (default: 0.0.0.0)
  */
