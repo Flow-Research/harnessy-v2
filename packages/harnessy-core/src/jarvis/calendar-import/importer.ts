@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import { classifyEvent, isJarvisBlock, parseMarkers } from "./classify.ts";
 import type { ConsentRecord } from "./consent.ts";
 import { type CalendarRead, CalendarReadError } from "./gws-reader.ts";
@@ -192,38 +194,42 @@ export async function importCalendars(options: ImportOptions): Promise<ImportRes
 			refuse("unbound");
 			continue;
 		}
-		let items: Record<string, unknown>[];
-		try {
-			const read = options.readerFor(slug);
-			const primary = await read([
-				"calendar",
-				"calendars",
-				"get",
-				"--params",
-				JSON.stringify({ calendarId: "primary", fields: "id" }),
-			]);
-			if (!text(primary.id)) throw new CalendarReadError("failed");
-			const identity = identityKey(salt, text(primary.id));
-			if (identity !== consent.identity) {
-				refuse("identity-changed");
-				continue;
-			}
-			if (identities.has(identity)) {
-				refuse("duplicate-account");
-				continue;
-			}
-			identities.add(identity);
-			items = await readEvents(read, from, to);
-		} catch (cause) {
-			refuse(
-				cause instanceof TooManyEvents
-					? "too-many-events"
-					: cause instanceof CalendarReadError
-						? cause.reason
-						: "failed",
-			);
+		const outcome = await Effect.runPromise(
+			Effect.tryPromise({
+				try: async (): Promise<AccountReason | Record<string, unknown>[]> => {
+					const read = options.readerFor(slug);
+					const primary = await read([
+						"calendar",
+						"calendars",
+						"get",
+						"--params",
+						JSON.stringify({ calendarId: "primary", fields: "id" }),
+					]);
+					if (!text(primary.id)) throw new CalendarReadError("failed");
+					const identity = identityKey(salt, text(primary.id));
+					// The approved identity is checked before any event is listed.
+					if (identity !== consent.identity) return "identity-changed";
+					if (identities.has(identity)) return "duplicate-account";
+					identities.add(identity);
+					return await readEvents(read, from, to);
+				},
+				catch: (cause): AccountReason =>
+					cause instanceof TooManyEvents
+						? "too-many-events"
+						: cause instanceof CalendarReadError
+							? cause.reason
+							: "failed",
+			}).pipe(Effect.result),
+		);
+		if (Result.isFailure(outcome)) {
+			refuse(outcome.failure);
 			continue;
 		}
+		if (typeof outcome.success === "string") {
+			refuse(outcome.success);
+			continue;
+		}
+		const items = outcome.success;
 		const accountEvents: StoredEvent[] = [];
 		let copies = 0;
 		for (const item of items) {

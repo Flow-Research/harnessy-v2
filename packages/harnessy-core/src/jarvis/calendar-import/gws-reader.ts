@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { promisify } from "node:util";
+import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import { CalendarImportError } from "./keys.ts";
 
 const execute = promisify(execFile);
@@ -34,12 +36,9 @@ export function assertReadOnlyCall(args: readonly string[]): void {
 		args[3] !== "--params"
 	)
 		throw new CalendarImportError("Refused: the calendar importer allows only read-only calendar calls");
-	let params: unknown;
-	try {
-		params = JSON.parse(args[4] ?? "");
-	} catch {
-		throw new CalendarImportError("Refused: calendar call parameters must be JSON");
-	}
+	const parsed = Result.try(() => JSON.parse(args[4] ?? "") as unknown);
+	if (Result.isFailure(parsed)) throw new CalendarImportError("Refused: calendar call parameters must be JSON");
+	const params = parsed.success;
 	if (typeof params !== "object" || params === null || Array.isArray(params))
 		throw new CalendarImportError("Refused: calendar call parameters must be an object");
 	if ((params as Record<string, unknown>).calendarId !== "primary")
@@ -47,16 +46,13 @@ export function assertReadOnlyCall(args: readonly string[]): void {
 }
 
 const failureOf = (stdout: unknown): ReadFailure => {
-	try {
-		const value: unknown = JSON.parse(String(stdout ?? ""));
-		const code =
-			typeof value === "object" && value !== null && "error" in value
-				? (value.error as { code?: unknown }).code
-				: undefined;
-		return code === 401 ? "auth" : code === 403 ? "scope" : "failed";
-	} catch {
-		return "failed";
-	}
+	const parsed = Result.try(() => JSON.parse(String(stdout ?? "")) as unknown);
+	const value = Result.isSuccess(parsed) ? parsed.success : undefined;
+	const code =
+		typeof value === "object" && value !== null && "error" in value
+			? (value.error as { code?: unknown }).code
+			: undefined;
+	return code === 401 ? "auth" : code === 403 ? "scope" : "failed";
 };
 
 // Mach-O (thin and fat, both byte orders) and ELF headers. A script of any kind
@@ -80,14 +76,10 @@ export function gwsCalendarReader(executable: string, approvedSha256: string, co
 		throw new CalendarImportError("Explicit absolute Google executable and configuration directory required");
 	if (!SHA256.test(approvedSha256))
 		throw new CalendarImportError("The approved Google executable SHA-256 must be 64 lowercase hex characters");
-	let command: string;
-	let config: string;
-	try {
-		command = realpathSync(executable);
-		config = realpathSync(configDirectory);
-	} catch {
+	const resolved = Result.try(() => ({ command: realpathSync(executable), config: realpathSync(configDirectory) }));
+	if (Result.isFailure(resolved))
 		throw new CalendarImportError("Google executable or configuration directory does not exist");
-	}
+	const { command, config } = resolved.success;
 	const directory = lstatSync(config);
 	if (
 		!directory.isDirectory() ||
@@ -111,29 +103,32 @@ export function gwsCalendarReader(executable: string, approvedSha256: string, co
 		};
 		delete env.GOOGLE_WORKSPACE_CLI_TOKEN;
 		delete env.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE;
-		let stdout: string;
-		try {
-			const result = await execute(command, [...args, "--format", "json"], {
-				env,
-				timeout: 60_000,
-				maxBuffer: 16 * 1024 * 1024,
-				encoding: "utf8",
-				shell: false,
-			});
-			stdout = result.stdout;
-		} catch (cause) {
-			throw new CalendarReadError(
-				failureOf(typeof cause === "object" && cause !== null && "stdout" in cause ? cause.stdout : undefined),
-			);
-		}
-		let value: unknown;
-		try {
-			value = JSON.parse(stdout);
-		} catch {
-			throw new CalendarReadError("failed");
-		}
+		const stdout = await Effect.runPromise(
+			Effect.tryPromise({
+				try: async () =>
+					(
+						await execute(command, [...args, "--format", "json"], {
+							env,
+							timeout: 60_000,
+							maxBuffer: 16 * 1024 * 1024,
+							encoding: "utf8",
+							shell: false,
+						})
+					).stdout,
+				catch: (cause) =>
+					new CalendarReadError(
+						failureOf(
+							typeof cause === "object" && cause !== null && "stdout" in cause ? cause.stdout : undefined,
+						),
+					),
+			}).pipe(Effect.result),
+		);
+		if (Result.isFailure(stdout)) throw stdout.failure;
+		const parsed = Result.try(() => JSON.parse(stdout.success) as unknown);
+		if (Result.isFailure(parsed)) throw new CalendarReadError("failed");
+		const value = parsed.success;
 		if (typeof value !== "object" || value === null || Array.isArray(value)) throw new CalendarReadError("failed");
-		if ("error" in value) throw new CalendarReadError(failureOf(stdout));
+		if ("error" in value) throw new CalendarReadError(failureOf(stdout.success));
 		return value as Record<string, unknown>;
 	};
 }

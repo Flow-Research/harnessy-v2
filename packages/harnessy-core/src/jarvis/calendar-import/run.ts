@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import * as Result from "effect/Result";
 import { z } from "zod";
 import { ACCOUNT_SLUG, type ConsentRecord, readConsent, recordConsent } from "./consent.ts";
 import { type CalendarRead, gwsCalendarReader } from "./gws-reader.ts";
@@ -24,13 +25,9 @@ export function calendarImportPaths(home: string) {
 
 /** The gws account folders on this Mac, keyed in memory. Folder names never leave this function's result. */
 export function gwsAccounts(home: string, salt: Buffer): ImportAccount[] {
-	let names: string[];
-	try {
-		names = readdirSync(join(home, ".config"));
-	} catch {
-		return [];
-	}
-	return names
+	const listed = Result.try(() => readdirSync(join(home, ".config")));
+	if (Result.isFailure(listed)) return [];
+	return listed.success
 		.filter((name) => name.startsWith("gws-") && ACCOUNT_SLUG.test(name.slice(4)))
 		.map((name) => ({ key: accountKey(salt, name.slice(4)), slug: name.slice(4) }))
 		.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
@@ -83,13 +80,9 @@ export async function runCalendarImport(options: CalendarImportRunOptions): Prom
 	const salt = options.dryRun && existingSalt === undefined ? randomBytes(32) : readOrCreateSalt(paths.salt);
 	const consent = readConsent(paths.consent);
 	const descriptors = options.descriptorsPath === undefined ? [] : readDescriptors(options.descriptorsPath);
-	let previousFingerprint: string | undefined;
-	try {
-		previousFingerprint = readObservations(paths.observations)?.fingerprint;
-	} catch {
-		// A damaged or oversized earlier store must not block the next run; it is replaced below.
-		previousFingerprint = undefined;
-	}
+	// A damaged or oversized earlier store must not block the next run; it is replaced below.
+	const previous = Result.try(() => readObservations(paths.observations)?.fingerprint);
+	const previousFingerprint = Result.isSuccess(previous) ? previous.success : undefined;
 	// Every consented account, plus folders without consent so they are reported as refused.
 	const present = gwsAccounts(options.home, salt);
 	const known = new Set(present.map((account) => account.key));
