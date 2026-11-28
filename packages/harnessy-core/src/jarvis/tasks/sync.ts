@@ -124,11 +124,9 @@ export const parseSyncConfig = (value: unknown): TasksSyncConfig => {
 	const endpoint = value.endpoint.trim().replace(/\/$/, "");
 	const tokenFile = value.tokenFile.trim();
 	if (!/^https?:\/\//u.test(endpoint) || tokenFile.length === 0) throw new TaskRefused("invalid_sync_config");
-	if (value.showSyncFailure !== undefined && typeof value.showSyncFailure !== "boolean")
-		throw new TaskRefused("invalid_sync_config");
-	return value.showSyncFailure === undefined
-		? { endpoint, tokenFile }
-		: { endpoint, tokenFile, showSyncFailure: value.showSyncFailure };
+	return typeof value.showSyncFailure === "boolean"
+		? { endpoint, tokenFile, showSyncFailure: value.showSyncFailure }
+		: { endpoint, tokenFile };
 };
 
 const isEnoent = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === "ENOENT";

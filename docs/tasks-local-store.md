@@ -17,14 +17,14 @@ exits non-zero. There is no interactive prompt: the 18:30 Africa/Lagos close-out
 routine can call this as an agent.
 
 For task and follow-up lists, set `"showSyncFailure": true` in `~/.config/harnessy/tasks-sync.json` to show sync warnings.
-Omit the key or set it to `false` to keep warnings off.
+Only the JSON boolean `true` enables warnings in the file. Other values and an absent key keep warnings off.
 For one command, `HARNESSY_TASKS_SHOW_SYNC_FAILURE=1` forces warnings on and `0` forces them off.
 Other values use the file setting.
 
 If sync fails with warnings on, the list returns cached items, prints one line to stderr, and adds `syncWarning` to stdout JSON.
 Its `kind` is `unreachable`, `401`, `timeout`, or `sync_failed` for other failures.
 If local changes await sync, the line and the optional `pending` field give their count.
-If a pull completes with changes still waiting, the kind is `queue pending`.
+If a pull completes with changes still waiting, stderr says `task sync incomplete` and the kind is `queue pending`.
 The local file `<tasksFile>.last-sync.json` records the last complete sync in UTC even when warnings are off.
 If that time is unavailable, `lastSuccessfulSyncAt` is `null` and the line says `unknown`.
 

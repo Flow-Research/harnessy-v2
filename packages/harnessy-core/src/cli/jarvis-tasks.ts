@@ -153,9 +153,10 @@ const syncBeforeList = async (file: string, config: TasksSyncConfig | undefined)
 	if (kind === "queue pending" && pending === 0) return {};
 	const hasPending = pending !== undefined && pending > 0;
 	const queueMessage = hasPending ? ` ${pending} local change${pending === 1 ? "" : "s"} not yet synced.` : "";
+	const status = kind === "queue pending" ? "incomplete" : "failed";
 	const lastSuccessfulSyncAt = lastSuccessfulSync(file);
 	console.warn(
-		`Warning: task sync failed (${kind}). Showing local cache.${queueMessage} Last successful sync: ${lastSuccessfulSyncAt ?? "unknown"}.`,
+		`Warning: task sync ${status} (${kind}). Showing local cache.${queueMessage} Last successful sync: ${lastSuccessfulSyncAt ?? "unknown"}.`,
 	);
 	return { syncWarning: { kind, ...(hasPending ? { pending } : {}), lastSuccessfulSyncAt } };
 };
